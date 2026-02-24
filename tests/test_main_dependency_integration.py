@@ -1,0 +1,88 @@
+import importlib
+import json
+import sys
+import types
+
+
+def load_pipeline_module():
+    if "requests" not in sys.modules:
+        requests_stub = types.ModuleType("requests")
+        requests_stub.get = lambda *args, **kwargs: None
+        requests_stub.post = lambda *args, **kwargs: None
+        sys.modules["requests"] = requests_stub
+
+    if "dotenv" not in sys.modules:
+        dotenv_stub = types.ModuleType("dotenv")
+        dotenv_stub.load_dotenv = lambda *args, **kwargs: None
+        sys.modules["dotenv"] = dotenv_stub
+
+    if "main" in sys.modules:
+        return importlib.reload(sys.modules["main"])
+    return importlib.import_module("main")
+
+
+def test_process_writes_dependencies_json(tmp_path, monkeypatch):
+    pipeline = load_pipeline_module()
+
+    monkeypatch.setattr(pipeline, "fetch", lambda _address: {"ContractName": "Mock"})
+    monkeypatch.setattr(pipeline, "scaffold", lambda _address, _name, _result: tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "analyze",
+        lambda _project_dir, _contract_name, _address: tmp_path / "analysis_report.txt",
+    )
+
+    calls = []
+    deps_payload = {
+        "address": "0x1111111111111111111111111111111111111111",
+        "dependencies": ["0x2222222222222222222222222222222222222222"],
+        "rpc": "https://rpc.example",
+        "network": "ethereum",
+    }
+
+    def fake_find_dependencies(address, rpc_url):
+        calls.append((address, rpc_url))
+        return deps_payload
+
+    monkeypatch.setattr(pipeline, "find_dependencies", fake_find_dependencies)
+
+    pipeline.process(
+        "0x1111111111111111111111111111111111111111",
+        run_llm=False,
+        run_deps=True,
+        deps_rpc="https://rpc.example",
+    )
+
+    written = tmp_path / "dependencies.json"
+    assert written.exists()
+    assert json.loads(written.read_text()) == deps_payload
+    assert calls == [("0x1111111111111111111111111111111111111111", "https://rpc.example")]
+
+
+def test_process_continues_if_dependency_discovery_fails(tmp_path, monkeypatch):
+    pipeline = load_pipeline_module()
+
+    monkeypatch.setattr(pipeline, "fetch", lambda _address: {"ContractName": "Mock"})
+    monkeypatch.setattr(pipeline, "scaffold", lambda _address, _name, _result: tmp_path)
+
+    analyze_calls = []
+
+    def fake_analyze(project_dir, contract_name, address):
+        analyze_calls.append((project_dir, contract_name, address))
+        return tmp_path / "analysis_report.txt"
+
+    monkeypatch.setattr(pipeline, "analyze", fake_analyze)
+    monkeypatch.setattr(
+        pipeline,
+        "find_dependencies",
+        lambda _address, _rpc_url: (_ for _ in ()).throw(RuntimeError("RPC unavailable")),
+    )
+
+    pipeline.process(
+        "0x1111111111111111111111111111111111111111",
+        run_llm=False,
+        run_deps=True,
+    )
+
+    assert analyze_calls
+    assert not (tmp_path / "dependencies.json").exists()
