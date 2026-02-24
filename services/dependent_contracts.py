@@ -3,9 +3,13 @@
 
 import argparse
 import json
+import os
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+from dotenv import load_dotenv
 
 EMPTY_CODE_VALUES = {"0x", "0x0"}
 RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
@@ -164,7 +168,20 @@ def discover_dependencies(rpc_url: str, root: str) -> list[str]:
 
 def find_dependencies(address: str, rpc_url: str | None = None) -> dict:
     """Resolve an RPC endpoint and return discovered static contract dependencies."""
-    network, resolved_rpc = resolve_rpc_for_address(address, rpc_url)
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+    env_rpc = os.getenv("ETH_RPC")
+    effective_rpc = rpc_url or env_rpc
+
+    if effective_rpc:
+        try:
+            network, resolved_rpc = resolve_rpc_for_address(address, effective_rpc)
+        except RuntimeError:
+            if rpc_url:
+                raise
+            network, resolved_rpc = resolve_rpc_for_address(address, None)
+    else:
+        network, resolved_rpc = resolve_rpc_for_address(address, None)
+
     deps = discover_dependencies(resolved_rpc, address)
 
     output = {

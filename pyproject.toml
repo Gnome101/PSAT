@@ -1,0 +1,22 @@
+[project]
+name = "psat"
+version = "0.1.0"
+description = "Protocol Security Assessment Tool"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "python-dotenv>=1.0.1",
+  "requests>=2.32.0",
+  "slither-analyzer>=0.11.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.0.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

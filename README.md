@@ -15,3 +15,14 @@ Each run now also attempts static dependent-contract discovery and writes `depen
 CLI flags:
 - `--no-deps` skips dependency discovery
 - `--deps-rpc <url>` uses a specific RPC for dependency discovery
+
+## Development (uv)
+
+1. Install dependencies and create `.venv`:
+   `uv sync`
+2. Configure environment:
+   `cp .env.example .env` and set `ETHERSCAN_API_KEY`, `ETH_RPC`, `NVIDIA_API_KEY`
+3. Run the pipeline:
+   `uv run python main.py --help`
+4. Run tests (excluding live RPC tests):
+   `uv run pytest -k "not live"`

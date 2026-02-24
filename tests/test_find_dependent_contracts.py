@@ -1,6 +1,10 @@
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services import dependent_contracts as fdc
 
@@ -69,6 +73,48 @@ def test_resolve_rpc_for_address_custom_rpc_requires_contract(monkeypatch):
         fdc.resolve_rpc_for_address(
             "0x1111111111111111111111111111111111111111",
             "https://my-rpc.example",
+        )
+
+
+# Verifies ETH_RPC fallback behavior so a throttled .env endpoint can gracefully fall back to public discovery.
+def test_find_dependencies_falls_back_when_env_rpc_fails(monkeypatch):
+    env_rpc = "https://env-rpc.example"
+    monkeypatch.setenv("ETH_RPC", env_rpc)
+    monkeypatch.setattr(fdc, "load_dotenv", lambda _path: None)
+
+    calls = []
+
+    def fake_resolve(_address, rpc_url):
+        calls.append(rpc_url)
+        if rpc_url == env_rpc:
+            raise RuntimeError("rate limited")
+        return "ethereum", "https://public-rpc.example"
+
+    monkeypatch.setattr(fdc, "resolve_rpc_for_address", fake_resolve)
+    monkeypatch.setattr(
+        fdc,
+        "discover_dependencies",
+        lambda _rpc_url, _root: ["0x2222222222222222222222222222222222222222"],
+    )
+
+    out = fdc.find_dependencies("0x1111111111111111111111111111111111111111")
+    assert out["rpc"] == "https://public-rpc.example"
+    assert calls == [env_rpc, None]
+
+
+# Verifies explicit RPC input remains strict and does not silently fall back to public endpoints.
+def test_find_dependencies_explicit_rpc_does_not_fallback(monkeypatch):
+    monkeypatch.setattr(fdc, "load_dotenv", lambda _path: None)
+    monkeypatch.setattr(
+        fdc,
+        "resolve_rpc_for_address",
+        lambda _address, _rpc_url: (_ for _ in ()).throw(RuntimeError("bad rpc")),
+    )
+
+    with pytest.raises(RuntimeError, match="bad rpc"):
+        fdc.find_dependencies(
+            "0x1111111111111111111111111111111111111111",
+            "https://explicit-rpc.example",
         )
 
 
