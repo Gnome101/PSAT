@@ -3,10 +3,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services import dependent_contracts as fdc
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 # Verifies auto-discovery tries multiple public networks so contracts can be found without custom RPC input.
@@ -137,9 +140,9 @@ def test_public_auto_discovery_live_rpc():
 
 # Verifies dependency extraction with a user-supplied live RPC so custom endpoint support remains functional.
 def test_public_dependencies_live_rpc():
-    rpc_url = os.environ.get("LIVE_RPC_URL")
+    rpc_url = os.environ.get("ETH_RPC")
     if not rpc_url:
-        pytest.skip("Set LIVE_RPC_URL before running this test.")
+        pytest.skip("Set ETH_RPC before running this test.")
 
     # 1inch Aggregation Router V5 on Ethereum mainnet
     contract = "0x1111111254eeb25477b68fb85ed929f73a960582"

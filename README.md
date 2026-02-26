@@ -10,11 +10,17 @@ The utils directory contains any important API or utility that the services migh
 
 Currently, addresses are fed into the pipeline via `addresses.json` and results are dumped under `contracts/`.
 
-Each run now also attempts static dependent-contract discovery and writes `dependencies.json` under each contract directory.
+Each run now attempts:
+- static dependent-contract discovery (`dependencies.json`)
+- dynamic trace-based dependency discovery (`dynamic_dependencies.json`)
 
 CLI flags:
-- `--no-deps` skips dependency discovery
-- `--deps-rpc <url>` uses a specific RPC for dependency discovery
+- `--no-deps` skips all dependency discovery
+- `--deps-rpc <url>` uses a specific RPC for static dependency discovery
+- `--no-dynamic-deps` skips dynamic dependency discovery
+- `--dynamic-rpc <url>` uses a tracing-enabled RPC for dynamic dependency discovery
+- `--dynamic-tx-limit <n>` traces up to `n` representative transactions
+- `--dynamic-tx-hash <hash>` traces an explicit transaction hash (repeatable)
 
 ## Development (uv)
 

@@ -17,6 +17,9 @@ Usage:
 
     # Skip dependency discovery
     python main.py 0x... --no-deps
+
+    # Dynamic dependency tracing with a tracing-enabled RPC
+    python main.py 0x... --dynamic-rpc https://your-trace-rpc --dynamic-tx-limit 5
 """
 
 import argparse
@@ -29,6 +32,7 @@ from services.fetcher import fetch, scaffold
 from services.analyzer import analyze
 from services.llm_analyzer import analyze_with_llm
 from services.dependent_contracts import find_dependencies
+from services.dynamic_dependencies import find_dynamic_dependencies
 
 
 def load_addresses(filepath: str) -> list[dict]:
@@ -61,9 +65,13 @@ def process(
     run_llm: bool = True,
     run_deps: bool = True,
     deps_rpc: str | None = None,
+    run_dynamic_deps: bool = True,
+    dynamic_rpc: str | None = None,
+    dynamic_tx_limit: int = 5,
+    dynamic_tx_hashes: list[str] | None = None,
 ):
     """Fetch, scaffold, discover dependencies, and run analyzers."""
-    steps = 3 + int(run_deps) + int(run_llm)
+    steps = 3 + int(run_deps) + int(run_dynamic_deps) + int(run_llm)
     step = 1
 
     print(f"\n{'─' * 50}")
@@ -91,6 +99,24 @@ def process(
         except RuntimeError as exc:
             print(f"         Dependency discovery skipped: {exc}")
 
+    if run_dynamic_deps:
+        print(f"[{step}/{steps}] Discovering dynamic contract dependencies via traces ...")
+        step += 1
+        try:
+            dyn_output = find_dynamic_dependencies(
+                address,
+                rpc_url=(dynamic_rpc or deps_rpc),
+                tx_limit=dynamic_tx_limit,
+                tx_hashes=dynamic_tx_hashes,
+            )
+            dyn_path = project_dir / "dynamic_dependencies.json"
+            dyn_path.write_text(json.dumps(dyn_output, indent=2) + "\n")
+            print(f"         Dependencies: {len(dyn_output['dependencies'])}")
+            print(f"         Transactions traced: {len(dyn_output['transactions_analyzed'])}")
+            print(f"         Output: {dyn_path}")
+        except RuntimeError as exc:
+            print(f"         Dynamic dependency discovery skipped: {exc}")
+
     print(f"[{step}/{steps}] Running Slither analysis ...")
     step += 1
     report_path = analyze(project_dir, contract_name, address)
@@ -112,8 +138,26 @@ def main():
     parser.add_argument("--name", help="Project name (single address mode)")
     parser.add_argument("--file", help="Path to JSON or CSV file with addresses")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM analysis")
-    parser.add_argument("--no-deps", action="store_true", help="Skip static dependency discovery")
+    parser.add_argument("--no-deps", action="store_true", help="Skip all dependency discovery")
+    parser.add_argument(
+        "--no-dynamic-deps",
+        action="store_true",
+        help="Skip dynamic dependency discovery via transaction tracing",
+    )
     parser.add_argument("--deps-rpc", help="Optional RPC URL for dependency discovery")
+    parser.add_argument("--dynamic-rpc", help="Tracing-enabled RPC URL for dynamic dependency discovery")
+    parser.add_argument(
+        "--dynamic-tx-limit",
+        type=int,
+        default=5,
+        help="Number of representative transactions to trace (default: 5)",
+    )
+    parser.add_argument(
+        "--dynamic-tx-hash",
+        action="append",
+        dest="dynamic_tx_hashes",
+        help="Specific transaction hash to trace (repeatable)",
+    )
     args = parser.parse_args()
 
     if not args.address and not args.file:
@@ -122,6 +166,10 @@ def main():
 
     run_llm = not args.no_llm
     run_deps = not args.no_deps
+    run_dynamic_deps = (not args.no_deps) and (not args.no_dynamic_deps)
+
+    if args.dynamic_tx_limit < 1:
+        sys.exit("--dynamic-tx-limit must be >= 1")
 
     if args.file:
         entries = load_addresses(args.file)
@@ -134,6 +182,10 @@ def main():
                     run_llm=run_llm,
                     run_deps=run_deps,
                     deps_rpc=args.deps_rpc,
+                    run_dynamic_deps=run_dynamic_deps,
+                    dynamic_rpc=args.dynamic_rpc,
+                    dynamic_tx_limit=args.dynamic_tx_limit,
+                    dynamic_tx_hashes=args.dynamic_tx_hashes,
                 )
             except Exception as e:
                 print(f"  FAILED: {e}")
@@ -144,6 +196,10 @@ def main():
             run_llm=run_llm,
             run_deps=run_deps,
             deps_rpc=args.deps_rpc,
+            run_dynamic_deps=run_dynamic_deps,
+            dynamic_rpc=args.dynamic_rpc,
+            dynamic_tx_limit=args.dynamic_tx_limit,
+            dynamic_tx_hashes=args.dynamic_tx_hashes,
         )
 
     print("\nDone.")
