@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from services.dependent_contracts import normalize_address, rpc_call
 from utils.etherscan import get as etherscan_get
 
-TRACE_OPS = {"CALL", "STATICCALL", "DELEGATECALL", "CREATE", "CREATE2"}
+TRACE_OPS = {"CALL", "STATICCALL", "DELEGATECALL", "CALLCODE", "CREATE", "CREATE2"}
 
 
 def _normalize_maybe_address(address: Any) -> str | None:
@@ -300,12 +300,23 @@ def find_dynamic_dependencies(
 
     all_edges = []
     trace_methods = set()
+    trace_errors: list[dict] = []
     for tx in selected_txs:
         tx_hash = tx["tx_hash"]
         block_number = tx["block_number"]
-        method, trace_result = trace_transaction(trace_rpc, tx_hash)
-        trace_methods.add(method)
-        all_edges.extend(extract_edges_from_trace(method, trace_result, tx_hash, block_number))
+        try:
+            method, trace_result = trace_transaction(trace_rpc, tx_hash)
+            trace_methods.add(method)
+            all_edges.extend(extract_edges_from_trace(method, trace_result, tx_hash, block_number))
+        except RuntimeError as exc:
+            trace_errors.append({"tx_hash": tx_hash, "error": str(exc)})
+            print(f"         Warning: trace failed for {tx_hash}: {exc}")
+
+    if not trace_methods and trace_errors:
+        raise RuntimeError(
+            f"All {len(trace_errors)} transaction trace(s) failed. "
+            f"First error: {trace_errors[0]['error']}"
+        )
 
     edges = _dedupe_edges(all_edges)
     dependency_edges = [edge for edge in edges if edge["to"] != target]
@@ -343,6 +354,7 @@ def find_dynamic_dependencies(
         "dependencies": dependencies,
         "provenance": provenance,
         "dependency_graph": _build_graph(dependency_edges),
+        "trace_errors": trace_errors,
     }
 
 
