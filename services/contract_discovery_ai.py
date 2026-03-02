@@ -33,6 +33,12 @@ ADDRESS_RE = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
 URL_RE = re.compile(r"https?://[^\s\"'<>)]+" )
 HREF_RE = re.compile(r"""href=["']([^"']+)["']""", re.IGNORECASE)
 DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+$", re.IGNORECASE)
+ROW_START_RE = re.compile(
+    r"""<(?:tr|div)\b[^>]*(?:role=["']row["']|class=["'][^"']*table_row[^"']*)[^>]*>""",
+    re.IGNORECASE,
+)
+P_TAG_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.IGNORECASE | re.DOTALL)
+TAG_RE = re.compile(r"<[^>]+>")
 HTTP_TIMEOUT_SECONDS = 12
 
 EXPLORER_CHAINS = {
@@ -112,6 +118,80 @@ def _extract_addresses(*values: str) -> set[str]:
     return out
 
 
+def _normalize_text(value: str) -> str:
+    if not value:
+        return ""
+    stripped = TAG_RE.sub(" ", unescape(value))
+    return " ".join(stripped.lower().split())
+
+
+def _extract_addresses_from_matching_rows(text: str, contract_name: str) -> set[str]:
+    if "<" not in text:
+        return set()
+
+    starts = [match.start() for match in ROW_START_RE.finditer(text)]
+    if not starts:
+        return set()
+    starts.append(len(text))
+
+    target = _normalize_text(contract_name)
+    matches: set[str] = set()
+    for idx in range(len(starts) - 1):
+        chunk = text[starts[idx] : starts[idx + 1]]
+        paragraphs = [_normalize_text(part) for part in P_TAG_RE.findall(chunk)]
+        first_cell = next((part for part in paragraphs if part), "")
+        if first_cell != target:
+            continue
+        matches.update(_extract_addresses(chunk))
+    return matches
+
+
+def _extract_addresses_near_contract_mentions(text: str, contract_name: str) -> set[str]:
+    if not text:
+        return set()
+    clean_contract = " ".join(contract_name.strip().split())
+    if not clean_contract:
+        return set()
+
+    matches: set[str] = set()
+    phrase_re = re.compile(re.escape(clean_contract).replace(r"\ ", r"\s+"), re.IGNORECASE)
+    for mention in phrase_re.finditer(text):
+        window = text[mention.start() : min(len(text), mention.end() + 900)]
+        near = ADDRESS_RE.findall(window)
+        if near:
+            matches.add(_normalize_address(near[0]))
+    return matches
+
+
+def _extract_addresses_for_contract(contract_name: str, *values: str) -> set[str]:
+    out: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        row_matches = _extract_addresses_from_matching_rows(value, contract_name)
+        if row_matches:
+            out.update(row_matches)
+            continue
+        out.update(_extract_addresses_near_contract_mentions(value, contract_name))
+    return out
+
+
+def _is_contract_near_substring(text: str, contract_name: str, needle: str, radius: int = 900) -> bool:
+    if not text or not contract_name or not needle:
+        return False
+    phrase_re = re.compile(re.escape(" ".join(contract_name.strip().split())).replace(r"\ ", r"\s+"), re.IGNORECASE)
+    start = 0
+    while True:
+        idx = text.find(needle, start)
+        if idx < 0:
+            return False
+        left = max(0, idx - radius)
+        right = min(len(text), idx + len(needle) + radius)
+        if phrase_re.search(text[left:right]):
+            return True
+        start = idx + max(1, len(needle))
+
+
 def _extract_urls(text: str) -> list[str]:
     return [match.rstrip(".,;:!?)") for match in URL_RE.findall(text or "")]
 
@@ -127,7 +207,10 @@ def _extract_href_urls(html: str, base_url: str) -> list[str]:
 
 
 def _get_domain(url: str) -> str:
-    domain = urlparse(url).netloc.lower()
+    try:
+        domain = urlparse(url).netloc.lower()
+    except ValueError:
+        return ""
     return domain[4:] if domain.startswith("www.") else domain
 
 
@@ -188,6 +271,46 @@ def _maybe_domain(value: str) -> str | None:
     return clean
 
 
+def _sort_urls_by_relevance(urls: list[str], contract_name: str) -> list[str]:
+    contract_tokens = [token for token in _tokenize(contract_name) if len(token) >= 3]
+    high_signal_terms = (
+        "contract",
+        "contracts",
+        "address",
+        "addresses",
+        "deploy",
+        "deployment",
+        "mainnet",
+    )
+    medium_signal_terms = (
+        "integration",
+        "integrations",
+        "developer",
+        "developers",
+        "docs",
+        "documentation",
+        "technical",
+        "reference",
+    )
+
+    def _score(url: str) -> int:
+        lowered = url.lower()
+        score = 0
+        score += sum(3 for term in high_signal_terms if term in lowered)
+        score += sum(1 for term in medium_signal_terms if term in lowered)
+        score += sum(2 for token in contract_tokens if token in lowered)
+        return score
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in urls:
+        if item in seen:
+            continue
+        seen.add(item)
+        deduped.append(item)
+    return sorted(deduped, key=lambda item: (-_score(item), len(item), item))
+
+
 class _QueryRunner:
     def __init__(self, max_queries: int):
         self.max_queries = max(1, max_queries)
@@ -223,6 +346,7 @@ class _QueryRunner:
 
 
 def _crawl_pages_for_evidence(
+    contract_name: str,
     seed_urls: set[str],
     allowed_domains: list[str],
     requested_chain: str | None,
@@ -231,7 +355,7 @@ def _crawl_pages_for_evidence(
     notes: list[str],
     max_pages: int,
 ) -> None:
-    queue = [url.split("#")[0] for url in seed_urls if url]
+    queue = _sort_urls_by_relevance([url.split("#")[0] for url in seed_urls if url], contract_name)
     visited: set[str] = set()
     pages_crawled = 0
 
@@ -260,7 +384,7 @@ def _crawl_pages_for_evidence(
         text = html[:700000]
 
         page_chain = _infer_chain(current, text)
-        for address in _extract_addresses(current, text):
+        for address in _extract_addresses_for_contract(contract_name, current, text):
             resolved_chain, chain_from_hint = _resolve_chain(page_chain, requested_chain)
             if resolved_chain is None:
                 continue
@@ -284,8 +408,10 @@ def _crawl_pages_for_evidence(
                 continue
 
             if _is_explorer_url(clean):
+                if not _is_contract_near_substring(text, contract_name, clean):
+                    continue
                 linked_chain = _infer_chain(clean, clean)
-                for address in _extract_addresses(clean, text):
+                for address in _extract_addresses(clean):
                     resolved_chain, chain_from_hint = _resolve_chain(linked_chain, requested_chain)
                     if resolved_chain is None:
                         continue
@@ -311,7 +437,7 @@ def _crawl_pages_for_evidence(
             else:
                 normal.append(clean)
 
-        queue = priority + queue + normal
+        queue = _sort_urls_by_relevance(priority, contract_name) + queue + _sort_urls_by_relevance(normal, contract_name)
 
     notes.append(f"Crawled pages: {pages_crawled}/{max_pages}")
 
@@ -424,10 +550,10 @@ def search_contract_name_ai(
     seed_urls: set[str] = set()
     for domain in evidence_domains:
         evidence_queries = [
-            f'site:{domain} "{clean_contract}" contract address',
-            f'site:{domain} "{clean_contract}" deployed contracts',
-            f'site:{domain} "{clean_contract}" contracts integrations',
-            f'site:{domain} "{clean_company}" "{clean_contract}"',
+            f'site:{domain} "{clean_contract}" "contract address"',
+            f'site:{domain} "{clean_contract}" "smart contract"',
+            f'site:{domain} "{clean_contract}" "deployment address"',
+            f'site:{domain} "{clean_company}" "{clean_contract}" "address"',
         ]
         for official_query in evidence_queries:
             official_results = runner.search(official_query, max_results=8, errors=errors, notes=notes)
@@ -439,15 +565,12 @@ def search_contract_name_ai(
                 content = str(result.get("content", "")).strip()
                 raw = str(result.get("raw_content", "")).strip()
                 blob = f"{title} {content} {raw}"
-                blob_tokens = _tokenize(blob)
-                if company_tokens and not (company_tokens & blob_tokens):
-                    continue
-                if contract_tokens and not (contract_tokens & blob_tokens):
-                    continue
 
                 seed_urls.add(page_url)
                 page_chain = _infer_chain(page_url, blob)
-                for address in _extract_addresses(page_url, blob):
+                page_addresses = _extract_addresses(page_url)
+                page_addresses.update(_extract_addresses_from_matching_rows(raw, clean_contract))
+                for address in page_addresses:
                     resolved_chain, chain_from_hint = _resolve_chain(page_chain, requested_chain)
                     if resolved_chain is None:
                         continue
@@ -458,8 +581,10 @@ def search_contract_name_ai(
                 for linked_url in _extract_urls(blob):
                     clean_link = linked_url.split("#")[0]
                     if _is_explorer_url(clean_link):
+                        if not _is_contract_near_substring(blob, clean_contract, clean_link):
+                            continue
                         linked_chain = _infer_chain(clean_link, clean_link)
-                        for address in _extract_addresses(clean_link, blob):
+                        for address in _extract_addresses(clean_link):
                             resolved_chain, chain_from_hint = _resolve_chain(linked_chain, requested_chain)
                             if resolved_chain is None:
                                 continue
@@ -480,6 +605,7 @@ def search_contract_name_ai(
             break
 
     _crawl_pages_for_evidence(
+        contract_name=clean_contract,
         seed_urls=seed_urls,
         allowed_domains=evidence_domains,
         requested_chain=requested_chain,
@@ -544,6 +670,8 @@ def search_contract_name_ai(
 
         if official_page == 0 and official_linked == 0:
             continue
+        if official_page == 1 and official_linked == 0 and confirmations == 0:
+            continue
 
         confidence = 0.25
         confidence += min(0.44, official_page * 0.22)
@@ -567,7 +695,7 @@ def search_contract_name_ai(
         for item in deduped:
             kind = str(item.get("kind", ""))
             url = str(item.get("url", "")).strip()
-            if url:
+            if url and url.lower() != "none":
                 base = {
                     "official_page": 0.6,
                     "crawled_page": 0.58,
@@ -577,7 +705,7 @@ def search_contract_name_ai(
                 }.get(kind, 0.0)
                 link_scores[url] = max(link_scores.get(url, 0.0), base)
             referrer = str(item.get("referrer_url", "")).strip()
-            if referrer:
+            if referrer and referrer.lower() != "none":
                 link_scores[referrer] = max(link_scores.get(referrer, 0.0), 0.7)
         links = {f"source_{idx + 1}": url for idx, (url, _) in enumerate(sorted(link_scores.items(), key=lambda p: p[1], reverse=True)[:5])}
         if not links:
