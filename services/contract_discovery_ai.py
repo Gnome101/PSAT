@@ -2,11 +2,15 @@
 """Resolve contract addresses from explicit `company` + `contract_name`.
 
 How it works:
-1. Runs a broad Tavily search to discover official domains and initial evidence.
-2. Runs targeted site-scoped queries on discovered domains.
-3. Extracts EVM addresses near contract name mentions in page content.
-4. Optionally confirms via explorer search.
-5. Scores and ranks candidates by evidence count.
+1. Broad Tavily search to discover official domains and collect initial evidence.
+2. LLM-guided page discovery — searches the official domain for pages, then asks
+   NIM which page(s) most likely list deployed contract addresses.  The
+   recommended page(s) are fetched directly (bypassing Tavily's content
+   truncation) and addresses extracted near the contract name are scored as
+   high-confidence ``llm_recommended_page`` evidence.
+3. Site-scoped Tavily queries on top domains for additional evidence.
+4. Optional explorer confirmation for already-found addresses.
+5. Scoring, deduplication by address (merging chain info), and ranking.
 """
 
 from __future__ import annotations
@@ -24,7 +28,9 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from utils import tavily
+import requests as _requests
+
+from utils import nim, tavily
 
 ADDRESS_RE = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
 URL_RE = re.compile(r"https?://[^\s\"'<>)]+")
@@ -218,6 +224,70 @@ def _tavily_search(
         return []
 
 
+def _discover_contract_listing_pages(
+    domain: str,
+    company: str,
+    queries_used: list[int],
+    max_queries: int,
+    errors: list[dict],
+) -> tuple[list[dict], list[str]]:
+    """Search the official domain for pages, then ask the LLM which ones list contract addresses.
+
+    Returns (tavily_results, recommended_urls).  Falls back gracefully if the
+    LLM call fails — recommended_urls will be empty.
+    """
+    results = _tavily_search(
+        f"site:{domain} {company} smart contract addresses",
+        max_results=10,
+        queries_used=queries_used,
+        max_queries=max_queries,
+        errors=errors,
+    )
+    if not results:
+        return [], []
+
+    # Collect unique URLs from this domain with their titles
+    seen_urls: set[str] = set()
+    page_info: list[dict[str, str]] = []
+    for r in results:
+        url = str(r.get("url", "")).strip()
+        title = str(r.get("title", "")).strip()
+        if not url or url in seen_urls:
+            continue
+        if _is_allowed_domain(_get_domain(url), [domain]):
+            seen_urls.add(url)
+            page_info.append({"url": url, "title": title})
+
+    if not page_info:
+        return results, []
+
+    # Ask the LLM to pick the most relevant page(s)
+    page_list = "\n".join(f"- {p['title']}: {p['url']}" for p in page_info)
+    prompt = (
+        f"Below are pages from the {company} documentation site ({domain}).\n"
+        f"Which of these pages is most likely to contain a comprehensive, "
+        f"authoritative list of deployed smart contract addresses?\n\n"
+        f"{page_list}\n\n"
+        f"Reply with ONLY the best URL(s), one per line — nothing else."
+    )
+
+    try:
+        response = nim.chat(
+            [{"role": "user", "content": prompt}],
+            max_tokens=2048,
+            temperature=0.0,
+        )
+        recommended: list[str] = []
+        for url_match in URL_RE.findall(response):
+            clean_url = url_match.rstrip(".,;:!?)")
+            if _is_allowed_domain(_get_domain(clean_url), [domain]):
+                recommended.append(clean_url)
+        return results, recommended
+    except Exception:  # noqa: BLE001
+        # LLM unavailable — return results without recommendations
+        return results, []
+
+
 def _process_results(
     results: list[dict],
     contract_name: str,
@@ -356,6 +426,67 @@ def search_contract_name_ai(
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     _process_results(broad_results, clean_contract, evidence_domains, requested_chain, grouped, "official_page")
 
+    # --- Phase 2.5: LLM-guided page discovery ---
+    # Search the primary domain for pages, ask the LLM which ones list
+    # contract addresses, then extract from those pages with boosted weight.
+    recommended_urls: set[str] = set()
+    if evidence_domains:
+        disc_results, rec_urls = _discover_contract_listing_pages(
+            evidence_domains[0], clean_company, queries_used, max_queries, errors
+        )
+        recommended_urls = {u.lower().rstrip("/") for u in rec_urls}
+        if recommended_urls:
+            notes.append(f"LLM-recommended pages: {len(recommended_urls)}")
+
+        # Process all discovery results normally (Tavily content, may be truncated)
+        _process_results(
+            disc_results, clean_contract, evidence_domains, requested_chain, grouped, "official_page"
+        )
+
+        # Fetch LLM-recommended pages directly to get full content (Tavily
+        # truncates large pages like contract listings, losing the data we need).
+        # Contract names can appear multiple times on a listing page (e.g.
+        # mainnet deploy + chain-specific subsystem).  The first occurrence is
+        # typically the primary deployment, so it gets full weight; later
+        # matches get regular weight.
+        for rec_url in rec_urls:
+            try:
+                page_resp = _requests.get(rec_url, timeout=15, headers={"User-Agent": "PSAT/0.1"})
+                if page_resp.status_code != 200:
+                    continue
+                plain = TAG_RE.sub(" ", page_resp.text)
+                page_chain = _infer_chain(rec_url, plain[:2000])
+
+                # Ordered extraction — first unique address gets the boost.
+                name_clean = " ".join(clean_contract.split())
+                name_pat = re.escape(name_clean).replace(r"\ ", r"\s+")
+                seen: set[str] = set()
+
+                # Try strict (line/cell start) first, then loose (anywhere).
+                for pattern, window_size in [
+                    (re.compile(r"(?:^|[\n|])\s*" + name_pat, re.IGNORECASE | re.MULTILINE), 120),
+                    (re.compile(name_pat, re.IGNORECASE), 200),
+                ]:
+                    for mention in pattern.finditer(plain):
+                        window = plain[mention.end() : mention.end() + window_size]
+                        near = ADDRESS_RE.search(window)
+                        if not near:
+                            continue
+                        addr = _normalize_address(near.group())
+                        if addr in seen:
+                            continue
+                        seen.add(addr)
+                        resolved, hint = _resolve_chain(page_chain, requested_chain)
+                        if resolved is not None:
+                            kind = "llm_recommended_page" if len(seen) == 1 else "official_page"
+                            grouped[(resolved, addr)].append(
+                                {"kind": kind, "url": rec_url, "chain_from_hint": hint}
+                            )
+                    if seen:
+                        break  # strict matched, skip loose
+            except Exception:  # noqa: BLE001
+                continue
+
     # --- Phase 3: Site-scoped queries on top domains ---
     # Two query variations per domain to surface different URL variants.
     for domain in evidence_domains[:2]:
@@ -422,15 +553,17 @@ def search_contract_name_ai(
             deduped.append(item)
 
         official_page = sum(1 for e in deduped if e["kind"] == "official_page")
+        llm_recommended = sum(1 for e in deduped if e["kind"] == "llm_recommended_page")
         linked_explorer = sum(1 for e in deduped if e["kind"].endswith("_linked_explorer"))
         confirmations = sum(1 for e in deduped if e["kind"] == "explorer_confirmation")
         unique_urls = {str(e.get("url", "")) for e in deduped if e.get("url")}
 
-        if official_page == 0 and linked_explorer == 0:
+        if official_page == 0 and linked_explorer == 0 and llm_recommended == 0:
             continue
 
         confidence = 0.25
         confidence += min(0.44, official_page * 0.22)
+        confidence += min(0.50, llm_recommended * 0.50)
         confidence += min(0.24, linked_explorer * 0.12)
         confidence += min(0.12, confirmations * 0.06)
         confidence += min(0.12, max(0, len(unique_urls) - 1) * 0.04)
@@ -440,6 +573,8 @@ def search_contract_name_ai(
             f"Official page evidence: {official_page}",
             f"Official linked explorer evidence: {linked_explorer}",
         ]
+        if llm_recommended:
+            reasons.append(f"LLM-recommended page evidence: {llm_recommended}")
         if confirmations:
             reasons.append(f"Explorer confirmations: {confirmations}")
         if len(unique_urls) > 1:
@@ -451,9 +586,12 @@ def search_contract_name_ai(
         for item in deduped:
             url = str(item.get("url", "")).strip()
             if url:
-                base = {"official_page": 0.6, "official_page_linked_explorer": 0.5, "explorer_confirmation": 0.4}.get(
-                    item["kind"], 0.3
-                )
+                base = {
+                    "llm_recommended_page": 0.8,
+                    "official_page": 0.6,
+                    "official_page_linked_explorer": 0.5,
+                    "explorer_confirmation": 0.4,
+                }.get(item["kind"], 0.3)
                 link_scores[url] = max(link_scores.get(url, 0.0), base)
             ref = str(item.get("referrer_url", "")).strip()
             if ref and ref.lower() != "none":
@@ -478,8 +616,26 @@ def search_contract_name_ai(
             }
         )
 
+    # Deduplicate by address — merge entries that only differ by chain,
+    # preferring a specific chain over "unknown" and keeping the best confidence.
+    by_address: dict[str, dict[str, Any]] = {}
+    for cand in candidates:
+        addr = cand["address"]
+        prev = by_address.get(addr)
+        if prev is None:
+            by_address[addr] = cand
+        else:
+            # Merge: keep higher confidence, prefer specific chain
+            winner = cand if cand["confidence"] > prev["confidence"] else prev
+            loser = prev if winner is cand else cand
+            if winner["chain"] == "unknown" and loser["chain"] != "unknown":
+                winner["chain"] = loser["chain"]
+            # Merge links (winner takes priority for key collisions)
+            winner["links"] = {**loser["links"], **winner["links"]}
+            by_address[addr] = winner
+
     ranked = sorted(
-        candidates,
+        by_address.values(),
         key=lambda c: (-c["confidence"], CHAIN_SORT_ORDER.get(c["chain"], 50), c["address"]),
     )[:limit]
 
