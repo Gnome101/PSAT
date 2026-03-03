@@ -1,0 +1,211 @@
+======================================================================
+  SECURITY ANALYSIS REPORT
+  Contract: TetherToken
+  Address:  0xdAC17F958D2ee523a2206206994597C13D831ec7
+======================================================================
+
+Summary: 52 finding(s)
+  Medium: 15
+  Low: 2
+  Informational: 32
+  Optimization: 3
+
+──────────────────────────────────────────────────────────────────────
+  [MEDIUM]
+──────────────────────────────────────────────────────────────────────
+
+  1. erc20-interface (confidence: High)
+     UpgradedStandardToken (src/TetherToken.sol#290-305) has incorrect ERC20 function interface:BasicToken.transfer(address,uint256) (src/TetherToken.sol#118-131)
+
+  2. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:TetherToken.transfer(address,uint256) (src/TetherToken.sol#326-335)
+
+  3. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:StandardToken.transferFrom(address,address,uint256) (src/TetherToken.sol#163-182)
+
+  4. erc20-interface (confidence: High)
+     UpgradedStandardToken (src/TetherToken.sol#290-305) has incorrect ERC20 function interface:ERC20Basic.transfer(address,uint256) (src/TetherToken.sol#79-80)
+
+  5. erc20-interface (confidence: High)
+     UpgradedStandardToken (src/TetherToken.sol#290-305) has incorrect ERC20 function interface:StandardToken.approve(address,uint256) (src/TetherToken.sol#191-200)
+
+  6. erc20-interface (confidence: High)
+     UpgradedStandardToken (src/TetherToken.sol#290-305) has incorrect ERC20 function interface:ERC20.approve(address,uint256) (src/TetherToken.sol#90-91)
+
+  7. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:ERC20Basic.transfer(address,uint256) (src/TetherToken.sol#79-80)
+
+  8. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:TetherToken.transferFrom(address,address,uint256) (src/TetherToken.sol#336-346)
+
+  9. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:ERC20.approve(address,uint256) (src/TetherToken.sol#90-91)
+
+  10. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:TetherToken.approve(address,uint256) (src/TetherToken.sol#355-364)
+
+  11. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:BasicToken.transfer(address,uint256) (src/TetherToken.sol#118-131)
+
+  12. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:ERC20.transferFrom(address,address,uint256) (src/TetherToken.sol#90)
+
+  13. erc20-interface (confidence: High)
+     TetherToken (src/TetherToken.sol#305-430) has incorrect ERC20 function interface:StandardToken.approve(address,uint256) (src/TetherToken.sol#191-200)
+
+  14. erc20-interface (confidence: High)
+     UpgradedStandardToken (src/TetherToken.sol#290-305) has incorrect ERC20 function interface:StandardToken.transferFrom(address,address,uint256) (src/TetherToken.sol#163-182)
+
+  15. erc20-interface (confidence: High)
+     UpgradedStandardToken (src/TetherToken.sol#290-305) has incorrect ERC20 function interface:ERC20.transferFrom(address,address,uint256) (src/TetherToken.sol#90)
+
+──────────────────────────────────────────────────────────────────────
+  [LOW]
+──────────────────────────────────────────────────────────────────────
+
+  1. events-access (confidence: Medium)
+     Ownable.transferOwnership(address) (src/TetherToken.sol#62-65) should emit an event for: 
+     	- owner = newOwner (src/TetherToken.sol#64-65)
+
+  2. missing-zero-check (confidence: Medium)
+     TetherToken.deprecate(address)._upgradedAddress (src/TetherToken.sol#374) lacks a zero-check on :
+     		- upgradedAddress = _upgradedAddress (src/TetherToken.sol#374-375)
+
+──────────────────────────────────────────────────────────────────────
+  [INFORMATIONAL]
+──────────────────────────────────────────────────────────────────────
+
+  1. solc-version (confidence: High)
+     Version constraint ^0.4.17 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)
+     	- DirtyBytesArrayToStorage
+     	- ABIDecodeTwoDimensionalArrayMemory
+     	- KeccakCaching
+     	- EmptyByteArrayCopy
+     	- DynamicArrayCleanup
+     	- ImplicitConstructorCallvalueCheck
+     	- TupleAssignmentMultiStackSlotComponents
+     	- MemoryArrayCreationOverflow
+     	- privateCanBeOverridden
+     	- SignedArrayStorageCopy
+     	- ABIEncoderV2StorageArrayWithMultiSlotElement
+     	- DynamicConstructorArgumentsClippedABIV2
+     	- UninitializedFunctionPointerInConstructor_0.4.x
+     	- IncorrectEventSignatureInLibraries_0.4.x
+     	- ExpExponentCleanup
+     	- EventStructWrongData
+     	- NestedArrayFunctionCallDecoder
+     	- ZeroFunctionSelector.
+     It is used by:
+     	- ^0.4.17 (src/TetherToken.sol#1)
+
+  2. solc-version (confidence: High)
+     solc-0.4.17 is an outdated solc version. Use a more recent version (at least 0.8.0), if possible.
+
+  3. naming-convention (confidence: High)
+     Parameter BlackList.addBlackList(address)._evilUser (src/TetherToken.sol#267) is not in mixedCase
+
+  4. naming-convention (confidence: High)
+     Parameter StandardToken.allowance(address,address)._spender (src/TetherToken.sol#209-210) is not in mixedCase
+
+  5. naming-convention (confidence: High)
+     Parameter StandardToken.approve(address,uint256)._value (src/TetherToken.sol#191) is not in mixedCase
+
+  6. naming-convention (confidence: High)
+     Parameter BasicToken.transfer(address,uint256)._value (src/TetherToken.sol#119) is not in mixedCase
+
+  7. naming-convention (confidence: High)
+     Parameter StandardToken.allowance(address,address)._owner (src/TetherToken.sol#209) is not in mixedCase
+
+  8. naming-convention (confidence: High)
+     Parameter TetherToken.transferFrom(address,address,uint256)._value (src/TetherToken.sol#338) is not in mixedCase
+
+  9. naming-convention (confidence: High)
+     Parameter TetherToken.transfer(address,uint256)._to (src/TetherToken.sol#326) is not in mixedCase
+
+  10. naming-convention (confidence: High)
+     Parameter StandardToken.transferFrom(address,address,uint256)._from (src/TetherToken.sol#164) is not in mixedCase
+
+  11. naming-convention (confidence: High)
+     Parameter TetherToken.allowance(address,address)._spender (src/TetherToken.sol#365) is not in mixedCase
+
+  12. naming-convention (confidence: High)
+     Parameter StandardToken.transferFrom(address,address,uint256)._to (src/TetherToken.sol#164) is not in mixedCase
+
+  13. naming-convention (confidence: High)
+     Parameter BlackList.removeBlackList(address)._clearedUser (src/TetherToken.sol#271-272) is not in mixedCase
+
+  14. naming-convention (confidence: High)
+     Parameter StandardToken.approve(address,uint256)._spender (src/TetherToken.sol#191) is not in mixedCase
+
+  15. naming-convention (confidence: High)
+     Parameter TetherToken.transferFrom(address,address,uint256)._from (src/TetherToken.sol#337) is not in mixedCase
+
+  16. naming-convention (confidence: High)
+     Parameter BlackList.destroyBlackFunds(address)._blackListedUser (src/TetherToken.sol#278) is not in mixedCase
+
+  17. naming-convention (confidence: High)
+     Parameter TetherToken.transfer(address,uint256)._value (src/TetherToken.sol#326) is not in mixedCase
+
+  18. naming-convention (confidence: High)
+     Parameter BasicToken.transfer(address,uint256)._to (src/TetherToken.sol#119) is not in mixedCase
+
+  19. naming-convention (confidence: High)
+     Parameter TetherToken.transferFrom(address,address,uint256)._to (src/TetherToken.sol#337-338) is not in mixedCase
+
+  20. naming-convention (confidence: High)
+     Parameter BlackList.getBlackListStatus(address)._maker (src/TetherToken.sol#258) is not in mixedCase
+
+  21. naming-convention (confidence: High)
+     Variable ERC20Basic._totalSupply (src/TetherToken.sol#75) is not in mixedCase
+
+  22. naming-convention (confidence: High)
+     Parameter TetherToken.deprecate(address)._upgradedAddress (src/TetherToken.sol#374) is not in mixedCase
+
+  23. naming-convention (confidence: High)
+     Parameter BasicToken.balanceOf(address)._owner (src/TetherToken.sol#139) is not in mixedCase
+
+  24. naming-convention (confidence: High)
+     Parameter TetherToken.allowance(address,address)._owner (src/TetherToken.sol#365) is not in mixedCase
+
+  25. naming-convention (confidence: High)
+     Parameter TetherToken.approve(address,uint256)._value (src/TetherToken.sol#356) is not in mixedCase
+
+  26. naming-convention (confidence: High)
+     Parameter TetherToken.approve(address,uint256)._spender (src/TetherToken.sol#355-356) is not in mixedCase
+
+  27. naming-convention (confidence: High)
+     Parameter StandardToken.transferFrom(address,address,uint256)._value (src/TetherToken.sol#164) is not in mixedCase
+
+  28. unimplemented-functions (confidence: High)
+     UpgradedStandardToken (src/TetherToken.sol#290-305) does not implement functions:
+     	- UpgradedStandardToken.approveByLegacy(address,address,uint256) (src/TetherToken.sol#303-305)
+     	- ERC20Basic.totalSupply() (src/TetherToken.sol#75-78)
+     	- UpgradedStandardToken.transferByLegacy(address,address,uint256) (src/TetherToken.sol#295-297)
+     	- UpgradedStandardToken.transferFromByLegacy(address,address,address,uint256) (src/TetherToken.sol#298-303)
+
+  29. unindexed-event-address (confidence: High)
+     Event BlackList.AddedBlackList(address) (src/TetherToken.sol#288-289) has address parameters but no indexed parameters
+
+  30. unindexed-event-address (confidence: High)
+     Event TetherToken.Deprecate(address) (src/TetherToken.sol#426-427) has address parameters but no indexed parameters
+
+  31. unindexed-event-address (confidence: High)
+     Event BlackList.RemovedBlackList(address) (src/TetherToken.sol#289-290) has address parameters but no indexed parameters
+
+  32. unindexed-event-address (confidence: High)
+     Event BlackList.DestroyedBlackFunds(address,uint256) (src/TetherToken.sol#287-288) has address parameters but no indexed parameters
+
+──────────────────────────────────────────────────────────────────────
+  [OPTIMIZATION]
+──────────────────────────────────────────────────────────────────────
+
+  1. constable-states (confidence: High)
+     BasicToken.basisPointsRate (src/TetherToken.sol#103-105) should be constant
+
+  2. constable-states (confidence: High)
+     BasicToken.maximumFee (src/TetherToken.sol#105) should be constant
+
+  3. constable-states (confidence: High)
+     ERC20Basic._totalSupply (src/TetherToken.sol#75) should be constant
+
+======================================================================

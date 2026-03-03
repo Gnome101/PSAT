@@ -1,0 +1,9 @@
+{
+  "address": "0xd25c6f0293d41758552b0b27d6f69353a1134d51",
+  "contract_name": "FeeCollectorFactory",
+  "compiler_version": "v0.8.23+commit.f704f362",
+  "optimization_used": "1",
+  "runs": "1000000",
+  "evm_version": "shanghai",
+  "license": ""
+}

@@ -1,0 +1,9 @@
+{
+  "address": "0x9c4cc862f51b1ba90485de3502aa058ca4331f32",
+  "contract_name": "UniswapV2Pair",
+  "compiler_version": "v0.5.16+commit.9c3226ce",
+  "optimization_used": "1",
+  "runs": "999999",
+  "evm_version": "Default",
+  "license": "GNU GPLv3"
+}

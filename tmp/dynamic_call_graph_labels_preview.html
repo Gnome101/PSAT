@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dynamic Call Graph for 0x1111111254eeb25477b68fb85ed929f73a960582</title>
+  <style>
+    :root {
+      --bg: #f7f7f4;
+      --panel: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #92400e;
+      --border: #e5e7eb;
+      --ok: #166534;
+      --ok-bg: #dcfce7;
+      --warn: #92400e;
+      --warn-bg: #fef3c7;
+      --danger: #991b1b;
+      --danger-bg: #fee2e2;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 440px 1fr;
+      min-height: 100vh;
+      gap: 16px;
+      padding: 16px;
+    }
+    main {
+      min-width: 0;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      overflow: auto;
+      max-height: calc(100vh - 32px);
+    }
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 18px;
+    }
+    h2 {
+      margin: 14px 0 8px 0;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .stat {
+      margin: 6px 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .stat strong {
+      color: var(--text);
+    }
+    .controls label {
+      display: block;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+    .controls input[type="text"],
+    .controls input[type="number"],
+    .controls select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+    .ops {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 10px;
+      margin-bottom: 10px;
+    }
+    button {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 8px 10px;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    #network {
+      width: 100%;
+      height: calc(100vh - 34px);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #ffffff;
+    }
+    #details {
+      margin-top: 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .badge {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      margin-right: 6px;
+    }
+    .badge-write { color: var(--ok); background: var(--ok-bg); }
+    .badge-read { color: #1d4ed8; background: #dbeafe; }
+    .badge-none { color: var(--muted); background: #f3f4f6; }
+    .table-wrap {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+      word-break: break-word;
+    }
+    th {
+      background: #fafafa;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    tr:last-child td {
+      border-bottom: none;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 4px 0 10px 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .error {
+      color: var(--danger);
+      background: var(--danger-bg);
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 12px;
+    }
+    .warn {
+      color: var(--warn);
+      background: var(--warn-bg);
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 12px;
+    }
+    @media (max-width: 1200px) {
+      .layout {
+        grid-template-columns: 380px 1fr;
+      }
+    }
+    @media (max-width: 960px) {
+      .layout {
+        grid-template-columns: 1fr;
+        min-height: auto;
+      }
+      main {
+        order: 1;
+      }
+      .panel {
+        order: 2;
+        max-height: none;
+      }
+      #network {
+        height: 58vh;
+      }
+      .ops {
+        grid-template-columns: 1fr;
+      }
+      .table-wrap {
+        max-height: 240px;
+        overflow: auto;
+      }
+      table {
+        font-size: 11px;
+      }
+    }
+  </style>
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside class="panel">
+      <h1>Call Graph Explorer</h1>
+      <div class="stat"><strong>Target:</strong> 0x1111111254eeb25477b68fb85ed929f73a960582</div>
+      <div class="stat"><strong>Contract:</strong> <span id="contractName">-</span></div>
+      <div class="stat" id="stats"></div>
+
+      <h2>Graph Filters</h2>
+      <div class="controls">
+        <label>Address Search</label>
+        <input type="text" id="search" placeholder="0x..." />
+
+        <label>Min Edge Count</label>
+        <input type="number" id="minCount" min="1" value="2" />
+
+        <label style="margin-top: 8px;">
+          <input type="checkbox" id="showIsolated" />
+          Show isolated nodes
+        </label>
+        <label style="margin-top: 8px;">
+          <input type="checkbox" id="filterByFunction" checked />
+          Filter graph by selected function transactions
+        </label>
+        <label style="margin-top: 8px;">
+          <input type="checkbox" id="hideSelfLoops" checked />
+          Hide self-loop edges
+        </label>
+        <label style="margin-top: 8px;">
+          <input type="checkbox" id="showEdgeLabels" checked />
+          Show edge labels (function/op)
+        </label>
+
+        <h2>Operations</h2>
+        <div id="ops" class="ops"></div>
+
+        <div class="button-row">
+          <button id="apply">Apply Filters</button>
+          <button id="reset">Reset View</button>
+        </div>
+      </div>
+
+      <h2>Function Impact</h2>
+      <div class="controls">
+        <label>Function / Selector</label>
+        <select id="fnSelect"></select>
+        <div id="fnMeta" class="hint"></div>
+      </div>
+
+      <div class="table-wrap">
+        <table id="stateVarsTable">
+          <thead>
+            <tr>
+              <th>State Variable</th>
+              <th>Type</th>
+              <th>Access In Function</th>
+            </tr>
+          </thead>
+          <tbody id="stateVarsBody"></tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap">
+        <table id="depsTable">
+          <thead>
+            <tr>
+              <th>Dependency</th>
+              <th>Direct</th>
+              <th>Transitive</th>
+              <th>Ops</th>
+              <th>Affected Vars</th>
+            </tr>
+          </thead>
+          <tbody id="depsBody"></tbody>
+        </table>
+      </div>
+
+      <h2>Selection</h2>
+      <div id="details">Select a node or edge to inspect details.</div>
+      <div id="warningBox" class="warn" style="display:none;"></div>
+      <div id="errorBox" class="error" style="display:none;"></div>
+    </aside>
+    <main>
+      <div id="network"></div>
+    </main>
+  </div>
+
+  <script>
+    const appData = {"graph":{"title":"Dynamic Call Graph for 0x1111111254eeb25477b68fb85ed929f73a960582","root":"0x1111111254eeb25477b68fb85ed929f73a960582","nodes":[{"id":"n_00000000000014aa86c5d3c41765bb24e11bd701","address":"0x00000000000014aa86c5d3c41765bb24e11bd701","label":"0x000000...1bd701","is_root":false},{"id":"n_0cba60ca5ef4d42f92a5070a8fedd13be93e2861","address":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","label":"0x0cba60...3e2861","is_root":false},{"id":"n_1111111254eeb25477b68fb85ed929f73a960582","address":"0x1111111254eeb25477b68fb85ed929f73a960582","label":"0x111111...960582","is_root":true},{"id":"n_2afef8a4bc6e0484271d5a212f46ee2a23b050c4","address":"0x2afef8a4bc6e0484271d5a212f46ee2a23b050c4","label":"0x2afef8...b050c4","is_root":false},{"id":"n_43506849d7c04f9138d1a2050bbf3a0c054402dd","address":"0x43506849d7c04f9138d1a2050bbf3a0c054402dd","label":"0x435068...4402dd","is_root":false},{"id":"n_68bbed6a47194eff1cf514b50ea91895597fc91e","address":"0x68bbed6a47194eff1cf514b50ea91895597fc91e","label":"0x68bbed...7fc91e","is_root":false},{"id":"n_691c1be0ef208faabd497889edfbe01d3b0acc64","address":"0x691c1be0ef208faabd497889edfbe01d3b0acc64","label":"0x691c1b...0acc64","is_root":false},{"id":"n_817162975186d4d53dbf5a7377dd45376e2d2fc5","address":"0x817162975186d4d53dbf5a7377dd45376e2d2fc5","label":"0x817162...2d2fc5","is_root":false},{"id":"n_88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","address":"0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","label":"0x88e6a0...3f5640","is_root":false},{"id":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","label":"0x990636...d8d086","is_root":false},{"id":"n_a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","label":"0xa0b869...06eb48","is_root":false},{"id":"n_a1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","address":"0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","label":"0xa1bf0e...d1c2c0","is_root":false},{"id":"n_a7a36dc1af4c14226575890949998195a0146a18","address":"0xa7a36dc1af4c14226575890949998195a0146a18","label":"0xa7a36d...146a18","is_root":false},{"id":"n_bbcb91440523216e2b87052a99f69c604a7b6e00","address":"0xbbcb91440523216e2b87052a99f69c604a7b6e00","label":"0xbbcb91...7b6e00","is_root":false},{"id":"n_be69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","address":"0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","label":"0xbe69eb...71a650","is_root":false},{"id":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","label":"0xc02aaa...756cc2","is_root":false},{"id":"n_d26f20001a72a18c002b00e6710000d68700ce00","address":"0xd26f20001a72a18c002b00e6710000d68700ce00","label":"0xd26f20...00ce00","is_root":false},{"id":"n_d8c978de79e12728e38aa952a6cb4166f891790f","address":"0xd8c978de79e12728e38aa952a6cb4166f891790f","label":"0xd8c978...91790f","is_root":false},{"id":"n_dac17f958d2ee523a2206206994597c13d831ec7","address":"0xdac17f958d2ee523a2206206994597c13d831ec7","label":"0xdac17f...831ec7","is_root":false},{"id":"n_f29450019834d7874b4e306275c4334326ac27f1","address":"0xf29450019834d7874b4e306275c4334326ac27f1","label":"0xf29450...ac27f1","is_root":false}],"edges":[{"id":"e1","from":"n_00000000000014aa86c5d3c41765bb24e11bd701","to":"n_a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","from_address":"0x00000000000014aa86c5d3c41765bb24e11bd701","to_address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","op":"CALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e2","from":"n_00000000000014aa86c5d3c41765bb24e11bd701","to":"n_d26f20001a72a18c002b00e6710000d68700ce00","from_address":"0x00000000000014aa86c5d3c41765bb24e11bd701","to_address":"0xd26f20001a72a18c002b00e6710000d68700ce00","op":"CALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e3","from":"n_0cba60ca5ef4d42f92a5070a8fedd13be93e2861","to":"n_0cba60ca5ef4d42f92a5070a8fedd13be93e2861","from_address":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","to_address":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","op":"STATICCALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e4","from":"n_0cba60ca5ef4d42f92a5070a8fedd13be93e2861","to":"n_f29450019834d7874b4e306275c4334326ac27f1","from_address":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","to_address":"0xf29450019834d7874b4e306275c4334326ac27f1","op":"CALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e5","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_0cba60ca5ef4d42f92a5070a8fedd13be93e2861","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","op":"CALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e6","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_2afef8a4bc6e0484271d5a212f46ee2a23b050c4","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x2afef8a4bc6e0484271d5a212f46ee2a23b050c4","op":"CALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e7","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_68bbed6a47194eff1cf514b50ea91895597fc91e","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x68bbed6a47194eff1cf514b50ea91895597fc91e","op":"CALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e8","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_691c1be0ef208faabd497889edfbe01d3b0acc64","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x691c1be0ef208faabd497889edfbe01d3b0acc64","op":"CALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e9","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_817162975186d4d53dbf5a7377dd45376e2d2fc5","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x817162975186d4d53dbf5a7377dd45376e2d2fc5","op":"CALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e10","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_817162975186d4d53dbf5a7377dd45376e2d2fc5","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x817162975186d4d53dbf5a7377dd45376e2d2fc5","op":"STATICCALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e11","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","op":"CALL","count":1,"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"]},{"id":"e12","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","op":"STATICCALL","count":1,"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"]},{"id":"e13","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","op":"CALL","count":4,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb","0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e14","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","op":"CALL","count":2,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e15","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","op":"STATICCALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e16","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"CALL","count":1,"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"]},{"id":"e17","from":"n_1111111254eeb25477b68fb85ed929f73a960582","to":"n_d8c978de79e12728e38aa952a6cb4166f891790f","from_address":"0x1111111254eeb25477b68fb85ed929f73a960582","to_address":"0xd8c978de79e12728e38aa952a6cb4166f891790f","op":"CALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e18","from":"n_88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","to":"n_a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","from_address":"0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","to_address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","op":"CALL","count":1,"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"]},{"id":"e19","from":"n_88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"STATICCALL","count":1,"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"]},{"id":"e20","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_0cba60ca5ef4d42f92a5070a8fedd13be93e2861","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","op":"CALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e21","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_0cba60ca5ef4d42f92a5070a8fedd13be93e2861","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","op":"STATICCALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e22","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_68bbed6a47194eff1cf514b50ea91895597fc91e","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0x68bbed6a47194eff1cf514b50ea91895597fc91e","op":"CALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e23","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_68bbed6a47194eff1cf514b50ea91895597fc91e","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0x68bbed6a47194eff1cf514b50ea91895597fc91e","op":"STATICCALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e24","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","op":"CALL","count":4,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb","0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e25","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","op":"CALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e26","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_a1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","op":"CALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e27","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_a1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","op":"STATICCALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e28","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_a7a36dc1af4c14226575890949998195a0146a18","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xa7a36dc1af4c14226575890949998195a0146a18","op":"CALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e29","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_a7a36dc1af4c14226575890949998195a0146a18","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xa7a36dc1af4c14226575890949998195a0146a18","op":"STATICCALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e30","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_bbcb91440523216e2b87052a99f69c604a7b6e00","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xbbcb91440523216e2b87052a99f69c604a7b6e00","op":"CALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e31","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_be69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","op":"CALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e32","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_be69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","op":"STATICCALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e33","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"CALL","count":3,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb","0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e34","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_d26f20001a72a18c002b00e6710000d68700ce00","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xd26f20001a72a18c002b00e6710000d68700ce00","op":"CALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e35","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_d8c978de79e12728e38aa952a6cb4166f891790f","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xd8c978de79e12728e38aa952a6cb4166f891790f","op":"CALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e36","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_d8c978de79e12728e38aa952a6cb4166f891790f","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xd8c978de79e12728e38aa952a6cb4166f891790f","op":"STATICCALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e37","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_dac17f958d2ee523a2206206994597c13d831ec7","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xdac17f958d2ee523a2206206994597c13d831ec7","op":"STATICCALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e38","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_f29450019834d7874b4e306275c4334326ac27f1","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xf29450019834d7874b4e306275c4334326ac27f1","op":"CALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e39","from":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","to":"n_f29450019834d7874b4e306275c4334326ac27f1","from_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","to_address":"0xf29450019834d7874b4e306275c4334326ac27f1","op":"STATICCALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e40","from":"n_a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","to":"n_43506849d7c04f9138d1a2050bbf3a0c054402dd","from_address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","to_address":"0x43506849d7c04f9138d1a2050bbf3a0c054402dd","op":"DELEGATECALL","count":3,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e41","from":"n_a1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","to":"n_68bbed6a47194eff1cf514b50ea91895597fc91e","from_address":"0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","to_address":"0x68bbed6a47194eff1cf514b50ea91895597fc91e","op":"STATICCALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e42","from":"n_a1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"CALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e43","from":"n_a1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"STATICCALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e44","from":"n_a7a36dc1af4c14226575890949998195a0146a18","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0xa7a36dc1af4c14226575890949998195a0146a18","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"CALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e45","from":"n_a7a36dc1af4c14226575890949998195a0146a18","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0xa7a36dc1af4c14226575890949998195a0146a18","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"STATICCALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e46","from":"n_a7a36dc1af4c14226575890949998195a0146a18","to":"n_d8c978de79e12728e38aa952a6cb4166f891790f","from_address":"0xa7a36dc1af4c14226575890949998195a0146a18","to_address":"0xd8c978de79e12728e38aa952a6cb4166f891790f","op":"STATICCALL","count":1,"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"]},{"id":"e47","from":"n_bbcb91440523216e2b87052a99f69c604a7b6e00","to":"n_a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","from_address":"0xbbcb91440523216e2b87052a99f69c604a7b6e00","to_address":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","op":"CALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e48","from":"n_bbcb91440523216e2b87052a99f69c604a7b6e00","to":"n_dac17f958d2ee523a2206206994597c13d831ec7","from_address":"0xbbcb91440523216e2b87052a99f69c604a7b6e00","to_address":"0xdac17f958d2ee523a2206206994597c13d831ec7","op":"CALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e49","from":"n_be69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","to":"n_817162975186d4d53dbf5a7377dd45376e2d2fc5","from_address":"0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","to_address":"0x817162975186d4d53dbf5a7377dd45376e2d2fc5","op":"CALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e50","from":"n_be69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","to":"n_817162975186d4d53dbf5a7377dd45376e2d2fc5","from_address":"0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","to_address":"0x817162975186d4d53dbf5a7377dd45376e2d2fc5","op":"STATICCALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e51","from":"n_be69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","to":"n_dac17f958d2ee523a2206206994597c13d831ec7","from_address":"0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","to_address":"0xdac17f958d2ee523a2206206994597c13d831ec7","op":"STATICCALL","count":1,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"]},{"id":"e52","from":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","to":"n_990636ecb3ff04d33d92e970d3d588bf5cd8d086","from_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","to_address":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","op":"CALL","count":3,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb","0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e53","from":"n_d26f20001a72a18c002b00e6710000d68700ce00","to":"n_00000000000014aa86c5d3c41765bb24e11bd701","from_address":"0xd26f20001a72a18c002b00e6710000d68700ce00","to_address":"0x00000000000014aa86c5d3c41765bb24e11bd701","op":"CALL","count":1,"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"]},{"id":"e54","from":"n_f29450019834d7874b4e306275c4334326ac27f1","to":"n_0cba60ca5ef4d42f92a5070a8fedd13be93e2861","from_address":"0xf29450019834d7874b4e306275c4334326ac27f1","to_address":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","op":"STATICCALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e55","from":"n_f29450019834d7874b4e306275c4334326ac27f1","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0xf29450019834d7874b4e306275c4334326ac27f1","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"CALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]},{"id":"e56","from":"n_f29450019834d7874b4e306275c4334326ac27f1","to":"n_c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","from_address":"0xf29450019834d7874b4e306275c4334326ac27f1","to_address":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","op":"STATICCALL","count":1,"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"]}]},"contract":{"available":true,"warning":"","contract_name":"AggregationRouterV5","artifact":"out/AggregationRouterV5.sol/AggregationRouterV5.json","lineage":["AggregationRouterV5","OrderRFQMixin","OnlyWethReceiver","OrderMixin","PredicateHelper","NonceManager","UnoswapV3Router","IUniswapV3SwapCallback","UnoswapRouter","GenericRouter","ClipperRouter","EthReceiver","Ownable","EIP712","IOrderMixin","Context"],"state_variables":[{"id":"v560","name":"_ETH","type":"contract IERC20","declaring_contract":"ClipperRouter","visibility":"private","mutability":"constant"},{"id":"v551","name":"_INCH_TAG_WITH_LENGTH_PREFIX","type":"bytes6","declaring_contract":"ClipperRouter","visibility":"private","mutability":"constant"},{"id":"v545","name":"_SIGNATURE_S_MASK","type":"uint256","declaring_contract":"ClipperRouter","visibility":"private","mutability":"constant"},{"id":"v548","name":"_SIGNATURE_V_SHIFT","type":"uint256","declaring_contract":"ClipperRouter","visibility":"private","mutability":"constant"},{"id":"v563","name":"_WETH","type":"contract IWETH","declaring_contract":"ClipperRouter","visibility":"private","mutability":"immutable"},{"id":"v5158","name":"_CACHED_CHAIN_ID","type":"uint256","declaring_contract":"EIP712","visibility":"private","mutability":"immutable"},{"id":"v5156","name":"_CACHED_DOMAIN_SEPARATOR","type":"bytes32","declaring_contract":"EIP712","visibility":"private","mutability":"immutable"},{"id":"v5160","name":"_CACHED_THIS","type":"address","declaring_contract":"EIP712","visibility":"private","mutability":"immutable"},{"id":"v5162","name":"_HASHED_NAME","type":"bytes32","declaring_contract":"EIP712","visibility":"private","mutability":"immutable"},{"id":"v5164","name":"_HASHED_VERSION","type":"bytes32","declaring_contract":"EIP712","visibility":"private","mutability":"immutable"},{"id":"v5166","name":"_TYPE_HASH","type":"bytes32","declaring_contract":"EIP712","visibility":"private","mutability":"immutable"},{"id":"v1399","name":"_PARTIAL_FILL","type":"uint256","declaring_contract":"GenericRouter","visibility":"private","mutability":"constant"},{"id":"v1404","name":"_REQUIRES_EXTRA_ETH","type":"uint256","declaring_contract":"GenericRouter","visibility":"private","mutability":"constant"},{"id":"v6447","name":"nonce","type":"mapping(address => uint256)","declaring_contract":"NonceManager","visibility":"public","mutability":"mutable"},{"id":"v4508","name":"_WETH","type":"address","declaring_contract":"OnlyWethReceiver","visibility":"private","mutability":"immutable"},{"id":"v7378","name":"_ORDER_DOES_NOT_EXIST","type":"uint256","declaring_contract":"OrderMixin","visibility":"private","mutability":"constant"},{"id":"v7381","name":"_ORDER_FILLED","type":"uint256","declaring_contract":"OrderMixin","visibility":"private","mutability":"constant"},{"id":"v7386","name":"_SKIP_PERMIT_FLAG","type":"uint256","declaring_contract":"OrderMixin","visibility":"private","mutability":"constant"},{"id":"v7390","name":"_THRESHOLD_MASK","type":"uint256","declaring_contract":"OrderMixin","visibility":"private","mutability":"constant"},{"id":"v7393","name":"_WETH","type":"contract IWETH","declaring_contract":"OrderMixin","visibility":"private","mutability":"immutable"},{"id":"v7398","name":"_remaining","type":"mapping(bytes32 => uint256)","declaring_contract":"OrderMixin","visibility":"private","mutability":"mutable"},{"id":"v5427","name":"_AMOUNT_MASK","type":"uint256","declaring_contract":"OrderRFQMixin","visibility":"private","mutability":"constant"},{"id":"v5411","name":"_IS_VALID_SIGNATURE_65_BYTES","type":"uint256","declaring_contract":"OrderRFQMixin","visibility":"private","mutability":"constant"},{"id":"v5401","name":"_MAKER_AMOUNT_FLAG","type":"uint256","declaring_contract":"OrderRFQMixin","visibility":"private","mutability":"constant"},{"id":"v5396","name":"_RAW_CALL_GAS_LIMIT","type":"uint256","declaring_contract":"OrderRFQMixin","visibility":"private","mutability":"constant"},{"id":"v5406","name":"_SIGNER_SMART_CONTRACT_HINT","type":"uint256","declaring_contract":"OrderRFQMixin","visibility":"private","mutability":"constant"},{"id":"v5416","name":"_UNWRAP_WETH_FLAG","type":"uint256","declaring_contract":"OrderRFQMixin","visibility":"private","mutability":"constant"},{"id":"v5430","name":"_WETH","type":"contract IWETH","declaring_contract":"OrderRFQMixin","visibility":"private","mutability":"immutable"},{"id":"v5436","name":"_invalidator","type":"mapping(address => mapping(uint256 => uint256))","declaring_contract":"OrderRFQMixin","visibility":"private","mutability":"mutable"},{"id":"v8508","name":"_owner","type":"address","declaring_contract":"Ownable","visibility":"private","mutability":"mutable"},{"id":"v1708","name":"_ADDRESS_MASK","type":"uint256","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1730","name":"_DENOMINATOR","type":"uint256","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1705","name":"_ERC20_TRANSFER_CALL_SELECTOR","type":"bytes4","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1741","name":"_MAX_SWAP_AMOUNT","type":"uint256","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1717","name":"_NUMERATOR_MASK","type":"uint256","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1733","name":"_NUMERATOR_OFFSET","type":"uint256","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1711","name":"_REVERSE_MASK","type":"uint256","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1696","name":"_TRANSFER_FROM_CALL_SELECTOR","type":"bytes4","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1724","name":"_UNISWAP_PAIR_RESERVES_CALL_SELECTOR","type":"bytes4","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1727","name":"_UNISWAP_PAIR_SWAP_CALL_SELECTOR","type":"bytes4","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1721","name":"_WETH","type":"address","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1699","name":"_WETH_DEPOSIT_CALL_SELECTOR","type":"bytes4","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1714","name":"_WETH_MASK","type":"uint256","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v1702","name":"_WETH_WITHDRAW_CALL_SELECTOR","type":"bytes4","declaring_contract":"UnoswapRouter","visibility":"private","mutability":"constant"},{"id":"v4094","name":"_ADDRESS_MASK","type":"uint256","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"constant"},{"id":"v4088","name":"_FF_FACTORY","type":"bytes32","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"constant"},{"id":"v4106","name":"_MAX_SQRT_RATIO","type":"uint160","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"constant"},{"id":"v4100","name":"_MIN_SQRT_RATIO","type":"uint160","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"constant"},{"id":"v4077","name":"_ONE_FOR_ZERO_MASK","type":"uint256","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"constant"},{"id":"v4085","name":"_POOL_INIT_CODE_HASH","type":"bytes32","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"constant"},{"id":"v4091","name":"_SELECTORS","type":"bytes32","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"constant"},{"id":"v4109","name":"_WETH","type":"contract IWETH","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"immutable"},{"id":"v4082","name":"_WETH_UNWRAP_MASK","type":"uint256","declaring_contract":"UnoswapV3Router","visibility":"private","mutability":"constant"}],"functions":[{"selector":"0x12aa3caf","signature":"swap(address,(address,address,address,address,uint256,uint256,uint256),bytes,bytes)","display_name":"swap(address,(address,address,address,address,uint256,uint256,uint256),bytes,bytes)","declaring_contract":"GenericRouter","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":["_PARTIAL_FILL","_REQUIRES_EXTRA_ETH"],"tx_count":4,"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb","0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"dependencies":[{"dependency":"0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","direct_calls":4,"transitive_calls":7,"ops":["CALL"],"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb","0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"from_addresses":["0x1111111254eeb25477b68fb85ed929f73a960582","0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"],"affected_state_vars":[]},{"dependency":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","direct_calls":0,"transitive_calls":9,"ops":["CALL","STATICCALL"],"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb","0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"from_addresses":["0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","0xa7a36dc1af4c14226575890949998195a0146a18","0xf29450019834d7874b4e306275c4334326ac27f1"],"affected_state_vars":[]},{"dependency":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","direct_calls":3,"transitive_calls":3,"ops":["CALL","STATICCALL"],"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"from_addresses":["0x00000000000014aa86c5d3c41765bb24e11bd701","0x1111111254eeb25477b68fb85ed929f73a960582","0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","0xbbcb91440523216e2b87052a99f69c604a7b6e00"],"affected_state_vars":[]},{"dependency":"0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","direct_calls":1,"transitive_calls":4,"ops":["CALL","STATICCALL"],"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"],"from_addresses":["0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","0x1111111254eeb25477b68fb85ed929f73a960582","0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","0xf29450019834d7874b4e306275c4334326ac27f1"],"affected_state_vars":[]},{"dependency":"0x68bbed6a47194eff1cf514b50ea91895597fc91e","direct_calls":1,"transitive_calls":3,"ops":["CALL","STATICCALL"],"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"from_addresses":["0x1111111254eeb25477b68fb85ed929f73a960582","0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0"],"affected_state_vars":[]},{"dependency":"0x817162975186d4d53dbf5a7377dd45376e2d2fc5","direct_calls":2,"transitive_calls":2,"ops":["CALL","STATICCALL"],"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"],"from_addresses":["0x1111111254eeb25477b68fb85ed929f73a960582","0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650"],"affected_state_vars":[]},{"dependency":"0xd8c978de79e12728e38aa952a6cb4166f891790f","direct_calls":1,"transitive_calls":3,"ops":["CALL","STATICCALL"],"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"],"from_addresses":["0x1111111254eeb25477b68fb85ed929f73a960582","0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","0xa7a36dc1af4c14226575890949998195a0146a18"],"affected_state_vars":[]},{"dependency":"0xdac17f958d2ee523a2206206994597c13d831ec7","direct_calls":0,"transitive_calls":3,"ops":["CALL","STATICCALL"],"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"],"from_addresses":["0x990636ecb3ff04d33d92e970d3d588bf5cd8d086","0xbbcb91440523216e2b87052a99f69c604a7b6e00","0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650"],"affected_state_vars":[]},{"dependency":"0xf29450019834d7874b4e306275c4334326ac27f1","direct_calls":0,"transitive_calls":3,"ops":["CALL","STATICCALL"],"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"],"from_addresses":["0x0cba60ca5ef4d42f92a5070a8fedd13be93e2861","0x990636ecb3ff04d33d92e970d3d588bf5cd8d086"],"affected_state_vars":[]},{"dependency":"0x43506849d7c04f9138d1a2050bbf3a0c054402dd","direct_calls":0,"transitive_calls":2,"ops":["DELEGATECALL"],"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"from_addresses":["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"],"affected_state_vars":[]},{"dependency":"0xa1bf0e900fb272089c9fd299ea14bfccb1d1c2c0","direct_calls":0,"transitive_calls":2,"ops":["CALL","STATICCALL"],"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"from_addresses":["0x990636ecb3ff04d33d92e970d3d588bf5cd8d086"],"affected_state_vars":[]},{"dependency":"0xa7a36dc1af4c14226575890949998195a0146a18","direct_calls":0,"transitive_calls":2,"ops":["CALL","STATICCALL"],"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"],"from_addresses":["0x990636ecb3ff04d33d92e970d3d588bf5cd8d086"],"affected_state_vars":[]},{"dependency":"0xbe69eb8ee10b3b51f9cdb4aa0d4c7fe83971a650","direct_calls":0,"transitive_calls":2,"ops":["CALL","STATICCALL"],"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"],"from_addresses":["0x990636ecb3ff04d33d92e970d3d588bf5cd8d086"],"affected_state_vars":[]},{"dependency":"0xd26f20001a72a18c002b00e6710000d68700ce00","direct_calls":0,"transitive_calls":2,"ops":["CALL"],"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"from_addresses":["0x00000000000014aa86c5d3c41765bb24e11bd701","0x990636ecb3ff04d33d92e970d3d588bf5cd8d086"],"affected_state_vars":[]},{"dependency":"0x00000000000014aa86c5d3c41765bb24e11bd701","direct_calls":0,"transitive_calls":1,"ops":["CALL"],"tx_hashes":["0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8"],"from_addresses":["0xd26f20001a72a18c002b00e6710000d68700ce00"],"affected_state_vars":[]},{"dependency":"0x2afef8a4bc6e0484271d5a212f46ee2a23b050c4","direct_calls":1,"transitive_calls":0,"ops":["CALL"],"tx_hashes":["0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb"],"from_addresses":["0x1111111254eeb25477b68fb85ed929f73a960582"],"affected_state_vars":[]},{"dependency":"0x691c1be0ef208faabd497889edfbe01d3b0acc64","direct_calls":1,"transitive_calls":0,"ops":["CALL"],"tx_hashes":["0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48"],"from_addresses":["0x1111111254eeb25477b68fb85ed929f73a960582"],"affected_state_vars":[]},{"dependency":"0xbbcb91440523216e2b87052a99f69c604a7b6e00","direct_calls":0,"transitive_calls":1,"ops":["CALL"],"tx_hashes":["0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479"],"from_addresses":["0x990636ecb3ff04d33d92e970d3d588bf5cd8d086"],"affected_state_vars":[]}]},{"selector":"0xbc80f1a8","signature":"uniswapV3SwapTo(address,uint256,uint256,uint256[])","display_name":"uniswapV3SwapTo(address,uint256,uint256,uint256[])","declaring_contract":"UnoswapV3Router","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":[],"tx_count":1,"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"],"dependencies":[{"dependency":"0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640","direct_calls":2,"transitive_calls":0,"ops":["CALL","STATICCALL"],"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"],"from_addresses":["0x1111111254eeb25477b68fb85ed929f73a960582"],"affected_state_vars":[]},{"dependency":"0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2","direct_calls":1,"transitive_calls":1,"ops":["CALL","STATICCALL"],"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"],"from_addresses":["0x1111111254eeb25477b68fb85ed929f73a960582","0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"],"affected_state_vars":[]},{"dependency":"0x43506849d7c04f9138d1a2050bbf3a0c054402dd","direct_calls":0,"transitive_calls":1,"ops":["DELEGATECALL"],"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"],"from_addresses":["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"],"affected_state_vars":[]},{"dependency":"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48","direct_calls":0,"transitive_calls":1,"ops":["CALL"],"tx_hashes":["0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45"],"from_addresses":["0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"],"affected_state_vars":[]}]},{"selector":"0x72c244a8","signature":"advanceNonce(uint8)","display_name":"advanceNonce(uint8)","declaring_contract":"NonceManager","visibility":"public","state_mutability":"nonpayable","state_writes":["nonce"],"state_reads":["nonce"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xbfa75143","signature":"and(uint256,bytes)","display_name":"and(uint256,bytes)","declaring_contract":"PredicateHelper","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xbf15fcd8","signature":"arbitraryStaticCall(address,bytes)","display_name":"arbitraryStaticCall(address,bytes)","declaring_contract":"PredicateHelper","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x2d9a56f6","signature":"cancelOrder((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes))","display_name":"cancelOrder((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes))","declaring_contract":"OrderMixin","visibility":"external","state_mutability":"nonpayable","state_writes":["_remaining"],"state_reads":["_ORDER_FILLED","_remaining"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x825caba1","signature":"cancelOrderRFQ(uint256)","display_name":"cancelOrderRFQ(uint256)","declaring_contract":"OrderRFQMixin","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xbddccd35","signature":"cancelOrderRFQ(uint256,uint256)","display_name":"cancelOrderRFQ(uint256,uint256)","declaring_contract":"OrderRFQMixin","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x6c838250","signature":"checkPredicate((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes))","display_name":"checkPredicate((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes))","declaring_contract":"OrderMixin","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x84bd6d29","signature":"clipperSwap(address,address,address,uint256,uint256,uint256,bytes32,bytes32)","display_name":"clipperSwap(address,address,address,uint256,uint256,uint256,bytes32,bytes32)","declaring_contract":"ClipperRouter","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x093d4fa5","signature":"clipperSwapTo(address,address,address,address,uint256,uint256,uint256,bytes32,bytes32)","display_name":"clipperSwapTo(address,address,address,address,uint256,uint256,uint256,bytes32,bytes32)","declaring_contract":"ClipperRouter","visibility":"public","state_mutability":"payable","state_writes":[],"state_reads":["_ETH","_WETH"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xc805a666","signature":"clipperSwapToWithPermit(address,address,address,address,uint256,uint256,uint256,bytes32,bytes32,bytes)","display_name":"clipperSwapToWithPermit(address,address,address,address,uint256,uint256,uint256,bytes32,bytes32,bytes)","declaring_contract":"ClipperRouter","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x83197ef0","signature":"destroy()","display_name":"destroy()","declaring_contract":"AggregationRouterV5","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x6fe7b0ba","signature":"eq(uint256,bytes)","display_name":"eq(uint256,bytes)","declaring_contract":"PredicateHelper","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x62e238bb","signature":"fillOrder((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes),bytes,bytes,uint256,uint256,uint256)","display_name":"fillOrder((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes),bytes,bytes,uint256,uint256,uint256)","declaring_contract":"OrderMixin","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x3eca9c0a","signature":"fillOrderRFQ((uint256,address,address,address,address,uint256,uint256),bytes,uint256)","display_name":"fillOrderRFQ((uint256,address,address,address,address,uint256,uint256),bytes,uint256)","declaring_contract":"OrderRFQMixin","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x9570eeee","signature":"fillOrderRFQCompact((uint256,address,address,address,address,uint256,uint256),bytes32,bytes32,uint256)","display_name":"fillOrderRFQCompact((uint256,address,address,address,address,uint256,uint256),bytes32,bytes32,uint256)","declaring_contract":"OrderRFQMixin","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":["_IS_VALID_SIGNATURE_65_BYTES","_SIGNER_SMART_CONTRACT_HINT"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x5a099843","signature":"fillOrderRFQTo((uint256,address,address,address,address,uint256,uint256),bytes,uint256,address)","display_name":"fillOrderRFQTo((uint256,address,address,address,address,uint256,uint256),bytes,uint256,address)","declaring_contract":"OrderRFQMixin","visibility":"public","state_mutability":"payable","state_writes":[],"state_reads":["_IS_VALID_SIGNATURE_65_BYTES","_SIGNER_SMART_CONTRACT_HINT"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x70ccbd31","signature":"fillOrderRFQToWithPermit((uint256,address,address,address,address,uint256,uint256),bytes,uint256,address,bytes)","display_name":"fillOrderRFQToWithPermit((uint256,address,address,address,address,uint256,uint256),bytes,uint256,address,bytes)","declaring_contract":"OrderRFQMixin","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xe5d7bde6","signature":"fillOrderTo((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes),bytes,bytes,uint256,uint256,uint256,address)","display_name":"fillOrderTo((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes),bytes,bytes,uint256,uint256,uint256,address)","declaring_contract":"OrderMixin","visibility":"public","state_mutability":"payable","state_writes":["_remaining"],"state_reads":["_ORDER_DOES_NOT_EXIST","_ORDER_FILLED","_SKIP_PERMIT_FLAG","_THRESHOLD_MASK","_WETH","_remaining"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xd365c695","signature":"fillOrderToWithPermit((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes),bytes,bytes,uint256,uint256,uint256,address,bytes)","display_name":"fillOrderToWithPermit((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes),bytes,bytes,uint256,uint256,uint256,address,bytes)","declaring_contract":"OrderMixin","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x4f38e2b8","signature":"gt(uint256,bytes)","display_name":"gt(uint256,bytes)","declaring_contract":"PredicateHelper","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x37e7316f","signature":"hashOrder((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes))","display_name":"hashOrder((uint256,address,address,address,address,address,uint256,uint256,uint256,bytes))","declaring_contract":"OrderMixin","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xc53a0292","signature":"increaseNonce()","display_name":"increaseNonce()","declaring_contract":"NonceManager","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x56f16124","signature":"invalidatorForOrderRFQ(address,uint256)","display_name":"invalidatorForOrderRFQ(address,uint256)","declaring_contract":"OrderRFQMixin","visibility":"external","state_mutability":"view","state_writes":[],"state_reads":["_invalidator"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xca4ece22","signature":"lt(uint256,bytes)","display_name":"lt(uint256,bytes)","declaring_contract":"PredicateHelper","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x70ae92d2","signature":"nonce(address)","display_name":"nonce(address)","declaring_contract":"unknown","visibility":"unknown","state_mutability":"unknown","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xcf6fc6e3","signature":"nonceEquals(address,uint256)","display_name":"nonceEquals(address,uint256)","declaring_contract":"NonceManager","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":["nonce"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x74261145","signature":"or(uint256,bytes)","display_name":"or(uint256,bytes)","declaring_contract":"PredicateHelper","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x8da5cb5b","signature":"owner()","display_name":"owner()","declaring_contract":"Ownable","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":["_owner"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xbc1ed74c","signature":"remaining(bytes32)","display_name":"remaining(bytes32)","declaring_contract":"OrderMixin","visibility":"external","state_mutability":"view","state_writes":[],"state_reads":["_ORDER_DOES_NOT_EXIST","_remaining"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x7e54f092","signature":"remainingRaw(bytes32)","display_name":"remainingRaw(bytes32)","declaring_contract":"OrderMixin","visibility":"external","state_mutability":"view","state_writes":[],"state_reads":["_remaining"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x942461bb","signature":"remainingsRaw(bytes32[])","display_name":"remainingsRaw(bytes32[])","declaring_contract":"OrderMixin","visibility":"external","state_mutability":"view","state_writes":[],"state_reads":["_remaining"],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x715018a6","signature":"renounceOwnership()","display_name":"renounceOwnership()","declaring_contract":"Ownable","visibility":"public","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x78e3214f","signature":"rescueFunds(address,uint256)","display_name":"rescueFunds(address,uint256)","declaring_contract":"AggregationRouterV5","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xbd61951d","signature":"simulate(address,bytes)","display_name":"simulate(address,bytes)","declaring_contract":"OrderMixin","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x63592c2b","signature":"timestampBelow(uint256)","display_name":"timestampBelow(uint256)","declaring_contract":"PredicateHelper","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x2cc2878d","signature":"timestampBelowAndNonceEquals(uint256)","display_name":"timestampBelowAndNonceEquals(uint256)","declaring_contract":"PredicateHelper","visibility":"public","state_mutability":"view","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xf2fde38b","signature":"transferOwnership(address)","display_name":"transferOwnership(address)","declaring_contract":"Ownable","visibility":"public","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xe449022e","signature":"uniswapV3Swap(uint256,uint256,uint256[])","display_name":"uniswapV3Swap(uint256,uint256,uint256[])","declaring_contract":"UnoswapV3Router","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xfa461e33","signature":"uniswapV3SwapCallback(int256,int256,bytes)","display_name":"uniswapV3SwapCallback(int256,int256,bytes)","declaring_contract":"UnoswapV3Router","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x2521b930","signature":"uniswapV3SwapToWithPermit(address,address,uint256,uint256,uint256[],bytes)","display_name":"uniswapV3SwapToWithPermit(address,address,uint256,uint256,uint256[],bytes)","declaring_contract":"UnoswapV3Router","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x0502b1c5","signature":"unoswap(address,uint256,uint256,uint256[])","display_name":"unoswap(address,uint256,uint256,uint256[])","declaring_contract":"UnoswapRouter","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0xf78dc253","signature":"unoswapTo(address,address,uint256,uint256,uint256[])","display_name":"unoswapTo(address,address,uint256,uint256,uint256[])","declaring_contract":"UnoswapRouter","visibility":"external","state_mutability":"payable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]},{"selector":"0x3c15fd91","signature":"unoswapToWithPermit(address,address,uint256,uint256,uint256[],bytes)","display_name":"unoswapToWithPermit(address,address,uint256,uint256,uint256[],bytes)","declaring_contract":"UnoswapRouter","visibility":"external","state_mutability":"nonpayable","state_writes":[],"state_reads":[],"tx_count":0,"tx_hashes":[],"dependencies":[]}],"transactions":[{"tx_hash":"0x43b57bf18523c3c8cca47303096901283e97585bcfd175434af64194047f3479","block_number":24544375,"method_selector":"0x12aa3caf","signature":"swap(address,(address,address,address,address,uint256,uint256,uint256),bytes,bytes)"},{"tx_hash":"0xa077355a2584223ffc631d60214ea1648698b7ab3918bd7f7704f8aea7391e45","block_number":24544259,"method_selector":"0xbc80f1a8","signature":"uniswapV3SwapTo(address,uint256,uint256,uint256[])"},{"tx_hash":"0xef367253ef02493c7253e5f5df8b8118ee22614fd8ec395669838ea48b6a39b8","block_number":24544371,"method_selector":"0x12aa3caf","signature":"swap(address,(address,address,address,address,uint256,uint256,uint256),bytes,bytes)"},{"tx_hash":"0xb15ff9470a6ead4310d51d469183faef498ec7ca3b06a720b4a9d627dcd5fb48","block_number":24544356,"method_selector":"0x12aa3caf","signature":"swap(address,(address,address,address,address,uint256,uint256,uint256),bytes,bytes)"},{"tx_hash":"0xa76f6d1543a927e109f7921963fbd3720cd1893bb54119b041972a8632cd71cb","block_number":24544346,"method_selector":"0x12aa3caf","signature":"swap(address,(address,address,address,address,uint256,uint256,uint256),bytes,bytes)"}],"unmatched_transactions":[]}};
+    const graphData = appData.graph;
+    const contractData = appData.contract;
+
+    const statsEl = document.getElementById("stats");
+    const detailsEl = document.getElementById("details");
+    const errorEl = document.getElementById("errorBox");
+    const warningEl = document.getElementById("warningBox");
+    const opsEl = document.getElementById("ops");
+    const minCountEl = document.getElementById("minCount");
+    const searchEl = document.getElementById("search");
+    const isolatedEl = document.getElementById("showIsolated");
+    const filterByFunctionEl = document.getElementById("filterByFunction");
+    const hideSelfLoopsEl = document.getElementById("hideSelfLoops");
+    const showEdgeLabelsEl = document.getElementById("showEdgeLabels");
+    const contractNameEl = document.getElementById("contractName");
+    const fnSelectEl = document.getElementById("fnSelect");
+    const fnMetaEl = document.getElementById("fnMeta");
+    const stateVarsBodyEl = document.getElementById("stateVarsBody");
+    const depsBodyEl = document.getElementById("depsBody");
+    const txSignatureByHash = new Map(
+      (Array.isArray(contractData.transactions) ? contractData.transactions : [])
+        .filter((tx) => tx && typeof tx.tx_hash === "string")
+        .map((tx) => [tx.tx_hash, tx.signature || tx.method_selector || "unknown"])
+    );
+
+    function showError(message) {
+      errorEl.textContent = message;
+      errorEl.style.display = "block";
+    }
+
+    function showWarning(message) {
+      warningEl.textContent = message;
+      warningEl.style.display = "block";
+    }
+
+    if (typeof vis === "undefined") {
+      showError("vis-network failed to load. Check internet access, then reopen this file.");
+      detailsEl.textContent = "Raw data remains available in dynamic_dependencies.json.";
+      throw new Error("vis-network unavailable");
+    }
+
+    const allOps = [...new Set(graphData.edges.map((edge) => edge.op))].sort();
+    for (const op of allOps) {
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = op;
+      checkbox.checked = true;
+      label.appendChild(checkbox);
+      label.appendChild(document.createTextNode(" " + op));
+      opsEl.appendChild(label);
+    }
+
+    const allNodesById = new Map(graphData.nodes.map((node) => [node.id, node]));
+    const allEdgesById = new Map(graphData.edges.map((edge) => [edge.id, edge]));
+
+    const nodeDataSet = new vis.DataSet([]);
+    const edgeDataSet = new vis.DataSet([]);
+
+    const network = new vis.Network(
+      document.getElementById("network"),
+      { nodes: nodeDataSet, edges: edgeDataSet },
+      {
+        autoResize: true,
+        layout: { improvedLayout: true, randomSeed: 7 },
+        physics: {
+          solver: "forceAtlas2Based",
+          forceAtlas2Based: {
+            gravitationalConstant: -55,
+            centralGravity: 0.01,
+            springLength: 180,
+            springConstant: 0.05,
+            damping: 0.4,
+            avoidOverlap: 1
+          },
+          minVelocity: 0.75,
+          stabilization: { enabled: true, iterations: 250, updateInterval: 25 }
+        },
+        interaction: { hover: true, tooltipDelay: 120 },
+        edges: {
+          arrows: "to",
+          font: { size: 10, align: "top", color: "#374151" },
+          smooth: { type: "dynamic", roundness: 0.16 }
+        },
+        nodes: {
+          shape: "box",
+          borderWidth: 1,
+          margin: 8,
+          font: { size: 12, face: "Consolas" }
+        }
+      }
+    );
+
+    let currentFunction = null;
+
+    function selectedOps() {
+      return new Set(
+        [...opsEl.querySelectorAll("input[type='checkbox']")]
+          .filter((box) => box.checked)
+          .map((box) => box.value)
+      );
+    }
+
+    function currentFunctionTxSet() {
+      if (!currentFunction || !Array.isArray(currentFunction.tx_hashes) || currentFunction.tx_hashes.length === 0) {
+        return null;
+      }
+      return new Set(currentFunction.tx_hashes);
+    }
+
+    function applyFilters() {
+      const ops = selectedOps();
+      const minCount = Math.max(1, Number(minCountEl.value || 1));
+      const showIsolated = isolatedEl.checked;
+      const hideSelfLoops = hideSelfLoopsEl.checked;
+      const showEdgeLabels = showEdgeLabelsEl.checked;
+
+      let edges = graphData.edges.filter((edge) => ops.has(edge.op) && edge.count >= minCount);
+
+      if (hideSelfLoops) {
+        edges = edges.filter((edge) => edge.from !== edge.to);
+      }
+
+      if (filterByFunctionEl.checked) {
+        const txSet = currentFunctionTxSet();
+        if (txSet) {
+          edges = edges.filter((edge) => edge.tx_hashes.some((hash) => txSet.has(hash)));
+        }
+      }
+
+      const connected = new Set();
+      for (const edge of edges) {
+        connected.add(edge.from);
+        connected.add(edge.to);
+      }
+      connected.add("n_" + graphData.root.slice(2));
+
+      const nodes = graphData.nodes.filter((node) => showIsolated || connected.has(node.id));
+
+      nodeDataSet.clear();
+      edgeDataSet.clear();
+
+      nodeDataSet.add(
+        nodes.map((node) => {
+          const color = node.is_root
+            ? { background: "#fef3c7", border: "#92400e" }
+            : { background: "#ffffff", border: "#cbd5e1" };
+          return {
+            id: node.id,
+            label: node.label,
+            title: node.address,
+            color: color
+          };
+        })
+      );
+
+      edgeDataSet.add(
+        edges.map((edge) => {
+          const baseColor = edge.op === "DELEGATECALL" ? "#b45309" : "#94a3b8";
+          const fnNames = edgeFunctionNames(edge);
+          const fnText = fnNames.length ? fnNames.join(", ") : "unknown";
+          const txText = edge.tx_hashes.length ? edge.tx_hashes.join("\n") : "No tx hashes captured";
+          return {
+            id: edge.id,
+            from: edge.from,
+            to: edge.to,
+            label: formatEdgeLabel(edge, showEdgeLabels),
+            title: "functions: " + fnText + "\n\n" + txText,
+            value: edge.count,
+            width: 1 + Math.min(8, edge.count * 0.7),
+            color: { color: baseColor, opacity: 0.75 }
+          };
+        })
+      );
+
+      statsEl.innerHTML = "<strong>Nodes:</strong> " + nodes.length + " | <strong>Edges:</strong> " + edges.length;
+      network.fit({ animation: false });
+      detailsEl.textContent = "Select a node or edge to inspect details.";
+    }
+
+    function inspectSelection(params) {
+      if (params.nodes.length > 0) {
+        const node = allNodesById.get(params.nodes[0]);
+        if (!node) return;
+        const incoming = graphData.edges.filter((edge) => edge.to === node.id).length;
+        const outgoing = graphData.edges.filter((edge) => edge.from === node.id).length;
+        detailsEl.textContent =
+          "Node\n" +
+          "address: " + node.address + "\n" +
+          "incoming edges: " + incoming + "\n" +
+          "outgoing edges: " + outgoing;
+        return;
+      }
+
+      if (params.edges.length > 0) {
+        const edge = allEdgesById.get(params.edges[0]);
+        if (!edge) return;
+        const txLines = edge.tx_hashes.length
+          ? edge.tx_hashes.map((hash) => "  - " + hash).join("\n")
+          : "  - none recorded";
+        detailsEl.textContent =
+          "Edge\n" +
+          "from: " + edge.from_address + "\n" +
+          "to:   " + edge.to_address + "\n" +
+          "op: " + edge.op + "\n" +
+          "count: " + edge.count + "\n" +
+          "tx_hashes:\n" + txLines;
+      }
+    }
+
+    function shortAddress(address) {
+      if (!address || typeof address !== "string" || address.length < 14) return String(address || "");
+      return address.slice(0, 8) + "..." + address.slice(-6);
+    }
+
+    function shortFunctionName(signature) {
+      if (typeof signature !== "string" || !signature) return "unknown";
+      const openParen = signature.indexOf("(");
+      const name = openParen > 0 ? signature.slice(0, openParen) : signature;
+      if (name.length <= 20) return name;
+      return name.slice(0, 19) + "…";
+    }
+
+    function edgeFunctionNames(edge) {
+      const uniqueNames = new Set();
+      const txHashes = Array.isArray(edge.tx_hashes) ? edge.tx_hashes : [];
+      for (const txHash of txHashes) {
+        const signature = txSignatureByHash.get(txHash);
+        if (signature) {
+          uniqueNames.add(shortFunctionName(signature));
+        }
+      }
+      return [...uniqueNames];
+    }
+
+    function formatEdgeLabel(edge, showEdgeLabels) {
+      if (!showEdgeLabels) return "";
+
+      const names = edgeFunctionNames(edge);
+      if (names.length === 0) {
+        return edge.op + " x" + edge.count;
+      }
+      if (names.length === 1) {
+        return names[0] + " · " + edge.op + " x" + edge.count;
+      }
+
+      const prefix = names.slice(0, 2).join(", ");
+      const remainder = names.length > 2 ? " +" + (names.length - 2) : "";
+      return prefix + remainder + " · " + edge.op + " x" + edge.count;
+    }
+
+    function truncateText(text, maxLength) {
+      if (typeof text !== "string") return String(text || "");
+      if (text.length <= maxLength) return text;
+      return text.slice(0, maxLength - 1) + "…";
+    }
+
+    function renderStateVariables(fn) {
+      stateVarsBodyEl.innerHTML = "";
+
+      const vars = Array.isArray(contractData.state_variables) ? contractData.state_variables : [];
+      const writes = new Set((fn && Array.isArray(fn.state_writes)) ? fn.state_writes : []);
+      const reads = new Set((fn && Array.isArray(fn.state_reads)) ? fn.state_reads : []);
+
+      if (vars.length === 0) {
+        stateVarsBodyEl.innerHTML = '<tr><td colspan="3">No state variables were detected in the compiled AST lineage.</td></tr>';
+        return;
+      }
+
+      for (const variable of vars) {
+        const tr = document.createElement("tr");
+        const access = writes.has(variable.name)
+          ? '<span class="badge badge-write">write</span>'
+          : (reads.has(variable.name)
+              ? '<span class="badge badge-read">read</span>'
+              : '<span class="badge badge-none">none</span>');
+
+        tr.innerHTML =
+          "<td><strong>" + variable.name + "</strong><br><span class='hint'>" + variable.declaring_contract + "</span></td>" +
+          "<td>" + variable.type + "</td>" +
+          "<td>" + access + "</td>";
+        stateVarsBodyEl.appendChild(tr);
+      }
+    }
+
+    function renderDependencies(fn) {
+      depsBodyEl.innerHTML = "";
+      const deps = (fn && Array.isArray(fn.dependencies)) ? fn.dependencies : [];
+
+      if (!fn) {
+        depsBodyEl.innerHTML = '<tr><td colspan="5">No function selected.</td></tr>';
+        return;
+      }
+
+      if (deps.length === 0) {
+        depsBodyEl.innerHTML = '<tr><td colspan="5">No traced dependency calls recorded for this function selection.</td></tr>';
+        return;
+      }
+
+      for (const dep of deps) {
+        const affected = dep.affected_state_vars && dep.affected_state_vars.length
+          ? dep.affected_state_vars.join(", ")
+          : "none detected";
+
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          "<td><span title='" + dep.dependency + "'>" + shortAddress(dep.dependency) + "</span></td>" +
+          "<td>" + dep.direct_calls + "</td>" +
+          "<td>" + dep.transitive_calls + "</td>" +
+          "<td>" + dep.ops.join(", ") + "</td>" +
+          "<td>" + affected + "</td>";
+        depsBodyEl.appendChild(tr);
+      }
+    }
+
+    function renderFunctionPanel(fn) {
+      currentFunction = fn;
+      if (!fn) {
+        fnMetaEl.textContent = "No function/selector data available.";
+        renderStateVariables(null);
+        renderDependencies(null);
+        applyFilters();
+        return;
+      }
+
+      const signature = fn.signature || fn.display_name || fn.selector || "unknown";
+      fnMetaEl.textContent =
+        truncateText(signature, 120) + "\n" +
+        "selector " + (fn.selector || "n/a") + " | txs " + fn.tx_count + "\n" +
+        "declared in " + (fn.declaring_contract || "unknown") + " | " +
+        (fn.visibility || "unknown") + " / " + (fn.state_mutability || "unknown");
+
+      renderStateVariables(fn);
+      renderDependencies(fn);
+      applyFilters();
+    }
+
+    function initializeContractPanel() {
+      contractNameEl.textContent = contractData.contract_name || "Unknown";
+
+      if (contractData.warning) {
+        showWarning(contractData.warning);
+      }
+
+      if (!contractData.available) {
+        fnSelectEl.innerHTML = '<option value="">No contract intelligence available</option>';
+        renderFunctionPanel(null);
+        return;
+      }
+
+      const functions = Array.isArray(contractData.functions) ? contractData.functions : [];
+      if (functions.length === 0) {
+        fnSelectEl.innerHTML = '<option value="">No function intelligence found</option>';
+        renderFunctionPanel(null);
+        return;
+      }
+
+      functions.forEach((fn, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        const name = fn.signature || fn.display_name || fn.selector || "unknown";
+        option.textContent = name + " (" + (fn.selector || "n/a") + ", txs " + fn.tx_count + ")";
+        fnSelectEl.appendChild(option);
+      });
+
+      fnSelectEl.addEventListener("change", () => {
+        const index = Number(fnSelectEl.value);
+        const fn = Number.isFinite(index) ? functions[index] : null;
+        renderFunctionPanel(fn || null);
+      });
+
+      renderFunctionPanel(functions[0]);
+    }
+
+    document.getElementById("apply").addEventListener("click", applyFilters);
+    document.getElementById("reset").addEventListener("click", () => {
+      network.fit({ animation: true });
+    });
+
+    filterByFunctionEl.addEventListener("change", applyFilters);
+    hideSelfLoopsEl.addEventListener("change", applyFilters);
+    showEdgeLabelsEl.addEventListener("change", applyFilters);
+
+    searchEl.addEventListener("change", () => {
+      const query = searchEl.value.trim().toLowerCase();
+      if (!query) return;
+      const node = graphData.nodes.find((entry) => entry.address.toLowerCase().includes(query));
+      if (node) {
+        network.selectNodes([node.id], false);
+        network.focus(node.id, { scale: 1.2, animation: true });
+      } else {
+        showError("Address not found in current graph: " + query);
+      }
+    });
+
+    network.on("select", inspectSelection);
+    initializeContractPanel();
+    applyFilters();
+  </script>
+</body>
+</html>

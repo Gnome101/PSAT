@@ -1,0 +1,8 @@
+======================================================================
+  SECURITY ANALYSIS REPORT
+  Contract: LiquidityPool
+  Address:  0x8765bb2f362a4b72e614df81e2841275b9358f8b
+======================================================================
+
+Slither compilation failed: /home/thegnome/asu/PSAT/contracts/LiquidityPool/out/build-info is not a directory.
+Static analysis results may be incomplete.

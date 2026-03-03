@@ -1,0 +1,9 @@
+{
+  "address": "0x4e9623b7e5b6438542458f5ee828d65c24d3af8c",
+  "contract_name": "JerryTheTurtleToken",
+  "compiler_version": "v0.8.0+commit.c7dfd78e",
+  "optimization_used": "0",
+  "runs": "200",
+  "evm_version": "Default",
+  "license": "MIT"
+}

@@ -1,0 +1,11 @@
+{
+  "address": "0x8765bb2f362a4b72e614df81e2841275b9358f8b",
+  "contract_name": "LiquidityPool",
+  "compiler_version": "v0.8.27+commit.40a35a09",
+  "optimization_used": "1",
+  "runs": "1500",
+  "evm_version": "prague",
+  "license": "",
+  "is_proxy": false,
+  "implementation": ""
+}

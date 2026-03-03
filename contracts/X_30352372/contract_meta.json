@@ -1,0 +1,9 @@
+{
+  "address": "0xa62894d5196bc44e4c3978400ad07e7b30352372",
+  "contract_name": "X",
+  "compiler_version": "v0.8.19+commit.7dd6d404",
+  "optimization_used": "1",
+  "runs": "200",
+  "evm_version": "Default",
+  "license": "MIT"
+}

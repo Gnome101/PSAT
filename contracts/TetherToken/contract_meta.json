@@ -1,0 +1,11 @@
+{
+  "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+  "contract_name": "TetherToken",
+  "compiler_version": "v0.4.18+commit.9cf6e910",
+  "optimization_used": "0",
+  "runs": "0",
+  "evm_version": "Default",
+  "license": "",
+  "is_proxy": false,
+  "implementation": ""
+}

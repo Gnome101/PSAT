@@ -196,3 +196,78 @@ def test_process_continues_if_dynamic_dependency_discovery_fails(tmp_path, monke
 
     assert analyze_calls
     assert not (tmp_path / "dynamic_dependencies.json").exists()
+
+
+def test_process_fetches_dependency_sources_once_for_discovered_addresses(tmp_path, monkeypatch):
+    pipeline = load_pipeline_module()
+
+    root = "0x1111111111111111111111111111111111111111"
+    dep_a = "0x2222222222222222222222222222222222222222"
+    dep_b = "0x3333333333333333333333333333333333333333"
+    dep_c = "0x4444444444444444444444444444444444444444"
+
+    fetch_calls = []
+
+    def fake_fetch(address):
+        fetch_calls.append(address)
+        return {
+            "ContractName": f"Contract_{address[-4:]}",
+            "SourceCode": "pragma solidity 0.8.19;\ncontract Test {}\n",
+        }
+
+    monkeypatch.setattr(pipeline, "fetch", fake_fetch)
+
+    scaffold_calls = []
+
+    def fake_scaffold(_address, _name, _result):
+        scaffold_calls.append((_address, _name))
+        path = tmp_path / _name
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    monkeypatch.setattr(pipeline, "scaffold", fake_scaffold)
+
+    monkeypatch.setattr(
+        pipeline,
+        "analyze",
+        lambda _project_dir, _contract_name, _address: tmp_path / "analysis_report.txt",
+    )
+
+    monkeypatch.setattr(
+        pipeline,
+        "find_dependencies",
+        lambda _address, _rpc_url: {
+            "address": root,
+            "dependencies": [dep_a, dep_b],
+            "rpc": "https://rpc.example",
+        },
+    )
+
+    monkeypatch.setattr(
+        pipeline,
+        "find_dynamic_dependencies",
+        lambda _address, _rpc_url, _tx_limit, _tx_hashes: {
+            "address": root,
+            "rpc": "https://trace-rpc.example",
+            "transactions_analyzed": [],
+            "dependencies": [dep_b, dep_c],
+            "provenance": {},
+            "dependency_graph": [],
+            "trace_methods": [],
+            "trace_errors": [],
+        },
+    )
+
+    pipeline.process(
+        root,
+        run_llm=False,
+        run_deps=True,
+        deps_rpc="https://rpc.example",
+        run_dynamic_deps=True,
+        dynamic_rpc="https://trace-rpc.example",
+        fetch_dependency_sources=True,
+    )
+
+    assert scaffold_calls[0][0] == root
+    assert set(dep for dep, _ in scaffold_calls[1:]) == {dep_a, dep_b, dep_c}
+    assert len(set(fetch_calls)) == 4

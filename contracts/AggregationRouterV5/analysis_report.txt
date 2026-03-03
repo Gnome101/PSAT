@@ -1,0 +1,666 @@
+======================================================================
+  SECURITY ANALYSIS REPORT
+  Contract: AggregationRouterV5
+  Address:  0x1111111254eeb25477b68fb85ed929f73a960582
+======================================================================
+
+Summary: 137 finding(s)
+  High: 9
+  Medium: 11
+  Low: 7
+  Informational: 110
+
+──────────────────────────────────────────────────────────────────────
+  [HIGH]
+──────────────────────────────────────────────────────────────────────
+
+  1. arbitrary-send-erc20 (confidence: High)
+     OrderRFQMixin._fillOrderRFQTo(OrderRFQLib.OrderRFQ,uint256,address) (src/AggregationRouterV5.sol#3600-3656) uses arbitrary from in transferFrom: IERC20(order.makerAsset).safeTransferFrom(maker,target,makingAmount) (src/AggregationRouterV5.sol#3645-3646)
+
+  2. arbitrary-send-erc20 (confidence: High)
+     OrderRFQMixin._fillOrderRFQTo(OrderRFQLib.OrderRFQ,uint256,address) (src/AggregationRouterV5.sol#3600-3656) uses arbitrary from in transferFrom: _WETH.transferFrom(maker,address(this),makingAmount) (src/AggregationRouterV5.sol#3637-3638)
+
+  3. arbitrary-send-erc20 (confidence: High)
+     UniERC20.uniTransferFrom(IERC20,address,address,uint256) (src/AggregationRouterV5.sol#831-853) uses arbitrary from in transferFrom: token.safeTransferFrom(from,to,amount) (src/AggregationRouterV5.sol#852)
+
+  4. controlled-delegatecall (confidence: Medium)
+     OrderMixin.simulate(address,bytes) (src/AggregationRouterV5.sol#4213-4222) uses delegatecall to a input-controlled function id
+     	- (success,result) = target.delegatecall(data) (src/AggregationRouterV5.sol#4217-4222)
+
+  5. shadowing-state (confidence: High)
+     OrderRFQMixin._WETH (src/AggregationRouterV5.sol#3426-3427) shadows:
+     	- OnlyWethReceiver._WETH (src/AggregationRouterV5.sol#2877-2878)
+
+  6. unchecked-transfer (confidence: Medium)
+     OrderRFQMixin._fillOrderRFQTo(OrderRFQLib.OrderRFQ,uint256,address) (src/AggregationRouterV5.sol#3600-3656) ignores return value by _WETH.transferFrom(maker,address(this),makingAmount) (src/AggregationRouterV5.sol#3637-3638)
+
+  7. unchecked-transfer (confidence: Medium)
+     OrderMixin.fillOrderTo(OrderLib.Order,bytes,bytes,uint256,uint256,uint256,address) (src/AggregationRouterV5.sol#4298-4470) ignores return value by _WETH.transfer(order.receiver,actualTakingAmount) (src/AggregationRouterV5.sol#4453-4454)
+
+  8. unchecked-transfer (confidence: Medium)
+     OrderRFQMixin._fillOrderRFQTo(OrderRFQLib.OrderRFQ,uint256,address) (src/AggregationRouterV5.sol#3600-3656) ignores return value by _WETH.transfer(maker,takingAmount) (src/AggregationRouterV5.sol#3649-3651)
+
+  9. unchecked-transfer (confidence: Medium)
+     OrderMixin.fillOrderTo(OrderLib.Order,bytes,bytes,uint256,uint256,uint256,address) (src/AggregationRouterV5.sol#4298-4470) ignores return value by _WETH.transfer(order.maker,actualTakingAmount) (src/AggregationRouterV5.sol#4453-4454)
+
+──────────────────────────────────────────────────────────────────────
+  [MEDIUM]
+──────────────────────────────────────────────────────────────────────
+
+  1. divide-before-multiply (confidence: Medium)
+     UnoswapRouter._unoswap.asm_0.swap() (src/AggregationRouterV5.sol#1135-1172) performs a multiplication on the result of a division:
+     	- ret__unoswap_asm_0_swap = ret__unoswap_asm_0_swap * reserve1__unoswap_asm_0_swap / ret__unoswap_asm_0_swap + reserve0__unoswap_asm_0_swap * _DENOMINATOR (src/AggregationRouterV5.sol#1161)
+     	- mstore(uint256,uint256)(emptyPtr__unoswap_asm_0_swap + 0x04,ret__unoswap_asm_0_swap * ! reversed__unoswap_asm_0_swap) (src/AggregationRouterV5.sol#1166)
+
+  2. divide-before-multiply (confidence: Medium)
+     AggregationRouterV5._unoswap.asm_0.swap() (src/AggregationRouterV5.sol#1135-1172) performs a multiplication on the result of a division:
+     	- ret__unoswap_asm_0_swap = ret__unoswap_asm_0_swap * reserve1__unoswap_asm_0_swap / ret__unoswap_asm_0_swap + reserve0__unoswap_asm_0_swap * _DENOMINATOR (src/AggregationRouterV5.sol#1161)
+     	- mstore(uint256,uint256)(emptyPtr__unoswap_asm_0_swap + 0x24,ret__unoswap_asm_0_swap * reversed__unoswap_asm_0_swap) (src/AggregationRouterV5.sol#1167)
+
+  3. divide-before-multiply (confidence: Medium)
+     AggregationRouterV5._unoswap.asm_0.swap() (src/AggregationRouterV5.sol#1135-1172) performs a multiplication on the result of a division:
+     	- ret__unoswap_asm_0_swap = ret__unoswap_asm_0_swap * reserve1__unoswap_asm_0_swap / ret__unoswap_asm_0_swap + reserve0__unoswap_asm_0_swap * _DENOMINATOR (src/AggregationRouterV5.sol#1161)
+     	- mstore(uint256,uint256)(emptyPtr__unoswap_asm_0_swap + 0x04,ret__unoswap_asm_0_swap * ! reversed__unoswap_asm_0_swap) (src/AggregationRouterV5.sol#1166)
+
+  4. divide-before-multiply (confidence: Medium)
+     UnoswapRouter._unoswap.asm_0.swap() (src/AggregationRouterV5.sol#1135-1172) performs a multiplication on the result of a division:
+     	- ret__unoswap_asm_0_swap = ret__unoswap_asm_0_swap * reserve1__unoswap_asm_0_swap / ret__unoswap_asm_0_swap + reserve0__unoswap_asm_0_swap * _DENOMINATOR (src/AggregationRouterV5.sol#1161)
+     	- mstore(uint256,uint256)(emptyPtr__unoswap_asm_0_swap + 0x24,ret__unoswap_asm_0_swap * reversed__unoswap_asm_0_swap) (src/AggregationRouterV5.sol#1167)
+
+  5. uninitialized-local (confidence: Medium)
+     PredicateHelper.and(uint256,bytes).current (src/AggregationRouterV5.sol#3870) is a local variable never initialized
+
+  6. uninitialized-local (confidence: Medium)
+     PredicateHelper.or(uint256,bytes).current (src/AggregationRouterV5.sol#3851) is a local variable never initialized
+
+  7. uninitialized-local (confidence: Medium)
+     SafeERC20.safePermit(IERC20,bytes).success (src/AggregationRouterV5.sol#361) is a local variable never initialized
+
+  8. unused-return (confidence: Medium)
+     UnoswapV3Router._makeSwap(address,address,uint256,uint256) (src/AggregationRouterV5.sol#2854-2874) ignores return value by (amount0,None) = IUniswapV3Pool(address(uint160(pool))).swap(recipient,zeroForOne,SafeCast.toInt256(amount),_MAX_SQRT_RATIO,abi.encode(payer)) (src/AggregationRouterV5.sol#2865-2873)
+
+  9. unused-return (confidence: Medium)
+     UnoswapV3Router._makeSwap(address,address,uint256,uint256) (src/AggregationRouterV5.sol#2854-2874) ignores return value by (None,amount1) = IUniswapV3Pool(address(uint160(pool))).swap(recipient,zeroForOne,SafeCast.toInt256(amount),_MIN_SQRT_RATIO,abi.encode(payer)) (src/AggregationRouterV5.sol#2861-2865)
+
+  10. write-after-write (confidence: High)
+     ArgumentsDecoder.decodeTailCalldata(bytes,uint256).args (src/AggregationRouterV5.sol#3788-3789) is written in both
+     	args = data + tailOffset (src/AggregationRouterV5.sol#3798-3799)
+     	args = data - tailOffset (src/AggregationRouterV5.sol#3799-3802)
+
+  11. write-after-write (confidence: High)
+     ArgumentsDecoder.decodeTargetAndCalldata(bytes).args (src/AggregationRouterV5.sol#3803) is written in both
+     	args = data + 20 (src/AggregationRouterV5.sol#3810-3811)
+     	args = data - 20 (src/AggregationRouterV5.sol#3811-3814)
+
+──────────────────────────────────────────────────────────────────────
+  [LOW]
+──────────────────────────────────────────────────────────────────────
+
+  1. missing-zero-check (confidence: Medium)
+     OrderMixin.simulate(address,bytes).target (src/AggregationRouterV5.sol#4213) lacks a zero-check on :
+     		- (success,result) = target.delegatecall(data) (src/AggregationRouterV5.sol#4217-4222)
+
+  2. reentrancy-events (confidence: Medium)
+     Reentrancy in OrderRFQMixin.fillOrderRFQCompact(OrderRFQLib.OrderRFQ,bytes32,bytes32,uint256) (src/AggregationRouterV5.sol#3515-3542):
+     	External calls:
+     	- (filledMakingAmount,filledTakingAmount) = _fillOrderRFQTo(order,flagsAndAmount,msg.sender) (src/AggregationRouterV5.sol#3535-3538)
+     		- _WETH.transferFrom(maker,address(this),makingAmount) (src/AggregationRouterV5.sol#3637-3638)
+     		- _WETH.withdraw(makingAmount) (src/AggregationRouterV5.sol#3638)
+     		- (success,None) = target.call{gas: _RAW_CALL_GAS_LIMIT,value: makingAmount}() (src/AggregationRouterV5.sol#3642-3643)
+     		- _WETH.deposit{value: takingAmount}() (src/AggregationRouterV5.sol#3648-3649)
+     		- _WETH.transfer(maker,takingAmount) (src/AggregationRouterV5.sol#3649-3651)
+     	External calls sending eth:
+     	- (filledMakingAmount,filledTakingAmount) = _fillOrderRFQTo(order,flagsAndAmount,msg.sender) (src/AggregationRouterV5.sol#3535-3538)
+     		- (success,None) = target.call{gas: _RAW_CALL_GAS_LIMIT,value: makingAmount}() (src/AggregationRouterV5.sol#3642-3643)
+     		- _WETH.deposit{value: takingAmount}() (src/AggregationRouterV5.sol#3648-3649)
+     	Event emitted after the call(s):
+     	- OrderFilledRFQ(orderHash,filledMakingAmount) (src/AggregationRouterV5.sol#3538-3542)
+
+  3. reentrancy-events (confidence: Medium)
+     Reentrancy in OrderRFQMixin.fillOrderRFQTo(OrderRFQLib.OrderRFQ,bytes,uint256,address) (src/AggregationRouterV5.sol#3583-3600):
+     	External calls:
+     	- (filledMakingAmount,filledTakingAmount) = _fillOrderRFQTo(order,flagsAndAmount,target) (src/AggregationRouterV5.sol#3594-3597)
+     		- _WETH.transferFrom(maker,address(this),makingAmount) (src/AggregationRouterV5.sol#3637-3638)
+     		- _WETH.withdraw(makingAmount) (src/AggregationRouterV5.sol#3638)
+     		- (success,None) = target.call{gas: _RAW_CALL_GAS_LIMIT,value: makingAmount}() (src/AggregationRouterV5.sol#3642-3643)
+     		- _WETH.deposit{value: takingAmount}() (src/AggregationRouterV5.sol#3648-3649)
+     		- _WETH.transfer(maker,takingAmount) (src/AggregationRouterV5.sol#3649-3651)
+     	External calls sending eth:
+     	- (filledMakingAmount,filledTakingAmount) = _fillOrderRFQTo(order,flagsAndAmount,target) (src/AggregationRouterV5.sol#3594-3597)
+     		- (success,None) = target.call{gas: _RAW_CALL_GAS_LIMIT,value: makingAmount}() (src/AggregationRouterV5.sol#3642-3643)
+     		- _WETH.deposit{value: takingAmount}() (src/AggregationRouterV5.sol#3648-3649)
+     	Event emitted after the call(s):
+     	- OrderFilledRFQ(orderHash,filledMakingAmount) (src/AggregationRouterV5.sol#3597-3599)
+
+  4. return-bomb (confidence: Medium)
+     OrderRFQMixin._fillOrderRFQTo(OrderRFQLib.OrderRFQ,uint256,address) (src/AggregationRouterV5.sol#3600-3656) tries to limit the gas of an external call that controls implicit decoding
+     	(success,None) = target.call{gas: _RAW_CALL_GAS_LIMIT,value: makingAmount}() (src/AggregationRouterV5.sol#3642-3643)
+
+  5. timestamp (confidence: Medium)
+     PredicateHelper.timestampBelow(uint256) (src/AggregationRouterV5.sol#3907-3914) uses timestamp for comparisons
+     	Dangerous comparisons:
+     	- block.timestamp < time (src/AggregationRouterV5.sol#3912)
+
+  6. timestamp (confidence: Medium)
+     OrderRFQMixin._fillOrderRFQTo(OrderRFQLib.OrderRFQ,uint256,address) (src/AggregationRouterV5.sol#3600-3656) uses timestamp for comparisons
+     	Dangerous comparisons:
+     	- expiration != 0 && block.timestamp > expiration (src/AggregationRouterV5.sol#3609)
+
+  7. timestamp (confidence: Medium)
+     PredicateHelper.timestampBelowAndNonceEquals(uint256) (src/AggregationRouterV5.sol#3926-3934) uses timestamp for comparisons
+     	Dangerous comparisons:
+     	- timestampBelow(_time) && nonceEquals(_account,_nonce) (src/AggregationRouterV5.sol#3933)
+
+──────────────────────────────────────────────────────────────────────
+  [INFORMATIONAL]
+──────────────────────────────────────────────────────────────────────
+
+  1. assembly (confidence: High)
+     StringUtil.toHex(bytes) (src/AggregationRouterV5.sol#688-751) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#690-751)
+
+  2. assembly (confidence: High)
+     SafeERC20._makeCalldataCall(IERC20,bytes4,bytes) (src/AggregationRouterV5.sol#385-402) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#388-402)
+
+  3. assembly (confidence: High)
+     RevertReasonForwarder.reRevert() (src/AggregationRouterV5.sol#214-226) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#218-226)
+
+  4. assembly (confidence: High)
+     ArgumentsDecoder.decodeTailCalldata(bytes,uint256) (src/AggregationRouterV5.sol#3782-3802) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3795-3802)
+
+  5. assembly (confidence: High)
+     SafeERC20._makeCall(IERC20,bytes4,address,uint256) (src/AggregationRouterV5.sol#369-385) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#372-385)
+
+  6. assembly (confidence: High)
+     ECDSA.toEthSignedMessageHash(bytes32) (src/AggregationRouterV5.sol#3134-3147) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3141-3147)
+
+  7. assembly (confidence: High)
+     AggregationRouterV5._unoswap.asm_0.swap() (src/AggregationRouterV5.sol#1135-1172) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1135-1172)
+
+  8. assembly (confidence: High)
+     OrderRFQLib.hash(OrderRFQLib.OrderRFQ,bytes32) (src/AggregationRouterV5.sol#3175-3185) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3181-3184)
+
+  9. assembly (confidence: High)
+     PredicateHelper._staticcallForUint(address,bytes) (src/AggregationRouterV5.sol#3991-4001) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3993-4001)
+
+  10. assembly (confidence: High)
+     ECDSA.recover(bytes32,bytes32,bytes32) (src/AggregationRouterV5.sol#2953-2979) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#2959-2979)
+
+  11. assembly (confidence: High)
+     ECDSA.recover(bytes32,bytes) (src/AggregationRouterV5.sol#2999-3015) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3000-3015)
+
+  12. assembly (confidence: High)
+     OrderLib.hash(OrderLib.Order,bytes32) (src/AggregationRouterV5.sol#3737-3763) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3740-3761)
+
+  13. assembly (confidence: High)
+     Address.verifyCallResult(bool,bytes,string) (src/AggregationRouterV5.sol#1517-1535) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1531-1534)
+
+  14. assembly (confidence: High)
+     UniERC20._uniDecode(IERC20,bytes4,bytes4) (src/AggregationRouterV5.sol#865-904) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#887-889)
+     	- INLINE ASM (src/AggregationRouterV5.sol#898-901)
+
+  15. assembly (confidence: High)
+     ECDSA.isValidSignature(address,bytes32,bytes32,bytes32) (src/AggregationRouterV5.sol#3090-3114) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3100-3114)
+
+  16. assembly (confidence: High)
+     ECDSA.isValidSignature65(address,bytes32,bytes32,bytes32) (src/AggregationRouterV5.sol#3114-3134) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3123-3134)
+
+  17. assembly (confidence: High)
+     ECDSA.isValidSignature(address,bytes32,uint8,bytes32,bytes32) (src/AggregationRouterV5.sol#3068-3090) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3072-3090)
+
+  18. assembly (confidence: High)
+     UnoswapV3Router.uniswapV3SwapCallback(int256,int256,bytes) (src/AggregationRouterV5.sol#2782-2853) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#2783-2853)
+
+  19. assembly (confidence: High)
+     UnoswapRouter._unoswap.asm_0.reRevert() (src/AggregationRouterV5.sol#1120-1124) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1120-1124)
+
+  20. assembly (confidence: High)
+     ECDSA.toTypedDataHash(bytes32,bytes32) (src/AggregationRouterV5.sol#3147-3161) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3153-3161)
+
+  21. assembly (confidence: High)
+     StringUtil.toHex.asm_0._toHex16() (src/AggregationRouterV5.sol#691-731) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#691-731)
+
+  22. assembly (confidence: High)
+     AggregationRouterV5.uniswapV3SwapCallback.asm_0.validateERC20Transfer() (src/AggregationRouterV5.sol#2789-2798) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#2789-2798)
+
+  23. assembly (confidence: High)
+     UnoswapRouter._unoswap.asm_0.swap() (src/AggregationRouterV5.sol#1135-1172) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1135-1172)
+
+  24. assembly (confidence: High)
+     AggregationRouterV5._unoswap.asm_0.reRevert() (src/AggregationRouterV5.sol#1120-1124) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1120-1124)
+
+  25. assembly (confidence: High)
+     UnoswapV3Router.uniswapV3SwapCallback.asm_0.reRevert() (src/AggregationRouterV5.sol#2785-2789) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#2785-2789)
+
+  26. assembly (confidence: High)
+     ECDSA.recover(bytes32,uint8,bytes32,bytes32) (src/AggregationRouterV5.sol#2932-2953) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#2936-2953)
+
+  27. assembly (confidence: High)
+     ArgumentsDecoder.decodeUint256(bytes,uint256) (src/AggregationRouterV5.sol#3765-3772) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3769-3772)
+
+  28. assembly (confidence: High)
+     UnoswapRouter._unoswap(address,IERC20,uint256,uint256,uint256[]) (src/AggregationRouterV5.sol#1113-1258) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1118-1255)
+
+  29. assembly (confidence: High)
+     AggregationRouterV5.uniswapV3SwapCallback.asm_0.reRevert() (src/AggregationRouterV5.sol#2785-2789) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#2785-2789)
+
+  30. assembly (confidence: High)
+     UnoswapRouter._unoswap.asm_0.validateERC20Transfer() (src/AggregationRouterV5.sol#1124-1135) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1124-1135)
+
+  31. assembly (confidence: High)
+     UnoswapV3Router.uniswapV3SwapCallback.asm_0.validateERC20Transfer() (src/AggregationRouterV5.sol#2789-2798) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#2789-2798)
+
+  32. assembly (confidence: High)
+     ECDSA.isValidSignature(address,bytes32,bytes) (src/AggregationRouterV5.sol#3050-3068) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3056-3068)
+
+  33. assembly (confidence: High)
+     SafeERC20.safeTransferFrom(IERC20,address,address,uint256) (src/AggregationRouterV5.sol#308-327) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#315-326)
+
+  34. assembly (confidence: High)
+     ClipperRouter.clipperSwapTo(IClipperExchangeInterface,address,IERC20,IERC20,uint256,uint256,uint256,bytes32,bytes32) (src/AggregationRouterV5.sol#503-652) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#525-541)
+     	- INLINE ASM (src/AggregationRouterV5.sol#554-572)
+     	- INLINE ASM (src/AggregationRouterV5.sol#578-600)
+     	- INLINE ASM (src/AggregationRouterV5.sol#608-624)
+     	- INLINE ASM (src/AggregationRouterV5.sol#632-651)
+
+  35. assembly (confidence: High)
+     ArgumentsDecoder.decodeSelector(bytes) (src/AggregationRouterV5.sol#3772-3782) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3779-3782)
+
+  36. assembly (confidence: High)
+     ArgumentsDecoder.decodeTargetAndCalldata(bytes) (src/AggregationRouterV5.sol#3802-3814) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#3806-3814)
+
+  37. assembly (confidence: High)
+     GenericRouter._execute(IAggregationExecutor,address,uint256,bytes) (src/AggregationRouterV5.sol#1009-1023) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1014-1023)
+
+  38. assembly (confidence: High)
+     OrderMixin._callTransferFrom(address,address,address,uint256,bytes) (src/AggregationRouterV5.sol#4474-4489) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#4478-4489)
+
+  39. assembly (confidence: High)
+     AggregationRouterV5._unoswap.asm_0.validateERC20Transfer() (src/AggregationRouterV5.sol#1124-1135) uses assembly
+     	- INLINE ASM (src/AggregationRouterV5.sol#1124-1135)
+
+  40. pragma (confidence: High)
+     3 different versions of Solidity are used:
+     	- Version constraint 0.8.17 is used by:
+     		-0.8.17 (src/AggregationRouterV5.sol#70-72)
+     		-0.8.17 (src/AggregationRouterV5.sol#87)
+     		-0.8.17 (src/AggregationRouterV5.sol#407)
+     		-0.8.17 (src/AggregationRouterV5.sol#653)
+     		-0.8.17 (src/AggregationRouterV5.sol#905)
+     		-0.8.17 (src/AggregationRouterV5.sol#1026)
+     		-0.8.17 (src/AggregationRouterV5.sol#1261-1262)
+     		-0.8.17 (src/AggregationRouterV5.sol#1307-1308)
+     		-0.8.17 (src/AggregationRouterV5.sol#2637-2638)
+     		-0.8.17 (src/AggregationRouterV5.sol#3161)
+     		-0.8.17 (src/AggregationRouterV5.sol#3371)
+     		-0.8.17 (src/AggregationRouterV5.sol#3377)
+     		-0.8.17 (src/AggregationRouterV5.sol#3396)
+     		-0.8.17 (src/AggregationRouterV5.sol#3664)
+     		-0.8.17 (src/AggregationRouterV5.sol#3764)
+     		-0.8.17 (src/AggregationRouterV5.sol#3815-3816)
+     		-0.8.17 (src/AggregationRouterV5.sol#3843)
+     		-0.8.17 (src/AggregationRouterV5.sol#4002)
+     		-0.8.17 (src/AggregationRouterV5.sol#4146)
+     		-0.8.17 (src/AggregationRouterV5.sol#4166)
+     		-0.8.17 (src/AggregationRouterV5.sol#4614)
+     	- Version constraint ^0.8.0 is used by:
+     		-^0.8.0 (src/AggregationRouterV5.sol#99)
+     		-^0.8.0 (src/AggregationRouterV5.sol#122)
+     		-^0.8.0 (src/AggregationRouterV5.sol#199-200)
+     		-^0.8.0 (src/AggregationRouterV5.sol#214)
+     		-^0.8.0 (src/AggregationRouterV5.sol#230)
+     		-^0.8.0 (src/AggregationRouterV5.sol#292)
+     		-^0.8.0 (src/AggregationRouterV5.sol#403-404)
+     		-^0.8.0 (src/AggregationRouterV5.sol#659)
+     		-^0.8.0 (src/AggregationRouterV5.sol#676)
+     		-^0.8.0 (src/AggregationRouterV5.sol#753)
+     		-^0.8.0 (src/AggregationRouterV5.sol#774)
+     		-^0.8.0 (src/AggregationRouterV5.sol#1540-1541)
+     		-^0.8.0 (src/AggregationRouterV5.sol#2876-2877)
+     		-^0.8.0 (src/AggregationRouterV5.sol#2889-2890)
+     		-^0.8.0 (src/AggregationRouterV5.sol#2905)
+     		-^0.8.0 (src/AggregationRouterV5.sol#3189-3190)
+     		-^0.8.0 (src/AggregationRouterV5.sol#3250-3251)
+     		-^0.8.0 (src/AggregationRouterV5.sol#4535-4536)
+     		-^0.8.0 (src/AggregationRouterV5.sol#4551)
+     	- Version constraint ^0.8.1 is used by:
+     		-^0.8.1 (src/AggregationRouterV5.sol#1339)
+
+  41. cyclomatic-complexity (confidence: High)
+     OrderMixin.fillOrderTo(OrderLib.Order,bytes,bytes,uint256,uint256,uint256,address) (src/AggregationRouterV5.sol#4298-4470) has a high cyclomatic complexity (31).
+
+  42. cyclomatic-complexity (confidence: High)
+     ClipperRouter.clipperSwapTo(IClipperExchangeInterface,address,IERC20,IERC20,uint256,uint256,uint256,bytes32,bytes32) (src/AggregationRouterV5.sol#503-652) has a high cyclomatic complexity (16).
+
+  43. cyclomatic-complexity (confidence: High)
+     OrderRFQMixin._fillOrderRFQTo(OrderRFQLib.OrderRFQ,uint256,address) (src/AggregationRouterV5.sol#3600-3656) has a high cyclomatic complexity (14).
+
+  44. cyclomatic-complexity (confidence: High)
+     UnoswapRouter._unoswap(address,IERC20,uint256,uint256,uint256[]) (src/AggregationRouterV5.sol#1113-1258) has a high cyclomatic complexity (12).
+
+  45. cyclomatic-complexity (confidence: High)
+     GenericRouter.swap(IAggregationExecutor,GenericRouter.SwapDescription,bytes,bytes) (src/AggregationRouterV5.sol#953-1008) has a high cyclomatic complexity (15).
+
+  46. dead-code (confidence: Medium)
+     EIP712._hashTypedDataV4(bytes32) (src/AggregationRouterV5.sol#3368-3370) is never used and should be removed
+
+  47. dead-code (confidence: Medium)
+     UnoswapRouter._unoswap.asm_0.swap() (src/AggregationRouterV5.sol#1135-1172) is never used and should be removed
+
+  48. dead-code (confidence: Medium)
+     UnoswapRouter._unoswap.asm_0.validateERC20Transfer() (src/AggregationRouterV5.sol#1124-1135) is never used and should be removed
+
+  49. dead-code (confidence: Medium)
+     OnlyWethReceiver._receive() (src/AggregationRouterV5.sol#2880-2885) is never used and should be removed
+
+  50. dead-code (confidence: Medium)
+     Context._msgData() (src/AggregationRouterV5.sol#4549-4550) is never used and should be removed
+
+  51. dead-code (confidence: Medium)
+     UnoswapRouter._unoswap.asm_0.reRevert() (src/AggregationRouterV5.sol#1120-1124) is never used and should be removed
+
+  52. dead-code (confidence: Medium)
+     UnoswapV3Router.uniswapV3SwapCallback.asm_0.reRevert() (src/AggregationRouterV5.sol#2785-2789) is never used and should be removed
+
+  53. dead-code (confidence: Medium)
+     UnoswapV3Router.uniswapV3SwapCallback.asm_0.validateERC20Transfer() (src/AggregationRouterV5.sol#2789-2798) is never used and should be removed
+
+  54. solc-version (confidence: High)
+     Version constraint 0.8.17 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)
+     	- VerbatimInvalidDeduplication
+     	- FullInlinerNonExpressionSplitArgumentEvaluationOrder
+     	- MissingSideEffectsOnSelectorAccess.
+     It is used by:
+     	- 0.8.17 (src/AggregationRouterV5.sol#70-72)
+     	- 0.8.17 (src/AggregationRouterV5.sol#87)
+     	- 0.8.17 (src/AggregationRouterV5.sol#407)
+     	- 0.8.17 (src/AggregationRouterV5.sol#653)
+     	- 0.8.17 (src/AggregationRouterV5.sol#905)
+     	- 0.8.17 (src/AggregationRouterV5.sol#1026)
+     	- 0.8.17 (src/AggregationRouterV5.sol#1261-1262)
+     	- 0.8.17 (src/AggregationRouterV5.sol#1307-1308)
+     	- 0.8.17 (src/AggregationRouterV5.sol#2637-2638)
+     	- 0.8.17 (src/AggregationRouterV5.sol#3161)
+     	- 0.8.17 (src/AggregationRouterV5.sol#3371)
+     	- 0.8.17 (src/AggregationRouterV5.sol#3377)
+     	- 0.8.17 (src/AggregationRouterV5.sol#3396)
+     	- 0.8.17 (src/AggregationRouterV5.sol#3664)
+     	- 0.8.17 (src/AggregationRouterV5.sol#3764)
+     	- 0.8.17 (src/AggregationRouterV5.sol#3815-3816)
+     	- 0.8.17 (src/AggregationRouterV5.sol#3843)
+     	- 0.8.17 (src/AggregationRouterV5.sol#4002)
+     	- 0.8.17 (src/AggregationRouterV5.sol#4146)
+     	- 0.8.17 (src/AggregationRouterV5.sol#4166)
+     	- 0.8.17 (src/AggregationRouterV5.sol#4614)
+
+  55. solc-version (confidence: High)
+     Version constraint ^0.8.1 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)
+     	- FullInlinerNonExpressionSplitArgumentEvaluationOrder
+     	- MissingSideEffectsOnSelectorAccess
+     	- AbiReencodingHeadOverflowWithStaticArrayCleanup
+     	- DirtyBytesArrayToStorage
+     	- DataLocationChangeInInternalOverride
+     	- NestedCalldataArrayAbiReencodingSizeValidation
+     	- SignedImmutables
+     	- ABIDecodeTwoDimensionalArrayMemory
+     	- KeccakCaching.
+     It is used by:
+     	- ^0.8.1 (src/AggregationRouterV5.sol#1339)
+
+  56. solc-version (confidence: High)
+     Version constraint ^0.8.0 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)
+     	- FullInlinerNonExpressionSplitArgumentEvaluationOrder
+     	- MissingSideEffectsOnSelectorAccess
+     	- AbiReencodingHeadOverflowWithStaticArrayCleanup
+     	- DirtyBytesArrayToStorage
+     	- DataLocationChangeInInternalOverride
+     	- NestedCalldataArrayAbiReencodingSizeValidation
+     	- SignedImmutables
+     	- ABIDecodeTwoDimensionalArrayMemory
+     	- KeccakCaching.
+     It is used by:
+     	- ^0.8.0 (src/AggregationRouterV5.sol#99)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#122)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#199-200)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#214)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#230)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#292)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#403-404)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#659)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#676)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#753)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#774)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#1540-1541)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#2876-2877)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#2889-2890)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#2905)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#3189-3190)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#3250-3251)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#4535-4536)
+     	- ^0.8.0 (src/AggregationRouterV5.sol#4551)
+
+  57. low-level-calls (confidence: High)
+     Low level call in OrderMixin.simulate(address,bytes) (src/AggregationRouterV5.sol#4213-4222):
+     	- (success,result) = target.delegatecall(data) (src/AggregationRouterV5.sol#4217-4222)
+
+  58. low-level-calls (confidence: High)
+     Low level call in UniERC20.uniTransferFrom(IERC20,address,address,uint256) (src/AggregationRouterV5.sol#831-853):
+     	- (success,None) = from.call{gas: _RAW_CALL_GAS_LIMIT,value: msg.value - amount}() (src/AggregationRouterV5.sol#844-845)
+
+  59. low-level-calls (confidence: High)
+     Low level call in Address.functionStaticCall(address,bytes,string) (src/AggregationRouterV5.sol#1476-1485):
+     	- (success,returndata) = target.staticcall(data) (src/AggregationRouterV5.sol#1482-1483)
+
+  60. low-level-calls (confidence: High)
+     Low level call in Address.functionDelegateCall(address,bytes,string) (src/AggregationRouterV5.sol#1500-1511):
+     	- (success,returndata) = target.delegatecall(data) (src/AggregationRouterV5.sol#1506-1507)
+
+  61. low-level-calls (confidence: High)
+     Low level call in Address.functionCallWithValue(address,bytes,uint256,string) (src/AggregationRouterV5.sol#1444-1458):
+     	- (success,returndata) = target.call{value: value}(data) (src/AggregationRouterV5.sol#1452-1456)
+
+  62. low-level-calls (confidence: High)
+     Low level call in UniERC20._uniDecode(IERC20,bytes4,bytes4) (src/AggregationRouterV5.sol#865-904):
+     	- (success,data) = address(token).staticcall{gas: 20000}(abi.encodeWithSelector(lowerCaseSelector)) (src/AggregationRouterV5.sol#873-877)
+     	- (success,data) = address(token).staticcall{gas: 20000}(abi.encodeWithSelector(upperCaseSelector)) (src/AggregationRouterV5.sol#877-878)
+
+  63. low-level-calls (confidence: High)
+     Low level call in OrderRFQMixin._fillOrderRFQTo(OrderRFQLib.OrderRFQ,uint256,address) (src/AggregationRouterV5.sol#3600-3656):
+     	- (success,None) = target.call{gas: _RAW_CALL_GAS_LIMIT,value: makingAmount}() (src/AggregationRouterV5.sol#3642-3643)
+
+  64. low-level-calls (confidence: High)
+     Low level call in OrderMixin._callGetter(bytes,uint256,uint256,uint256,uint256,bytes32) (src/AggregationRouterV5.sol#4512-4534):
+     	- (success,result) = target.staticcall(abi.encodePacked(data,requestedAmount,remainingMakingAmount,orderHash)) (src/AggregationRouterV5.sol#4529-4530)
+
+  65. low-level-calls (confidence: High)
+     Low level call in OrderMixin.fillOrderTo(OrderLib.Order,bytes,bytes,uint256,uint256,uint256,address) (src/AggregationRouterV5.sol#4298-4470):
+     	- (success,None) = msg.sender.call{value: msg.value - actualTakingAmount}() (src/AggregationRouterV5.sol#4445-4446)
+
+  66. low-level-calls (confidence: High)
+     Low level call in Address.sendValue(address,uint256) (src/AggregationRouterV5.sol#1391-1397):
+     	- (success,None) = recipient.call{value: amount}() (src/AggregationRouterV5.sol#1395)
+
+  67. low-level-calls (confidence: High)
+     Low level call in UniERC20.uniTransfer(IERC20,address,uint256) (src/AggregationRouterV5.sol#815-830):
+     	- (success,None) = to.call{gas: _RAW_CALL_GAS_LIMIT,value: amount}() (src/AggregationRouterV5.sol#823-825)
+
+  68. naming-convention (confidence: High)
+     Parameter AggregationRouterV5._unoswap.asm_0.swap().emptyPtr__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  69. naming-convention (confidence: High)
+     Parameter UnoswapRouter._unoswap.asm_0.swap().numerator__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  70. naming-convention (confidence: High)
+     Parameter AggregationRouterV5.uniswapV3SwapCallback.asm_0.validateERC20Transfer().status_uniswapV3SwapCallback_asm_0_validateERC20Transfer (src/AggregationRouterV5.sol#2789) is not in mixedCase
+
+  71. naming-convention (confidence: High)
+     Parameter UnoswapRouter._unoswap.asm_0.swap().emptyPtr__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  72. naming-convention (confidence: High)
+     Parameter AggregationRouterV5._unoswap.asm_0.swap().numerator__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  73. naming-convention (confidence: High)
+     Parameter UnoswapRouter._unoswap.asm_0.swap().to__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  74. naming-convention (confidence: High)
+     Variable OrderMixin._WETH (src/AggregationRouterV5.sol#4193) is not in mixedCase
+
+  75. naming-convention (confidence: High)
+     Function IERC20MetadataUppercase.NAME() (src/AggregationRouterV5.sol#660-661) is not in mixedCase
+
+  76. naming-convention (confidence: High)
+     Parameter AggregationRouterV5._unoswap.asm_0.swap().to__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  77. naming-convention (confidence: High)
+     Variable OrderRFQMixin._WETH (src/AggregationRouterV5.sol#3426-3427) is not in mixedCase
+
+  78. naming-convention (confidence: High)
+     Variable EIP712._TYPE_HASH (src/AggregationRouterV5.sol#3302-3304) is not in mixedCase
+
+  79. naming-convention (confidence: High)
+     Parameter UnoswapV3Router.uniswapV3SwapCallback.asm_0.validateERC20Transfer().status_uniswapV3SwapCallback_asm_0_validateERC20Transfer (src/AggregationRouterV5.sol#2789) is not in mixedCase
+
+  80. naming-convention (confidence: High)
+     Parameter AggregationRouterV5._unoswap.asm_0.swap().swapAmount__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  81. naming-convention (confidence: High)
+     Parameter UnoswapRouter._unoswap.asm_0.swap().swapAmount__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  82. naming-convention (confidence: High)
+     Function IERC20MetadataUppercase.SYMBOL() (src/AggregationRouterV5.sol#663-667) is not in mixedCase
+
+  83. naming-convention (confidence: High)
+     Variable EIP712._CACHED_THIS (src/AggregationRouterV5.sol#3297-3299) is not in mixedCase
+
+  84. naming-convention (confidence: High)
+     Function IERC20Permit.DOMAIN_SEPARATOR() (src/AggregationRouterV5.sol#287-289) is not in mixedCase
+
+  85. naming-convention (confidence: High)
+     Parameter AggregationRouterV5._unoswap.asm_0.validateERC20Transfer().status__unoswap_asm_0_validateERC20Transfer (src/AggregationRouterV5.sol#1124) is not in mixedCase
+
+  86. naming-convention (confidence: High)
+     Variable EIP712._CACHED_CHAIN_ID (src/AggregationRouterV5.sol#3296-3297) is not in mixedCase
+
+  87. naming-convention (confidence: High)
+     Variable ClipperRouter._WETH (src/AggregationRouterV5.sol#436) is not in mixedCase
+
+  88. naming-convention (confidence: High)
+     Variable UnoswapV3Router._WETH (src/AggregationRouterV5.sol#2678-2680) is not in mixedCase
+
+  89. naming-convention (confidence: High)
+     Parameter AggregationRouterV5._unoswap.asm_0.swap().pair__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  90. naming-convention (confidence: High)
+     Variable EIP712._HASHED_NAME (src/AggregationRouterV5.sol#3299-3301) is not in mixedCase
+
+  91. naming-convention (confidence: High)
+     Parameter UnoswapRouter._unoswap.asm_0.swap().reversed__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  92. naming-convention (confidence: High)
+     Parameter UnoswapRouter._unoswap.asm_0.validateERC20Transfer().status__unoswap_asm_0_validateERC20Transfer (src/AggregationRouterV5.sol#1124) is not in mixedCase
+
+  93. naming-convention (confidence: High)
+     Parameter AggregationRouterV5._unoswap.asm_0.swap().reversed__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  94. naming-convention (confidence: High)
+     Variable EIP712._CACHED_DOMAIN_SEPARATOR (src/AggregationRouterV5.sol#3293-3295) is not in mixedCase
+
+  95. naming-convention (confidence: High)
+     Parameter UnoswapRouter._unoswap.asm_0.swap().pair__unoswap_asm_0_swap (src/AggregationRouterV5.sol#1136) is not in mixedCase
+
+  96. naming-convention (confidence: High)
+     Variable OnlyWethReceiver._WETH (src/AggregationRouterV5.sol#2877-2878) is not in mixedCase
+
+  97. naming-convention (confidence: High)
+     Variable EIP712._HASHED_VERSION (src/AggregationRouterV5.sol#3301-3302) is not in mixedCase
+
+  98. too-many-digits (confidence: Medium)
+     AggregationRouterV5._unoswap.asm_0.validateERC20Transfer() (src/AggregationRouterV5.sol#1124-1135) uses literals with too many digits:
+     	- mstore(uint256,uint256)(0,0xf27f64e400000000000000000000000000000000000000000000000000000000) (src/AggregationRouterV5.sol#1129-1133)
+
+  99. too-many-digits (confidence: Medium)
+     ECDSA.toEthSignedMessageHash(bytes32) (src/AggregationRouterV5.sol#3134-3147) uses literals with too many digits:
+     	- mstore(uint256,uint256)(0,0x19457468657265756d205369676e6564204d6573736167653a0a333200000000) (src/AggregationRouterV5.sol#3142-3144)
+
+  100. too-many-digits (confidence: Medium)
+     StringUtil.toHex.asm_0._toHex16() (src/AggregationRouterV5.sol#691-731) uses literals with too many digits:
+     	- output_toHex_asm_0__toHex16 = output_toHex_asm_0__toHex16 & 0xFF000000FF000000FF000000FF000000FF000000FF000000FF000000FF000000 | output_toHex_asm_0__toHex16 & 0x00FF000000FF000000FF000000FF000000FF000000FF000000FF000000FF0000 >> 8 (src/AggregationRouterV5.sol#715-719)
+
+  101. too-many-digits (confidence: Medium)
+     UnoswapRouter._unoswap(address,IERC20,uint256,uint256,uint256[]) (src/AggregationRouterV5.sol#1113-1258) uses literals with too many digits:
+     	- mstore(uint256,uint256)(0,0x1841b4e100000000000000000000000000000000000000000000000000000000) (src/AggregationRouterV5.sol#1185-1187)
+
+  102. too-many-digits (confidence: Medium)
+     StringUtil.toHex.asm_0._toHex16() (src/AggregationRouterV5.sol#691-731) uses literals with too many digits:
+     	- output_toHex_asm_0__toHex16 = output_toHex_asm_0__toHex16 & 0xFFFFFFFF000000000000000000000000FFFFFFFF000000000000000000000000 | output_toHex_asm_0__toHex16 & 0x00000000FFFFFFFF000000000000000000000000FFFFFFFF0000000000000000 >> 32 (src/AggregationRouterV5.sol#702-710)
+
+  103. too-many-digits (confidence: Medium)
+     StringUtil.toHex.asm_0._toHex16() (src/AggregationRouterV5.sol#691-731) uses literals with too many digits:
+     	- output_toHex_asm_0__toHex16 = input_toHex_asm_0__toHex16 & 0xFFFFFFFFFFFFFFFF000000000000000000000000000000000000000000000000 | input_toHex_asm_0__toHex16 & 0x0000000000000000FFFFFFFFFFFFFFFF00000000000000000000000000000000 >> 64 (src/AggregationRouterV5.sol#692-702)
+
+  104. too-many-digits (confidence: Medium)
+     UnoswapV3Router.uniswapV3SwapCallback(int256,int256,bytes) (src/AggregationRouterV5.sol#2782-2853) uses literals with too many digits:
+     	- mstore(uint256,uint256)(0,0xb2c0272200000000000000000000000000000000000000000000000000000000) (src/AggregationRouterV5.sol#2828-2830)
+
+  105. too-many-digits (confidence: Medium)
+     AggregationRouterV5.uniswapV3SwapCallback.asm_0.validateERC20Transfer() (src/AggregationRouterV5.sol#2789-2798) uses literals with too many digits:
+     	- mstore(uint256,uint256)(0,0xf27f64e400000000000000000000000000000000000000000000000000000000) (src/AggregationRouterV5.sol#2796-2797)
+
+  106. too-many-digits (confidence: Medium)
+     UnoswapRouter._unoswap(address,IERC20,uint256,uint256,uint256[]) (src/AggregationRouterV5.sol#1113-1258) uses literals with too many digits:
+     	- mstore(uint256,uint256)(0,0x1841b4e100000000000000000000000000000000000000000000000000000000) (src/AggregationRouterV5.sol#1201)
+
+  107. too-many-digits (confidence: Medium)
+     AggregationRouterV5._unoswap.asm_0.swap() (src/AggregationRouterV5.sol#1135-1172) uses literals with too many digits:
+     	- mstore(uint256,uint256)(0,0x85cd58dc00000000000000000000000000000000000000000000000000000000) (src/AggregationRouterV5.sol#1146-1148)
+
+  108. too-many-digits (confidence: Medium)
+     UnoswapRouter._unoswap(address,IERC20,uint256,uint256,uint256[]) (src/AggregationRouterV5.sol#1113-1258) uses literals with too many digits:
+     	- mstore(uint256,uint256)(0,0xcf0b4d3a00000000000000000000000000000000000000000000000000000000) (src/AggregationRouterV5.sol#1176-1177)
+
+  109. too-many-digits (confidence: Medium)
+     StringUtil.toHex.asm_0._toHex16() (src/AggregationRouterV5.sol#691-731) uses literals with too many digits:
+     	- output_toHex_asm_0__toHex16 = output_toHex_asm_0__toHex16 & 0xFFFF000000000000FFFF000000000000FFFF000000000000FFFF000000000000 | output_toHex_asm_0__toHex16 & 0x0000FFFF000000000000FFFF000000000000FFFF000000000000FFFF00000000 >> 16 (src/AggregationRouterV5.sol#710-715)
+
+  110. too-many-digits (confidence: Medium)
+     ECDSA.toTypedDataHash(bytes32,bytes32) (src/AggregationRouterV5.sol#3147-3161) uses literals with too many digits:
+     	- mstore(uint256,uint256)(ptr_toTypedDataHash_asm_0,0x1901000000000000000000000000000000000000000000000000000000000000) (src/AggregationRouterV5.sol#3155-3158)
+
+======================================================================

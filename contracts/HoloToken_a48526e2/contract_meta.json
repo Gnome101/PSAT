@@ -1,0 +1,9 @@
+{
+  "address": "0x6c6ee5e31d828de241282b9606c8e98ea48526e2",
+  "contract_name": "HoloToken",
+  "compiler_version": "v0.4.18+commit.9cf6e910",
+  "optimization_used": "1",
+  "runs": "200",
+  "evm_version": "Default",
+  "license": ""
+}

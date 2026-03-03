@@ -13,14 +13,20 @@ Currently, addresses are fed into the pipeline via `addresses.json` and results 
 Each run now attempts:
 - static dependent-contract discovery (`dependencies.json`)
 - dynamic trace-based dependency discovery (`dynamic_dependencies.json`)
+- dynamic call graph export (`dynamic_call_graph.mmd`, `dynamic_call_graph.dot`, `dynamic_call_graph.html`)
+  - HTML includes contract-level function/selector impact view (state variables + traced dependency interactions)
 
 CLI flags:
 - `--no-deps` skips all dependency discovery
 - `--deps-rpc <url>` uses a specific RPC for static dependency discovery
 - `--no-dynamic-deps` skips dynamic dependency discovery
 - `--dynamic-rpc <url>` uses a tracing-enabled RPC for dynamic dependency discovery
+- `--fetch-dependency-sources` fetches verified source for discovered dependencies (static and dynamic)
 - `--dynamic-tx-limit <n>` traces up to `n` representative transactions
 - `--dynamic-tx-hash <hash>` traces an explicit transaction hash (repeatable)
+
+To generate call graphs for existing outputs under `contracts/`:
+- `uv run python tools/render_call_graphs.py`
 
 ## Development (uv)
 

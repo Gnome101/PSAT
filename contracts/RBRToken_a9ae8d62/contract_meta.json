@@ -1,0 +1,9 @@
+{
+  "address": "0x2c431766e48ec4a17dc052d9d3fef6b6a9ae8d62",
+  "contract_name": "RBRToken",
+  "compiler_version": "v0.8.30+commit.73712a01",
+  "optimization_used": "1",
+  "runs": "200",
+  "evm_version": "Default",
+  "license": ""
+}

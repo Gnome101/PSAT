@@ -1,0 +1,9 @@
+{
+  "address": "0xd4419c2d3daa986dc30444fa333a846be44fd1eb",
+  "contract_name": "FixedToken",
+  "compiler_version": "v0.8.12+commit.f00d7308",
+  "optimization_used": "1",
+  "runs": "200",
+  "evm_version": "Default",
+  "license": ""
+}

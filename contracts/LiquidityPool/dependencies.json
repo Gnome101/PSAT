@@ -1,0 +1,6 @@
+{
+  "address": "0x8765bb2f362a4b72e614df81e2841275b9358f8b",
+  "dependencies": [],
+  "rpc": "https://eth.llamarpc.com",
+  "network": "ethereum"
+}

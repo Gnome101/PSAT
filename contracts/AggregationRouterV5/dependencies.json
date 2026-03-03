@@ -1,0 +1,7 @@
+{
+  "address": "0x1111111254eeb25477b68fb85ed929f73a960582",
+  "dependencies": [
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
+  ],
+  "rpc": "https://eth-mainnet.g.alchemy.com/v2/UAc6fj_rHF4_e5nasJDa5"
+}
