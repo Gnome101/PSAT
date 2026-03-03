@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Minimal contract discovery by name using Blockscout search."""
+"""Contract discovery by name using Blockscout search.
+
+How it works:
+1. Queries Blockscout's search API across supported chains (Ethereum, Arbitrum,
+   Optimism, Polygon, Base) for the given contract/token name.
+2. Scores each result using mutually exclusive name/symbol matching tiers with a
+   length penalty for names much longer than the query (prevents scam tokens like
+   "$1,000 USDC Reward" from outranking real "USDC").
+3. Deduplicates same-address results across chains and collapses multi-chain
+   deployments into a single candidate.
+4. Returns ranked candidates with confidence scores, source links, and an
+   auto-selected best_candidate when one result clearly dominates.
+"""
 
 from __future__ import annotations
 
@@ -43,8 +55,8 @@ def _normalize_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
 
 
-def _tokenize_text(value: str) -> list[str]:
-    return [part for part in re.split(r"[^a-z0-9]+", value.lower()) if part]
+def _tokenize(value: str) -> set[str]:
+    return {part for part in re.split(r"[^a-z0-9]+", value.lower()) if part}
 
 
 def _is_evm_address(value: str) -> bool:
@@ -57,13 +69,6 @@ def _normalize_address(value: str) -> str:
 
 def _chain_sort_key(chain: str) -> tuple[int, str]:
     return (CHAIN_SORT_ORDER.get(chain, 50), chain)
-
-
-def _explorer_link(chain: str, address: str) -> str | None:
-    template = CHAIN_TO_EXPLORER.get(chain)
-    if not template:
-        return None
-    return template.format(address=address)
 
 
 def _safe_get_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -102,52 +107,55 @@ def _score_candidate(
     name_n = _normalize_text(name)
     symbol_n = _normalize_text(symbol or "")
 
-    query_tokens = set(_tokenize_text(query))
-    name_tokens = set(_tokenize_text(name))
-    symbol_tokens = set(_tokenize_text(symbol or ""))
+    query_tokens = _tokenize(query)
+    name_tokens = _tokenize(name)
 
     score = 0.0
     reasons: list[str] = []
 
-    if query_n and name_n:
-        if query_n == name_n:
-            score += 0.70
-            reasons.append("Exact name match")
-        elif query_n in name_n or name_n in query_n:
-            score += 0.45
-            reasons.append("Partial name match")
-
-    if query_tokens and name_tokens:
+    # --- Name matching (mutually exclusive tiers) ---
+    if query_n and name_n and query_n == name_n:
+        score += 0.55
+        reasons.append("Exact name match")
+    elif query_tokens and name_tokens and query_tokens.issubset(name_tokens):
+        # All query tokens found in name — penalize if name is much longer.
+        extra = len(name_tokens) - len(query_tokens)
+        if extra == 0:
+            score += 0.50
+            reasons.append("Exact token match")
+        elif extra <= 2:
+            score += 0.35
+            reasons.append("Close name match")
+        else:
+            score += 0.15
+            reasons.append(f"Substring match ({extra} extra tokens)")
+    elif query_tokens and name_tokens:
         overlap = len(query_tokens & name_tokens) / len(query_tokens)
-        if query_tokens.issubset(name_tokens):
-            score += 0.40
-            reasons.append("Name token match")
-        elif overlap >= 0.5:
-            score += 0.20
-            reasons.append(f"Name token overlap ({overlap:.2f})")
+        if overlap >= 0.5:
+            score += 0.10
+            reasons.append(f"Partial token overlap ({overlap:.0%})")
 
+    # --- Symbol matching (mutually exclusive) ---
     if query_n and symbol_n:
         if query_n == symbol_n:
-            score += 0.25
+            score += 0.20
             reasons.append("Exact symbol match")
         elif query_n in symbol_n or symbol_n in query_n:
-            score += 0.12
+            score += 0.08
             reasons.append("Partial symbol match")
 
-    if query_tokens and symbol_tokens and query_tokens.issubset(symbol_tokens):
-        score += 0.15
-        reasons.append("Symbol token match")
-
+    # --- Type bonus ---
     if item_type in {"metadata_tag", "contract"}:
-        score += 0.25
+        score += 0.20
         reasons.append(f"Explorer {item_type} match")
     elif item_type in {"token", "erc20", "erc721", "erc1155"}:
-        score += 0.08
+        score += 0.05
         reasons.append(f"Explorer {item_type} match")
 
+    # --- Verified ---
     if verified:
         score += 0.05
-        reasons.append("Verified contract on explorer")
+        reasons.append("Verified contract")
 
     return min(score, 0.99), reasons
 
@@ -156,7 +164,7 @@ def _search_blockscout(query: str, chain: str | None, per_chain_limit: int = 25)
     if chain:
         base_url = BLOCKSCOUT_BY_CHAIN.get(chain)
         if not base_url:
-            return [], [{"provider": "blockscout", "error": f"No endpoint configured for chain '{chain}'"}]
+            return [], [{"provider": "blockscout", "error": f"No endpoint for chain '{chain}'"}]
         targets = [(chain, base_url)]
     else:
         targets = sorted(BLOCKSCOUT_BY_CHAIN.items())
@@ -194,12 +202,10 @@ def _search_blockscout(query: str, chain: str | None, per_chain_limit: int = 25)
             if confidence <= 0:
                 continue
 
-            links: dict[str, str] = {
-                "blockscout": f"{base_url}/address/{address}",
-            }
-            explorer = _explorer_link(chain_name, address)
-            if explorer:
-                links["explorer"] = explorer
+            explorer_template = CHAIN_TO_EXPLORER.get(chain_name)
+            links: dict[str, str] = {"blockscout": f"{base_url}/address/{address}"}
+            if explorer_template:
+                links["explorer"] = explorer_template.format(address=address)
 
             candidates.append(
                 {
@@ -217,58 +223,33 @@ def _search_blockscout(query: str, chain: str | None, per_chain_limit: int = 25)
     return candidates, errors
 
 
-def _merge_same_chain_address(candidates: list[dict]) -> list[dict]:
-    by_key: dict[tuple[str, str], dict] = {}
+def _dedup_and_collapse(candidates: list[dict], collapse_chains: bool) -> list[dict]:
+    """Merge duplicate (chain, address) pairs and optionally collapse cross-chain."""
+    # Step 1: merge same (chain, address)
+    by_chain_addr: dict[tuple[str, str], dict] = {}
+    for c in candidates:
+        key = (c["chain"], c["address"])
+        existing = by_chain_addr.get(key)
+        if not existing or c["confidence"] > existing["confidence"]:
+            by_chain_addr[key] = c
+        elif existing:
+            existing["reasons"] = sorted(set(existing["reasons"] + c["reasons"]))
 
-    for candidate in candidates:
-        key = (candidate["chain"], candidate["address"])
-        existing = by_key.get(key)
-        if not existing:
-            by_key[key] = candidate
-            continue
+    if not collapse_chains:
+        return list(by_chain_addr.values())
 
-        if candidate["confidence"] > existing["confidence"]:
-            primary, secondary = candidate, existing
-        else:
-            primary, secondary = existing, candidate
-
-        by_key[key] = {
-            "display_name": primary["display_name"],
-            "symbol": primary["symbol"] or secondary["symbol"],
-            "address": primary["address"],
-            "chain": primary["chain"],
-            "confidence": max(primary["confidence"], secondary["confidence"]),
-            "source": "blockscout",
-            "reasons": sorted(set(existing["reasons"] + candidate["reasons"])),
-            "links": {**secondary["links"], **primary["links"]},
-        }
-
-    return list(by_key.values())
-
-
-def _collapse_cross_chain(candidates: list[dict]) -> list[dict]:
+    # Step 2: collapse same address across chains
     by_address: dict[str, list[dict]] = {}
-    for candidate in candidates:
-        by_address.setdefault(candidate["address"], []).append(candidate)
+    for c in by_chain_addr.values():
+        by_address.setdefault(c["address"], []).append(c)
 
     collapsed: list[dict] = []
     for address, group in by_address.items():
-        chains = sorted({candidate["chain"] for candidate in group}, key=_chain_sort_key)
-        primary = sorted(
-            group,
-            key=lambda c: (-c["confidence"], _chain_sort_key(c["chain"]), c["display_name"].lower()),
-        )[0]
-
-        reasons = sorted({reason for candidate in group for reason in candidate["reasons"]})
-        links = dict(primary["links"])
-        for candidate in group:
-            if "explorer" in candidate["links"]:
-                links[f"explorer_{candidate['chain']}"] = candidate["links"]["explorer"]
-            if "blockscout" in candidate["links"]:
-                links[f"blockscout_{candidate['chain']}"] = candidate["links"]["blockscout"]
-
+        primary = max(group, key=lambda c: (c["confidence"], -_chain_sort_key(c["chain"])[0]))
+        chains = sorted({c["chain"] for c in group}, key=_chain_sort_key)
+        reasons = sorted({r for c in group for r in c["reasons"]})
         if len(chains) > 1:
-            reasons.append(f"Found on multiple chains: {', '.join(chains)}")
+            reasons.append(f"Found on {len(chains)} chains: {', '.join(chains)}")
 
         collapsed.append(
             {
@@ -278,29 +259,13 @@ def _collapse_cross_chain(candidates: list[dict]) -> list[dict]:
                 "chain": primary["chain"] if len(chains) == 1 else "multi",
                 "confidence": primary["confidence"],
                 "source": "blockscout",
-                "reasons": sorted(set(reasons)),
-                "links": links,
-                "chains": chains if len(chains) > 1 else [],
+                "reasons": reasons,
+                "links": primary["links"],
+                **({"chains": chains} if len(chains) > 1 else {}),
             }
         )
 
     return collapsed
-
-
-def _rank(candidates: list[dict]) -> list[dict]:
-    return sorted(candidates, key=lambda c: (-c["confidence"], c["display_name"].lower(), c["address"]))
-
-
-def _auto_select(candidates: list[dict]) -> dict | None:
-    if not candidates:
-        return None
-    if len(candidates) == 1:
-        return candidates[0]
-    first = candidates[0]
-    second_score = candidates[1]["confidence"] if len(candidates) > 1 else 0.0
-    if first["confidence"] >= 0.90 and (first["confidence"] - second_score) >= 0.12:
-        return first
-    return None
 
 
 def search_contract_name(query: str, chain: str | None = None, limit: int = 10) -> dict[str, Any]:
@@ -316,13 +281,21 @@ def search_contract_name(query: str, chain: str | None = None, limit: int = 10) 
         raise ValueError("query looks like an address; this script only supports name-based discovery")
 
     candidates, errors = _search_blockscout(clean_query, normalized_chain)
-    candidates = _merge_same_chain_address(candidates)
+    candidates = _dedup_and_collapse(candidates, collapse_chains=normalized_chain is None)
 
-    if normalized_chain is None:
-        candidates = _collapse_cross_chain(candidates)
+    ranked = sorted(
+        candidates,
+        key=lambda c: (-c["confidence"], c["display_name"].lower(), c["address"]),
+    )[:limit]
 
-    ranked = _rank(candidates)[:limit]
-    best_candidate = _auto_select(ranked)
+    # Auto-select if one candidate clearly dominates
+    best_candidate = None
+    if len(ranked) == 1:
+        best_candidate = ranked[0]
+    elif len(ranked) >= 2:
+        first, second = ranked[0], ranked[1]
+        if first["confidence"] >= 0.90 and (first["confidence"] - second["confidence"]) >= 0.12:
+            best_candidate = first
 
     return {
         "query": clean_query,
@@ -330,6 +303,10 @@ def search_contract_name(query: str, chain: str | None = None, limit: int = 10) 
         "best_candidate": best_candidate,
         "candidates": ranked,
         "errors": errors[:5],
+        "warning": (
+            "Name-based discovery relies on block explorer indexing and may return "
+            "incorrect results. Always verify addresses against official project documentation."
+        ),
     }
 
 

@@ -505,6 +505,10 @@ def search_contract_name_ai(
         "candidates": ranked,
         "errors": errors[:12],
         "notes": notes[:12],
+        "warning": (
+            "AI-powered discovery searches official docs and web sources but may return "
+            "incorrect results. Always verify addresses against official project documentation."
+        ),
     }
 
 
