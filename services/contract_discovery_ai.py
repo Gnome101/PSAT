@@ -2,26 +2,23 @@
 """Resolve contract addresses from explicit `company` + `contract_name`.
 
 How it works:
-1. Uses Tavily to identify likely official company/docs domains.
-2. Searches those domains for contract pages and crawls internal docs links.
-3. Extracts EVM addresses only from retrieved page content/URLs.
-4. Adds optional explorer confirmation and ranks candidates by evidence count.
-5. Returns structured output with confidence, reasons, and source links.
+1. Runs a broad Tavily search to discover official domains and initial evidence.
+2. Runs targeted site-scoped queries on discovered domains.
+3. Extracts EVM addresses near contract name mentions in page content.
+4. Optionally confirms via explorer search.
+5. Scores and ranks candidates by evidence count.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-from html import unescape
 import re
 import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlparse
-
-import requests
+from urllib.parse import urlparse
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
@@ -30,16 +27,8 @@ if str(ROOT_DIR) not in sys.path:
 from utils import tavily
 
 ADDRESS_RE = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
-URL_RE = re.compile(r"https?://[^\s\"'<>)]+" )
-HREF_RE = re.compile(r"""href=["']([^"']+)["']""", re.IGNORECASE)
+URL_RE = re.compile(r"https?://[^\s\"'<>)]+")
 DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+$", re.IGNORECASE)
-ROW_START_RE = re.compile(
-    r"""<(?:tr|div)\b[^>]*(?:role=["']row["']|class=["'][^"']*table_row[^"']*)[^>]*>""",
-    re.IGNORECASE,
-)
-P_TAG_RE = re.compile(r"<p\b[^>]*>(.*?)</p>", re.IGNORECASE | re.DOTALL)
-TAG_RE = re.compile(r"<[^>]+>")
-HTTP_TIMEOUT_SECONDS = 12
 
 EXPLORER_CHAINS = {
     "etherscan.io": "ethereum",
@@ -68,35 +57,6 @@ LOW_TRUST_DOMAINS = {
     "reddit.com",
 }
 
-CRYPTO_HINTS = (
-    "smart contract",
-    "contract address",
-    "token",
-    "protocol",
-    "defi",
-    "mainnet",
-    "ethereum",
-    "arbitrum",
-    "optimism",
-    "polygon",
-    "base",
-    "etherscan",
-    "arbiscan",
-)
-
-GENERIC_COMPANY_TERMS = {
-    "llc",
-    "inc",
-    "incorporated",
-    "ltd",
-    "limited",
-    "company",
-    "co",
-    "corp",
-    "corporation",
-    "group",
-}
-
 CHAIN_SORT_ORDER = {"ethereum": 0, "arbitrum": 1, "optimism": 2, "polygon": 3, "base": 4, "unknown": 99}
 
 
@@ -111,72 +71,54 @@ def _normalize_address(value: str) -> str:
 def _extract_addresses(*values: str) -> set[str]:
     out: set[str] = set()
     for value in values:
-        if not value:
-            continue
-        for match in ADDRESS_RE.findall(value):
-            out.add(_normalize_address(match))
+        if value:
+            for match in ADDRESS_RE.findall(value):
+                out.add(_normalize_address(match))
     return out
 
 
-def _normalize_text(value: str) -> str:
-    if not value:
-        return ""
-    stripped = TAG_RE.sub(" ", unescape(value))
-    return " ".join(stripped.lower().split())
+TAG_RE = re.compile(r"<[^>]+>")
 
 
-def _extract_addresses_from_matching_rows(text: str, contract_name: str) -> set[str]:
-    if "<" not in text:
-        return set()
+def _extract_addresses_near_name(text: str, contract_name: str) -> set[str]:
+    """Find addresses closely following each mention of contract_name.
 
-    starts = [match.start() for match in ROW_START_RE.finditer(text)]
-    if not starts:
-        return set()
-    starts.append(len(text))
-
-    target = _normalize_text(contract_name)
-    matches: set[str] = set()
-    for idx in range(len(starts) - 1):
-        chunk = text[starts[idx] : starts[idx + 1]]
-        paragraphs = [_normalize_text(part) for part in P_TAG_RE.findall(chunk)]
-        first_cell = next((part for part in paragraphs if part), "")
-        if first_cell != target:
-            continue
-        matches.update(_extract_addresses(chunk))
-    return matches
-
-
-def _extract_addresses_near_contract_mentions(text: str, contract_name: str) -> set[str]:
+    Strips HTML tags first so proximity reflects visual distance.
+    Uses strict line/cell-start matching to avoid substring false positives
+    (e.g. "L2 KING Distributor" vs "KING Distributor"), with a proximity
+    fallback for prose text.
+    """
     if not text:
         return set()
-    clean_contract = " ".join(contract_name.strip().split())
-    if not clean_contract:
+    clean = " ".join(contract_name.strip().split())
+    if not clean:
         return set()
-
+    plain = TAG_RE.sub(" ", text)
+    name_re = re.escape(clean).replace(r"\ ", r"\s+")
     matches: set[str] = set()
-    phrase_re = re.compile(re.escape(clean_contract).replace(r"\ ", r"\s+"), re.IGNORECASE)
-    for mention in phrase_re.finditer(text):
-        window = text[mention.start() : min(len(text), mention.end() + 900)]
-        near = ADDRESS_RE.findall(window)
+
+    # Strict: name at start of line or table cell — avoids substring matches.
+    strict = re.compile(r"(?:^|[\n|])\s*" + name_re, re.IGNORECASE | re.MULTILINE)
+    for mention in strict.finditer(plain):
+        window = plain[mention.end() : mention.end() + 120]
+        near = ADDRESS_RE.search(window)
         if near:
-            matches.add(_normalize_address(near[0]))
+            matches.add(_normalize_address(near.group()))
+    if matches:
+        return matches
+
+    # Fallback: proximity for prose where name may appear mid-sentence.
+    loose = re.compile(name_re, re.IGNORECASE)
+    for mention in loose.finditer(plain):
+        window = plain[mention.end() : mention.end() + 200]
+        near = ADDRESS_RE.search(window)
+        if near:
+            matches.add(_normalize_address(near.group()))
     return matches
 
 
-def _extract_addresses_for_contract(contract_name: str, *values: str) -> set[str]:
-    out: set[str] = set()
-    for value in values:
-        if not value:
-            continue
-        row_matches = _extract_addresses_from_matching_rows(value, contract_name)
-        if row_matches:
-            out.update(row_matches)
-            continue
-        out.update(_extract_addresses_near_contract_mentions(value, contract_name))
-    return out
-
-
-def _is_contract_near_substring(text: str, contract_name: str, needle: str, radius: int = 900) -> bool:
+def _is_name_near_substring(text: str, contract_name: str, needle: str, radius: int = 900) -> bool:
+    """Check if contract_name appears within radius chars of needle in text."""
     if not text or not contract_name or not needle:
         return False
     phrase_re = re.compile(re.escape(" ".join(contract_name.strip().split())).replace(r"\ ", r"\s+"), re.IGNORECASE)
@@ -192,20 +134,6 @@ def _is_contract_near_substring(text: str, contract_name: str, needle: str, radi
         start = idx + max(1, len(needle))
 
 
-def _extract_urls(text: str) -> list[str]:
-    return [match.rstrip(".,;:!?)") for match in URL_RE.findall(text or "")]
-
-
-def _extract_href_urls(html: str, base_url: str) -> list[str]:
-    urls: list[str] = []
-    for raw in HREF_RE.findall(html or ""):
-        href = unescape(str(raw).strip())
-        if not href or href.startswith(("javascript:", "mailto:", "tel:", "#")):
-            continue
-        urls.append(urljoin(base_url, href))
-    return urls
-
-
 def _get_domain(url: str) -> str:
     try:
         domain = urlparse(url).netloc.lower()
@@ -219,19 +147,15 @@ def _domain_matches(domain: str, known: str) -> bool:
 
 
 def _is_explorer_domain(domain: str) -> bool:
-    return any(_domain_matches(domain, known) for known in EXPLORER_CHAINS)
-
-
-def _is_explorer_url(url: str) -> bool:
-    return _is_explorer_domain(_get_domain(url))
+    return any(_domain_matches(domain, k) for k in EXPLORER_CHAINS)
 
 
 def _is_low_trust_domain(domain: str) -> bool:
-    return any(_domain_matches(domain, known) for known in LOW_TRUST_DOMAINS)
+    return any(_domain_matches(domain, k) for k in LOW_TRUST_DOMAINS)
 
 
-def _is_allowed_domain(domain: str, allowed_domains: list[str]) -> bool:
-    return any(_domain_matches(domain, allowed) for allowed in allowed_domains)
+def _is_allowed_domain(domain: str, allowed: list[str]) -> bool:
+    return any(_domain_matches(domain, a) for a in allowed)
 
 
 def _infer_chain(url: str, text: str) -> str:
@@ -262,8 +186,7 @@ def _resolve_chain(inferred: str, requested: str | None) -> tuple[str | None, bo
 
 
 def _maybe_domain(value: str) -> str | None:
-    clean = value.strip().lower().replace("https://", "").replace("http://", "")
-    clean = clean.split("/")[0]
+    clean = value.strip().lower().replace("https://", "").replace("http://", "").split("/")[0]
     if clean.startswith("www."):
         clean = clean[4:]
     if " " in clean or not DOMAIN_RE.match(clean) or _is_explorer_domain(clean):
@@ -271,175 +194,78 @@ def _maybe_domain(value: str) -> str | None:
     return clean
 
 
-def _sort_urls_by_relevance(urls: list[str], contract_name: str) -> list[str]:
-    contract_tokens = [token for token in _tokenize(contract_name) if len(token) >= 3]
-    high_signal_terms = (
-        "contract",
-        "contracts",
-        "address",
-        "addresses",
-        "deploy",
-        "deployment",
-        "mainnet",
-    )
-    medium_signal_terms = (
-        "integration",
-        "integrations",
-        "developer",
-        "developers",
-        "docs",
-        "documentation",
-        "technical",
-        "reference",
-    )
-
-    def _score(url: str) -> int:
-        lowered = url.lower()
-        score = 0
-        score += sum(3 for term in high_signal_terms if term in lowered)
-        score += sum(1 for term in medium_signal_terms if term in lowered)
-        score += sum(2 for token in contract_tokens if token in lowered)
-        return score
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for item in urls:
-        if item in seen:
-            continue
-        seen.add(item)
-        deduped.append(item)
-    return sorted(deduped, key=lambda item: (-_score(item), len(item), item))
+def _tavily_search(
+    query: str,
+    max_results: int,
+    queries_used: list[int],
+    max_queries: int,
+    errors: list[dict],
+) -> list[dict]:
+    """Run a single Tavily search, respecting query budget."""
+    if queries_used[0] >= max_queries:
+        return []
+    queries_used[0] += 1
+    try:
+        return tavily.search(
+            query,
+            max_results=max_results,
+            topic="general",
+            search_depth="advanced",
+            include_raw_content=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        errors.append(tavily.error_from_exception(exc))
+        return []
 
 
-class _QueryRunner:
-    def __init__(self, max_queries: int):
-        self.max_queries = max(1, max_queries)
-        self.used = 0
-        self.failures = 0
-        self.halted = False
-
-    def search(self, query: str, *, max_results: int, errors: list[dict[str, Any]], notes: list[str]) -> list[dict[str, Any]]:
-        if self.halted:
-            return []
-        if self.used >= self.max_queries:
-            notes.append(f"Query budget reached ({self.max_queries})")
-            self.halted = True
-            return []
-        self.used += 1
-        try:
-            out = tavily.search(
-                query,
-                max_results=max_results,
-                topic="general",
-                search_depth="advanced",
-                include_raw_content=True,
-            )
-            self.failures = 0
-            return out
-        except Exception as exc:  # noqa: BLE001
-            errors.append(tavily.error_from_exception(exc))
-            self.failures += 1
-            if self.failures >= 2:
-                notes.append("Halting after repeated Tavily failures")
-                self.halted = True
-            return []
-
-
-def _crawl_pages_for_evidence(
+def _process_results(
+    results: list[dict],
     contract_name: str,
-    seed_urls: set[str],
-    allowed_domains: list[str],
+    evidence_domains: list[str],
     requested_chain: str | None,
     grouped: dict[tuple[str, str], list[dict[str, Any]]],
-    errors: list[dict[str, Any]],
-    notes: list[str],
-    max_pages: int,
+    kind: str,
 ) -> None:
-    queue = _sort_urls_by_relevance([url.split("#")[0] for url in seed_urls if url], contract_name)
-    visited: set[str] = set()
-    pages_crawled = 0
-
-    while queue and pages_crawled < max_pages:
-        current = queue.pop(0)
-        if not current or current in visited:
+    """Extract address evidence from Tavily results (no crawling needed)."""
+    for result in results:
+        url = str(result.get("url", "")).strip()
+        if not url:
             continue
-        current_domain = _get_domain(current)
-        if not _is_allowed_domain(current_domain, allowed_domains):
-            continue
-        visited.add(current)
-        pages_crawled += 1
+        domain = _get_domain(url)
+        title = str(result.get("title", "")).strip()
+        content = str(result.get("content", "")).strip()
+        raw = str(result.get("raw_content", "")).strip()
+        blob = f"{title} {content} {raw}"
 
-        try:
-            response = requests.get(
-                current,
-                headers={"User-Agent": "PSAT/0.1"},
-                timeout=HTTP_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            html = response.text
-        except requests.RequestException as exc:
-            errors.append({"provider": "crawler", "error": f"{current}: {exc}"})
-            continue
+        # Extract addresses from official domain pages near the contract name
+        if _is_allowed_domain(domain, evidence_domains):
+            page_chain = _infer_chain(url, blob)
+            for address in _extract_addresses_near_name(blob, contract_name):
+                resolved, hint = _resolve_chain(page_chain, requested_chain)
+                if resolved is not None:
+                    grouped[(resolved, address)].append(
+                        {"kind": kind, "url": url, "chain_from_hint": hint}
+                    )
 
-        text = html[:700000]
-
-        page_chain = _infer_chain(current, text)
-        for address in _extract_addresses_for_contract(contract_name, current, text):
-            resolved_chain, chain_from_hint = _resolve_chain(page_chain, requested_chain)
-            if resolved_chain is None:
+        # Find explorer links in content that are near the contract name
+        for raw_url in URL_RE.findall(blob):
+            explorer_url = raw_url.rstrip(".,;:!?)")
+            if not _is_explorer_domain(_get_domain(explorer_url)):
                 continue
-            grouped[(resolved_chain, address)].append(
-                {
-                    "kind": "crawled_page",
-                    "url": current,
-                    "referrer_url": None,
-                    "chain_from_hint": chain_from_hint,
-                }
-            )
-
-        discovered_urls: set[str] = set(_extract_urls(text))
-        discovered_urls.update(_extract_href_urls(html, current))
-
-        priority: list[str] = []
-        normal: list[str] = []
-        for discovered in discovered_urls:
-            clean = discovered.split("#")[0].strip()
-            if not clean:
+            if not _is_name_near_substring(blob, contract_name, explorer_url):
                 continue
-
-            if _is_explorer_url(clean):
-                if not _is_contract_near_substring(text, contract_name, clean):
-                    continue
-                linked_chain = _infer_chain(clean, clean)
-                for address in _extract_addresses(clean):
-                    resolved_chain, chain_from_hint = _resolve_chain(linked_chain, requested_chain)
-                    if resolved_chain is None:
-                        continue
-                    grouped[(resolved_chain, address)].append(
+            linked_chain = _infer_chain(explorer_url, "")
+            for address in _extract_addresses(explorer_url):
+                resolved, hint = _resolve_chain(linked_chain, requested_chain)
+                if resolved is not None:
+                    grouped[(resolved, address)].append(
                         {
-                            "kind": "crawled_linked_explorer",
-                            "url": clean,
-                            "referrer_url": current,
-                            "chain_from_hint": chain_from_hint,
+                            "kind": f"{kind}_linked_explorer",
+                            "url": explorer_url,
+                            "referrer_url": url,
+                            "chain_from_hint": hint,
                         }
                     )
-                continue
-
-            discovered_domain = _get_domain(clean)
-            if not _is_allowed_domain(discovered_domain, allowed_domains):
-                continue
-            if clean in visited:
-                continue
-
-            lowered = clean.lower()
-            if any(keyword in lowered for keyword in ("contract", "deployed", "integration", "docs", "address", "token")):
-                priority.append(clean)
-            else:
-                normal.append(clean)
-
-        queue = _sort_urls_by_relevance(priority, contract_name) + queue + _sort_urls_by_relevance(normal, contract_name)
-
-    notes.append(f"Crawled pages: {pages_crawled}/{max_pages}")
 
 
 def search_contract_name_ai(
@@ -447,8 +273,7 @@ def search_contract_name_ai(
     contract_name: str,
     chain: str | None = None,
     limit: int = 10,
-    max_queries: int = 12,
-    max_pages: int = 10,
+    max_queries: int = 8,
 ) -> dict[str, Any]:
     clean_company = company.strip()
     clean_contract = contract_name.strip()
@@ -462,61 +287,50 @@ def search_contract_name_ai(
     requested_chain = chain.lower().strip() if isinstance(chain, str) and chain.strip() else None
     errors: list[dict[str, Any]] = []
     notes: list[str] = []
-    runner = _QueryRunner(max_queries=max_queries)
+    queries_used: list[int] = [0]
 
-    # 1) Resolve official domain.
-    domain_candidates: list[str] = []
+    # --- Phase 1: Broad search (doubles as domain discovery + initial evidence) ---
+    broad_results = _tavily_search(
+        f'"{clean_company}" "{clean_contract}" contract address',
+        max_results=10,
+        queries_used=queries_used,
+        max_queries=max_queries,
+        errors=errors,
+    )
+
+    # Identify official domains from results
     official_domain = _maybe_domain(clean_company)
     if official_domain:
         notes.append(f"Using provided company domain: {official_domain}")
         domain_candidates = [official_domain]
     else:
-        company_tokens = {tok for tok in _tokenize(clean_company) if len(tok) >= 3 and tok not in GENERIC_COMPANY_TERMS}
-        contract_tokens = {tok for tok in _tokenize(clean_contract) if len(tok) >= 3 and tok not in {"smart", "contract", "token"}}
-        scores: dict[str, float] = defaultdict(float)
-        queries = [
-            f"{clean_company} official website crypto protocol",
-            f"{clean_company} {clean_contract} smart contract",
-        ]
-        notes.append(f"Domain discovery queries planned: {len(queries)}")
-        for query_text in queries:
-            results = runner.search(query_text, max_results=8, errors=errors, notes=notes)
-            for result in results:
-                url = str(result.get("url", "")).strip()
-                if not url:
-                    continue
-                title = str(result.get("title", "")).strip()
-                content = str(result.get("content", "")).strip()
-                raw = str(result.get("raw_content", "")).strip()
-                text = f"{title} {content} {raw}"
-                domain = _get_domain(url)
-                if _is_explorer_domain(domain) or _is_low_trust_domain(domain):
-                    continue
-                tokens = _tokenize(f"{domain} {text}")
-                company_overlap = len(company_tokens & tokens) / len(company_tokens) if company_tokens else 0.0
-                contract_overlap = len(contract_tokens & tokens) / len(contract_tokens) if contract_tokens else 0.0
-                hint_hits = sum(1 for hint in CRYPTO_HINTS if hint in text.lower())
-                score = 0.6 * company_overlap + 0.2 * contract_overlap + min(0.05 * hint_hits, 0.3)
-                if domain.endswith(".fi") or domain.endswith(".io"):
-                    score += 0.05
-                if any(term in domain for term in GENERIC_COMPANY_TERMS) and hint_hits == 0:
-                    score -= 0.2
-                if score > 0:
-                    scores[domain] += score
-                for linked_url in _extract_urls(text):
-                    linked_domain = _get_domain(linked_url)
-                    if linked_domain and not _is_explorer_domain(linked_domain) and not _is_low_trust_domain(linked_domain):
-                        scores[linked_domain] += max(score * 0.4, 0.0)
-            if runner.halted:
-                break
-        domain_candidates = [domain for domain, score in sorted(scores.items(), key=lambda item: item[1], reverse=True) if score >= 0.25][:3]
+        company_tokens = {t for t in _tokenize(clean_company) if len(t) >= 3}
+        domain_scores: dict[str, float] = defaultdict(float)
+        for result in broad_results:
+            url = str(result.get("url", "")).strip()
+            if not url:
+                continue
+            domain = _get_domain(url)
+            if not domain or _is_explorer_domain(domain) or _is_low_trust_domain(domain):
+                continue
+            tokens = _tokenize(f"{domain} {result.get('title', '')} {result.get('content', '')}")
+            overlap = len(company_tokens & tokens) / len(company_tokens) if company_tokens else 0
+            if overlap > 0:
+                domain_scores[domain] += overlap
+
+        domain_candidates = [
+            d
+            for d, s in sorted(domain_scores.items(), key=lambda x: x[1], reverse=True)
+            if s >= 0.3
+        ][:3]
         official_domain = domain_candidates[0] if domain_candidates else None
-        if domain_candidates:
-            notes.append(f"Domain candidates: {', '.join(domain_candidates)}")
-        else:
-            notes.append("Could not identify an official domain")
+
+    if domain_candidates:
+        notes.append(f"Domain candidates: {', '.join(domain_candidates)}")
 
     if not official_domain:
+        notes.append("Could not identify an official domain")
+        notes.append(f"Tavily queries used: {queries_used[0]}/{max_queries}")
         return {
             "query": clean_contract,
             "company": clean_company,
@@ -529,109 +343,57 @@ def search_contract_name_ai(
             "notes": notes[:12],
         }
 
-    # 2) Gather evidence from official domains (protocol site + docs domains).
-    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    company_tokens = _tokenize(clean_company)
-    contract_tokens = _tokenize(clean_contract)
-
+    # Build evidence domains list
     evidence_domains: list[str] = []
-    for domain in [official_domain] + domain_candidates:
-        if not domain:
-            continue
-        if _is_low_trust_domain(domain):
-            continue
-        if domain in evidence_domains:
-            continue
-        if "github.com" in domain and official_domain != domain:
-            continue
-        evidence_domains.append(domain)
+    for d in [official_domain] + domain_candidates:
+        if d and not _is_low_trust_domain(d) and d not in evidence_domains:
+            if "github.com" in d and d != official_domain:
+                continue
+            evidence_domains.append(d)
     notes.append(f"Evidence domains: {', '.join(evidence_domains)}")
 
-    seed_urls: set[str] = set()
-    for domain in evidence_domains:
-        evidence_queries = [
-            f'site:{domain} "{clean_contract}" "contract address"',
-            f'site:{domain} "{clean_contract}" "smart contract"',
-            f'site:{domain} "{clean_contract}" "deployment address"',
-            f'site:{domain} "{clean_company}" "{clean_contract}" "address"',
-        ]
-        for official_query in evidence_queries:
-            official_results = runner.search(official_query, max_results=8, errors=errors, notes=notes)
-            for result in official_results:
-                page_url = str(result.get("url", "")).strip()
-                if not page_url or not _is_allowed_domain(_get_domain(page_url), evidence_domains):
-                    continue
-                title = str(result.get("title", "")).strip()
-                content = str(result.get("content", "")).strip()
-                raw = str(result.get("raw_content", "")).strip()
-                blob = f"{title} {content} {raw}"
+    # --- Phase 2: Extract evidence from broad results ---
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    _process_results(broad_results, clean_contract, evidence_domains, requested_chain, grouped, "official_page")
 
-                seed_urls.add(page_url)
-                page_chain = _infer_chain(page_url, blob)
-                page_addresses = _extract_addresses(page_url)
-                page_addresses.update(_extract_addresses_from_matching_rows(raw, clean_contract))
-                for address in page_addresses:
-                    resolved_chain, chain_from_hint = _resolve_chain(page_chain, requested_chain)
-                    if resolved_chain is None:
-                        continue
-                    grouped[(resolved_chain, address)].append(
-                        {"kind": "official_page", "url": page_url, "referrer_url": None, "chain_from_hint": chain_from_hint}
-                    )
+    # --- Phase 3: Site-scoped queries on top domains ---
+    # Two query variations per domain to surface different URL variants.
+    for domain in evidence_domains[:2]:
+        for query_text in [
+            f'site:{domain} "{clean_contract}" contract address',
+            f'site:{domain} "{clean_company}" "{clean_contract}" address',
+        ]:
+            site_results = _tavily_search(
+                query_text,
+                max_results=8,
+                queries_used=queries_used,
+                max_queries=max_queries,
+                errors=errors,
+            )
+            _process_results(site_results, clean_contract, evidence_domains, requested_chain, grouped, "official_page")
 
-                for linked_url in _extract_urls(blob):
-                    clean_link = linked_url.split("#")[0]
-                    if _is_explorer_url(clean_link):
-                        if not _is_contract_near_substring(blob, clean_contract, clean_link):
-                            continue
-                        linked_chain = _infer_chain(clean_link, clean_link)
-                        for address in _extract_addresses(clean_link):
-                            resolved_chain, chain_from_hint = _resolve_chain(linked_chain, requested_chain)
-                            if resolved_chain is None:
-                                continue
-                            grouped[(resolved_chain, address)].append(
-                                {
-                                    "kind": "official_linked_explorer",
-                                    "url": clean_link,
-                                    "referrer_url": page_url,
-                                    "chain_from_hint": chain_from_hint,
-                                }
-                            )
-                    elif _is_allowed_domain(_get_domain(clean_link), evidence_domains):
-                        seed_urls.add(clean_link)
+    notes.append(f"Evidence keys: {len(grouped)}")
 
-            if runner.halted:
-                break
-        if runner.halted:
-            break
-
-    _crawl_pages_for_evidence(
-        contract_name=clean_contract,
-        seed_urls=seed_urls,
-        allowed_domains=evidence_domains,
-        requested_chain=requested_chain,
-        grouped=grouped,
-        errors=errors,
-        notes=notes,
-        max_pages=max_pages,
-    )
-
-    notes.append(f"Official evidence keys: {len(grouped)}")
-
-    # 3) Optional explorer confirmation for already-found addresses.
+    # --- Phase 4: Optional explorer confirmation for already-found addresses ---
     if grouped:
         explorer_query = f'"{clean_company}" "{clean_contract}" contract address etherscan'
         if requested_chain:
             explorer_query = f'"{clean_company}" "{clean_contract}" {requested_chain} contract address'
-        explorer_results = runner.search(explorer_query, max_results=8, errors=errors, notes=notes)
+        explorer_results = _tavily_search(
+            explorer_query,
+            max_results=8,
+            queries_used=queries_used,
+            max_queries=max_queries,
+            errors=errors,
+        )
         allowed_keys = set(grouped.keys())
+        company_tokens = _tokenize(clean_company)
+        contract_tokens = _tokenize(clean_contract)
         for result in explorer_results:
             url = str(result.get("url", "")).strip()
-            if not _is_explorer_url(url):
+            if not _is_explorer_domain(_get_domain(url)):
                 continue
-            title = str(result.get("title", "")).strip()
-            content = str(result.get("content", "")).strip()
-            raw = str(result.get("raw_content", "")).strip()
-            blob = f"{url} {title} {content} {raw}"
+            blob = f"{url} {result.get('title', '')} {result.get('content', '')} {result.get('raw_content', '')}"
             blob_tokens = _tokenize(blob)
             if company_tokens and not (company_tokens & blob_tokens):
                 continue
@@ -639,75 +401,67 @@ def search_contract_name_ai(
                 continue
             inferred = _infer_chain(url, blob)
             for address in _extract_addresses(blob):
-                resolved_chain, chain_from_hint = _resolve_chain(inferred, requested_chain)
-                if resolved_chain is None:
+                resolved, hint = _resolve_chain(inferred, requested_chain)
+                if resolved is None:
                     continue
-                key = (resolved_chain, address)
+                key = (resolved, address)
                 if key not in allowed_keys:
                     continue
-                grouped[key].append(
-                    {"kind": "explorer_confirmation", "url": url, "referrer_url": None, "chain_from_hint": chain_from_hint}
-                )
+                grouped[key].append({"kind": "explorer_confirmation", "url": url, "chain_from_hint": hint})
 
-    # 4) Score candidates.
+    # --- Phase 5: Score and rank ---
     candidates: list[dict[str, Any]] = []
-    for (candidate_chain, address), evidence in grouped.items():
-        seen: set[tuple[str, str, str]] = set()
+    for (cand_chain, address), evidence in grouped.items():
+        seen: set[tuple[str, str]] = set()
         deduped: list[dict[str, Any]] = []
         for item in evidence:
-            sig = (str(item.get("kind", "")), str(item.get("url", "")), str(item.get("referrer_url", "")))
+            sig = (str(item.get("kind", "")), str(item.get("url", "")))
             if sig in seen:
                 continue
             seen.add(sig)
             deduped.append(item)
 
-        official_page = sum(1 for item in deduped if item.get("kind") in {"official_page", "crawled_page"})
-        official_linked = sum(
-            1 for item in deduped if item.get("kind") in {"official_linked_explorer", "crawled_linked_explorer"}
-        )
-        confirmations = sum(1 for item in deduped if item.get("kind") == "explorer_confirmation")
-        unique_urls = {str(item.get("url", "")) for item in deduped if item.get("url")}
+        official_page = sum(1 for e in deduped if e["kind"] == "official_page")
+        linked_explorer = sum(1 for e in deduped if e["kind"].endswith("_linked_explorer"))
+        confirmations = sum(1 for e in deduped if e["kind"] == "explorer_confirmation")
+        unique_urls = {str(e.get("url", "")) for e in deduped if e.get("url")}
 
-        if official_page == 0 and official_linked == 0:
-            continue
-        if official_page == 1 and official_linked == 0 and confirmations == 0:
+        if official_page == 0 and linked_explorer == 0:
             continue
 
         confidence = 0.25
         confidence += min(0.44, official_page * 0.22)
-        confidence += min(0.24, official_linked * 0.12)
+        confidence += min(0.24, linked_explorer * 0.12)
         confidence += min(0.12, confirmations * 0.06)
         confidence += min(0.12, max(0, len(unique_urls) - 1) * 0.04)
         confidence = min(confidence, 0.99)
 
         reasons = [
             f"Official page evidence: {official_page}",
-            f"Official linked explorer evidence: {official_linked}",
+            f"Official linked explorer evidence: {linked_explorer}",
         ]
         if confirmations:
             reasons.append(f"Explorer confirmations: {confirmations}")
         if len(unique_urls) > 1:
             reasons.append(f"Confirmed by {len(unique_urls)} unique URLs")
-        if any(item.get("chain_from_hint") for item in deduped):
+        if any(e.get("chain_from_hint") for e in deduped):
             reasons.append("Applied requested chain to chain-agnostic evidence")
 
         link_scores: dict[str, float] = {}
         for item in deduped:
-            kind = str(item.get("kind", ""))
             url = str(item.get("url", "")).strip()
-            if url and url.lower() != "none":
-                base = {
-                    "official_page": 0.6,
-                    "crawled_page": 0.58,
-                    "official_linked_explorer": 0.5,
-                    "crawled_linked_explorer": 0.48,
-                    "explorer_confirmation": 0.4,
-                }.get(kind, 0.0)
+            if url:
+                base = {"official_page": 0.6, "official_page_linked_explorer": 0.5, "explorer_confirmation": 0.4}.get(
+                    item["kind"], 0.3
+                )
                 link_scores[url] = max(link_scores.get(url, 0.0), base)
-            referrer = str(item.get("referrer_url", "")).strip()
-            if referrer and referrer.lower() != "none":
-                link_scores[referrer] = max(link_scores.get(referrer, 0.0), 0.7)
-        links = {f"source_{idx + 1}": url for idx, (url, _) in enumerate(sorted(link_scores.items(), key=lambda p: p[1], reverse=True)[:5])}
+            ref = str(item.get("referrer_url", "")).strip()
+            if ref and ref.lower() != "none":
+                link_scores[ref] = max(link_scores.get(ref, 0.0), 0.7)
+        links = {
+            f"source_{i + 1}": u
+            for i, (u, _) in enumerate(sorted(link_scores.items(), key=lambda p: p[1], reverse=True)[:5])
+        }
         if not links:
             continue
 
@@ -716,7 +470,7 @@ def search_contract_name_ai(
                 "display_name": f"{clean_company} - {clean_contract}",
                 "symbol": None,
                 "address": address,
-                "chain": candidate_chain,
+                "chain": cand_chain,
                 "confidence": round(confidence, 4),
                 "source": "tavily_ai",
                 "reasons": reasons,
@@ -724,7 +478,11 @@ def search_contract_name_ai(
             }
         )
 
-    ranked = sorted(candidates, key=lambda item: (-item["confidence"], CHAIN_SORT_ORDER.get(item["chain"], 50), item["address"]))[:limit]
+    ranked = sorted(
+        candidates,
+        key=lambda c: (-c["confidence"], CHAIN_SORT_ORDER.get(c["chain"], 50), c["address"]),
+    )[:limit]
+
     best_candidate = None
     if len(ranked) == 1:
         best_candidate = ranked[0]
@@ -735,7 +493,7 @@ def search_contract_name_ai(
 
     if not ranked:
         notes.append("No address met official-domain evidence requirements")
-    notes.append(f"Tavily queries used: {runner.used}/{runner.max_queries}")
+    notes.append(f"Tavily queries used: {queries_used[0]}/{max_queries}")
 
     return {
         "query": clean_contract,
@@ -752,12 +510,11 @@ def search_contract_name_ai(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Contract discovery with explicit company + contract name")
-    parser.add_argument("company", help="Company/protocol (e.g., etherfi)")
-    parser.add_argument("contract_name", help='Contract name (e.g., "KING Distributor")')
+    parser.add_argument("company", help="Company/protocol name")
+    parser.add_argument("contract_name", help="Contract name to search for")
     parser.add_argument("--chain", default=None, help="Optional chain filter")
     parser.add_argument("--limit", type=int, default=10, help="Max candidates to return")
-    parser.add_argument("--max-queries", type=int, default=12, help="Hard Tavily query cap (default: 12)")
-    parser.add_argument("--max-pages", type=int, default=10, help="Max official/docs pages to crawl (default: 10)")
+    parser.add_argument("--max-queries", type=int, default=8, help="Tavily query cap (default: 8)")
     args = parser.parse_args()
 
     try:
@@ -767,7 +524,6 @@ def main() -> None:
             chain=args.chain,
             limit=args.limit,
             max_queries=args.max_queries,
-            max_pages=args.max_pages,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
