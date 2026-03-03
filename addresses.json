@@ -1,3 +1,21 @@
 [
-  {"address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", "name": "USDT"}
+  {"address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", "name": "USDT"},
+
+  {"address": "0x35fA164735182de50811E8e2E824cFb9B6118ac2", "name": "EtherFi_eETH"},
+  {"address": "0xCd5fE23C85820F7B72D0926FC9b05b43E359b7ee", "name": "EtherFi_WeETH"},
+  {"address": "0xFe0c30065B384F05761f15d0CC899D4F9F9Cc0eB", "name": "EtherFi_ETHFI"},
+  {"address": "0x308861A430be4cce5502d0A12724771Fc6DaF216", "name": "EtherFi_LiquidityPool"},
+  {"address": "0x9ffdf407cde9a93c47611799da23924af3ef764f", "name": "EtherFi_Liquifier"},
+
+  {"address": "0x08c6F91e2B681FaF5e17227F2a44C307b3C1364C", "name": "EtherFi_LiquidUSD_Vault"},
+  {"address": "0xcFF411d5C54FE0583A984beE1eF43a4776854B9A", "name": "EtherFi_LiquidUSD_Manager"},
+  {"address": "0x281a8621699667671A047E91Bb3dFdC331ea0Ea5", "name": "EtherFi_LiquidUSD_DecoderAndSanitizer"},
+  {"address": "0x4DE413a26fC24c3FC27Cc983be70aA9c5C299387", "name": "EtherFi_LiquidUSD_Teller"},
+  {"address": "0xc315D6e14DDCDC7407784e2Caf815d131Bc1D3E7", "name": "EtherFi_LiquidUSD_Accountant"},
+  {"address": "0x5232bc0F5999f8dA604c42E1748A13a170F94A1B", "name": "EtherFi_LiquidUSD_Lens"},
+  {"address": "0xaBA6bA1E95E0926a6A6b917FE4E2f19ceaE4FF2e", "name": "EtherFi_LiquidUSD_RolesAuthority"},
+
+  {"address": "0xf0bb20865277abd641a307ece5ee04e79073416c", "name": "EtherFi_ETHYield_BoringVault"},
+  {"address": "0x0d05D94a5F1E76C18fbeB7A13d17C8a314088198", "name": "EtherFi_ETHYield_Accountant"},
+  {"address": "0x9AA79C84b79816ab920bBcE20f8f74557B514734", "name": "EtherFi_ETHYield_Teller"}
 ]

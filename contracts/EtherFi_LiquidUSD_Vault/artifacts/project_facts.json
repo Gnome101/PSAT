@@ -1,0 +1,4524 @@
+{
+  "_pydantic_type": {
+    "is_list": false,
+    "model_name": "ProjectFacts"
+  },
+  "_cache_version": "1.1.0",
+  "_checksum": "bbaf96a8c933f0f882d121471e37289efc2816f81a0e58218f5903091f49ae7f",
+  "data": {
+    "contracts": {
+      "BoringVault@src!base!BoringVault.sol": {
+        "name": "BoringVault",
+        "key": {
+          "contract_name": "BoringVault",
+          "path": "src/base/BoringVault.sol"
+        },
+        "path": "src/base/BoringVault.sol",
+        "is_abstract": false,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": false,
+        "directly_inherits": [
+          {
+            "contract_name": "ERC20",
+            "path": "src/lib/solmate/src/tokens/ERC20.sol"
+          },
+          {
+            "contract_name": "Auth",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          },
+          {
+            "contract_name": "ERC721Holder",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol"
+          },
+          {
+            "contract_name": "ERC1155Holder",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol"
+          }
+        ],
+        "scopes": [
+          {
+            "contract_name": "BoringVault",
+            "path": "src/base/BoringVault.sol"
+          },
+          {
+            "contract_name": "Authority",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          },
+          {
+            "contract_name": "ERC20",
+            "path": "src/lib/solmate/src/tokens/ERC20.sol"
+          },
+          {
+            "contract_name": "FixedPointMathLib",
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+          },
+          {
+            "contract_name": "ERC1155Holder",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol"
+          },
+          {
+            "contract_name": "IERC721Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+          },
+          {
+            "contract_name": "ERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+          },
+          {
+            "contract_name": "BeforeTransferHook",
+            "path": "src/interfaces/BeforeTransferHook.sol"
+          },
+          {
+            "contract_name": "Address",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+          },
+          {
+            "contract_name": "Auth",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          },
+          {
+            "contract_name": "ERC721Holder",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol"
+          },
+          {
+            "contract_name": "IERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+          },
+          {
+            "contract_name": "IERC1155Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+          },
+          {
+            "contract_name": "SafeTransferLib",
+            "path": "src/lib/solmate/src/utils/SafeTransferLib.sol"
+          },
+          {
+            "contract_name": "BoringVault",
+            "path": "src/base/BoringVault.sol"
+          }
+        ],
+        "functions_declared": {
+          "constructor(address,string,string,uint8)": {
+            "signature": "constructor(address,string,string,uint8)",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "string",
+              "string",
+              "uint8"
+            ],
+            "returns": [],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 32,
+            "line_end": 35,
+            "callees": {
+              "internal_callees": [
+                "ERC20.constructor(string,string,uint8)",
+                "Auth.constructor(address,Authority)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "manage(address,bytes,uint256)": {
+            "signature": "manage(address,bytes,uint256)",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [
+              "Auth.requiresAuth()"
+            ],
+            "arguments": [
+              "address",
+              "bytes",
+              "uint256"
+            ],
+            "returns": [
+              "bytes"
+            ],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 43,
+            "line_end": 49,
+            "callees": {
+              "internal_callees": [
+                "Auth.requiresAuth()"
+              ],
+              "external_callees": [],
+              "library_callees": [
+                "Address.functionCallWithValue(address,bytes,uint256)"
+              ],
+              "has_low_level_calls": false
+            }
+          },
+          "manage(address[],bytes[],uint256[])": {
+            "signature": "manage(address[],bytes[],uint256[])",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [
+              "Auth.requiresAuth()"
+            ],
+            "arguments": [
+              "address[]",
+              "bytes[]",
+              "uint256[]"
+            ],
+            "returns": [
+              "bytes[]"
+            ],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 55,
+            "line_end": 65,
+            "callees": {
+              "internal_callees": [
+                "Auth.requiresAuth()"
+              ],
+              "external_callees": [],
+              "library_callees": [
+                "Address.functionCallWithValue(address,bytes,uint256)"
+              ],
+              "has_low_level_calls": false
+            }
+          },
+          "enter(address,ERC20,uint256,address,uint256)": {
+            "signature": "enter(address,ERC20,uint256,address,uint256)",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [
+              "Auth.requiresAuth()"
+            ],
+            "arguments": [
+              "address",
+              "ERC20",
+              "uint256",
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 74,
+            "line_end": 85,
+            "callees": {
+              "internal_callees": [
+                "Auth.requiresAuth()",
+                "ERC20._mint(address,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [
+                "SafeTransferLib.safeTransferFrom(ERC20,address,address,uint256)"
+              ],
+              "has_low_level_calls": false
+            }
+          },
+          "exit(address,ERC20,uint256,address,uint256)": {
+            "signature": "exit(address,ERC20,uint256,address,uint256)",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [
+              "Auth.requiresAuth()"
+            ],
+            "arguments": [
+              "address",
+              "ERC20",
+              "uint256",
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 94,
+            "line_end": 105,
+            "callees": {
+              "internal_callees": [
+                "Auth.requiresAuth()",
+                "ERC20._burn(address,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [
+                "SafeTransferLib.safeTransfer(ERC20,address,uint256)"
+              ],
+              "has_low_level_calls": false
+            }
+          },
+          "setBeforeTransferHook(address)": {
+            "signature": "setBeforeTransferHook(address)",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [
+              "Auth.requiresAuth()"
+            ],
+            "arguments": [
+              "address"
+            ],
+            "returns": [],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 113,
+            "line_end": 115,
+            "callees": {
+              "internal_callees": [
+                "Auth.requiresAuth()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "_callBeforeTransfer(address)": {
+            "signature": "_callBeforeTransfer(address)",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [
+              "view"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address"
+            ],
+            "returns": [],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 120,
+            "line_end": 122,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [
+                "BeforeTransferHook.beforeTransfer(address)"
+              ],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "transfer(address,uint256)": {
+            "signature": "transfer(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [
+              "override"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 124,
+            "line_end": 127,
+            "callees": {
+              "internal_callees": [
+                "BoringVault._callBeforeTransfer(address)",
+                "ERC20.transfer(address,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "transferFrom(address,address,uint256)": {
+            "signature": "transferFrom(address,address,uint256)",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [
+              "override"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 129,
+            "line_end": 132,
+            "callees": {
+              "internal_callees": [
+                "BoringVault._callBeforeTransfer(address)",
+                "ERC20.transferFrom(address,address,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "receive()": {
+            "signature": "receive()",
+            "implementation_contract": {
+              "contract_name": "BoringVault",
+              "path": "src/base/BoringVault.sol"
+            },
+            "solidity_modifiers": [
+              "payable"
+            ],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [],
+            "returns": [],
+            "path": "src/base/BoringVault.sol",
+            "line_start": 136,
+            "line_end": 136,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {
+          "supportsInterface(bytes4)": {
+            "signature": "supportsInterface(bytes4)",
+            "implementation_contract": {
+              "contract_name": "ERC165",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "override",
+              "view"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol",
+            "line_start": 24,
+            "line_end": 26,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "onERC1155Received(address,address,uint256,uint256,bytes)": {
+            "signature": "onERC1155Received(address,address,uint256,uint256,bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC1155Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "uint256",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+            "line_start": 28,
+            "line_end": 34,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)": {
+            "signature": "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC1155Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256[]",
+              "uint256[]",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+            "line_start": 52,
+            "line_end": 58,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "onERC721Received(address,address,uint256,bytes)": {
+            "signature": "onERC721Received(address,address,uint256,bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC721Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol",
+            "line_start": 22,
+            "line_end": 27,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "constructor(address,Authority)": {
+            "signature": "constructor(address,Authority)",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "Authority"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 16,
+            "line_end": 22,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "isAuthorized(address,bytes4)": {
+            "signature": "isAuthorized(address,bytes4)",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "view"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 30,
+            "line_end": 36,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [
+                "Authority.canCall(address,address,bytes4)"
+              ],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "setAuthority(Authority)": {
+            "signature": "setAuthority(Authority)",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "Authority"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 38,
+            "line_end": 46,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [
+                "Authority.canCall(address,address,bytes4)"
+              ],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "transferOwnership(address)": {
+            "signature": "transferOwnership(address)",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [
+              "Auth.requiresAuth()"
+            ],
+            "arguments": [
+              "address"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 48,
+            "line_end": 52,
+            "callees": {
+              "internal_callees": [
+                "Auth.requiresAuth()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "constructor(string,string,uint8)": {
+            "signature": "constructor(string,string,uint8)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "string",
+              "string",
+              "uint8"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 51,
+            "line_end": 62,
+            "callees": {
+              "internal_callees": [
+                "ERC20.computeDomainSeparator()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "approve(address,uint256)": {
+            "signature": "approve(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 68,
+            "line_end": 74,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "transfer(address,uint256)": {
+            "signature": "transfer(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 76,
+            "line_end": 88,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "transferFrom(address,address,uint256)": {
+            "signature": "transferFrom(address,address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 90,
+            "line_end": 110,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)": {
+            "signature": "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "uint256",
+              "uint8",
+              "bytes32",
+              "bytes32"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 116,
+            "line_end": 160,
+            "callees": {
+              "internal_callees": [
+                "ERC20.DOMAIN_SEPARATOR()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "DOMAIN_SEPARATOR()": {
+            "signature": "DOMAIN_SEPARATOR()",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "view"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [],
+            "returns": [
+              "bytes32"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 162,
+            "line_end": 164,
+            "callees": {
+              "internal_callees": [
+                "ERC20.computeDomainSeparator()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "computeDomainSeparator()": {
+            "signature": "computeDomainSeparator()",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "view"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [],
+            "returns": [
+              "bytes32"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 166,
+            "line_end": 177,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "_mint(address,uint256)": {
+            "signature": "_mint(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 183,
+            "line_end": 193,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "_burn(address,uint256)": {
+            "signature": "_burn(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 195,
+            "line_end": 205,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "requiresAuth()": {
+            "signature": "requiresAuth()",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [],
+            "returns": [],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 24,
+            "line_end": 28,
+            "callees": {
+              "internal_callees": [
+                "Auth.isAuthorized(address,bytes4)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "state_variables": [
+          {
+            "name": "hook",
+            "type_str": "BeforeTransferHook",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 23
+          }
+        ],
+        "events": [
+          {
+            "name": "Enter",
+            "parameters": [
+              {
+                "name": "from",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "asset",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "amount",
+                "type_str": "uint256",
+                "indexed": false
+              },
+              {
+                "name": "to",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "shares",
+                "type_str": "uint256",
+                "indexed": false
+              }
+            ],
+            "line_number": 27
+          },
+          {
+            "name": "Exit",
+            "parameters": [
+              {
+                "name": "to",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "asset",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "amount",
+                "type_str": "uint256",
+                "indexed": false
+              },
+              {
+                "name": "from",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "shares",
+                "type_str": "uint256",
+                "indexed": false
+              }
+            ],
+            "line_number": 28
+          }
+        ]
+      },
+      "BeforeTransferHook@src!interfaces!BeforeTransferHook.sol": {
+        "name": "BeforeTransferHook",
+        "key": {
+          "contract_name": "BeforeTransferHook",
+          "path": "src/interfaces/BeforeTransferHook.sol"
+        },
+        "path": "src/interfaces/BeforeTransferHook.sol",
+        "is_abstract": false,
+        "is_fully_implemented": false,
+        "is_interface": true,
+        "is_library": false,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "BeforeTransferHook",
+            "path": "src/interfaces/BeforeTransferHook.sol"
+          },
+          {
+            "contract_name": "BeforeTransferHook",
+            "path": "src/interfaces/BeforeTransferHook.sol"
+          }
+        ],
+        "functions_declared": {
+          "beforeTransfer(address)": {
+            "signature": "beforeTransfer(address)",
+            "implementation_contract": {
+              "contract_name": "BeforeTransferHook",
+              "path": "src/interfaces/BeforeTransferHook.sol"
+            },
+            "solidity_modifiers": [
+              "view"
+            ],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address"
+            ],
+            "returns": [],
+            "path": "src/interfaces/BeforeTransferHook.sol",
+            "line_start": 5,
+            "line_end": 5,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [],
+        "events": []
+      },
+      "IERC1155Receiver@src!lib!openzeppelin-contracts!contracts!token!ERC1155!IERC1155Receiver.sol": {
+        "name": "IERC1155Receiver",
+        "key": {
+          "contract_name": "IERC1155Receiver",
+          "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+        },
+        "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+        "is_abstract": false,
+        "is_fully_implemented": false,
+        "is_interface": true,
+        "is_library": false,
+        "directly_inherits": [
+          {
+            "contract_name": "IERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+          }
+        ],
+        "scopes": [
+          {
+            "contract_name": "IERC1155Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+          },
+          {
+            "contract_name": "IERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+          },
+          {
+            "contract_name": "IERC1155Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+          }
+        ],
+        "functions_declared": {
+          "onERC1155Received(address,address,uint256,uint256,bytes)": {
+            "signature": "onERC1155Received(address,address,uint256,uint256,bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC1155Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "uint256",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+            "line_start": 28,
+            "line_end": 34,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)": {
+            "signature": "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC1155Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256[]",
+              "uint256[]",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+            "line_start": 52,
+            "line_end": 58,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {
+          "supportsInterface(bytes4)": {
+            "signature": "supportsInterface(bytes4)",
+            "implementation_contract": {
+              "contract_name": "IERC165",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+            },
+            "solidity_modifiers": [
+              "view"
+            ],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol",
+            "line_start": 24,
+            "line_end": 24,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "state_variables": [],
+        "events": []
+      },
+      "ERC1155Holder@src!lib!openzeppelin-contracts!contracts!token!ERC1155!utils!ERC1155Holder.sol": {
+        "name": "ERC1155Holder",
+        "key": {
+          "contract_name": "ERC1155Holder",
+          "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol"
+        },
+        "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol",
+        "is_abstract": true,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": false,
+        "directly_inherits": [
+          {
+            "contract_name": "ERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+          },
+          {
+            "contract_name": "IERC1155Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+          }
+        ],
+        "scopes": [
+          {
+            "contract_name": "ERC1155Holder",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol"
+          },
+          {
+            "contract_name": "ERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+          },
+          {
+            "contract_name": "IERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+          },
+          {
+            "contract_name": "IERC1155Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+          },
+          {
+            "contract_name": "ERC1155Holder",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol"
+          }
+        ],
+        "functions_declared": {
+          "supportsInterface(bytes4)": {
+            "signature": "supportsInterface(bytes4)",
+            "implementation_contract": {
+              "contract_name": "ERC1155Holder",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "override",
+              "view"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol",
+            "line_start": 19,
+            "line_end": 21,
+            "callees": {
+              "internal_callees": [
+                "ERC165.supportsInterface(bytes4)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "onERC1155Received(address,address,uint256,uint256,bytes)": {
+            "signature": "onERC1155Received(address,address,uint256,uint256,bytes)",
+            "implementation_contract": {
+              "contract_name": "ERC1155Holder",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "override"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "uint256",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol",
+            "line_start": 23,
+            "line_end": 31,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)": {
+            "signature": "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)",
+            "implementation_contract": {
+              "contract_name": "ERC1155Holder",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "override"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256[]",
+              "uint256[]",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol",
+            "line_start": 33,
+            "line_end": 41,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {
+          "onERC1155Received(address,address,uint256,uint256,bytes)": {
+            "signature": "onERC1155Received(address,address,uint256,uint256,bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC1155Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "uint256",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+            "line_start": 28,
+            "line_end": 34,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)": {
+            "signature": "onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC1155Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256[]",
+              "uint256[]",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+            "line_start": 52,
+            "line_end": 58,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "supportsInterface(bytes4)": {
+            "signature": "supportsInterface(bytes4)",
+            "implementation_contract": {
+              "contract_name": "ERC165",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "override",
+              "view"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol",
+            "line_start": 24,
+            "line_end": 26,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "state_variables": [],
+        "events": []
+      },
+      "IERC721Receiver@src!lib!openzeppelin-contracts!contracts!token!ERC721!IERC721Receiver.sol": {
+        "name": "IERC721Receiver",
+        "key": {
+          "contract_name": "IERC721Receiver",
+          "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+        },
+        "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol",
+        "is_abstract": false,
+        "is_fully_implemented": false,
+        "is_interface": true,
+        "is_library": false,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "IERC721Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+          },
+          {
+            "contract_name": "IERC721Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+          }
+        ],
+        "functions_declared": {
+          "onERC721Received(address,address,uint256,bytes)": {
+            "signature": "onERC721Received(address,address,uint256,bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC721Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol",
+            "line_start": 22,
+            "line_end": 27,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [],
+        "events": []
+      },
+      "ERC721Holder@src!lib!openzeppelin-contracts!contracts!token!ERC721!utils!ERC721Holder.sol": {
+        "name": "ERC721Holder",
+        "key": {
+          "contract_name": "ERC721Holder",
+          "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol"
+        },
+        "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol",
+        "is_abstract": true,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": false,
+        "directly_inherits": [
+          {
+            "contract_name": "IERC721Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+          }
+        ],
+        "scopes": [
+          {
+            "contract_name": "ERC721Holder",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol"
+          },
+          {
+            "contract_name": "IERC721Receiver",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+          },
+          {
+            "contract_name": "ERC721Holder",
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol"
+          }
+        ],
+        "functions_declared": {
+          "onERC721Received(address,address,uint256,bytes)": {
+            "signature": "onERC721Received(address,address,uint256,bytes)",
+            "implementation_contract": {
+              "contract_name": "ERC721Holder",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "override"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol",
+            "line_start": 21,
+            "line_end": 23,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {
+          "onERC721Received(address,address,uint256,bytes)": {
+            "signature": "onERC721Received(address,address,uint256,bytes)",
+            "implementation_contract": {
+              "contract_name": "IERC721Receiver",
+              "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "bytes"
+            ],
+            "returns": [
+              "bytes4"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol",
+            "line_start": 22,
+            "line_end": 27,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "state_variables": [],
+        "events": []
+      },
+      "Address@src!lib!openzeppelin-contracts!contracts!utils!Address.sol": {
+        "name": "Address",
+        "key": {
+          "contract_name": "Address",
+          "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+        },
+        "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+        "is_abstract": false,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": true,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "Address",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+          },
+          {
+            "contract_name": "Address",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+          }
+        ],
+        "functions_declared": {
+          "sendValue(address,uint256)": {
+            "signature": "sendValue(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "Address",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+            "line_start": 41,
+            "line_end": 50,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": true
+            }
+          },
+          "functionCall(address,bytes)": {
+            "signature": "functionCall(address,bytes)",
+            "implementation_contract": {
+              "contract_name": "Address",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "bytes"
+            ],
+            "returns": [
+              "bytes"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+            "line_start": 70,
+            "line_end": 72,
+            "callees": {
+              "internal_callees": [
+                "Address.functionCallWithValue(address,bytes,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "functionCallWithValue(address,bytes,uint256)": {
+            "signature": "functionCallWithValue(address,bytes,uint256)",
+            "implementation_contract": {
+              "contract_name": "Address",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "bytes",
+              "uint256"
+            ],
+            "returns": [
+              "bytes"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+            "line_start": 83,
+            "line_end": 89,
+            "callees": {
+              "internal_callees": [
+                "Address.verifyCallResultFromTarget(address,bool,bytes)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": true
+            }
+          },
+          "functionStaticCall(address,bytes)": {
+            "signature": "functionStaticCall(address,bytes)",
+            "implementation_contract": {
+              "contract_name": "Address",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+            },
+            "solidity_modifiers": [
+              "view"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "bytes"
+            ],
+            "returns": [
+              "bytes"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+            "line_start": 95,
+            "line_end": 98,
+            "callees": {
+              "internal_callees": [
+                "Address.verifyCallResultFromTarget(address,bool,bytes)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": true
+            }
+          },
+          "functionDelegateCall(address,bytes)": {
+            "signature": "functionDelegateCall(address,bytes)",
+            "implementation_contract": {
+              "contract_name": "Address",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "bytes"
+            ],
+            "returns": [
+              "bytes"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+            "line_start": 104,
+            "line_end": 107,
+            "callees": {
+              "internal_callees": [
+                "Address.verifyCallResultFromTarget(address,bool,bytes)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": true
+            }
+          },
+          "verifyCallResultFromTarget(address,bool,bytes)": {
+            "signature": "verifyCallResultFromTarget(address,bool,bytes)",
+            "implementation_contract": {
+              "contract_name": "Address",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+            },
+            "solidity_modifiers": [
+              "view"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "bool",
+              "bytes"
+            ],
+            "returns": [
+              "bytes"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+            "line_start": 114,
+            "line_end": 129,
+            "callees": {
+              "internal_callees": [
+                "Address._revert(bytes)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "verifyCallResult(bool,bytes)": {
+            "signature": "verifyCallResult(bool,bytes)",
+            "implementation_contract": {
+              "contract_name": "Address",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "bool",
+              "bytes"
+            ],
+            "returns": [
+              "bytes"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+            "line_start": 135,
+            "line_end": 141,
+            "callees": {
+              "internal_callees": [
+                "Address._revert(bytes)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "_revert(bytes)": {
+            "signature": "_revert(bytes)",
+            "implementation_contract": {
+              "contract_name": "Address",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "private",
+            "function_modifiers": [],
+            "arguments": [
+              "bytes"
+            ],
+            "returns": [],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+            "line_start": 146,
+            "line_end": 158,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [],
+        "events": []
+      },
+      "ERC165@src!lib!openzeppelin-contracts!contracts!utils!introspection!ERC165.sol": {
+        "name": "ERC165",
+        "key": {
+          "contract_name": "ERC165",
+          "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+        },
+        "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol",
+        "is_abstract": true,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": false,
+        "directly_inherits": [
+          {
+            "contract_name": "IERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+          }
+        ],
+        "scopes": [
+          {
+            "contract_name": "ERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+          },
+          {
+            "contract_name": "IERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+          },
+          {
+            "contract_name": "ERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+          }
+        ],
+        "functions_declared": {
+          "supportsInterface(bytes4)": {
+            "signature": "supportsInterface(bytes4)",
+            "implementation_contract": {
+              "contract_name": "ERC165",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "override",
+              "view"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol",
+            "line_start": 24,
+            "line_end": 26,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {
+          "supportsInterface(bytes4)": {
+            "signature": "supportsInterface(bytes4)",
+            "implementation_contract": {
+              "contract_name": "IERC165",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+            },
+            "solidity_modifiers": [
+              "view"
+            ],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol",
+            "line_start": 24,
+            "line_end": 24,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "state_variables": [],
+        "events": []
+      },
+      "IERC165@src!lib!openzeppelin-contracts!contracts!utils!introspection!IERC165.sol": {
+        "name": "IERC165",
+        "key": {
+          "contract_name": "IERC165",
+          "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+        },
+        "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol",
+        "is_abstract": false,
+        "is_fully_implemented": false,
+        "is_interface": true,
+        "is_library": false,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "IERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+          },
+          {
+            "contract_name": "IERC165",
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+          }
+        ],
+        "functions_declared": {
+          "supportsInterface(bytes4)": {
+            "signature": "supportsInterface(bytes4)",
+            "implementation_contract": {
+              "contract_name": "IERC165",
+              "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol"
+            },
+            "solidity_modifiers": [
+              "view"
+            ],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol",
+            "line_start": 24,
+            "line_end": 24,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [],
+        "events": []
+      },
+      "Auth@src!lib!solmate!src!auth!Auth.sol": {
+        "name": "Auth",
+        "key": {
+          "contract_name": "Auth",
+          "path": "src/lib/solmate/src/auth/Auth.sol"
+        },
+        "path": "src/lib/solmate/src/auth/Auth.sol",
+        "is_abstract": true,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": false,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "Auth",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          },
+          {
+            "contract_name": "Authority",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          },
+          {
+            "contract_name": "Auth",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          }
+        ],
+        "functions_declared": {
+          "constructor(address,Authority)": {
+            "signature": "constructor(address,Authority)",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "Authority"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 16,
+            "line_end": 22,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "isAuthorized(address,bytes4)": {
+            "signature": "isAuthorized(address,bytes4)",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "view"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 30,
+            "line_end": 36,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [
+                "Authority.canCall(address,address,bytes4)"
+              ],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "setAuthority(Authority)": {
+            "signature": "setAuthority(Authority)",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "Authority"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 38,
+            "line_end": 46,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [
+                "Authority.canCall(address,address,bytes4)"
+              ],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "transferOwnership(address)": {
+            "signature": "transferOwnership(address)",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [
+              "Auth.requiresAuth()"
+            ],
+            "arguments": [
+              "address"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 48,
+            "line_end": 52,
+            "callees": {
+              "internal_callees": [
+                "Auth.requiresAuth()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "requiresAuth()": {
+            "signature": "requiresAuth()",
+            "implementation_contract": {
+              "contract_name": "Auth",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [],
+            "returns": [],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 24,
+            "line_end": 28,
+            "callees": {
+              "internal_callees": [
+                "Auth.isAuthorized(address,bytes4)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [
+          {
+            "name": "owner",
+            "type_str": "address",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 12
+          },
+          {
+            "name": "authority",
+            "type_str": "Authority",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 14
+          }
+        ],
+        "events": [
+          {
+            "name": "OwnershipTransferred",
+            "parameters": [
+              {
+                "name": "user",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "newOwner",
+                "type_str": "address",
+                "indexed": true
+              }
+            ],
+            "line_number": 8
+          },
+          {
+            "name": "AuthorityUpdated",
+            "parameters": [
+              {
+                "name": "user",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "newAuthority",
+                "type_str": "Authority",
+                "indexed": true
+              }
+            ],
+            "line_number": 10
+          }
+        ]
+      },
+      "Authority@src!lib!solmate!src!auth!Auth.sol": {
+        "name": "Authority",
+        "key": {
+          "contract_name": "Authority",
+          "path": "src/lib/solmate/src/auth/Auth.sol"
+        },
+        "path": "src/lib/solmate/src/auth/Auth.sol",
+        "is_abstract": false,
+        "is_fully_implemented": false,
+        "is_interface": true,
+        "is_library": false,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "Auth",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          },
+          {
+            "contract_name": "Authority",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          },
+          {
+            "contract_name": "Authority",
+            "path": "src/lib/solmate/src/auth/Auth.sol"
+          }
+        ],
+        "functions_declared": {
+          "canCall(address,address,bytes4)": {
+            "signature": "canCall(address,address,bytes4)",
+            "implementation_contract": {
+              "contract_name": "Authority",
+              "path": "src/lib/solmate/src/auth/Auth.sol"
+            },
+            "solidity_modifiers": [
+              "view"
+            ],
+            "visibility": "external",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "bytes4"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/auth/Auth.sol",
+            "line_start": 59,
+            "line_end": 63,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [],
+        "events": []
+      },
+      "ERC20@src!lib!solmate!src!tokens!ERC20.sol": {
+        "name": "ERC20",
+        "key": {
+          "contract_name": "ERC20",
+          "path": "src/lib/solmate/src/tokens/ERC20.sol"
+        },
+        "path": "src/lib/solmate/src/tokens/ERC20.sol",
+        "is_abstract": true,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": false,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "ERC20",
+            "path": "src/lib/solmate/src/tokens/ERC20.sol"
+          },
+          {
+            "contract_name": "ERC20",
+            "path": "src/lib/solmate/src/tokens/ERC20.sol"
+          }
+        ],
+        "functions_declared": {
+          "constructor(string,string,uint8)": {
+            "signature": "constructor(string,string,uint8)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "string",
+              "string",
+              "uint8"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 51,
+            "line_end": 62,
+            "callees": {
+              "internal_callees": [
+                "ERC20.computeDomainSeparator()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "approve(address,uint256)": {
+            "signature": "approve(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 68,
+            "line_end": 74,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "transfer(address,uint256)": {
+            "signature": "transfer(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 76,
+            "line_end": 88,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "transferFrom(address,address,uint256)": {
+            "signature": "transferFrom(address,address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256"
+            ],
+            "returns": [
+              "bool"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 90,
+            "line_end": 110,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)": {
+            "signature": "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "address",
+              "uint256",
+              "uint256",
+              "uint8",
+              "bytes32",
+              "bytes32"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 116,
+            "line_end": 160,
+            "callees": {
+              "internal_callees": [
+                "ERC20.DOMAIN_SEPARATOR()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "DOMAIN_SEPARATOR()": {
+            "signature": "DOMAIN_SEPARATOR()",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "view"
+            ],
+            "visibility": "public",
+            "function_modifiers": [],
+            "arguments": [],
+            "returns": [
+              "bytes32"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 162,
+            "line_end": 164,
+            "callees": {
+              "internal_callees": [
+                "ERC20.computeDomainSeparator()"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "computeDomainSeparator()": {
+            "signature": "computeDomainSeparator()",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual",
+              "view"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [],
+            "returns": [
+              "bytes32"
+            ],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 166,
+            "line_end": 177,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "_mint(address,uint256)": {
+            "signature": "_mint(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 183,
+            "line_end": 193,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "_burn(address,uint256)": {
+            "signature": "_burn(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "ERC20",
+              "path": "src/lib/solmate/src/tokens/ERC20.sol"
+            },
+            "solidity_modifiers": [
+              "virtual"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/tokens/ERC20.sol",
+            "line_start": 195,
+            "line_end": 205,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [
+          {
+            "name": "name",
+            "type_str": "string",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 21
+          },
+          {
+            "name": "symbol",
+            "type_str": "string",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 23
+          },
+          {
+            "name": "decimals",
+            "type_str": "uint8",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": true,
+            "line_number": 25
+          },
+          {
+            "name": "totalSupply",
+            "type_str": "uint256",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 31
+          },
+          {
+            "name": "balanceOf",
+            "type_str": "mapping(address => uint256)",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 33
+          },
+          {
+            "name": "allowance",
+            "type_str": "mapping(address => mapping(address => uint256))",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 35
+          },
+          {
+            "name": "INITIAL_CHAIN_ID",
+            "type_str": "uint256",
+            "visibility": "internal",
+            "is_constant": false,
+            "is_immutable": true,
+            "line_number": 41
+          },
+          {
+            "name": "INITIAL_DOMAIN_SEPARATOR",
+            "type_str": "bytes32",
+            "visibility": "internal",
+            "is_constant": false,
+            "is_immutable": true,
+            "line_number": 43
+          },
+          {
+            "name": "nonces",
+            "type_str": "mapping(address => uint256)",
+            "visibility": "public",
+            "is_constant": false,
+            "is_immutable": false,
+            "line_number": 45
+          }
+        ],
+        "events": [
+          {
+            "name": "Transfer",
+            "parameters": [
+              {
+                "name": "from",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "to",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "amount",
+                "type_str": "uint256",
+                "indexed": false
+              }
+            ],
+            "line_number": 13
+          },
+          {
+            "name": "Approval",
+            "parameters": [
+              {
+                "name": "owner",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "spender",
+                "type_str": "address",
+                "indexed": true
+              },
+              {
+                "name": "amount",
+                "type_str": "uint256",
+                "indexed": false
+              }
+            ],
+            "line_number": 15
+          }
+        ]
+      },
+      "FixedPointMathLib@src!lib!solmate!src!utils!FixedPointMathLib.sol": {
+        "name": "FixedPointMathLib",
+        "key": {
+          "contract_name": "FixedPointMathLib",
+          "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+        },
+        "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+        "is_abstract": false,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": true,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "FixedPointMathLib",
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+          },
+          {
+            "contract_name": "FixedPointMathLib",
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+          }
+        ],
+        "functions_declared": {
+          "mulWadDown(uint256,uint256)": {
+            "signature": "mulWadDown(uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 16,
+            "line_end": 18,
+            "callees": {
+              "internal_callees": [
+                "FixedPointMathLib.mulDivDown(uint256,uint256,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "mulWadUp(uint256,uint256)": {
+            "signature": "mulWadUp(uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 20,
+            "line_end": 22,
+            "callees": {
+              "internal_callees": [
+                "FixedPointMathLib.mulDivUp(uint256,uint256,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "divWadDown(uint256,uint256)": {
+            "signature": "divWadDown(uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 24,
+            "line_end": 26,
+            "callees": {
+              "internal_callees": [
+                "FixedPointMathLib.mulDivDown(uint256,uint256,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "divWadUp(uint256,uint256)": {
+            "signature": "divWadUp(uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 28,
+            "line_end": 30,
+            "callees": {
+              "internal_callees": [
+                "FixedPointMathLib.mulDivUp(uint256,uint256,uint256)"
+              ],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "mulDivDown(uint256,uint256,uint256)": {
+            "signature": "mulDivDown(uint256,uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 36,
+            "line_end": 51,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "mulDivUp(uint256,uint256,uint256)": {
+            "signature": "mulDivUp(uint256,uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 53,
+            "line_end": 69,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "rpow(uint256,uint256,uint256)": {
+            "signature": "rpow(uint256,uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 71,
+            "line_end": 158,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "sqrt(uint256)": {
+            "signature": "sqrt(uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 164,
+            "line_end": 227,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "unsafeMod(uint256,uint256)": {
+            "signature": "unsafeMod(uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 229,
+            "line_end": 236,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "unsafeDiv(uint256,uint256)": {
+            "signature": "unsafeDiv(uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 238,
+            "line_end": 245,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "unsafeDivUp(uint256,uint256)": {
+            "signature": "unsafeDivUp(uint256,uint256)",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [
+              "view",
+              "pure"
+            ],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "uint256",
+              "uint256"
+            ],
+            "returns": [
+              "uint256"
+            ],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 247,
+            "line_end": 254,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "slitherConstructorConstantVariables()": {
+            "signature": "slitherConstructorConstantVariables()",
+            "implementation_contract": {
+              "contract_name": "FixedPointMathLib",
+              "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [],
+            "returns": [],
+            "path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+            "line_start": 7,
+            "line_end": 255,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [
+          {
+            "name": "MAX_UINT256",
+            "type_str": "uint256",
+            "visibility": "internal",
+            "is_constant": true,
+            "is_immutable": false,
+            "line_number": 12
+          },
+          {
+            "name": "WAD",
+            "type_str": "uint256",
+            "visibility": "internal",
+            "is_constant": true,
+            "is_immutable": false,
+            "line_number": 14
+          }
+        ],
+        "events": []
+      },
+      "SafeTransferLib@src!lib!solmate!src!utils!SafeTransferLib.sol": {
+        "name": "SafeTransferLib",
+        "key": {
+          "contract_name": "SafeTransferLib",
+          "path": "src/lib/solmate/src/utils/SafeTransferLib.sol"
+        },
+        "path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+        "is_abstract": false,
+        "is_fully_implemented": true,
+        "is_interface": false,
+        "is_library": true,
+        "directly_inherits": [],
+        "scopes": [
+          {
+            "contract_name": "SafeTransferLib",
+            "path": "src/lib/solmate/src/utils/SafeTransferLib.sol"
+          },
+          {
+            "contract_name": "ERC20",
+            "path": "src/lib/solmate/src/tokens/ERC20.sol"
+          },
+          {
+            "contract_name": "SafeTransferLib",
+            "path": "src/lib/solmate/src/utils/SafeTransferLib.sol"
+          }
+        ],
+        "functions_declared": {
+          "safeTransferETH(address,uint256)": {
+            "signature": "safeTransferETH(address,uint256)",
+            "implementation_contract": {
+              "contract_name": "SafeTransferLib",
+              "path": "src/lib/solmate/src/utils/SafeTransferLib.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+            "line_start": 15,
+            "line_end": 25,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "safeTransferFrom(ERC20,address,address,uint256)": {
+            "signature": "safeTransferFrom(ERC20,address,address,uint256)",
+            "implementation_contract": {
+              "contract_name": "SafeTransferLib",
+              "path": "src/lib/solmate/src/utils/SafeTransferLib.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "ERC20",
+              "address",
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+            "line_start": 31,
+            "line_end": 63,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "safeTransfer(ERC20,address,uint256)": {
+            "signature": "safeTransfer(ERC20,address,uint256)",
+            "implementation_contract": {
+              "contract_name": "SafeTransferLib",
+              "path": "src/lib/solmate/src/utils/SafeTransferLib.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "ERC20",
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+            "line_start": 65,
+            "line_end": 95,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          },
+          "safeApprove(ERC20,address,uint256)": {
+            "signature": "safeApprove(ERC20,address,uint256)",
+            "implementation_contract": {
+              "contract_name": "SafeTransferLib",
+              "path": "src/lib/solmate/src/utils/SafeTransferLib.sol"
+            },
+            "solidity_modifiers": [],
+            "visibility": "internal",
+            "function_modifiers": [],
+            "arguments": [
+              "ERC20",
+              "address",
+              "uint256"
+            ],
+            "returns": [],
+            "path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+            "line_start": 97,
+            "line_end": 127,
+            "callees": {
+              "internal_callees": [],
+              "external_callees": [],
+              "library_callees": [],
+              "has_low_level_calls": false
+            }
+          }
+        },
+        "functions_inherited": {},
+        "state_variables": [],
+        "events": []
+      }
+    },
+    "project_dir": "/home/gnome2/asu/capstone/PSAT/contracts/EtherFi_LiquidUSD_Vault",
+    "detector_results": {
+      "arbitrary-send-erc20": [
+        {
+          "detector_name": "arbitrary-send-erc20",
+          "check": "arbitrary-send-erc20",
+          "impact": "High",
+          "confidence": "High",
+          "description": "BoringVault.enter(address,ERC20,uint256,address,uint256) (src/base/BoringVault.sol#74-85) uses arbitrary from in transferFrom: asset.safeTransferFrom(from,address(this),assetAmount) (src/base/BoringVault.sol#79)\n",
+          "source_locations": [
+            {
+              "file_path": "src/base/BoringVault.sol",
+              "start_line": 74,
+              "end_line": 85
+            },
+            {
+              "file_path": "src/base/BoringVault.sol",
+              "start_line": 79,
+              "end_line": 79
+            }
+          ]
+        }
+      ],
+      "assembly": [
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "SafeTransferLib.safeApprove(ERC20,address,uint256) (src/lib/solmate/src/utils/SafeTransferLib.sol#97-127) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/SafeTransferLib.sol#105-124)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 97,
+              "end_line": 127
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 105,
+              "end_line": 124
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "FixedPointMathLib.unsafeDiv(uint256,uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#238-245) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/FixedPointMathLib.sol#240-244)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 238,
+              "end_line": 245
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 240,
+              "end_line": 244
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Address._revert(bytes) (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#146-158) uses assembly\n\t- INLINE ASM (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#151-154)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 146,
+              "end_line": 158
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 151,
+              "end_line": 154
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "FixedPointMathLib.rpow(uint256,uint256,uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#71-158) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/FixedPointMathLib.sol#77-157)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 71,
+              "end_line": 158
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 77,
+              "end_line": 157
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "SafeTransferLib.safeTransferETH(address,uint256) (src/lib/solmate/src/utils/SafeTransferLib.sol#15-25) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/SafeTransferLib.sol#19-22)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 15,
+              "end_line": 25
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 19,
+              "end_line": 22
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "SafeTransferLib.safeTransfer(ERC20,address,uint256) (src/lib/solmate/src/utils/SafeTransferLib.sol#65-95) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/SafeTransferLib.sol#73-92)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 65,
+              "end_line": 95
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 73,
+              "end_line": 92
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "SafeTransferLib.safeTransferFrom(ERC20,address,address,uint256) (src/lib/solmate/src/utils/SafeTransferLib.sol#31-63) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/SafeTransferLib.sol#40-60)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 31,
+              "end_line": 63
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 40,
+              "end_line": 60
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "FixedPointMathLib.mulDivDown(uint256,uint256,uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#36-51) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/FixedPointMathLib.sol#42-50)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 36,
+              "end_line": 51
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 42,
+              "end_line": 50
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "FixedPointMathLib.unsafeDivUp(uint256,uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#247-254) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/FixedPointMathLib.sol#249-253)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 247,
+              "end_line": 254
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 249,
+              "end_line": 253
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "FixedPointMathLib.unsafeMod(uint256,uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#229-236) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/FixedPointMathLib.sol#231-235)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 229,
+              "end_line": 236
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 231,
+              "end_line": 235
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "FixedPointMathLib.mulDivUp(uint256,uint256,uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#53-69) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/FixedPointMathLib.sol#59-68)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 53,
+              "end_line": 69
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 59,
+              "end_line": 68
+            }
+          ]
+        },
+        {
+          "detector_name": "assembly",
+          "check": "assembly",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "FixedPointMathLib.sqrt(uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#164-227) uses assembly\n\t- INLINE ASM (src/lib/solmate/src/utils/FixedPointMathLib.sol#166-226)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 164,
+              "end_line": 227
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 166,
+              "end_line": 226
+            }
+          ]
+        }
+      ],
+      "pragma": [
+        {
+          "detector_name": "pragma",
+          "check": "pragma",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "3 different versions of Solidity are used:\n\t- Version constraint 0.8.21 is used by:\n\t\t-0.8.21 (src/base/BoringVault.sol#2)\n\t\t-0.8.21 (src/interfaces/BeforeTransferHook.sol#2)\n\t- Version constraint ^0.8.20 is used by:\n\t\t-^0.8.20 (src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol#4)\n\t\t-^0.8.20 (src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol#4)\n\t\t-^0.8.20 (src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol#4)\n\t\t-^0.8.20 (src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol#4)\n\t\t-^0.8.20 (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#4)\n\t\t-^0.8.20 (src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol#4)\n\t\t-^0.8.20 (src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol#4)\n\t- Version constraint >=0.8.0 is used by:\n\t\t->=0.8.0 (src/lib/solmate/src/auth/Auth.sol#2)\n\t\t->=0.8.0 (src/lib/solmate/src/tokens/ERC20.sol#2)\n\t\t->=0.8.0 (src/lib/solmate/src/utils/FixedPointMathLib.sol#2)\n\t\t->=0.8.0 (src/lib/solmate/src/utils/SafeTransferLib.sol#2)\n",
+          "source_locations": [
+            {
+              "file_path": "src/base/BoringVault.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/interfaces/BeforeTransferHook.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/solmate/src/auth/Auth.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/lib/solmate/src/tokens/ERC20.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        }
+      ],
+      "divide-before-multiply": [
+        {
+          "detector_name": "divide-before-multiply",
+          "check": "divide-before-multiply",
+          "impact": "Medium",
+          "confidence": "Medium",
+          "description": "FixedPointMathLib.rpow(uint256,uint256,uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#71-158) performs a multiplication on the result of a division:\n\t- x = xxRound_rpow_asm_0 / scalar (src/lib/solmate/src/utils/FixedPointMathLib.sol#129)\n\t- zx_rpow_asm_0 = z * x (src/lib/solmate/src/utils/FixedPointMathLib.sol#134)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 71,
+              "end_line": 158
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 129,
+              "end_line": 129
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 134,
+              "end_line": 134
+            }
+          ]
+        }
+      ],
+      "solc-version": [
+        {
+          "detector_name": "solc-version",
+          "check": "solc-version",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Version constraint >=0.8.0 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)\n\t- FullInlinerNonExpressionSplitArgumentEvaluationOrder\n\t- MissingSideEffectsOnSelectorAccess\n\t- AbiReencodingHeadOverflowWithStaticArrayCleanup\n\t- DirtyBytesArrayToStorage\n\t- DataLocationChangeInInternalOverride\n\t- NestedCalldataArrayAbiReencodingSizeValidation\n\t- SignedImmutables\n\t- ABIDecodeTwoDimensionalArrayMemory\n\t- KeccakCaching.\nIt is used by:\n\t- >=0.8.0 (src/lib/solmate/src/auth/Auth.sol#2)\n\t- >=0.8.0 (src/lib/solmate/src/tokens/ERC20.sol#2)\n\t- >=0.8.0 (src/lib/solmate/src/utils/FixedPointMathLib.sol#2)\n\t- >=0.8.0 (src/lib/solmate/src/utils/SafeTransferLib.sol#2)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/auth/Auth.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/lib/solmate/src/tokens/ERC20.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        },
+        {
+          "detector_name": "solc-version",
+          "check": "solc-version",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Version constraint 0.8.21 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)\n\t- VerbatimInvalidDeduplication.\nIt is used by:\n\t- 0.8.21 (src/base/BoringVault.sol#2)\n\t- 0.8.21 (src/interfaces/BeforeTransferHook.sol#2)\n",
+          "source_locations": [
+            {
+              "file_path": "src/base/BoringVault.sol",
+              "start_line": 2,
+              "end_line": 2
+            },
+            {
+              "file_path": "src/interfaces/BeforeTransferHook.sol",
+              "start_line": 2,
+              "end_line": 2
+            }
+          ]
+        },
+        {
+          "detector_name": "solc-version",
+          "check": "solc-version",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Version constraint ^0.8.20 contains known severe issues (https://solidity.readthedocs.io/en/latest/bugs.html)\n\t- VerbatimInvalidDeduplication\n\t- FullInlinerNonExpressionSplitArgumentEvaluationOrder\n\t- MissingSideEffectsOnSelectorAccess.\nIt is used by:\n\t- ^0.8.20 (src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol#4)\n\t- ^0.8.20 (src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol#4)\n\t- ^0.8.20 (src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol#4)\n\t- ^0.8.20 (src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol#4)\n\t- ^0.8.20 (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#4)\n\t- ^0.8.20 (src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol#4)\n\t- ^0.8.20 (src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol#4)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/IERC1155Receiver.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/token/ERC1155/utils/ERC1155Holder.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/token/ERC721/utils/ERC721Holder.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/ERC165.sol",
+              "start_line": 4,
+              "end_line": 4
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/introspection/IERC165.sol",
+              "start_line": 4,
+              "end_line": 4
+            }
+          ]
+        }
+      ],
+      "low-level-calls": [
+        {
+          "detector_name": "low-level-calls",
+          "check": "low-level-calls",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Low level call in Address.functionCallWithValue(address,bytes,uint256) (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#83-89):\n\t- (success,returndata) = target.call{value: value}(data) (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#87)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 83,
+              "end_line": 89
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 87,
+              "end_line": 87
+            }
+          ]
+        },
+        {
+          "detector_name": "low-level-calls",
+          "check": "low-level-calls",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Low level call in Address.functionDelegateCall(address,bytes) (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#104-107):\n\t- (success,returndata) = target.delegatecall(data) (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#105)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 104,
+              "end_line": 107
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 105,
+              "end_line": 105
+            }
+          ]
+        },
+        {
+          "detector_name": "low-level-calls",
+          "check": "low-level-calls",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Low level call in Address.functionStaticCall(address,bytes) (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#95-98):\n\t- (success,returndata) = target.staticcall(data) (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#96)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 95,
+              "end_line": 98
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 96,
+              "end_line": 96
+            }
+          ]
+        },
+        {
+          "detector_name": "low-level-calls",
+          "check": "low-level-calls",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Low level call in Address.sendValue(address,uint256) (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#41-50):\n\t- (success,None) = recipient.call{value: amount}() (src/lib/openzeppelin-contracts/contracts/utils/Address.sol#46)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 41,
+              "end_line": 50
+            },
+            {
+              "file_path": "src/lib/openzeppelin-contracts/contracts/utils/Address.sol",
+              "start_line": 46,
+              "end_line": 46
+            }
+          ]
+        }
+      ],
+      "missing-zero-check": [
+        {
+          "detector_name": "missing-zero-check",
+          "check": "missing-zero-check",
+          "impact": "Low",
+          "confidence": "Medium",
+          "description": "Auth.transferOwnership(address).newOwner (src/lib/solmate/src/auth/Auth.sol#48) lacks a zero-check on :\n\t\t- owner = newOwner (src/lib/solmate/src/auth/Auth.sol#49)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/auth/Auth.sol",
+              "start_line": 48,
+              "end_line": 48
+            },
+            {
+              "file_path": "src/lib/solmate/src/auth/Auth.sol",
+              "start_line": 49,
+              "end_line": 49
+            }
+          ]
+        }
+      ],
+      "naming-convention": [
+        {
+          "detector_name": "naming-convention",
+          "check": "naming-convention",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Variable ERC20.INITIAL_CHAIN_ID (src/lib/solmate/src/tokens/ERC20.sol#41) is not in mixedCase\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/tokens/ERC20.sol",
+              "start_line": 41,
+              "end_line": 41
+            }
+          ]
+        },
+        {
+          "detector_name": "naming-convention",
+          "check": "naming-convention",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Function ERC20.DOMAIN_SEPARATOR() (src/lib/solmate/src/tokens/ERC20.sol#162-164) is not in mixedCase\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/tokens/ERC20.sol",
+              "start_line": 162,
+              "end_line": 164
+            }
+          ]
+        },
+        {
+          "detector_name": "naming-convention",
+          "check": "naming-convention",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Parameter BoringVault.setBeforeTransferHook(address)._hook (src/base/BoringVault.sol#113) is not in mixedCase\n",
+          "source_locations": [
+            {
+              "file_path": "src/base/BoringVault.sol",
+              "start_line": 113,
+              "end_line": 113
+            }
+          ]
+        },
+        {
+          "detector_name": "naming-convention",
+          "check": "naming-convention",
+          "impact": "Informational",
+          "confidence": "High",
+          "description": "Variable ERC20.INITIAL_DOMAIN_SEPARATOR (src/lib/solmate/src/tokens/ERC20.sol#43) is not in mixedCase\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/tokens/ERC20.sol",
+              "start_line": 43,
+              "end_line": 43
+            }
+          ]
+        }
+      ],
+      "timestamp": [
+        {
+          "detector_name": "timestamp",
+          "check": "timestamp",
+          "impact": "Low",
+          "confidence": "Medium",
+          "description": "ERC20.permit(address,address,uint256,uint256,uint8,bytes32,bytes32) (src/lib/solmate/src/tokens/ERC20.sol#116-160) uses timestamp for comparisons\n\tDangerous comparisons:\n\t- require(bool,string)(deadline >= block.timestamp,PERMIT_DEADLINE_EXPIRED) (src/lib/solmate/src/tokens/ERC20.sol#125)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/tokens/ERC20.sol",
+              "start_line": 116,
+              "end_line": 160
+            },
+            {
+              "file_path": "src/lib/solmate/src/tokens/ERC20.sol",
+              "start_line": 125,
+              "end_line": 125
+            }
+          ]
+        }
+      ],
+      "too-many-digits": [
+        {
+          "detector_name": "too-many-digits",
+          "check": "too-many-digits",
+          "impact": "Informational",
+          "confidence": "Medium",
+          "description": "SafeTransferLib.safeTransferFrom(ERC20,address,address,uint256) (src/lib/solmate/src/utils/SafeTransferLib.sol#31-63) uses literals with too many digits:\n\t- mstore(uint256,uint256)(freeMemoryPointer_safeTransferFrom_asm_0,0x23b872dd00000000000000000000000000000000000000000000000000000000) (src/lib/solmate/src/utils/SafeTransferLib.sol#45)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 31,
+              "end_line": 63
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 45,
+              "end_line": 45
+            }
+          ]
+        },
+        {
+          "detector_name": "too-many-digits",
+          "check": "too-many-digits",
+          "impact": "Informational",
+          "confidence": "Medium",
+          "description": "SafeTransferLib.safeApprove(ERC20,address,uint256) (src/lib/solmate/src/utils/SafeTransferLib.sol#97-127) uses literals with too many digits:\n\t- mstore(uint256,uint256)(freeMemoryPointer_safeApprove_asm_0,0x095ea7b300000000000000000000000000000000000000000000000000000000) (src/lib/solmate/src/utils/SafeTransferLib.sol#110)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 97,
+              "end_line": 127
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 110,
+              "end_line": 110
+            }
+          ]
+        },
+        {
+          "detector_name": "too-many-digits",
+          "check": "too-many-digits",
+          "impact": "Informational",
+          "confidence": "Medium",
+          "description": "SafeTransferLib.safeTransfer(ERC20,address,uint256) (src/lib/solmate/src/utils/SafeTransferLib.sol#65-95) uses literals with too many digits:\n\t- mstore(uint256,uint256)(freeMemoryPointer_safeTransfer_asm_0,0xa9059cbb00000000000000000000000000000000000000000000000000000000) (src/lib/solmate/src/utils/SafeTransferLib.sol#78)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 65,
+              "end_line": 95
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/SafeTransferLib.sol",
+              "start_line": 78,
+              "end_line": 78
+            }
+          ]
+        },
+        {
+          "detector_name": "too-many-digits",
+          "check": "too-many-digits",
+          "impact": "Informational",
+          "confidence": "Medium",
+          "description": "FixedPointMathLib.sqrt(uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#164-227) uses literals with too many digits:\n\t- ! y_sqrt_asm_0 < 0x1000000 (src/lib/solmate/src/utils/FixedPointMathLib.sol#188-191)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 164,
+              "end_line": 227
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 188,
+              "end_line": 191
+            }
+          ]
+        },
+        {
+          "detector_name": "too-many-digits",
+          "check": "too-many-digits",
+          "impact": "Informational",
+          "confidence": "Medium",
+          "description": "FixedPointMathLib.sqrt(uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#164-227) uses literals with too many digits:\n\t- ! y_sqrt_asm_0 < 0x1000000000000000000 (src/lib/solmate/src/utils/FixedPointMathLib.sol#180-183)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 164,
+              "end_line": 227
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 180,
+              "end_line": 183
+            }
+          ]
+        },
+        {
+          "detector_name": "too-many-digits",
+          "check": "too-many-digits",
+          "impact": "Informational",
+          "confidence": "Medium",
+          "description": "FixedPointMathLib.sqrt(uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#164-227) uses literals with too many digits:\n\t- ! y_sqrt_asm_0 < 0x10000000000 (src/lib/solmate/src/utils/FixedPointMathLib.sol#184-187)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 164,
+              "end_line": 227
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 184,
+              "end_line": 187
+            }
+          ]
+        },
+        {
+          "detector_name": "too-many-digits",
+          "check": "too-many-digits",
+          "impact": "Informational",
+          "confidence": "Medium",
+          "description": "FixedPointMathLib.sqrt(uint256) (src/lib/solmate/src/utils/FixedPointMathLib.sol#164-227) uses literals with too many digits:\n\t- ! y_sqrt_asm_0 < 0x10000000000000000000000000000000000 (src/lib/solmate/src/utils/FixedPointMathLib.sol#176-179)\n",
+          "source_locations": [
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 164,
+              "end_line": 227
+            },
+            {
+              "file_path": "src/lib/solmate/src/utils/FixedPointMathLib.sol",
+              "start_line": 176,
+              "end_line": 179
+            }
+          ]
+        }
+      ]
+    },
+    "available_detectors": [
+      {
+        "name": "abiencoderv2-array",
+        "description": "Storage abiencoderv2 array",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "arbitrary-send-erc20",
+        "description": "transferFrom uses arbitrary `from`",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "arbitrary-send-erc20-permit",
+        "description": "transferFrom uses arbitrary from with permit",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "arbitrary-send-eth",
+        "description": "Functions that send Ether to arbitrary destinations",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "array-by-reference",
+        "description": "Modifying storage array by value",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "controlled-array-length",
+        "description": "Tainted array length assignment",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "assembly",
+        "description": "Assembly usage",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "assert-state-change",
+        "description": "Assert state change",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "backdoor",
+        "description": "Function named backdoor (detector example)",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "weak-prng",
+        "description": "Weak PRNG",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "boolean-cst",
+        "description": "Misuse of Boolean constant",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "boolean-equal",
+        "description": "Comparison to boolean constant",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "shadowing-builtin",
+        "description": "Built-in symbol shadowing",
+        "impact": "Low",
+        "confidence": "High"
+      },
+      {
+        "name": "cache-array-length",
+        "description": "Detects `for` loops that use `length` member of some storage array in their loop condition and don't modify it.",
+        "impact": "Optimization",
+        "confidence": "High"
+      },
+      {
+        "name": "chainlink-feed-registry",
+        "description": "Detect when chainlink feed registry is used",
+        "impact": "Low",
+        "confidence": "High"
+      },
+      {
+        "name": "chronicle-unchecked-price",
+        "description": "Detect when Chronicle price is not checked.",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "constant-function-asm",
+        "description": "Constant functions using assembly code",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "constant-function-state",
+        "description": "Constant functions changing the state",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "pragma",
+        "description": "If different pragma directives are used",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "controlled-delegatecall",
+        "description": "Controlled delegatecall destination",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "costly-loop",
+        "description": "Costly operations in a loop",
+        "impact": "Informational",
+        "confidence": "Medium"
+      },
+      {
+        "name": "constable-states",
+        "description": "State variables that could be declared constant",
+        "impact": "Optimization",
+        "confidence": "High"
+      },
+      {
+        "name": "immutable-states",
+        "description": "State variables that could be declared immutable",
+        "impact": "Optimization",
+        "confidence": "High"
+      },
+      {
+        "name": "cyclomatic-complexity",
+        "description": "Detects functions with high (> 11) cyclomatic complexity",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "dead-code",
+        "description": "Functions that are not used",
+        "impact": "Informational",
+        "confidence": "Medium"
+      },
+      {
+        "name": "delegatecall-loop",
+        "description": "Payable functions using `delegatecall` inside a loop",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "deprecated-standards",
+        "description": "Deprecated Solidity Standards",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "divide-before-multiply",
+        "description": "Imprecise arithmetic operations order",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "domain-separator-collision",
+        "description": "Detects ERC20 tokens that have a function whose signature collides with EIP-2612's DOMAIN_SEPARATOR()",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "encode-packed-collision",
+        "description": "ABI encodePacked Collision",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "enum-conversion",
+        "description": "Detect dangerous enum conversion",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "external-function",
+        "description": "Public function that could be declared external",
+        "impact": "Optimization",
+        "confidence": "High"
+      },
+      {
+        "name": "function-init-state",
+        "description": "Function initializing state variables",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "gelato-unprotected-randomness",
+        "description": "Call to _requestRandomness within an unprotected function",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "erc20-interface",
+        "description": "Incorrect ERC20 interfaces",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "erc721-interface",
+        "description": "Incorrect ERC721 interfaces",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "incorrect-exp",
+        "description": "Incorrect exponentiation",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "incorrect-return",
+        "description": "If a `return` is incorrectly used in assembly mode.",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "solc-version",
+        "description": "Incorrect Solidity version",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "incorrect-equality",
+        "description": "Dangerous strict equalities",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "incorrect-unary",
+        "description": "Dangerous unary expressions",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "incorrect-using-for",
+        "description": "Detects using-for statement usage when no function from a given library matches a given type",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "shadowing-local",
+        "description": "Local variables shadowing",
+        "impact": "Low",
+        "confidence": "High"
+      },
+      {
+        "name": "locked-ether",
+        "description": "Contracts that lock ether",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "low-level-calls",
+        "description": "Low level calls",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "mapping-deletion",
+        "description": "Deletion on mapping containing a structure",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "events-access",
+        "description": "Missing Events Access Control",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "events-maths",
+        "description": "Missing Events Arithmetic",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "missing-inheritance",
+        "description": "Missing inheritance",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "missing-zero-check",
+        "description": "Missing Zero Address Validation",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "incorrect-modifier",
+        "description": "Modifiers that can return the default value",
+        "impact": "Low",
+        "confidence": "High"
+      },
+      {
+        "name": "msg-value-loop",
+        "description": "msg.value inside a loop",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "calls-loop",
+        "description": "Multiple calls in a loop",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "multiple-constructors",
+        "description": "Multiple constructor schemes",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "name-reused",
+        "description": "Contract's name reused",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "naming-convention",
+        "description": "Conformity to Solidity naming conventions",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "optimism-deprecation",
+        "description": "Detect when deprecated Optimism predeploy or function is used.",
+        "impact": "Low",
+        "confidence": "High"
+      },
+      {
+        "name": "out-of-order-retryable",
+        "description": "Out-of-order retryable transactions",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "variable-scope",
+        "description": "Local variables used prior their declaration",
+        "impact": "Low",
+        "confidence": "High"
+      },
+      {
+        "name": "protected-vars",
+        "description": "Detected unprotected variables",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "public-mappings-nested",
+        "description": "Public mappings with nested variables",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "pyth-deprecated-functions",
+        "description": "Detect Pyth deprecated functions",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "pyth-unchecked-confidence",
+        "description": "Detect when the confidence level of a Pyth price is not checked",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "pyth-unchecked-publishtime",
+        "description": "Detect when the publishTime of a Pyth price is not checked",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "redundant-statements",
+        "description": "Redundant statements",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "reentrancy-balance",
+        "description": "Reentrancy vulnerabilities leading to outdated balance checks",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "reentrancy-benign",
+        "description": "Benign reentrancy vulnerabilities",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "reentrancy-eth",
+        "description": "Reentrancy vulnerabilities (theft of ethers)",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "reentrancy-events",
+        "description": "Reentrancy vulnerabilities leading to out-of-order Events",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "reentrancy-unlimited-gas",
+        "description": "Reentrancy vulnerabilities through send and transfer",
+        "impact": "Informational",
+        "confidence": "Medium"
+      },
+      {
+        "name": "reentrancy-no-eth",
+        "description": "Reentrancy vulnerabilities (no theft of ethers)",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "return-bomb",
+        "description": "A low level callee may consume all callers gas unexpectedly.",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "return-leave",
+        "description": "If a `return` is used instead of a `leave`.",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "reused-constructor",
+        "description": "Reused base constructor",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "rtlo",
+        "description": "Right-To-Left-Override control character is used",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "shadowing-abstract",
+        "description": "State variables shadowing from abstract contracts",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "incorrect-shift",
+        "description": "The order of parameters in a shift instruction is incorrect.",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "shadowing-state",
+        "description": "State variables shadowing",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "storage-array",
+        "description": "Signed storage integer array compiler bug",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "suicidal",
+        "description": "Functions allowing anyone to destruct the contract",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "tautological-compare",
+        "description": "Comparing a variable to itself always returns true or false, depending on comparison",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "timestamp",
+        "description": "Dangerous usage of `block.timestamp`",
+        "impact": "Low",
+        "confidence": "Medium"
+      },
+      {
+        "name": "too-many-digits",
+        "description": "Conformance to numeric notation best practices",
+        "impact": "Informational",
+        "confidence": "Medium"
+      },
+      {
+        "name": "tx-origin",
+        "description": "Dangerous usage of `tx.origin`",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "tautology",
+        "description": "Tautology or contradiction",
+        "impact": "Medium",
+        "confidence": "High"
+      },
+      {
+        "name": "unchecked-lowlevel",
+        "description": "Unchecked low-level calls",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "unchecked-send",
+        "description": "Unchecked send",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "unchecked-transfer",
+        "description": "Unchecked tokens transfer",
+        "impact": "High",
+        "confidence": "Medium"
+      },
+      {
+        "name": "unimplemented-functions",
+        "description": "Unimplemented functions",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "erc20-indexed",
+        "description": "Un-indexed ERC20 event parameters",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "unindexed-event-address",
+        "description": "Events with address parameters but no indexed parameters",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "uninitialized-fptr-cst",
+        "description": "Uninitialized function pointer calls in constructors",
+        "impact": "Low",
+        "confidence": "High"
+      },
+      {
+        "name": "uninitialized-local",
+        "description": "Uninitialized local variables",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "uninitialized-state",
+        "description": "Uninitialized state variables",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "uninitialized-storage",
+        "description": "Uninitialized storage variables",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "unprotected-upgrade",
+        "description": "Unprotected upgradeable contract",
+        "impact": "High",
+        "confidence": "High"
+      },
+      {
+        "name": "unused-return",
+        "description": "Unused return values",
+        "impact": "Medium",
+        "confidence": "Medium"
+      },
+      {
+        "name": "unused-state",
+        "description": "Unused state variables",
+        "impact": "Informational",
+        "confidence": "High"
+      },
+      {
+        "name": "var-read-using-this",
+        "description": "Contract reads its own variable using `this`",
+        "impact": "Optimization",
+        "confidence": "High"
+      },
+      {
+        "name": "void-cst",
+        "description": "Constructor called not implemented",
+        "impact": "Low",
+        "confidence": "High"
+      },
+      {
+        "name": "write-after-write",
+        "description": "Unused write",
+        "impact": "Medium",
+        "confidence": "High"
+      }
+    ]
+  }
+}

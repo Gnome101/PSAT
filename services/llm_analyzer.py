@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from utils.nim import chat
+from utils.source_loader import load_sources, load_slither_findings
 
 SYSTEM_PROMPT = """\
 You are a smart contract security analyst. You will be given:
@@ -33,42 +34,10 @@ Be specific — reference function names and line numbers.\
 """
 
 
-def _load_sources(project_dir: Path) -> str:
-    """Concatenate all .sol files in the project."""
-    parts = []
-    for sol_file in sorted(project_dir.rglob("src/**/*.sol")):
-        rel = sol_file.relative_to(project_dir)
-        content = sol_file.read_text()
-        parts.append(f"// === {rel} ===\n{content}")
-    return "\n\n".join(parts)
-
-
-def _load_slither_findings(project_dir: Path) -> str:
-    """Load slither results as a summary string."""
-    json_path = project_dir / "slither_results.json"
-    if not json_path.exists():
-        return "No Slither results available."
-
-    data = json.loads(json_path.read_text())
-    detectors = data.get("results", {}).get("detectors", [])
-
-    if not detectors:
-        return "Slither found no issues."
-
-    lines = []
-    for d in detectors:
-        impact = d.get("impact", "?")
-        check = d.get("check", "?")
-        desc = d.get("description", "").strip().split("\n")[0]
-        lines.append(f"- [{impact}] {check}: {desc}")
-
-    return "\n".join(lines)
-
-
 def analyze_with_llm(project_dir: Path, model: str | None = None) -> str:
     """Run LLM flow analysis on a contract project. Returns the analysis text."""
-    source_code = _load_sources(project_dir)
-    slither_findings = _load_slither_findings(project_dir)
+    source_code = load_sources(project_dir)
+    slither_findings = load_slither_findings(project_dir)
 
     # Load metadata
     meta_path = project_dir / "contract_meta.json"

@@ -2,19 +2,29 @@ import importlib
 import json
 import sys
 import types
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def load_pipeline_module():
+    # Try importing real modules first; only stub if truly unavailable.
     if "requests" not in sys.modules:
-        requests_stub = types.ModuleType("requests")
-        requests_stub.get = lambda *args, **kwargs: None
-        requests_stub.post = lambda *args, **kwargs: None
-        sys.modules["requests"] = requests_stub
+        try:
+            import requests  # noqa: F401
+        except ImportError:
+            requests_stub = types.ModuleType("requests")
+            requests_stub.get = lambda *args, **kwargs: None
+            requests_stub.post = lambda *args, **kwargs: None
+            sys.modules["requests"] = requests_stub
 
     if "dotenv" not in sys.modules:
-        dotenv_stub = types.ModuleType("dotenv")
-        dotenv_stub.load_dotenv = lambda *args, **kwargs: None
-        sys.modules["dotenv"] = dotenv_stub
+        try:
+            import dotenv  # noqa: F401
+        except ImportError:
+            dotenv_stub = types.ModuleType("dotenv")
+            dotenv_stub.load_dotenv = lambda *args, **kwargs: None
+            sys.modules["dotenv"] = dotenv_stub
 
     if "main" in sys.modules:
         return importlib.reload(sys.modules["main"])
@@ -139,7 +149,7 @@ def test_process_writes_dynamic_dependencies_json(tmp_path, monkeypatch):
         ],
     }
 
-    def fake_find_dynamic_dependencies(address, rpc_url, tx_limit, tx_hashes):
+    def fake_find_dynamic_dependencies(address, rpc_url=None, tx_limit=5, tx_hashes=None):
         calls.append((address, rpc_url, tx_limit, tx_hashes))
         return dyn_payload
 
@@ -246,7 +256,7 @@ def test_process_fetches_dependency_sources_once_for_discovered_addresses(tmp_pa
     monkeypatch.setattr(
         pipeline,
         "find_dynamic_dependencies",
-        lambda _address, _rpc_url, _tx_limit, _tx_hashes: {
+        lambda _address, rpc_url=None, tx_limit=5, tx_hashes=None: {
             "address": root,
             "rpc": "https://trace-rpc.example",
             "transactions_analyzed": [],

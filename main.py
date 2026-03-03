@@ -35,6 +35,10 @@ from services.llm_analyzer import analyze_with_llm
 from services.dependent_contracts import find_dependencies
 from services.dynamic_dependencies import find_dynamic_dependencies
 from services.call_graph import export_call_graph
+from services.privilege_analysis import analyze_privileges
+from services.pausability_analysis import analyze_pausability
+from services.timelock_analysis import analyze_timelocks
+from services.llm_big_picture import analyze_big_picture
 
 
 def load_addresses(filepath: str) -> list[dict]:
@@ -113,9 +117,15 @@ def process(
     dynamic_tx_limit: int = 5,
     dynamic_tx_hashes: list[str] | None = None,
     fetch_dependency_sources: bool = False,
+    run_privilege: bool = True,
+    run_pausability: bool = True,
+    run_timelock: bool = True,
+    run_big_picture: bool = True,
 ):
     """Fetch, scaffold, discover dependencies, and run analyzers."""
-    steps = 3 + int(run_deps) + int(run_dynamic_deps) + int(run_llm)
+    steps = (3 + int(run_deps) + int(run_dynamic_deps) + int(run_llm)
+             + int(run_privilege) + int(run_pausability) + int(run_timelock)
+             + int(run_big_picture))
     step = 1
 
     print(f"\n{'─' * 50}")
@@ -176,12 +186,54 @@ def process(
     report_path = analyze(project_dir, contract_name, address)
     print(f"         Report: {report_path}")
 
+    if run_privilege:
+        print(f"[{step}/{steps}] Running privilege & access control analysis ...")
+        step += 1
+        try:
+            priv_result = analyze_privileges(project_dir)
+            print(f"         Roles: {priv_result.get('privileged_roles', [])}")
+            print(f"         Output: {project_dir / 'privilege_analysis.json'}")
+        except Exception as exc:
+            print(f"         Privilege analysis skipped: {exc}")
+
+    if run_pausability:
+        print(f"[{step}/{steps}] Running pausability analysis ...")
+        step += 1
+        try:
+            pause_result = analyze_pausability(project_dir)
+            print(f"         Pausable: {pause_result.get('is_pausable', False)}")
+            print(f"         Output: {project_dir / 'pausability_analysis.json'}")
+        except Exception as exc:
+            print(f"         Pausability analysis skipped: {exc}")
+
+    if run_timelock:
+        print(f"[{step}/{steps}] Running timelock analysis ...")
+        step += 1
+        try:
+            tl_result = analyze_timelocks(project_dir)
+            print(f"         Has timelock: {tl_result.get('has_timelock', False)}")
+            print(f"         Output: {project_dir / 'timelock_analysis.json'}")
+        except Exception as exc:
+            print(f"         Timelock analysis skipped: {exc}")
+
     if run_llm:
         print(f"[{step}/{steps}] Running LLM flow analysis (NVIDIA NIM) ...")
+        step += 1
         llm_report = analyze_with_llm(project_dir)
         llm_path = project_dir / "llm_analysis.md"
         llm_path.write_text(llm_report + "\n")
         print(f"         LLM report: {llm_path}")
+
+    if run_big_picture:
+        print(f"[{step}/{steps}] Running big picture AI analysis ...")
+        step += 1
+        try:
+            bp_report = analyze_big_picture(project_dir)
+            bp_path = project_dir / "big_picture_analysis.md"
+            bp_path.write_text(bp_report + "\n")
+            print(f"         Big picture report: {bp_path}")
+        except Exception as exc:
+            print(f"         Big picture analysis skipped: {exc}")
 
     return project_dir
 
@@ -217,6 +269,10 @@ def main():
         action="store_true",
         help="Fetch and scaffold verified source code for discovered dependency contracts",
     )
+    parser.add_argument("--no-privilege", action="store_true", help="Skip privilege analysis")
+    parser.add_argument("--no-pausability", action="store_true", help="Skip pausability analysis")
+    parser.add_argument("--no-timelock", action="store_true", help="Skip timelock analysis")
+    parser.add_argument("--no-big-picture", action="store_true", help="Skip big picture AI analysis")
     args = parser.parse_args()
 
     if not args.address and not args.file:
@@ -226,6 +282,10 @@ def main():
     run_llm = not args.no_llm
     run_deps = not args.no_deps
     run_dynamic_deps = (not args.no_deps) and (not args.no_dynamic_deps)
+    run_privilege = not args.no_privilege
+    run_pausability = not args.no_pausability
+    run_timelock = not args.no_timelock
+    run_big_picture = not args.no_big_picture
 
     if args.dynamic_tx_limit < 1:
         sys.exit("--dynamic-tx-limit must be >= 1")
@@ -246,6 +306,10 @@ def main():
                     dynamic_tx_limit=args.dynamic_tx_limit,
                     dynamic_tx_hashes=args.dynamic_tx_hashes,
                     fetch_dependency_sources=args.fetch_dependency_sources,
+                    run_privilege=run_privilege,
+                    run_pausability=run_pausability,
+                    run_timelock=run_timelock,
+                    run_big_picture=run_big_picture,
                 )
             except Exception as e:
                 print(f"  FAILED: {e}")
@@ -261,6 +325,10 @@ def main():
             dynamic_tx_limit=args.dynamic_tx_limit,
             dynamic_tx_hashes=args.dynamic_tx_hashes,
             fetch_dependency_sources=args.fetch_dependency_sources,
+            run_privilege=run_privilege,
+            run_pausability=run_pausability,
+            run_timelock=run_timelock,
+            run_big_picture=run_big_picture,
         )
 
     print("\nDone.")
