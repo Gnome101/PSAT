@@ -4,11 +4,14 @@
 import argparse
 import json
 import os
+import sys
+import hashlib
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 
+from db.db_manager import DatabaseManager
 from services.dependent_contracts import normalize_address, rpc_call
 from utils.etherscan import get as etherscan_get
 
@@ -277,10 +280,7 @@ def _build_graph(edges: list[dict]) -> list[dict]:
 
 
 def find_dynamic_dependencies(
-    address: str,
-    rpc_url: str | None = None,
-    tx_limit: int = 5,
-    tx_hashes: list[str] | None = None,
+    address: str, rpc_url: str | None = None, tx_limit: int = 5, tx_hashes: list[str] | None = None,
 ) -> dict:
     """Trace representative transactions and return a dynamic dependency graph."""
     if tx_limit < 1:
@@ -357,6 +357,124 @@ def find_dynamic_dependencies(
         "trace_errors": trace_errors,
     }
 
+def persist_dynamic_results(
+    db: DatabaseManager,
+    protocol_id: int,
+    results: dict,
+) -> dict:
+    """
+    Persist the output of find_dynamic_dependencies() into the PSAT database and 
+    returns a summary dict with inserted row counts and IDs.
+    """
+    summary: dict[str, Any] = {
+        "protocol_id": protocol_id,
+        "target_contract_id": None,
+        "source_ids": [],
+        "document_ids": [],
+        "dependency_contract_ids": [],
+        "claim_ids": [],
+        "evidence_ids": [],
+        "links_created": 0,
+    }
+
+    target_contract = db.insert("contract", {
+        "protocol_id": protocol_id,
+        "address": results["address"],
+        "chain": "ethereum",
+        "is_proxy": False,
+    })
+    summary["target_contract_id"] = target_contract["id"]
+
+    rpc_source = db.insert("source", {
+        "protocol_id": protocol_id,
+        "type": "rpc_trace",
+        "url": results["rpc"],
+        "authority_score": 90.0,
+    })
+    summary["source_ids"].append(rpc_source["id"])
+
+    etherscan_source = None
+    if not any(e.get("error") for e in results.get("trace_errors", [])):
+        etherscan_source = db.insert("source", {
+            "protocol_id": protocol_id,
+            "type": "etherscan",
+            "url": f"https://api.etherscan.io/api?module=account&action=txlist&address={results['address']}",
+            "authority_score": 85.0,
+        })
+        summary["source_ids"].append(etherscan_source["id"])
+
+    tx_document_map: dict[str, int] = {}
+    source_id_for_docs = rpc_source["id"]
+
+    for tx in results.get("transactions_analyzed", []):
+        tx_hash = tx["tx_hash"]
+        content = json.dumps(tx, sort_keys=True)
+        content_hash = hashlib.sha256(content.encode()).hexdigest()
+
+        doc = db.insert("document", {
+            "source_id": source_id_for_docs,
+            "format": "json",
+            "content_hash": f"sha256:{content_hash}",
+            "storage_path": f"traces/{results['address']}/{tx_hash}.json",
+        })
+        tx_document_map[tx_hash] = doc["id"]
+        summary["document_ids"].append(doc["id"])
+
+    for dep_address in results.get("dependencies", []):
+        dep_contract = db.insert("contract", {
+            "protocol_id": protocol_id,
+            "address": dep_address,
+            "chain": "ethereum",
+            "is_proxy": False,
+        })
+        summary["dependency_contract_ids"].append(dep_contract["id"])
+
+        prov_records = results.get("provenance", {}).get(dep_address, [])
+        evidence_ids_for_dep: list[int] = []
+
+        for prov in prov_records:
+            evidence = db.insert("evidence", {
+                "reference": (
+                    f"tx:{prov['tx_hash']} "
+                    f"block:{prov['block_number']} "
+                    f"from:{prov['from']} "
+                    f"op:{prov['op']}"
+                ),
+                "type": prov["op"].lower(),
+                "checksum": prov["tx_hash"],
+            })
+            evidence_ids_for_dep.append(evidence["id"])
+            summary["evidence_ids"].append(evidence["id"])
+
+        first_tx_hash = prov_records[0]["tx_hash"] if prov_records else None
+        doc_id = tx_document_map.get(first_tx_hash)
+
+        if doc_id is None and summary["document_ids"]:
+            doc_id = summary["document_ids"][0]
+
+        if doc_id is not None:
+            total_txs = len(results.get("transactions_analyzed", []))
+            observed_txs = len({p["tx_hash"] for p in prov_records})
+            confidence = round(observed_txs / max(total_txs, 1), 4)
+
+            claim = db.insert("claims", {
+                "document_id": doc_id,
+                "category": "dynamic_dependency",
+                "value": json.dumps({
+                    "target": results["address"],
+                    "dependency": dep_address,
+                    "ops": sorted({p["op"] for p in prov_records}),
+                    "tx_count": observed_txs,
+                }),
+                "confidence": confidence,
+            })
+            summary["claim_ids"].append(claim["id"])
+
+            for eid in evidence_ids_for_dep:
+                db.link_claim_evidence(claim["id"], eid)
+                summary["links_created"] += 1
+
+    return summary
 
 def main():
     parser = argparse.ArgumentParser()
@@ -365,6 +483,14 @@ def main():
     parser.add_argument("--tx-limit", type=int, default=5)
     parser.add_argument("--tx-hash", action="append", dest="tx_hashes")
     args = parser.parse_args()
+
+    parser.add_argument("--save", action="store_true", default=False, help="Persist results to the PSAT database")
+    parser.add_argument("--protocol-id", type=int, default=None, help="Protocol ID to associate results with (required with --save)")
+    parser.add_argument("--db-name", default="psat_db", help="Database name")
+    parser.add_argument("--db-user", default="postgres", help="Database user")
+    parser.add_argument("--db-password", default="postgres", help="Database password")
+    parser.add_argument("--db-host", default="localhost", help="Database host")
+    parser.add_argument("--db-port", type=int, default=5432, help="Database port")
 
     try:
         output = find_dynamic_dependencies(
@@ -377,6 +503,47 @@ def main():
         raise SystemExit(str(exc)) from exc
 
     print(json.dumps(output))
+
+    if args.save:
+        if args.protocol_id is None:
+            raise SystemExit("--protocol-id is required when using --save")
+
+        db = DatabaseManager(
+            dbname=args.db_name,
+            user=args.db_user,
+            password=args.db_password,
+            host=args.db_host,
+            port=args.db_port,
+        )
+
+        try:
+            db.initialize()
+
+            protocol = db.get_by_id("protocol", args.protocol_id)
+            if protocol is None:
+                raise SystemExit(
+                    f"Protocol with id={args.protocol_id} not found. "
+                    f"Create it first:\n"
+                    f"  python -c \"from db.db_manager import DatabaseManager; "
+                    f"db = DatabaseManager(); db.initialize(); "
+                    f"print(db.insert('protocol', {{'name': 'MyProtocol', 'chain': 'ethereum'}}))\""
+                )
+
+            summary = persist_dynamic_results(db, args.protocol_id, output)
+
+            print(f"\nSaved to database:", file=sys.stderr)
+            print(f"  Target contract ID : {summary['target_contract_id']}", file=sys.stderr)
+            print(f"  Sources created    : {len(summary['source_ids'])}", file=sys.stderr)
+            print(f"  Documents created  : {len(summary['document_ids'])}", file=sys.stderr)
+            print(f"  Dependencies stored: {len(summary['dependency_contract_ids'])}", file=sys.stderr)
+            print(f"  Claims created     : {len(summary['claim_ids'])}", file=sys.stderr)
+            print(f"  Evidence created   : {len(summary['evidence_ids'])}", file=sys.stderr)
+            print(f"  Links created      : {summary['links_created']}", file=sys.stderr)
+
+        except Exception as exc:
+            raise SystemExit(f"Database error: {exc}") from exc
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":
