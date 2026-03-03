@@ -4,7 +4,8 @@
 How it works:
 1. Broad Tavily search to discover official domains and collect initial evidence.
 2. LLM-guided page discovery — searches the official domain for pages, then asks
-   NIM which page(s) most likely list deployed contract addresses.  The
+   the Kimi model (from ``utils.llm``) which page(s) most likely list deployed
+   contract addresses. The
    recommended page(s) are fetched directly (bypassing Tavily's content
    truncation) and addresses extracted near the contract name are scored as
    high-confidence ``llm_recommended_page`` evidence.
@@ -19,6 +20,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -30,7 +32,7 @@ if str(ROOT_DIR) not in sys.path:
 
 import requests as _requests
 
-from utils import nim, tavily
+from utils import llm, tavily
 
 ADDRESS_RE = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
 URL_RE = re.compile(r"https?://[^\s\"'<>)]+")
@@ -64,6 +66,12 @@ LOW_TRUST_DOMAINS = {
 }
 
 CHAIN_SORT_ORDER = {"ethereum": 0, "arbitrum": 1, "optimism": 2, "polygon": 3, "base": 4, "unknown": 99}
+
+
+def _debug_log(enabled: bool, message: str) -> None:
+    if enabled:
+        ts = datetime.now().isoformat(timespec="seconds")
+        print(f"[{ts}] [debug] {message}", file=sys.stderr)
 
 
 def _tokenize(value: str) -> set[str]:
@@ -206,21 +214,30 @@ def _tavily_search(
     queries_used: list[int],
     max_queries: int,
     errors: list[dict],
+    debug: bool = False,
 ) -> list[dict]:
     """Run a single Tavily search, respecting query budget."""
     if queries_used[0] >= max_queries:
+        _debug_log(debug, f"Skipping Tavily query (budget exhausted): {query!r}")
         return []
     queries_used[0] += 1
+    _debug_log(
+        debug,
+        f"Tavily query {queries_used[0]}/{max_queries}: {query!r} (max_results={max_results})",
+    )
     try:
-        return tavily.search(
+        results = tavily.search(
             query,
             max_results=max_results,
             topic="general",
             search_depth="advanced",
             include_raw_content=True,
         )
+        _debug_log(debug, f"Tavily returned {len(results)} result(s)")
+        return results
     except Exception as exc:  # noqa: BLE001
         errors.append(tavily.error_from_exception(exc))
+        _debug_log(debug, f"Tavily query failed: {exc!r}")
         return []
 
 
@@ -230,20 +247,24 @@ def _discover_contract_listing_pages(
     queries_used: list[int],
     max_queries: int,
     errors: list[dict],
+    debug: bool = False,
 ) -> tuple[list[dict], list[str]]:
     """Search the official domain for pages, then ask the LLM which ones list contract addresses.
 
     Returns (tavily_results, recommended_urls).  Falls back gracefully if the
     LLM call fails — recommended_urls will be empty.
     """
+    _debug_log(debug, f"Phase 2.5: discovering contract-listing pages on domain={domain}")
     results = _tavily_search(
         f"site:{domain} {company} smart contract addresses",
         max_results=10,
         queries_used=queries_used,
         max_queries=max_queries,
         errors=errors,
+        debug=debug,
     )
     if not results:
+        _debug_log(debug, "No page-discovery results returned")
         return [], []
 
     # Collect unique URLs from this domain with their titles
@@ -259,6 +280,7 @@ def _discover_contract_listing_pages(
             page_info.append({"url": url, "title": title})
 
     if not page_info:
+        _debug_log(debug, "No unique in-domain pages found for LLM recommendation")
         return results, []
 
     # Ask the LLM to pick the most relevant page(s)
@@ -272,8 +294,9 @@ def _discover_contract_listing_pages(
     )
 
     try:
-        response = nim.chat(
+        response = llm.nim.chat(
             [{"role": "user", "content": prompt}],
+            model=llm.nim.default_model,
             max_tokens=2048,
             temperature=0.0,
         )
@@ -282,9 +305,11 @@ def _discover_contract_listing_pages(
             clean_url = url_match.rstrip(".,;:!?)")
             if _is_allowed_domain(_get_domain(clean_url), [domain]):
                 recommended.append(clean_url)
+        _debug_log(debug, f"LLM recommended {len(recommended)} in-domain URL(s)")
         return results, recommended
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         # LLM unavailable — return results without recommendations
+        _debug_log(debug, f"LLM recommendation step failed: {exc!r}")
         return results, []
 
 
@@ -295,8 +320,10 @@ def _process_results(
     requested_chain: str | None,
     grouped: dict[tuple[str, str], list[dict[str, Any]]],
     kind: str,
+    debug: bool = False,
 ) -> None:
     """Extract address evidence from Tavily results (no crawling needed)."""
+    before = sum(len(v) for v in grouped.values())
     for result in results:
         url = str(result.get("url", "")).strip()
         if not url:
@@ -336,6 +363,11 @@ def _process_results(
                             "chain_from_hint": hint,
                         }
                     )
+    after = sum(len(v) for v in grouped.values())
+    _debug_log(
+        debug,
+        f"Processed {len(results)} result(s) for kind={kind}; added {after - before} evidence item(s)",
+    )
 
 
 def search_contract_name_ai(
@@ -344,6 +376,7 @@ def search_contract_name_ai(
     chain: str | None = None,
     limit: int = 10,
     max_queries: int = 8,
+    debug: bool = False,
 ) -> dict[str, Any]:
     clean_company = company.strip()
     clean_contract = contract_name.strip()
@@ -358,14 +391,24 @@ def search_contract_name_ai(
     errors: list[dict[str, Any]] = []
     notes: list[str] = []
     queries_used: list[int] = [0]
+    _debug_log(
+        debug,
+        (
+            "Starting discovery: "
+            f"company={clean_company!r}, contract={clean_contract!r}, "
+            f"chain={requested_chain or 'any'}, limit={limit}, max_queries={max_queries}"
+        ),
+    )
 
     # --- Phase 1: Broad search (doubles as domain discovery + initial evidence) ---
+    _debug_log(debug, "Phase 1: broad Tavily search for domain discovery + initial evidence")
     broad_results = _tavily_search(
         f'"{clean_company}" "{clean_contract}" contract address',
         max_results=10,
         queries_used=queries_used,
         max_queries=max_queries,
         errors=errors,
+        debug=debug,
     )
 
     # Identify official domains from results
@@ -397,10 +440,18 @@ def search_contract_name_ai(
 
     if domain_candidates:
         notes.append(f"Domain candidates: {', '.join(domain_candidates)}")
+    _debug_log(
+        debug,
+        (
+            f"Domain selection complete: official_domain={official_domain!r}, "
+            f"candidates={domain_candidates}"
+        ),
+    )
 
     if not official_domain:
         notes.append("Could not identify an official domain")
         notes.append(f"Tavily queries used: {queries_used[0]}/{max_queries}")
+        _debug_log(debug, "Stopping early: official domain not identified")
         return {
             "query": clean_contract,
             "company": clean_company,
@@ -421,26 +472,49 @@ def search_contract_name_ai(
                 continue
             evidence_domains.append(d)
     notes.append(f"Evidence domains: {', '.join(evidence_domains)}")
+    _debug_log(debug, f"Evidence domains: {evidence_domains}")
 
     # --- Phase 2: Extract evidence from broad results ---
     grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    _process_results(broad_results, clean_contract, evidence_domains, requested_chain, grouped, "official_page")
+    _debug_log(debug, "Phase 2: extracting evidence from broad search results")
+    _process_results(
+        broad_results,
+        clean_contract,
+        evidence_domains,
+        requested_chain,
+        grouped,
+        "official_page",
+        debug=debug,
+    )
 
     # --- Phase 2.5: LLM-guided page discovery ---
     # Search the primary domain for pages, ask the LLM which ones list
     # contract addresses, then extract from those pages with boosted weight.
     recommended_urls: set[str] = set()
     if evidence_domains:
+        _debug_log(debug, "Phase 2.5: LLM-guided page discovery on primary evidence domain")
         disc_results, rec_urls = _discover_contract_listing_pages(
-            evidence_domains[0], clean_company, queries_used, max_queries, errors
+            evidence_domains[0],
+            clean_company,
+            queries_used,
+            max_queries,
+            errors,
+            debug=debug,
         )
         recommended_urls = {u.lower().rstrip("/") for u in rec_urls}
         if recommended_urls:
             notes.append(f"LLM-recommended pages: {len(recommended_urls)}")
+            _debug_log(debug, f"Recommended URLs: {sorted(recommended_urls)}")
 
         # Process all discovery results normally (Tavily content, may be truncated)
         _process_results(
-            disc_results, clean_contract, evidence_domains, requested_chain, grouped, "official_page"
+            disc_results,
+            clean_contract,
+            evidence_domains,
+            requested_chain,
+            grouped,
+            "official_page",
+            debug=debug,
         )
 
         # Fetch LLM-recommended pages directly to get full content (Tavily
@@ -451,8 +525,10 @@ def search_contract_name_ai(
         # matches get regular weight.
         for rec_url in rec_urls:
             try:
+                _debug_log(debug, f"Fetching recommended page: {rec_url}")
                 page_resp = _requests.get(rec_url, timeout=15, headers={"User-Agent": "PSAT/0.1"})
                 if page_resp.status_code != 200:
+                    _debug_log(debug, f"Skipping {rec_url}: HTTP {page_resp.status_code}")
                     continue
                 plain = TAG_RE.sub(" ", page_resp.text)
                 page_chain = _infer_chain(rec_url, plain[:2000])
@@ -484,11 +560,14 @@ def search_contract_name_ai(
                             )
                     if seen:
                         break  # strict matched, skip loose
-            except Exception:  # noqa: BLE001
+                _debug_log(debug, f"Recommended page {rec_url} produced {len(seen)} address match(es)")
+            except Exception as exc:  # noqa: BLE001
+                _debug_log(debug, f"Failed to process recommended page {rec_url}: {exc!r}")
                 continue
 
     # --- Phase 3: Site-scoped queries on top domains ---
     # Two query variations per domain to surface different URL variants.
+    _debug_log(debug, "Phase 3: running site-scoped Tavily queries")
     for domain in evidence_domains[:2]:
         for query_text in [
             f'site:{domain} "{clean_contract}" contract address',
@@ -500,13 +579,24 @@ def search_contract_name_ai(
                 queries_used=queries_used,
                 max_queries=max_queries,
                 errors=errors,
+                debug=debug,
             )
-            _process_results(site_results, clean_contract, evidence_domains, requested_chain, grouped, "official_page")
+            _process_results(
+                site_results,
+                clean_contract,
+                evidence_domains,
+                requested_chain,
+                grouped,
+                "official_page",
+                debug=debug,
+            )
 
     notes.append(f"Evidence keys: {len(grouped)}")
+    _debug_log(debug, f"Evidence keys after Phase 3: {len(grouped)}")
 
     # --- Phase 4: Optional explorer confirmation for already-found addresses ---
     if grouped:
+        _debug_log(debug, "Phase 4: explorer confirmation for discovered addresses")
         explorer_query = f'"{clean_company}" "{clean_contract}" contract address etherscan'
         if requested_chain:
             explorer_query = f'"{clean_company}" "{clean_contract}" {requested_chain} contract address'
@@ -516,10 +606,12 @@ def search_contract_name_ai(
             queries_used=queries_used,
             max_queries=max_queries,
             errors=errors,
+            debug=debug,
         )
         allowed_keys = set(grouped.keys())
         company_tokens = _tokenize(clean_company)
         contract_tokens = _tokenize(clean_contract)
+        confirmations_added = 0
         for result in explorer_results:
             url = str(result.get("url", "")).strip()
             if not _is_explorer_domain(_get_domain(url)):
@@ -539,8 +631,11 @@ def search_contract_name_ai(
                 if key not in allowed_keys:
                     continue
                 grouped[key].append({"kind": "explorer_confirmation", "url": url, "chain_from_hint": hint})
+                confirmations_added += 1
+        _debug_log(debug, f"Explorer confirmations added: {confirmations_added}")
 
     # --- Phase 5: Score and rank ---
+    _debug_log(debug, "Phase 5: scoring, deduplication, and ranking")
     candidates: list[dict[str, Any]] = []
     for (cand_chain, address), evidence in grouped.items():
         seen: set[tuple[str, str]] = set()
@@ -650,6 +745,14 @@ def search_contract_name_ai(
     if not ranked:
         notes.append("No address met official-domain evidence requirements")
     notes.append(f"Tavily queries used: {queries_used[0]}/{max_queries}")
+    _debug_log(
+        debug,
+        (
+            f"Completed discovery: candidates={len(candidates)}, ranked={len(ranked)}, "
+            f"best_candidate={'yes' if best_candidate else 'no'}, "
+            f"queries_used={queries_used[0]}/{max_queries}, errors={len(errors)}"
+        ),
+    )
 
     return {
         "query": clean_contract,
@@ -675,6 +778,7 @@ def main() -> None:
     parser.add_argument("--chain", default=None, help="Optional chain filter")
     parser.add_argument("--limit", type=int, default=10, help="Max candidates to return")
     parser.add_argument("--max-queries", type=int, default=8, help="Tavily query cap (default: 8)")
+    parser.add_argument("--debug", action="store_true", help="Print phase-by-phase debug logs to stderr")
     args = parser.parse_args()
 
     try:
@@ -684,6 +788,7 @@ def main() -> None:
             chain=args.chain,
             limit=args.limit,
             max_queries=args.max_queries,
+            debug=args.debug,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
