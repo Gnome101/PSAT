@@ -61,7 +61,10 @@ class LLMClient:
                 break
             try:
                 chunk = json.loads(data)
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
                 content = delta.get("content")
                 if content:
                     content_parts.append(content)
@@ -74,7 +77,7 @@ class LLMClient:
 openrouter = LLMClient(
     url="https://openrouter.ai/api/v1/chat/completions",
     env_var="OPEN_ROUTER_KEY",
-    default_model="minimax/minimax-m2.5",
+    default_model="google/gemini-2.0-flash-001",
 )
 
 nim = LLMClient(
