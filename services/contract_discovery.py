@@ -18,9 +18,17 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
+from pathlib import Path
 from typing import Any
 
 import requests
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from services.dependent_contracts import normalize_address as _normalize_address
 
 ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 HTTP_TIMEOUT_SECONDS = 20
@@ -61,10 +69,6 @@ def _tokenize(value: str) -> set[str]:
 
 def _is_evm_address(value: str) -> bool:
     return bool(ADDRESS_RE.match(value.strip()))
-
-
-def _normalize_address(value: str) -> str:
-    return "0x" + value.lower().replace("0x", "", 1)
 
 
 def _chain_sort_key(chain: str) -> tuple[int, str]:
