@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections import defaultdict
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -266,3 +267,168 @@ def _process_results(
         debug,
         f"Processed {len(results)} result(s) for kind={kind}; added {after - before} evidence item(s)",
     )
+
+
+# -- Higher-level pipeline helpers -------------------------------------------
+
+def _build_evidence_domains(
+    official_domain: str,
+    broad_results: list[dict[str, Any]],
+) -> list[str]:
+    """Collect up to 3 trusted domains for evidence extraction."""
+    domains: list[str] = [official_domain]
+    for result in broad_results:
+        url = str(result.get("url", "")).strip()
+        if not url:
+            continue
+        d = _get_domain(url)
+        if d and d not in domains and not _is_explorer_domain(d) and not _is_low_trust_domain(d):
+            if "github.com" not in d:
+                domains.append(d)
+        if len(domains) >= 3:
+            break
+    return domains
+
+
+def _extract_addresses_from_recommended_pages(
+    rec_urls: list[str],
+    clean_contract: str,
+    requested_chain: str | None,
+    grouped: dict[tuple[str, str], list[dict[str, Any]]],
+    debug: bool = False,
+) -> None:
+    """Fetch LLM-recommended pages and extract address evidence near the contract name."""
+    for rec_url in rec_urls:
+        page_text = _fetch_page(rec_url, debug=debug)
+        if not page_text:
+            continue
+        plain = TAG_RE.sub(" ", page_text)
+        page_chain = _infer_chain(rec_url, plain[:2000])
+
+        name_clean = " ".join(clean_contract.split())
+        name_pat = re.escape(name_clean).replace(r"\ ", r"\s+")
+        seen: set[str] = set()
+
+        for pattern, window_size in [
+            (re.compile(r"(?:^|[\n|])\s*" + name_pat, re.IGNORECASE | re.MULTILINE), 120),
+            (re.compile(name_pat, re.IGNORECASE), 200),
+        ]:
+            for mention in pattern.finditer(plain):
+                window = plain[mention.end() : mention.end() + window_size]
+                near = ADDRESS_RE.search(window)
+                if not near:
+                    continue
+                addr = _normalize_address(near.group())
+                if addr in seen:
+                    continue
+                seen.add(addr)
+                resolved, hint = _resolve_chain(page_chain, requested_chain)
+                if resolved is not None:
+                    kind = "llm_recommended_page" if len(seen) == 1 else "official_page"
+                    grouped[(resolved, addr)].append(
+                        {"kind": kind, "url": rec_url, "chain_from_hint": hint}
+                    )
+            if seen:
+                break
+        _debug_log(debug, f"Recommended page {rec_url} produced {len(seen)} address match(es)")
+
+
+def _build_source_links(deduped: list[dict[str, Any]]) -> dict[str, str]:
+    """Build ranked source links from deduplicated evidence items."""
+    link_scores: dict[str, float] = {}
+    for item in deduped:
+        url = str(item.get("url", "")).strip()
+        if url:
+            base = {
+                "llm_recommended_page": 0.8,
+                "official_page": 0.6,
+                "official_page_linked_explorer": 0.5,
+            }.get(item["kind"], 0.3)
+            link_scores[url] = max(link_scores.get(url, 0.0), base)
+        ref = str(item.get("referrer_url", "")).strip()
+        if ref and ref.lower() != "none":
+            link_scores[ref] = max(link_scores.get(ref, 0.0), 0.7)
+    return {
+        f"source_{i + 1}": u
+        for i, (u, _) in enumerate(sorted(link_scores.items(), key=lambda p: p[1], reverse=True)[:5])
+    }
+
+
+def _score_and_build_candidates(
+    grouped: dict[tuple[str, str], list[dict[str, Any]]],
+    clean_company: str,
+    clean_contract: str,
+) -> list[dict[str, Any]]:
+    """Score evidence groups and build candidate dicts."""
+    candidates: list[dict[str, Any]] = []
+    for (cand_chain, address), evidence in grouped.items():
+        seen: set[tuple[str, str]] = set()
+        deduped: list[dict[str, Any]] = []
+        for item in evidence:
+            sig = (str(item.get("kind", "")), str(item.get("url", "")))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            deduped.append(item)
+
+        official_page = sum(1 for e in deduped if e["kind"] == "official_page")
+        llm_recommended = sum(1 for e in deduped if e["kind"] == "llm_recommended_page")
+        linked_explorer = sum(1 for e in deduped if e["kind"].endswith("_linked_explorer"))
+        unique_urls = {str(e.get("url", "")) for e in deduped if e.get("url")}
+
+        if official_page == 0 and linked_explorer == 0 and llm_recommended == 0:
+            continue
+
+        confidence = 0.25
+        confidence += min(0.44, official_page * 0.22)
+        confidence += min(0.50, llm_recommended * 0.50)
+        confidence += min(0.24, linked_explorer * 0.12)
+        confidence += min(0.12, max(0, len(unique_urls) - 1) * 0.04)
+        confidence = min(confidence, 0.99)
+
+        reasons = [
+            f"Official page evidence: {official_page}",
+            f"Official linked explorer evidence: {linked_explorer}",
+        ]
+        if llm_recommended:
+            reasons.append(f"LLM-recommended page evidence: {llm_recommended}")
+        if len(unique_urls) > 1:
+            reasons.append(f"Confirmed by {len(unique_urls)} unique URLs")
+        if any(e.get("chain_from_hint") for e in deduped):
+            reasons.append("Applied requested chain to chain-agnostic evidence")
+
+        links = _build_source_links(deduped)
+        if not links:
+            continue
+
+        candidates.append(
+            {
+                "display_name": f"{clean_company} - {clean_contract}",
+                "symbol": None,
+                "address": address,
+                "chain": cand_chain,
+                "confidence": round(confidence, 4),
+                "source": "tavily_ai",
+                "reasons": reasons,
+                "links": links,
+            }
+        )
+    return candidates
+
+
+def _deduplicate_by_address(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge candidates that share the same address, preferring specific chains and higher confidence."""
+    by_address: dict[str, dict[str, Any]] = {}
+    for cand in candidates:
+        addr = cand["address"]
+        prev = by_address.get(addr)
+        if prev is None:
+            by_address[addr] = cand
+        else:
+            winner = cand if cand["confidence"] > prev["confidence"] else prev
+            loser = prev if winner is cand else cand
+            if winner["chain"] == "unknown" and loser["chain"] != "unknown":
+                winner["chain"] = loser["chain"]
+            winner["links"] = {**loser["links"], **winner["links"]}
+            by_address[addr] = winner
+    return list(by_address.values())

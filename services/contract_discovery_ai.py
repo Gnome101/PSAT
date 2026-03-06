@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -25,21 +24,15 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from services.dependent_contracts import normalize_address as _normalize_address
-
 from services.discovery_ai_evidence import (
-    ADDRESS_RE,
     CHAIN_SORT_ORDER,
-    TAG_RE,
+    _build_evidence_domains,
     _debug_log,
+    _deduplicate_by_address,
     _enrich_with_fetched_content,
-    _fetch_page,
-    _get_domain,
-    _infer_chain,
-    _is_explorer_domain,
-    _is_low_trust_domain,
+    _extract_addresses_from_recommended_pages,
     _process_results,
-    _resolve_chain,
+    _score_and_build_candidates,
 )
 from services.discovery_ai_domain import (
     _discover_contract_listing_pages,
@@ -130,19 +123,7 @@ def search_contract_name_ai(
             "notes": notes[:12],
         }
 
-    # Build evidence domains list
-    evidence_domains: list[str] = [official_domain]
-    # Also include non-low-trust domains from broad results that aren't the official one
-    for result in broad_results:
-        url = str(result.get("url", "")).strip()
-        if not url:
-            continue
-        d = _get_domain(url)
-        if d and d not in evidence_domains and not _is_explorer_domain(d) and not _is_low_trust_domain(d):
-            if "github.com" not in d:
-                evidence_domains.append(d)
-        if len(evidence_domains) >= 3:
-            break
+    evidence_domains = _build_evidence_domains(official_domain, broad_results)
     notes.append(f"Evidence domains: {', '.join(evidence_domains)}")
     _debug_log(debug, f"Evidence domains: {evidence_domains}")
 
@@ -161,7 +142,7 @@ def search_contract_name_ai(
         debug=debug,
     )
 
-    # --- Phase 2.5: LLM-guided page discovery ---
+    # --- Phase 2: LLM-guided page discovery ---
     # Search the primary domain for pages, ask the LLM which ones list
     # contract addresses, then fetch those pages directly for extraction.
     if evidence_domains:
@@ -191,137 +172,18 @@ def search_contract_name_ai(
         )
 
         # Fetch LLM-recommended pages directly to get full content.
-        for rec_url in rec_urls:
-            page_text = _fetch_page(rec_url, debug=debug)
-            if not page_text:
-                continue
-            plain = TAG_RE.sub(" ", page_text)
-            page_chain = _infer_chain(rec_url, plain[:2000])
-
-            # Ordered extraction — first unique address gets the boost.
-            name_clean = " ".join(clean_contract.split())
-            name_pat = re.escape(name_clean).replace(r"\ ", r"\s+")
-            seen: set[str] = set()
-
-            # Try strict (line/cell start) first, then loose (anywhere).
-            for pattern, window_size in [
-                (re.compile(r"(?:^|[\n|])\s*" + name_pat, re.IGNORECASE | re.MULTILINE), 120),
-                (re.compile(name_pat, re.IGNORECASE), 200),
-            ]:
-                for mention in pattern.finditer(plain):
-                    window = plain[mention.end() : mention.end() + window_size]
-                    near = ADDRESS_RE.search(window)
-                    if not near:
-                        continue
-                    addr = _normalize_address(near.group())
-                    if addr in seen:
-                        continue
-                    seen.add(addr)
-                    resolved, hint = _resolve_chain(page_chain, requested_chain)
-                    if resolved is not None:
-                        kind = "llm_recommended_page" if len(seen) == 1 else "official_page"
-                        grouped[(resolved, addr)].append(
-                            {"kind": kind, "url": rec_url, "chain_from_hint": hint}
-                        )
-                if seen:
-                    break  # strict matched, skip loose
-            _debug_log(debug, f"Recommended page {rec_url} produced {len(seen)} address match(es)")
+        _extract_addresses_from_recommended_pages(
+            rec_urls, clean_contract, requested_chain, grouped, debug=debug,
+        )
 
     notes.append(f"Evidence keys: {len(grouped)}")
     _debug_log(debug, f"Evidence keys after Phase 2: {len(grouped)}")
 
     # --- Phase 3: Score and rank ---
     _debug_log(debug, "Phase 3: scoring, deduplication, and ranking")
-    candidates: list[dict[str, Any]] = []
-    for (cand_chain, address), evidence in grouped.items():
-        seen: set[tuple[str, str]] = set()
-        deduped: list[dict[str, Any]] = []
-        for item in evidence:
-            sig = (str(item.get("kind", "")), str(item.get("url", "")))
-            if sig in seen:
-                continue
-            seen.add(sig)
-            deduped.append(item)
-
-        official_page = sum(1 for e in deduped if e["kind"] == "official_page")
-        llm_recommended = sum(1 for e in deduped if e["kind"] == "llm_recommended_page")
-        linked_explorer = sum(1 for e in deduped if e["kind"].endswith("_linked_explorer"))
-        unique_urls = {str(e.get("url", "")) for e in deduped if e.get("url")}
-
-        if official_page == 0 and linked_explorer == 0 and llm_recommended == 0:
-            continue
-
-        confidence = 0.25
-        confidence += min(0.44, official_page * 0.22)
-        confidence += min(0.50, llm_recommended * 0.50)
-        confidence += min(0.24, linked_explorer * 0.12)
-        confidence += min(0.12, max(0, len(unique_urls) - 1) * 0.04)
-        confidence = min(confidence, 0.99)
-
-        reasons = [
-            f"Official page evidence: {official_page}",
-            f"Official linked explorer evidence: {linked_explorer}",
-        ]
-        if llm_recommended:
-            reasons.append(f"LLM-recommended page evidence: {llm_recommended}")
-        if len(unique_urls) > 1:
-            reasons.append(f"Confirmed by {len(unique_urls)} unique URLs")
-        if any(e.get("chain_from_hint") for e in deduped):
-            reasons.append("Applied requested chain to chain-agnostic evidence")
-
-        link_scores: dict[str, float] = {}
-        for item in deduped:
-            url = str(item.get("url", "")).strip()
-            if url:
-                base = {
-                    "llm_recommended_page": 0.8,
-                    "official_page": 0.6,
-                    "official_page_linked_explorer": 0.5,
-                }.get(item["kind"], 0.3)
-                link_scores[url] = max(link_scores.get(url, 0.0), base)
-            ref = str(item.get("referrer_url", "")).strip()
-            if ref and ref.lower() != "none":
-                link_scores[ref] = max(link_scores.get(ref, 0.0), 0.7)
-        links = {
-            f"source_{i + 1}": u
-            for i, (u, _) in enumerate(sorted(link_scores.items(), key=lambda p: p[1], reverse=True)[:5])
-        }
-        if not links:
-            continue
-
-        candidates.append(
-            {
-                "display_name": f"{clean_company} - {clean_contract}",
-                "symbol": None,
-                "address": address,
-                "chain": cand_chain,
-                "confidence": round(confidence, 4),
-                "source": "tavily_ai",
-                "reasons": reasons,
-                "links": links,
-            }
-        )
-
-    # Deduplicate by address — merge entries that only differ by chain,
-    # preferring a specific chain over "unknown" and keeping the best confidence.
-    by_address: dict[str, dict[str, Any]] = {}
-    for cand in candidates:
-        addr = cand["address"]
-        prev = by_address.get(addr)
-        if prev is None:
-            by_address[addr] = cand
-        else:
-            # Merge: keep higher confidence, prefer specific chain
-            winner = cand if cand["confidence"] > prev["confidence"] else prev
-            loser = prev if winner is cand else cand
-            if winner["chain"] == "unknown" and loser["chain"] != "unknown":
-                winner["chain"] = loser["chain"]
-            # Merge links (winner takes priority for key collisions)
-            winner["links"] = {**loser["links"], **winner["links"]}
-            by_address[addr] = winner
-
+    candidates = _score_and_build_candidates(grouped, clean_company, clean_contract)
     ranked = sorted(
-        by_address.values(),
+        _deduplicate_by_address(candidates),
         key=lambda c: (-c["confidence"], CHAIN_SORT_ORDER.get(c["chain"], 50), c["address"]),
     )[:limit]
 
