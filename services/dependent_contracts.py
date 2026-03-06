@@ -300,7 +300,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("address")
     parser.add_argument("--rpc")
-    args = parser.parse_args()
 
     parser.add_argument("--save", action="store_true", default=False, help="Persist results to the PSAT database")
     parser.add_argument("--protocol-id", type=int, default=None, help="Protocol ID to associate results with (required with --save)")
@@ -309,6 +308,10 @@ def main():
     parser.add_argument("--db-password", default="postgres", help="Database password")
     parser.add_argument("--db-host", default="localhost", help="Database host")
     parser.add_argument("--db-port", type=int, default=5432, help="Database port")
+
+    parser.add_argument("--db-url", default=None, help="PostgreSQL connection string (overrides individual --db-* args)")
+
+    args = parser.parse_args()
 
     try:
         output = find_dependencies(args.address.strip(), args.rpc)
@@ -322,13 +325,16 @@ def main():
         if args.protocol_id is None:
             raise SystemExit("--protocol-id is required when using --save")
 
-        db = DatabaseManager(
-            dbname=args.db_name,
-            user=args.db_user,
-            password=args.db_password,
-            host=args.db_host,
-            port=args.db_port,
-        )
+        if args.db_url:
+            db = DatabaseManager(dsn=args.db_url)
+        else:
+            db = DatabaseManager(
+                dbname=args.db_name,
+                user=args.db_user,
+                password=args.db_password,
+                host=args.db_host,
+                port=args.db_port,
+            )
 
         try:
             db.initialize()

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import psycopg2
 from psycopg2 import sql, extras
 from datetime import datetime, timezone
@@ -123,19 +124,25 @@ class DatabaseManager:
 
     def __init__(
         self,
+        dsn: str = None,
         dbname: str = "psat_db",
         user: str = "postgres",
         password: str = "postgres",
         host: str = "localhost",
         port: int = 5432,
     ):
-        self._conn_params = {
-            "dbname": dbname,
-            "user": user,
-            "password": password,
-            "host": host,
-            "port": port,
-        }
+        if dsn:
+            self._dsn = dsn
+            self._conn_params = None
+        else:
+            self._dsn = None
+            self._conn_params = {
+                "dbname": dbname,
+                "user": user,
+                "password": password,
+                "host": host,
+                "port": port,
+            }
         self.conn: Optional[psycopg2.extensions.connection] = None
 
     # Connection helpers
@@ -143,7 +150,10 @@ class DatabaseManager:
     def connect(self) -> None:
         """Open a connection to the database."""
         if self.conn is None or self.conn.closed:
-            self.conn = psycopg2.connect(**self._conn_params)
+            if self._dsn:
+                self.conn = psycopg2.connect(self._dsn)
+            else:
+                self.conn = psycopg2.connect(**self._conn_params)
             self.conn.autocommit = False
 
     def close(self) -> None:
@@ -464,7 +474,8 @@ class DatabaseManager:
 
     def __repr__(self):
         status = "connected" if (self.conn and not self.conn.closed) else "disconnected"
-        return f"<DatabaseManager db={self._conn_params['dbname']!r} {status}>"
+        label = self._dsn[:40] + "..." if self._dsn else self._conn_params['dbname']
+        return f"<DatabaseManager db={label!r} {status}>"
 
 
 # Interactive CLI
@@ -510,20 +521,23 @@ def interactive_cli():
     print("  PSAT Database Manager — Interactive CLI")
     print("=" * 60)
 
-    dbname   = input("Database name [psat_db]: ").strip() or "psat_db"
-    user     = input("User [postgres]: ").strip() or "postgres"
-    password = input("Password [postgres]: ").strip() or "postgres"
-    host     = input("Host [localhost]: ").strip() or "localhost"
-    port     = input("Port [5432]: ").strip() or "5432"
+    dsn = input("Connection string (or press Enter for manual config): ").strip()
 
-    db = DatabaseManager(dbname=dbname, user=user, password=password, host=host, port=int(port))
+    if dsn:
+        db = DatabaseManager(dsn=dsn)
+    else:
+        dbname   = input("Database name [psat_db]: ").strip() or "psat_db"
+        user     = input("User [postgres]: ").strip() or "postgres"
+        password = input("Password [postgres]: ").strip() or "postgres"
+        host     = input("Host [localhost]: ").strip() or "localhost"
+        port     = input("Port [5432]: ").strip() or "5432"
+        db = DatabaseManager(dbname=dbname, user=user, password=password, host=host, port=int(port))
 
     try:
         db.initialize()
     except psycopg2.OperationalError as e:
         print(f"\n✘ Could not connect to database: {e}")
-        print("  Make sure PostgreSQL is running and the database exists.")
-        print(f"  You can create it with:  createdb {dbname}")
+        print("  Make sure PostgreSQL is running and the connection details are correct.")
         return
 
     tables = list(VALID_TABLES.keys())
