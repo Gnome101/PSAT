@@ -1,0 +1,1580 @@
+{
+  "company": "etherfi",
+  "chain": "any",
+  "official_domain": "etherfi.gitbook.io",
+  "domain_candidates": [
+    "etherfi.gitbook.io",
+    "github.com",
+    "antiersolutions.com",
+    "docs.etherlink.com",
+    "ethereum.stackexchange.com",
+    "okx.com"
+  ],
+  "pages_considered": [
+    "https://etherfi.gitbook.io/etherfi/ether.fi-whitepaper/technical-documentation",
+    "https://etherfi.gitbook.io/etherfi/cash/technical-documentation",
+    "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+    "https://etherfi.gitbook.io/etherfi/contracts-and-integrations",
+    "https://etherfi.gitbook.io/etherfi/staking/ebtc",
+    "https://etherfi.gitbook.io/etherfi/node-operators/node-operators-guide",
+    "https://etherfi.gitbook.io/etherfi/cash/vault",
+    "https://etherfi.gitbook.io/etherfi/getting-started/loyalty-points"
+  ],
+  "pages_selected": [
+    "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+    "https://etherfi.gitbook.io/etherfi/contracts-and-integrations"
+  ],
+  "contracts": [
+    {
+      "name": "ETHFI Season 1 - Tranche 1",
+      "aliases": [],
+      "address": "0x93fff4028927f53f708534397ed349b9cd4e2f9f",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x93fff4028927f53f708534397ed349b9cd4e2f9f"
+      }
+    },
+    {
+      "name": "ETHFI Season 1 - Tranche 2",
+      "aliases": [],
+      "address": "0x1baa2146e5b258a2cc516166a095dbc22caacfe6",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x1baa2146E5b258a2CC516166a095DbC22CAacfe6"
+      }
+    },
+    {
+      "name": "ETHFI Season 1 - Tranche 3",
+      "aliases": [],
+      "address": "0x227dd729c7ca1eb91c22dac0c4b1abad75b8365a",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x227dd729c7ca1eb91c22dac0c4b1abad75b8365a"
+      }
+    },
+    {
+      "name": "ETHFI Season 2 - Tranche 1",
+      "aliases": [],
+      "address": "0x64776b0907b839e759f91a5a328ea143067ddcd7",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x64776B0907b839e759f91a5a328EA143067dDCd7"
+      }
+    },
+    {
+      "name": "ETHFI Season 2 - Tranche 1",
+      "aliases": [],
+      "address": "0xc5fde679f52e9bd896ab1dee5265f9a80c672512",
+      "chain": "arbitrum",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://arbiscan.io/address/0xc5fde679f52e9bd896ab1dee5265f9a80c672512"
+      }
+    },
+    {
+      "name": "ETHFI Season 2 - Tranche 2",
+      "aliases": [],
+      "address": "0x87eb1c0f3827cb91bef234f61e4a5594280754e9",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x87eb1c0f3827cb91bef234f61e4a5594280754e9"
+      }
+    },
+    {
+      "name": "ETHFI Season 2 - Tranche 2",
+      "aliases": [],
+      "address": "0x2c999fd1543dd5a228acd0173092af10e3a8eeda",
+      "chain": "arbitrum",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://arbiscan.io/address/0x2c999fd1543dd5a228acd0173092af10e3a8eeda"
+      }
+    },
+    {
+      "name": "ETHFI Season 2 - Tranche 3",
+      "aliases": [],
+      "address": "0x7aec93210fd857bfb1e7919cb9ef30731494c003",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x7aec93210fd857bfb1e7919cb9ef30731494c003"
+      }
+    },
+    {
+      "name": "ETHFI Season 2 - Tranche 3",
+      "aliases": [],
+      "address": "0x390624d61f03075d7e14d909d6c3f46ecac8b984",
+      "chain": "arbitrum",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://arbiscan.io/address/0x390624d61F03075d7e14D909D6c3f46Ecac8b984"
+      }
+    },
+    {
+      "name": "ETHFI Season 2 - Tranche 4",
+      "aliases": [],
+      "address": "0x0c1e1a20566321de81841e61a75b2b949610cb39",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x0c1e1a20566321de81841e61a75b2b949610cb39"
+      }
+    },
+    {
+      "name": "ETHFI Season 3 - Tranche 1",
+      "aliases": [],
+      "address": "0xbd456973dfd5b00b07ce5307110c77e3f228ca3c",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0xbd456973DFd5B00b07Ce5307110C77E3F228Ca3c"
+      }
+    },
+    {
+      "name": "ETHFI Season 3 - Tranche 1",
+      "aliases": [],
+      "address": "0x4dea1271dfae80f4f3324b3a50c33abdbea89a57",
+      "chain": "arbitrum",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://arbiscan.io/address/0x4dea1271dfae80f4f3324b3a50c33abdbea89a57"
+      }
+    },
+    {
+      "name": "ETHFI Season 3 - Tranche 1",
+      "aliases": [],
+      "address": "0x7b6a67f1031c1d8c7bab1cf001bdaf83271241fb",
+      "chain": "base",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://basescan.org/address/0x7b6a67f1031c1d8c7bab1cf001bdaf83271241fb"
+      }
+    },
+    {
+      "name": "ETHFI Season 3 - Tranche 2",
+      "aliases": [],
+      "address": "0xce6460b8e97d7be72a9f525fa5b49c62d06d2b46",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0xCE6460b8E97D7be72a9F525Fa5B49C62D06d2B46"
+      }
+    },
+    {
+      "name": "ETHFI Season 3 - Tranche 2",
+      "aliases": [],
+      "address": "0x637ee65658cb8f6524c051f76677e791ddc10bd4",
+      "chain": "arbitrum",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://arbiscan.io/address/0x637Ee65658Cb8f6524C051F76677E791dDC10bd4"
+      }
+    },
+    {
+      "name": "ETHFI Season 3 - Tranche 3",
+      "aliases": [],
+      "address": "0xf5a6d0642c7e02b250a5ada440f901d211b40506",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0xf5A6d0642C7E02b250a5adA440F901d211B40506"
+      }
+    },
+    {
+      "name": "EigenLayer Stakedrop Season 2",
+      "aliases": [],
+      "address": "0x2ec90ef34e312a855becf74762d198d8369eece1",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x2ec90ef34e312a855becf74762d198d8369eece1"
+      }
+    },
+    {
+      "name": "Liquid ETH Rewards",
+      "aliases": [],
+      "address": "0xf0164d48b308c42ae028e3379b2fb620e70f8780",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0xF0164d48b308c42AE028e3379b2FB620E70F8780"
+      }
+    },
+    {
+      "name": "Liquid ETH Rewards 2",
+      "aliases": [],
+      "address": "0xa8037a13f5b0d6dc91a1c4c75b31a79a2986e24b",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0xa8037a13f5b0d6dc91a1c4c75b31a79a2986e24b"
+      }
+    },
+    {
+      "name": "Liquid ETH Rewards 3",
+      "aliases": [],
+      "address": "0x2882f978460d1229f1d0414ce91d0061b81adc2c",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts",
+        "explorer_1": "https://etherscan.io/address/0x2882f978460d1229f1d0414ce91d0061b81adc2c"
+      }
+    },
+    {
+      "name": "Address Provider",
+      "aliases": [],
+      "address": "0x8487c5f8550e3c3e7734fe7dcf77db2b72e4a848",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Auction Manager",
+      "aliases": [],
+      "address": "0x00c452affee3a17d9cecc1bcd2b8d5c7635c4cb9",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "BNFT",
+      "aliases": [],
+      "address": "0x6599861e55abd28b91dd9d86a826ec0cc8d72c2c",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "BeHYPE",
+      "aliases": [],
+      "address": "0xd8fc8f0b03eba61f64d08b0bef69d80916e5dda9",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "BeHYPETimelock",
+      "aliases": [],
+      "address": "0xa24af73eadd17997eeedbed36672e996544d2de4",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Cash Data Provider",
+      "aliases": [],
+      "address": "0xb1f5bbc3e4de0c767ace41eab8a28b837fba966f",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Cash Pre-order Contract",
+      "aliases": [],
+      "address": "0x4e9fa586862183a944aa8a6e158af47ccae544e2",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Cash TopUp Dest",
+      "aliases": [],
+      "address": "0xeb61c16a60ab1b4a9a1f8e92305808f949f4ea9b",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Cash TopUp Source",
+      "aliases": [],
+      "address": "0xc85276fec421d0ca3c0efd4be2b7f569bc7b5b99",
+      "chain": "multiple",
+      "chains": [
+        "ethereum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 2",
+        "Table/list evidence: 2",
+        "Published chains: ethereum, base"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Cashback Dispatcher",
+      "aliases": [],
+      "address": "0x7d372c3ca903ca2b6ecd8600d567eb6bafc5e6c9",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Debt Manager",
+      "aliases": [],
+      "address": "0x8f9d2cd33551ce06dd0564ba147513f715c2f4a0",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "DepositAdapter",
+      "aliases": [],
+      "address": "0xcfc6d9bd7411962bfe7145451a7ef71a24b6a7a2",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "ETHFI",
+      "aliases": [],
+      "address": "0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "ETHFI",
+      "aliases": [],
+      "address": "0x7189fb5b6504bbff6a852b13b7b82a3c118fdc27",
+      "chain": "arbitrum",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "ETHFI",
+      "aliases": [],
+      "address": "0x6c240dda6b5c336df09a4d011139beaaa1ea2aa2",
+      "chain": "base",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "ETHFI Staking",
+      "aliases": [],
+      "address": "0x86b5780b606940eb59a062aa85a07959518c0161",
+      "chain": "multiple",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 3",
+        "Table/list evidence: 3",
+        "Published chains: ethereum, arbitrum, base"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Early Adopter Pool",
+      "aliases": [],
+      "address": "0x7623e9dc0da6ff821ddb9ebaba794054e078f8c4",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "EtherFiAdmin",
+      "aliases": [],
+      "address": "0x0ef8fa4760db8f5cd4d993f3e3416f30f942d705",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "EtherFiAvsOperatorsManager",
+      "aliases": [],
+      "address": "0x2093bbb221f1d8c7c932c32ee28be6dee4a37a6a",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "EtherFiOracle",
+      "aliases": [],
+      "address": "0x57aaf0004c716388b21795431cd7d5f9d3bb6a41",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "EtherFiRedemptionManager",
+      "aliases": [],
+      "address": "0xdadef1ffbfeaab4f68a9fd181395f68b4e4e7ae0",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "EtherFiRestaker",
+      "aliases": [],
+      "address": "0x1b7a4c3797236a1c37f8741c0be35c2c72736fff",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "EtherFiTimelock",
+      "aliases": [],
+      "address": "0x9f26d4c958fd811a1f59b01b86be7dffc9d20761",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Etherfi Nodes Manager",
+      "aliases": [],
+      "address": "0x8b71140ad2e5d1e7018d2a7f8a288bd3cd38916f",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "KING Distributor",
+      "aliases": [],
+      "address": "0x6db24ee656843e3fe03eb8762a54d86186ba6b64",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "L2 KING Distributor",
+      "aliases": [],
+      "address": "0x79ed14b41a30215e168d58fe9b6c2266a89765b0",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Liquidity Pool",
+      "aliases": [],
+      "address": "0x308861a430be4cce5502d0a12724771fc6daf216",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Liquifier",
+      "aliases": [],
+      "address": "0x9ffdf407cde9a93c47611799da23924af3ef764f",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Membership Manager",
+      "aliases": [],
+      "address": "0x3d320286e014c3e1ce99af6d6b00f0c1d63e3000",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Membership NFT",
+      "aliases": [],
+      "address": "0xb49e4420ea6e35f98060cd133842dbea9c27e479",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Node Operator Manager",
+      "aliases": [],
+      "address": "0xd5edf7730abad812247f6f54d7bd31a52554e35e",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Price Provider",
+      "aliases": [],
+      "address": "0x8b4c8c403fc015c46061a8702799490fd616e3bf",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Rewards Router",
+      "aliases": [],
+      "address": "0x73f7b1184b5cd361cc0f7654998953e2a251dd58",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "RoleRegistry",
+      "aliases": [],
+      "address": "0x62247d29b4b9becf4bb73e0c722cf6445cfc7ce9",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "RoleRegistry",
+      "aliases": [],
+      "address": "0x90102473a816a01a9fb0809f2289438b2e294f76",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Settlement Dispatcher",
+      "aliases": [],
+      "address": "0x4dca5093e0bb450d7f7961b5df0a9d4c24b24786",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Staking Manager",
+      "aliases": [],
+      "address": "0x25e821b7197b146f7713c3b89b6a4d83516b912d",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "StakingCore",
+      "aliases": [],
+      "address": "0xcead893b162d38e714d82d06a7fe0b0dc3c38e0b",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Swapper OpenOcean",
+      "aliases": [],
+      "address": "0x44c00821f0e70f00b7af74235981eb30beb3577f",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "TNFT",
+      "aliases": [],
+      "address": "0x7b5ae07e2af1c861bcc4736d23f5f66a61e0ca5e",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "Treasury",
+      "aliases": [],
+      "address": "0x6329004e903b7f420245e7af3f355186f2432466",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "User Safe Event Emitter",
+      "aliases": [],
+      "address": "0x5423885b376ebb4e6104b8ab1a908d350f6a162e",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "User Safe Factory",
+      "aliases": [],
+      "address": "0x18fa07df94b4e9f09844e1128483801b24fe8a27",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "User Safe Lens",
+      "aliases": [],
+      "address": "0x333321a783f765bfd4c22fbbc5b2d02b97efb44c",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "WeETH",
+      "aliases": [],
+      "address": "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "WithdrawManager",
+      "aliases": [],
+      "address": "0x9d0b0877b9f2204cf414ca7862e4f03506822538",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "WithdrawRequestNFT",
+      "aliases": [],
+      "address": "0x7d5706f6ef3f89b3951e23e557cdfbc3239d4e2c",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "eBTC",
+      "aliases": [],
+      "address": "0x657e8c867d8b37dcc18fa4caead9c45eb088c642",
+      "chain": "multiple",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base",
+        "berachain",
+        "corn"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 5",
+        "Table/list evidence: 5",
+        "Published chains: ethereum, arbitrum, base, berachain, corn"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "eETH",
+      "aliases": [],
+      "address": "0x35fa164735182de50811e8e2e824cfb9b6118ac2",
+      "chain": "ethereum",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0x35751007a407ca6feffe80b3cb397736d2cf4dbe",
+      "chain": "arbitrum",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0x5a7facb970d094b6c7ff1df0ea68d99e6e73cbff",
+      "chain": "optimism",
+      "chains": [
+        "optimism"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0x01f0a31698c4d065659b9bdc21b3610292a1c506",
+      "chain": "scroll",
+      "chains": [
+        "scroll"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0x04c0599ae5a44757c0af6f9ec3b93da8976c150a",
+      "chain": "multiple",
+      "chains": [
+        "base",
+        "blast",
+        "bsc",
+        "mode"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 4",
+        "Table/list evidence: 4",
+        "Published chains: base, blast, bsc, mode"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0x1bf74c010e6320bab11e2e5a532b5ac15e0b8aa6",
+      "chain": "linea",
+      "chains": [
+        "linea"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0x7dcc39b4d1c53cb31e1abc0e358b43987fef80f7",
+      "chain": "multiple",
+      "chains": [
+        "berachain",
+        "morph",
+        "unichain"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 3",
+        "Table/list evidence: 3",
+        "Published chains: berachain, morph, unichain"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0x9893989433e7a383cb313953e4c2365107dc19a7",
+      "chain": "katana",
+      "chains": [
+        "katana"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0xa3d68b74bf0528fdd07263c60d6488749044914b",
+      "chain": "multiple",
+      "chains": [
+        "avalanche",
+        "hyperevm",
+        "ink",
+        "monad",
+        "sonic"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 5",
+        "Table/list evidence: 5",
+        "Published chains: avalanche, hyperevm, ink, monad, sonic"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0xa6cb988942610f6731e664379d15ffcfbf282b44",
+      "chain": "swell",
+      "chains": [
+        "swell"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    },
+    {
+      "name": "weETH",
+      "aliases": [],
+      "address": "0xc1fa6e2e8667d9be0ca938a54c7e0285e9df924a",
+      "chain": "zksync",
+      "chains": [
+        "zksync"
+      ],
+      "confidence": 0.78,
+      "source": "tavily_ai_inventory",
+      "reasons": [
+        "Official pages: 1",
+        "Named evidence: 1",
+        "Table/list evidence: 1"
+      ],
+      "links": {
+        "source_1": "https://etherfi.gitbook.io/etherfi/contracts-and-integrations/deployed-contracts"
+      }
+    }
+  ],
+  "errors": [],
+  "notes": [
+    "Domain candidates: etherfi.gitbook.io, github.com, antiersolutions.com, docs.etherlink.com, ethereum.stackexchange.com",
+    "Official domain: etherfi.gitbook.io",
+    "Selected pages: 2",
+    "Tavily queries used: 2/4"
+  ],
+  "warning": "Inventory discovery extracts officially published contract addresses from selected protocol pages but may miss contracts or mislabel entries. Always verify critical addresses against the protocol's canonical documentation."
+}
