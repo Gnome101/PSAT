@@ -33,6 +33,9 @@ from services.analyzer import analyze
 from services.llm_analyzer import analyze_with_llm
 from services.dependent_contracts import find_dependencies
 from services.dynamic_dependencies import find_dynamic_dependencies
+from services.contract_discovery import search_contract_name
+from services.contract_discovery_ai import search_contract_name_ai
+from services.contract_inventory_ai import search_protocol_inventory
 
 
 def load_addresses(filepath: str) -> list[dict]:
@@ -132,6 +135,45 @@ def process(
     return project_dir
 
 
+def run_discovery(args) -> None:
+    """Run contract name discovery and print JSON results."""
+    chain = getattr(args, "discover_chain", None)
+    limit = getattr(args, "discover_limit", None)
+    if limit is None:
+        limit = 100 if args.discover_inventory else 10
+
+    if args.discover:
+        result = search_contract_name(args.discover, chain=chain, limit=limit)
+        output_name = args.discover
+        output_root = Path("contracts")
+        output_file = "discovery.json"
+    elif args.discover_inventory:
+        result = search_protocol_inventory(args.discover_inventory, chain=chain, limit=limit)
+        output_name = args.discover_inventory
+        output_root = Path("protocols")
+        output_file = "contract_inventory.json"
+    else:
+        result = search_contract_name_ai(
+            args.discover_ai[0],
+            args.discover_ai[1],
+            chain=chain,
+            limit=limit,
+        )
+        output_name = f"{args.discover_ai[0]}_{args.discover_ai[1]}"
+        output_root = Path("contracts")
+        output_file = "discovery.json"
+
+    output = json.dumps(result, indent=2)
+    print(output)
+
+    # Write discovery output to contracts/<name>/
+    safe_name = output_name.replace("/", "_").replace(" ", "_")
+    out_dir = output_root / safe_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / output_file).write_text(output + "\n")
+    print(f"\nSaved to {out_dir / output_file}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch and analyze smart contracts")
     parser.add_argument("address", nargs="?", help="Single Ethereum contract address")
@@ -158,7 +200,44 @@ def main():
         dest="dynamic_tx_hashes",
         help="Specific transaction hash to trace (repeatable)",
     )
+
+    # Contract discovery flags
+    parser.add_argument(
+        "--discover",
+        metavar="NAME",
+        help="Discover contract address by name via Blockscout (standalone)",
+    )
+    parser.add_argument(
+        "--discover-ai",
+        nargs=2,
+        metavar=("COMPANY", "CONTRACT_NAME"),
+        help="AI-powered contract discovery via Tavily + LLM (standalone)",
+    )
+    parser.add_argument(
+        "--discover-inventory",
+        metavar="COMPANY_OR_DOMAIN",
+        help="AI-powered official contract inventory discovery for a protocol (standalone)",
+    )
+    parser.add_argument("--discover-chain", help="Chain filter for discovery")
+    parser.add_argument(
+        "--discover-limit",
+        type=int,
+        default=None,
+        help="Max discovery results to return (default: 10, or 100 for --discover-inventory)",
+    )
+
     args = parser.parse_args()
+
+    # Discovery mode — standalone, mutually exclusive with pipeline
+    if args.discover or args.discover_ai or args.discover_inventory:
+        selected_modes = [bool(args.discover), bool(args.discover_ai), bool(args.discover_inventory)]
+        if sum(selected_modes) > 1:
+            sys.exit("--discover, --discover-ai, and --discover-inventory are mutually exclusive")
+        try:
+            run_discovery(args)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        return
 
     if not args.address and not args.file:
         parser.print_help()
