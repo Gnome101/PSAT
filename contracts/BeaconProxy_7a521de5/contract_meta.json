@@ -1,9 +1,0 @@
-{
-  "address": "0x90cbe4bdd538d6e9b379bff5fe72c3d67a521de5",
-  "contract_name": "BeaconProxy",
-  "compiler_version": "v0.8.23+commit.f704f362",
-  "optimization_used": "1",
-  "runs": "1000000",
-  "evm_version": "shanghai",
-  "license": ""
-}

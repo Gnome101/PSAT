@@ -1,9 +1,0 @@
-{
-  "address": "0x9ff58067bd8d239000010c154c6983a325df138e",
-  "contract_name": "PlatformToken",
-  "compiler_version": "v0.8.19+commit.7dd6d404",
-  "optimization_used": "1",
-  "runs": "4000",
-  "evm_version": "Default",
-  "license": ""
-}

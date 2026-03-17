@@ -1,9 +1,0 @@
-{
-  "address": "0xf7849d0852fc588210b9c0d8b26f43c0c9bc1470",
-  "contract_name": "UniswapV3Pool",
-  "compiler_version": "v0.7.6+commit.7338295f",
-  "optimization_used": "1",
-  "runs": "800",
-  "evm_version": "Default",
-  "license": "None"
-}
