@@ -1,26 +1,146 @@
-"""LLM-based domain selection and discovery of relevant contract pages."""
+"""Domain selection, page discovery, and shared utilities for contract inventory.
+
+This module provides the infrastructure layer for the inventory discovery pipeline:
+  - Shared constants: regex patterns, blockchain explorer mappings, trust lists
+  - Utility helpers: domain matching, chain inference, address extraction, page fetching
+  - Tavily search with query budget management
+  - LLM-based official domain identification and page selection
+"""
 
 from __future__ import annotations
 
 import json
 import re
+import sys
 from collections import defaultdict
+from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import requests as _requests
 
+from services.dependent_contracts import normalize_address as _normalize_address
 from utils import llm, tavily
 
-from services.discovery_ai_evidence import (
-    DOMAIN_RE,
-    URL_RE,
-    _debug_log,
-    _get_domain,
-    _is_allowed_domain,
-    _is_explorer_domain,
-    _is_low_trust_domain,
-)
+# -- Constants ---------------------------------------------------------------
 
+ADDRESS_RE = re.compile(r"\b0x[a-fA-F0-9]{40}\b")
+URL_RE = re.compile(r"https?://[^\s\"'<>)]+")
+DOMAIN_RE = re.compile(r"^[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+$", re.IGNORECASE)
+TAG_RE = re.compile(r"<[^>]+>")
+
+EXPLORER_CHAINS = {
+    "etherscan.io": "ethereum",
+    "eth.blockscout.com": "ethereum",
+    "arbiscan.io": "arbitrum",
+    "arbitrum.blockscout.com": "arbitrum",
+    "optimistic.etherscan.io": "optimism",
+    "optimism.blockscout.com": "optimism",
+    "polygonscan.com": "polygon",
+    "polygon.blockscout.com": "polygon",
+    "basescan.org": "base",
+    "base.blockscout.com": "base",
+}
+
+LOW_TRUST_DOMAINS = {
+    "coingecko.com",
+    "coinmarketcap.com",
+    "defillama.com",
+    "x.com",
+    "twitter.com",
+    "linkedin.com",
+    "facebook.com",
+    "instagram.com",
+    "youtube.com",
+    "wikipedia.org",
+    "reddit.com",
+}
+
+CHAIN_SORT_ORDER = {"ethereum": 0, "arbitrum": 1, "optimism": 2, "polygon": 3, "base": 4, "unknown": 99}
+
+
+# -- Utility helpers ---------------------------------------------------------
+
+def _debug_log(enabled: bool, message: str) -> None:
+    if enabled:
+        ts = datetime.now().isoformat(timespec="seconds")
+        print(f"[{ts}] [debug] {message}", file=sys.stderr)
+
+
+def _get_domain(url: str) -> str:
+    try:
+        domain = urlparse(url).netloc.lower()
+    except ValueError:
+        return ""
+    return domain[4:] if domain.startswith("www.") else domain
+
+
+def _domain_matches(domain: str, known: str) -> bool:
+    return domain == known or domain.endswith(f".{known}")
+
+
+def _is_explorer_domain(domain: str) -> bool:
+    return any(_domain_matches(domain, k) for k in EXPLORER_CHAINS)
+
+
+def _is_low_trust_domain(domain: str) -> bool:
+    return any(_domain_matches(domain, k) for k in LOW_TRUST_DOMAINS)
+
+
+def _is_allowed_domain(domain: str, allowed: list[str]) -> bool:
+    return any(_domain_matches(domain, a) for a in allowed)
+
+
+def _extract_addresses(*values: str) -> set[str]:
+    out: set[str] = set()
+    for value in values:
+        if value:
+            for match in ADDRESS_RE.findall(value):
+                out.add(_normalize_address(match))
+    return out
+
+
+def _infer_chain(url: str, text: str) -> str:
+    domain = _get_domain(url)
+    for known, chain in EXPLORER_CHAINS.items():
+        if _domain_matches(domain, known):
+            return chain
+    lowered = text.lower()
+    if "arbitrum" in lowered:
+        return "arbitrum"
+    if "optimism" in lowered or "optimistic" in lowered:
+        return "optimism"
+    if "polygon" in lowered or "matic" in lowered:
+        return "polygon"
+    if "base" in lowered:
+        return "base"
+    if "ethereum" in lowered or "mainnet" in lowered:
+        return "ethereum"
+    return "unknown"
+
+
+def _resolve_chain(inferred: str, requested: str | None) -> tuple[str | None, bool]:
+    if not requested:
+        return inferred, False
+    if inferred not in {requested, "unknown"}:
+        return None, False
+    return requested, inferred == "unknown"
+
+
+def _fetch_page(url: str, debug: bool = False) -> str | None:
+    """Fetch a page via HTTP and return its text, or None on failure."""
+    try:
+        resp = _requests.get(url, timeout=15, headers={"User-Agent": "PSAT/0.1"})
+        if resp.status_code == 200:
+            _debug_log(debug, f"Fetched {url} ({len(resp.text)} chars)")
+            return resp.text
+        _debug_log(debug, f"Fetch {url}: HTTP {resp.status_code}")
+    except _requests.RequestException as exc:
+        _debug_log(debug, f"Fetch {url} failed: {exc!r}")
+    return None
+
+
+# -- Domain selection & page discovery ---------------------------------------
 
 def _maybe_domain(value: str) -> str | None:
     clean = value.strip().lower().replace("https://", "").replace("http://", "").split("/")[0]
@@ -111,10 +231,10 @@ def _llm_select_domain(
             max_tokens=32,
             temperature=0.0,
         )
-        # Accept only purely numeric replies (e.g., "2"), not arbitrary text with digits.
-        choice = response.strip()
-        if re.fullmatch(r"\d+", choice):
-            idx = int(choice) - 1
+        # Accept the first number from the response (e.g., "2" or "1, 2, 6").
+        first_num = re.search(r"\d+", response.strip())
+        if first_num:
+            idx = int(first_num.group()) - 1
             sorted_domains = sorted(domain_info.keys(), key=lambda d: -len(domain_info[d]))
             if 0 <= idx < len(sorted_domains):
                 selected = sorted_domains[idx]
@@ -217,47 +337,6 @@ def _dedupe_results_by_url(results: list[dict[str, Any]]) -> list[dict[str, Any]
             merged.update(result)
             by_url[url] = merged
     return list(by_url.values())
-
-
-def _discover_contract_listing_pages(
-    domain: str,
-    company: str,
-    queries_used: list[int],
-    max_queries: int,
-    errors: list[dict],
-    debug: bool = False,
-) -> tuple[list[dict], list[str]]:
-    """Search the official domain for pages, then ask the LLM which ones list contract addresses.
-
-    Returns (tavily_results, recommended_urls).  Falls back gracefully if the
-    LLM call fails — recommended_urls will be empty.
-    """
-    _debug_log(debug, f"Phase 2: discovering contract-listing pages on domain={domain}")
-    results = _tavily_search(
-        f"site:{domain} {company} smart contract addresses",
-        max_results=10,
-        queries_used=queries_used,
-        max_queries=max_queries,
-        errors=errors,
-        debug=debug,
-    )
-    if not results:
-        _debug_log(debug, "No page-discovery results returned")
-        return [], []
-
-    page_info = _collect_in_domain_pages(results, domain)
-    if not page_info:
-        _debug_log(debug, "No unique in-domain pages found for LLM recommendation")
-        return results, []
-
-    prompt = (
-        f"Below are pages from the {company} documentation site ({domain}).\n"
-        f"Which of these pages is most likely to contain a comprehensive, "
-        f"authoritative list of deployed smart contract addresses?\n\n"
-        "{page_list}\n\n"
-        f"Reply with ONLY the best URL(s), one per line — nothing else."
-    )
-    return results, _llm_select_pages(page_info, company, domain, prompt, debug=debug)
 
 
 def _discover_contract_inventory_pages(

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Discover officially published protocol contract inventories."""
+"""Orchestrator for protocol contract inventory discovery.
+
+Given a company/protocol name or domain, this module:
+  1. Identifies the official domain via Tavily search + LLM  (discovery_ai_domain.py)
+  2. Selects pages likely to contain contract inventories     (discovery_ai_domain.py)
+  3. Extracts contract entries from those pages                (discovery_ai_inventory.py)
+  4. Scores, deduplicates, and ranks the results
+"""
 
 from __future__ import annotations
 
@@ -15,13 +22,14 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from services.discovery_ai_domain import (
+    CHAIN_SORT_ORDER,
+    _debug_log,
     _discover_contract_inventory_pages,
     _domain_candidates_from_results,
     _llm_select_domain,
     _maybe_domain,
     _tavily_search,
 )
-from services.discovery_ai_evidence import CHAIN_SORT_ORDER, _debug_log
 from services.discovery_ai_inventory import extract_inventory_entries_from_pages
 
 

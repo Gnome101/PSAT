@@ -1,4 +1,9 @@
-"""Helpers for extracting broad protocol contract inventories from official pages."""
+"""HTML parsing and contract entry extraction for the inventory pipeline.
+
+Fetches official protocol pages and extracts contract records (name, address,
+chain) from tables, lists, explorer links, and prose text.  Called by
+contract_inventory_ai.py after discovery_ai_domain.py identifies the pages.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +12,7 @@ import re
 from typing import Any
 
 from services.dependent_contracts import normalize_address as _normalize_address
-from services.discovery_ai_evidence import (
+from services.discovery_ai_domain import (
     ADDRESS_RE,
     TAG_RE,
     URL_RE,
