@@ -1,0 +1,7 @@
+services:
+  psat:
+    build: .
+    env_file: .env
+    volumes:
+      - ./contracts:/app/contracts
+      - ./addresses.json:/app/addresses.json
