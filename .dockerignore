@@ -1,0 +1,9 @@
+.venv/
+.git/
+.env
+contracts/
+__pycache__/
+*.pyc
+.pytest_cache/
+tmp/
+image.png
