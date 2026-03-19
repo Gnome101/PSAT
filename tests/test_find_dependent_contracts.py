@@ -12,6 +12,57 @@ from services import dependent_contracts as fdc
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
+# ---------------------------------------------------------------------------
+# Core helpers: normalize_address, extract_push20_addresses
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_address_and_extract_push20():
+    # normalize_address: strips prefix, lowercases
+    assert fdc.normalize_address("0xAbCd" + "0" * 36) == "0xabcd" + "0" * 36
+    assert fdc.normalize_address("AbCd" + "0" * 36) == "0xabcd" + "0" * 36
+
+    # has_deployed_code
+    assert fdc.has_deployed_code("0x60016000") is True
+    assert fdc.has_deployed_code("0x") is False
+    assert fdc.has_deployed_code("0x0") is False
+
+    # extract_push20_addresses: empty / no PUSH20
+    assert fdc.extract_push20_addresses("0x") == set()
+    assert fdc.extract_push20_addresses("0x6001") == set()
+
+    # extract_push20_addresses: single embedded address
+    addr = "aabbccddee11223344556677889900aabbccddee"
+    bytecode = "0x73" + addr + "60"  # PUSH20 <addr> PUSH1
+    result = fdc.extract_push20_addresses(bytecode)
+    assert "0x" + addr in result
+
+    # extract_push20_addresses: filters zero address
+    zero_addr = "0" * 40
+    bytecode = "0x73" + zero_addr + "73" + addr + "00"
+    result = fdc.extract_push20_addresses(bytecode)
+    assert "0x" + zero_addr not in result
+    assert "0x" + addr in result
+
+    # extract_push20_addresses: skips PUSH data correctly
+    # PUSH32 (0x7f) has 32 bytes of data — a PUSH20 opcode inside that data should be ignored
+    push32_data = "73" + addr + "00" * 11  # 0x73 inside PUSH32 data (32 bytes total)
+    bytecode = "0x7f" + push32_data
+    result = fdc.extract_push20_addresses(bytecode)
+    assert result == set()
+
+    # extract_push20_addresses: multiple addresses
+    addr2 = "1122334455667788990011223344556677889900"
+    bytecode = "0x73" + addr + "73" + addr2 + "00"
+    result = fdc.extract_push20_addresses(bytecode)
+    assert result == {"0x" + addr, "0x" + addr2}
+
+
+# ---------------------------------------------------------------------------
+# RPC resolution
+# ---------------------------------------------------------------------------
+
+
 # Verifies auto-discovery tries multiple public networks so contracts can be found without custom RPC input.
 def test_resolve_rpc_for_address_auto_discovers_public_rpc(monkeypatch):
     monkeypatch.setattr(
@@ -36,7 +87,9 @@ def test_resolve_rpc_for_address_auto_discovers_public_rpc(monkeypatch):
         return "0x"
 
     monkeypatch.setattr(fdc, "get_code", fake_get_code)
-    network, rpc_url = fdc.resolve_rpc_for_address("0x1111111111111111111111111111111111111111")
+    network, rpc_url = fdc.resolve_rpc_for_address(
+        "0x1111111111111111111111111111111111111111"
+    )
 
     assert network == second_network
     assert rpc_url == second_rpc
@@ -62,7 +115,9 @@ def test_resolve_rpc_for_address_uses_backup_endpoint_on_error(monkeypatch):
         return "0x"
 
     monkeypatch.setattr(fdc, "get_code", fake_get_code)
-    network, rpc_url = fdc.resolve_rpc_for_address("0x1111111111111111111111111111111111111111")
+    network, rpc_url = fdc.resolve_rpc_for_address(
+        "0x1111111111111111111111111111111111111111"
+    )
 
     assert network == "ethereum"
     assert rpc_url == "https://rpc-good.example"

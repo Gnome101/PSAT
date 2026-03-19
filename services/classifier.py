@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+"""Classify contract dependencies as proxy, implementation, beacon, factory, library, or regular.
+
+Detection methods:
+  - EIP-1967 storage slots (implementation, beacon, admin)
+  - EIP-1822 UUPS logic slot
+  - EIP-1167 minimal proxy bytecode pattern
+  - OpenZeppelin legacy implementation slot
+  - Bytecode heuristic (short code + DELEGATECALL)
+  - Dynamic trace edges (CREATE/CREATE2 -> factory, DELEGATECALL-only -> library)
+  - Relational (proxy slot targets -> implementation/beacon)
+"""
+
+import json
+
+from services.dependent_contracts import get_code, normalize_address, rpc_call
+
+# ---------------------------------------------------------------------------
+# Storage slot constants
+# ---------------------------------------------------------------------------
+
+# EIP-1967 (keccak256 of label string minus 1)
+EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+EIP1967_BEACON_SLOT = (
+    "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50"
+)
+EIP1967_ADMIN_SLOT = (
+    "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"
+)
+
+# EIP-1822 UUPS
+EIP1822_LOGIC_SLOT = (
+    "0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7"
+)
+
+# OpenZeppelin legacy (keccak256("org.zeppelinos.proxy.implementation"))
+OZ_IMPL_SLOT = "0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3"
+
+# ---------------------------------------------------------------------------
+# EIP-1167 minimal proxy bytecode markers
+# ---------------------------------------------------------------------------
+
+EIP1167_PREFIX = "363d3d373d3d3d363d73"
+EIP1167_SUFFIX = "5af43d82803e903d91602b57fd5bf3"
+
+# ---------------------------------------------------------------------------
+# Thresholds / selectors
+# ---------------------------------------------------------------------------
+
+# Max bytecode hex-char length for the DELEGATECALL heuristic (300 bytes).
+SHORT_BYTECODE_THRESHOLD = 600
+
+# implementation() selector
+IMPLEMENTATION_SELECTOR = "0x5c60da1b"
+
+
+# ---------------------------------------------------------------------------
+# Low-level helpers
+# ---------------------------------------------------------------------------
+
+
+def get_storage_at(rpc_url: str, address: str, slot: str) -> str:
+    """Read a single 32-byte storage slot."""
+    return rpc_call(rpc_url, "eth_getStorageAt", [address, slot, "latest"], retries=1)
+
+
+def _slot_to_address(slot_value: str) -> str | None:
+    """Extract a 20-byte address from a 32-byte storage value.  Returns None for zero/empty."""
+    if not slot_value or slot_value in ("0x", "0x0"):
+        return None
+    raw = slot_value.replace("0x", "").zfill(64)
+    addr_hex = raw[-40:]
+    if all(c == "0" for c in addr_hex):
+        return None
+    return normalize_address("0x" + addr_hex)
+
+
+def detect_eip1167(bytecode_hex: str) -> str | None:
+    """Return the implementation address if *bytecode_hex* is an EIP-1167 minimal proxy."""
+    raw = (bytecode_hex[2:] if bytecode_hex.startswith("0x") else bytecode_hex).lower()
+    if raw.startswith(EIP1167_PREFIX) and raw.endswith(EIP1167_SUFFIX):
+        addr_hex = raw[len(EIP1167_PREFIX) : len(EIP1167_PREFIX) + 40]
+        if len(addr_hex) == 40:
+            return normalize_address("0x" + addr_hex)
+    return None
+
+
+def _bytecode_has_delegatecall(bytecode_hex: str) -> bool:
+    """Return True if the bytecode contains a real DELEGATECALL (0xF4) opcode,
+    skipping bytes that are part of PUSH immediates."""
+    raw = bytecode_hex[2:] if bytecode_hex.startswith("0x") else bytecode_hex
+    if not raw or len(raw) % 2 != 0:
+        return False
+    try:
+        code = bytes.fromhex(raw)
+    except ValueError:
+        return False
+    i = 0
+    while i < len(code):
+        op = code[i]
+        if op == 0xF4:
+            return True
+        # PUSH1 (0x60) through PUSH32 (0x7F): skip immediate bytes
+        if 0x60 <= op <= 0x7F:
+            i += 1 + (op - 0x5F)
+            continue
+        i += 1
+    return False
+
+
+def _try_implementation_call(rpc_url: str, address: str) -> str | None:
+    """Call ``implementation()`` (selector 0x5c60da1b) on a contract.
+    Returns the address on success, or None."""
+    try:
+        result = rpc_call(
+            rpc_url,
+            "eth_call",
+            [{"to": address, "data": IMPLEMENTATION_SELECTOR}, "latest"],
+            retries=0,
+        )
+        return _slot_to_address(result)
+    except RuntimeError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Single-contract classification (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+def classify_single(address: str, rpc_url: str, bytecode: str | None = None) -> dict:
+    """Classify one contract via bytecode patterns and storage slot inspection.
+
+    Returns a dict with ``address``, ``type``, and type-specific metadata.
+    """
+    address = normalize_address(address)
+    if bytecode is None:
+        bytecode = get_code(rpc_url, address)
+
+    info: dict = {"address": address}
+
+    # 1. EIP-1167 minimal proxy (bytecode pattern)
+    eip1167_impl = detect_eip1167(bytecode)
+    if eip1167_impl:
+        info.update(type="proxy", proxy_type="eip1167", implementation=eip1167_impl)
+        return info
+
+    # 2. EIP-1967 storage slots
+    impl = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_IMPL_SLOT))
+    beacon = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_BEACON_SLOT))
+    admin = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_ADMIN_SLOT))
+
+    if beacon:
+        info.update(type="proxy", proxy_type="beacon_proxy", beacon=beacon)
+        if impl:
+            info["implementation"] = impl
+        if admin:
+            info["admin"] = admin
+        return info
+
+    if impl:
+        info.update(type="proxy", proxy_type="eip1967", implementation=impl)
+        if admin:
+            info["admin"] = admin
+        return info
+
+    # 3. EIP-1822 UUPS
+    uups = _slot_to_address(get_storage_at(rpc_url, address, EIP1822_LOGIC_SLOT))
+    if uups:
+        info.update(type="proxy", proxy_type="eip1822", implementation=uups)
+        return info
+
+    # 4. OpenZeppelin legacy slot
+    oz = _slot_to_address(get_storage_at(rpc_url, address, OZ_IMPL_SLOT))
+    if oz:
+        info.update(type="proxy", proxy_type="oz_legacy", implementation=oz)
+        return info
+
+    # 5. Heuristic: short bytecode (<= 300 bytes) with DELEGATECALL opcode
+    raw = bytecode[2:] if bytecode.startswith("0x") else bytecode
+    if 10 <= len(raw) <= SHORT_BYTECODE_THRESHOLD and _bytecode_has_delegatecall(
+        bytecode
+    ):
+        info.update(type="proxy", proxy_type="unknown")
+        return info
+
+    info["type"] = "regular"
+    return info
+
+
+# ---------------------------------------------------------------------------
+# Multi-contract classification (Phases 1-3)
+# ---------------------------------------------------------------------------
+
+
+def classify_contracts(
+    target: str,
+    dependencies: list[str],
+    rpc_url: str,
+    dynamic_edges: list[dict] | None = None,
+) -> dict:
+    """Classify the target contract and all its dependencies.
+
+    Three phases:
+      1. **Intrinsic** -- storage slots and bytecode patterns.
+      2. **Relational** -- mark implementations / beacons discovered via proxy pointers.
+      3. **Behavioral** -- factory / library labels from dynamic call-graph edges.
+    """
+    target = normalize_address(target)
+    all_addrs = list(
+        dict.fromkeys([target] + [normalize_address(a) for a in dependencies])
+    )
+
+    # Phase 1 -- intrinsic classification
+    classifications: dict[str, dict] = {}
+    impl_to_proxies: dict[str, list[str]] = {}
+    beacon_to_proxies: dict[str, list[str]] = {}
+    discovered: set[str] = set()
+
+    for addr in all_addrs:
+        try:
+            info = classify_single(addr, rpc_url)
+        except RuntimeError:
+            info = {"address": addr, "type": "regular"}
+        classifications[addr] = info
+
+        # Track reverse mappings
+        if impl := info.get("implementation"):
+            impl_to_proxies.setdefault(impl, []).append(addr)
+            if impl not in set(all_addrs):
+                discovered.add(impl)
+        if bcon := info.get("beacon"):
+            beacon_to_proxies.setdefault(bcon, []).append(addr)
+            if bcon not in set(all_addrs):
+                discovered.add(bcon)
+
+    # Classify newly-discovered addresses (found in proxy slots)
+    for addr in sorted(discovered):
+        try:
+            info = classify_single(addr, rpc_url)
+        except RuntimeError:
+            info = {"address": addr, "type": "regular"}
+        classifications[addr] = info
+
+    # Phase 2 -- relational: mark implementations and beacons
+    for addr, info in classifications.items():
+        if info["type"] != "regular":
+            continue
+        if addr in impl_to_proxies:
+            info["type"] = "implementation"
+            info["proxies"] = sorted(impl_to_proxies[addr])
+        elif addr in beacon_to_proxies:
+            info["type"] = "beacon"
+            info["proxies"] = sorted(beacon_to_proxies[addr])
+            # Try to resolve the beacon's current implementation via implementation()
+            impl = _try_implementation_call(rpc_url, addr)
+            if impl:
+                info["implementation"] = impl
+
+    # Phase 3 -- behavioral: factory / library from dynamic edges
+    if dynamic_edges:
+        creators: set[str] = set()
+        delegatecall_only: dict[str, bool] = {}
+
+        for edge in dynamic_edges:
+            src = normalize_address(edge["from"])
+            dst = normalize_address(edge["to"])
+            op = edge.get("op", "")
+
+            if op in ("CREATE", "CREATE2"):
+                creators.add(src)
+            elif op == "DELEGATECALL":
+                if dst in classifications and dst not in delegatecall_only:
+                    delegatecall_only[dst] = True
+            elif op in ("CALL", "STATICCALL", "CALLCODE"):
+                if dst in classifications:
+                    delegatecall_only[dst] = False
+
+        for addr, info in classifications.items():
+            if info["type"] != "regular":
+                continue
+            if addr in creators:
+                info["type"] = "factory"
+            elif delegatecall_only.get(addr, False):
+                info["type"] = "library"
+
+    return {
+        "address": target,
+        "rpc": rpc_url,
+        "classifications": classifications,
+        "discovered_addresses": sorted(discovered),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Standalone entry point
+# ---------------------------------------------------------------------------
+
+
+def main():
+    import argparse
+    import os
+    from pathlib import Path
+
+    from dotenv import load_dotenv
+
+    from services.dependent_contracts import resolve_rpc_for_address
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+    parser = argparse.ArgumentParser(description="Classify contract dependencies")
+    parser.add_argument("address", help="Contract address to classify")
+    parser.add_argument("--rpc", help="RPC URL")
+    parser.add_argument("--deps", nargs="*", default=[], help="Dependency addresses")
+    args = parser.parse_args()
+
+    rpc = args.rpc or os.getenv("ETH_RPC")
+    _, resolved_rpc = resolve_rpc_for_address(args.address.strip(), rpc)
+
+    result = classify_contracts(args.address.strip(), args.deps, resolved_rpc)
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
