@@ -27,7 +27,7 @@ def format_report(slither_output: dict, contract_name: str, address: str) -> str
     """Format slither JSON into a readable text report."""
     lines = []
     lines.append("=" * 70)
-    lines.append(f"  SECURITY ANALYSIS REPORT")
+    lines.append("  SECURITY ANALYSIS REPORT")
     lines.append(f"  Contract: {contract_name}")
     lines.append(f"  Address:  {address}")
     lines.append("=" * 70)
