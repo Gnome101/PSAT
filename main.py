@@ -55,12 +55,14 @@ def load_addresses(filepath: str) -> list[dict]:
     if path.suffix == ".csv":
         with open(path) as f:
             reader = csv.DictReader(f)
-            return [{"address": row["address"], "name": row.get("name")} for row in reader]
+            return [
+                {"address": row["address"], "name": row.get("name")} for row in reader
+            ]
 
     sys.exit(f"Unsupported file type: {path.suffix} (use .json or .csv)")
 
 
-_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "proxies")
+_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "proxies", "facets")
 
 
 def _build_unified_deps(
@@ -177,12 +179,16 @@ def process(
         try:
             deps_output = find_dependencies(address, deps_rpc)
             resolved_rpc = deps_output.get("rpc")
-            print(f"         Found {len(deps_output['dependencies'])} static dependenc(ies)")
+            print(
+                f"         Found {len(deps_output['dependencies'])} static dependenc(ies)"
+            )
         except RuntimeError as exc:
             print(f"         Dependency discovery skipped: {exc}")
 
     if run_dynamic_deps:
-        print(f"[{step}/{steps}] Discovering dynamic contract dependencies via traces ...")
+        print(
+            f"[{step}/{steps}] Discovering dynamic contract dependencies via traces ..."
+        )
         step += 1
         try:
             dyn_output = find_dynamic_dependencies(
@@ -193,8 +199,12 @@ def process(
             )
             if not resolved_rpc:
                 resolved_rpc = dyn_output.get("rpc")
-            print(f"         Found {len(dyn_output['dependencies'])} dynamic dependenc(ies)")
-            print(f"         Transactions traced: {len(dyn_output['transactions_analyzed'])}")
+            print(
+                f"         Found {len(dyn_output['dependencies'])} dynamic dependenc(ies)"
+            )
+            print(
+                f"         Transactions traced: {len(dyn_output['transactions_analyzed'])}"
+            )
         except RuntimeError as exc:
             print(f"         Dynamic dependency discovery skipped: {exc}")
 
@@ -208,10 +218,12 @@ def process(
                 _, resolved_rpc = resolve_rpc_for_address(
                     address, deps_rpc or dynamic_rpc
                 )
-            unique_deps = sorted(set(
-                (deps_output or {}).get("dependencies", [])
-                + (dyn_output or {}).get("dependencies", [])
-            ))
+            unique_deps = sorted(
+                set(
+                    (deps_output or {}).get("dependencies", [])
+                    + (dyn_output or {}).get("dependencies", [])
+                )
+            )
             cls_output = classify_contracts(
                 address,
                 unique_deps,
@@ -260,7 +272,9 @@ def main():
     parser.add_argument("--name", help="Project name (single address mode)")
     parser.add_argument("--file", help="Path to JSON or CSV file with addresses")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM analysis")
-    parser.add_argument("--no-deps", action="store_true", help="Skip all dependency discovery")
+    parser.add_argument(
+        "--no-deps", action="store_true", help="Skip all dependency discovery"
+    )
     parser.add_argument(
         "--no-dynamic-deps",
         action="store_true",
@@ -272,7 +286,9 @@ def main():
         help="Skip dependency classification",
     )
     parser.add_argument("--deps-rpc", help="Optional RPC URL for dependency discovery")
-    parser.add_argument("--dynamic-rpc", help="Tracing-enabled RPC URL for dynamic dependency discovery")
+    parser.add_argument(
+        "--dynamic-rpc", help="Tracing-enabled RPC URL for dynamic dependency discovery"
+    )
     parser.add_argument(
         "--dynamic-tx-limit",
         type=int,

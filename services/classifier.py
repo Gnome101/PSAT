@@ -2,11 +2,13 @@
 """Classify contract dependencies as proxy, implementation, beacon, factory, library, or regular.
 
 Detection methods:
+  - EIP-1167 minimal proxy bytecode pattern
   - EIP-1967 storage slots (implementation, beacon, admin)
   - EIP-1822 UUPS logic slot
-  - EIP-1167 minimal proxy bytecode pattern
   - OpenZeppelin legacy implementation slot
-  - Bytecode heuristic (short code + DELEGATECALL)
+  - EIP-2535 diamond proxy (facetAddresses() call)
+  - implementation() call (catches custom proxies with non-standard slots)
+  - Bytecode heuristic (short code + DELEGATECALL, confirmed via trace probe)
   - Dynamic trace edges (CREATE/CREATE2 -> factory, DELEGATECALL-only -> library)
   - Relational (proxy slot targets -> implementation/beacon)
 """
@@ -50,8 +52,9 @@ EIP1167_SUFFIX = "5af43d82803e903d91602b57fd5bf3"
 # Max bytecode hex-char length for the DELEGATECALL heuristic (300 bytes).
 SHORT_BYTECODE_THRESHOLD = 600
 
-# implementation() selector
-IMPLEMENTATION_SELECTOR = "0x5c60da1b"
+# Function selectors
+IMPLEMENTATION_SELECTOR = "0x5c60da1b"  # implementation()
+FACET_ADDRESSES_SELECTOR = "0x52ef6b2c"  # facetAddresses() — EIP-2535
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +111,84 @@ def _bytecode_has_delegatecall(bytecode_hex: str) -> bool:
     return False
 
 
+# Synthetic calldata: a 4-byte selector unlikely to match any real function.
+_PROBE_CALLDATA = "0xdeadbeef"
+
+
+def _extract_delegatecall_target_geth(node) -> str | None:
+    """Extract the first DELEGATECALL target address from a Geth callTracer result."""
+    if not isinstance(node, dict):
+        return None
+    if str(node.get("type", "")).upper() == "DELEGATECALL":
+        raw = node.get("to")
+        return normalize_address(raw) if isinstance(raw, str) and len(raw) >= 42 else ""
+    for child in node.get("calls", []) or []:
+        target = _extract_delegatecall_target_geth(child)
+        if target is not None:
+            return target
+    return None
+
+
+def _extract_delegatecall_target_parity(result) -> str | None:
+    """Extract the first DELEGATECALL target address from a Parity-style trace result."""
+    traces = (
+        result
+        if isinstance(result, list)
+        else (result.get("trace", []) if isinstance(result, dict) else [])
+    )
+    for item in traces:
+        if not isinstance(item, dict):
+            continue
+        action = item.get("action", {}) or {}
+        if str(action.get("callType", "")).lower() == "delegatecall":
+            raw = action.get("to")
+            return (
+                normalize_address(raw)
+                if isinstance(raw, str) and len(raw) >= 42
+                else ""
+            )
+    return None
+
+
+def _probe_delegatecall(rpc_url: str, address: str) -> str | None | bool:
+    """Send a synthetic eth_call with tracing to check if DELEGATECALL fires
+    in the fallback path.
+
+    Returns:
+      - An address string if DELEGATECALL is triggered (the implementation).
+      - ``""`` (empty string) if DELEGATECALL fired but the target couldn't be parsed.
+      - ``False`` if no DELEGATECALL was triggered (not a proxy).
+      - ``None`` if tracing is unavailable (caller should fall back to static heuristic).
+
+    Any truthy return means the contract is a proxy.
+    """
+    call_obj = {"to": address, "data": _PROBE_CALLDATA}
+
+    # Try debug_traceCall (Geth-style) with callTracer
+    for params in [
+        [call_obj, "latest", {"tracer": "callTracer", "timeout": "10s"}],
+        [call_obj, "latest", {"tracer": "callTracer"}],
+    ]:
+        try:
+            result = rpc_call(rpc_url, "debug_traceCall", params, retries=0)
+            target = _extract_delegatecall_target_geth(result)
+            return target if target is not None else False
+        except RuntimeError:
+            pass
+
+    # Try trace_call (Parity / OpenEthereum / Erigon-style)
+    try:
+        result = rpc_call(
+            rpc_url, "trace_call", [call_obj, ["trace"], "latest"], retries=0
+        )
+        target = _extract_delegatecall_target_parity(result)
+        return target if target is not None else False
+    except RuntimeError:
+        pass
+
+    return None  # tracing unavailable
+
+
 def _try_implementation_call(rpc_url: str, address: str) -> str | None:
     """Call ``implementation()`` (selector 0x5c60da1b) on a contract.
     Returns the address on success, or None."""
@@ -119,6 +200,49 @@ def _try_implementation_call(rpc_url: str, address: str) -> str | None:
             retries=0,
         )
         return _slot_to_address(result)
+    except RuntimeError:
+        return None
+
+
+def _decode_address_array(hex_data: str) -> list[str] | None:
+    """Decode an ABI-encoded ``address[]`` return value."""
+    raw = hex_data[2:] if hex_data.startswith("0x") else hex_data
+    try:
+        data = bytes.fromhex(raw)
+    except ValueError:
+        return None
+    if len(data) < 64:
+        return None
+    offset = int.from_bytes(data[:32], "big")
+    if offset + 32 > len(data):
+        return None
+    length = int.from_bytes(data[offset : offset + 32], "big")
+    if length == 0 or length > 100:
+        return None
+    start = offset + 32
+    if start + length * 32 > len(data):
+        return None
+    addresses = []
+    for i in range(length):
+        addr = _slot_to_address(
+            "0x" + data[start + i * 32 : start + (i + 1) * 32].hex()
+        )
+        if addr:
+            addresses.append(addr)
+    return addresses or None
+
+
+def _try_facet_addresses_call(rpc_url: str, address: str) -> list[str] | None:
+    """Call ``facetAddresses()`` (EIP-2535) on a contract.
+    Returns a list of facet addresses on success, or None."""
+    try:
+        result = rpc_call(
+            rpc_url,
+            "eth_call",
+            [{"to": address, "data": FACET_ADDRESSES_SELECTOR}, "latest"],
+            retries=0,
+        )
+        return _decode_address_array(result)
     except RuntimeError:
         return None
 
@@ -176,12 +300,41 @@ def classify_single(address: str, rpc_url: str, bytecode: str | None = None) -> 
         info.update(type="proxy", proxy_type="oz_legacy", implementation=oz)
         return info
 
-    # 5. Heuristic: short bytecode (<= 300 bytes) with DELEGATECALL opcode
+    # 5. EIP-2535 diamond proxy — facetAddresses() call
+    facets = _try_facet_addresses_call(rpc_url, address)
+    if facets:
+        info.update(type="proxy", proxy_type="eip2535", facets=facets)
+        return info
+
+    # 6. implementation() call — catches custom proxies with non-standard
+    #    storage slots that still expose the standard interface.
+    impl_call = _try_implementation_call(rpc_url, address)
+    if impl_call:
+        info.update(type="proxy", proxy_type="custom", implementation=impl_call)
+        return info
+
+    # 7. Heuristic: short bytecode (<= 300 bytes) with DELEGATECALL opcode.
+    #    When tracing is available, probe with synthetic calldata to confirm
+    #    DELEGATECALL actually fires in the fallback path (eliminates library
+    #    false positives) and extract the implementation address from the trace.
     raw = bytecode[2:] if bytecode.startswith("0x") else bytecode
     if 10 <= len(raw) <= SHORT_BYTECODE_THRESHOLD and _bytecode_has_delegatecall(
         bytecode
     ):
+        probe = _probe_delegatecall(rpc_url, address)
+        if probe is False:
+            # DELEGATECALL exists but isn't triggered by arbitrary calldata —
+            # this is a library or utility, not a proxy.
+            info["type"] = "regular"
+            return info
+        if probe is None:
+            # Tracing unavailable — fall back to static heuristic.
+            info.update(type="proxy", proxy_type="unknown")
+            return info
+        # probe is a str: the DELEGATECALL target (implementation address)
         info.update(type="proxy", proxy_type="unknown")
+        if probe:  # non-empty address string
+            info["implementation"] = probe
         return info
 
     info["type"] = "regular"
@@ -233,6 +386,10 @@ def classify_contracts(
             beacon_to_proxies.setdefault(bcon, []).append(addr)
             if bcon not in set(all_addrs):
                 discovered.add(bcon)
+        for facet in info.get("facets", []):
+            impl_to_proxies.setdefault(facet, []).append(addr)
+            if facet not in set(all_addrs):
+                discovered.add(facet)
 
     # Classify newly-discovered addresses (found in proxy slots)
     for addr in sorted(discovered):

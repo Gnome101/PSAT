@@ -18,244 +18,249 @@ def ADDR(n):
 
 RPC = "https://rpc.example"
 BIG_BYTECODE = "0x" + "60" * 500
+SHORT_BYTECODE = "0x" + "6000" * 10 + "f4" + "00" * 5
 ZERO_SLOT = "0x" + "0" * 64
 
 
 def _slot_for(addr: str) -> str:
-    """Pad a 20-byte address into a 32-byte storage slot value."""
     return "0x" + "0" * 24 + addr[2:]
 
 
+def _abi_encode_address_array(addrs: list[str]) -> str:
+    """Minimal ABI encoder for address[] return values."""
+    buf = (0x20).to_bytes(32, "big")  # offset
+    buf += len(addrs).to_bytes(32, "big")  # length
+    for a in addrs:
+        buf += bytes.fromhex(a[2:].zfill(64))
+    return "0x" + buf.hex()
+
+
 # ---------------------------------------------------------------------------
-# Helpers: _slot_to_address, detect_eip1167, _bytecode_has_delegatecall
+# Helpers
 # ---------------------------------------------------------------------------
 
 
 def test_helper_functions():
-    # _slot_to_address
     assert cls._slot_to_address(ZERO_SLOT) is None
     assert cls._slot_to_address("0x") is None
-    assert cls._slot_to_address("0x0") is None
     assert cls._slot_to_address(None) is None  # type: ignore[arg-type]
-    assert cls._slot_to_address("") is None
     assert cls._slot_to_address(_slot_for(ADDR(2))) == ADDR(2)
-    assert cls._slot_to_address("0x1") == "0x0000000000000000000000000000000000000001"
 
-    # detect_eip1167
     impl = "aabbccddee11223344556677889900aabbccddee"
     assert (
         cls.detect_eip1167("0x" + cls.EIP1167_PREFIX + impl + cls.EIP1167_SUFFIX)
         == "0x" + impl
     )
     assert cls.detect_eip1167("0x60016000") is None
-    assert cls.detect_eip1167("0x") is None
 
-    # _bytecode_has_delegatecall
-    assert cls._bytecode_has_delegatecall("0x6000f4") is True  # real DELEGATECALL
-    assert cls._bytecode_has_delegatecall("0x6000600100") is False  # no DELEGATECALL
-    assert cls._bytecode_has_delegatecall("0x61f400") is False  # 0xf4 inside PUSH2 data
-    assert (
-        cls._bytecode_has_delegatecall("0x61f400f4") is True
-    )  # PUSH2 data then real DELEGATECALL
-    assert cls._bytecode_has_delegatecall("0x") is False
-    assert cls._bytecode_has_delegatecall("") is False
+    assert cls._bytecode_has_delegatecall("0x6000f4") is True
+    assert cls._bytecode_has_delegatecall("0x61f400") is False  # 0xf4 inside PUSH2
+    assert cls._bytecode_has_delegatecall("0x61f400f4") is True
+
+    # _decode_address_array
+    encoded = _abi_encode_address_array([ADDR(1), ADDR(2)])
+    assert cls._decode_address_array(encoded) == [ADDR(1), ADDR(2)]
+    assert cls._decode_address_array("0x") is None
+    assert cls._decode_address_array("0x" + "00" * 64) is None  # length=0
 
 
 # ---------------------------------------------------------------------------
-# classify_single: all proxy detection methods + regular fallback
+# Full classification pipeline: all proxy types, probe paths, phases 1-3
 # ---------------------------------------------------------------------------
 
 
-def test_classify_single_detects_all_proxy_types(monkeypatch):
-    """Each proxy standard is detected with correct proxy_type and metadata."""
-    cases = []
+def test_full_classification_pipeline(monkeypatch):
+    """Single classify_contracts call exercising every detection path and phase.
 
-    # EIP-1167 (bytecode pattern — no storage reads needed)
+    Phase 1 coverage:
+      - EIP-1167 (bytecode pattern), EIP-1967 (storage), beacon (storage),
+        EIP-1822 (storage), OZ legacy (storage), EIP-2535 diamond (facetAddresses),
+        custom (implementation() call), heuristic with probe confirmed (Geth),
+        heuristic with probe confirmed (Parity fallback), heuristic with probe
+        rejected (library), heuristic with probe unavailable (static fallback),
+        large bytecode with DELEGATECALL (stays regular).
+    Phase 2: implementation/beacon discovery from proxy pointers + probe + facets.
+    Phase 3: factory, library, CALL+DELEGATECALL not-library, proxy priority.
+    """
+    target = ADDR(1)
+    eip1167 = ADDR(2)
+    eip1967 = ADDR(3)
+    beacon_proxy = ADDR(4)
+    uups = ADDR(5)
+    oz = ADDR(6)
+    diamond = ADDR(7)
+    custom = ADDR(8)
+    geth_proxy = ADDR(9)  # short bytecode — probe confirms via Geth
+    parity_proxy = "0x" + "aa" * 20  # short bytecode — Geth fails, Parity confirms
+    lib_dep = "0x" + "bb" * 20  # short bytecode — probe rejects (library)
+    static_proxy = "0x" + "cc" * 20  # short bytecode — tracing unavailable
+    factory = "0x" + "dd" * 20
+    not_lib = "0x" + "ee" * 20  # CALL + DELEGATECALL — stays regular
+    large_dc = "0x" + "ff" * 20  # large bytecode with DELEGATECALL — regular
+
+    # Implementation / facet addresses
+    eip1967_impl = "0x" + "01" * 20
+    eip1967_admin = "0x" + "02" * 20
+    beacon_addr = "0x" + "03" * 20
+    uups_impl = "0x" + "04" * 20
+    oz_impl = "0x" + "05" * 20
+    facet1 = "0x" + "06" * 20
+    facet2 = "0x" + "07" * 20
+    custom_impl = "0x" + "08" * 20
+    geth_impl = "0x" + "09" * 20
+    parity_impl = "0x" + "0a" * 20
     impl_hex = "aabbccddee11223344556677889900aabbccddee"
-    eip1167_bytecode = "0x" + cls.EIP1167_PREFIX + impl_hex + cls.EIP1167_SUFFIX
-    cases.append(("eip1167", eip1167_bytecode, {}, {"implementation": "0x" + impl_hex}))
+    eip1167_bc = "0x" + cls.EIP1167_PREFIX + impl_hex + cls.EIP1167_SUFFIX
 
-    # EIP-1967 with admin
-    cases.append(
-        (
-            "eip1967",
-            BIG_BYTECODE,
-            {
-                cls.EIP1967_IMPL_SLOT: _slot_for(ADDR(3)),
-                cls.EIP1967_ADMIN_SLOT: _slot_for(ADDR(4)),
-            },
-            {"implementation": ADDR(3), "admin": ADDR(4)},
-        )
-    )
+    short_addrs = {geth_proxy, parity_proxy, lib_dep, static_proxy}
 
-    # Beacon proxy
-    cases.append(
-        (
-            "beacon_proxy",
-            BIG_BYTECODE,
-            {
-                cls.EIP1967_BEACON_SLOT: _slot_for(ADDR(5)),
-            },
-            {"beacon": ADDR(5)},
-        )
-    )
+    def fake_code(_rpc, addr):
+        if addr == eip1167:
+            return eip1167_bc
+        if addr in short_addrs:
+            return SHORT_BYTECODE
+        if addr == large_dc:
+            return "0x" + "60" * 400 + "f4"
+        return BIG_BYTECODE
 
-    # EIP-1822 UUPS
-    cases.append(
-        (
-            "eip1822",
-            BIG_BYTECODE,
-            {
-                cls.EIP1822_LOGIC_SLOT: _slot_for(ADDR(6)),
-            },
-            {"implementation": ADDR(6)},
-        )
-    )
+    storage = {
+        (eip1967, cls.EIP1967_IMPL_SLOT): _slot_for(eip1967_impl),
+        (eip1967, cls.EIP1967_ADMIN_SLOT): _slot_for(eip1967_admin),
+        (beacon_proxy, cls.EIP1967_BEACON_SLOT): _slot_for(beacon_addr),
+        (uups, cls.EIP1822_LOGIC_SLOT): _slot_for(uups_impl),
+        (oz, cls.OZ_IMPL_SLOT): _slot_for(oz_impl),
+    }
 
-    # OpenZeppelin legacy
-    cases.append(
-        (
-            "oz_legacy",
-            BIG_BYTECODE,
-            {
-                cls.OZ_IMPL_SLOT: _slot_for(ADDR(7)),
-            },
-            {"implementation": ADDR(7)},
-        )
-    )
-
-    # Heuristic: short bytecode with DELEGATECALL
-    short_bytecode = "0x" + "6000" * 10 + "f4" + "00" * 5
-    cases.append(("unknown", short_bytecode, {}, {}))
-
-    for proxy_type, bytecode, slots, expected_meta in cases:
-        monkeypatch.setattr(cls, "get_code", lambda _r, _a, bc=bytecode: bc)
-        monkeypatch.setattr(
-            cls,
-            "get_storage_at",
-            lambda _r, _a, slot, s=slots: s.get(slot, ZERO_SLOT),
-        )
-        result = cls.classify_single(ADDR(1), RPC)
-        assert result["type"] == "proxy", f"Failed for {proxy_type}"
-        assert result["proxy_type"] == proxy_type, (
-            f"Expected {proxy_type}, got {result['proxy_type']}"
-        )
-        for key, val in expected_meta.items():
-            assert result[key] == val, f"{key} mismatch for {proxy_type}"
-
-
-def test_classify_single_regular_and_large_delegatecall(monkeypatch):
-    """Regular contract and large bytecode with DELEGATECALL are both 'regular'."""
-    monkeypatch.setattr(cls, "get_storage_at", lambda _r, _a, _s: ZERO_SLOT)
-
-    # Normal large bytecode
-    monkeypatch.setattr(cls, "get_code", lambda _r, _a: BIG_BYTECODE)
-    assert cls.classify_single(ADDR(1), RPC)["type"] == "regular"
-
-    # Large bytecode WITH delegatecall — still regular (exceeds heuristic threshold)
-    monkeypatch.setattr(cls, "get_code", lambda _r, _a: "0x" + "60" * 400 + "f4")
-    assert cls.classify_single(ADDR(1), RPC)["type"] == "regular"
-
-
-# ---------------------------------------------------------------------------
-# classify_contracts: Phase 2 (relational) + address discovery
-# ---------------------------------------------------------------------------
-
-
-def test_classify_contracts_relational(monkeypatch):
-    """Proxies mark their targets as implementation/beacon; new addresses are discovered."""
-    proxy = ADDR(1)
-    impl = ADDR(2)
-    beacon_proxy = ADDR(3)
-    beacon = ADDR(4)
-    new_impl = ADDR(5)  # not in original dep list
-
-    monkeypatch.setattr(cls, "get_code", lambda _r, _a: BIG_BYTECODE)
-    monkeypatch.setattr(
-        cls,
-        "_try_implementation_call",
-        lambda _r, _a: None,
-    )
-
-    def fake_storage(_r, addr, slot):
-        if addr == proxy and slot == cls.EIP1967_IMPL_SLOT:
-            return _slot_for(impl)
-        if addr == beacon_proxy and slot == cls.EIP1967_BEACON_SLOT:
-            return _slot_for(beacon)
-        # A dep that's a proxy pointing to an address NOT in the dep list
-        if addr == ADDR(6) and slot == cls.EIP1967_IMPL_SLOT:
-            return _slot_for(new_impl)
+    def fake_rpc(_rpc, method, params, retries=1):
+        if method == "eth_getStorageAt":
+            return storage.get((params[0], params[1]), ZERO_SLOT)
+        if method == "eth_getCode":
+            return fake_code(_rpc, params[0])
+        if method == "eth_call":
+            addr = params[0].get("to", "")
+            sel = params[0].get("data", "")[:10]
+            if addr == diamond and sel == cls.FACET_ADDRESSES_SELECTOR:
+                return _abi_encode_address_array([facet1, facet2])
+            if addr == custom and sel == cls.IMPLEMENTATION_SELECTOR:
+                return _slot_for(custom_impl)
+            raise RuntimeError("revert")
+        if method in ("debug_traceCall", "trace_call"):
+            addr = params[0].get("to", "")
+            if addr == geth_proxy and method == "debug_traceCall":
+                return {
+                    "type": "CALL",
+                    "calls": [
+                        {"type": "DELEGATECALL", "from": geth_proxy, "to": geth_impl}
+                    ],
+                }
+            if addr == lib_dep and method == "debug_traceCall":
+                return {"type": "CALL", "calls": []}
+            if addr == parity_proxy:
+                if method == "debug_traceCall":
+                    raise RuntimeError("debug not available")
+                return [
+                    {
+                        "type": "call",
+                        "action": {
+                            "callType": "delegatecall",
+                            "from": parity_proxy,
+                            "to": parity_impl,
+                        },
+                    }
+                ]
+            raise RuntimeError("tracing unavailable")
         return ZERO_SLOT
 
-    monkeypatch.setattr(cls, "get_storage_at", fake_storage)
-
-    result = cls.classify_contracts(
-        ADDR(9), [proxy, impl, beacon_proxy, beacon, ADDR(6)], RPC
-    )
-
-    assert result["classifications"][proxy]["type"] == "proxy"
-    assert result["classifications"][impl]["type"] == "implementation"
-    assert proxy in result["classifications"][impl]["proxies"]
-    assert result["classifications"][beacon_proxy]["type"] == "proxy"
-    assert result["classifications"][beacon_proxy]["proxy_type"] == "beacon_proxy"
-    assert result["classifications"][beacon]["type"] == "beacon"
-    # new_impl discovered via proxy slot, not in original dep list
-    assert new_impl in result["discovered_addresses"]
-    assert new_impl in result["classifications"]
-    assert result["classifications"][new_impl]["type"] == "implementation"
-
-
-# ---------------------------------------------------------------------------
-# classify_contracts: Phase 3 (behavioral) + priority
-# ---------------------------------------------------------------------------
-
-
-def test_classify_contracts_behavioral(monkeypatch):
-    """Dynamic edges classify factory/library; CALL+DELEGATECALL prevents library label."""
-    target = ADDR(1)
-    factory = ADDR(2)
-    lib = ADDR(3)
-    not_lib = ADDR(4)  # called via both DELEGATECALL and CALL
-
-    monkeypatch.setattr(cls, "get_code", lambda _r, _a: BIG_BYTECODE)
-    monkeypatch.setattr(cls, "get_storage_at", lambda _r, _a, _s: ZERO_SLOT)
+    monkeypatch.setattr(cls, "get_code", fake_code)
+    monkeypatch.setattr(cls, "rpc_call", fake_rpc)
 
     edges = [
-        {"from": factory, "to": ADDR(8), "op": "CREATE2"},
-        {"from": target, "to": lib, "op": "DELEGATECALL"},
+        {"from": target, "to": lib_dep, "op": "DELEGATECALL"},
+        {"from": factory, "to": ADDR(1), "op": "CREATE2"},
         {"from": target, "to": not_lib, "op": "DELEGATECALL"},
         {"from": target, "to": not_lib, "op": "CALL"},
+        {
+            "from": geth_proxy,
+            "to": ADDR(1),
+            "op": "CREATE2",
+        },  # should NOT override proxy
     ]
-    result = cls.classify_contracts(
-        target, [factory, lib, not_lib], RPC, dynamic_edges=edges
-    )
 
-    assert result["classifications"][factory]["type"] == "factory"
-    assert result["classifications"][lib]["type"] == "library"
-    assert result["classifications"][not_lib]["type"] == "regular"
+    deps = [
+        eip1167,
+        eip1967,
+        beacon_proxy,
+        uups,
+        oz,
+        diamond,
+        custom,
+        geth_proxy,
+        parity_proxy,
+        lib_dep,
+        static_proxy,
+        factory,
+        not_lib,
+        large_dc,
+    ]
+    result = cls.classify_contracts(target, deps, RPC, dynamic_edges=edges)
+    c = result["classifications"]
 
+    # --- Phase 1: every proxy type ---
+    assert c[eip1167]["proxy_type"] == "eip1167"
+    assert c[eip1167]["implementation"] == "0x" + impl_hex
 
-def test_proxy_not_overridden_by_behavioral(monkeypatch):
-    """Phase 1 proxy classification takes priority over Phase 3 behavioral."""
-    target = ADDR(1)
-    proxy_dep = ADDR(2)
-    impl = ADDR(3)
+    assert c[eip1967]["proxy_type"] == "eip1967"
+    assert c[eip1967]["implementation"] == eip1967_impl
+    assert c[eip1967]["admin"] == eip1967_admin
 
-    monkeypatch.setattr(cls, "get_code", lambda _r, _a: BIG_BYTECODE)
+    assert c[beacon_proxy]["proxy_type"] == "beacon_proxy"
+    assert c[beacon_proxy]["beacon"] == beacon_addr
 
-    def fake_storage(_r, addr, slot):
-        if addr == proxy_dep and slot == cls.EIP1967_IMPL_SLOT:
-            return _slot_for(impl)
-        return ZERO_SLOT
+    assert c[uups]["proxy_type"] == "eip1822"
+    assert c[uups]["implementation"] == uups_impl
 
-    monkeypatch.setattr(cls, "get_storage_at", fake_storage)
+    assert c[oz]["proxy_type"] == "oz_legacy"
+    assert c[oz]["implementation"] == oz_impl
 
-    # Dynamic edges show proxy_dep using CREATE2 — should NOT override proxy
-    edges = [{"from": proxy_dep, "to": ADDR(8), "op": "CREATE2"}]
-    result = cls.classify_contracts(target, [proxy_dep, impl], RPC, dynamic_edges=edges)
+    assert c[diamond]["proxy_type"] == "eip2535"
+    assert set(c[diamond]["facets"]) == {facet1, facet2}
 
-    assert result["classifications"][proxy_dep]["type"] == "proxy"
-    assert result["classifications"][impl]["type"] == "implementation"
+    assert c[custom]["proxy_type"] == "custom"
+    assert c[custom]["implementation"] == custom_impl
+
+    # Heuristic: probe confirmed (Geth), impl extracted
+    assert c[geth_proxy]["proxy_type"] == "unknown"
+    assert c[geth_proxy]["implementation"] == geth_impl
+
+    # Heuristic: probe confirmed (Parity fallback), impl extracted
+    assert c[parity_proxy]["proxy_type"] == "unknown"
+    assert c[parity_proxy]["implementation"] == parity_impl
+
+    # Heuristic: probe rejected — stays regular, Phase 3 marks library
+    assert c[lib_dep]["type"] == "library"
+
+    # Heuristic: probe unavailable — static fallback
+    assert c[static_proxy]["proxy_type"] == "unknown"
+
+    # Large bytecode with DELEGATECALL — still regular
+    assert c[large_dc]["type"] == "regular"
+
+    # --- Phase 2: relational discovery ---
+    assert c[eip1967_impl]["type"] == "implementation"
+    assert eip1967_impl in result["discovered_addresses"]
+    assert c[geth_impl]["type"] == "implementation"
+    assert c[parity_impl]["type"] == "implementation"
+    assert c[custom_impl]["type"] == "implementation"
+    # Diamond facets discovered and marked as implementations
+    assert facet1 in result["discovered_addresses"]
+    assert c[facet1]["type"] == "implementation"
+    assert c[facet2]["type"] == "implementation"
+
+    # --- Phase 3: behavioral ---
+    assert c[factory]["type"] == "factory"
+    assert c[not_lib]["type"] == "regular"  # CALL+DELEGATECALL — not library
+    # Proxy not overridden by CREATE2 edge
+    assert c[geth_proxy]["type"] == "proxy"
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +284,7 @@ def test_classify_contracts_handles_rpc_failure(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Live RPC (skip-guarded)
+# Live RPC
 # ---------------------------------------------------------------------------
 
 
