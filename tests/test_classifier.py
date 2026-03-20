@@ -12,8 +12,8 @@ from services import classifier as cls
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
-def ADDR(n):
-    return f"0x{str(n) * 40}"
+def ADDR(n: int) -> str:
+    return "0x" + hex(n)[2:].zfill(40)
 
 
 RPC = "https://rpc.example"
@@ -56,12 +56,17 @@ def test_helper_functions():
     assert cls._bytecode_has_delegatecall("0x6000f4") is True
     assert cls._bytecode_has_delegatecall("0x61f400") is False  # 0xf4 inside PUSH2
     assert cls._bytecode_has_delegatecall("0x61f400f4") is True
+    assert cls._bytecode_has_delegatecall("0x600") is False  # odd-length hex
+    assert cls._bytecode_has_delegatecall("0xZZZZ") is False  # invalid hex
 
     # _decode_address_array
     encoded = _abi_encode_address_array([ADDR(1), ADDR(2)])
     assert cls._decode_address_array(encoded) == [ADDR(1), ADDR(2)]
     assert cls._decode_address_array("0x") is None
     assert cls._decode_address_array("0x" + "00" * 64) is None  # length=0
+    # length > 100 rejected
+    big = (0x20).to_bytes(32, "big") + (101).to_bytes(32, "big") + b"\x00" * (101 * 32)
+    assert cls._decode_address_array("0x" + big.hex()) is None
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +114,7 @@ def test_full_classification_pipeline(monkeypatch):
     custom_impl = "0x" + "08" * 20
     geth_impl = "0x" + "09" * 20
     parity_impl = "0x" + "0a" * 20
+    beacon_impl = "0x" + "0b" * 20
     impl_hex = "aabbccddee11223344556677889900aabbccddee"
     eip1167_bc = "0x" + cls.EIP1167_PREFIX + impl_hex + cls.EIP1167_SUFFIX
 
@@ -143,6 +149,8 @@ def test_full_classification_pipeline(monkeypatch):
                 return _abi_encode_address_array([facet1, facet2])
             if addr == custom and sel == cls.IMPLEMENTATION_SELECTOR:
                 return _slot_for(custom_impl)
+            if addr == beacon_addr and sel == cls.IMPLEMENTATION_SELECTOR:
+                return _slot_for(beacon_impl)
             raise RuntimeError("revert")
         if method in ("debug_traceCall", "trace_call"):
             addr = params[0].get("to", "")
@@ -215,6 +223,7 @@ def test_full_classification_pipeline(monkeypatch):
 
     assert c[beacon_proxy]["proxy_type"] == "beacon_proxy"
     assert c[beacon_proxy]["beacon"] == beacon_addr
+    assert c[beacon_proxy]["implementation"] == beacon_impl  # resolved through beacon
 
     assert c[uups]["proxy_type"] == "eip1822"
     assert c[uups]["implementation"] == uups_impl
@@ -251,6 +260,11 @@ def test_full_classification_pipeline(monkeypatch):
     assert c[geth_impl]["type"] == "implementation"
     assert c[parity_impl]["type"] == "implementation"
     assert c[custom_impl]["type"] == "implementation"
+    # Beacon classified as beacon (not custom proxy), impl preserved from Phase 1
+    assert c[beacon_addr]["type"] == "beacon"
+    assert beacon_proxy in c[beacon_addr]["proxies"]
+    assert c[beacon_addr]["implementation"] == beacon_impl
+    assert "proxy_type" not in c[beacon_addr]  # cleaned up from Phase 1
     # Diamond facets discovered and marked as implementations
     assert facet1 in result["discovered_addresses"]
     assert c[facet1]["type"] == "implementation"
@@ -281,6 +295,84 @@ def test_classify_contracts_handles_rpc_failure(monkeypatch):
     result = cls.classify_contracts(ADDR(1), [ADDR(2), ADDR(3)], RPC)
     assert result["classifications"][ADDR(2)]["type"] == "regular"
     assert result["classifications"][ADDR(3)]["type"] == "regular"
+
+
+# ---------------------------------------------------------------------------
+# Direct classify_single tests
+# ---------------------------------------------------------------------------
+
+
+def test_classify_single_eip1967_proxy(monkeypatch):
+    """classify_single detects an EIP-1967 proxy via storage slots."""
+    addr = ADDR(0xA)
+    impl = ADDR(0xB)
+    admin = ADDR(0xC)
+
+    storage = {
+        (addr, cls.EIP1967_IMPL_SLOT): _slot_for(impl),
+        (addr, cls.EIP1967_ADMIN_SLOT): _slot_for(admin),
+    }
+
+    monkeypatch.setattr(cls, "get_code", lambda _rpc, _addr: BIG_BYTECODE)
+    monkeypatch.setattr(
+        cls,
+        "rpc_call",
+        lambda _rpc, method, params, retries=1: storage.get(
+            (params[0], params[1]), ZERO_SLOT
+        )
+        if method == "eth_getStorageAt"
+        else (_ for _ in ()).throw(RuntimeError("unexpected")),
+    )
+
+    result = cls.classify_single(addr, RPC)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "eip1967"
+    assert result["implementation"] == impl
+    assert result["admin"] == admin
+
+
+def test_classify_single_eip1167(monkeypatch):
+    """classify_single detects an EIP-1167 minimal proxy from bytecode."""
+    impl_hex = "aabbccddee11223344556677889900aabbccddee"
+    bytecode = "0x" + cls.EIP1167_PREFIX + impl_hex + cls.EIP1167_SUFFIX
+    addr = ADDR(0xD)
+
+    monkeypatch.setattr(cls, "get_code", lambda _rpc, _addr: bytecode)
+
+    result = cls.classify_single(addr, RPC)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "eip1167"
+    assert result["implementation"] == "0x" + impl_hex
+
+
+def test_classify_single_regular(monkeypatch):
+    """classify_single returns 'regular' when no proxy pattern is found."""
+    addr = ADDR(0xE)
+
+    monkeypatch.setattr(cls, "get_code", lambda _rpc, _addr: BIG_BYTECODE)
+    monkeypatch.setattr(
+        cls,
+        "rpc_call",
+        lambda _rpc, method, params, retries=1: ZERO_SLOT
+        if method == "eth_getStorageAt"
+        else (_ for _ in ()).throw(RuntimeError("revert")),
+    )
+
+    result = cls.classify_single(addr, RPC)
+    assert result["type"] == "regular"
+
+
+def test_classify_single_with_bytecode_param(monkeypatch):
+    """Passing bytecode= skips the get_code call."""
+    impl_hex = "aabbccddee11223344556677889900aabbccddee"
+    bytecode = "0x" + cls.EIP1167_PREFIX + impl_hex + cls.EIP1167_SUFFIX
+
+    monkeypatch.setattr(
+        cls, "get_code", lambda *a: (_ for _ in ()).throw(AssertionError("should not be called"))
+    )
+    result = cls.classify_single(ADDR(0xF), RPC, bytecode=bytecode)
+    assert result["type"] == "proxy"
+    assert result["implementation"] == "0x" + impl_hex
 
 
 # ---------------------------------------------------------------------------

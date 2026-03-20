@@ -9,10 +9,27 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from services.dependent_contracts import normalize_address, rpc_call
+from services.dependent_contracts import (
+    get_code,
+    has_deployed_code,
+    normalize_address,
+    rpc_call,
+)
 from utils.etherscan import get as etherscan_get
 
 TRACE_OPS = {"CALL", "STATICCALL", "DELEGATECALL", "CALLCODE", "CREATE", "CREATE2"}
+
+# EVM precompile addresses (ecrecover, sha256, ripemd160, identity, etc.)
+_MAX_PRECOMPILE_ADDR = 9
+
+
+def _is_precompile(address: str) -> bool:
+    """Return True if address is an EVM precompile (0x01-0x09)."""
+    try:
+        val = int(address, 16)
+        return 0 < val <= _MAX_PRECOMPILE_ADDR
+    except (ValueError, TypeError):
+        return False
 
 
 def _normalize_maybe_address(address: Any) -> str | None:
@@ -49,28 +66,28 @@ def _tx_selector(input_data: Any) -> str:
 
 
 def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
-    """Fetch recent normal transactions for an address from Etherscan."""
-    try:
-        data = etherscan_get(
-            "account",
-            "txlist",
-            address=address,
-            startblock=0,
-            endblock=99_999_999,
-            page=1,
-            offset=max(20, limit),
-            sort="desc",
-        )
-    except RuntimeError as exc:
-        # Etherscan returns status=0 for empty tx history.
-        if "No transactions found" in str(exc):
-            return []
-        raise
-
-    result = data.get("result", [])
-    if not isinstance(result, list):
-        return []
-    return result
+    """Fetch recent normal and internal transactions for an address from Etherscan."""
+    txs: list[dict] = []
+    for action in ("txlist", "txlistinternal"):
+        try:
+            data = etherscan_get(
+                "account",
+                action,
+                address=address,
+                startblock=0,
+                endblock=99_999_999,
+                page=1,
+                offset=max(20, limit),
+                sort="desc",
+            )
+        except RuntimeError as exc:
+            if "No transactions found" in str(exc):
+                continue
+            raise
+        result = data.get("result", [])
+        if isinstance(result, list):
+            txs.extend(result)
+    return txs
 
 
 def pick_representative_transactions(
@@ -320,7 +337,16 @@ def find_dynamic_dependencies(
 
     edges = _dedupe_edges(all_edges)
     dependency_edges = [edge for edge in edges if edge["to"] != target]
-    dependencies = sorted({edge["to"] for edge in dependency_edges})
+
+    # Filter out precompiles and addresses with no deployed code (EOAs)
+    dep_candidates = sorted({edge["to"] for edge in dependency_edges})
+    contracts = {
+        addr
+        for addr in dep_candidates
+        if not _is_precompile(addr) and has_deployed_code(get_code(trace_rpc, addr))
+    }
+    dependency_edges = [edge for edge in dependency_edges if edge["to"] in contracts]
+    dependencies = sorted(contracts)
 
     provenance: dict[str, list[dict]] = {}
     for edge in dependency_edges:

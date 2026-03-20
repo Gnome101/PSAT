@@ -278,6 +278,11 @@ def classify_single(address: str, rpc_url: str, bytecode: str | None = None) -> 
         info.update(type="proxy", proxy_type="beacon_proxy", beacon=beacon)
         if impl:
             info["implementation"] = impl
+        else:
+            # Resolve implementation through the beacon contract
+            beacon_impl = _try_implementation_call(rpc_url, beacon)
+            if beacon_impl:
+                info["implementation"] = beacon_impl
         if admin:
             info["admin"] = admin
         return info
@@ -369,6 +374,7 @@ def classify_contracts(
     impl_to_proxies: dict[str, list[str]] = {}
     beacon_to_proxies: dict[str, list[str]] = {}
     discovered: set[str] = set()
+    all_addrs_set = set(all_addrs)
 
     for addr in all_addrs:
         try:
@@ -380,15 +386,15 @@ def classify_contracts(
         # Track reverse mappings
         if impl := info.get("implementation"):
             impl_to_proxies.setdefault(impl, []).append(addr)
-            if impl not in set(all_addrs):
+            if impl not in all_addrs_set:
                 discovered.add(impl)
         if bcon := info.get("beacon"):
             beacon_to_proxies.setdefault(bcon, []).append(addr)
-            if bcon not in set(all_addrs):
+            if bcon not in all_addrs_set:
                 discovered.add(bcon)
         for facet in info.get("facets", []):
             impl_to_proxies.setdefault(facet, []).append(addr)
-            if facet not in set(all_addrs):
+            if facet not in all_addrs_set:
                 discovered.add(facet)
 
     # Classify newly-discovered addresses (found in proxy slots)
@@ -401,18 +407,24 @@ def classify_contracts(
 
     # Phase 2 -- relational: mark implementations and beacons
     for addr, info in classifications.items():
+        # Beacon takes priority: the EIP-1967 beacon slot is a strong signal.
+        # Phase 1 may have classified the beacon as "proxy/custom" because
+        # UpgradeableBeacon exposes implementation() — override that here.
+        if addr in beacon_to_proxies:
+            for key in ("proxy_type", "beacon", "admin"):
+                info.pop(key, None)
+            info["type"] = "beacon"
+            info["proxies"] = sorted(beacon_to_proxies[addr])
+            if "implementation" not in info:
+                impl = _try_implementation_call(rpc_url, addr)
+                if impl:
+                    info["implementation"] = impl
+            continue
         if info["type"] != "regular":
             continue
         if addr in impl_to_proxies:
             info["type"] = "implementation"
             info["proxies"] = sorted(impl_to_proxies[addr])
-        elif addr in beacon_to_proxies:
-            info["type"] = "beacon"
-            info["proxies"] = sorted(beacon_to_proxies[addr])
-            # Try to resolve the beacon's current implementation via implementation()
-            impl = _try_implementation_call(rpc_url, addr)
-            if impl:
-                info["implementation"] = impl
 
     # Phase 3 -- behavioral: factory / library from dynamic edges
     if dynamic_edges:

@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -44,16 +45,18 @@ DEFAULT_PUBLIC_RPCS_BY_NETWORK = {
     ),
 }
 
-# Normalize an Ethereum address to lowercase with a single 0x prefix for consistent comparisons/caching.
 def normalize_address(address: str) -> str:
+    """Normalize an Ethereum address to lowercase with a single 0x prefix."""
     return "0x" + address.lower().replace("0x", "", 1)
 
-# Return True if an eth_getCode response represents deployed contract bytecode (not an empty/non-contract result).
+
 def has_deployed_code(bytecode_hex: str) -> bool:
+    """Return True if an eth_getCode response represents deployed contract bytecode."""
     return bytecode_hex not in EMPTY_CODE_VALUES
 
-# Send a JSON-RPC POST request to the given RPC endpoint with retries/backoff and return the response "result" field.
-def rpc_call(rpc_url: str, method: str, params: list, retries: int = 1) -> str:
+
+def rpc_call(rpc_url: str, method: str, params: list, retries: int = 1) -> Any:
+    """Send a JSON-RPC POST request with retries/backoff and return the 'result' field."""
     payload = json.dumps(
         {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     ).encode("utf-8")
@@ -83,13 +86,16 @@ def rpc_call(rpc_url: str, method: str, params: list, retries: int = 1) -> str:
                 time.sleep(0.3 * (2**attempt))
                 continue
             raise RuntimeError(f"RPC request failed for {rpc_url}: {exc}") from exc
+    raise RuntimeError(f"RPC request failed for {rpc_url}: all {retries + 1} attempts exhausted")
 
-# Fetch the deployed EVM bytecode at an address via eth_getCode.
+
 def get_code(rpc_url: str, address: str) -> str:
+    """Fetch the deployed EVM bytecode at an address via eth_getCode."""
     return rpc_call(rpc_url, "eth_getCode", [address, "latest"])
 
-# Pick an RPC endpoint (custom or from known public lists) where the given address has deployed bytecode, returning (network, rpc_url).
+
 def resolve_rpc_for_address(address: str, rpc_url: str | None = None) -> tuple[str, str]:
+    """Pick an RPC endpoint where the address has deployed bytecode."""
     address = normalize_address(address)
     if rpc_url:
         if not has_deployed_code(get_code(rpc_url, address)):
@@ -110,8 +116,8 @@ def resolve_rpc_for_address(address: str, rpc_url: str | None = None) -> tuple[s
         message += " " + " | ".join(errors[:3])
     raise RuntimeError(message)
 
-# Parse EVM bytecode and extract any 20-byte constants pushed with PUSH20 (0x73) that look like embedded addresses.
 def extract_push20_addresses(bytecode_hex: str) -> set[str]:
+    """Parse EVM bytecode and extract 20-byte constants from PUSH20 (0x73) opcodes."""
     raw = bytecode_hex[2:] if bytecode_hex.startswith("0x") else bytecode_hex
     if len(raw) % 2 != 0:
         return set()
@@ -133,8 +139,8 @@ def extract_push20_addresses(bytecode_hex: str) -> set[str]:
     out.discard("0x" + ("0" * 40))
     return out
 
-# Starting from a root contract, traverse reachable embedded PUSH20 addresses and return the set of those that are deployed contracts.
 def discover_dependencies(rpc_url: str, root: str) -> list[str]:
+    """BFS-traverse embedded PUSH20 addresses and return deployed contract dependencies."""
     root = normalize_address(root)
     code_cache = {}
 
