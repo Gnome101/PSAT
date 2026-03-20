@@ -28,12 +28,12 @@ import json
 import sys
 from pathlib import Path
 
-from services.fetcher import fetch, scaffold
 from services.analyzer import analyze
-from services.llm_analyzer import analyze_with_llm
+from services.contract_inventory_ai import search_protocol_inventory
 from services.dependent_contracts import find_dependencies
 from services.dynamic_dependencies import find_dynamic_dependencies
-from services.contract_inventory_ai import search_protocol_inventory
+from services.fetcher import fetch, scaffold
+from services.llm_analyzer import analyze_with_llm
 
 
 def load_addresses(filepath: str) -> list[dict]:

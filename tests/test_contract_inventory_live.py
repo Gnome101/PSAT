@@ -1,8 +1,8 @@
 #run live test with accuracy metrics with uv run python -m pytest -s tests/test_contract_inventory_live.py
-from collections import Counter
 import os
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
