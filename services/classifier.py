@@ -23,17 +23,11 @@ from services.dependent_contracts import get_code, normalize_address, rpc_call
 
 # EIP-1967 (keccak256 of label string minus 1)
 EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
-EIP1967_BEACON_SLOT = (
-    "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50"
-)
-EIP1967_ADMIN_SLOT = (
-    "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"
-)
+EIP1967_BEACON_SLOT = "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50"
+EIP1967_ADMIN_SLOT = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103"
 
 # EIP-1822 UUPS
-EIP1822_LOGIC_SLOT = (
-    "0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7"
-)
+EIP1822_LOGIC_SLOT = "0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7"
 
 # OpenZeppelin legacy (keccak256("org.zeppelinos.proxy.implementation"))
 OZ_IMPL_SLOT = "0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3"
@@ -131,22 +125,14 @@ def _extract_delegatecall_target_geth(node) -> str | None:
 
 def _extract_delegatecall_target_parity(result) -> str | None:
     """Extract the first DELEGATECALL target address from a Parity-style trace result."""
-    traces = (
-        result
-        if isinstance(result, list)
-        else (result.get("trace", []) if isinstance(result, dict) else [])
-    )
+    traces = result if isinstance(result, list) else (result.get("trace", []) if isinstance(result, dict) else [])
     for item in traces:
         if not isinstance(item, dict):
             continue
         action = item.get("action", {}) or {}
         if str(action.get("callType", "")).lower() == "delegatecall":
             raw = action.get("to")
-            return (
-                normalize_address(raw)
-                if isinstance(raw, str) and len(raw) >= 42
-                else ""
-            )
+            return normalize_address(raw) if isinstance(raw, str) and len(raw) >= 42 else ""
     return None
 
 
@@ -178,9 +164,7 @@ def _probe_delegatecall(rpc_url: str, address: str) -> str | None | bool:
 
     # Try trace_call (Parity / OpenEthereum / Erigon-style)
     try:
-        result = rpc_call(
-            rpc_url, "trace_call", [call_obj, ["trace"], "latest"], retries=0
-        )
+        result = rpc_call(rpc_url, "trace_call", [call_obj, ["trace"], "latest"], retries=0)
         target = _extract_delegatecall_target_parity(result)
         return target if target is not None else False
     except RuntimeError:
@@ -224,9 +208,7 @@ def _decode_address_array(hex_data: str) -> list[str] | None:
         return None
     addresses = []
     for i in range(length):
-        addr = _slot_to_address(
-            "0x" + data[start + i * 32 : start + (i + 1) * 32].hex()
-        )
+        addr = _slot_to_address("0x" + data[start + i * 32 : start + (i + 1) * 32].hex())
         if addr:
             addresses.append(addr)
     return addresses or None
@@ -323,9 +305,7 @@ def classify_single(address: str, rpc_url: str, bytecode: str | None = None) -> 
     #    DELEGATECALL actually fires in the fallback path (eliminates library
     #    false positives) and extract the implementation address from the trace.
     raw = bytecode[2:] if bytecode.startswith("0x") else bytecode
-    if 10 <= len(raw) <= SHORT_BYTECODE_THRESHOLD and _bytecode_has_delegatecall(
-        bytecode
-    ):
+    if 10 <= len(raw) <= SHORT_BYTECODE_THRESHOLD and _bytecode_has_delegatecall(bytecode):
         probe = _probe_delegatecall(rpc_url, address)
         if probe is False:
             # DELEGATECALL exists but isn't triggered by arbitrary calldata —
@@ -365,9 +345,7 @@ def classify_contracts(
       3. **Behavioral** -- factory / library labels from dynamic call-graph edges.
     """
     target = normalize_address(target)
-    all_addrs = list(
-        dict.fromkeys([target] + [normalize_address(a) for a in dependencies])
-    )
+    all_addrs = list(dict.fromkeys([target] + [normalize_address(a) for a in dependencies]))
 
     # Phase 1 -- intrinsic classification
     classifications: dict[str, dict] = {}

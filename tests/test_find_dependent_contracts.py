@@ -90,9 +90,7 @@ def test_resolve_rpc_for_address_auto_discovers_public_rpc(monkeypatch):
         return "0x"
 
     monkeypatch.setattr(fdc, "get_code", fake_get_code)
-    network, rpc_url = fdc.resolve_rpc_for_address(
-        "0x1111111111111111111111111111111111111111"
-    )
+    network, rpc_url = fdc.resolve_rpc_for_address("0x1111111111111111111111111111111111111111")
 
     assert network == second_network
     assert rpc_url == second_rpc
@@ -118,9 +116,7 @@ def test_resolve_rpc_for_address_uses_backup_endpoint_on_error(monkeypatch):
         return "0x"
 
     monkeypatch.setattr(fdc, "get_code", fake_get_code)
-    network, rpc_url = fdc.resolve_rpc_for_address(
-        "0x1111111111111111111111111111111111111111"
-    )
+    network, rpc_url = fdc.resolve_rpc_for_address("0x1111111111111111111111111111111111111111")
 
     assert network == "ethereum"
     assert rpc_url == "https://rpc-good.example"

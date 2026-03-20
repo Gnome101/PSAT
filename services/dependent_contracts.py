@@ -45,6 +45,7 @@ DEFAULT_PUBLIC_RPCS_BY_NETWORK = {
     ),
 }
 
+
 def normalize_address(address: str) -> str:
     """Normalize an Ethereum address to lowercase with a single 0x prefix."""
     return "0x" + address.lower().replace("0x", "", 1)
@@ -57,9 +58,7 @@ def has_deployed_code(bytecode_hex: str) -> bool:
 
 def rpc_call(rpc_url: str, method: str, params: list, retries: int = 1) -> Any:
     """Send a JSON-RPC POST request with retries/backoff and return the 'result' field."""
-    payload = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-    ).encode("utf-8")
+    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode("utf-8")
     request = urllib.request.Request(
         rpc_url,
         data=payload,
@@ -116,6 +115,7 @@ def resolve_rpc_for_address(address: str, rpc_url: str | None = None) -> tuple[s
         message += " " + " | ".join(errors[:3])
     raise RuntimeError(message)
 
+
 def extract_push20_addresses(bytecode_hex: str) -> set[str]:
     """Parse EVM bytecode and extract 20-byte constants from PUSH20 (0x73) opcodes."""
     raw = bytecode_hex[2:] if bytecode_hex.startswith("0x") else bytecode_hex
@@ -138,6 +138,7 @@ def extract_push20_addresses(bytecode_hex: str) -> set[str]:
 
     out.discard("0x" + ("0" * 40))
     return out
+
 
 def discover_dependencies(rpc_url: str, root: str) -> list[str]:
     """BFS-traverse embedded PUSH20 addresses and return deployed contract dependencies."""

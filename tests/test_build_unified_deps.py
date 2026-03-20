@@ -14,11 +14,7 @@ def _get_build_fn():
         dotenv_stub = types.ModuleType("dotenv")
         dotenv_stub.load_dotenv = lambda *a, **kw: None  # type: ignore[attr-defined]
         sys.modules["dotenv"] = dotenv_stub
-    mod = (
-        importlib.import_module("main")
-        if "main" not in sys.modules
-        else sys.modules["main"]
-    )
+    mod = importlib.import_module("main") if "main" not in sys.modules else sys.modules["main"]
     return mod._build_unified_deps
 
 
@@ -42,9 +38,7 @@ def _dynamic(deps, provenance=None, graph=None):
     return {
         "address": TARGET,
         "rpc": "https://trace.example",
-        "transactions_analyzed": [
-            {"tx_hash": "0xaa", "block_number": 1, "method_selector": "0xdeadbeef"}
-        ],
+        "transactions_analyzed": [{"tx_hash": "0xaa", "block_number": 1, "method_selector": "0xdeadbeef"}],
         "trace_methods": ["debug_traceTransaction"],
         "dependencies": deps,
         "provenance": provenance or {},
@@ -64,9 +58,7 @@ def test_source_tracking():
     assert "dependency_graph" not in r
 
     # Dynamic only (with provenance and graph)
-    prov = {
-        DEP_A: [{"tx_hash": "0xaa", "block_number": 1, "from": TARGET, "op": "CALL"}]
-    }
+    prov = {DEP_A: [{"tx_hash": "0xaa", "block_number": 1, "from": TARGET, "op": "CALL"}]}
     graph = [
         {
             "from": TARGET,

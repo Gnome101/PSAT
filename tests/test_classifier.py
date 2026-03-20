@@ -47,10 +47,7 @@ def test_helper_functions():
     assert cls._slot_to_address(_slot_for(ADDR(2))) == ADDR(2)
 
     impl = "aabbccddee11223344556677889900aabbccddee"
-    assert (
-        cls.detect_eip1167("0x" + cls.EIP1167_PREFIX + impl + cls.EIP1167_SUFFIX)
-        == "0x" + impl
-    )
+    assert cls.detect_eip1167("0x" + cls.EIP1167_PREFIX + impl + cls.EIP1167_SUFFIX) == "0x" + impl
     assert cls.detect_eip1167("0x60016000") is None
 
     assert cls._bytecode_has_delegatecall("0x6000f4") is True
@@ -157,9 +154,7 @@ def test_full_classification_pipeline(monkeypatch):
             if addr == geth_proxy and method == "debug_traceCall":
                 return {
                     "type": "CALL",
-                    "calls": [
-                        {"type": "DELEGATECALL", "from": geth_proxy, "to": geth_impl}
-                    ],
+                    "calls": [{"type": "DELEGATECALL", "from": geth_proxy, "to": geth_impl}],
                 }
             if addr == lib_dep and method == "debug_traceCall":
                 return {"type": "CALL", "calls": []}
@@ -317,11 +312,11 @@ def test_classify_single_eip1967_proxy(monkeypatch):
     monkeypatch.setattr(
         cls,
         "rpc_call",
-        lambda _rpc, method, params, retries=1: storage.get(
-            (params[0], params[1]), ZERO_SLOT
-        )
-        if method == "eth_getStorageAt"
-        else (_ for _ in ()).throw(RuntimeError("unexpected")),
+        lambda _rpc, method, params, retries=1: (
+            storage.get((params[0], params[1]), ZERO_SLOT)
+            if method == "eth_getStorageAt"
+            else (_ for _ in ()).throw(RuntimeError("unexpected"))
+        ),
     )
 
     result = cls.classify_single(addr, RPC)
@@ -353,9 +348,9 @@ def test_classify_single_regular(monkeypatch):
     monkeypatch.setattr(
         cls,
         "rpc_call",
-        lambda _rpc, method, params, retries=1: ZERO_SLOT
-        if method == "eth_getStorageAt"
-        else (_ for _ in ()).throw(RuntimeError("revert")),
+        lambda _rpc, method, params, retries=1: (
+            ZERO_SLOT if method == "eth_getStorageAt" else (_ for _ in ()).throw(RuntimeError("revert"))
+        ),
     )
 
     result = cls.classify_single(addr, RPC)
@@ -367,9 +362,7 @@ def test_classify_single_with_bytecode_param(monkeypatch):
     impl_hex = "aabbccddee11223344556677889900aabbccddee"
     bytecode = "0x" + cls.EIP1167_PREFIX + impl_hex + cls.EIP1167_SUFFIX
 
-    monkeypatch.setattr(
-        cls, "get_code", lambda *a: (_ for _ in ()).throw(AssertionError("should not be called"))
-    )
+    monkeypatch.setattr(cls, "get_code", lambda *a: (_ for _ in ()).throw(AssertionError("should not be called")))
     result = cls.classify_single(ADDR(0xF), RPC, bytecode=bytecode)
     assert result["type"] == "proxy"
     assert result["implementation"] == "0x" + impl_hex

@@ -122,9 +122,7 @@ def test_extract_edges_captures_all_op_types():
             {"type": "CALLCODE", "from": addr(2), "to": addr(5)},
         ],
     }
-    debug_edges = ddc.extract_edges_from_trace(
-        "debug_traceTransaction", debug_trace, "0xtx", 1
-    )
+    debug_edges = ddc.extract_edges_from_trace("debug_traceTransaction", debug_trace, "0xtx", 1)
     assert {e["op"] for e in debug_edges} == {
         "CALL",
         "DELEGATECALL",
@@ -161,9 +159,7 @@ def test_extract_edges_captures_all_op_types():
             "result": {"address": addr(7)},
         },
     ]
-    parity_edges = ddc.extract_edges_from_trace(
-        "trace_transaction", parity_entries, "0xtx", 1
-    )
+    parity_edges = ddc.extract_edges_from_trace("trace_transaction", parity_entries, "0xtx", 1)
     assert {e["op"] for e in parity_edges} == {
         "CALL",
         "STATICCALL",
@@ -182,9 +178,7 @@ def test_trace_transaction_falls_back_to_parity_style(monkeypatch):
         calls.append(method)
         if method == "debug_traceTransaction":
             raise RuntimeError("method not found")
-        return [
-            {"type": "call", "action": {"from": "0x1", "to": "0x2", "callType": "call"}}
-        ]
+        return [{"type": "call", "action": {"from": "0x1", "to": "0x2", "callType": "call"}}]
 
     monkeypatch.setattr(ddc, "rpc_call", fake_rpc_call)
 
@@ -417,9 +411,7 @@ def test_find_dynamic_dependencies_with_explicit_tx_hashes(monkeypatch):
     )
 
     out = ddc.find_dynamic_dependencies(target, tx_hashes=["0xtxhash"])
-    assert fetch_called == [], (
-        "fetch_contract_transactions should not be called when tx_hashes provided"
-    )
+    assert fetch_called == [], "fetch_contract_transactions should not be called when tx_hashes provided"
     assert out["transactions_analyzed"][0]["tx_hash"] == "0xtxhash"
 
 
