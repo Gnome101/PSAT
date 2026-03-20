@@ -34,6 +34,7 @@ from services.llm_analyzer import analyze_with_llm
 from services.dependent_contracts import find_dependencies, normalize_address
 from services.dynamic_dependencies import find_dynamic_dependencies
 from services.classifier import classify_contracts
+from services.contract_inventory_ai import search_protocol_inventory
 
 
 def load_addresses(filepath: str) -> list[dict]:
@@ -266,6 +267,23 @@ def process(
     return project_dir
 
 
+def run_discovery(args) -> None:
+    """Run contract inventory discovery and print JSON results."""
+    chain = getattr(args, "discover_chain", None)
+    limit = getattr(args, "discover_limit", None) or 100
+
+    result = search_protocol_inventory(args.discover_inventory, chain=chain, limit=limit)
+
+    output = json.dumps(result, indent=2)
+    print(output)
+
+    safe_name = args.discover_inventory.replace("/", "_").replace(" ", "_")
+    out_dir = Path("protocols") / safe_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "contract_inventory.json").write_text(output + "\n")
+    print(f"\nSaved to {out_dir / 'contract_inventory.json'}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch and analyze smart contracts")
     parser.add_argument("address", nargs="?", help="Single Ethereum contract address")
@@ -301,7 +319,30 @@ def main():
         dest="dynamic_tx_hashes",
         help="Specific transaction hash to trace (repeatable)",
     )
+
+    # Contract inventory discovery flags
+    parser.add_argument(
+        "--discover-inventory",
+        metavar="COMPANY_OR_DOMAIN",
+        help="AI-powered official contract inventory discovery for a protocol (standalone)",
+    )
+    parser.add_argument("--discover-chain", help="Chain filter for discovery")
+    parser.add_argument(
+        "--discover-limit",
+        type=int,
+        default=None,
+        help="Max discovery results to return (default: 100)",
+    )
+
     args = parser.parse_args()
+
+    # Discovery mode — standalone, mutually exclusive with pipeline
+    if args.discover_inventory:
+        try:
+            run_discovery(args)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        return
 
     if not args.address and not args.file:
         parser.print_help()
