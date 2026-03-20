@@ -21,7 +21,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from services.discovery_ai_domain import (
+from services.discovery_ai_domain import (  # noqa: E402
     CHAIN_SORT_ORDER,
     _debug_log,
     _discover_contract_inventory_pages,
@@ -30,7 +30,7 @@ from services.discovery_ai_domain import (
     _maybe_domain,
     _tavily_search,
 )
-from services.discovery_ai_inventory import extract_inventory_entries_from_pages
+from services.discovery_ai_inventory import extract_inventory_entries_from_pages  # noqa: E402
 
 
 def _build_links(evidence: list[dict[str, Any]]) -> dict[str, str]:
@@ -256,7 +256,11 @@ def search_protocol_inventory(
         debug=debug,
     )
 
-    considered_urls = [str(result.get("url", "")).strip() for result in page_results if str(result.get("url", "")).strip()]
+    considered_urls = [
+        str(result.get("url", "")).strip()
+        for result in page_results
+        if str(result.get("url", "")).strip()
+    ]
     if not selected_urls:
         selected_urls = considered_urls[:3]
         if selected_urls:
