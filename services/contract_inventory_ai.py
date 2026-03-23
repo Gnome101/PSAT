@@ -267,7 +267,7 @@ def search_protocol_inventory(
             "company": clean_company,
             "chain": requested_chain or "any",
             "official_domain": None,
-            "domain_candidates": domain_candidates if 'domain_candidates' in locals() else [],
+            "domain_candidates": domain_candidates if "domain_candidates" in locals() else [],
             "pages_considered": [],
             "pages_selected": [],
             "contracts": [],
@@ -287,9 +287,7 @@ def search_protocol_inventory(
     )
 
     considered_urls = [
-        str(result.get("url", "")).strip()
-        for result in page_results
-        if str(result.get("url", "")).strip()
+        str(result.get("url", "")).strip() for result in page_results if str(result.get("url", "")).strip()
     ]
     if not selected_urls:
         selected_urls = considered_urls[:3]

@@ -370,8 +370,7 @@ class TestExpandFromDeployers:
                 return {
                     "status": "1",
                     "result": [
-                        {"contractAddress": s, "contractCreator": deployer, "txHash": "0x" + "1" * 64}
-                        for s in seeds
+                        {"contractAddress": s, "contractCreator": deployer, "txHash": "0x" + "1" * 64} for s in seeds
                     ],
                 }
             if action == "txlist":
@@ -437,6 +436,7 @@ class TestExpandFromDeployers:
 
     def test_no_creators_found(self, monkeypatch):
         """If getcontractcreation fails for all seeds, return empty."""
+
         def fake_get(*_a, **_kw):
             raise RuntimeError("No data found")
 

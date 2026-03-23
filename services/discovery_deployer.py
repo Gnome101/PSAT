@@ -47,6 +47,7 @@ _MIN_SEED_SHARE = 0.05
 
 # -- Etherscan helpers -------------------------------------------------------
 
+
 def _batch_get_creators(
     addresses: list[str],
     batch_size: int = 5,
@@ -142,21 +143,20 @@ def _filter_deployers(
         if count >= min_seed_count and share >= min_seed_share:
             _debug_log(
                 debug,
-                f"Deployer {deployer} ACCEPTED: "
-                f"seeds={count}/{total_resolved} ({share:.0%})",
+                f"Deployer {deployer} ACCEPTED: seeds={count}/{total_resolved} ({share:.0%})",
             )
             qualified.append(deployer)
         else:
             _debug_log(
                 debug,
-                f"Deployer {deployer} REJECTED: "
-                f"seeds={count}/{total_resolved} ({share:.0%})",
+                f"Deployer {deployer} REJECTED: seeds={count}/{total_resolved} ({share:.0%})",
             )
 
     return qualified
 
 
 # -- Public API --------------------------------------------------------------
+
 
 def expand_from_deployers(
     seed_addresses: list[str],
@@ -202,8 +202,7 @@ def expand_from_deployers(
 
     _debug_log(
         debug,
-        f"Qualified {len(qualified_deployers)} of "
-        f"{len(set(creators.values()))} unique deployer(s)",
+        f"Qualified {len(qualified_deployers)} of {len(set(creators.values()))} unique deployer(s)",
     )
 
     # Step 3 — collect every contract each qualified deployer has created
@@ -217,8 +216,7 @@ def expand_from_deployers(
 
     _debug_log(
         debug,
-        f"Qualified deployers created {len(all_deployed)} total contract(s), "
-        f"{len(all_deployed.keys() - seed_set)} new",
+        f"Qualified deployers created {len(all_deployed)} total contract(s), {len(all_deployed.keys() - seed_set)} new",
     )
 
     # Step 4 — name resolution for new addresses
