@@ -29,8 +29,9 @@ import sys
 from pathlib import Path
 
 from services.analyzer import analyze
+from services.classifier import classify_contracts
 from services.contract_inventory_ai import search_protocol_inventory
-from services.dependent_contracts import find_dependencies
+from services.dependent_contracts import find_dependencies, normalize_address
 from services.dynamic_dependencies import find_dynamic_dependencies
 from services.fetcher import fetch, scaffold
 from services.llm_analyzer import analyze_with_llm
@@ -60,6 +61,79 @@ def load_addresses(filepath: str) -> list[dict]:
     sys.exit(f"Unsupported file type: {path.suffix} (use .json or .csv)")
 
 
+_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "proxies", "facets")
+
+
+def _build_unified_deps(
+    address: str,
+    static_deps: dict | None,
+    dynamic_deps: dict | None,
+    classifications: dict | None,
+) -> dict:
+    """Merge static deps, dynamic deps, and classifications into one output."""
+    target = normalize_address(address)
+
+    # Collect dependency addresses with their discovery source
+    dep_sources: dict[str, set[str]] = {}
+    if static_deps:
+        for dep in static_deps.get("dependencies", []):
+            dep_sources.setdefault(normalize_address(dep), set()).add("static")
+    if dynamic_deps:
+        for dep in dynamic_deps.get("dependencies", []):
+            dep_sources.setdefault(normalize_address(dep), set()).add("dynamic")
+
+    cls_map = (classifications or {}).get("classifications", {})
+    dyn_provenance = (dynamic_deps or {}).get("provenance", {})
+
+    def _dep_entry(addr: str, sources: list[str]) -> dict:
+        entry: dict = {"type": "regular", "source": sources}
+        if addr in cls_map:
+            c = cls_map[addr]
+            entry["type"] = c.get("type", "regular")
+            for k in _CLS_KEYS:
+                if k in c:
+                    entry[k] = c[k]
+        if addr in dyn_provenance:
+            entry["provenance"] = dyn_provenance[addr]
+        return entry
+
+    deps = {addr: _dep_entry(addr, sorted(sources)) for addr, sources in sorted(dep_sources.items())}
+
+    # Include addresses discovered by classification (not in original dep lists)
+    discovered = (classifications or {}).get("discovered_addresses", [])
+    for addr in discovered:
+        addr = normalize_address(addr)
+        if addr not in deps:
+            deps[addr] = _dep_entry(addr, ["classification"])
+
+    output: dict = {"address": target}
+
+    # Target contract classification (only if non-regular)
+    if target in cls_map and cls_map[target].get("type", "regular") != "regular":
+        tc = cls_map[target]
+        info = {"type": tc["type"]}
+        for k in ("proxy_type", "implementation", "beacon", "admin"):
+            if k in tc:
+                info[k] = tc[k]
+        output["target_classification"] = info
+
+    output["dependencies"] = deps
+
+    if dynamic_deps:
+        output["dependency_graph"] = dynamic_deps.get("dependency_graph", [])
+        output["transactions_analyzed"] = dynamic_deps.get("transactions_analyzed", [])
+        output["trace_methods"] = dynamic_deps.get("trace_methods", [])
+        output["trace_errors"] = dynamic_deps.get("trace_errors", [])
+
+    if discovered:
+        output["discovered_addresses"] = sorted(discovered)
+
+    if static_deps and static_deps.get("network"):
+        output["network"] = static_deps["network"]
+
+    return output
+
+
 def process(
     address: str,
     name: str | None = None,
@@ -70,9 +144,11 @@ def process(
     dynamic_rpc: str | None = None,
     dynamic_tx_limit: int = 5,
     dynamic_tx_hashes: list[str] | None = None,
+    run_classify: bool = True,
 ):
-    """Fetch, scaffold, discover dependencies, and run analyzers."""
-    steps = 3 + int(run_deps) + int(run_dynamic_deps) + int(run_llm)
+    """Fetch, scaffold, discover dependencies, classify, and run analyzers."""
+    do_classify = run_classify and (run_deps or run_dynamic_deps)
+    steps = 3 + int(run_deps) + int(run_dynamic_deps) + int(do_classify) + int(run_llm)
     step = 1
 
     print(f"\n{'─' * 50}")
@@ -88,15 +164,18 @@ def process(
     project_dir = scaffold(address, name, result)
     print(f"         -> {project_dir}")
 
+    deps_output = None
+    dyn_output = None
+    cls_output = None
+    resolved_rpc = None
+
     if run_deps:
         print(f"[{step}/{steps}] Discovering static contract dependencies ...")
         step += 1
         try:
             deps_output = find_dependencies(address, deps_rpc)
-            deps_path = project_dir / "dependencies.json"
-            deps_path.write_text(json.dumps(deps_output, indent=2) + "\n")
-            print(f"         Dependencies: {len(deps_output['dependencies'])}")
-            print(f"         Output: {deps_path}")
+            resolved_rpc = deps_output.get("rpc")
+            print(f"         Found {len(deps_output['dependencies'])} static dependenc(ies)")
         except RuntimeError as exc:
             print(f"         Dependency discovery skipped: {exc}")
 
@@ -110,13 +189,50 @@ def process(
                 tx_limit=dynamic_tx_limit,
                 tx_hashes=dynamic_tx_hashes,
             )
-            dyn_path = project_dir / "dynamic_dependencies.json"
-            dyn_path.write_text(json.dumps(dyn_output, indent=2) + "\n")
-            print(f"         Dependencies: {len(dyn_output['dependencies'])}")
+            if not resolved_rpc:
+                resolved_rpc = dyn_output.get("rpc")
+            print(f"         Found {len(dyn_output['dependencies'])} dynamic dependenc(ies)")
             print(f"         Transactions traced: {len(dyn_output['transactions_analyzed'])}")
-            print(f"         Output: {dyn_path}")
         except RuntimeError as exc:
             print(f"         Dynamic dependency discovery skipped: {exc}")
+
+    if do_classify:
+        print(f"[{step}/{steps}] Classifying contract dependencies ...")
+        step += 1
+        try:
+            if not resolved_rpc:
+                from services.dependent_contracts import resolve_rpc_for_address
+
+                _, resolved_rpc = resolve_rpc_for_address(address, deps_rpc or dynamic_rpc)
+            unique_deps = sorted(
+                set((deps_output or {}).get("dependencies", []) + (dyn_output or {}).get("dependencies", []))
+            )
+            cls_output = classify_contracts(
+                address,
+                unique_deps,
+                resolved_rpc,
+                dynamic_edges=(dyn_output or {}).get("dependency_graph"),
+            )
+        except RuntimeError as exc:
+            print(f"         Classification skipped: {exc}")
+
+    # Write unified dependencies output
+    if deps_output or dyn_output:
+        unified = _build_unified_deps(address, deps_output, dyn_output, cls_output)
+        deps_path = project_dir / "dependencies.json"
+        deps_path.write_text(json.dumps(unified, indent=2) + "\n")
+        type_counts: dict[str, int] = {}
+        for info in unified["dependencies"].values():
+            t = info.get("type", "regular")
+            type_counts[t] = type_counts.get(t, 0) + 1
+        dep_count = len(unified["dependencies"])
+        parts = [f"{dep_count} total"]
+        parts.extend(f"{v} {k}" for k, v in sorted(type_counts.items()))
+        print(f"         Dependencies: {', '.join(parts)}")
+        if unified.get("discovered_addresses"):
+            n = len(unified["discovered_addresses"])
+            print(f"         Discovered {n} new address(es) via proxy slots")
+        print(f"         Output: {deps_path}")
 
     print(f"[{step}/{steps}] Running Slither analysis ...")
     step += 1
@@ -161,6 +277,11 @@ def main():
         "--no-dynamic-deps",
         action="store_true",
         help="Skip dynamic dependency discovery via transaction tracing",
+    )
+    parser.add_argument(
+        "--no-classify",
+        action="store_true",
+        help="Skip dependency classification",
     )
     parser.add_argument("--deps-rpc", help="Optional RPC URL for dependency discovery")
     parser.add_argument("--dynamic-rpc", help="Tracing-enabled RPC URL for dynamic dependency discovery")
@@ -208,6 +329,7 @@ def main():
     run_llm = not args.no_llm
     run_deps = not args.no_deps
     run_dynamic_deps = (not args.no_deps) and (not args.no_dynamic_deps)
+    run_classify = not args.no_classify
 
     if args.dynamic_tx_limit < 1:
         sys.exit("--dynamic-tx-limit must be >= 1")
@@ -227,6 +349,7 @@ def main():
                     dynamic_rpc=args.dynamic_rpc,
                     dynamic_tx_limit=args.dynamic_tx_limit,
                     dynamic_tx_hashes=args.dynamic_tx_hashes,
+                    run_classify=run_classify,
                 )
             except Exception as e:
                 print(f"  FAILED: {e}")
@@ -241,6 +364,7 @@ def main():
             dynamic_rpc=args.dynamic_rpc,
             dynamic_tx_limit=args.dynamic_tx_limit,
             dynamic_tx_hashes=args.dynamic_tx_hashes,
+            run_classify=run_classify,
         )
 
     print("\nDone.")
