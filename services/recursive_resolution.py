@@ -28,6 +28,13 @@ def _load_json(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def _load_effective_permissions(project_dir: Path) -> dict | None:
+    path = project_dir / "effective_permissions.json"
+    if not path.exists():
+        return None
+    return _load_json(path)
+
+
 def _address_node_id(address: str) -> str:
     return f"address:{address.lower()}"
 
@@ -183,6 +190,97 @@ def _nested_principals_for_details(resolved_type: str, details: dict[str, object
     return principals
 
 
+def _role_principals_from_effective_permissions(effective_permissions: dict) -> list[dict[str, object]]:
+    principals: dict[str, dict[str, object]] = {}
+    for function in effective_permissions.get("functions", []):
+        function_signature = str(function.get("function", ""))
+        for role_grant in function.get("authority_roles", []):
+            role = int(role_grant["role"])
+            for principal in role_grant.get("principals", []):
+                address = str(principal.get("address", "")).lower()
+                if not address.startswith("0x"):
+                    continue
+                payload = principals.setdefault(
+                    address,
+                    {
+                        "address": address,
+                        "resolved_type": str(principal.get("resolved_type", "unknown")),
+                        "details": dict(principal.get("details", {})),
+                        "roles": set(),
+                        "functions": set(),
+                    },
+                )
+                payload["roles"].add(role)
+                if function_signature:
+                    payload["functions"].add(function_signature)
+                if payload.get("resolved_type") in {None, "", "unknown"} and principal.get("resolved_type"):
+                    payload["resolved_type"] = str(principal.get("resolved_type"))
+                merged_details = dict(payload.get("details", {}))
+                merged_details.update(dict(principal.get("details", {})))
+                payload["details"] = merged_details
+
+    serialized: list[dict[str, object]] = []
+    for payload in principals.values():
+        serialized.append(
+            {
+                "address": payload["address"],
+                "resolved_type": payload["resolved_type"],
+                "details": dict(payload.get("details", {})),
+                "roles": sorted(payload.get("roles", set())),
+                "functions": sorted(payload.get("functions", set())),
+            }
+        )
+    return sorted(serialized, key=lambda item: str(item["address"]))
+
+
+def _maybe_queue_address(queue: deque, queued: set[str], address: str, depth: int, max_depth: int) -> None:
+    if address in queued or depth > max_depth:
+        return
+    queue.append({"address": address, "depth": depth})
+    queued.add(address)
+
+
+def _add_nested_principals(
+    *,
+    nodes: dict[str, ResolvedGraphNode],
+    edges: dict[tuple, ResolvedGraphEdge],
+    queue: deque,
+    queued: set[str],
+    rpc_url: str,
+    from_node_id: str,
+    source_controller_id: str | None,
+    resolved_type: str,
+    details: dict[str, object],
+    depth: int,
+    max_depth: int,
+) -> None:
+    for nested_address, relation, label in _nested_principals_for_details(resolved_type, details):
+        nested_type, nested_details = classify_resolved_address(rpc_url, nested_address)
+        nested_node_type = "contract" if nested_type in ANALYZABLE_TYPES else "principal"
+        nested_node_id = _ensure_node(
+            nodes,
+            address=nested_address,
+            resolved_type=nested_type,
+            label=label,
+            depth=depth + 1,
+            node_type=nested_node_type,
+            details=nested_details,
+        )
+        _add_edge(
+            edges,
+            {
+                "from_id": from_node_id,
+                "to_id": nested_node_id,
+                "relation": relation,  # type: ignore[typeddict-item]
+                "label": label,
+                "source_controller_id": source_controller_id,
+                "notes": [],
+            },
+        )
+        if nested_type in ANALYZABLE_TYPES:
+            _maybe_queue_address(queue, queued, nested_address, depth + 1, max_depth)
+
+
 def resolve_control_graph(
     root_analysis_path: Path,
     *,
@@ -234,6 +332,7 @@ def resolve_control_graph(
         processed.add(address)
         analysis = artifacts["analysis"]
         snapshot = artifacts["snapshot"]
+        effective_permissions = _load_effective_permissions(artifacts["project_dir"])
         contract_name = analysis["subject"]["name"]
         contract_node_id = _ensure_node(
             nodes,
@@ -281,37 +380,71 @@ def resolve_control_graph(
                 },
             )
 
-            if resolved_type in ANALYZABLE_TYPES and controller_address not in queued and depth + 1 <= max_depth:
-                queue.append({"address": controller_address, "depth": depth + 1})
-                queued.add(controller_address)
+            if resolved_type in ANALYZABLE_TYPES:
+                _maybe_queue_address(queue, queued, controller_address, depth + 1, max_depth)
 
-            for nested_address, relation, label in _nested_principals_for_details(resolved_type, details):
-                nested_type, nested_details = classify_resolved_address(rpc_url, nested_address)
-                nested_node_type = "contract" if nested_type in ANALYZABLE_TYPES else "principal"
-                nested_node_id = _ensure_node(
-                    nodes,
-                    address=nested_address,
-                    resolved_type=nested_type,
-                    label=label,
-                    depth=depth + 2,
-                    node_type=nested_node_type,
-                    details=nested_details,
-                )
-                _add_edge(
-                    edges,
-                    {
-                        "from_id": controller_node_id,
-                        "to_id": nested_node_id,
-                        "relation": relation,  # type: ignore[typeddict-item]
-                        "label": label,
-                        "source_controller_id": controller_id,
-                        "notes": [],
-                    },
-                )
+            _add_nested_principals(
+                nodes=nodes,
+                edges=edges,
+                queue=queue,
+                queued=queued,
+                rpc_url=rpc_url,
+                from_node_id=controller_node_id,
+                source_controller_id=controller_id,
+                resolved_type=resolved_type,
+                details=details,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
 
-                if nested_type in ANALYZABLE_TYPES and nested_address not in queued and depth + 2 <= max_depth:
-                    queue.append({"address": nested_address, "depth": depth + 2})
-                    queued.add(nested_address)
+        for principal_value in _role_principals_from_effective_permissions(effective_permissions or {}):
+            principal_address = str(principal_value["address"]).lower()
+            resolved_type = str(principal_value.get("resolved_type", "unknown"))
+            details = dict(principal_value.get("details", {}))
+            if resolved_type == "unknown":
+                resolved_type, classified_details = classify_resolved_address(rpc_url, principal_address)
+                merged_details = dict(details)
+                merged_details.update(classified_details)
+                details = merged_details
+
+            node_type = "contract" if resolved_type in ANALYZABLE_TYPES else "principal"
+            principal_node_id = _ensure_node(
+                nodes,
+                address=principal_address,
+                resolved_type=resolved_type,
+                label="role principal",
+                depth=depth + 1,
+                node_type=node_type,
+                details=details,
+            )
+            roles = principal_value.get("roles", [])
+            functions = principal_value.get("functions", [])
+            _add_edge(
+                edges,
+                {
+                    "from_id": contract_node_id,
+                    "to_id": principal_node_id,
+                    "relation": "role_principal",
+                    "label": f"roles {','.join(str(role) for role in roles)}" if roles else "role principal",
+                    "source_controller_id": None,
+                    "notes": [f"functions={len(functions)}", *(f"role={role}" for role in roles)],
+                },
+            )
+            if resolved_type in ANALYZABLE_TYPES:
+                _maybe_queue_address(queue, queued, principal_address, depth + 1, max_depth)
+            _add_nested_principals(
+                nodes=nodes,
+                edges=edges,
+                queue=queue,
+                queued=queued,
+                rpc_url=rpc_url,
+                from_node_id=principal_node_id,
+                source_controller_id=None,
+                resolved_type=resolved_type,
+                details=details,
+                depth=depth + 1,
+                max_depth=max_depth,
+            )
 
     return {
         "schema_version": "0.1",

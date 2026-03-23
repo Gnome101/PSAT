@@ -23,6 +23,14 @@ def test_index_serves_html() -> None:
     assert "Run an address and inspect the control surface" in response.text
 
 
+def test_spa_fallback_serves_html_for_deep_link() -> None:
+    client = make_client()
+    response = client.get("/address/0x1234567890123456789012345678901234567890/graph")
+
+    assert response.status_code == 200
+    assert "Run an address and inspect the control surface" in response.text
+
+
 def test_health_and_config_endpoints() -> None:
     client = make_client()
 

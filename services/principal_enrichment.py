@@ -122,6 +122,8 @@ def _graph_labels_for_node(node: dict, incoming_edges: list[dict], node_index: d
             labels.add("timelock_owner")
         elif relation == "proxy_admin_owner":
             labels.add("proxy_admin_owner")
+        elif relation == "role_principal":
+            labels.add("role_principal")
 
     return labels, sorted(set(context))
 
@@ -142,14 +144,22 @@ def _display_name(
     if f"{contract_slug}_admin" in labels:
         if resolved_type == "safe":
             return f"{contract_name} admin Safe", "high"
+        if resolved_type == "contract":
+            return f"{contract_name} admin contract", "high"
         return f"{contract_name} admin", "high"
     if f"{contract_slug}_manager" in labels:
+        if resolved_type == "contract":
+            return f"{contract_name} manager contract", "high"
         return f"{contract_name} manager", "high"
     if f"{contract_slug}_operator" in labels:
         function_names = sorted({permission["function"].split("(", 1)[0] for permission in permissions})
         if len(function_names) <= 2 and function_names:
             joined = "/".join(function_names)
+            if resolved_type == "contract":
+                return f"{contract_name} {joined} contract", "medium"
             return f"{contract_name} {joined} operator", "medium"
+        if resolved_type == "contract":
+            return f"{contract_name} operator contract", "medium"
         return f"{contract_name} operator", "medium"
     if "authority_controller" in labels:
         return f"{contract_name} authority", "high"

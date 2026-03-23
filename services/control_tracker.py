@@ -173,19 +173,33 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
     controller_values = {}
     for controller in plan["tracked_controllers"]:
         source = controller["source"]
-        controller_values[controller["controller_id"]] = {
-            "source": source,
-            "value": _read_polling_source(rpc_url, plan["contract_address"], source, controller["kind"], block_tag),
-            "block_number": block_number,
-            "observed_via": "eth_call",
-        }
-        resolved_type, details = classify_resolved_address(
-            rpc_url,
-            controller_values[controller["controller_id"]]["value"],
-            block_tag,
-        )
-        controller_values[controller["controller_id"]]["resolved_type"] = resolved_type
-        controller_values[controller["controller_id"]]["details"] = details
+        try:
+            value = _read_polling_source(rpc_url, plan["contract_address"], source, controller["kind"], block_tag)
+            controller_values[controller["controller_id"]] = {
+                "source": source,
+                "value": value,
+                "block_number": block_number,
+                "observed_via": "eth_call",
+            }
+            resolved_type, details = classify_resolved_address(
+                rpc_url,
+                value,
+                block_tag,
+            )
+            controller_values[controller["controller_id"]]["resolved_type"] = resolved_type
+            controller_values[controller["controller_id"]]["details"] = details
+        except Exception as exc:
+            controller_values[controller["controller_id"]] = {
+                "source": source,
+                "value": None,
+                "block_number": block_number,
+                "observed_via": "eth_call_error",
+                "resolved_type": "unknown",
+                "details": {
+                    "source": source,
+                    "error": str(exc),
+                },
+            }
     return {
         "schema_version": "0.1",
         "contract_address": plan["contract_address"],

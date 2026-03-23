@@ -1,7 +1,13 @@
 services:
-  psat:
-    build: .
-    env_file: .env
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: psat-backend:latest
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
     volumes:
       - ./contracts:/app/contracts
-      - ./addresses.json:/app/addresses.json
+    restart: unless-stopped

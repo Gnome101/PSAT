@@ -64,7 +64,7 @@ class ControlTrackingPlan(TypedDict):
 
 class ControlSnapshotValue(TypedDict, total=False):
     source: str
-    value: str
+    value: str | None
     block_number: int
     observed_via: str
     resolved_type: ResolvedControllerType

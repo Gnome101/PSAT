@@ -17,6 +17,7 @@ from schemas.effective_permissions import (
     AuthorityRoleGrant,
     EffectiveFunctionPermission,
     EffectivePermissions,
+    PrincipalResolution,
     ResolvedPrincipal,
 )
 
@@ -99,6 +100,7 @@ def build_effective_permissions(
     authority_snapshot: dict | None = None,
     policy_state: dict | None = None,
     artifact_paths: dict[str, str] | None = None,
+    principal_resolution: PrincipalResolution | None = None,
 ) -> EffectivePermissions:
     contract_address = target_analysis["subject"]["address"].lower()
     contract_name = target_analysis["subject"]["name"]
@@ -180,6 +182,13 @@ def build_effective_permissions(
         "contract_address": contract_address,
         "contract_name": contract_name,
         "authority_contract": authority_value if authority_value else None,
+        "principal_resolution": principal_resolution
+        or {
+            "status": "complete" if policy_state else "missing_policy_state",
+            "reason": "Authority policy state was joined into the permission view."
+            if policy_state
+            else "No authority policy state was provided for this artifact.",
+        },
         "artifacts": artifact_paths or {},
         "functions": functions,
     }
@@ -192,6 +201,7 @@ def write_effective_permissions_from_files(
     authority_snapshot_path: Path | None = None,
     policy_state_path: Path | None = None,
     output_path: Path | None = None,
+    principal_resolution: PrincipalResolution | None = None,
 ) -> Path:
     target_analysis = _load_json(target_analysis_path)
     target_snapshot = _load_json(target_snapshot_path) if target_snapshot_path else None
@@ -214,6 +224,7 @@ def write_effective_permissions_from_files(
         authority_snapshot=authority_snapshot,
         policy_state=policy_state,
         artifact_paths=artifact_paths,
+        principal_resolution=principal_resolution,
     )
     if output_path is None:
         output_path = target_analysis_path.with_name("effective_permissions.json")

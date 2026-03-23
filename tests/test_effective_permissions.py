@@ -102,6 +102,7 @@ def test_build_effective_permissions_resolves_roles_and_safe_details():
     )
 
     assert payload["authority_contract"] == "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert payload["principal_resolution"]["status"] == "complete"
     functions = {item["function"]: item for item in payload["functions"]}
 
     manage = functions["manage(address,bytes,uint256)"]
@@ -213,4 +214,5 @@ def test_write_effective_permissions_from_files(tmp_path):
     assert written.name == "effective_permissions.json"
     assert payload["contract_name"] == "Target"
     assert payload["authority_contract"] == "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert payload["principal_resolution"]["status"] == "complete"
     assert payload["functions"][0]["effect_labels"] == ["arbitrary_external_call"]

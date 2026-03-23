@@ -6,6 +6,19 @@ from typing import Literal, TypedDict
 
 
 ResolvedAddressType = Literal["zero", "eoa", "safe", "timelock", "proxy_admin", "contract", "unknown"]
+PrincipalResolutionStatus = Literal[
+    "complete",
+    "missing_hypersync_token",
+    "missing_policy_state",
+    "no_authority",
+    "no_authority_snapshot",
+    "no_policy_tracking",
+]
+
+
+class PrincipalResolution(TypedDict):
+    status: PrincipalResolutionStatus
+    reason: str
 
 
 class ResolvedPrincipal(TypedDict, total=False):
@@ -39,5 +52,6 @@ class EffectivePermissions(TypedDict):
     contract_address: str
     contract_name: str
     authority_contract: str | None
+    principal_resolution: PrincipalResolution
     artifacts: dict[str, str]
     functions: list[EffectiveFunctionPermission]

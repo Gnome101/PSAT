@@ -219,6 +219,50 @@ def test_build_control_snapshot_and_diff(monkeypatch):
     ]
 
 
+def test_build_control_snapshot_handles_reverting_getter(monkeypatch):
+    plan = {
+        "schema_version": "0.1",
+        "contract_address": "0x1111111111111111111111111111111111111111",
+        "contract_name": "Mock",
+        "tracking_strategy": "event_first_with_polling_fallback",
+        "tracked_controllers": [
+            {
+                "controller_id": "state_variable:owner",
+                "label": "owner",
+                "source": "owner",
+                "kind": "state_variable",
+                "tracking_mode": "event_plus_state",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": "0x1111111111111111111111111111111111111111",
+                    "polling_sources": ["owner"],
+                    "cadence": "state_only",
+                    "notes": [],
+                },
+                "notes": [],
+            }
+        ],
+        "tracked_policies": [],
+    }
+
+    def fake_rpc(_rpc_url, method, _params):
+        if method == "eth_blockNumber":
+            return "0x10"
+        if method == "eth_call":
+            raise RuntimeError("{'code': 3, 'message': 'execution reverted', 'data': '0x'}")
+        raise AssertionError(f"Unexpected RPC call: {method}")
+
+    monkeypatch.setattr("services.control_tracker._rpc_request", fake_rpc)
+
+    snapshot = build_control_snapshot(plan, "https://rpc.example")
+    value = snapshot["controller_values"]["state_variable:owner"]
+
+    assert value["value"] is None
+    assert value["observed_via"] == "eth_call_error"
+    assert value["resolved_type"] == "unknown"
+    assert "execution reverted" in value["details"]["error"]
+
+
 def test_classify_resolved_address_detects_safe(monkeypatch):
     def fake_rpc(_rpc_url, method, params):
         if method == "eth_getCode":

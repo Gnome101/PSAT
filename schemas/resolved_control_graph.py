@@ -9,6 +9,7 @@ from .control_tracking import ResolvedControllerType
 ResolvedNodeType = Literal["contract", "principal"]
 ResolvedEdgeRelation = Literal[
     "controller_value",
+    "role_principal",
     "safe_owner",
     "timelock_owner",
     "proxy_admin_owner",

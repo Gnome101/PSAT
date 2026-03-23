@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from dotenv import load_dotenv
+
 from services.analyzer import analyze
 from services.contract_analysis import analyze_contract
 from services.control_tracker import build_control_snapshot, load_control_tracking_plan, write_control_snapshot
@@ -17,6 +19,8 @@ from services.fetcher import CONTRACTS_DIR, fetch, scaffold
 from services.hypersync_backfill import run_hypersync_policy_backfill
 from services.principal_enrichment import write_principal_labels_from_files
 from services.recursive_resolution import write_resolved_control_graph
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 DEFAULT_DEMO_RPC_URL = os.getenv("PSAT_DEMO_RPC_URL", "https://ethereum-rpc.publicnode.com")
 DEFAULT_HYPERSYNC_URL = os.getenv("PSAT_HYPERSYNC_URL", "https://eth.hypersync.xyz")
@@ -157,7 +161,7 @@ def _authority_snapshot_and_policy(
     project_dir: Path,
     resolved_graph_path: Path,
     target_snapshot_path: Path,
-) -> tuple[Path | None, Path | None]:
+) -> tuple[Path | None, Path | None, dict]:
     target_snapshot = json_load(target_snapshot_path)
     authority_address = None
     for controller_id, value in target_snapshot.get("controller_values", {}).items():
@@ -165,11 +169,17 @@ def _authority_snapshot_and_policy(
             authority_address = str(value.get("value", "")).lower()
             break
     if not authority_address or authority_address == "0x0000000000000000000000000000000000000000":
-        return None, None
+        return None, None, {
+            "status": "no_authority",
+            "reason": "No non-zero authority controller was resolved for this contract.",
+        }
 
     authority_snapshot_path = _find_controller_snapshot_from_graph(resolved_graph_path, authority_address)
     if authority_snapshot_path is None:
-        return None, None
+        return None, None, {
+            "status": "no_authority_snapshot",
+            "reason": "The authority contract was found, but its recursive snapshot artifact is missing.",
+        }
 
     authority_project_dir = authority_snapshot_path.parent
     authority_plan_path = authority_project_dir / "control_tracking_plan.json"
@@ -178,15 +188,36 @@ def _authority_snapshot_and_policy(
 
     if authority_plan_path.exists() and authority_analysis_path.exists():
         authority_analysis = json_load(authority_analysis_path)
-        if authority_analysis.get("policy_tracking") and os.getenv("ENVIO_API_TOKEN"):
-            if not policy_state_path.exists():
+        if authority_analysis.get("policy_tracking"):
+            if policy_state_path.exists():
+                return authority_snapshot_path, policy_state_path, {
+                    "status": "complete",
+                    "reason": "Existing authority policy state was joined into the permission view.",
+                }
+            if os.getenv("ENVIO_API_TOKEN"):
                 run_hypersync_policy_backfill(
                     authority_plan_path,
                     url=DEFAULT_HYPERSYNC_URL,
                     state_out=policy_state_path,
                     events_out=authority_project_dir / "policy_event_history.jsonl",
                 )
-    return authority_snapshot_path, policy_state_path if policy_state_path.exists() else None
+                if policy_state_path.exists():
+                    return authority_snapshot_path, policy_state_path, {
+                        "status": "complete",
+                        "reason": "Authority policy backfill completed and principals were joined from current policy state.",
+                    }
+            return authority_snapshot_path, None, {
+                "status": "missing_hypersync_token",
+                "reason": "Authority policy tracking exists, but ENVIO_API_TOKEN is not set, so HyperSync backfill was skipped.",
+            }
+        return authority_snapshot_path, None, {
+            "status": "no_policy_tracking",
+            "reason": "The resolved authority contract does not expose policy tracking metadata.",
+        }
+    return authority_snapshot_path, None, {
+        "status": "missing_policy_state",
+        "reason": "Authority artifacts are incomplete, so policy state could not be reconstructed.",
+    }
 
 
 def run_demo_analysis(
@@ -226,19 +257,34 @@ def run_demo_analysis(
         contract_analysis_path,
         rpc_url=rpc_url,
         output_path=project_dir / "resolved_control_graph.json",
-        max_depth=3,
+        max_depth=4,
         workspace_prefix="recursive",
         refresh_snapshots=True,
     )
 
     update("permissions", "Resolving effective permissions")
-    authority_snapshot_path, policy_state_path = _authority_snapshot_and_policy(project_dir, resolved_graph_path, snapshot_path)
+    authority_snapshot_path, policy_state_path, principal_resolution = _authority_snapshot_and_policy(
+        project_dir,
+        resolved_graph_path,
+        snapshot_path,
+    )
     effective_permissions_path = write_effective_permissions_from_files(
         contract_analysis_path,
         target_snapshot_path=snapshot_path,
         authority_snapshot_path=authority_snapshot_path,
         policy_state_path=policy_state_path,
         output_path=project_dir / "effective_permissions.json",
+        principal_resolution=principal_resolution,
+    )
+
+    update("graph", "Refreshing control graph with role-holder recursion")
+    resolved_graph_path = write_resolved_control_graph(
+        contract_analysis_path,
+        rpc_url=rpc_url,
+        output_path=project_dir / "resolved_control_graph.json",
+        max_depth=4,
+        workspace_prefix="recursive",
+        refresh_snapshots=True,
     )
 
     update("labels", "Labeling principals")
