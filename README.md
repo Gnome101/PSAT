@@ -13,6 +13,17 @@ Currently, addresses are fed into the pipeline via `addresses.json` and results 
 Each run now attempts:
 - static dependent-contract discovery (`dependencies.json`)
 - dynamic trace-based dependency discovery (`dynamic_dependencies.json`)
+- structured contract analysis (`contract_analysis.json`)
+- runtime watch-plan compilation (`control_tracking_plan.json`)
+
+`contract_analysis.json` now includes a `permission_graph` section with:
+- state-write sinks
+- structural guard kinds inferred from Slither CFG/IR
+- controller references linked to those guards
+
+This is still an early source-level pass. It does not yet resolve live controller
+addresses from chain state or provide bytecode fallback when source-level
+structure is missing.
 
 CLI flags:
 - `--no-deps` skips all dependency discovery
@@ -41,3 +52,12 @@ Output directories:
    `uv run python main.py --help`
 4. Run tests (excluding live RPC tests):
    `uv run pytest -k "not live"`
+
+## HyperSync Policy Backfill
+
+For authority contracts with `tracked_policies` in `control_tracking_plan.json`, you can
+backfill policy events and reconstruct a current `policy_state.json` from HyperSync:
+
+`uv run python services/hypersync_backfill.py contracts/<name>/control_tracking_plan.json --url https://eth.hypersync.xyz`
+
+This requires `ENVIO_API_TOKEN` or `--token <token>`.

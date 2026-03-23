@@ -65,10 +65,19 @@ def _load_slither_findings(project_dir: Path) -> str:
     return "\n".join(lines)
 
 
+def _load_structured_analysis(project_dir: Path) -> str:
+    """Load structured contract analysis if present."""
+    json_path = project_dir / "contract_analysis.json"
+    if not json_path.exists():
+        return "No structured contract analysis available."
+    return json.dumps(json.loads(json_path.read_text()), indent=2)
+
+
 def analyze_with_llm(project_dir: Path, model: str | None = None) -> str:
     """Run LLM flow analysis on a contract project. Returns the analysis text."""
     source_code = _load_sources(project_dir)
     slither_findings = _load_slither_findings(project_dir)
+    structured_analysis = _load_structured_analysis(project_dir)
 
     # Load metadata
     meta_path = project_dir / "contract_meta.json"
@@ -85,6 +94,11 @@ Compiler: {meta.get('compiler_version', 'Unknown')}
 
 ## Slither Findings
 {slither_findings}
+
+## Structured Static Analysis
+```json
+{structured_analysis}
+```
 """
 
     kwargs = {}
