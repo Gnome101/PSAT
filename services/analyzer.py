@@ -2,7 +2,6 @@
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 SEVERITY_ORDER = {"High": 0, "Medium": 1, "Low": 2, "Informational": 3, "Optimization": 4}
@@ -10,17 +9,36 @@ SEVERITY_ORDER = {"High": 0, "Medium": 1, "Low": 2, "Informational": 3, "Optimiz
 
 def run_slither(project_dir: Path) -> dict:
     """Run slither on a project directory and return the JSON output."""
-    result = subprocess.run(
+    commands = [
         ["slither", ".", "--json", "-"],
-        capture_output=True,
-        text=True,
-        cwd=project_dir,
-    )
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        print(f"Slither stderr:\n{result.stderr}", file=sys.stderr)
-        raise RuntimeError("Failed to parse Slither output")
+        ["slither", ".", "--json", "-", "--print", "human-summary"],
+    ]
+    last_error = None
+
+    for command in commands:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            cwd=project_dir,
+        )
+        if not result.stdout.strip():
+            last_error = RuntimeError(
+                f"Slither produced no JSON output (exit {result.returncode}). stderr:\n{result.stderr}"
+            )
+            continue
+
+        try:
+            return json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            last_error = RuntimeError(
+                "Failed to parse Slither output. "
+                f"exit={result.returncode} stderr:\n{result.stderr}\nstdout:\n{result.stdout[:2000]}"
+            )
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Failed to run Slither")
 
 
 def format_report(slither_output: dict, contract_name: str, address: str) -> str:

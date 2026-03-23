@@ -29,7 +29,9 @@ import sys
 from pathlib import Path
 
 from services.analyzer import analyze
+from services.contract_analysis import analyze_contract
 from services.contract_inventory_ai import search_protocol_inventory
+from services.control_tracking_plan import write_control_tracking_plan
 from services.dependent_contracts import find_dependencies
 from services.dynamic_dependencies import find_dynamic_dependencies
 from services.fetcher import fetch, scaffold
@@ -72,7 +74,7 @@ def process(
     dynamic_tx_hashes: list[str] | None = None,
 ):
     """Fetch, scaffold, discover dependencies, and run analyzers."""
-    steps = 3 + int(run_deps) + int(run_dynamic_deps) + int(run_llm)
+    steps = 4 + int(run_deps) + int(run_dynamic_deps) + int(run_llm)
     step = 1
 
     print(f"\n{'─' * 50}")
@@ -122,6 +124,19 @@ def process(
     step += 1
     report_path = analyze(project_dir, contract_name, address)
     print(f"         Report: {report_path}")
+
+    print(f"[{step}/{steps}] Building structured contract analysis ...")
+    step += 1
+    try:
+        contract_analysis_path = analyze_contract(project_dir)
+        print(f"         Contract analysis: {contract_analysis_path}")
+        try:
+            tracking_plan_path = write_control_tracking_plan(contract_analysis_path)
+            print(f"         Control tracking plan: {tracking_plan_path}")
+        except Exception as exc:
+            print(f"         Control tracking plan skipped: {exc}")
+    except RuntimeError as exc:
+        print(f"         Contract analysis skipped: {exc}")
 
     if run_llm:
         print(f"[{step}/{steps}] Running LLM flow analysis (NVIDIA NIM) ...")

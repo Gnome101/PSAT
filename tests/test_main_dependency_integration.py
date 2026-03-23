@@ -31,6 +31,7 @@ def test_process_writes_dependencies_json(tmp_path, monkeypatch):
         "analyze",
         lambda _project_dir, _contract_name, _address: tmp_path / "analysis_report.txt",
     )
+    monkeypatch.setattr(pipeline, "analyze_contract", lambda _project_dir: tmp_path / "contract_analysis.json")
 
     calls = []
     deps_payload = {
@@ -73,6 +74,7 @@ def test_process_continues_if_dependency_discovery_fails(tmp_path, monkeypatch):
         return tmp_path / "analysis_report.txt"
 
     monkeypatch.setattr(pipeline, "analyze", fake_analyze)
+    monkeypatch.setattr(pipeline, "analyze_contract", lambda _project_dir: tmp_path / "contract_analysis.json")
     monkeypatch.setattr(
         pipeline,
         "find_dependencies",
@@ -100,6 +102,7 @@ def test_process_writes_dynamic_dependencies_json(tmp_path, monkeypatch):
         "analyze",
         lambda _project_dir, _contract_name, _address: tmp_path / "analysis_report.txt",
     )
+    monkeypatch.setattr(pipeline, "analyze_contract", lambda _project_dir: tmp_path / "contract_analysis.json")
 
     calls = []
     dyn_payload = {
@@ -181,6 +184,7 @@ def test_process_continues_if_dynamic_dependency_discovery_fails(tmp_path, monke
         return tmp_path / "analysis_report.txt"
 
     monkeypatch.setattr(pipeline, "analyze", fake_analyze)
+    monkeypatch.setattr(pipeline, "analyze_contract", lambda _project_dir: tmp_path / "contract_analysis.json")
     monkeypatch.setattr(
         pipeline,
         "find_dynamic_dependencies",
@@ -196,3 +200,148 @@ def test_process_continues_if_dynamic_dependency_discovery_fails(tmp_path, monke
 
     assert analyze_calls
     assert not (tmp_path / "dynamic_dependencies.json").exists()
+
+
+def test_process_writes_contract_analysis_json(tmp_path, monkeypatch):
+    pipeline = load_pipeline_module()
+
+    monkeypatch.setattr(pipeline, "fetch", lambda _address: {"ContractName": "Mock"})
+    monkeypatch.setattr(pipeline, "scaffold", lambda _address, _name, _result: tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "analyze",
+        lambda _project_dir, _contract_name, _address: tmp_path / "analysis_report.txt",
+    )
+
+    payload = {"schema_version": "0.1", "summary": {"control_model": "ownable"}}
+
+    def fake_analyze_contract(project_dir):
+        path = project_dir / "contract_analysis.json"
+        path.write_text(json.dumps(payload))
+        return path
+
+    monkeypatch.setattr(pipeline, "analyze_contract", fake_analyze_contract)
+
+    pipeline.process(
+        "0x1111111111111111111111111111111111111111",
+        run_llm=False,
+        run_deps=False,
+        run_dynamic_deps=False,
+    )
+
+    written = tmp_path / "contract_analysis.json"
+    assert written.exists()
+    assert json.loads(written.read_text()) == payload
+
+
+def test_process_writes_control_tracking_plan_json(tmp_path, monkeypatch):
+    pipeline = load_pipeline_module()
+
+    monkeypatch.setattr(pipeline, "fetch", lambda _address: {"ContractName": "Mock"})
+    monkeypatch.setattr(pipeline, "scaffold", lambda _address, _name, _result: tmp_path)
+    monkeypatch.setattr(
+        pipeline,
+        "analyze",
+        lambda _project_dir, _contract_name, _address: tmp_path / "analysis_report.txt",
+    )
+
+    payload = {
+        "schema_version": "0.1",
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Mock",
+            "compiler_version": "v0.8.19",
+            "source_verified": True,
+        },
+        "controller_tracking": [
+            {
+                "controller_id": "state_variable:owner",
+                "label": "owner",
+                "source": "owner",
+                "kind": "state_variable",
+                "tracking_mode": "event_plus_state",
+                "writer_functions": [
+                    {
+                        "contract": "OwnableLike",
+                        "function": "transferOwnership(address)",
+                        "visibility": "public",
+                        "writes": ["owner"],
+                        "associated_events": [
+                            {
+                                "name": "OwnershipTransferred",
+                                "signature": "OwnershipTransferred(address,address)",
+                                "topic0": "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
+                                "inputs": [
+                                    {"name": "user", "type": "address", "indexed": True},
+                                    {"name": "newOwner", "type": "address", "indexed": True},
+                                ],
+                            }
+                        ],
+                        "evidence": [],
+                    }
+                ],
+                "associated_events": [
+                    {
+                        "name": "OwnershipTransferred",
+                        "signature": "OwnershipTransferred(address,address)",
+                        "topic0": "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
+                        "inputs": [
+                            {"name": "user", "type": "address", "indexed": True},
+                            {"name": "newOwner", "type": "address", "indexed": True},
+                        ],
+                    }
+                ],
+                "polling_sources": ["owner"],
+                "notes": ["Monitor events and confirm with RPC reads."],
+            }
+        ],
+        "policy_tracking": [],
+    }
+
+    def fake_analyze_contract(project_dir):
+        path = project_dir / "contract_analysis.json"
+        path.write_text(json.dumps(payload))
+        return path
+
+    monkeypatch.setattr(pipeline, "analyze_contract", fake_analyze_contract)
+
+    pipeline.process(
+        "0x1111111111111111111111111111111111111111",
+        run_llm=False,
+        run_deps=False,
+        run_dynamic_deps=False,
+    )
+
+    written = tmp_path / "control_tracking_plan.json"
+    assert written.exists()
+    assert json.loads(written.read_text())["tracked_controllers"][0]["event_watch"]["events"][0]["name"] == "OwnershipTransferred"
+
+
+def test_process_continues_if_contract_analysis_fails(tmp_path, monkeypatch):
+    pipeline = load_pipeline_module()
+
+    monkeypatch.setattr(pipeline, "fetch", lambda _address: {"ContractName": "Mock"})
+    monkeypatch.setattr(pipeline, "scaffold", lambda _address, _name, _result: tmp_path)
+
+    analyze_calls = []
+
+    def fake_analyze(project_dir, contract_name, address):
+        analyze_calls.append((project_dir, contract_name, address))
+        return tmp_path / "analysis_report.txt"
+
+    monkeypatch.setattr(pipeline, "analyze", fake_analyze)
+    monkeypatch.setattr(
+        pipeline,
+        "analyze_contract",
+        lambda _project_dir: (_ for _ in ()).throw(RuntimeError("analysis unavailable")),
+    )
+
+    pipeline.process(
+        "0x1111111111111111111111111111111111111111",
+        run_llm=False,
+        run_deps=False,
+        run_dynamic_deps=False,
+    )
+
+    assert analyze_calls
+    assert not (tmp_path / "contract_analysis.json").exists()
