@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { buildVisualPermissionGraph, layoutVisualPermissionGraph, prettyFunctionName, shortenAddress, wrapText } from "./graph.js";
+import DependencyGraphTab from "./DependencyGraphTab.jsx";
 
-const TABS = ["summary", "permissions", "principals", "graph", "raw"];
+const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "raw"];
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 async function api(path, options) {
@@ -277,6 +278,8 @@ function RawTab({ detail }) {
   const available = {
     contract_analysis: detail?.contract_analysis,
     control_snapshot: detail?.control_snapshot,
+    dependencies: detail?.dependencies,
+    dependency_graph_viz: detail?.dependency_graph_viz,
     effective_permissions: detail?.effective_permissions,
     principal_labels: detail?.principal_labels,
     resolved_control_graph: detail?.resolved_control_graph,
@@ -805,6 +808,7 @@ export default function App() {
     permissions: <PermissionsTab detail={selectedDetail} />,
     principals: <PrincipalsTab detail={selectedDetail} />,
     graph: <GraphTab detail={selectedDetail} />,
+    dependencies: <DependencyGraphTab data={selectedDetail?.dependency_graph_viz} runName={selectedRun} />,
     raw: <RawTab detail={selectedDetail} />,
   };
 

@@ -185,6 +185,7 @@ def _parse_debug_call_tree(node: Any, tx_hash: str, block_number: int | None, ou
                 "from": src,
                 "to": dst,
                 "op": op,
+                "selector": _tx_selector(node.get("input")),
                 "tx_hash": tx_hash,
                 "block_number": block_number,
             }
@@ -208,9 +209,11 @@ def _parse_parity_trace_entries(entries: Any, tx_hash: str, block_number: int | 
         dst = None
         op = None
 
+        selector = "0x"
         if trace_type == "call":
             op = str(action.get("callType", "call")).upper()
             dst = _normalize_maybe_address(action.get("to"))
+            selector = _tx_selector(action.get("input"))
         elif trace_type == "create":
             creation_method = str(action.get("creationMethod", "create")).upper()
             op = "CREATE2" if creation_method == "CREATE2" else "CREATE"
@@ -223,6 +226,7 @@ def _parse_parity_trace_entries(entries: Any, tx_hash: str, block_number: int | 
                     "from": src,
                     "to": dst,
                     "op": op,
+                    "selector": selector,
                     "tx_hash": tx_hash,
                     "block_number": block_number,
                 }
@@ -237,6 +241,7 @@ def _dedupe_edges(edges: list[dict]) -> list[dict]:
             edge["from"],
             edge["to"],
             edge["op"],
+            edge.get("selector", "0x"),
             edge["tx_hash"],
             edge["block_number"],
         )
@@ -260,9 +265,10 @@ def extract_edges_from_trace(
 
 
 def _build_graph(edges: list[dict]) -> list[dict]:
-    graph_map: dict[tuple[str, str, str], list[dict]] = {}
+    graph_map: dict[tuple[str, str, str, str], list[dict]] = {}
     for edge in edges:
-        key = (edge["from"], edge["to"], edge["op"])
+        selector = edge.get("selector", "0x")
+        key = (edge["from"], edge["to"], edge["op"], selector)
         provenance = {"tx_hash": edge["tx_hash"], "block_number": edge["block_number"]}
         graph_map.setdefault(key, [])
         if provenance not in graph_map[key]:
@@ -270,28 +276,29 @@ def _build_graph(edges: list[dict]) -> list[dict]:
 
     graph = []
     for key in sorted(graph_map.keys()):
-        src, dst, op = key
-        graph.append(
-            {
-                "from": src,
-                "to": dst,
-                "op": op,
-                "provenance": sorted(
-                    graph_map[key],
-                    key=lambda p: (
-                        p["block_number"] if p["block_number"] is not None else -1,
-                        p["tx_hash"],
-                    ),
+        src, dst, op, selector = key
+        entry: dict = {
+            "from": src,
+            "to": dst,
+            "op": op,
+            "provenance": sorted(
+                graph_map[key],
+                key=lambda p: (
+                    p["block_number"] if p["block_number"] is not None else -1,
+                    p["tx_hash"],
                 ),
-            }
-        )
+            ),
+        }
+        if selector and selector != "0x":
+            entry["selector"] = selector
+        graph.append(entry)
     return graph
 
 
 def find_dynamic_dependencies(
     address: str,
     rpc_url: str | None = None,
-    tx_limit: int = 5,
+    tx_limit: int = 10,
     tx_hashes: list[str] | None = None,
 ) -> dict:
     """Trace representative transactions and return a dynamic dependency graph."""
