@@ -44,9 +44,7 @@ class LLMClient:
             "stream": True,
         }
 
-        response = requests.post(
-            self.url, headers=headers, json=payload, stream=True, timeout=120
-        )
+        response = requests.post(self.url, headers=headers, json=payload, stream=True, timeout=120)
         response.raise_for_status()
 
         content_parts = []
