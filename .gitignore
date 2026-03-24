@@ -8,3 +8,6 @@ site/node_modules/
 site/dist/
 contracts/
 protocols/
+!tests/fixtures/
+!tests/fixtures/contracts/
+!tests/fixtures/contracts/**

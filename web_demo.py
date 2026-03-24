@@ -102,8 +102,12 @@ if SITE_ASSETS_DIR.exists():
 
 
 def _site_index_response():
-    if (SITE_DIST_DIR / "index.html").exists():
-        return FileResponse(SITE_DIST_DIR / "index.html")
+    dist_index = SITE_DIST_DIR / "index.html"
+    source_index = SITE_DIR / "index.html"
+    if dist_index.exists():
+        return FileResponse(dist_index)
+    if source_index.exists():
+        return FileResponse(source_index)
     return PlainTextResponse(
         "Frontend build not found. Run `cd site && npm run build` or start the "
         "Vite dev server with `cd site && npm run dev`.",
