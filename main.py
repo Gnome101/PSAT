@@ -28,8 +28,8 @@ import json
 import sys
 from pathlib import Path
 
-from services.classifier import classify_contracts
 from services.discovery import fetch, find_dependencies, find_dynamic_dependencies, scaffold, search_protocol_inventory
+from services.discovery.classifier import classify_contracts
 from services.discovery.static_dependencies import normalize_address, resolve_rpc_for_address
 from services.resolution import write_control_tracking_plan
 from services.static import analyze, analyze_contract, analyze_with_llm

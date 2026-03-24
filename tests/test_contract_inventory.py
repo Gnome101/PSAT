@@ -13,6 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from services.discovery.deployer import expand_from_deployers
 from services.discovery.inventory import (
     _build_contracts,
     search_protocol_inventory,
@@ -20,7 +21,6 @@ from services.discovery.inventory import (
 from services.discovery.inventory_extract import (
     extract_inventory_entries_from_page_text,
 )
-from services.discovery_deployer import expand_from_deployers
 
 # ---------------------------------------------------------------------------
 # Helper
@@ -389,8 +389,8 @@ class TestExpandFromDeployers:
                 return {"status": "1", "result": [{"ContractName": ""}]}
             return {"status": "0", "result": []}
 
-        monkeypatch.setattr("services.discovery_deployer.etherscan.get", fake_etherscan_get)
-        monkeypatch.setattr("services.discovery_deployer.time.sleep", lambda _: None)
+        monkeypatch.setattr("services.discovery.deployer.etherscan.get", fake_etherscan_get)
+        monkeypatch.setattr("services.discovery.deployer.time.sleep", lambda _: None)
 
         entries = expand_from_deployers(seeds)
 
@@ -423,8 +423,8 @@ class TestExpandFromDeployers:
                 }
             return {"status": "0", "result": []}
 
-        monkeypatch.setattr("services.discovery_deployer.etherscan.get", fake_get)
-        monkeypatch.setattr("services.discovery_deployer.time.sleep", lambda _: None)
+        monkeypatch.setattr("services.discovery.deployer.etherscan.get", fake_get)
+        monkeypatch.setattr("services.discovery.deployer.time.sleep", lambda _: None)
 
         # With default thresholds (min_seed_count=3), 1 seed is not enough
         entries = expand_from_deployers([seed])
@@ -440,8 +440,8 @@ class TestExpandFromDeployers:
         def fake_get(*_a, **_kw):
             raise RuntimeError("No data found")
 
-        monkeypatch.setattr("services.discovery_deployer.etherscan.get", fake_get)
-        monkeypatch.setattr("services.discovery_deployer.time.sleep", lambda _: None)
+        monkeypatch.setattr("services.discovery.deployer.etherscan.get", fake_get)
+        monkeypatch.setattr("services.discovery.deployer.time.sleep", lambda _: None)
 
         entries = expand_from_deployers(["0x" + "a" * 40])
         assert entries == []
@@ -469,8 +469,8 @@ class TestExpandFromDeployers:
                 }
             return {"status": "1", "result": [{"ContractName": ""}]}
 
-        monkeypatch.setattr("services.discovery_deployer.etherscan.get", fake_get)
-        monkeypatch.setattr("services.discovery_deployer.time.sleep", lambda _: None)
+        monkeypatch.setattr("services.discovery.deployer.etherscan.get", fake_get)
+        monkeypatch.setattr("services.discovery.deployer.time.sleep", lambda _: None)
 
         entries = expand_from_deployers([seed])
         assert entries == []

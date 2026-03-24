@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import classifier as cls
+from services.discovery import classifier as cls
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

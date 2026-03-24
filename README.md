@@ -150,7 +150,7 @@ The FastAPI demo runner does this for a submitted address:
 9. writes `effective_permissions.json`
 10. writes `principal_labels.json`
 
-The implementation is in [`services/demo_runner.py`](/home/gnome2/asu/capstone/PSAT/services/demo_runner.py).
+The implementation is in [`services/demo/runner.py`](/home/gnome2/asu/capstone/PSAT/services/demo/runner.py).
 
 ## Docker
 

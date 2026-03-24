@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from services.demo_runner import DEFAULT_DEMO_RPC_URL, artifact_path, list_analyses, read_analysis, run_demo_analysis
+from services.demo.runner import DEFAULT_DEMO_RPC_URL, artifact_path, list_analyses, read_analysis, run_demo_analysis
 
 ROOT_DIR = Path(__file__).resolve().parent
 SITE_DIR = ROOT_DIR / "site"
