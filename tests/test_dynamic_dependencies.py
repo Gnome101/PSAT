@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import dynamic_dependencies as ddc
+from services.discovery import dynamic_dependencies as ddc
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -527,7 +527,7 @@ def test_live_dynamic_dependencies():
 
     # Skip if RPC is unreachable or doesn't support tracing
     try:
-        from services.dependent_contracts import rpc_call
+        from services.discovery.static_dependencies import rpc_call
 
         rpc_call(rpc_url, "eth_blockNumber", [], retries=0)
     except Exception as exc:

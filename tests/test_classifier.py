@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import classifier as cls
+from services.discovery import classifier as cls
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -379,7 +379,7 @@ def test_live_classify_usdc_proxy():
     if not rpc_url:
         pytest.skip("Set ETH_RPC before running this test.")
     try:
-        from services.dependent_contracts import rpc_call
+        from services.discovery.static_dependencies import rpc_call
 
         rpc_call(rpc_url, "eth_blockNumber", [], retries=0)
     except Exception as exc:

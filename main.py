@@ -28,13 +28,12 @@ import json
 import sys
 from pathlib import Path
 
-from services.analyzer import analyze
-from services.classifier import classify_contracts
-from services.contract_inventory_ai import search_protocol_inventory
-from services.dependent_contracts import find_dependencies, normalize_address
-from services.dynamic_dependencies import find_dynamic_dependencies
-from services.fetcher import fetch, scaffold
-from services.llm_analyzer import analyze_with_llm
+from services.demo.runner import run_protocol_analysis
+from services.discovery import fetch, find_dependencies, find_dynamic_dependencies, scaffold, search_protocol_inventory
+from services.discovery.classifier import classify_contracts
+from services.discovery.static_dependencies import normalize_address, resolve_rpc_for_address
+from services.resolution import write_control_tracking_plan
+from services.static import analyze, analyze_contract, analyze_with_llm
 
 
 def load_addresses(filepath: str) -> list[dict]:
@@ -201,8 +200,6 @@ def process(
         step += 1
         try:
             if not resolved_rpc:
-                from services.dependent_contracts import resolve_rpc_for_address
-
                 _, resolved_rpc = resolve_rpc_for_address(address, deps_rpc or dynamic_rpc)
             unique_deps = sorted(
                 set((deps_output or {}).get("dependencies", []) + (dyn_output or {}).get("dependencies", []))
@@ -239,6 +236,19 @@ def process(
     report_path = analyze(project_dir, contract_name, address)
     print(f"         Report: {report_path}")
 
+    print(f"[{step}/{steps}] Building structured contract analysis ...")
+    step += 1
+    try:
+        contract_analysis_path = analyze_contract(project_dir)
+        print(f"         Contract analysis: {contract_analysis_path}")
+        try:
+            tracking_plan_path = write_control_tracking_plan(contract_analysis_path)
+            print(f"         Control tracking plan: {tracking_plan_path}")
+        except Exception as exc:
+            print(f"         Control tracking plan skipped: {exc}")
+    except RuntimeError as exc:
+        print(f"         Contract analysis skipped: {exc}")
+
     if run_llm:
         print(f"[{step}/{steps}] Running LLM flow analysis (NVIDIA NIM) ...")
         llm_report = analyze_with_llm(project_dir)
@@ -269,6 +279,7 @@ def run_discovery(args) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Fetch and analyze smart contracts")
     parser.add_argument("address", nargs="?", help="Single Ethereum contract address")
+    parser.add_argument("--company", help="Company or protocol name for discovery + full analysis")
     parser.add_argument("--name", help="Project name (single address mode)")
     parser.add_argument("--file", help="Path to JSON or CSV file with addresses")
     parser.add_argument("--no-llm", action="store_true", help="Skip LLM analysis")
@@ -311,6 +322,12 @@ def main():
         default=None,
         help="Max discovery results to return (default: 100)",
     )
+    parser.add_argument(
+        "--analyze-limit",
+        type=int,
+        default=5,
+        help="When running company discovery, analyze the top N discovered contracts (default: 5)",
+    )
 
     args = parser.parse_args()
 
@@ -320,6 +337,21 @@ def main():
             run_discovery(args)
         except ValueError as exc:
             sys.exit(str(exc))
+        return
+
+    if args.company:
+        try:
+            result = run_protocol_analysis(
+                args.company,
+                chain=args.discover_chain,
+                discover_limit=args.discover_limit or 25,
+                analyze_limit=args.analyze_limit,
+                rpc_url=args.dynamic_rpc or args.deps_rpc,
+            )
+        except ValueError as exc:
+            sys.exit(str(exc))
+        print(json.dumps(result, indent=2))
+        print("\nDone.")
         return
 
     if not args.address and not args.file:
