@@ -6,44 +6,6 @@
       "source": [
         "dynamic"
       ],
-      "provenance": [
-        {
-          "tx_hash": "0x13f821680e9cbf9e7ab03de6ed1c11ca06e3deb1c1f0b2cc5786c280105a690b",
-          "block_number": 24722264,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "STATICCALL"
-        },
-        {
-          "tx_hash": "0xf4381559f00cb6382da36bf7ae4eacf80119a657bb9e804cd0020d8277531191",
-          "block_number": 24722473,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "STATICCALL"
-        },
-        {
-          "tx_hash": "0x5cb47871bd5faad5c939b1a3b363f1ea3b214865c0d856efd43d5eb7554f2e82",
-          "block_number": 24722966,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "STATICCALL"
-        },
-        {
-          "tx_hash": "0xdb2b450c1191ea21b3b8dc48a869204255a84992cb8373171a111caa025f7ffd",
-          "block_number": 24723059,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "STATICCALL"
-        },
-        {
-          "tx_hash": "0x2d39635f59fac1d8acf8f23f993992988560be98530f88996dbdea4bc710cbd8",
-          "block_number": 24723608,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "STATICCALL"
-        },
-        {
-          "tx_hash": "0x30cd6ea2692267043ac9c1b62044e8712b249b1bb10d9df35d90db0722d76ad2",
-          "block_number": 24725856,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "STATICCALL"
-        }
-      ],
       "contract_name": "LayerZeroTellerWithRateLimiting"
     },
     "0x6c96de32cea08842dcc4058c14d3aaad7fa41dee": {
@@ -52,16 +14,15 @@
         "dynamic"
       ],
       "proxy_type": "eip1967",
-      "implementation": "0xcd979b10a55fcdac23ec785ce3066c6ef8a479a4",
+      "implementation": {
+        "type": "implementation",
+        "source": [
+          "classification"
+        ],
+        "address": "0xcd979b10a55fcdac23ec785ce3066c6ef8a479a4",
+        "contract_name": "OAdapterUpgradeable"
+      },
       "admin": "0x4de7096b2131e84fd6b2042ad8cd9b4e43f728fc",
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "CALL"
-        }
-      ],
       "contract_name": "TransparentUpgradeableProxy"
     },
     "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2": {
@@ -70,29 +31,20 @@
         "dynamic"
       ],
       "proxy_type": "eip1967",
-      "implementation": "0x8147b99df7672a21809c9093e6f6ce1a60f119bd",
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "CALL"
-        }
-      ],
+      "implementation": {
+        "type": "implementation",
+        "source": [
+          "classification"
+        ],
+        "address": "0x8147b99df7672a21809c9093e6f6ce1a60f119bd",
+        "contract_name": "PoolInstance"
+      },
       "contract_name": "InitializableImmutableAdminUpgradeabilityProxy"
     },
     "0xaba6ba1e95e0926a6a6b917fe4e2f19ceae4ff2e": {
       "type": "regular",
       "source": [
         "dynamic"
-      ],
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "STATICCALL"
-        }
       ],
       "contract_name": "RolesAuthority"
     },
@@ -101,137 +53,107 @@
       "source": [
         "dynamic"
       ],
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072,
-          "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-          "op": "CALL"
-        }
-      ],
       "contract_name": "TetherToken"
-    },
-    "0x8147b99df7672a21809c9093e6f6ce1a60f119bd": {
-      "type": "implementation",
-      "source": [
-        "classification"
-      ],
-      "proxies": [
-        "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2"
-      ],
-      "contract_name": "PoolInstance"
-    },
-    "0xcd979b10a55fcdac23ec785ce3066c6ef8a479a4": {
-      "type": "implementation",
-      "source": [
-        "classification"
-      ],
-      "proxies": [
-        "0x6c96de32cea08842dcc4058c14d3aaad7fa41dee"
-      ],
-      "contract_name": "OAdapterUpgradeable"
     }
   },
-  "dependency_graph": [
-    {
-      "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-      "to": "0x4de413a26fc24c3fc27cc983be70aa9c5c299387",
-      "op": "STATICCALL",
-      "provenance": [
-        {
-          "tx_hash": "0x13f821680e9cbf9e7ab03de6ed1c11ca06e3deb1c1f0b2cc5786c280105a690b",
-          "block_number": 24722264
-        },
-        {
-          "tx_hash": "0xf4381559f00cb6382da36bf7ae4eacf80119a657bb9e804cd0020d8277531191",
-          "block_number": 24722473
-        },
-        {
-          "tx_hash": "0x5cb47871bd5faad5c939b1a3b363f1ea3b214865c0d856efd43d5eb7554f2e82",
-          "block_number": 24722966
-        },
-        {
-          "tx_hash": "0xdb2b450c1191ea21b3b8dc48a869204255a84992cb8373171a111caa025f7ffd",
-          "block_number": 24723059
-        },
-        {
-          "tx_hash": "0x2d39635f59fac1d8acf8f23f993992988560be98530f88996dbdea4bc710cbd8",
-          "block_number": 24723608
-        },
-        {
-          "tx_hash": "0x30cd6ea2692267043ac9c1b62044e8712b249b1bb10d9df35d90db0722d76ad2",
-          "block_number": 24725856
-        }
-      ],
-      "selector": "0xe83931af",
-      "function_name": "beforeTransfer"
-    },
-    {
-      "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-      "to": "0x6c96de32cea08842dcc4058c14d3aaad7fa41dee",
-      "op": "CALL",
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072
-        }
-      ],
-      "selector": "0xc7c7f5b3",
-      "function_name": "send"
-    },
-    {
-      "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-      "to": "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
-      "op": "CALL",
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072
-        }
-      ],
-      "selector": "0x69328dec",
-      "function_name": "withdraw"
-    },
-    {
-      "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-      "to": "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
-      "op": "CALL",
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072
-        }
-      ],
-      "selector": "0xa415bcad",
-      "function_name": "borrow"
-    },
-    {
-      "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-      "to": "0xaba6ba1e95e0926a6a6b917fe4e2f19ceae4ff2e",
-      "op": "STATICCALL",
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072
-        }
-      ],
-      "selector": "0xb7009613",
-      "function_name": "canCall"
-    },
-    {
-      "from": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-      "to": "0xdac17f958d2ee523a2206206994597c13d831ec7",
-      "op": "CALL",
-      "provenance": [
-        {
-          "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
-          "block_number": 24701072
-        }
-      ],
-      "selector": "0x095ea7b3",
-      "function_name": "approve"
-    }
-  ],
+  "dependency_graph": {
+    "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c|0x4de413a26fc24c3fc27cc983be70aa9c5c299387": [
+      {
+        "op": "STATICCALL",
+        "provenance": [
+          {
+            "tx_hash": "0x13f821680e9cbf9e7ab03de6ed1c11ca06e3deb1c1f0b2cc5786c280105a690b",
+            "block_number": 24722264
+          },
+          {
+            "tx_hash": "0xf4381559f00cb6382da36bf7ae4eacf80119a657bb9e804cd0020d8277531191",
+            "block_number": 24722473
+          },
+          {
+            "tx_hash": "0x5cb47871bd5faad5c939b1a3b363f1ea3b214865c0d856efd43d5eb7554f2e82",
+            "block_number": 24722966
+          },
+          {
+            "tx_hash": "0xdb2b450c1191ea21b3b8dc48a869204255a84992cb8373171a111caa025f7ffd",
+            "block_number": 24723059
+          },
+          {
+            "tx_hash": "0x2d39635f59fac1d8acf8f23f993992988560be98530f88996dbdea4bc710cbd8",
+            "block_number": 24723608
+          },
+          {
+            "tx_hash": "0x30cd6ea2692267043ac9c1b62044e8712b249b1bb10d9df35d90db0722d76ad2",
+            "block_number": 24725856
+          }
+        ],
+        "selector": "0xe83931af",
+        "function_name": "beforeTransfer"
+      }
+    ],
+    "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c|0x6c96de32cea08842dcc4058c14d3aaad7fa41dee": [
+      {
+        "op": "CALL",
+        "provenance": [
+          {
+            "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
+            "block_number": 24701072
+          }
+        ],
+        "selector": "0xc7c7f5b3",
+        "function_name": "send"
+      }
+    ],
+    "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c|0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2": [
+      {
+        "op": "CALL",
+        "provenance": [
+          {
+            "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
+            "block_number": 24701072
+          }
+        ],
+        "selector": "0x69328dec",
+        "function_name": "withdraw"
+      },
+      {
+        "op": "CALL",
+        "provenance": [
+          {
+            "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
+            "block_number": 24701072
+          }
+        ],
+        "selector": "0xa415bcad",
+        "function_name": "borrow"
+      }
+    ],
+    "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c|0xaba6ba1e95e0926a6a6b917fe4e2f19ceae4ff2e": [
+      {
+        "op": "STATICCALL",
+        "provenance": [
+          {
+            "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
+            "block_number": 24701072
+          }
+        ],
+        "selector": "0xb7009613",
+        "function_name": "canCall"
+      }
+    ],
+    "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c|0xdac17f958d2ee523a2206206994597c13d831ec7": [
+      {
+        "op": "CALL",
+        "provenance": [
+          {
+            "tx_hash": "0xf288b007f60b046afd988f1b58b68ae7e41bf6dbec06b92188729b80bf13ea72",
+            "block_number": 24701072
+          }
+        ],
+        "selector": "0x095ea7b3",
+        "function_name": "approve"
+      }
+    ]
+  },
   "transactions_analyzed": [
     {
       "tx_hash": "0x53a17f4258cfbb67f8b3fec7500766902f9eebe91b449e29f8ad01465acd4bb0",
@@ -287,9 +209,5 @@
   "trace_methods": [
     "debug_traceTransaction"
   ],
-  "trace_errors": [],
-  "discovered_addresses": [
-    "0x8147b99df7672a21809c9093e6f6ce1a60f119bd",
-    "0xcd979b10a55fcdac23ec785ce3066c6ef8a479a4"
-  ]
+  "trace_errors": []
 }

@@ -37,6 +37,18 @@ def _contract_label(contract_dir: Path) -> str:
     return contract_dir.name
 
 
+def _derive_discovered(unified: dict) -> list[str]:
+    """Derive discovered addresses from deps whose source includes 'classification'."""
+    result: list[str] = []
+    for addr, info in unified.get("dependencies", {}).items():
+        if "classification" in info.get("source", []):
+            result.append(addr)
+        impl = info.get("implementation")
+        if isinstance(impl, dict) and "classification" in impl.get("source", []):
+            result.append(impl["address"])
+    return sorted(result)
+
+
 # ---------------------------------------------------------------------------
 # Node / edge construction
 # ---------------------------------------------------------------------------
@@ -66,6 +78,9 @@ def _build_nodes(
     deps = unified.get("dependencies", {})
     for addr in sorted(deps):
         info = deps[addr]
+        impl = info.get("implementation")
+        impl_addr = impl["address"] if isinstance(impl, dict) else impl
+
         nodes.append(
             {
                 "id": f"addr:{addr}",
@@ -73,13 +88,30 @@ def _build_nodes(
                 "label": info.get("contract_name") or _shorten(addr),
                 "type": info.get("type", "regular"),
                 "proxy_type": info.get("proxy_type"),
-                "implementation": info.get("implementation"),
+                "implementation": impl_addr,
                 "beacon": info.get("beacon"),
                 "admin": info.get("admin"),
                 "is_target": False,
                 "source": info.get("source", []),
             }
         )
+
+        # Nested implementation → separate node for visualization
+        if isinstance(impl, dict):
+            nodes.append(
+                {
+                    "id": f"addr:{impl['address']}",
+                    "address": impl["address"],
+                    "label": impl.get("contract_name") or _shorten(impl["address"]),
+                    "type": impl.get("type", "implementation"),
+                    "proxy_type": None,
+                    "implementation": None,
+                    "beacon": None,
+                    "admin": None,
+                    "is_target": False,
+                    "source": impl.get("source", []),
+                }
+            )
 
     return nodes
 
@@ -118,23 +150,26 @@ def _build_edges(
             entry["function_name"] = function_name
         edges.append(entry)
 
-    # Dynamic call-graph edges
-    for edge in unified.get("dependency_graph", []):
-        _add(
-            f"addr:{edge['from']}",
-            f"addr:{edge['to']}",
-            edge["op"],
-            edge.get("provenance", []),
-            selector=edge.get("selector"),
-            function_name=edge.get("function_name"),
-        )
+    # Dynamic call-graph edges (keyed by from|to)
+    for graph_key, edge_list in unified.get("dependency_graph", {}).items():
+        parts = graph_key.split("|")
+        from_addr, to_addr = parts[0], parts[1]
+        for edge in edge_list:
+            _add(
+                f"addr:{from_addr}",
+                f"addr:{to_addr}",
+                edge["op"],
+                edge.get("provenance", []),
+                selector=edge.get("selector"),
+                function_name=edge.get("function_name"),
+            )
 
     # For deps found via static bytecode scan (not trace or classification),
     # create implicit edges from target.  Skip classification-only discoveries
     # — those are reachable through their proxy's DELEGATES_TO / BEACON edge.
-    deps_with_edges = set()
-    for edge in unified.get("dependency_graph", []):
-        deps_with_edges.add(edge["to"])
+    deps_with_edges: set[str] = set()
+    for graph_key in unified.get("dependency_graph", {}):
+        deps_with_edges.add(graph_key.split("|")[1])
     deps = unified.get("dependencies", {})
     for addr in sorted(deps):
         if addr in deps_with_edges:
@@ -146,8 +181,11 @@ def _build_edges(
 
     # Proxy relationship edges
     for addr, info in deps.items():
-        if info.get("implementation"):
-            _add(f"addr:{addr}", f"addr:{info['implementation']}", "DELEGATES_TO")
+        impl = info.get("implementation")
+        if isinstance(impl, dict):
+            _add(f"addr:{addr}", f"addr:{impl['address']}", "DELEGATES_TO")
+        elif isinstance(impl, str) and impl:
+            _add(f"addr:{addr}", f"addr:{impl}", "DELEGATES_TO")
         if info.get("beacon"):
             _add(f"addr:{addr}", f"addr:{info['beacon']}", "BEACON")
 
@@ -183,7 +221,7 @@ def build_dependency_visualization(contract_dir: str | Path) -> dict:
         "transactions_analyzed": unified.get("transactions_analyzed", []),
         "trace_methods": unified.get("trace_methods", []),
         "trace_errors": unified.get("trace_errors", []),
-        "discovered_addresses": unified.get("discovered_addresses", []),
+        "discovered_addresses": _derive_discovered(unified),
     }
 
     return {"nodes": nodes, "edges": edges, "metadata": metadata}
