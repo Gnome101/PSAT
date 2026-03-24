@@ -9,10 +9,27 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from services.dependent_contracts import normalize_address, rpc_call
+from services.dependent_contracts import (
+    get_code,
+    has_deployed_code,
+    normalize_address,
+    rpc_call,
+)
 from utils.etherscan import get as etherscan_get
 
 TRACE_OPS = {"CALL", "STATICCALL", "DELEGATECALL", "CALLCODE", "CREATE", "CREATE2"}
+
+# EVM precompile addresses (ecrecover, sha256, ripemd160, identity, etc.)
+_MAX_PRECOMPILE_ADDR = 9
+
+
+def _is_precompile(address: str) -> bool:
+    """Return True if address is an EVM precompile (0x01-0x09)."""
+    try:
+        val = int(address, 16)
+        return 0 < val <= _MAX_PRECOMPILE_ADDR
+    except (ValueError, TypeError):
+        return False
 
 
 def _normalize_maybe_address(address: Any) -> str | None:
@@ -49,33 +66,31 @@ def _tx_selector(input_data: Any) -> str:
 
 
 def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
-    """Fetch recent normal transactions for an address from Etherscan."""
-    try:
-        data = etherscan_get(
-            "account",
-            "txlist",
-            address=address,
-            startblock=0,
-            endblock=99_999_999,
-            page=1,
-            offset=max(20, limit),
-            sort="desc",
-        )
-    except RuntimeError as exc:
-        # Etherscan returns status=0 for empty tx history.
-        if "No transactions found" in str(exc):
-            return []
-        raise
+    """Fetch recent normal and internal transactions for an address from Etherscan."""
+    txs: list[dict] = []
+    for action in ("txlist", "txlistinternal"):
+        try:
+            data = etherscan_get(
+                "account",
+                action,
+                address=address,
+                startblock=0,
+                endblock=99_999_999,
+                page=1,
+                offset=max(20, limit),
+                sort="desc",
+            )
+        except RuntimeError as exc:
+            if "No transactions found" in str(exc):
+                continue
+            raise
+        result = data.get("result", [])
+        if isinstance(result, list):
+            txs.extend(result)
+    return txs
 
-    result = data.get("result", [])
-    if not isinstance(result, list):
-        return []
-    return result
 
-
-def pick_representative_transactions(
-    address: str, transactions: list[dict], max_txs: int = 5
-) -> list[dict]:
+def pick_representative_transactions(address: str, transactions: list[dict], max_txs: int = 5) -> list[dict]:
     """Select representative successful txs to the target, prioritizing selector diversity."""
     target = normalize_address(address)
     unique_selector_seen = set()
@@ -156,9 +171,7 @@ def trace_transaction(rpc_url: str, tx_hash: str) -> tuple[str, Any]:
     raise RuntimeError(f"Tracing failed for {tx_hash}: {' | '.join(errors)}")
 
 
-def _parse_debug_call_tree(
-    node: Any, tx_hash: str, block_number: int | None, out_edges: list[dict]
-) -> None:
+def _parse_debug_call_tree(node: Any, tx_hash: str, block_number: int | None, out_edges: list[dict]) -> None:
     if not isinstance(node, dict):
         return
 
@@ -180,9 +193,7 @@ def _parse_debug_call_tree(
         _parse_debug_call_tree(child, tx_hash, block_number, out_edges)
 
 
-def _parse_parity_trace_entries(
-    entries: Any, tx_hash: str, block_number: int | None, out_edges: list[dict]
-) -> None:
+def _parse_parity_trace_entries(entries: Any, tx_hash: str, block_number: int | None, out_edges: list[dict]) -> None:
     if not isinstance(entries, list):
         return
 
@@ -314,16 +325,26 @@ def find_dynamic_dependencies(
 
     if not trace_methods and trace_errors:
         raise RuntimeError(
-            f"All {len(trace_errors)} transaction trace(s) failed. "
-            f"First error: {trace_errors[0]['error']}"
+            f"All {len(trace_errors)} transaction trace(s) failed. First error: {trace_errors[0]['error']}"
         )
 
     edges = _dedupe_edges(all_edges)
-    dependency_edges = [edge for edge in edges if edge["to"] != target]
-    dependencies = sorted({edge["to"] for edge in dependency_edges})
+
+    # Keep only direct calls from the target contract.  Intermediate calls
+    # between dependencies (e.g. DEX pool → oracle) are trace noise — they
+    # don't represent what the *target* depends on.
+    direct_edges = [edge for edge in edges if edge["from"] == target and edge["to"] != target]
+
+    # Filter out precompiles and addresses with no deployed code (EOAs)
+    dep_candidates = sorted({edge["to"] for edge in direct_edges})
+    contracts = {
+        addr for addr in dep_candidates if not _is_precompile(addr) and has_deployed_code(get_code(trace_rpc, addr))
+    }
+    direct_edges = [edge for edge in direct_edges if edge["to"] in contracts]
+    dependencies = sorted(contracts)
 
     provenance: dict[str, list[dict]] = {}
-    for edge in dependency_edges:
+    for edge in direct_edges:
         dep = edge["to"]
         record = {
             "tx_hash": edge["tx_hash"],
@@ -353,7 +374,7 @@ def find_dynamic_dependencies(
         "trace_methods": sorted(trace_methods),
         "dependencies": dependencies,
         "provenance": provenance,
-        "dependency_graph": _build_graph(dependency_edges),
+        "dependency_graph": _build_graph(direct_edges),
         "trace_errors": trace_errors,
     }
 
