@@ -1,6 +1,7 @@
 """Discovery package."""
 
 from .classifier import classify_contracts
+from .dependency_graph_builder import write_dependency_visualization
 from .deployer import expand_from_deployers
 from .dynamic_dependencies import find_dynamic_dependencies
 from .fetch import CONTRACTS_DIR, fetch, parse_remappings, parse_sources, parse_verification_bundle, scaffold
@@ -19,4 +20,5 @@ __all__ = [
     "parse_verification_bundle",
     "scaffold",
     "search_protocol_inventory",
+    "write_dependency_visualization",
 ]

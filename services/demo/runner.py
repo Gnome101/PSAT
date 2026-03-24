@@ -37,6 +37,7 @@ JSON_ARTIFACTS = (
     "contract_meta.json",
     "control_snapshot.json",
     "control_tracking_plan.json",
+    "dependency_graph_viz.json",
     "effective_permissions.json",
     "principal_labels.json",
     "resolved_control_graph.json",
@@ -134,6 +135,8 @@ def read_analysis(run_name: str) -> dict:
     for artifact in (
         "contract_analysis.json",
         "control_snapshot.json",
+        "dependencies.json",
+        "dependency_graph_viz.json",
         "resolved_control_graph.json",
         "effective_permissions.json",
         "principal_labels.json",

@@ -19,7 +19,7 @@ Usage:
     python main.py 0x... --no-deps
 
     # Dynamic dependency tracing with a tracing-enabled RPC
-    python main.py 0x... --dynamic-rpc https://your-trace-rpc --dynamic-tx-limit 5
+    python main.py 0x... --dynamic-rpc https://your-trace-rpc --dynamic-tx-limit 10
 """
 
 import argparse
@@ -31,9 +31,11 @@ from pathlib import Path
 from services.demo.runner import run_protocol_analysis
 from services.discovery import fetch, find_dependencies, find_dynamic_dependencies, scaffold, search_protocol_inventory
 from services.discovery.classifier import classify_contracts
+from services.discovery.dependency_graph_builder import write_dependency_visualization
 from services.discovery.static_dependencies import normalize_address, resolve_rpc_for_address
 from services.resolution import write_control_tracking_plan
 from services.static import analyze, analyze_contract, analyze_with_llm
+from utils.etherscan import get_contract_info
 
 
 def load_addresses(filepath: str) -> list[dict]:
@@ -141,7 +143,7 @@ def process(
     deps_rpc: str | None = None,
     run_dynamic_deps: bool = True,
     dynamic_rpc: str | None = None,
-    dynamic_tx_limit: int = 5,
+    dynamic_tx_limit: int = 10,
     dynamic_tx_hashes: list[str] | None = None,
     run_classify: bool = True,
 ):
@@ -216,6 +218,54 @@ def process(
     # Write unified dependencies output
     if deps_output or dyn_output:
         unified = _build_unified_deps(address, deps_output, dyn_output, cls_output)
+
+        # Resolve contract names and function selectors from Etherscan.
+        # Uses get_contract_info() which fetches name + ABI in one call per address.
+        deps = unified.get("dependencies", {})
+        graph_edges = unified.get("dependency_graph", [])
+
+        # Collect all addresses we need info for: deps + their implementations
+        addrs_to_fetch: set[str] = set(deps.keys())
+        for info in deps.values():
+            impl = info.get("implementation")
+            if impl:
+                addrs_to_fetch.add(impl)
+
+        # Single Etherscan call per address → name + selector map
+        info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
+        for addr in sorted(addrs_to_fetch):
+            info_cache[addr] = get_contract_info(addr)
+
+        # Apply contract names
+        resolved_names = 0
+        for addr in deps:
+            cname = info_cache.get(addr, (None, {}))[0]
+            if cname:
+                deps[addr]["contract_name"] = cname
+                resolved_names += 1
+        if resolved_names:
+            print(f"         Resolved {resolved_names}/{len(deps)} contract name(s)")
+
+        # Apply function names to graph edges
+        if graph_edges:
+            resolved_fns = 0
+            for edge in graph_edges:
+                sel = edge.get("selector")
+                if not sel or sel == "0x":
+                    continue
+                to_addr = edge["to"]
+                # Try the target's ABI first, then its implementation's
+                name = info_cache.get(to_addr, (None, {}))[1].get(sel)
+                if not name:
+                    impl = deps.get(to_addr, {}).get("implementation")
+                    if impl:
+                        name = info_cache.get(impl, (None, {}))[1].get(sel)
+                if name:
+                    edge["function_name"] = name
+                    resolved_fns += 1
+            if resolved_fns:
+                print(f"         Resolved {resolved_fns} function selector(s)")
+
         deps_path = project_dir / "dependencies.json"
         deps_path.write_text(json.dumps(unified, indent=2) + "\n")
         type_counts: dict[str, int] = {}
@@ -230,6 +280,10 @@ def process(
             n = len(unified["discovered_addresses"])
             print(f"         Discovered {n} new address(es) via proxy slots")
         print(f"         Output: {deps_path}")
+
+        viz_path = write_dependency_visualization(project_dir)
+        if viz_path:
+            print(f"         Dependency graph visualization: {viz_path}")
 
     print(f"[{step}/{steps}] Running Slither analysis ...")
     step += 1
@@ -299,8 +353,8 @@ def main():
     parser.add_argument(
         "--dynamic-tx-limit",
         type=int,
-        default=5,
-        help="Number of representative transactions to trace (default: 5)",
+        default=10,
+        help="Number of representative transactions to trace (default: 10)",
     )
     parser.add_argument(
         "--dynamic-tx-hash",
