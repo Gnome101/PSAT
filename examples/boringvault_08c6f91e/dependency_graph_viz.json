@@ -3,7 +3,7 @@
     {
       "id": "addr:0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
       "address": "0x08c6f91e2b681faf5e17227f2a44c307b3c1364c",
-      "label": "BoringVault",
+      "label": "BoringVault_08c6f91e",
       "type": "target",
       "proxy_type": null,
       "is_target": true,
@@ -38,9 +38,9 @@
       ]
     },
     {
-      "id": "addr:0x8147b99df7672a21809c9093e6f6ce1a60f119bd",
-      "address": "0x8147b99df7672a21809c9093e6f6ce1a60f119bd",
-      "label": "PoolInstance",
+      "id": "addr:0xcd979b10a55fcdac23ec785ce3066c6ef8a479a4",
+      "address": "0xcd979b10a55fcdac23ec785ce3066c6ef8a479a4",
+      "label": "OAdapterUpgradeable",
       "type": "implementation",
       "proxy_type": null,
       "implementation": null,
@@ -66,6 +66,20 @@
       ]
     },
     {
+      "id": "addr:0x8147b99df7672a21809c9093e6f6ce1a60f119bd",
+      "address": "0x8147b99df7672a21809c9093e6f6ce1a60f119bd",
+      "label": "PoolInstance",
+      "type": "implementation",
+      "proxy_type": null,
+      "implementation": null,
+      "beacon": null,
+      "admin": null,
+      "is_target": false,
+      "source": [
+        "classification"
+      ]
+    },
+    {
       "id": "addr:0xaba6ba1e95e0926a6a6b917fe4e2f19ceae4ff2e",
       "address": "0xaba6ba1e95e0926a6a6b917fe4e2f19ceae4ff2e",
       "label": "RolesAuthority",
@@ -77,20 +91,6 @@
       "is_target": false,
       "source": [
         "dynamic"
-      ]
-    },
-    {
-      "id": "addr:0xcd979b10a55fcdac23ec785ce3066c6ef8a479a4",
-      "address": "0xcd979b10a55fcdac23ec785ce3066c6ef8a479a4",
-      "label": "OAdapterUpgradeable",
-      "type": "implementation",
-      "proxy_type": null,
-      "implementation": null,
-      "beacon": null,
-      "admin": null,
-      "is_target": false,
-      "source": [
-        "classification"
       ]
     },
     {

@@ -12,7 +12,16 @@ from typing import Any, Callable
 from dotenv import load_dotenv
 
 from schemas.effective_permissions import PrincipalResolution
-from services.discovery import CONTRACTS_DIR, fetch, scaffold, search_protocol_inventory
+from services.discovery import (
+    CONTRACTS_DIR,
+    fetch,
+    find_dependencies,
+    find_dynamic_dependencies,
+    scaffold,
+    search_protocol_inventory,
+)
+from services.discovery.classifier import classify_contracts
+from services.discovery.dependency_graph_builder import write_dependency_visualization
 from services.policy import (
     run_hypersync_policy_backfill,
     write_effective_permissions_from_files,
@@ -26,10 +35,11 @@ from services.resolution import (
     write_resolved_control_graph,
 )
 from services.static import analyze, analyze_contract
+from utils.etherscan import get_contract_info
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-DEFAULT_DEMO_RPC_URL = os.getenv("PSAT_DEMO_RPC_URL", "https://ethereum-rpc.publicnode.com")
+DEFAULT_DEMO_RPC_URL = os.getenv("PSAT_DEMO_RPC_URL") or os.getenv("ETH_RPC") or "https://ethereum-rpc.publicnode.com"
 DEFAULT_HYPERSYNC_URL = os.getenv("PSAT_HYPERSYNC_URL", "https://eth.hypersync.xyz")
 PROTOCOLS_DIR = Path(__file__).resolve().parents[2] / "protocols"
 JSON_ARTIFACTS = (
@@ -289,6 +299,88 @@ def run_demo_analysis(
     run_name = _unique_run_name(name or f"{contract_name}_{address[2:10]}")
     update("scaffold", f"Scaffolding {run_name}")
     project_dir = scaffold(address, run_name, result)
+
+    # --- Dependency discovery pipeline ---
+    update("dependencies", "Discovering dependencies")
+    try:
+        from main import _build_unified_deps
+
+        deps_output = None
+        dyn_output = None
+        cls_output = None
+        resolved_rpc = rpc_url
+
+        try:
+            deps_output = find_dependencies(address, rpc_url)
+            resolved_rpc = deps_output.get("rpc") or resolved_rpc
+        except RuntimeError:
+            pass
+
+        try:
+            dyn_output = find_dynamic_dependencies(address, rpc_url=rpc_url, tx_limit=10)
+        except RuntimeError:
+            pass
+
+        if deps_output or dyn_output:
+            unique_deps = sorted(
+                set((deps_output or {}).get("dependencies", []) + (dyn_output or {}).get("dependencies", []))
+            )
+            try:
+                cls_output = classify_contracts(
+                    address,
+                    unique_deps,
+                    resolved_rpc,
+                    dynamic_edges=(dyn_output or {}).get("dependency_graph"),
+                )
+            except RuntimeError:
+                pass
+
+            unified = _build_unified_deps(address, deps_output, dyn_output, cls_output)
+
+            # Enrich with contract names and function selectors
+            deps = unified.get("dependencies", {})
+            keyed_graph = unified.get("dependency_graph", {})
+
+            addrs_to_fetch: set[str] = set(deps.keys())
+            for info in deps.values():
+                impl = info.get("implementation")
+                if isinstance(impl, dict):
+                    addrs_to_fetch.add(impl["address"])
+
+            info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
+            for addr in sorted(addrs_to_fetch):
+                info_cache[addr] = get_contract_info(addr)
+
+            for addr, dep_info in deps.items():
+                cname = info_cache.get(addr, (None, {}))[0]
+                if cname:
+                    dep_info["contract_name"] = cname
+                impl = dep_info.get("implementation")
+                if isinstance(impl, dict):
+                    impl_name = info_cache.get(impl["address"], (None, {}))[0]
+                    if impl_name:
+                        impl["contract_name"] = impl_name
+
+            for key, edges in keyed_graph.items():
+                to_addr = key.split("|")[1]
+                for edge in edges:
+                    sel = edge.get("selector")
+                    if not sel or sel == "0x":
+                        continue
+                    fn_name = info_cache.get(to_addr, (None, {}))[1].get(sel)
+                    if not fn_name:
+                        impl = deps.get(to_addr, {}).get("implementation")
+                        impl_addr = impl["address"] if isinstance(impl, dict) else impl
+                        if impl_addr:
+                            fn_name = info_cache.get(impl_addr, (None, {}))[1].get(sel)
+                    if fn_name:
+                        edge["function_name"] = fn_name
+
+            deps_path = project_dir / "dependencies.json"
+            deps_path.write_text(json.dumps(unified, indent=2) + "\n")
+            write_dependency_visualization(project_dir)
+    except Exception:
+        pass  # Dependency discovery is best-effort; don't block the rest of the pipeline
 
     update("slither", "Running Slither")
     analyze(project_dir, contract_name, address)
