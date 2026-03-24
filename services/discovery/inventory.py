@@ -21,6 +21,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from services.discovery_deployer import expand_from_deployers  # noqa: E402
+
 from .inventory_domain import (  # noqa: E402
     CHAIN_SORT_ORDER,
     _debug_log,
@@ -30,8 +32,7 @@ from .inventory_domain import (  # noqa: E402
     _maybe_domain,
     _tavily_search,
 )
-from services.discovery_ai_inventory import extract_inventory_entries_from_pages  # noqa: E402
-from services.discovery_deployer import expand_from_deployers  # noqa: E402
+from .inventory_extract import extract_inventory_entries_from_pages  # noqa: E402
 
 
 def _build_links(evidence: list[dict[str, Any]]) -> dict[str, str]:

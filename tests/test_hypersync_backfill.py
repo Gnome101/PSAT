@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from schemas.control_tracking import ControlTrackingPlan
+from schemas.hypersync_backfill import PolicyEventRecord
 from services.policy.hypersync_backfill import (
     fetch_policy_event_history,
     reconstruct_policy_state,
@@ -12,7 +14,7 @@ from services.policy.hypersync_backfill import (
 )
 
 
-def _plan() -> dict:
+def _plan() -> ControlTrackingPlan:
     return {
         "schema_version": "0.1",
         "contract_address": "0x1111111111111111111111111111111111111111",
@@ -175,7 +177,7 @@ def test_fetch_policy_event_history_decodes_paginated_logs():
 
 def test_reconstruct_policy_state():
     plan = _plan()
-    records = [
+    records: list[PolicyEventRecord] = [
         {
             "schema_version": "0.1",
             "contract_address": plan["contract_address"],

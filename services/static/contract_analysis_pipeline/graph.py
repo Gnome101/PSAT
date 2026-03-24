@@ -426,7 +426,8 @@ def _guards_for_sink(function, sink_node, project_dir: Path) -> list[dict[str, A
     guards: list[dict[str, Any]] = []
     state_aliases: dict[str, str] = {}
     for node in sorted(sink_node.dominators, key=lambda item: item.node_id):
-        if node is sink_node or getattr(node, "type", None).name == "ENTRYPOINT":
+        node_type = getattr(node, "type", None)
+        if node is sink_node or getattr(node_type, "name", None) == "ENTRYPOINT":
             continue
         guards.extend(_direct_structural_guards(node, project_dir, {"msg.sender"}, state_aliases))
         for ir in getattr(node, "irs", []):

@@ -379,7 +379,7 @@ def test_live_classify_usdc_proxy():
     if not rpc_url:
         pytest.skip("Set ETH_RPC before running this test.")
     try:
-        from services.dependent_contracts import rpc_call
+        from services.discovery.static_dependencies import rpc_call
 
         rpc_call(rpc_url, "eth_blockNumber", [], retries=0)
     except Exception as exc:

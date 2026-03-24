@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from schemas.control_tracking import ControlTrackingPlan
 from services.resolution.tracking import (
     _classify_resolved_address,
     build_control_snapshot,
@@ -153,7 +154,7 @@ def test_matching_policies_for_log_and_decode_fields(tmp_path):
 
 
 def test_build_control_snapshot_and_diff(monkeypatch):
-    plan = {
+    plan: ControlTrackingPlan = {
         "schema_version": "0.1",
         "contract_address": "0x1111111111111111111111111111111111111111",
         "contract_name": "Mock",
@@ -233,7 +234,7 @@ def test_build_control_snapshot_and_diff(monkeypatch):
 
 
 def test_build_control_snapshot_handles_reverting_getter(monkeypatch):
-    plan = {
+    plan: ControlTrackingPlan = {
         "schema_version": "0.1",
         "contract_address": "0x1111111111111111111111111111111111111111",
         "contract_name": "Mock",
@@ -273,7 +274,7 @@ def test_build_control_snapshot_handles_reverting_getter(monkeypatch):
     assert value["value"] is None
     assert value["observed_via"] == "eth_call_error"
     assert value["resolved_type"] == "unknown"
-    assert "execution reverted" in value["details"]["error"]
+    assert "execution reverted" in str(value["details"]["error"])
 
 
 def test_classify_resolved_address_detects_safe(monkeypatch):

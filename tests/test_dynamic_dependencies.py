@@ -527,7 +527,7 @@ def test_live_dynamic_dependencies():
 
     # Skip if RPC is unreachable or doesn't support tracing
     try:
-        from services.dependent_contracts import rpc_call
+        from services.discovery.static_dependencies import rpc_call
 
         rpc_call(rpc_url, "eth_blockNumber", [], retries=0)
     except Exception as exc:

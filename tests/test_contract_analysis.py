@@ -6,6 +6,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from schemas.contract_analysis import (
+    ContractAnalysis,
+    ControllerTrackingTarget,
+    GuardRecord,
+    PolicyTrackingTarget,
+    PrivilegedFunction,
+    SinkRecord,
+)
 from services.static import collect_contract_analysis
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "contracts"
@@ -58,27 +66,27 @@ def _fixture_index() -> list[dict]:
     return json.loads(FIXTURE_INDEX_PATH.read_text())["fixtures"]
 
 
-def _privileged_function(analysis: dict, signature: str) -> dict:
+def _privileged_function(analysis: ContractAnalysis, signature: str) -> PrivilegedFunction:
     for function in analysis["access_control"]["privileged_functions"]:
         if function["function"] == signature:
             return function
     raise AssertionError(f"Privileged function {signature} not found")
 
 
-def _sink(analysis: dict, function_signature: str, target: str) -> dict:
+def _sink(analysis: ContractAnalysis, function_signature: str, target: str) -> SinkRecord:
     for sink in analysis["permission_graph"]["sinks"]:
         if sink["function"] == function_signature and sink["target"] == target:
             return sink
     raise AssertionError(f"Sink for {function_signature} -> {target} not found")
 
 
-def _guards_for_sink(analysis: dict, function_signature: str, target: str) -> list[dict]:
+def _guards_for_sink(analysis: ContractAnalysis, function_signature: str, target: str) -> list[GuardRecord]:
     sink = _sink(analysis, function_signature, target)
     guard_ids = set(sink["guarded_by"])
     return [guard for guard in analysis["permission_graph"]["guards"] if guard["id"] in guard_ids]
 
 
-def _controller_labels(analysis: dict, guard: dict) -> set[str]:
+def _controller_labels(analysis: ContractAnalysis, guard: GuardRecord) -> set[str]:
     controller_ids = set(guard["controller_ids"])
     return {
         controller["label"]
@@ -87,14 +95,14 @@ def _controller_labels(analysis: dict, guard: dict) -> set[str]:
     }
 
 
-def _tracked_controller(analysis: dict, label: str) -> dict:
+def _tracked_controller(analysis: ContractAnalysis, label: str) -> ControllerTrackingTarget:
     for controller in analysis["controller_tracking"]:
         if controller["label"] == label:
             return controller
     raise AssertionError(f"Tracked controller {label} not found")
 
 
-def _tracked_policy(analysis: dict, label: str) -> dict:
+def _tracked_policy(analysis: ContractAnalysis, label: str) -> PolicyTrackingTarget:
     for policy in analysis["policy_tracking"]:
         if policy["label"] == label:
             return policy

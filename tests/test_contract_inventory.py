@@ -13,11 +13,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.contract_inventory_ai import (
+from services.discovery.inventory import (
     _build_contracts,
     search_protocol_inventory,
 )
-from services.discovery_ai_inventory import (
+from services.discovery.inventory_extract import (
     extract_inventory_entries_from_page_text,
 )
 from services.discovery_deployer import expand_from_deployers
@@ -192,8 +192,8 @@ class TestSearchProtocolInventoryOffline:
             search_protocol_inventory("test", limit=0)
 
     def test_no_domain_returns_valid_structure(self, monkeypatch):
-        monkeypatch.setattr("services.contract_inventory_ai._tavily_search", lambda *_a, **_kw: [])
-        monkeypatch.setattr("services.contract_inventory_ai._llm_select_domain", lambda *_a, **_kw: None)
+        monkeypatch.setattr("services.discovery.inventory._tavily_search", lambda *_a, **_kw: [])
+        monkeypatch.setattr("services.discovery.inventory._llm_select_domain", lambda *_a, **_kw: None)
 
         result = search_protocol_inventory("nonexistent_xyz")
         assert result["official_domain"] is None
@@ -207,15 +207,15 @@ class TestSearchProtocolInventoryOffline:
             _entry(address="0x" + "b" * 40, name="Router", chain="arbitrum", kind="official_inventory_link"),
         ]
         monkeypatch.setattr(
-            "services.contract_inventory_ai._discover_contract_inventory_pages",
+            "services.discovery.inventory._discover_contract_inventory_pages",
             lambda *_a, **_kw: ([{"url": "https://docs.example.com"}], ["https://docs.example.com"]),
         )
         monkeypatch.setattr(
-            "services.contract_inventory_ai.extract_inventory_entries_from_pages",
+            "services.discovery.inventory.extract_inventory_entries_from_pages",
             lambda *_a, **_kw: fake_entries,
         )
         monkeypatch.setattr(
-            "services.contract_inventory_ai.expand_from_deployers",
+            "services.discovery.inventory.expand_from_deployers",
             lambda *_a, **_kw: [],
         )
 
@@ -256,15 +256,15 @@ class TestSearchProtocolInventoryOffline:
             ),
         ]
         monkeypatch.setattr(
-            "services.contract_inventory_ai._discover_contract_inventory_pages",
+            "services.discovery.inventory._discover_contract_inventory_pages",
             lambda *_a, **_kw: ([{"url": "https://docs.example.com"}], ["https://docs.example.com"]),
         )
         monkeypatch.setattr(
-            "services.contract_inventory_ai.extract_inventory_entries_from_pages",
+            "services.discovery.inventory.extract_inventory_entries_from_pages",
             lambda *_a, **_kw: tavily_entries,
         )
         monkeypatch.setattr(
-            "services.contract_inventory_ai.expand_from_deployers",
+            "services.discovery.inventory.expand_from_deployers",
             lambda *_a, **_kw: deployer_entries,
         )
 

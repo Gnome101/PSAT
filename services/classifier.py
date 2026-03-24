@@ -15,7 +15,7 @@ Detection methods:
 
 import json
 
-from services.dependent_contracts import get_code, normalize_address, rpc_call
+from services.discovery.static_dependencies import get_code, normalize_address, rpc_call
 
 # ---------------------------------------------------------------------------
 # Storage slot constants
@@ -451,7 +451,7 @@ def main():
 
     from dotenv import load_dotenv
 
-    from services.dependent_contracts import resolve_rpc_for_address
+    from services.discovery.static_dependencies import resolve_rpc_for_address
 
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 

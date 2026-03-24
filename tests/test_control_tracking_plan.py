@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from schemas.control_tracking import ControlTrackingPlan, TrackedController
 from services.resolution.tracking_plan import (
     build_control_tracking_plan,
     build_control_tracking_plan_from_file,
@@ -41,7 +42,7 @@ def _fixture_source(relative_path: str) -> str:
     return (FIXTURES_DIR / relative_path).read_text()
 
 
-def _tracked_controller(plan: dict, label: str) -> dict:
+def _tracked_controller(plan: ControlTrackingPlan, label: str) -> TrackedController:
     for controller in plan["tracked_controllers"]:
         if controller["label"] == label:
             return controller

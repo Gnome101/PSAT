@@ -7,8 +7,9 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 
-from eth_utils import keccak
+from eth_utils.crypto import keccak
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -18,6 +19,7 @@ from schemas.effective_permissions import (
     EffectiveFunctionPermission,
     EffectivePermissions,
     PrincipalResolution,
+    ResolvedAddressType,
     ResolvedPrincipal,
 )
 
@@ -34,7 +36,7 @@ ELEMENTARY_TYPE_PREFIXES = (
 )
 
 
-def _load_json(path: Path) -> dict:
+def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
@@ -68,29 +70,57 @@ def _selector(function_signature: str) -> str:
     return "0x" + keccak(text=_abi_signature(function_signature)).hex()[:8]
 
 
-def _known_principals(*snapshots: dict | None) -> dict[str, ResolvedPrincipal]:
+def _resolved_principal(
+    address: str,
+    resolved_type: ResolvedAddressType,
+    details: dict[str, object],
+    *,
+    source_contract: str | None = None,
+    source_controller_id: str | None = None,
+) -> ResolvedPrincipal:
+    payload: ResolvedPrincipal = {
+        "address": address,
+        "resolved_type": resolved_type,
+        "details": details,
+    }
+    if source_contract is not None:
+        payload["source_contract"] = source_contract
+    if source_controller_id is not None:
+        payload["source_controller_id"] = source_controller_id
+    return payload
+
+
+def _known_principals(*snapshots: dict[str, Any] | None) -> dict[str, ResolvedPrincipal]:
     known: dict[str, ResolvedPrincipal] = {}
     for snapshot in snapshots:
         if not snapshot:
             continue
-        contract_name = snapshot.get("contract_name", "")
-        for controller_id, value in snapshot.get("controller_values", {}).items():
-            address = str(value.get("value", "")).lower()
+        contract_name = str(snapshot.get("contract_name", ""))
+        controller_values = snapshot.get("controller_values", {})
+        if not isinstance(controller_values, dict):
+            continue
+        for controller_id, value in controller_values.items():
+            if not isinstance(controller_id, str) or not isinstance(value, dict):
+                continue
+            address_raw = value.get("value", "")
+            address = str(address_raw).lower()
             if not address.startswith("0x"):
                 continue
-            known[address] = {
-                "address": address,
-                "resolved_type": value.get("resolved_type", "unknown"),
-                "details": dict(value.get("details", {})),
-                "source_contract": contract_name,
-                "source_controller_id": controller_id,
-            }
+            details_raw = value.get("details", {})
+            details = dict(details_raw) if isinstance(details_raw, dict) else {}
+            known[address] = _resolved_principal(
+                address,
+                cast(ResolvedAddressType, str(value.get("resolved_type", "unknown"))),
+                details,
+                source_contract=contract_name,
+                source_controller_id=controller_id,
+            )
     return known
 
 
 def _principal_for_address(address: str, known: dict[str, ResolvedPrincipal]) -> ResolvedPrincipal:
     normalized = address.lower()
-    return dict(known.get(normalized) or {"address": normalized, "resolved_type": "unknown", "details": {}})
+    return known.get(normalized) or _resolved_principal(normalized, "unknown", {})
 
 
 def build_effective_permissions(

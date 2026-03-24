@@ -30,8 +30,8 @@ import time
 from collections import Counter
 from typing import Any
 
-from services.dependent_contracts import normalize_address
-from services.discovery_ai_domain import _debug_log
+from services.discovery.inventory_domain import _debug_log
+from services.discovery.static_dependencies import normalize_address
 from utils import etherscan
 
 # Etherscan free-tier allows ~5 req/s.  A small pause between batches avoids

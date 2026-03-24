@@ -8,8 +8,10 @@ from pathlib import Path
 from schemas.contract_analysis import (
     AccessControlAnalysis,
     ContractClassification,
+    ControlModel,
     PausabilityAnalysis,
     PermissionGraph,
+    RiskLevel,
     RoleDefinition,
     SlitherFinding,
     SlitherSummary,
@@ -109,8 +111,9 @@ def _high_level_call_guards(function) -> list[str]:
     for node in getattr(function, "nodes", []):
         for _, call in getattr(node, "high_level_calls", []) or []:
             function_name = getattr(call, "function_name", None) or getattr(call, "function", None)
-            if hasattr(function_name, "name"):
-                function_name = function_name.name
+            named_function = getattr(function_name, "name", None) if function_name is not None else None
+            if named_function is not None:
+                function_name = named_function
             if str(function_name) != "canCall":
                 continue
             destination = getattr(call, "destination", None)
@@ -201,10 +204,13 @@ def _looks_like_control_function(function, effects: list[str]) -> bool:
     )
 
 
-def _has_graph_permission_evidence(graph_entry: dict | None) -> bool:
+def _has_graph_permission_evidence(graph_entry: dict[str, object] | None) -> bool:
     if not graph_entry:
         return False
-    return bool(graph_entry["guards"] or graph_entry["guard_kinds"] or graph_entry["controller_refs"])
+    guards = graph_entry.get("guards", [])
+    guard_kinds = graph_entry.get("guard_kinds", [])
+    controller_refs = graph_entry.get("controller_refs", [])
+    return bool(guards or guard_kinds or controller_refs)
 
 
 def _internal_call_names(function) -> list[str]:
@@ -334,7 +340,9 @@ def _detect_contract_classification(contract, project_dir: Path) -> ContractClas
     standards = set()
     erc_detector = getattr(contract, "ercs", None)
     if callable(erc_detector):
-        standards.update(erc_detector())
+        erc_values = erc_detector()
+        if isinstance(erc_values, (list, set, tuple)):
+            standards.update(str(value) for value in erc_values)
 
     signatures = _contract_signatures(contract)
     events = _contract_events(contract)
@@ -630,7 +638,7 @@ def _summarize_slither(slither_output: dict) -> SlitherSummary:
     }
 
 
-def _derive_static_risk_level(detector_counts: dict[str, int]) -> str:
+def _derive_static_risk_level(detector_counts: dict[str, int]) -> RiskLevel:
     if detector_counts.get("High", 0) > 0:
         return "high"
     if detector_counts.get("Medium", 0) > 0:
@@ -640,7 +648,9 @@ def _derive_static_risk_level(detector_counts: dict[str, int]) -> str:
     return "unknown"
 
 
-def _determine_control_model(contract, access_control: dict, timelock: dict) -> str:
+def _determine_control_model(
+    contract, access_control: AccessControlAnalysis, timelock: TimelockAnalysis
+) -> ControlModel:
     lower_names = [base.name.lower() for base in getattr(contract, "inheritance", [])]
     if timelock["has_timelock"] or any("governor" in name for name in lower_names):
         return "governance"

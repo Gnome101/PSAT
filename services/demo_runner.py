@@ -10,6 +10,7 @@ from typing import Callable
 
 from dotenv import load_dotenv
 
+from schemas.effective_permissions import PrincipalResolution
 from services.discovery import CONTRACTS_DIR, fetch, scaffold
 from services.policy import (
     run_hypersync_policy_backfill,
@@ -166,7 +167,7 @@ def _authority_snapshot_and_policy(
     project_dir: Path,
     resolved_graph_path: Path,
     target_snapshot_path: Path,
-) -> tuple[Path | None, Path | None, dict]:
+) -> tuple[Path | None, Path | None, PrincipalResolution]:
     target_snapshot = json_load(target_snapshot_path)
     authority_address = None
     for controller_id, value in target_snapshot.get("controller_values", {}).items():

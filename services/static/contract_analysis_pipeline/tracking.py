@@ -5,13 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from eth_utils import keccak
+from eth_utils.crypto import keccak
 
 from schemas.contract_analysis import (
     AssociatedEvent,
     AssociatedEventInput,
     ControllerTrackingTarget,
     ControllerWriterFunction,
+    Evidence,
     PermissionGraph,
     PolicyTrackingTarget,
 )
@@ -116,13 +117,13 @@ def _resolve_event_refs(event_name: str, arguments: list, event_index: dict[str,
 
 def _collect_events(
     unit, project_dir: Path, event_index: dict[str, list], seen: set[str]
-) -> list[tuple[AssociatedEvent, dict]]:
+) -> list[tuple[AssociatedEvent, Evidence]]:
     key = _unit_key(unit)
     if key in seen:
         return []
     seen.add(key)
 
-    events: list[tuple[AssociatedEvent, dict]] = []
+    events: list[tuple[AssociatedEvent, Evidence]] = []
     for node in getattr(unit, "nodes", []):
         for ir in getattr(node, "irs", []) or []:
             if type(ir).__name__ == "EventCall":
@@ -140,7 +141,7 @@ def _collect_events(
     return events
 
 
-def _dedupe_event_refs(events: list[tuple[AssociatedEvent, dict]]) -> list[AssociatedEvent]:
+def _dedupe_event_refs(events: list[tuple[AssociatedEvent, Evidence]]) -> list[AssociatedEvent]:
     deduped: dict[str, AssociatedEvent] = {}
     for event_ref, _ in events:
         deduped[event_ref["signature"]] = event_ref

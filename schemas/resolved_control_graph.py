@@ -16,7 +16,7 @@ ResolvedEdgeRelation = Literal[
 ]
 
 
-class ResolvedGraphNode(TypedDict, total=False):
+class ResolvedGraphNode(TypedDict):
     id: str
     address: str
     node_type: ResolvedNodeType
@@ -29,7 +29,7 @@ class ResolvedGraphNode(TypedDict, total=False):
     artifacts: dict[str, str]
 
 
-class ResolvedGraphEdge(TypedDict, total=False):
+class ResolvedGraphEdge(TypedDict):
     from_id: str
     to_id: str
     relation: ResolvedEdgeRelation

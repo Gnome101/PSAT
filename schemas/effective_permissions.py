@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
+from typing_extensions import NotRequired
+
 ResolvedAddressType = Literal["zero", "eoa", "safe", "timelock", "proxy_admin", "contract", "unknown"]
 PrincipalResolutionStatus = Literal[
     "complete",
@@ -20,12 +22,12 @@ class PrincipalResolution(TypedDict):
     reason: str
 
 
-class ResolvedPrincipal(TypedDict, total=False):
+class ResolvedPrincipal(TypedDict):
     address: str
     resolved_type: ResolvedAddressType
     details: dict[str, object]
-    source_contract: str
-    source_controller_id: str
+    source_contract: NotRequired[str]
+    source_controller_id: NotRequired[str]
 
 
 class AuthorityRoleGrant(TypedDict):

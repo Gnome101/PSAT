@@ -9,19 +9,28 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import requests
 import websockets
-from eth_abi import decode
-from eth_utils import keccak
+from eth_abi.abi import decode
+from eth_utils.crypto import keccak
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from schemas.control_tracking import ControlChangeEvent, ControlSnapshot, ControlTrackingPlan
+from schemas.contract_analysis import AssociatedEvent
+from schemas.control_tracking import (
+    ControlChangeEvent,
+    ControlSnapshot,
+    ControlTrackingPlan,
+    EventWatch,
+    TrackedController,
+    TrackedPolicy,
+)
 
 JSON_RPC_TIMEOUT_SECONDS = 10
+TrackedItem = TypeVar("TrackedItem", TrackedController, TrackedPolicy)
 
 
 def load_control_tracking_plan(path: Path) -> ControlTrackingPlan:
@@ -98,7 +107,7 @@ def _decode_topic_value(raw_value: str, abi_type: str):
 
 def _try_eth_call_decoded(
     rpc_url: str, contract_address: str, signature: str, abi_type: str, block_tag: str = "latest"
-):
+) -> object | None:
     try:
         raw = _eth_call_raw(rpc_url, contract_address, signature, block_tag)
         if _normalize_hex(raw) in {"0x", "0x0"}:
@@ -111,6 +120,16 @@ def _try_eth_call_decoded(
 def _get_code(rpc_url: str, address: str, block_tag: str = "latest") -> str:
     raw = _rpc_request(rpc_url, "eth_getCode", [address, block_tag])
     return _normalize_hex(raw if isinstance(raw, str) else "0x")
+
+
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value, 16) if value.startswith("0x") else int(value)
+    raise RuntimeError(f"Unsupported integer value: {value!r}")
 
 
 def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "latest") -> tuple[str, dict[str, object]]:
@@ -127,8 +146,8 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
     if safe_owners is not None and safe_threshold is not None:
         return "safe", {
             "address": normalized,
-            "owners": safe_owners,
-            "threshold": int(safe_threshold),
+            "owners": [str(item).lower() for item in safe_owners] if isinstance(safe_owners, list) else [],
+            "threshold": _coerce_int(safe_threshold),
         }
 
     min_delay = _try_eth_call_decoded(rpc_url, normalized, "getMinDelay()", "uint256", block_tag)
@@ -136,7 +155,7 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
         min_delay = _try_eth_call_decoded(rpc_url, normalized, "delay()", "uint256", block_tag)
     if min_delay is not None:
         owner = _try_eth_call_decoded(rpc_url, normalized, "owner()", "address", block_tag)
-        details: dict[str, object] = {"address": normalized, "delay": int(min_delay)}
+        details: dict[str, object] = {"address": normalized, "delay": _coerce_int(min_delay)}
         if owner is not None:
             details["owner"] = owner
         return "timelock", details
@@ -280,7 +299,7 @@ def grouped_event_filters(plan: ControlTrackingPlan) -> list[dict[str, Any]]:
     ]
 
 
-def _matching_event_watch_items(items: list[dict[str, Any]], log_entry: dict[str, Any]) -> list[dict[str, Any]]:
+def _matching_event_watch_items(items: list[TrackedItem], log_entry: dict[str, Any]) -> list[TrackedItem]:
     log_address = _normalize_hex(log_entry.get("address"))
     topics = list(log_entry.get("topics") or [])
     topic0 = _normalize_hex(topics[0]) if topics else "0x"
@@ -297,15 +316,15 @@ def _matching_event_watch_items(items: list[dict[str, Any]], log_entry: dict[str
     return matches
 
 
-def matching_controllers_for_log(plan: ControlTrackingPlan, log_entry: dict[str, Any]) -> list[dict[str, Any]]:
+def matching_controllers_for_log(plan: ControlTrackingPlan, log_entry: dict[str, Any]) -> list[TrackedController]:
     return _matching_event_watch_items(list(plan.get("tracked_controllers", [])), log_entry)
 
 
-def matching_policies_for_log(plan: ControlTrackingPlan, log_entry: dict[str, Any]) -> list[dict[str, Any]]:
+def matching_policies_for_log(plan: ControlTrackingPlan, log_entry: dict[str, Any]) -> list[TrackedPolicy]:
     return _matching_event_watch_items(list(plan.get("tracked_policies", [])), log_entry)
 
 
-def _event_from_log(event_watch: dict[str, Any], log_entry: dict[str, Any]) -> dict[str, Any] | None:
+def _event_from_log(event_watch: EventWatch, log_entry: dict[str, Any]) -> AssociatedEvent | None:
     topics = list(log_entry.get("topics") or [])
     topic0 = _normalize_hex(topics[0]) if topics else "0x"
     for event in event_watch.get("events", []):
@@ -314,7 +333,7 @@ def _event_from_log(event_watch: dict[str, Any], log_entry: dict[str, Any]) -> d
     return None
 
 
-def _decode_event_log_fields(event_ref: dict[str, Any], log_entry: dict[str, Any]) -> dict[str, Any]:
+def _decode_event_log_fields(event_ref: AssociatedEvent, log_entry: dict[str, Any]) -> dict[str, Any]:
     topics = list(log_entry.get("topics") or [])
     topic_index = 1
     non_indexed_types = [item["type"] for item in event_ref.get("inputs", []) if not item.get("indexed")]
@@ -353,7 +372,7 @@ def _decode_event_log_fields(event_ref: dict[str, Any], log_entry: dict[str, Any
 
 
 def policy_change_events(
-    plan: ControlTrackingPlan, policy_matches: list[dict[str, Any]], log_entry: dict[str, Any]
+    plan: ControlTrackingPlan, policy_matches: list[TrackedPolicy], log_entry: dict[str, Any]
 ) -> list[ControlChangeEvent]:
     if not policy_matches:
         return []
@@ -367,9 +386,9 @@ def policy_change_events(
     tx_hash = log_entry.get("transactionHash")
     changes: list[ControlChangeEvent] = []
     for policy in policy_matches:
-        event_watch = policy.get("event_watch") or {}
+        event_watch = policy["event_watch"]
         event_ref = _event_from_log(event_watch, log_entry)
-        decoded_fields = _decode_event_log_fields(event_ref or {}, log_entry) if event_ref else {}
+        decoded_fields = _decode_event_log_fields(event_ref, log_entry) if event_ref else {}
         notes = list(policy.get("notes", []))
         if decoded_fields:
             notes.append(

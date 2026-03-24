@@ -62,7 +62,7 @@ class ControlTrackingPlan(TypedDict):
     tracked_policies: list[TrackedPolicy]
 
 
-class ControlSnapshotValue(TypedDict, total=False):
+class ControlSnapshotValue(TypedDict):
     source: str
     value: str | None
     block_number: int

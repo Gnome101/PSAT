@@ -9,10 +9,14 @@ import re
 import sys
 from collections import deque
 from pathlib import Path
+from typing import Any, TypedDict, cast
+
+from typing_extensions import NotRequired
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from schemas.control_tracking import ControlSnapshot
 from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEdge, ResolvedGraphNode
 from services.discovery.fetch import CONTRACTS_DIR, fetch, scaffold
 from services.static import analyze, analyze_contract
@@ -28,11 +32,42 @@ from .tracking_plan import write_control_tracking_plan
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
 
 
-def _load_json(path: Path) -> dict:
+class LoadedArtifacts(TypedDict):
+    project_dir: Path
+    analysis_path: Path
+    plan_path: Path
+    snapshot_path: Path
+    analysis: dict[str, Any]
+    snapshot: ControlSnapshot
+
+
+class PendingContract(TypedDict):
+    address: str
+    depth: int
+    analysis_path: NotRequired[Path]
+
+
+class RolePrincipalAccumulator(TypedDict):
+    address: str
+    resolved_type: str
+    details: dict[str, object]
+    roles: set[int]
+    functions: set[str]
+
+
+class RolePrincipal(TypedDict):
+    address: str
+    resolved_type: str
+    details: dict[str, object]
+    roles: list[int]
+    functions: list[str]
+
+
+def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def _load_effective_permissions(project_dir: Path) -> dict | None:
+def _load_effective_permissions(project_dir: Path) -> dict[str, Any] | None:
     path = project_dir / "effective_permissions.json"
     if not path.exists():
         return None
@@ -57,7 +92,7 @@ def _load_or_build_artifacts(
     rpc_url: str,
     *,
     refresh_snapshots: bool,
-) -> dict:
+) -> LoadedArtifacts:
     analysis = _load_json(analysis_path)
     project_dir = analysis_path.parent
     plan_path = project_dir / "control_tracking_plan.json"
@@ -70,7 +105,7 @@ def _load_or_build_artifacts(
         snapshot = build_control_snapshot(plan, rpc_url)
         write_control_snapshot(snapshot, snapshot_path)
     else:
-        snapshot = _load_json(snapshot_path)
+        snapshot = cast(ControlSnapshot, _load_json(snapshot_path))
 
     return {
         "project_dir": project_dir,
@@ -88,9 +123,9 @@ def _materialize_contract_artifacts(
     *,
     workspace_prefix: str,
     refresh_snapshots: bool,
-) -> dict:
+) -> LoadedArtifacts:
     result = fetch(address)
-    contract_name = result.get("ContractName", "Contract")
+    contract_name = str(result.get("ContractName", "Contract"))
     project_name = _workspace_name(contract_name, address, workspace_prefix)
     project_dir = CONTRACTS_DIR / project_name
     analysis_path = project_dir / "contract_analysis.json"
@@ -180,7 +215,8 @@ def _add_edge(edges: dict[tuple, ResolvedGraphEdge], edge: ResolvedGraphEdge) ->
 def _nested_principals_for_details(resolved_type: str, details: dict[str, object]) -> list[tuple[str, str, str]]:
     principals: list[tuple[str, str, str]] = []
     if resolved_type == "safe":
-        for owner in details.get("owners", []) or []:
+        owners = details.get("owners")
+        for owner in owners if isinstance(owners, list) else []:
             if isinstance(owner, str) and owner.startswith("0x"):
                 principals.append((owner.lower(), "safe_owner", "safe owner"))
     elif resolved_type == "timelock":
@@ -194,22 +230,30 @@ def _nested_principals_for_details(resolved_type: str, details: dict[str, object
     return principals
 
 
-def _role_principals_from_effective_permissions(effective_permissions: dict) -> list[dict[str, object]]:
-    principals: dict[str, dict[str, object]] = {}
+def _role_principals_from_effective_permissions(effective_permissions: dict[str, Any]) -> list[RolePrincipal]:
+    principals: dict[str, RolePrincipalAccumulator] = {}
     for function in effective_permissions.get("functions", []):
+        if not isinstance(function, dict):
+            continue
         function_signature = str(function.get("function", ""))
         for role_grant in function.get("authority_roles", []):
+            if not isinstance(role_grant, dict):
+                continue
             role = int(role_grant["role"])
             for principal in role_grant.get("principals", []):
+                if not isinstance(principal, dict):
+                    continue
                 address = str(principal.get("address", "")).lower()
                 if not address.startswith("0x"):
                     continue
+                details_raw = principal.get("details", {})
+                details = dict(details_raw) if isinstance(details_raw, dict) else {}
                 payload = principals.setdefault(
                     address,
                     {
                         "address": address,
                         "resolved_type": str(principal.get("resolved_type", "unknown")),
-                        "details": dict(principal.get("details", {})),
+                        "details": details,
                         "roles": set(),
                         "functions": set(),
                     },
@@ -219,25 +263,27 @@ def _role_principals_from_effective_permissions(effective_permissions: dict) -> 
                     payload["functions"].add(function_signature)
                 if payload.get("resolved_type") in {None, "", "unknown"} and principal.get("resolved_type"):
                     payload["resolved_type"] = str(principal.get("resolved_type"))
-                merged_details = dict(payload.get("details", {}))
-                merged_details.update(dict(principal.get("details", {})))
+                merged_details = dict(payload["details"])
+                merged_details.update(details)
                 payload["details"] = merged_details
 
-    serialized: list[dict[str, object]] = []
+    serialized: list[RolePrincipal] = []
     for payload in principals.values():
         serialized.append(
             {
                 "address": payload["address"],
                 "resolved_type": payload["resolved_type"],
-                "details": dict(payload.get("details", {})),
-                "roles": sorted(payload.get("roles", set())),
-                "functions": sorted(payload.get("functions", set())),
+                "details": dict(payload["details"]),
+                "roles": sorted(payload["roles"]),
+                "functions": sorted(payload["functions"]),
             }
         )
     return sorted(serialized, key=lambda item: str(item["address"]))
 
 
-def _maybe_queue_address(queue: deque, queued: set[str], address: str, depth: int, max_depth: int) -> None:
+def _maybe_queue_address(
+    queue: deque[PendingContract], queued: set[str], address: str, depth: int, max_depth: int
+) -> None:
     if address in queued or depth > max_depth:
         return
     queue.append({"address": address, "depth": depth})
@@ -248,7 +294,7 @@ def _add_nested_principals(
     *,
     nodes: dict[str, ResolvedGraphNode],
     edges: dict[tuple, ResolvedGraphEdge],
-    queue: deque,
+    queue: deque[PendingContract],
     queued: set[str],
     rpc_url: str,
     from_node_id: str,
@@ -295,9 +341,10 @@ def resolve_control_graph(
 ) -> ResolvedControlGraph:
     root_artifacts = _load_or_build_artifacts(root_analysis_path, rpc_url, refresh_snapshots=refresh_snapshots)
     root_analysis = root_artifacts["analysis"]
-    root_address = root_analysis["subject"]["address"].lower()
+    root_subject = root_analysis.get("subject", {})
+    root_address = str(root_subject.get("address", "")).lower()
 
-    queue = deque(
+    queue: deque[PendingContract] = deque(
         [
             {
                 "address": root_address,
@@ -319,9 +366,10 @@ def resolve_control_graph(
         if address in processed or depth > max_depth:
             continue
 
-        if pending.get("analysis_path") is not None:
+        analysis_path = pending.get("analysis_path")
+        if analysis_path is not None:
             artifacts = _load_or_build_artifacts(
-                Path(pending["analysis_path"]),
+                analysis_path,
                 rpc_url,
                 refresh_snapshots=refresh_snapshots,
             )
@@ -337,7 +385,8 @@ def resolve_control_graph(
         analysis = artifacts["analysis"]
         snapshot = artifacts["snapshot"]
         effective_permissions = _load_effective_permissions(artifacts["project_dir"])
-        contract_name = analysis["subject"]["name"]
+        subject = analysis.get("subject", {})
+        contract_name = str(subject.get("name", address))
         contract_node_id = _ensure_node(
             nodes,
             address=address,
@@ -404,7 +453,7 @@ def resolve_control_graph(
         for principal_value in _role_principals_from_effective_permissions(effective_permissions or {}):
             principal_address = str(principal_value["address"]).lower()
             resolved_type = str(principal_value.get("resolved_type", "unknown"))
-            details = dict(principal_value.get("details", {}))
+            details = dict(principal_value["details"])
             if resolved_type == "unknown":
                 resolved_type, classified_details = classify_resolved_address(rpc_url, principal_address)
                 merged_details = dict(details)
@@ -421,8 +470,8 @@ def resolve_control_graph(
                 node_type=node_type,
                 details=details,
             )
-            roles = principal_value.get("roles", [])
-            functions = principal_value.get("functions", [])
+            roles = principal_value["roles"]
+            functions = principal_value["functions"]
             _add_edge(
                 edges,
                 {

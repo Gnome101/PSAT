@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -122,7 +123,7 @@ def _source_evidence(item, project_dir: Path, detail: str | None = None) -> Evid
     absolute = getattr(file_info, "absolute", None) if file_info else None
     lines = list(getattr(mapping, "lines", []) or [])
 
-    evidence = {}
+    evidence: Evidence = {}
     if absolute:
         path = Path(str(absolute))
         try:
@@ -164,14 +165,23 @@ def _dedupe_strings(values: list[str]) -> list[str]:
     return sorted({value for value in values if value})
 
 
-def _call_or_value(item, attr_name: str):
+def _call_or_value(item, attr_name: str) -> list[Any]:
     value = getattr(item, attr_name, [])
-    return value() if callable(value) else value
+    resolved = value() if callable(value) else value
+    if resolved is None:
+        return []
+    if isinstance(resolved, list):
+        return resolved
+    if isinstance(resolved, (tuple, set)):
+        return list(resolved)
+    if isinstance(resolved, Iterable) and not isinstance(resolved, (str, bytes, dict)):
+        return list(resolved)
+    return []
 
 
 def _node_contains_require_or_assert(node) -> bool:
     marker = getattr(node, "contains_require_or_assert", False)
-    return marker() if callable(marker) else bool(marker)
+    return bool(marker()) if callable(marker) else bool(marker)
 
 
 def _function_effects(function) -> list[str]:

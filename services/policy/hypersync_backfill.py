@@ -14,7 +14,8 @@ from typing import Any
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from schemas.control_tracking import ControlTrackingPlan
+from schemas.contract_analysis import AssociatedEvent
+from schemas.control_tracking import ControlTrackingPlan, TrackedPolicy
 from schemas.hypersync_backfill import (
     PolicyEventRecord,
     PolicyStateSnapshot,
@@ -87,12 +88,22 @@ def _log_entry_from_hypersync_log(log) -> dict[str, Any]:
     }
 
 
-def _policy_event_lookup(plan: ControlTrackingPlan) -> dict[str, list[tuple[dict[str, Any], dict[str, Any]]]]:
-    by_topic0: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+def _policy_event_lookup(plan: ControlTrackingPlan) -> dict[str, list[tuple[TrackedPolicy, AssociatedEvent]]]:
+    by_topic0: dict[str, list[tuple[TrackedPolicy, AssociatedEvent]]] = {}
     for policy in plan.get("tracked_policies", []):
         for event in (policy.get("event_watch") or {}).get("events", []):
             by_topic0.setdefault(_normalize_hex(event["topic0"]), []).append((policy, event))
     return by_topic0
+
+
+def _coerce_int(value: object) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value, 16) if value.startswith("0x") else int(value)
+    raise RuntimeError(f"Unsupported integer value: {value!r}")
 
 
 async def fetch_policy_event_history(
@@ -182,7 +193,7 @@ def reconstruct_policy_state(plan: ControlTrackingPlan, records: list[PolicyEven
             continue
 
         if signature == "RoleCapabilityUpdated(uint8,address,bytes4,bool)":
-            role = int(fields["role"])
+            role = _coerce_int(fields["role"])
             target = str(fields["target"]).lower()
             function_sig = str(fields["functionSig"]).lower()
             role_capabilities[(role, target, function_sig)] = {
@@ -197,7 +208,7 @@ def reconstruct_policy_state(plan: ControlTrackingPlan, records: list[PolicyEven
 
         if signature == "UserRoleUpdated(address,uint8,bool)":
             user = str(fields["user"]).lower()
-            role = int(fields["role"])
+            role = _coerce_int(fields["role"])
             user_roles[(user, role)] = {
                 "user": user,
                 "role": role,

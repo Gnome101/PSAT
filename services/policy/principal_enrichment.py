@@ -9,6 +9,7 @@ import re
 import sys
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -17,7 +18,7 @@ from schemas.principal_labels import PrincipalLabels, PrincipalPermission, Princ
 from services.resolution.tracking import classify_resolved_address
 
 
-def _load_json(path: Path) -> dict:
+def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
@@ -39,41 +40,53 @@ def _display_from_type(resolved_type: str) -> str:
     }.get(resolved_type, "Unknown principal")
 
 
-def _collect_permissions(effective_permissions: dict) -> tuple[dict[str, list[PrincipalPermission]], dict[str, str]]:
+def _collect_permissions(
+    effective_permissions: dict[str, Any],
+) -> tuple[dict[str, list[PrincipalPermission]], dict[str, str]]:
     by_address: dict[str, list[PrincipalPermission]] = defaultdict(list)
     contract_name = effective_permissions["contract_name"]
     contract_slug = _slug(contract_name)
     permission_labels: dict[str, set[str]] = defaultdict(set)
 
     for function in effective_permissions.get("functions", []):
-        payload_base = {
-            "function": function["function"],
-            "effect_labels": list(function.get("effect_labels", [])),
-            "authority_public": bool(function.get("authority_public", False)),
-        }
+        function_name = str(function.get("function", ""))
+        effect_labels = [str(label) for label in function.get("effect_labels", [])]
+        authority_public = bool(function.get("authority_public", False))
         direct_owner = function.get("direct_owner")
         if direct_owner:
             address = direct_owner["address"].lower()
-            by_address[address].append({**payload_base, "role": None})
+            permission: PrincipalPermission = {
+                "function": function_name,
+                "effect_labels": effect_labels,
+                "authority_public": authority_public,
+                "role": None,
+            }
+            by_address[address].append(permission)
             permission_labels[address].update({f"{contract_slug}_direct_owner", f"{contract_slug}_permissioned"})
 
         for role_grant in function.get("authority_roles", []):
             role = int(role_grant["role"])
             for principal in role_grant.get("principals", []):
                 address = principal["address"].lower()
-                by_address[address].append({**payload_base, "role": role})
+                permission: PrincipalPermission = {
+                    "function": function_name,
+                    "effect_labels": effect_labels,
+                    "authority_public": authority_public,
+                    "role": role,
+                }
+                by_address[address].append(permission)
                 permission_labels[address].update(
                     {
                         f"{contract_slug}_permissioned",
                         f"{contract_slug}_role_{role}_holder",
                     }
                 )
-                effect_labels = set(function.get("effect_labels", []))
-                if "arbitrary_external_call" in effect_labels:
+                effect_labels_set = set(effect_labels)
+                if "arbitrary_external_call" in effect_labels_set:
                     permission_labels[address].add(f"{contract_slug}_manager")
-                if effect_labels.intersection({"asset_pull", "asset_send", "mint", "burn"}):
+                if effect_labels_set.intersection({"asset_pull", "asset_send", "mint", "burn"}):
                     permission_labels[address].add(f"{contract_slug}_operator")
-                if effect_labels.intersection(
+                if effect_labels_set.intersection(
                     {
                         "authority_update",
                         "ownership_transfer",

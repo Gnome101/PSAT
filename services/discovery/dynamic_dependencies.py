@@ -9,15 +9,14 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from services.dependent_contracts import (
+from utils.etherscan import get as etherscan_get
+
+from .static_dependencies import (
     get_code,
     has_deployed_code,
     normalize_address,
     rpc_call,
 )
-from utils.etherscan import get as etherscan_get
-
-from .static_dependencies import normalize_address, rpc_call
 
 TRACE_OPS = {"CALL", "STATICCALL", "DELEGATECALL", "CALLCODE", "CREATE", "CREATE2"}
 
