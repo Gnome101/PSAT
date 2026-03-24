@@ -7,3 +7,4 @@ __pycache__/
 site/node_modules/
 site/dist/
 contracts/
+protocols/

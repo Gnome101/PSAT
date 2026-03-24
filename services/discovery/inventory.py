@@ -30,7 +30,8 @@ from .inventory_domain import (  # noqa: E402
     _maybe_domain,
     _tavily_search,
 )
-from .inventory_extract import extract_inventory_entries_from_pages  # noqa: E402
+from services.discovery_ai_inventory import extract_inventory_entries_from_pages  # noqa: E402
+from services.discovery_deployer import expand_from_deployers  # noqa: E402
 
 
 def _build_links(evidence: list[dict[str, Any]]) -> dict[str, str]:
@@ -109,6 +110,7 @@ def _score_inventory_item(chain: str, evidence: list[dict[str, Any]]) -> tuple[f
     table_count = sum(1 for item in evidence if item.get("kind") == "official_inventory_table")
     link_count = sum(1 for item in evidence if item.get("kind") == "official_inventory_link")
     text_count = sum(1 for item in evidence if item.get("kind") == "official_inventory_text")
+    deployer_count = sum(1 for item in evidence if item.get("kind") == "deployer_expansion")
     explorer_count = sum(1 for item in evidence if item.get("explorer_url"))
 
     confidence = 0.35
@@ -120,6 +122,8 @@ def _score_inventory_item(chain: str, evidence: list[dict[str, Any]]) -> tuple[f
         confidence += 0.12
     if text_count and not table_count and not link_count:
         confidence += 0.05
+    if deployer_count:
+        confidence += 0.15
     confidence += min(0.12, max(0, page_count - 1) * 0.06)
     if explorer_count:
         confidence += 0.06
@@ -137,10 +141,30 @@ def _score_inventory_item(chain: str, evidence: list[dict[str, Any]]) -> tuple[f
         reasons.append(f"Explorer-link evidence: {link_count}")
     if text_count and not table_count:
         reasons.append(f"Text evidence: {text_count}")
+    if deployer_count:
+        reasons.append(f"Deployer evidence: {deployer_count}")
     if any(item.get("chain_from_hint") for item in evidence):
         reasons.append("Applied requested chain to chain-agnostic evidence")
 
     return round(confidence, 4), reasons
+
+
+def _determine_sources(evidence: list[dict[str, Any]]) -> list[str]:
+    """Derive the source list from evidence kinds present for an address."""
+    _KIND_TO_SOURCE = {
+        "official_inventory_table": "tavily_ai_inventory",
+        "official_inventory_link": "tavily_ai_inventory",
+        "official_inventory_text": "tavily_ai_inventory",
+        "deployer_expansion": "deployer_expansion",
+    }
+    sources: list[str] = []
+    seen: set[str] = set()
+    for item in evidence:
+        source = _KIND_TO_SOURCE.get(item.get("kind", ""), "tavily_ai_inventory")
+        if source not in seen:
+            seen.add(source)
+            sources.append(source)
+    return sources
 
 
 def _build_contracts(entries: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -153,6 +177,11 @@ def _build_contracts(entries: list[dict[str, Any]], limit: int) -> list[dict[str
         links = _build_links(evidence)
         if not links:
             continue
+        sources = _determine_sources(evidence)
+        # Drop unnamed deployer-only contracts — without a name they can't be
+        # catalogued or fed into the analysis pipeline (which needs verified source).
+        if not name and sources == ["deployer_expansion"]:
+            continue
         if len(chains) > 1:
             reasons = [*reasons, f"Published chains: {', '.join(chains)}"]
         contracts.append(
@@ -163,7 +192,7 @@ def _build_contracts(entries: list[dict[str, Any]], limit: int) -> list[dict[str
                 "chain": chain,
                 "chains": chains,
                 "confidence": confidence,
-                "source": "tavily_ai_inventory",
+                "source": sources,
                 "reasons": reasons,
                 "links": links,
             }
@@ -186,6 +215,7 @@ def search_protocol_inventory(
     chain: str | None = None,
     limit: int = 100,
     max_queries: int = 4,
+    run_deployer: bool = True,
     debug: bool = False,
 ) -> dict[str, Any]:
     clean_company = company.strip()
@@ -266,7 +296,20 @@ def search_protocol_inventory(
 
     if selected_urls:
         notes.append(f"Selected pages: {len(selected_urls)}")
-    entries = extract_inventory_entries_from_pages(selected_urls, requested_chain, debug=debug)
+    tavily_entries = extract_inventory_entries_from_pages(selected_urls, requested_chain, debug=debug)
+
+    deployer_entries: list[dict[str, Any]] = []
+    if run_deployer and tavily_entries:
+        seed_addresses = sorted({e["address"] for e in tavily_entries})
+        _debug_log(debug, f"Running deployer expansion with {len(seed_addresses)} seed(s)")
+        try:
+            deployer_entries = expand_from_deployers(seed_addresses, debug=debug)
+            notes.append(f"Deployer expansion: {len(deployer_entries)} contract(s)")
+        except Exception as exc:
+            _debug_log(debug, f"Deployer expansion failed: {exc!r}")
+            notes.append(f"Deployer expansion failed: {exc}")
+
+    entries = tavily_entries + deployer_entries
     contracts = _build_contracts(entries, limit=limit)
 
     if not contracts:
