@@ -329,18 +329,22 @@ def find_dynamic_dependencies(
         )
 
     edges = _dedupe_edges(all_edges)
-    dependency_edges = [edge for edge in edges if edge["to"] != target]
+
+    # Keep only direct calls from the target contract.  Intermediate calls
+    # between dependencies (e.g. DEX pool → oracle) are trace noise — they
+    # don't represent what the *target* depends on.
+    direct_edges = [edge for edge in edges if edge["from"] == target and edge["to"] != target]
 
     # Filter out precompiles and addresses with no deployed code (EOAs)
-    dep_candidates = sorted({edge["to"] for edge in dependency_edges})
+    dep_candidates = sorted({edge["to"] for edge in direct_edges})
     contracts = {
         addr for addr in dep_candidates if not _is_precompile(addr) and has_deployed_code(get_code(trace_rpc, addr))
     }
-    dependency_edges = [edge for edge in dependency_edges if edge["to"] in contracts]
+    direct_edges = [edge for edge in direct_edges if edge["to"] in contracts]
     dependencies = sorted(contracts)
 
     provenance: dict[str, list[dict]] = {}
-    for edge in dependency_edges:
+    for edge in direct_edges:
         dep = edge["to"]
         record = {
             "tx_hash": edge["tx_hash"],
@@ -370,7 +374,7 @@ def find_dynamic_dependencies(
         "trace_methods": sorted(trace_methods),
         "dependencies": dependencies,
         "provenance": provenance,
-        "dependency_graph": _build_graph(dependency_edges),
+        "dependency_graph": _build_graph(direct_edges),
         "trace_errors": trace_errors,
     }
 

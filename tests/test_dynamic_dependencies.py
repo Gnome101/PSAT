@@ -250,12 +250,14 @@ def test_find_dynamic_dependencies_aggregates_graph(monkeypatch):
 
     out = ddc.find_dynamic_dependencies(target, tx_limit=2)
     assert out["address"] == target
+    # Only direct calls from target are included; the indirect
+    # 0x2222→0x3333 DELEGATECALL is filtered out.
     assert out["dependencies"] == [
         "0x2222222222222222222222222222222222222222",
-        "0x3333333333333333333333333333333333333333",
     ]
     assert len(out["transactions_analyzed"]) == 2
-    assert len(out["dependency_graph"]) == 2
+    assert len(out["dependency_graph"]) == 1
+    assert out["dependency_graph"][0]["from"] == target
     assert isinstance(out["trace_errors"], list) and out["trace_errors"] == []
 
 
