@@ -44,19 +44,20 @@ DEFAULT_PUBLIC_RPCS_BY_NETWORK = {
     ),
 }
 
+
 # Normalize an Ethereum address to lowercase with a single 0x prefix for consistent comparisons/caching.
 def normalize_address(address: str) -> str:
     return "0x" + address.lower().replace("0x", "", 1)
+
 
 # Return True if an eth_getCode response represents deployed contract bytecode (not an empty/non-contract result).
 def has_deployed_code(bytecode_hex: str) -> bool:
     return bytecode_hex not in EMPTY_CODE_VALUES
 
+
 # Send a JSON-RPC POST request to the given RPC endpoint with retries/backoff and return the response "result" field.
 def rpc_call(rpc_url: str, method: str, params: list, retries: int = 1) -> str:
-    payload = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-    ).encode("utf-8")
+    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode("utf-8")
     request = urllib.request.Request(
         rpc_url,
         data=payload,
@@ -84,9 +85,11 @@ def rpc_call(rpc_url: str, method: str, params: list, retries: int = 1) -> str:
                 continue
             raise RuntimeError(f"RPC request failed for {rpc_url}: {exc}") from exc
 
+
 # Fetch the deployed EVM bytecode at an address via eth_getCode.
 def get_code(rpc_url: str, address: str) -> str:
     return rpc_call(rpc_url, "eth_getCode", [address, "latest"])
+
 
 # Pick an RPC endpoint (custom or from known public lists) where the given address has deployed bytecode, returning (network, rpc_url).
 def resolve_rpc_for_address(address: str, rpc_url: str | None = None) -> tuple[str, str]:
@@ -110,6 +113,7 @@ def resolve_rpc_for_address(address: str, rpc_url: str | None = None) -> tuple[s
         message += " " + " | ".join(errors[:3])
     raise RuntimeError(message)
 
+
 # Parse EVM bytecode and extract any 20-byte constants pushed with PUSH20 (0x73) that look like embedded addresses.
 def extract_push20_addresses(bytecode_hex: str) -> set[str]:
     raw = bytecode_hex[2:] if bytecode_hex.startswith("0x") else bytecode_hex
@@ -132,6 +136,7 @@ def extract_push20_addresses(bytecode_hex: str) -> set[str]:
 
     out.discard("0x" + ("0" * 40))
     return out
+
 
 # Starting from a root contract, traverse reachable embedded PUSH20 addresses and return the set of those that are deployed contracts.
 def discover_dependencies(rpc_url: str, root: str) -> list[str]:

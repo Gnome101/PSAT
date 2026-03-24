@@ -11,8 +11,7 @@ import html as _html
 import re
 from typing import Any
 
-from services.dependent_contracts import normalize_address as _normalize_address
-from services.discovery_ai_domain import (
+from .inventory_domain import (
     ADDRESS_RE,
     TAG_RE,
     URL_RE,
@@ -24,6 +23,7 @@ from services.discovery_ai_domain import (
     _is_explorer_domain,
     _resolve_chain,
 )
+from .static_dependencies import normalize_address as _normalize_address
 
 _SCRIPT_STYLE_RE = re.compile(r"(?is)<(script|style|noscript|svg)\b.*?</\1>")
 _ANCHOR_RE = re.compile(r"""(?is)<a\b[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>""")

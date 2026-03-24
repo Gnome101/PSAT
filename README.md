@@ -4,6 +4,17 @@ Protocol Security Assessment Tool.
 
 The repo fetches verified contract source, runs static analysis, resolves current control state, reconstructs authority policy when available, and exposes the results through a FastAPI + Vite demo site.
 
+## Service Packages
+
+Backend code is now grouped by domain:
+
+- [`services/discovery/`](/home/gnome2/asu/capstone/PSAT/services/discovery)
+- [`services/static/`](/home/gnome2/asu/capstone/PSAT/services/static)
+- [`services/resolution/`](/home/gnome2/asu/capstone/PSAT/services/resolution)
+- [`services/policy/`](/home/gnome2/asu/capstone/PSAT/services/policy)
+
+The older top-level modules under [`services/`](/home/gnome2/asu/capstone/PSAT/services) are now compatibility wrappers so existing imports and scripts keep working during the transition.
+
 ## Main Outputs
 
 Each run is written under [`contracts/`](/home/gnome2/asu/capstone/PSAT/contracts) and typically includes:
@@ -121,7 +132,7 @@ uv run python main.py 0x08c6F91e2B681FaF5e17227F2a44C307b3C1364C --name BoringVa
 Then build the live control artifacts:
 
 ```bash
-uv run python services/control_tracker.py contracts/BoringVault_08c6F91e/control_tracking_plan.json --rpc https://ethereum-rpc.publicnode.com --snapshot-out contracts/BoringVault_08c6F91e/control_snapshot.json --changes-out contracts/BoringVault_08c6F91e/control_change_events.jsonl --once
+uv run python services/resolution/tracking.py contracts/BoringVault_08c6F91e/control_tracking_plan.json --rpc https://ethereum-rpc.publicnode.com --snapshot-out contracts/BoringVault_08c6F91e/control_snapshot.json --changes-out contracts/BoringVault_08c6F91e/control_change_events.jsonl --once
 ```
 
 ## Demo Site Flow
@@ -141,12 +152,12 @@ The FastAPI demo runner does this for a submitted address:
 
 The implementation is in [`services/demo_runner.py`](/home/gnome2/asu/capstone/PSAT/services/demo_runner.py).
 
-## Docker Backend
+## Docker
 
-The backend can also be run in Docker.
+The monorepo can be run with separate `api` and `site` containers.
 
 ```bash
-docker compose up --build backend
+docker compose up --build api site
 ```
 
 See [docs/docker-backend.md](/home/gnome2/asu/capstone/PSAT/docs/docker-backend.md).

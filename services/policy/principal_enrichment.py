@@ -11,10 +11,10 @@ from collections import defaultdict
 from pathlib import Path
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.principal_labels import PrincipalLabels, PrincipalPermission, PrincipalProfile
-from services.control_tracker import classify_resolved_address
+from services.resolution.tracking import classify_resolved_address
 
 
 def _load_json(path: Path) -> dict:
@@ -73,7 +73,15 @@ def _collect_permissions(effective_permissions: dict) -> tuple[dict[str, list[Pr
                     permission_labels[address].add(f"{contract_slug}_manager")
                 if effect_labels.intersection({"asset_pull", "asset_send", "mint", "burn"}):
                     permission_labels[address].add(f"{contract_slug}_operator")
-                if effect_labels.intersection({"authority_update", "ownership_transfer", "hook_update", "implementation_update", "role_management"}):
+                if effect_labels.intersection(
+                    {
+                        "authority_update",
+                        "ownership_transfer",
+                        "hook_update",
+                        "implementation_update",
+                        "role_management",
+                    }
+                ):
                     permission_labels[address].add(f"{contract_slug}_admin")
 
     return by_address, {address: ",".join(sorted(labels)) for address, labels in permission_labels.items()}
@@ -90,7 +98,9 @@ def _node_by_id(graph: dict) -> dict[str, dict]:
     return {node["id"]: node for node in graph.get("nodes", [])}
 
 
-def _graph_labels_for_node(node: dict, incoming_edges: list[dict], node_index: dict[str, dict]) -> tuple[set[str], list[str]]:
+def _graph_labels_for_node(
+    node: dict, incoming_edges: list[dict], node_index: dict[str, dict]
+) -> tuple[set[str], list[str]]:
     labels = {node.get("resolved_type", "unknown")}
     context: list[str] = []
     if node.get("resolved_type") == "safe":
@@ -198,7 +208,9 @@ def build_principal_labels(
         if resolved_type == "unknown" and rpc_url:
             resolved_type, details = classify_resolved_address(rpc_url, address)
 
-        labels, graph_context = _graph_labels_for_node(node or {"resolved_type": resolved_type}, incoming_by_id.get((node or {}).get("id", ""), []), nodes_by_id)
+        labels, graph_context = _graph_labels_for_node(
+            node or {"resolved_type": resolved_type}, incoming_by_id.get((node or {}).get("id", ""), []), nodes_by_id
+        )
         hint_string = permission_label_hints.get(address)
         if hint_string:
             labels.update(hint_string.split(","))
@@ -259,7 +271,9 @@ def write_principal_labels_from_files(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build frontend-friendly principal labels from permission and control-graph artifacts.")
+    parser = argparse.ArgumentParser(
+        description="Build frontend-friendly principal labels from permission and control-graph artifacts."
+    )
     parser.add_argument("effective_permissions", help="Path to effective_permissions.json")
     parser.add_argument("--resolved-graph", help="Optional path to resolved_control_graph.json")
     parser.add_argument("--rpc", help="Optional RPC URL for classifying addresses missing from the resolved graph")

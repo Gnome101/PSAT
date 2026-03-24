@@ -9,7 +9,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from services.dependent_contracts import normalize_address, rpc_call
+from .static_dependencies import normalize_address, rpc_call
 from utils.etherscan import get as etherscan_get
 
 TRACE_OPS = {"CALL", "STATICCALL", "DELEGATECALL", "CALLCODE", "CREATE", "CREATE2"}
@@ -73,9 +73,7 @@ def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
     return result
 
 
-def pick_representative_transactions(
-    address: str, transactions: list[dict], max_txs: int = 5
-) -> list[dict]:
+def pick_representative_transactions(address: str, transactions: list[dict], max_txs: int = 5) -> list[dict]:
     """Select representative successful txs to the target, prioritizing selector diversity."""
     target = normalize_address(address)
     unique_selector_seen = set()
@@ -156,9 +154,7 @@ def trace_transaction(rpc_url: str, tx_hash: str) -> tuple[str, Any]:
     raise RuntimeError(f"Tracing failed for {tx_hash}: {' | '.join(errors)}")
 
 
-def _parse_debug_call_tree(
-    node: Any, tx_hash: str, block_number: int | None, out_edges: list[dict]
-) -> None:
+def _parse_debug_call_tree(node: Any, tx_hash: str, block_number: int | None, out_edges: list[dict]) -> None:
     if not isinstance(node, dict):
         return
 
@@ -180,9 +176,7 @@ def _parse_debug_call_tree(
         _parse_debug_call_tree(child, tx_hash, block_number, out_edges)
 
 
-def _parse_parity_trace_entries(
-    entries: Any, tx_hash: str, block_number: int | None, out_edges: list[dict]
-) -> None:
+def _parse_parity_trace_entries(entries: Any, tx_hash: str, block_number: int | None, out_edges: list[dict]) -> None:
     if not isinstance(entries, list):
         return
 
@@ -314,8 +308,7 @@ def find_dynamic_dependencies(
 
     if not trace_methods and trace_errors:
         raise RuntimeError(
-            f"All {len(trace_errors)} transaction trace(s) failed. "
-            f"First error: {trace_errors[0]['error']}"
+            f"All {len(trace_errors)} transaction trace(s) failed. First error: {trace_errors[0]['error']}"
         )
 
     edges = _dedupe_edges(all_edges)

@@ -17,11 +17,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from services.discovery_ai_domain import (  # noqa: E402
+from .inventory_domain import (  # noqa: E402
     CHAIN_SORT_ORDER,
     _debug_log,
     _discover_contract_inventory_pages,
@@ -30,7 +30,7 @@ from services.discovery_ai_domain import (  # noqa: E402
     _maybe_domain,
     _tavily_search,
 )
-from services.discovery_ai_inventory import extract_inventory_entries_from_pages  # noqa: E402
+from .inventory_extract import extract_inventory_entries_from_pages  # noqa: E402
 
 
 def _build_links(evidence: list[dict[str, Any]]) -> dict[str, str]:
@@ -237,7 +237,7 @@ def search_protocol_inventory(
             "company": clean_company,
             "chain": requested_chain or "any",
             "official_domain": None,
-            "domain_candidates": domain_candidates if 'domain_candidates' in locals() else [],
+            "domain_candidates": domain_candidates if "domain_candidates" in locals() else [],
             "pages_considered": [],
             "pages_selected": [],
             "contracts": [],
@@ -257,9 +257,7 @@ def search_protocol_inventory(
     )
 
     considered_urls = [
-        str(result.get("url", "")).strip()
-        for result in page_results
-        if str(result.get("url", "")).strip()
+        str(result.get("url", "")).strip() for result in page_results if str(result.get("url", "")).strip()
     ]
     if not selected_urls:
         selected_urls = considered_urls[:3]

@@ -11,14 +11,19 @@ from collections import deque
 from pathlib import Path
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEdge, ResolvedGraphNode
-from services.analyzer import analyze
-from services.contract_analysis import analyze_contract
-from services.control_tracker import build_control_snapshot, classify_resolved_address, load_control_tracking_plan, write_control_snapshot
-from services.control_tracking_plan import write_control_tracking_plan
-from services.fetcher import CONTRACTS_DIR, fetch, scaffold
+from services.discovery.fetch import CONTRACTS_DIR, fetch, scaffold
+from services.static import analyze, analyze_contract
+
+from .tracking import (
+    build_control_snapshot,
+    classify_resolved_address,
+    load_control_tracking_plan,
+    write_control_snapshot,
+)
+from .tracking_plan import write_control_tracking_plan
 
 
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}

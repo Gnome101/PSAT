@@ -314,7 +314,10 @@ def test_process_writes_control_tracking_plan_json(tmp_path, monkeypatch):
 
     written = tmp_path / "control_tracking_plan.json"
     assert written.exists()
-    assert json.loads(written.read_text())["tracked_controllers"][0]["event_watch"]["events"][0]["name"] == "OwnershipTransferred"
+    assert (
+        json.loads(written.read_text())["tracked_controllers"][0]["event_watch"]["events"][0]["name"]
+        == "OwnershipTransferred"
+    )
 
 
 def test_process_continues_if_contract_analysis_fails(tmp_path, monkeypatch):

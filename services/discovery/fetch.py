@@ -9,7 +9,7 @@ from pathlib import Path
 
 from utils.etherscan import get_source
 
-CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
+CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts"
 
 
 def fetch(address: str) -> dict:
@@ -101,7 +101,7 @@ def scaffold(address: str, name: str, result: dict) -> Path:
             out = "out"
             libs = ["lib"]
             solc_version = "{solc_version}"
-            evm_version = "{result.get('EVMVersion', 'shanghai') or 'shanghai'}"
+            evm_version = "{result.get("EVMVersion", "shanghai") or "shanghai"}"
             optimizer = {str(result.get("OptimizationUsed", "1") == "1").lower()}
             optimizer_runs = {int(result.get("Runs", "200") or 200)}
         """

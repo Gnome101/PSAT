@@ -142,7 +142,9 @@ def _direct_sink_candidates(function, unit, node, project_dir: Path) -> list[dic
                     continue
                 function_name = getattr(ir, "function_name", None) or "call"
                 arguments = list(getattr(ir, "arguments", []) or [])
-                destination_name = _variable_name(arguments[0]) if arguments else _variable_name(getattr(ir, "destination", None))
+                destination_name = (
+                    _variable_name(arguments[0]) if arguments else _variable_name(getattr(ir, "destination", None))
+                )
                 target = f"{destination_name}.{function_name}"
                 sinks.append(
                     {
@@ -384,11 +386,15 @@ def _guards_from_internal_call(ir, project_dir: Path, seen: set[str], caller_ali
         )
 
     nested_seen = {callee_name, *seen}
-    guards.extend(_structural_guards_for_unit(callee, project_dir, nested_seen, _propagated_caller_aliases(ir, caller_aliases)))
+    guards.extend(
+        _structural_guards_for_unit(callee, project_dir, nested_seen, _propagated_caller_aliases(ir, caller_aliases))
+    )
     return guards
 
 
-def _structural_guards_for_unit(unit, project_dir: Path, seen: set[str], caller_aliases: set[str]) -> list[dict[str, Any]]:
+def _structural_guards_for_unit(
+    unit, project_dir: Path, seen: set[str], caller_aliases: set[str]
+) -> list[dict[str, Any]]:
     guards: list[dict[str, Any]] = []
     state_aliases: dict[str, str] = {}
     for node in getattr(unit, "nodes", []):
@@ -561,7 +567,9 @@ def privileged_functions_from_graph(contract, permission_graph: PermissionGraph)
                 entry["controller_refs"].append(controller["source"])
                 entry["guards"].append(controller["label"])
 
-    functions_by_signature = {getattr(function, "full_name", function.name): function for function in _entry_points(contract)}
+    functions_by_signature = {
+        getattr(function, "full_name", function.name): function for function in _entry_points(contract)
+    }
     for function_signature, entry in by_function.items():
         function = functions_by_signature.get(function_signature)
         if function is not None:

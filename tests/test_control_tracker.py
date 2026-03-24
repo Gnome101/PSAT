@@ -5,8 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.contract_analysis import collect_contract_analysis
-from services.control_tracker import (
+from services.resolution.tracking import (
     build_control_snapshot,
     diff_control_snapshots,
     grouped_event_filters,
@@ -16,7 +15,8 @@ from services.control_tracker import (
     _classify_resolved_address,
     run_control_tracker,
 )
-from services.control_tracking_plan import build_control_tracking_plan
+from services.resolution.tracking_plan import build_control_tracking_plan
+from services.static import collect_contract_analysis
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "contracts"
 
@@ -38,7 +38,9 @@ def _write_project(tmp_path: Path, contract_name: str, source_code: str, slither
         )
         + "\n"
     )
-    (project_dir / "slither_results.json").write_text(json.dumps(slither_output or {"results": {"detectors": []}}) + "\n")
+    (project_dir / "slither_results.json").write_text(
+        json.dumps(slither_output or {"results": {"detectors": []}}) + "\n"
+    )
     return project_dir
 
 
@@ -60,10 +62,12 @@ def test_grouped_event_filters_from_plan(tmp_path):
     assert filters == [
         {
             "address": "0x1111111111111111111111111111111111111111",
-            "topics": [[
-                "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
-                "0xa3396fd7f6e0a21b50e5089d2da70d5ac0a3bbbd1f617a93f134b76389980198",
-            ]],
+            "topics": [
+                [
+                    "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
+                    "0xa3396fd7f6e0a21b50e5089d2da70d5ac0a3bbbd1f617a93f134b76389980198",
+                ]
+            ],
             "controller_ids": ["external_contract:authority", "state_variable:owner"],
         }
     ]
@@ -98,7 +102,9 @@ def test_matching_policies_for_log_and_decode_fields(tmp_path):
     plan = build_control_tracking_plan(analysis)
     policy = next(item for item in plan["tracked_policies"] if item["label"] == "canCall policy")
     role_event = next(
-        event for event in policy["event_watch"]["events"] if event["signature"] == "RoleCapabilityUpdated(uint8,address,bytes4,bool)"
+        event
+        for event in policy["event_watch"]["events"]
+        if event["signature"] == "RoleCapabilityUpdated(uint8,address,bytes4,bool)"
     )
 
     log_entry = {
@@ -191,7 +197,7 @@ def test_build_control_snapshot_and_diff(monkeypatch):
             return "0x"
         raise AssertionError(f"Unexpected RPC call: {method} {params}")
 
-    monkeypatch.setattr("services.control_tracker._rpc_request", fake_rpc)
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
 
     first = build_control_snapshot(plan, "https://rpc.example")
     state["owner"] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -252,7 +258,7 @@ def test_build_control_snapshot_handles_reverting_getter(monkeypatch):
             raise RuntimeError("{'code': 3, 'message': 'execution reverted', 'data': '0x'}")
         raise AssertionError(f"Unexpected RPC call: {method}")
 
-    monkeypatch.setattr("services.control_tracker._rpc_request", fake_rpc)
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
 
     snapshot = build_control_snapshot(plan, "https://rpc.example")
     value = snapshot["controller_values"]["state_variable:owner"]
@@ -282,7 +288,7 @@ def test_classify_resolved_address_detects_safe(monkeypatch):
             return "0x"
         raise AssertionError(f"Unexpected RPC call: {method} {params}")
 
-    monkeypatch.setattr("services.control_tracker._rpc_request", fake_rpc)
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
 
     resolved_type, details = _classify_resolved_address(
         "https://rpc.example",
@@ -313,7 +319,7 @@ def test_classify_resolved_address_detects_timelock(monkeypatch):
             return "0x"
         raise AssertionError(f"Unexpected RPC call: {method} {params}")
 
-    monkeypatch.setattr("services.control_tracker._rpc_request", fake_rpc)
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
 
     resolved_type, details = _classify_resolved_address(
         "https://rpc.example",
@@ -346,7 +352,7 @@ def test_classify_resolved_address_detects_proxy_admin(monkeypatch):
             return "0x"
         raise AssertionError(f"Unexpected RPC call: {method} {params}")
 
-    monkeypatch.setattr("services.control_tracker._rpc_request", fake_rpc)
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
 
     resolved_type, details = _classify_resolved_address(
         "https://rpc.example",
@@ -392,6 +398,7 @@ def test_run_control_tracker_once_writes_snapshot(monkeypatch, tmp_path):
         )
         + "\n"
     )
+
     def fake_rpc(_rpc_url, method, params):
         if method == "eth_blockNumber":
             return "0x20"
@@ -401,7 +408,7 @@ def test_run_control_tracker_once_writes_snapshot(monkeypatch, tmp_path):
             return "0x"
         raise AssertionError(f"Unexpected RPC call: {method} {params}")
 
-    monkeypatch.setattr("services.control_tracker._rpc_request", fake_rpc)
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
 
     snapshot_path = tmp_path / "snapshot.json"
     changes_path = tmp_path / "changes.jsonl"

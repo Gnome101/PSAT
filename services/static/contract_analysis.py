@@ -1,4 +1,4 @@
-"""Compatibility facade for the contract analysis package."""
+"""Static contract-analysis facade."""
 
 from __future__ import annotations
 

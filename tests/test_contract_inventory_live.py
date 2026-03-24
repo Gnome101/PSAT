@@ -1,4 +1,4 @@
-#run live test with accuracy metrics with uv run python -m pytest -s tests/test_contract_inventory_live.py
+# run live test with accuracy metrics with uv run python -m pytest -s tests/test_contract_inventory_live.py
 import os
 import re
 import sys
@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.contract_inventory_ai import search_protocol_inventory
+from services.discovery.inventory import search_protocol_inventory
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -142,11 +142,7 @@ def _assert_contract_present(
 
 
 def _duplicate_address_sample(counts: Counter[str], limit: int = 5) -> str:
-    duplicates = [
-        (address, count)
-        for address, count in counts.items()
-        if count > 1
-    ]
+    duplicates = [(address, count) for address, count in counts.items() if count > 1]
     if not duplicates:
         return ""
     duplicates.sort(key=lambda item: (-item[1], item[0]))

@@ -83,9 +83,9 @@ def analyze_with_llm(project_dir: Path, model: str | None = None) -> str:
     meta_path = project_dir / "contract_meta.json"
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
 
-    user_message = f"""Contract: {meta.get('contract_name', 'Unknown')}
-Address: {meta.get('address', 'Unknown')}
-Compiler: {meta.get('compiler_version', 'Unknown')}
+    user_message = f"""Contract: {meta.get("contract_name", "Unknown")}
+Address: {meta.get("address", "Unknown")}
+Compiler: {meta.get("compiler_version", "Unknown")}
 
 ## Source Code
 ```solidity

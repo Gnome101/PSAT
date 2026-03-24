@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 import requests as _requests
 
-from services.dependent_contracts import normalize_address as _normalize_address
+from .static_dependencies import normalize_address as _normalize_address
 from utils import llm, tavily
 
 # -- Constants ---------------------------------------------------------------
@@ -60,6 +60,7 @@ CHAIN_SORT_ORDER = {"ethereum": 0, "arbitrum": 1, "optimism": 2, "polygon": 3, "
 
 
 # -- Utility helpers ---------------------------------------------------------
+
 
 def _debug_log(enabled: bool, message: str) -> None:
     if enabled:
@@ -142,6 +143,7 @@ def _fetch_page(url: str, debug: bool = False) -> str | None:
 
 # -- Domain selection & page discovery ---------------------------------------
 
+
 def _maybe_domain(value: str) -> str | None:
     clean = value.strip().lower().replace("https://", "").replace("http://", "").split("/")[0]
     if clean.startswith("www."):
@@ -214,9 +216,7 @@ def _llm_select_domain(
     # Present as numbered choices (more reliable across LLM models)
     choices = "\n".join(
         f"{i + 1}. {domain} (pages: {', '.join(titles[:2])})"
-        for i, (domain, titles) in enumerate(
-            sorted(domain_info.items(), key=lambda x: -len(x[1]))
-        )
+        for i, (domain, titles) in enumerate(sorted(domain_info.items(), key=lambda x: -len(x[1])))
     )
 
     prompt = (
@@ -290,10 +290,7 @@ def _llm_select_pages(
         return []
 
     page_list = "\n".join(
-        (
-            f"- {page['title'] or '(untitled)'}: {page['url']}\n"
-            f"  Snippet: {(page['snippet'] or 'none')[:240]}"
-        )
+        (f"- {page['title'] or '(untitled)'}: {page['url']}\n  Snippet: {(page['snippet'] or 'none')[:240]}")
         for page in page_info
     )
 

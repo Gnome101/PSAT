@@ -1,13 +1,28 @@
 services:
-  backend:
+  api:
     build:
       context: .
       dockerfile: Dockerfile
-    image: psat-backend:latest
+    image: psat-api:latest
     env_file:
       - .env
     ports:
       - "8000:8000"
     volumes:
       - ./contracts:/app/contracts
+    restart: unless-stopped
+
+  site:
+    build:
+      context: .
+      dockerfile: docker/site.Dockerfile
+    image: psat-site:latest
+    environment:
+      VITE_DEV_HOST: 0.0.0.0
+      VITE_DEV_PORT: 5173
+      VITE_API_PROXY_TARGET: http://api:8000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
     restart: unless-stopped

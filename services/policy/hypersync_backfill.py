@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.control_tracking import ControlTrackingPlan
 from schemas.hypersync_backfill import (
@@ -22,7 +22,7 @@ from schemas.hypersync_backfill import (
     RoleCapabilityStateEntry,
     UserRoleStateEntry,
 )
-from services.control_tracker import _decode_event_log_fields, _normalize_hex
+from services.resolution.tracking import _decode_event_log_fields, _normalize_hex
 
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 
@@ -212,7 +212,9 @@ def reconstruct_policy_state(plan: ControlTrackingPlan, records: list[PolicyEven
         "contract_name": plan["contract_name"],
         "source": "hypersync",
         "event_count": len(records),
-        "public_capabilities": sorted(public_capabilities.values(), key=lambda item: (item["target"], item["function_sig"])),
+        "public_capabilities": sorted(
+            public_capabilities.values(), key=lambda item: (item["target"], item["function_sig"])
+        ),
         "role_capabilities": sorted(
             role_capabilities.values(),
             key=lambda item: (item["role"], item["target"], item["function_sig"]),

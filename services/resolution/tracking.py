@@ -17,7 +17,7 @@ from eth_abi import decode
 from eth_utils import keccak
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.control_tracking import ControlChangeEvent, ControlSnapshot, ControlTrackingPlan
 
@@ -96,7 +96,9 @@ def _decode_topic_value(raw_value: str, abi_type: str):
     return normalized
 
 
-def _try_eth_call_decoded(rpc_url: str, contract_address: str, signature: str, abi_type: str, block_tag: str = "latest"):
+def _try_eth_call_decoded(
+    rpc_url: str, contract_address: str, signature: str, abi_type: str, block_tag: str = "latest"
+):
     try:
         raw = _eth_call_raw(rpc_url, contract_address, signature, block_tag)
         if _normalize_hex(raw) in {"0x", "0x0"}:
@@ -139,7 +141,9 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
             details["owner"] = owner
         return "timelock", details
 
-    upgrade_interface_version = _try_eth_call_decoded(rpc_url, normalized, "UPGRADE_INTERFACE_VERSION()", "string", block_tag)
+    upgrade_interface_version = _try_eth_call_decoded(
+        rpc_url, normalized, "UPGRADE_INTERFACE_VERSION()", "string", block_tag
+    )
     if upgrade_interface_version is not None:
         owner = _try_eth_call_decoded(rpc_url, normalized, "owner()", "address", block_tag)
         details = {
@@ -163,7 +167,9 @@ def _current_block_number(rpc_url: str) -> int:
     return int(raw, 16)
 
 
-def _read_polling_source(rpc_url: str, contract_address: str, source: str, controller_kind: str, block_tag: str = "latest") -> str:
+def _read_polling_source(
+    rpc_url: str, contract_address: str, source: str, controller_kind: str, block_tag: str = "latest"
+) -> str:
     raw = _eth_call_raw(rpc_url, contract_address, f"{source}()", block_tag)
     return _decode_controller_value(raw, controller_kind)
 
@@ -346,7 +352,9 @@ def _decode_event_log_fields(event_ref: dict[str, Any], log_entry: dict[str, Any
     return decoded
 
 
-def policy_change_events(plan: ControlTrackingPlan, policy_matches: list[dict[str, Any]], log_entry: dict[str, Any]) -> list[ControlChangeEvent]:
+def policy_change_events(
+    plan: ControlTrackingPlan, policy_matches: list[dict[str, Any]], log_entry: dict[str, Any]
+) -> list[ControlChangeEvent]:
     if not policy_matches:
         return []
 
@@ -365,8 +373,7 @@ def policy_change_events(plan: ControlTrackingPlan, policy_matches: list[dict[st
         notes = list(policy.get("notes", []))
         if decoded_fields:
             notes.append(
-                "decoded_fields="
-                + ", ".join(f"{key}={value}" for key, value in sorted(decoded_fields.items()))
+                "decoded_fields=" + ", ".join(f"{key}={value}" for key, value in sorted(decoded_fields.items()))
             )
         changes.append(
             {
@@ -457,7 +464,9 @@ async def run_control_tracker(
         while True:
             await asyncio.sleep(reconcile_interval_seconds)
             current_snapshot = build_control_snapshot(plan, rpc_url)
-            append_control_change_events(diff_control_snapshots(previous_snapshot, current_snapshot), change_events_path)
+            append_control_change_events(
+                diff_control_snapshots(previous_snapshot, current_snapshot), change_events_path
+            )
             write_control_snapshot(current_snapshot, snapshot_path)
             previous_snapshot = current_snapshot
         return

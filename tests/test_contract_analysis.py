@@ -6,7 +6,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.contract_analysis import collect_contract_analysis
+from services.static import collect_contract_analysis
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "contracts"
 FIXTURE_INDEX_PATH = FIXTURES_DIR / "index.json"
@@ -103,10 +103,7 @@ def _tracked_policy(analysis: dict, label: str) -> dict:
 
 def test_fixture_index_covers_all_solidity_contract_fixtures():
     indexed_paths = {entry["path"] for entry in _fixture_index()}
-    fixture_paths = {
-        str(path.relative_to(FIXTURES_DIR))
-        for path in FIXTURES_DIR.rglob("*.sol")
-    }
+    fixture_paths = {str(path.relative_to(FIXTURES_DIR)) for path in FIXTURES_DIR.rglob("*.sol")}
 
     assert indexed_paths == fixture_paths
 

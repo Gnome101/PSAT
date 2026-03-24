@@ -23,7 +23,11 @@ from .shared import (
 
 
 def _unit_key(unit) -> str:
-    return getattr(unit, "canonical_name", None) or getattr(unit, "full_name", None) or getattr(unit, "name", str(id(unit)))
+    return (
+        getattr(unit, "canonical_name", None)
+        or getattr(unit, "full_name", None)
+        or getattr(unit, "name", str(id(unit)))
+    )
 
 
 def _abi_type(type_obj) -> str:
@@ -109,7 +113,9 @@ def _resolve_event_refs(event_name: str, arguments: list, event_index: dict[str,
     return sorted(deduped.values(), key=lambda item: item["signature"])
 
 
-def _collect_events(unit, project_dir: Path, event_index: dict[str, list], seen: set[str]) -> list[tuple[AssociatedEvent, dict]]:
+def _collect_events(
+    unit, project_dir: Path, event_index: dict[str, list], seen: set[str]
+) -> list[tuple[AssociatedEvent, dict]]:
     key = _unit_key(unit)
     if key in seen:
         return []
@@ -142,7 +148,8 @@ def _dedupe_event_refs(events: list[tuple[AssociatedEvent, dict]]) -> list[Assoc
 
 def _functions_by_signature(contract) -> dict[str, object]:
     return {
-        getattr(function, "full_name", getattr(function, "name", "")): function for function in _contract_functions(contract)
+        getattr(function, "full_name", getattr(function, "name", "")): function
+        for function in _contract_functions(contract)
     }
 
 
@@ -157,7 +164,11 @@ def _writer_records_for_targets(
     functions_by_signature = _functions_by_signature(contract)
     writer_targets_by_signature: dict[str, set[str]] = {}
     for sink in permission_graph["sinks"]:
-        if sink["kind"] != "state_write" or sink["target"] not in target_set or sink["function"].startswith("constructor("):
+        if (
+            sink["kind"] != "state_write"
+            or sink["target"] not in target_set
+            or sink["function"].startswith("constructor(")
+        ):
             continue
         writer_targets_by_signature.setdefault(sink["function"], set()).add(sink["target"])
 
@@ -193,7 +204,9 @@ def _writer_records_for_targets(
     return writer_functions, associated_events
 
 
-def build_controller_tracking(contract, project_dir: Path, permission_graph: PermissionGraph) -> list[ControllerTrackingTarget]:
+def build_controller_tracking(
+    contract, project_dir: Path, permission_graph: PermissionGraph
+) -> list[ControllerTrackingTarget]:
     """Build event-first tracking metadata for mutable controllers discovered in the permission graph."""
     event_lookup = _event_index(contract)
 

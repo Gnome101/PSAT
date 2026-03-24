@@ -25,7 +25,7 @@ Run the HyperSync backfill against a generated `control_tracking_plan.json`:
 
 ```bash
 ENVIO_API_TOKEN=<token> \
-uv run python services/hypersync_backfill.py \
+uv run python services/policy/hypersync_backfill.py \
   contracts/<name>/control_tracking_plan.json \
   --url https://eth.hypersync.xyz
 ```

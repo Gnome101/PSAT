@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.recursive_resolution import resolve_control_graph
+from services.resolution.recursive import resolve_control_graph
 
 
 def _write_artifact_dir(base: Path, name: str, *, address: str, contract_name: str, snapshot: dict) -> Path:
@@ -118,8 +118,8 @@ def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch, tmp_pa
             return "eoa", {"address": signer_address}
         return "unknown", {"address": address}
 
-    monkeypatch.setattr("services.recursive_resolution._materialize_contract_artifacts", fake_materialize)
-    monkeypatch.setattr("services.recursive_resolution.classify_resolved_address", fake_classify)
+    monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
+    monkeypatch.setattr("services.resolution.recursive.classify_resolved_address", fake_classify)
 
     graph = resolve_control_graph(
         root_analysis_path,
@@ -217,9 +217,9 @@ def test_resolve_control_graph_dedupes_recursive_contract_addresses(monkeypatch,
             "snapshot": json.loads(nested_path.with_name("control_snapshot.json").read_text()),
         }
 
-    monkeypatch.setattr("services.recursive_resolution._materialize_contract_artifacts", fake_materialize)
+    monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
     monkeypatch.setattr(
-        "services.recursive_resolution.classify_resolved_address",
+        "services.resolution.recursive.classify_resolved_address",
         lambda rpc_url, address, block_tag="latest": ("unknown", {"address": address}),
     )
 
@@ -334,8 +334,8 @@ def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch, 
             return "contract", {"address": role_holder_address}
         return "unknown", {"address": address}
 
-    monkeypatch.setattr("services.recursive_resolution._materialize_contract_artifacts", fake_materialize)
-    monkeypatch.setattr("services.recursive_resolution.classify_resolved_address", fake_classify)
+    monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
+    monkeypatch.setattr("services.resolution.recursive.classify_resolved_address", fake_classify)
 
     graph = resolve_control_graph(
         root_analysis_path,

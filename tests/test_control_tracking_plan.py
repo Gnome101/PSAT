@@ -4,12 +4,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.contract_analysis import collect_contract_analysis
-from services.control_tracking_plan import (
+from services.resolution.tracking_plan import (
     build_control_tracking_plan,
     build_control_tracking_plan_from_file,
     write_control_tracking_plan,
 )
+from services.static import collect_contract_analysis
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "contracts"
 
@@ -31,7 +31,9 @@ def _write_project(tmp_path: Path, contract_name: str, source_code: str, slither
         )
         + "\n"
     )
-    (project_dir / "slither_results.json").write_text(json.dumps(slither_output or {"results": {"detectors": []}}) + "\n")
+    (project_dir / "slither_results.json").write_text(
+        json.dumps(slither_output or {"results": {"detectors": []}}) + "\n"
+    )
     return project_dir
 
 

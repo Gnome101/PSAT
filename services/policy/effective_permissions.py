@@ -11,7 +11,7 @@ from pathlib import Path
 from eth_utils import keccak
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.effective_permissions import (
     AuthorityRoleGrant,
@@ -113,7 +113,11 @@ def build_effective_permissions(
         None,
     )
     authority_value = next(
-        (value.get("value", "").lower() for key, value in target_controller_values.items() if key.endswith(":authority")),
+        (
+            value.get("value", "").lower()
+            for key, value in target_controller_values.items()
+            if key.endswith(":authority")
+        ),
         None,
     )
 
@@ -139,7 +143,11 @@ def build_effective_permissions(
     for privileged in target_analysis["access_control"]["privileged_functions"]:
         selector = _selector(privileged["function"])
         direct_owner = None
-        if "owner" in privileged.get("controller_refs", []) and owner_value and owner_value != "0x0000000000000000000000000000000000000000":
+        if (
+            "owner" in privileged.get("controller_refs", [])
+            and owner_value
+            and owner_value != "0x0000000000000000000000000000000000000000"
+        ):
             direct_owner = _principal_for_address(owner_value, known)
 
         role_grants: list[AuthorityRoleGrant] = []
@@ -233,7 +241,9 @@ def write_effective_permissions_from_files(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Resolve effective permissions from contract analysis and authority policy state.")
+    parser = argparse.ArgumentParser(
+        description="Resolve effective permissions from contract analysis and authority policy state."
+    )
     parser.add_argument("target_analysis", help="Path to target contract_analysis.json")
     parser.add_argument("--target-snapshot", help="Optional path to target control_snapshot.json")
     parser.add_argument("--authority-snapshot", help="Optional path to authority control_snapshot.json")

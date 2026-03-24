@@ -10,15 +10,20 @@ from typing import Callable
 
 from dotenv import load_dotenv
 
-from services.analyzer import analyze
-from services.contract_analysis import analyze_contract
-from services.control_tracker import build_control_snapshot, load_control_tracking_plan, write_control_snapshot
-from services.control_tracking_plan import write_control_tracking_plan
-from services.effective_permissions import write_effective_permissions_from_files
-from services.fetcher import CONTRACTS_DIR, fetch, scaffold
-from services.hypersync_backfill import run_hypersync_policy_backfill
-from services.principal_enrichment import write_principal_labels_from_files
-from services.recursive_resolution import write_resolved_control_graph
+from services.discovery import CONTRACTS_DIR, fetch, scaffold
+from services.policy import (
+    run_hypersync_policy_backfill,
+    write_effective_permissions_from_files,
+    write_principal_labels_from_files,
+)
+from services.resolution import (
+    build_control_snapshot,
+    load_control_tracking_plan,
+    write_control_snapshot,
+    write_control_tracking_plan,
+    write_resolved_control_graph,
+)
+from services.static import analyze, analyze_contract
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
@@ -169,17 +174,25 @@ def _authority_snapshot_and_policy(
             authority_address = str(value.get("value", "")).lower()
             break
     if not authority_address or authority_address == "0x0000000000000000000000000000000000000000":
-        return None, None, {
-            "status": "no_authority",
-            "reason": "No non-zero authority controller was resolved for this contract.",
-        }
+        return (
+            None,
+            None,
+            {
+                "status": "no_authority",
+                "reason": "No non-zero authority controller was resolved for this contract.",
+            },
+        )
 
     authority_snapshot_path = _find_controller_snapshot_from_graph(resolved_graph_path, authority_address)
     if authority_snapshot_path is None:
-        return None, None, {
-            "status": "no_authority_snapshot",
-            "reason": "The authority contract was found, but its recursive snapshot artifact is missing.",
-        }
+        return (
+            None,
+            None,
+            {
+                "status": "no_authority_snapshot",
+                "reason": "The authority contract was found, but its recursive snapshot artifact is missing.",
+            },
+        )
 
     authority_project_dir = authority_snapshot_path.parent
     authority_plan_path = authority_project_dir / "control_tracking_plan.json"
@@ -190,10 +203,14 @@ def _authority_snapshot_and_policy(
         authority_analysis = json_load(authority_analysis_path)
         if authority_analysis.get("policy_tracking"):
             if policy_state_path.exists():
-                return authority_snapshot_path, policy_state_path, {
-                    "status": "complete",
-                    "reason": "Existing authority policy state was joined into the permission view.",
-                }
+                return (
+                    authority_snapshot_path,
+                    policy_state_path,
+                    {
+                        "status": "complete",
+                        "reason": "Existing authority policy state was joined into the permission view.",
+                    },
+                )
             if os.getenv("ENVIO_API_TOKEN"):
                 run_hypersync_policy_backfill(
                     authority_plan_path,
@@ -202,22 +219,38 @@ def _authority_snapshot_and_policy(
                     events_out=authority_project_dir / "policy_event_history.jsonl",
                 )
                 if policy_state_path.exists():
-                    return authority_snapshot_path, policy_state_path, {
-                        "status": "complete",
-                        "reason": "Authority policy backfill completed and principals were joined from current policy state.",
-                    }
-            return authority_snapshot_path, None, {
-                "status": "missing_hypersync_token",
-                "reason": "Authority policy tracking exists, but ENVIO_API_TOKEN is not set, so HyperSync backfill was skipped.",
-            }
-        return authority_snapshot_path, None, {
-            "status": "no_policy_tracking",
-            "reason": "The resolved authority contract does not expose policy tracking metadata.",
-        }
-    return authority_snapshot_path, None, {
-        "status": "missing_policy_state",
-        "reason": "Authority artifacts are incomplete, so policy state could not be reconstructed.",
-    }
+                    return (
+                        authority_snapshot_path,
+                        policy_state_path,
+                        {
+                            "status": "complete",
+                            "reason": "Authority policy backfill completed and principals were joined from current policy state.",
+                        },
+                    )
+            return (
+                authority_snapshot_path,
+                None,
+                {
+                    "status": "missing_hypersync_token",
+                    "reason": "Authority policy tracking exists, but ENVIO_API_TOKEN is not set, so HyperSync backfill was skipped.",
+                },
+            )
+        return (
+            authority_snapshot_path,
+            None,
+            {
+                "status": "no_policy_tracking",
+                "reason": "The resolved authority contract does not expose policy tracking metadata.",
+            },
+        )
+    return (
+        authority_snapshot_path,
+        None,
+        {
+            "status": "missing_policy_state",
+            "reason": "Authority artifacts are incomplete, so policy state could not be reconstructed.",
+        },
+    )
 
 
 def run_demo_analysis(

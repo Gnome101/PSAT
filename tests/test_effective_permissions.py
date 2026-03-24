@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.effective_permissions import build_effective_permissions, write_effective_permissions_from_files
+from services.policy.effective_permissions import build_effective_permissions, write_effective_permissions_from_files
 
 
 def test_build_effective_permissions_resolves_roles_and_safe_details():

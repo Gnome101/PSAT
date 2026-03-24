@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import dynamic_dependencies as ddc
+from services.discovery import dynamic_dependencies as ddc
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -19,7 +19,13 @@ def test_pick_representative_transactions_prefers_selector_coverage():
         {"hash": "0xtx1", "to": target, "isError": "0", "blockNumber": "100", "input": "0xaaaaaaaa1234"},
         {"hash": "0xtx2", "to": target, "isError": "0", "blockNumber": "99", "input": "0xbbbbbbbb1234"},
         {"hash": "0xtx3", "to": target, "isError": "0", "blockNumber": "98", "input": "0xaaaaaaaa9999"},
-        {"hash": "0xtx4", "to": "0x2222222222222222222222222222222222222222", "isError": "0", "blockNumber": "97", "input": "0xcccccccc"},
+        {
+            "hash": "0xtx4",
+            "to": "0x2222222222222222222222222222222222222222",
+            "isError": "0",
+            "blockNumber": "97",
+            "input": "0xcccccccc",
+        },
         {"hash": "0xtx5", "to": target, "isError": "1", "blockNumber": "96", "input": "0xdddddddd"},
     ]
 
@@ -35,11 +41,12 @@ def test_extract_edges_captures_all_op_types():
     # debug callTracer: nested CALL/DELEGATECALL/CREATE/CALLCODE
     debug_trace = {
         "type": "CALL",
-        "from": addr(1), "to": addr(2),
+        "from": addr(1),
+        "to": addr(2),
         "calls": [
             {"type": "DELEGATECALL", "from": addr(2), "to": addr(3)},
-            {"type": "CREATE",       "from": addr(2), "to": addr(4)},
-            {"type": "CALLCODE",     "from": addr(2), "to": addr(5)},
+            {"type": "CREATE", "from": addr(2), "to": addr(4)},
+            {"type": "CALLCODE", "from": addr(2), "to": addr(5)},
         ],
     }
     debug_edges = ddc.extract_edges_from_trace("debug_traceTransaction", debug_trace, "0xtx", 1)
@@ -47,11 +54,11 @@ def test_extract_edges_captures_all_op_types():
 
     # parity style: all six types including STATICCALL and CREATE2
     parity_entries = [
-        {"type": "call",   "action": {"from": addr(1), "to": addr(2), "callType": "call"}},
-        {"type": "call",   "action": {"from": addr(1), "to": addr(3), "callType": "staticcall"}},
-        {"type": "call",   "action": {"from": addr(1), "to": addr(4), "callType": "delegatecall"}},
-        {"type": "call",   "action": {"from": addr(1), "to": addr(5), "callType": "callcode"}},
-        {"type": "create", "action": {"from": addr(1), "creationMethod": "create"},  "result": {"address": addr(6)}},
+        {"type": "call", "action": {"from": addr(1), "to": addr(2), "callType": "call"}},
+        {"type": "call", "action": {"from": addr(1), "to": addr(3), "callType": "staticcall"}},
+        {"type": "call", "action": {"from": addr(1), "to": addr(4), "callType": "delegatecall"}},
+        {"type": "call", "action": {"from": addr(1), "to": addr(5), "callType": "callcode"}},
+        {"type": "create", "action": {"from": addr(1), "creationMethod": "create"}, "result": {"address": addr(6)}},
         {"type": "create", "action": {"from": addr(1), "creationMethod": "create2"}, "result": {"address": addr(7)}},
     ]
     parity_edges = ddc.extract_edges_from_trace("trace_transaction", parity_entries, "0xtx", 1)
@@ -83,7 +90,8 @@ def test_find_dynamic_dependencies_aggregates_graph(monkeypatch):
     monkeypatch.setattr(ddc, "load_dotenv", lambda _path: None)
     monkeypatch.setenv("ETH_RPC", "https://trace.example")
     monkeypatch.setattr(
-        ddc, "fetch_contract_transactions",
+        ddc,
+        "fetch_contract_transactions",
         lambda _address, limit=0: [
             {"hash": tx1, "to": target, "isError": "0", "blockNumber": "11", "input": "0xaaaaaaaa"},
             {"hash": tx2, "to": target, "isError": "0", "blockNumber": "12", "input": "0xbbbbbbbb"},
@@ -93,10 +101,22 @@ def test_find_dynamic_dependencies_aggregates_graph(monkeypatch):
     def fake_trace(_rpc_url, tx_hash):
         if tx_hash == tx1:
             return "debug_traceTransaction", {
-                "type": "CALL", "from": target, "to": "0x2222222222222222222222222222222222222222",
-                "calls": [{"type": "DELEGATECALL", "from": "0x2222222222222222222222222222222222222222", "to": "0x3333333333333333333333333333333333333333"}],
+                "type": "CALL",
+                "from": target,
+                "to": "0x2222222222222222222222222222222222222222",
+                "calls": [
+                    {
+                        "type": "DELEGATECALL",
+                        "from": "0x2222222222222222222222222222222222222222",
+                        "to": "0x3333333333333333333333333333333333333333",
+                    }
+                ],
             }
-        return "debug_traceTransaction", {"type": "CALL", "from": target, "to": "0x2222222222222222222222222222222222222222"}
+        return "debug_traceTransaction", {
+            "type": "CALL",
+            "from": target,
+            "to": "0x2222222222222222222222222222222222222222",
+        }
 
     monkeypatch.setattr(ddc, "trace_transaction", fake_trace)
 
@@ -119,7 +139,8 @@ def test_find_dynamic_dependencies_continues_on_single_trace_failure(monkeypatch
     monkeypatch.setattr(ddc, "load_dotenv", lambda _path: None)
     monkeypatch.setenv("ETH_RPC", "https://trace.example")
     monkeypatch.setattr(
-        ddc, "fetch_contract_transactions",
+        ddc,
+        "fetch_contract_transactions",
         lambda _address, limit=0: [
             {"hash": tx1, "to": target, "isError": "0", "blockNumber": "10", "input": "0xaaaaaaaa"},
             {"hash": tx2, "to": target, "isError": "0", "blockNumber": "11", "input": "0xbbbbbbbb"},
@@ -129,7 +150,11 @@ def test_find_dynamic_dependencies_continues_on_single_trace_failure(monkeypatch
     def fake_trace(_rpc_url, tx_hash):
         if tx_hash == tx1:
             raise RuntimeError("RPC error on tx1")
-        return "debug_traceTransaction", {"type": "CALL", "from": target, "to": "0x2222222222222222222222222222222222222222"}
+        return "debug_traceTransaction", {
+            "type": "CALL",
+            "from": target,
+            "to": "0x2222222222222222222222222222222222222222",
+        }
 
     monkeypatch.setattr(ddc, "trace_transaction", fake_trace)
 
@@ -145,7 +170,8 @@ def test_find_dynamic_dependencies_raises_if_all_traces_fail(monkeypatch):
     monkeypatch.setattr(ddc, "load_dotenv", lambda _path: None)
     monkeypatch.setenv("ETH_RPC", "https://trace.example")
     monkeypatch.setattr(
-        ddc, "fetch_contract_transactions",
+        ddc,
+        "fetch_contract_transactions",
         lambda _address, limit=0: [
             {"hash": "0xtx1", "to": target, "isError": "0", "blockNumber": "10", "input": "0xaaaaaaaa"},
         ],
@@ -165,12 +191,17 @@ def test_find_dynamic_dependencies_with_explicit_tx_hashes(monkeypatch):
     fetch_called = []
     monkeypatch.setattr(ddc, "fetch_contract_transactions", lambda *a, **kw: fetch_called.append(1) or [])
     monkeypatch.setattr(
-        ddc, "_fetch_tx_metadata_from_rpc",
+        ddc,
+        "_fetch_tx_metadata_from_rpc",
         lambda _rpc, tx_hash: {"tx_hash": tx_hash, "block_number": 1, "method_selector": "0xdeadbeef"},
     )
     monkeypatch.setattr(
-        ddc, "trace_transaction",
-        lambda _rpc, _tx: ("debug_traceTransaction", {"type": "CALL", "from": target, "to": "0x2222222222222222222222222222222222222222"}),
+        ddc,
+        "trace_transaction",
+        lambda _rpc, _tx: (
+            "debug_traceTransaction",
+            {"type": "CALL", "from": target, "to": "0x2222222222222222222222222222222222222222"},
+        ),
     )
 
     out = ddc.find_dynamic_dependencies(target, tx_hashes=["0xtxhash"])
@@ -186,7 +217,8 @@ def test_live_dynamic_dependencies():
 
     # Skip if RPC is unreachable or doesn't support tracing
     try:
-        from services.dependent_contracts import rpc_call
+        from services.discovery.static_dependencies import rpc_call
+
         rpc_call(rpc_url, "eth_blockNumber", [], retries=0)
     except Exception as exc:
         pytest.skip(f"RPC unreachable: {exc}")

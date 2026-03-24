@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services import dependent_contracts as fdc
+from services.discovery import static_dependencies as fdc
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 

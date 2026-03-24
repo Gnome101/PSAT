@@ -147,7 +147,9 @@ def _infer_function_guards(function, project_dir: Path) -> list[str]:
     guards.extend(_high_level_call_guards(function))
 
     all_solidity_reads = [str(variable) for variable in _call_or_value(function, "all_solidity_variables_read")]
-    all_state_reads = [getattr(variable, "name", "") for variable in _call_or_value(function, "all_state_variables_read")]
+    all_state_reads = [
+        getattr(variable, "name", "") for variable in _call_or_value(function, "all_state_variables_read")
+    ]
     if "msg.sender" in all_solidity_reads:
         guards.extend(name for name in all_state_reads if _state_variable_looks_like_auth(name))
 
@@ -370,9 +372,7 @@ def _detect_contract_classification(contract, project_dir: Path) -> ContractClas
     }
 
 
-def _detect_access_control(
-    contract, project_dir: Path, permission_graph: PermissionGraph
-) -> AccessControlAnalysis:
+def _detect_access_control(contract, project_dir: Path, permission_graph: PermissionGraph) -> AccessControlAnalysis:
     state_variables = _all_state_variables(contract)
     modifiers = _all_modifiers(contract)
     functions = _entry_points(contract)
@@ -447,11 +447,7 @@ def _detect_access_control(
         or any(item["role"].endswith("_ROLE") for item in role_definitions)
     ):
         pattern = "access_control"
-    elif (
-        any("ownable" in name for name in lower_inheritance_names)
-        or "onlyowner" in modifier_names
-        or owner_variables
-    ):
+    elif any("ownable" in name for name in lower_inheritance_names) or "onlyowner" in modifier_names or owner_variables:
         pattern = "ownable"
     elif (
         any("auth" in name for name in lower_inheritance_names)
@@ -548,9 +544,7 @@ def _detect_pausability(contract, project_dir: Path) -> PausabilityAnalysis:
 
     gating_modifiers = [modifier.name for modifier in modifiers if _looks_like_pause_guard(modifier.name)]
     pause_variables = [
-        variable.name
-        for variable in state_variables
-        if variable.name.lower() in {"paused", "_paused", "live", "_live"}
+        variable.name for variable in state_variables if variable.name.lower() in {"paused", "_paused", "live", "_live"}
     ]
 
     evidence = []
@@ -569,9 +563,7 @@ def _detect_pausability(contract, project_dir: Path) -> PausabilityAnalysis:
     }
 
 
-def _detect_timelock(
-    contract, project_dir: Path, role_definitions: list[RoleDefinition]
-) -> TimelockAnalysis:
+def _detect_timelock(contract, project_dir: Path, role_definitions: list[RoleDefinition]) -> TimelockAnalysis:
     inheritance_names = [contract.name, *[base.name for base in getattr(contract, "inheritance", [])]]
     lower_names = [name.lower() for name in inheritance_names]
     delay_variables = []

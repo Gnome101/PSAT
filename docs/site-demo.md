@@ -5,6 +5,13 @@ This repo ships a small demo site built with:
 - FastAPI backend in [`web_demo.py`](/home/gnome2/asu/capstone/PSAT/web_demo.py)
 - React + Vite frontend in [`site/`](/home/gnome2/asu/capstone/PSAT/site)
 
+Backend logic is grouped into the domain packages:
+
+- [`services/discovery/`](/home/gnome2/asu/capstone/PSAT/services/discovery)
+- [`services/static/`](/home/gnome2/asu/capstone/PSAT/services/static)
+- [`services/resolution/`](/home/gnome2/asu/capstone/PSAT/services/resolution)
+- [`services/policy/`](/home/gnome2/asu/capstone/PSAT/services/policy)
+
 ## Run It Locally
 
 Start the backend:

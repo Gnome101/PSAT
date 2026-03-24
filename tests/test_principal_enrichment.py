@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.principal_enrichment import build_principal_labels, write_principal_labels_from_files
+from services.policy.principal_enrichment import build_principal_labels, write_principal_labels_from_files
 
 
 def test_build_principal_labels_enriches_safe_admin_and_operator(monkeypatch):
@@ -104,7 +104,7 @@ def test_build_principal_labels_enriches_safe_admin_and_operator(monkeypatch):
     }
 
     monkeypatch.setattr(
-        "services.principal_enrichment.classify_resolved_address",
+        "services.policy.principal_enrichment.classify_resolved_address",
         lambda rpc_url, address: ("eoa", {"address": address}),
     )
 

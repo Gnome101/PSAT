@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.hypersync_backfill import (
+from services.policy.hypersync_backfill import (
     fetch_policy_event_history,
     reconstruct_policy_state,
     run_hypersync_policy_backfill,
@@ -290,7 +290,7 @@ def test_run_hypersync_policy_backfill_writes_outputs(tmp_path, monkeypatch):
     async def fake_fetch(*args, **kwargs):
         return records
 
-    monkeypatch.setattr("services.hypersync_backfill.fetch_policy_event_history", fake_fetch)
+    monkeypatch.setattr("services.policy.hypersync_backfill.fetch_policy_event_history", fake_fetch)
 
     events_path, state_path = run_hypersync_policy_backfill(
         plan_path,
