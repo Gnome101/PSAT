@@ -1,6 +1,6 @@
 # Examples
 
-These are real generated artifacts copied from actual runs in [`contracts/`](/home/gnome2/asu/capstone/PSAT/contracts), not mocks.
+These are real generated artifacts copied from actual runs in `contracts/`, not mocks.
 
 Each example directory contains the JSON files the frontend reads:
 
@@ -12,5 +12,5 @@ Each example directory contains the JSON files the frontend reads:
 
 Current examples:
 
-- [`boringvault_08c6f91e/`](/home/gnome2/asu/capstone/PSAT/examples/boringvault_08c6f91e)
-- [`morpho_bbbbbbbb/`](/home/gnome2/asu/capstone/PSAT/examples/morpho_bbbbbbbb)
+- `boringvault_08c6f91e/`
+- `morpho_bbbbbbbb/`

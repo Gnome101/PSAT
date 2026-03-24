@@ -2,9 +2,9 @@
 """Orchestrator for protocol contract inventory discovery.
 
 Given a company/protocol name or domain, this module:
-  1. Identifies the official domain via Tavily search + LLM  (discovery_ai_domain.py)
-  2. Selects pages likely to contain contract inventories     (discovery_ai_domain.py)
-  3. Extracts contract entries from those pages                (discovery_ai_inventory.py)
+  1. Identifies the official domain via Tavily search + LLM  (inventory_domain.py)
+  2. Selects pages likely to contain contract inventories     (inventory_domain.py)
+  3. Extracts contract entries from those pages               (inventory_extract.py)
   4. Scores, deduplicates, and ranks the results
 """
 

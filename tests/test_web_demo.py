@@ -61,11 +61,45 @@ def test_analyze_endpoint_uses_start_demo_job(monkeypatch) -> None:
     assert response.json()["job_id"] == "job-1"
 
 
+def test_company_analyze_endpoint_uses_start_demo_job(monkeypatch) -> None:
+    client = make_client()
+
+    def fake_start_demo_job(request: web_demo.AnalyzeRequest) -> dict:
+        assert request.company == "etherfi"
+        assert request.address is None
+        assert request.chain == "ethereum"
+        assert request.analyze_limit == 3
+        return {"job_id": "job-2", "status": "queued"}
+
+    monkeypatch.setattr(web_demo, "start_demo_job", fake_start_demo_job)
+
+    response = client.post(
+        "/api/analyze",
+        json={"company": "etherfi", "chain": "ethereum", "analyze_limit": 3},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["job_id"] == "job-2"
+
+
 def test_analyze_endpoint_rejects_bad_address() -> None:
     client = make_client()
     response = client.post("/api/analyze", json={"address": "123", "name": "demo"})
 
     assert response.status_code == 422
+
+
+def test_analyze_endpoint_requires_exactly_one_target() -> None:
+    client = make_client()
+
+    missing = client.post("/api/analyze", json={"name": "demo"})
+    both = client.post(
+        "/api/analyze",
+        json={"address": "0x1234567890123456789012345678901234567890", "company": "etherfi"},
+    )
+
+    assert missing.status_code == 422
+    assert both.status_code == 422
 
 
 def test_get_job_and_missing_job() -> None:

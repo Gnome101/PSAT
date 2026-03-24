@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from dotenv import load_dotenv
 
 from schemas.effective_permissions import PrincipalResolution
-from services.discovery import CONTRACTS_DIR, fetch, scaffold
+from services.discovery import CONTRACTS_DIR, fetch, scaffold, search_protocol_inventory
 from services.policy import (
     run_hypersync_policy_backfill,
     write_effective_permissions_from_files,
@@ -30,6 +31,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 DEFAULT_DEMO_RPC_URL = os.getenv("PSAT_DEMO_RPC_URL", "https://ethereum-rpc.publicnode.com")
 DEFAULT_HYPERSYNC_URL = os.getenv("PSAT_HYPERSYNC_URL", "https://eth.hypersync.xyz")
+PROTOCOLS_DIR = Path(__file__).resolve().parents[2] / "protocols"
 JSON_ARTIFACTS = (
     "contract_analysis.json",
     "contract_meta.json",
@@ -65,6 +67,12 @@ def _unique_run_name(base: str) -> str:
         return candidate
     suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     return f"{candidate}_{suffix}"
+
+
+def _protocol_inventory_path(company: str) -> Path:
+    protocol_dir = PROTOCOLS_DIR / _slug(company)
+    protocol_dir.mkdir(parents=True, exist_ok=True)
+    return protocol_dir / "contract_inventory.json"
 
 
 def _analysis_summary(project_dir: Path) -> dict:
@@ -348,4 +356,87 @@ def run_demo_analysis(
             "effective_permissions": str(effective_permissions_path),
             "principal_labels": str(principal_labels_path),
         },
+    }
+
+
+def run_protocol_analysis(
+    company: str,
+    *,
+    chain: str | None = None,
+    discover_limit: int = 25,
+    analyze_limit: int = 5,
+    rpc_url: str = DEFAULT_DEMO_RPC_URL,
+    progress: Callable[[str, str], None] | None = None,
+) -> dict[str, Any]:
+    def update(stage: str, detail: str) -> None:
+        if progress:
+            progress(stage, detail)
+
+    clean_company = company.strip()
+    if not clean_company:
+        raise ValueError("Company must not be empty")
+    if discover_limit < 1:
+        raise ValueError("Discover limit must be >= 1")
+    if analyze_limit < 1:
+        raise ValueError("Analyze limit must be >= 1")
+
+    update("discovery", f"Discovering official contracts for {clean_company}")
+    inventory = search_protocol_inventory(clean_company, chain=chain, limit=discover_limit)
+    inventory_path = _protocol_inventory_path(clean_company)
+    inventory_path.write_text(json.dumps(inventory, indent=2) + "\n")
+
+    discovered_contracts = [entry for entry in inventory.get("contracts", []) if entry.get("address")]
+    selected_contracts = discovered_contracts[:analyze_limit]
+    analyzed_runs: list[dict[str, Any]] = []
+
+    if not selected_contracts:
+        update("completed", "Discovery finished but no contracts were available to analyze")
+        return {
+            "mode": "company",
+            "company": clean_company,
+            "chain": chain or "any",
+            "inventory_path": str(inventory_path),
+            "official_domain": inventory.get("official_domain"),
+            "discovered_contract_count": len(discovered_contracts),
+            "analyzed_contract_count": 0,
+            "run_name": None,
+            "run_names": [],
+            "runs": [],
+        }
+
+    total = len(selected_contracts)
+    for index, contract in enumerate(selected_contracts, start=1):
+        contract_name = str(contract.get("name") or f"{clean_company}_{str(contract['address'])[2:10]}")
+
+        def child_progress(stage: str, detail: str, *, current: int = index, overall: int = total) -> None:
+            update(f"{stage} {current}/{overall}", f"{contract_name}: {detail}")
+
+        result = run_demo_analysis(
+            str(contract["address"]),
+            name=contract_name,
+            rpc_url=rpc_url,
+            progress=child_progress,
+        )
+        analyzed_runs.append(
+            {
+                "run_name": result["run_name"],
+                "contract_name": result["contract_name"],
+                "address": result["address"],
+                "chain": contract.get("chain"),
+                "confidence": contract.get("confidence"),
+            }
+        )
+
+    update("completed", f"Discovery complete. Analyzed {len(analyzed_runs)} contract(s)")
+    return {
+        "mode": "company",
+        "company": clean_company,
+        "chain": chain or "any",
+        "inventory_path": str(inventory_path),
+        "official_domain": inventory.get("official_domain"),
+        "discovered_contract_count": len(discovered_contracts),
+        "analyzed_contract_count": len(analyzed_runs),
+        "run_name": analyzed_runs[0]["run_name"] if analyzed_runs else None,
+        "run_names": [run["run_name"] for run in analyzed_runs],
+        "runs": analyzed_runs,
     }

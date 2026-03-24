@@ -2,8 +2,8 @@
 
 This repo ships a small demo site built with:
 
-- FastAPI backend in [`web_demo.py`](/home/gnome2/asu/capstone/PSAT/web_demo.py)
-- React + Vite frontend in [`site/`](/home/gnome2/asu/capstone/PSAT/site)
+- FastAPI backend in `web_demo.py`
+- React + Vite frontend in `site/`
 
 Backend logic is grouped into the domain packages:
 
@@ -72,6 +72,6 @@ The Graph tab is a graph-first view of:
 
 ## Notes
 
-- The backend stores run artifacts under [`contracts/`](/home/gnome2/asu/capstone/PSAT/contracts).
+- The backend stores run artifacts under `contracts/`.
 - Recursive artifacts are written as `recursive_*` workspaces under `contracts/`.
 - HyperSync authority-policy backfill only runs when `ENVIO_API_TOKEN` is set.

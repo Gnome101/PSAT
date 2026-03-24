@@ -2,7 +2,7 @@
 
 This repo now includes a multi-container Docker setup for the FastAPI API and the Vite site.
 
-For local frontend + backend development without Docker, see [site-demo.md](/home/gnome2/asu/capstone/PSAT/docs/site-demo.md).
+For local frontend + backend development without Docker, see `docs/site-demo.md`.
 
 ## What it includes
 
@@ -13,7 +13,7 @@ For local frontend + backend development without Docker, see [site-demo.md](/hom
 - `site`
   - Vite development server
   - proxies `/api` to the `api` container
-  - serves the React frontend from [`site/`](/home/gnome2/asu/capstone/PSAT/site)
+  - serves the React frontend from `site/`
 
 ## Start the containers
 

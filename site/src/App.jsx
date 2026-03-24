@@ -660,7 +660,7 @@ export default function App() {
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [activeTab, setActiveTab] = useState("summary");
   const [job, setJob] = useState(null);
-  const [form, setForm] = useState({ address: "", name: "" });
+  const [form, setForm] = useState({ target: "", name: "", chain: "", analyzeLimit: "5" });
   const [loading, setLoading] = useState(false);
   const analysesRef = useRef([]);
   const selectedRunRef = useRef(null);
@@ -766,18 +766,26 @@ export default function App() {
 
   async function submit(event) {
     event.preventDefault();
-    if (!form.address) {
+    if (!form.target) {
       return;
     }
     setLoading(true);
     try {
+      const target = form.target.trim();
+      const payload = isAddress(target)
+        ? {
+            address: target,
+            name: form.name.trim() || null,
+          }
+        : {
+            company: target,
+            chain: form.chain.trim() || null,
+            analyze_limit: Number.parseInt(form.analyzeLimit, 10) || 5,
+          };
       const nextJob = await api("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          address: form.address.trim(),
-          name: form.name.trim() || null,
-        }),
+        body: JSON.stringify(payload),
       });
       setJob(nextJob);
       setForm((current) => ({ ...current, name: "" }));
@@ -802,22 +810,22 @@ export default function App() {
 
   return (
     <div className="shell">
-      <div className="sr-copy">Run an address and inspect the control surface</div>
+      <div className="sr-copy">Run an address or company and inspect the control surface</div>
       <header className="hero">
         <div className="hero-copy">
           <p className="eyebrow">Protocol Security Assessment Tool</p>
-          <h1>Run an address and inspect the control surface</h1>
+          <h1>Run an address or company and inspect the control surface</h1>
           <p className="lede">
-            Submit a contract address, let the backend build the analysis artifacts, and browse existing or newly completed runs.
+            Submit a contract address for direct analysis, or a company name to run discovery first and then analyze the top discovered contracts.
           </p>
         </div>
         <form className="submit-card" onSubmit={submit}>
           <label>
-            <span>Address</span>
+            <span>Address or company</span>
             <input
-              value={form.address}
-              onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))}
-              placeholder="0x..."
+              value={form.target}
+              onChange={(event) => setForm((current) => ({ ...current, target: event.target.value }))}
+              placeholder="0x... or etherfi"
               required
             />
           </label>
@@ -826,7 +834,25 @@ export default function App() {
             <input
               value={form.name}
               onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-              placeholder="Optional"
+              placeholder="Optional, address mode only"
+            />
+          </label>
+          <label>
+            <span>Discovery chain</span>
+            <input
+              value={form.chain}
+              onChange={(event) => setForm((current) => ({ ...current, chain: event.target.value }))}
+              placeholder="Optional, company mode only"
+            />
+          </label>
+          <label>
+            <span>Analyze top N</span>
+            <input
+              type="number"
+              min="1"
+              max="25"
+              value={form.analyzeLimit}
+              onChange={(event) => setForm((current) => ({ ...current, analyzeLimit: event.target.value }))}
             />
           </label>
           <button type="submit" disabled={loading}>

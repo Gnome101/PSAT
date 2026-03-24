@@ -2,7 +2,7 @@
 
 Fetches official protocol pages and extracts contract records (name, address,
 chain) from tables, lists, explorer links, and prose text.  Called by
-contract_inventory_ai.py after discovery_ai_domain.py identifies the pages.
+inventory.py after inventory_domain.py identifies the pages.
 """
 
 from __future__ import annotations

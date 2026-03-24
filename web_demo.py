@@ -14,9 +14,16 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from services.demo.runner import DEFAULT_DEMO_RPC_URL, artifact_path, list_analyses, read_analysis, run_demo_analysis
+from services.demo.runner import (
+    DEFAULT_DEMO_RPC_URL,
+    artifact_path,
+    list_analyses,
+    read_analysis,
+    run_demo_analysis,
+    run_protocol_analysis,
+)
 
 ROOT_DIR = Path(__file__).resolve().parent
 SITE_DIR = ROOT_DIR / "site"
@@ -25,9 +32,19 @@ SITE_ASSETS_DIR = SITE_DIST_DIR / "assets"
 
 
 class AnalyzeRequest(BaseModel):
-    address: str = Field(min_length=42, max_length=42)
+    address: str | None = Field(default=None, min_length=42, max_length=42)
+    company: str | None = Field(default=None, min_length=1)
     name: str | None = None
+    chain: str | None = None
+    discover_limit: int = Field(default=25, ge=1, le=100)
+    analyze_limit: int = Field(default=5, ge=1, le=25)
     rpc_url: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_target(self) -> "AnalyzeRequest":
+        if bool(self.address) == bool(self.company):
+            raise ValueError("Provide exactly one of address or company")
+        return self
 
 
 JOBS: dict[str, dict[str, Any]] = {}
@@ -51,19 +68,29 @@ def _run_job(job_id: str, request: AnalyzeRequest) -> None:
         def progress(stage: str, detail: str) -> None:
             _update_job(job_id, stage=stage, detail=detail)
 
-        result = run_demo_analysis(
-            request.address,
-            name=request.name,
-            rpc_url=request.rpc_url or DEFAULT_DEMO_RPC_URL,
-            progress=progress,
-        )
+        if request.company:
+            result = run_protocol_analysis(
+                request.company,
+                chain=request.chain,
+                discover_limit=request.discover_limit,
+                analyze_limit=request.analyze_limit,
+                rpc_url=request.rpc_url or DEFAULT_DEMO_RPC_URL,
+                progress=progress,
+            )
+        else:
+            result = run_demo_analysis(
+                request.address or "",
+                name=request.name,
+                rpc_url=request.rpc_url or DEFAULT_DEMO_RPC_URL,
+                progress=progress,
+            )
         _update_job(
             job_id,
             status="completed",
             stage="completed",
             detail="Analysis complete",
             result=result,
-            run_name=result["run_name"],
+            run_name=result.get("run_name"),
         )
     except Exception as exc:  # pragma: no cover - exercised via API tests with monkeypatch
         _update_job(
@@ -138,7 +165,7 @@ def list_jobs() -> list[dict[str, Any]]:
 
 @app.post("/api/analyze")
 def analyze_address(request: AnalyzeRequest) -> dict[str, Any]:
-    if not request.address.startswith("0x"):
+    if request.address and not request.address.startswith("0x"):
         raise HTTPException(status_code=400, detail="Address must start with 0x")
     job = start_demo_job(request)
     return job

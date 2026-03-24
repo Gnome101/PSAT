@@ -13,11 +13,11 @@ Backend code is now grouped by domain:
 - [`services/resolution/`](/home/gnome2/asu/capstone/PSAT/services/resolution)
 - [`services/policy/`](/home/gnome2/asu/capstone/PSAT/services/policy)
 
-The older top-level modules under [`services/`](/home/gnome2/asu/capstone/PSAT/services) are now compatibility wrappers so existing imports and scripts keep working during the transition.
+The codebase now lives under the split service packages in `services/`.
 
 ## Main Outputs
 
-Each run is written under [`contracts/`](/home/gnome2/asu/capstone/PSAT/contracts) and typically includes:
+Each run is written under `contracts/` and typically includes:
 
 - `contract_analysis.json`
 - `control_tracking_plan.json`
@@ -73,7 +73,7 @@ http://127.0.0.1:8000
 
 ### Frontend
 
-The site lives in [`site/`](/home/gnome2/asu/capstone/PSAT/site).
+The site lives in `site/`.
 
 Install frontend deps once:
 
@@ -150,7 +150,7 @@ The FastAPI demo runner does this for a submitted address:
 9. writes `effective_permissions.json`
 10. writes `principal_labels.json`
 
-The implementation is in [`services/demo/runner.py`](/home/gnome2/asu/capstone/PSAT/services/demo/runner.py).
+The implementation is in `services/demo/runner.py`.
 
 ## Docker
 
@@ -160,11 +160,11 @@ The monorepo can be run with separate `api` and `site` containers.
 docker compose up --build api site
 ```
 
-See [docs/docker-backend.md](/home/gnome2/asu/capstone/PSAT/docs/docker-backend.md).
+See `docs/docker-backend.md`.
 
 ## Examples
 
-Real generated frontend artifacts are copied into [`examples/`](/home/gnome2/asu/capstone/PSAT/examples).
+Real generated frontend artifacts are copied into `examples/`.
 
 Each example contains the same JSON files the site reads:
 
@@ -176,8 +176,8 @@ Each example contains the same JSON files the site reads:
 
 Current examples:
 
-- [`examples/boringvault_08c6f91e`](/home/gnome2/asu/capstone/PSAT/examples/boringvault_08c6f91e)
-- [`examples/morpho_bbbbbbbb`](/home/gnome2/asu/capstone/PSAT/examples/morpho_bbbbbbbb)
+- `examples/boringvault_08c6f91e`
+- `examples/morpho_bbbbbbbb`
 
 ## Tests
 
