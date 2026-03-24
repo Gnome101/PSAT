@@ -1,5 +1,5 @@
-import json
 import importlib
+import json
 import sys
 from pathlib import Path
 
@@ -15,23 +15,26 @@ STANDARD_JSON_RESULT = {
     "Runs": "200",
     "EVMVersion": "shanghai",
     "LicenseType": "MIT",
-    "SourceCode": """{{
-  "language": "Solidity",
-  "sources": {
-    "src/base/BoringVault.sol": {
-      "content": "pragma solidity 0.8.21;\\nimport {\\"Auth\\"} from \\"@solmate/auth/Auth.sol\\";\\ncontract BoringVault is Auth {}\\n"
-    },
-    "lib/solmate/src/auth/Auth.sol": {
-      "content": "pragma solidity >=0.8.0;\\nabstract contract Auth {}\\n"
-    }
-  },
-  "settings": {
-    "remappings": [
-      "@solmate/=lib/solmate/src/",
-      "@openzeppelin/=lib/openzeppelin-contracts/"
-    ]
-  }
-}}""",
+    "SourceCode": (
+        "{{\n"
+        '  "language": "Solidity",\n'
+        '  "sources": {\n'
+        '    "src/base/BoringVault.sol": {\n'
+        '      "content": "pragma solidity 0.8.21;\\nimport {\\"Auth\\"} from '
+        '\\"@solmate/auth/Auth.sol\\";\\ncontract BoringVault is Auth {}\\n"\n'
+        "    },\n"
+        '    "lib/solmate/src/auth/Auth.sol": {\n'
+        '      "content": "pragma solidity >=0.8.0;\\nabstract contract Auth {}\\n"\n'
+        "    }\n"
+        "  },\n"
+        '  "settings": {\n'
+        '    "remappings": [\n'
+        '      "@solmate/=lib/solmate/src/",\n'
+        '      "@openzeppelin/=lib/openzeppelin-contracts/"\n'
+        "    ]\n"
+        "  }\n"
+        "}}"
+    ),
 }
 
 

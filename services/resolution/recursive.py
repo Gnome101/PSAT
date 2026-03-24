@@ -25,7 +25,6 @@ from .tracking import (
 )
 from .tracking_plan import write_control_tracking_plan
 
-
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
 
 

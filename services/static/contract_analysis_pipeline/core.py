@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from schemas.contract_analysis import AuditAlignment, ContractAnalysis, Summary
 from slither.slither import Slither
+
+from schemas.contract_analysis import AuditAlignment, ContractAnalysis, Summary
 
 from .graph import build_permission_graph
 from .shared import _load_json, _select_subject_contract

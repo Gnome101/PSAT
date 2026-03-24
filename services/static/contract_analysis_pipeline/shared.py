@@ -6,8 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from schemas.contract_analysis import Evidence
 from slither.slither import Slither
+
+from schemas.contract_analysis import Evidence
 
 from .constants import ROLE_CONSTANT_PATTERN
 

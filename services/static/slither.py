@@ -30,7 +30,7 @@ def run_slither(project_dir: Path) -> dict:
 
         try:
             return json.loads(result.stdout)
-        except json.JSONDecodeError as exc:
+        except json.JSONDecodeError:
             last_error = RuntimeError(
                 "Failed to parse Slither output. "
                 f"exit={result.returncode} stderr:\n{result.stderr}\nstdout:\n{result.stdout[:2000]}"

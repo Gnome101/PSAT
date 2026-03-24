@@ -121,7 +121,8 @@ def test_find_dependencies_explicit_rpc_does_not_fallback(monkeypatch):
         )
 
 
-# Verifies public auto-discovery against a known mainnet contract so the default no-custom-RPC path is exercised end-to-end.
+# Verifies public auto-discovery against a known mainnet contract so the
+# default no-custom-RPC path is exercised end-to-end.
 def test_public_auto_discovery_live_rpc():
     # 1inch Aggregation Router V5 on Ethereum mainnet
     contract = "0x1111111254eeb25477b68fb85ed929f73a960582"

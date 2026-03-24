@@ -91,7 +91,8 @@ def get_code(rpc_url: str, address: str) -> str:
     return rpc_call(rpc_url, "eth_getCode", [address, "latest"])
 
 
-# Pick an RPC endpoint (custom or from known public lists) where the given address has deployed bytecode, returning (network, rpc_url).
+# Pick an RPC endpoint where the given address has deployed bytecode and return
+# the resolved `(network, rpc_url)` pair.
 def resolve_rpc_for_address(address: str, rpc_url: str | None = None) -> tuple[str, str]:
     address = normalize_address(address)
     if rpc_url:
@@ -138,7 +139,8 @@ def extract_push20_addresses(bytecode_hex: str) -> set[str]:
     return out
 
 
-# Starting from a root contract, traverse reachable embedded PUSH20 addresses and return the set of those that are deployed contracts.
+# Starting from a root contract, traverse reachable embedded PUSH20 addresses
+# and return the set of those that are deployed contracts.
 def discover_dependencies(rpc_url: str, root: str) -> list[str]:
     root = normalize_address(root)
     code_cache = {}

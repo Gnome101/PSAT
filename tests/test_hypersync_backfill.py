@@ -72,7 +72,9 @@ def _plan() -> dict:
                     ],
                 },
                 "notes": [
-                    "Track authorization-policy mutations through emitted events; the underlying table-backed state is non-enumerable for generic polling."
+                    "Track authorization-policy mutations through emitted events; "
+                    "the underlying table-backed state is non-enumerable for "
+                    "generic polling."
                 ],
             }
         ],

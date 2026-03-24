@@ -224,7 +224,10 @@ def _authority_snapshot_and_policy(
                         policy_state_path,
                         {
                             "status": "complete",
-                            "reason": "Authority policy backfill completed and principals were joined from current policy state.",
+                            "reason": (
+                                "Authority policy backfill completed and principals "
+                                "were joined from current policy state."
+                            ),
                         },
                     )
             return (
@@ -232,7 +235,10 @@ def _authority_snapshot_and_policy(
                 None,
                 {
                     "status": "missing_hypersync_token",
-                    "reason": "Authority policy tracking exists, but ENVIO_API_TOKEN is not set, so HyperSync backfill was skipped.",
+                    "reason": (
+                        "Authority policy tracking exists, but ENVIO_API_TOKEN is "
+                        "not set, so HyperSync backfill was skipped."
+                    ),
                 },
             )
         return (

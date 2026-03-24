@@ -9,8 +9,9 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from .static_dependencies import normalize_address, rpc_call
 from utils.etherscan import get as etherscan_get
+
+from .static_dependencies import normalize_address, rpc_call
 
 TRACE_OPS = {"CALL", "STATICCALL", "DELEGATECALL", "CALLCODE", "CREATE", "CREATE2"}
 

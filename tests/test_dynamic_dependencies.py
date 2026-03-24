@@ -36,7 +36,8 @@ def test_pick_representative_transactions_prefers_selector_coverage():
 
 # Verifies edge extraction handles all call op types (including CALLCODE) for both debug and parity trace formats.
 def test_extract_edges_captures_all_op_types():
-    addr = lambda n: f"0x{str(n) * 40}"
+    def addr(n):
+        return f"0x{str(n) * 40}"
 
     # debug callTracer: nested CALL/DELEGATECALL/CREATE/CALLCODE
     debug_trace = {

@@ -1,18 +1,18 @@
-import json
 import asyncio
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.resolution.tracking import (
+    _classify_resolved_address,
     build_control_snapshot,
     diff_control_snapshots,
     grouped_event_filters,
     matching_controllers_for_log,
     matching_policies_for_log,
     policy_change_events,
-    _classify_resolved_address,
     run_control_tracker,
 )
 from services.resolution.tracking_plan import build_control_tracking_plan
@@ -137,8 +137,15 @@ def test_matching_policies_for_log_and_decode_fields(tmp_path):
             "new_value": None,
             "observed_via": "wss_logs",
             "notes": [
-                "Track authorization-policy mutations through emitted events; the underlying table-backed state is non-enumerable for generic polling.",
-                "decoded_fields=enabled=True, functionSig=0x12345678, role=1, target=0x2222222222222222222222222222222222222222",
+                (
+                    "Track authorization-policy mutations through emitted events; "
+                    "the underlying table-backed state is non-enumerable for "
+                    "generic polling."
+                ),
+                (
+                    "decoded_fields=enabled=True, functionSig=0x12345678, role=1, "
+                    "target=0x2222222222222222222222222222222222222222"
+                ),
             ],
             "event_signature": "RoleCapabilityUpdated(uint8,address,bytes4,bool)",
         }

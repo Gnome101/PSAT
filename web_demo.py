@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import traceback
 import uuid
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 from typing import Any
 
@@ -105,7 +105,8 @@ def _site_index_response():
     if (SITE_DIST_DIR / "index.html").exists():
         return FileResponse(SITE_DIST_DIR / "index.html")
     return PlainTextResponse(
-        "Frontend build not found. Run `cd site && npm run build` or start the Vite dev server with `cd site && npm run dev`.",
+        "Frontend build not found. Run `cd site && npm run build` or start the "
+        "Vite dev server with `cd site && npm run dev`.",
         status_code=503,
     )
 

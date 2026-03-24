@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from eth_utils import keccak
+
 from schemas.contract_analysis import (
     AssociatedEvent,
     AssociatedEventInput,
@@ -227,7 +228,9 @@ def build_controller_tracking(
                     "associated_events": [],
                     "polling_sources": [controller_source],
                     "notes": [
-                        "Controller kind is not directly reducible to a mutable singleton state value; manual review or specialized resolution is required."
+                        "Controller kind is not directly reducible to a mutable "
+                        "singleton state value; manual review or specialized "
+                        "resolution is required."
                     ],
                 }
             )
@@ -243,16 +246,21 @@ def build_controller_tracking(
         if associated_events:
             tracking_mode = "event_plus_state"
             notes = [
-                "Monitor associated events for low-latency detection and confirm the resulting controller state with RPC reads."
+                "Monitor associated events for low-latency detection and confirm "
+                "the resulting controller state with RPC reads."
             ]
         else:
             tracking_mode = "state_only"
             notes = [
-                "No deterministically associated post-deploy events were found for this controller state; rely on periodic RPC reads and reconciliation."
+                "No deterministically associated post-deploy events were found "
+                "for this controller state; rely on periodic RPC reads and "
+                "reconciliation."
             ]
             if not writer_functions:
                 notes.append(
-                    "No post-deploy writer functions were found from static analysis; continue polling the current value and reanalyze on implementation changes."
+                    "No post-deploy writer functions were found from static "
+                    "analysis; continue polling the current value and reanalyze "
+                    "on implementation changes."
                 )
 
         tracking_targets.append(
@@ -310,7 +318,9 @@ def build_policy_tracking(contract, project_dir: Path, permission_graph: Permiss
                 "writer_functions": writer_functions,
                 "associated_events": associated_events,
                 "notes": [
-                    "Track authorization-policy mutations through emitted events; the underlying table-backed state is non-enumerable for generic polling."
+                    "Track authorization-policy mutations through emitted events; "
+                    "the underlying table-backed state is non-enumerable for "
+                    "generic polling."
                 ],
             }
         )

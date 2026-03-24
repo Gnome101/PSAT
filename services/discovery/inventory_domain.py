@@ -19,8 +19,9 @@ from urllib.parse import urlparse
 
 import requests as _requests
 
-from .static_dependencies import normalize_address as _normalize_address
 from utils import llm, tavily
+
+from .static_dependencies import normalize_address as _normalize_address
 
 # -- Constants ---------------------------------------------------------------
 
