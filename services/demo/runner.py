@@ -29,8 +29,8 @@ from services.static import analyze, analyze_contract
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-DEFAULT_DEMO_RPC_URL = os.getenv("PSAT_DEMO_RPC_URL", "https://ethereum-rpc.publicnode.com")
-DEFAULT_HYPERSYNC_URL = os.getenv("PSAT_HYPERSYNC_URL", "https://eth.hypersync.xyz")
+DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 PROTOCOLS_DIR = Path(__file__).resolve().parents[2] / "protocols"
 JSON_ARTIFACTS = (
     "contract_analysis.json",
@@ -275,7 +275,7 @@ def run_demo_analysis(
     address: str,
     *,
     name: str | None = None,
-    rpc_url: str = DEFAULT_DEMO_RPC_URL,
+    rpc_url: str = DEFAULT_RPC_URL,
     progress: Callable[[str, str], None] | None = None,
 ) -> dict:
     def update(stage: str, detail: str) -> None:
@@ -368,7 +368,7 @@ def run_protocol_analysis(
     chain: str | None = None,
     discover_limit: int = 25,
     analyze_limit: int = 5,
-    rpc_url: str = DEFAULT_DEMO_RPC_URL,
+    rpc_url: str = DEFAULT_RPC_URL,
     progress: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
     def update(stage: str, detail: str) -> None:

@@ -68,11 +68,31 @@ def parse_remappings(result: dict) -> list[str]:
 
 
 def _detect_solc_version(sources: dict[str, str]) -> str:
+    versions = []
     for content in sources.values():
-        match = re.search(r"pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)", content)
-        if match:
-            return match.group(1)
-    return "0.8.19"
+        for m in re.finditer(r"pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)", content):
+            versions.append(m.group(1))
+    if not versions:
+        return "0.8.19"
+    return max(versions, key=lambda v: tuple(int(x) for x in v.split(".")))
+
+
+def _relax_pragmas(sources: dict[str, str]) -> dict[str, str]:
+    """Rewrite exact pragma constraints to '^X.Y.Z'.
+
+    Foundry nightly validates pragma constraints against solc_version even with
+    auto_detect_solc = false. Both bare '0.8.28' and '=0.8.28' are exact
+    constraints that prevent using a newer patch-level compiler.
+    """
+    relaxed = {}
+    for path, content in sources.items():
+        # Match 'pragma solidity =0.8.28' or bare 'pragma solidity 0.8.28'
+        relaxed[path] = re.sub(
+            r"(pragma\s+solidity\s+)=?\s*(0\.\d+\.\d+)",
+            r"\1^\2",
+            content,
+        )
+    return relaxed
 
 
 def _project_src_dir(sources: dict[str, str]) -> str:
@@ -88,6 +108,8 @@ def scaffold(address: str, name: str, result: dict) -> Path:
     bundle = parse_verification_bundle(result)
     solc_version = _detect_solc_version(sources)
     src_dir = _project_src_dir(sources)
+    raw_evm = result.get("EVMVersion", "") or ""
+    evm_version = raw_evm if raw_evm.lower() not in ("", "default") else "shanghai"
 
     project_dir = CONTRACTS_DIR / name
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -101,9 +123,10 @@ def scaffold(address: str, name: str, result: dict) -> Path:
             out = "out"
             libs = ["lib"]
             solc_version = "{solc_version}"
-            evm_version = "{result.get("EVMVersion", "shanghai") or "shanghai"}"
+            evm_version = "{evm_version}"
             optimizer = {str(result.get("OptimizationUsed", "1") == "1").lower()}
             optimizer_runs = {int(result.get("Runs", "200") or 200)}
+            auto_detect_solc = false
         """
         )
     )
@@ -114,7 +137,8 @@ def scaffold(address: str, name: str, result: dict) -> Path:
     if bundle:
         (project_dir / "etherscan_standard_input.json").write_text(json.dumps(bundle, indent=2) + "\n")
 
-    # source files
+    # source files — relax exact pragmas so a single solc_version satisfies all
+    sources = _relax_pragmas(sources)
     for filename, content in sources.items():
         filepath = project_dir / filename
         filepath.parent.mkdir(parents=True, exist_ok=True)

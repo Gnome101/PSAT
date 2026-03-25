@@ -2,7 +2,7 @@
 
 This repo ships a small demo site built with:
 
-- FastAPI backend in `web_demo.py`
+- FastAPI backend in `api.py`
 - React + Vite frontend in `site/`
 
 Backend logic is grouped into the domain packages:
@@ -17,7 +17,7 @@ Backend logic is grouped into the domain packages:
 Start the backend:
 
 ```bash
-uv run uvicorn web_demo:app --host 127.0.0.1 --port 8000
+uv run uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
 Start the frontend:

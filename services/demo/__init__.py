@@ -1,7 +1,7 @@
 """Demo-specific orchestration helpers."""
 
 from .runner import (
-    DEFAULT_DEMO_RPC_URL,
+    DEFAULT_RPC_URL,
     artifact_path,
     list_analyses,
     read_analysis,
@@ -9,7 +9,7 @@ from .runner import (
 )
 
 __all__ = [
-    "DEFAULT_DEMO_RPC_URL",
+    "DEFAULT_RPC_URL",
     "artifact_path",
     "list_analyses",
     "read_analysis",

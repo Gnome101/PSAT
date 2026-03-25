@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { buildVisualPermissionGraph, layoutVisualPermissionGraph, prettyFunctionName, shortenAddress, wrapText } from "./graph.js";
 import DependencyGraphTab from "./DependencyGraphTab.jsx";
@@ -391,11 +391,9 @@ function GraphTab({ detail }) {
     }
     return layoutVisualPermissionGraph(visual);
   }, [detail]);
-  if (!graph) {
-    return <p className="empty">No resolved permission graph available.</p>;
-  }
 
   const graphBounds = useMemo(() => {
+    if (!graph) return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 };
     const margin = 40;
     const minX = Math.min(...graph.nodes.map((node) => node.x)) - margin;
     const minY = Math.min(...graph.nodes.map((node) => node.y)) - margin;
@@ -412,6 +410,7 @@ function GraphTab({ detail }) {
   }, [graph]);
 
   const edgeGeometry = useMemo(() => {
+    if (!graph) return [];
     const outgoingById = new Map();
     const incomingById = new Map();
 
@@ -601,6 +600,10 @@ function GraphTab({ detail }) {
     }
   }
 
+  if (!graph) {
+    return <p className="empty">No resolved permission graph available.</p>;
+  }
+
   return (
     <div className="stack">
       <div className="graph-toolbar">
@@ -657,12 +660,68 @@ function GraphTab({ detail }) {
   );
 }
 
+const PIPELINE_STAGES = ["discovery", "static", "resolution", "policy"];
+
+function ActiveJobCard({ job }) {
+  const label = job.company || job.name || job.address || "Job";
+  const stageIdx = PIPELINE_STAGES.indexOf(job.stage);
+  const isDone = job.stage === "done";
+
+  return (
+    <div className="run-item active-job">
+      <div className="run-name">{label}</div>
+      <div className="stage-bar">
+        {PIPELINE_STAGES.map((stage, i) => (
+          <div
+            key={stage}
+            className={`stage-step ${isDone || i < stageIdx ? "done" : i === stageIdx ? "current" : ""}`}
+            title={stage}
+          >
+            <div className="stage-dot" />
+            <span className="stage-label">{stage}</span>
+          </div>
+        ))}
+      </div>
+      <div className="card-subtitle">{job.detail || job.status}</div>
+    </div>
+  );
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="shell" style={{ padding: 40 }}>
+          <div className="card" style={{ maxWidth: 600, margin: "80px auto" }}>
+            <h3>Something went wrong</h3>
+            <p className="muted">{String(this.state.error)}</p>
+            <button onClick={() => { this.setState({ error: null }); window.location.reload(); }}>
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   const [analyses, setAnalyses] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [activeTab, setActiveTab] = useState("summary");
   const [job, setJob] = useState(null);
+  const [activeJobs, setActiveJobs] = useState([]);
   const [form, setForm] = useState({ target: "", name: "", chain: "", analyzeLimit: "5" });
   const [loading, setLoading] = useState(false);
   const analysesRef = useRef([]);
@@ -696,13 +755,18 @@ export default function App() {
   }
 
   async function loadAnalysis(runName, options = {}) {
-    const payload = await api(`/api/analyses/${encodeURIComponent(runName)}`);
-    const nextTab = normalizeTab(options.tab ?? activeTabRef.current);
-    setSelectedRun(runName);
-    setSelectedDetail(payload);
-    setActiveTab(nextTab);
-    syncLocation(runName, payload, nextTab, options.history || "replace");
-    return payload;
+    try {
+      const payload = await api(`/api/analyses/${encodeURIComponent(runName)}`);
+      const nextTab = normalizeTab(options.tab ?? activeTabRef.current);
+      setSelectedRun(runName);
+      setSelectedDetail(payload);
+      setActiveTab(nextTab);
+      syncLocation(runName, payload, nextTab, options.history || "replace");
+      return payload;
+    } catch (err) {
+      console.error("Failed to load analysis:", runName, err);
+      return null;
+    }
   }
 
   async function resolveRoute(route, analysesPayload, options = {}) {
@@ -732,8 +796,9 @@ export default function App() {
 
   async function refreshAnalyses(preferredRun = null, options = {}) {
     const payload = await api("/api/analyses");
-    setAnalyses(payload);
-    await resolveRoute(options.route || parseLocationPath(window.location.pathname), payload, {
+    const filtered = payload.filter((a) => a.address);
+    setAnalyses(filtered);
+    await resolveRoute(options.route || parseLocationPath(window.location.pathname), filtered, {
       preferredRun,
       history: options.history || "replace",
     });
@@ -750,22 +815,42 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!job?.job_id || job.status === "completed" || job.status === "failed") {
-      return undefined;
-    }
-    const timer = window.setInterval(async () => {
+    if (!job?.job_id) return undefined;
+
+    let stopped = false;
+    let timer;
+
+    async function poll() {
+      if (stopped) return;
       try {
-        const next = await api(`/api/jobs/${job.job_id}`);
-        setJob(next);
-        if (next.status === "completed" && next.run_name) {
-          await refreshAnalyses(next.run_name, { history: "push" });
+        const allJobs = await api("/api/jobs");
+        if (stopped) return;
+        const running = allJobs.filter(
+          (j) => j.status === "queued" || j.status === "processing"
+        );
+        setActiveJobs(running);
+
+        const parent = allJobs.find((j) => j.job_id === job.job_id);
+        if (parent) setJob(parent);
+
+        if (running.length === 0) {
+          stopped = true;
+          clearInterval(timer);
+          setActiveJobs([]);
+          await refreshAnalyses(null, { history: "push" });
         }
       } catch {
-        // ignore transient polling failures in the demo UI
+        // ignore transient polling failures
       }
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [job]);
+    }
+
+    poll();
+    timer = setInterval(poll, 3000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [job?.job_id]);
 
   async function submit(event) {
     event.preventDefault();
@@ -797,11 +882,46 @@ export default function App() {
     }
   }
 
+  async function discoverMore(company) {
+    try {
+      const nextJob = await api("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company, analyze_limit: 5 }),
+      });
+      setJob(nextJob);
+    } catch (err) {
+      console.error("Failed to start discovery:", err);
+    }
+  }
+
   function handleTabChange(tab) {
     const nextTab = normalizeTab(tab);
     setActiveTab(nextTab);
     syncLocation(selectedRun, selectedDetail, nextTab, "push");
   }
+
+  const groupedAnalyses = useMemo(() => {
+    const groups = [];
+    const companyMap = new Map();
+    const standalone = [];
+
+    for (const analysis of analyses) {
+      const company = analysis.company;
+      if (company) {
+        if (!companyMap.has(company)) {
+          const group = { company, items: [] };
+          companyMap.set(company, group);
+          groups.push(group);
+        }
+        companyMap.get(company).items.push(analysis);
+      } else {
+        standalone.push(analysis);
+      }
+    }
+
+    return { groups, standalone };
+  }, [analyses]);
 
   const tabContent = {
     summary: <SummaryTab detail={selectedDetail} />,
@@ -813,6 +933,7 @@ export default function App() {
   };
 
   return (
+    <ErrorBoundary>
     <div className="shell">
       <div className="sr-copy">Run an address or company and inspect the control surface</div>
       <header className="hero">
@@ -875,69 +996,82 @@ export default function App() {
               </button>
             </div>
             <div className="run-list">
-              {analyses.map((analysis) => (
+              {activeJobs.map((activeJob) => (
+                <ActiveJobCard key={activeJob.job_id} job={activeJob} />
+              ))}
+              {groupedAnalyses.groups.map((group) => (
+                <div key={group.company} className="run-group">
+                  <div className="run-group-header">
+                    <span>{group.company}</span>
+                    <button className="discover-more" title={`Discover more ${group.company} contracts`} onClick={() => discoverMore(group.company)}>+</button>
+                  </div>
+                  {group.items.map((analysis) => (
+                    <button
+                      className={`run-item ${analysis.run_name === selectedRun ? "active" : ""}`}
+                      key={analysis.run_name}
+                      onClick={() => loadAnalysis(analysis.run_name, { tab: activeTab, history: "push" })}
+                    >
+                      <div className="run-name">{analysis.contract_name || analysis.run_name}</div>
+                      <div className="run-address">{analysis.address}</div>
+                      <div className="card-subtitle">{(analysis.summary?.standards || []).join(" · ") || "No standards yet"}</div>
+                    </button>
+                  ))}
+                </div>
+              ))}
+              {groupedAnalyses.standalone.map((analysis) => (
                 <button
                   className={`run-item ${analysis.run_name === selectedRun ? "active" : ""}`}
                   key={analysis.run_name}
                   onClick={() => loadAnalysis(analysis.run_name, { tab: activeTab, history: "push" })}
                 >
                   <div className="run-name">{analysis.contract_name || analysis.run_name}</div>
-                  <div className="run-address">{analysis.address || "Unknown address"}</div>
+                  <div className="run-address">{analysis.address}</div>
                   <div className="card-subtitle">{(analysis.summary?.standards || []).join(" · ") || "No standards yet"}</div>
                 </button>
               ))}
+              {!activeJobs.length && !analyses.length && (
+                <div className="empty" style={{ padding: "12px 0" }}>No analyses yet. Submit a contract or company above.</div>
+              )}
             </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Job Status</h2>
-            </div>
-            {!job ? (
-              <div className="job-status empty">No active job</div>
-            ) : (
-              <div className="job-status">
-                <div className={`job-pill ${job.status}`}>{job.status}</div>
-                <div>
-                  <strong>{job.stage || "pending"}</strong>
-                </div>
-                <div>{job.detail || ""}</div>
-                {job.run_name ? <div className="mono">{job.run_name}</div> : null}
-                {job.error ? <pre className="pre-wrap code-block small">{job.error}</pre> : null}
-              </div>
-            )}
           </section>
         </aside>
 
         <section className="content">
-          <section className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Selected Run</p>
-                <h2>{selectedDetail?.contract_name || selectedRun || "Nothing selected"}</h2>
+          {selectedDetail ? (
+            <section className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Selected Run</p>
+                  <h2>{selectedDetail.contract_name || selectedRun || "Unknown"}</h2>
+                </div>
+                <div className="meta-stack">
+                  <div className="mono">{selectedDetail.address || ""}</div>
+                  <div>{selectedDetail.summary?.control_model || selectedDetail.contract_analysis?.summary?.control_model || ""}</div>
+                </div>
               </div>
-              <div className="meta-stack">
-                <div className="mono">{selectedDetail?.address || "Unknown address"}</div>
-                <div>{selectedDetail?.summary?.control_model || selectedDetail?.contract_analysis?.summary?.control_model || ""}</div>
+
+              <div className="tabs">
+                {TABS.map((tab) => (
+                  <button
+                    key={tab}
+                    className={`tab ${activeTab === tab ? "active" : ""}`}
+                    onClick={() => handleTabChange(tab)}
+                  >
+                    {tab === "raw" ? "Raw JSON" : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </button>
+                ))}
               </div>
-            </div>
 
-            <div className="tabs">
-              {TABS.map((tab) => (
-                <button
-                  key={tab}
-                  className={`tab ${activeTab === tab ? "active" : ""}`}
-                  onClick={() => handleTabChange(tab)}
-                >
-                  {tab === "raw" ? "Raw JSON" : tab.charAt(0).toUpperCase() + tab.slice(1)}
-                </button>
-              ))}
-            </div>
-
-            <div className="tab-panel active">{tabContent[activeTab]}</div>
-          </section>
+              <div className="tab-panel active">{tabContent[activeTab]}</div>
+            </section>
+          ) : (
+            <section className="panel empty-state">
+              <p className="empty">Select a run from the sidebar to view its analysis.</p>
+            </section>
+          )}
         </section>
       </main>
     </div>
+    </ErrorBoundary>
   );
 }

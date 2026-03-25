@@ -480,6 +480,121 @@ button.ghost {
   letter-spacing: -0.03em;
 }
 
+/* Run groups (company headers) */
+.run-group {
+  display: grid;
+  gap: 8px;
+}
+
+.run-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--teal);
+  padding: 8px 4px 0;
+}
+
+.discover-more {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--teal-soft);
+  color: var(--teal);
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.discover-more:hover {
+  background: var(--teal);
+  color: white;
+  transform: none;
+}
+
+/* Active job cards with stage progression */
+.active-job {
+  border-color: rgba(15, 118, 110, 0.24);
+  background: linear-gradient(180deg, rgba(223, 248, 244, 0.5), rgba(255, 251, 244, 0.96));
+  cursor: default;
+}
+
+.active-job:hover {
+  transform: none;
+  border-color: rgba(15, 118, 110, 0.24);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.stage-bar {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 4px;
+}
+
+.stage-step {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.stage-dot {
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(164, 152, 133, 0.18);
+  transition: background 300ms;
+}
+
+.stage-step.done .stage-dot {
+  background: var(--teal);
+}
+
+.stage-step.current .stage-dot {
+  background: var(--amber);
+  animation: pulse-bar 1.5s ease-in-out infinite;
+}
+
+.stage-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.stage-step.done .stage-label {
+  color: var(--teal);
+}
+
+.stage-step.current .stage-label {
+  color: var(--amber-deep);
+  font-weight: 700;
+}
+
+@keyframes pulse-bar {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+}
+
 @media (max-width: 1500px) {
   .graph-layout {
     grid-template-columns: 1fr;
