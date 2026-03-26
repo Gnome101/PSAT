@@ -354,8 +354,11 @@ def run_discovery(args) -> None:
     """Run contract inventory discovery and print JSON results."""
     chain = getattr(args, "discover_chain", None)
     limit = getattr(args, "discover_limit", None) or 100
+    run_activity = not getattr(args, "no_activity_ranking", False)
 
-    result = search_protocol_inventory(args.discover_inventory, chain=chain, limit=limit)
+    result = search_protocol_inventory(
+        args.discover_inventory, chain=chain, limit=limit, run_activity_ranking=run_activity
+    )
 
     output = json.dumps(result, indent=2)
     print(output)
@@ -418,6 +421,11 @@ def main():
         type=int,
         default=5,
         help="When running company discovery, analyze the top N discovered contracts (default: 5)",
+    )
+    parser.add_argument(
+        "--no-activity-ranking",
+        action="store_true",
+        help="Skip on-chain activity ranking for discovered contracts",
     )
 
     args = parser.parse_args()

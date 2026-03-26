@@ -132,7 +132,7 @@ def _resolve_chain(inferred: str, requested: str | None) -> tuple[str | None, bo
 def _fetch_page(url: str, debug: bool = False) -> str | None:
     """Fetch a page via HTTP and return its text, or None on failure."""
     try:
-        resp = _requests.get(url, timeout=15, headers={"User-Agent": "PSAT/0.1"})
+        resp = _requests.get(url, timeout=30, headers={"User-Agent": "PSAT/0.1"})
         if resp.status_code == 200:
             _debug_log(debug, f"Fetched {url} ({len(resp.text)} chars)")
             return resp.text

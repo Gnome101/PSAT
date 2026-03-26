@@ -519,6 +519,8 @@ def run_protocol_analysis(
                 "address": result["address"],
                 "chain": contract.get("chain"),
                 "confidence": contract.get("confidence"),
+                "rank_score": contract.get("rank_score"),
+                "activity": contract.get("activity"),
             }
         )
 
