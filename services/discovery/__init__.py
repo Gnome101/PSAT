@@ -1,5 +1,6 @@
 """Discovery package."""
 
+from .activity import enrich_with_activity
 from .classifier import classify_contracts
 from .dependency_graph_builder import write_dependency_visualization
 from .deployer import expand_from_deployers
@@ -11,6 +12,7 @@ from .static_dependencies import find_dependencies
 __all__ = [
     "CONTRACTS_DIR",
     "classify_contracts",
+    "enrich_with_activity",
     "expand_from_deployers",
     "fetch",
     "find_dependencies",
