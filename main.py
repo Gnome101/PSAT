@@ -62,7 +62,7 @@ def load_addresses(filepath: str) -> list[dict]:
     sys.exit(f"Unsupported file type: {path.suffix} (use .json or .csv)")
 
 
-_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "proxies", "facets")
+_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "facets")
 
 
 def _build_unified_deps(
@@ -84,7 +84,6 @@ def _build_unified_deps(
             dep_sources.setdefault(normalize_address(dep), set()).add("dynamic")
 
     cls_map = (classifications or {}).get("classifications", {})
-    dyn_provenance = (dynamic_deps or {}).get("provenance", {})
 
     def _dep_entry(addr: str, sources: list[str]) -> dict:
         entry: dict = {"type": "regular", "source": sources}
@@ -94,8 +93,6 @@ def _build_unified_deps(
             for k in _CLS_KEYS:
                 if k in c:
                     entry[k] = c[k]
-        if addr in dyn_provenance:
-            entry["provenance"] = dyn_provenance[addr]
         return entry
 
     deps = {addr: _dep_entry(addr, sorted(sources)) for addr, sources in sorted(dep_sources.items())}
@@ -106,6 +103,21 @@ def _build_unified_deps(
         addr = normalize_address(addr)
         if addr not in deps:
             deps[addr] = _dep_entry(addr, ["classification"])
+
+    # Nest implementation entries under their proxy instead of top-level keys
+    impl_to_remove: set[str] = set()
+    for addr, info in deps.items():
+        if info.get("type") != "proxy":
+            continue
+        impl_addr = info.get("implementation")
+        if not isinstance(impl_addr, str) or impl_addr not in deps:
+            continue
+        impl_entry = deps[impl_addr].copy()
+        impl_entry["address"] = impl_addr
+        info["implementation"] = impl_entry
+        impl_to_remove.add(impl_addr)
+    for addr in impl_to_remove:
+        del deps[addr]
 
     output: dict = {"address": target}
 
@@ -121,13 +133,21 @@ def _build_unified_deps(
     output["dependencies"] = deps
 
     if dynamic_deps:
-        output["dependency_graph"] = dynamic_deps.get("dependency_graph", [])
+        # Key dependency_graph by from|to pair for O(1) lookups
+        raw_graph = dynamic_deps.get("dependency_graph", [])
+        keyed_graph: dict[str, list[dict]] = {}
+        for edge in raw_graph:
+            key = f"{edge['from']}|{edge['to']}"
+            entry: dict = {"op": edge["op"], "provenance": edge.get("provenance", [])}
+            if edge.get("selector"):
+                entry["selector"] = edge["selector"]
+            if edge.get("function_name"):
+                entry["function_name"] = edge["function_name"]
+            keyed_graph.setdefault(key, []).append(entry)
+        output["dependency_graph"] = keyed_graph
         output["transactions_analyzed"] = dynamic_deps.get("transactions_analyzed", [])
         output["trace_methods"] = dynamic_deps.get("trace_methods", [])
         output["trace_errors"] = dynamic_deps.get("trace_errors", [])
-
-    if discovered:
-        output["discovered_addresses"] = sorted(discovered)
 
     if static_deps and static_deps.get("network"):
         output["network"] = static_deps["network"]
@@ -222,14 +242,14 @@ def process(
         # Resolve contract names and function selectors from Etherscan.
         # Uses get_contract_info() which fetches name + ABI in one call per address.
         deps = unified.get("dependencies", {})
-        graph_edges = unified.get("dependency_graph", [])
+        keyed_graph = unified.get("dependency_graph", {})
 
-        # Collect all addresses we need info for: deps + their implementations
+        # Collect all addresses we need info for: deps + nested implementations
         addrs_to_fetch: set[str] = set(deps.keys())
         for info in deps.values():
             impl = info.get("implementation")
-            if impl:
-                addrs_to_fetch.add(impl)
+            if isinstance(impl, dict):
+                addrs_to_fetch.add(impl["address"])
 
         # Single Etherscan call per address → name + selector map
         info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
@@ -238,31 +258,39 @@ def process(
 
         # Apply contract names
         resolved_names = 0
-        for addr in deps:
+        for addr, dep_info in deps.items():
             cname = info_cache.get(addr, (None, {}))[0]
             if cname:
-                deps[addr]["contract_name"] = cname
+                dep_info["contract_name"] = cname
                 resolved_names += 1
+            impl = dep_info.get("implementation")
+            if isinstance(impl, dict):
+                impl_name = info_cache.get(impl["address"], (None, {}))[0]
+                if impl_name:
+                    impl["contract_name"] = impl_name
+                    resolved_names += 1
         if resolved_names:
-            print(f"         Resolved {resolved_names}/{len(deps)} contract name(s)")
+            print(f"         Resolved {resolved_names}/{len(addrs_to_fetch)} contract name(s)")
 
         # Apply function names to graph edges
-        if graph_edges:
+        if keyed_graph:
             resolved_fns = 0
-            for edge in graph_edges:
-                sel = edge.get("selector")
-                if not sel or sel == "0x":
-                    continue
-                to_addr = edge["to"]
-                # Try the target's ABI first, then its implementation's
-                name = info_cache.get(to_addr, (None, {}))[1].get(sel)
-                if not name:
-                    impl = deps.get(to_addr, {}).get("implementation")
-                    if impl:
-                        name = info_cache.get(impl, (None, {}))[1].get(sel)
-                if name:
-                    edge["function_name"] = name
-                    resolved_fns += 1
+            for key, edges in keyed_graph.items():
+                to_addr = key.split("|")[1]
+                for edge in edges:
+                    sel = edge.get("selector")
+                    if not sel or sel == "0x":
+                        continue
+                    # Try the target's ABI first, then its implementation's
+                    fn_name = info_cache.get(to_addr, (None, {}))[1].get(sel)
+                    if not fn_name:
+                        impl = deps.get(to_addr, {}).get("implementation")
+                        impl_addr = impl["address"] if isinstance(impl, dict) else impl
+                        if impl_addr:
+                            fn_name = info_cache.get(impl_addr, (None, {}))[1].get(sel)
+                    if fn_name:
+                        edge["function_name"] = fn_name
+                        resolved_fns += 1
             if resolved_fns:
                 print(f"         Resolved {resolved_fns} function selector(s)")
 
@@ -276,9 +304,18 @@ def process(
         parts = [f"{dep_count} total"]
         parts.extend(f"{v} {k}" for k, v in sorted(type_counts.items()))
         print(f"         Dependencies: {', '.join(parts)}")
-        if unified.get("discovered_addresses"):
-            n = len(unified["discovered_addresses"])
-            print(f"         Discovered {n} new address(es) via proxy slots")
+        # Derive discovered addresses from deps with classification source
+        n_discovered = sum(
+            1
+            for info in unified["dependencies"].values()
+            if "classification" in info.get("source", [])
+            or (
+                isinstance(info.get("implementation"), dict)
+                and "classification" in info["implementation"].get("source", [])
+            )
+        )
+        if n_discovered:
+            print(f"         Discovered {n_discovered} new address(es) via proxy slots")
         print(f"         Output: {deps_path}")
 
         viz_path = write_dependency_visualization(project_dir)
@@ -317,8 +354,11 @@ def run_discovery(args) -> None:
     """Run contract inventory discovery and print JSON results."""
     chain = getattr(args, "discover_chain", None)
     limit = getattr(args, "discover_limit", None) or 100
+    run_activity = not getattr(args, "no_activity_ranking", False)
 
-    result = search_protocol_inventory(args.discover_inventory, chain=chain, limit=limit)
+    result = search_protocol_inventory(
+        args.discover_inventory, chain=chain, limit=limit, run_activity_ranking=run_activity
+    )
 
     output = json.dumps(result, indent=2)
     print(output)
@@ -381,6 +421,11 @@ def main():
         type=int,
         default=5,
         help="When running company discovery, analyze the top N discovered contracts (default: 5)",
+    )
+    parser.add_argument(
+        "--no-activity-ranking",
+        action="store_true",
+        help="Skip on-chain activity ranking for discovered contracts",
     )
 
     args = parser.parse_args()

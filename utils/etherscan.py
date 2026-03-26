@@ -25,7 +25,7 @@ def _get_api_key() -> str:
     return key
 
 
-def get(module: str, action: str, **params) -> dict:
+def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
     """Make an Etherscan API call with automatic retry on rate-limit errors."""
     api_key = _get_api_key()
     backoff = _RATE_LIMIT_BACKOFF
@@ -34,7 +34,7 @@ def get(module: str, action: str, **params) -> dict:
         resp = requests.get(
             ETHERSCAN_API,
             params={
-                "chainid": "1",
+                "chainid": str(chain_id),
                 "module": module,
                 "action": action,
                 "apikey": api_key,

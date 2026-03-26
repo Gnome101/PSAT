@@ -21,6 +21,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from .activity import enrich_with_activity  # noqa: E402
 from .deployer import expand_from_deployers  # noqa: E402
 from .inventory_domain import (  # noqa: E402
     CHAIN_SORT_ORDER,
@@ -216,6 +217,7 @@ def search_protocol_inventory(
     limit: int = 100,
     max_queries: int = 4,
     run_deployer: bool = True,
+    run_activity_ranking: bool = True,
     debug: bool = False,
 ) -> dict[str, Any]:
     clean_company = company.strip()
@@ -311,6 +313,15 @@ def search_protocol_inventory(
 
     entries = tavily_entries + deployer_entries
     contracts = _build_contracts(entries, limit=limit)
+
+    if run_activity_ranking and contracts:
+        _debug_log(debug, "Running on-chain activity ranking")
+        try:
+            contracts = enrich_with_activity(contracts, debug=debug)
+            notes.append(f"Activity ranking: enriched {len(contracts)} contract(s)")
+        except Exception as exc:
+            _debug_log(debug, f"Activity ranking failed: {exc!r}")
+            notes.append(f"Activity ranking failed: {exc}")
 
     if not contracts:
         notes.append("No inventory contracts extracted from selected pages")
