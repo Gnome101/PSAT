@@ -16,9 +16,10 @@ EMPTY_CODE_VALUES = {"0x", "0x0"}
 RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
 RPC_TIMEOUT_SECONDS = 8
 DEFAULT_PUBLIC_RPCS_BY_NETWORK = {
+    # Order: batch-capable RPCs first, then individual-only fallbacks.
     "ethereum": (
-        "https://eth.llamarpc.com",
         "https://rpc.flashbots.net",
+        "https://eth.llamarpc.com",
         "https://eth-mainnet.public.blastapi.io",
         "https://cloudflare-eth.com",
         "https://ethereum-rpc.publicnode.com",
@@ -43,7 +44,34 @@ DEFAULT_PUBLIC_RPCS_BY_NETWORK = {
         "https://polygon.llamarpc.com",
         "https://polygon-bor-rpc.publicnode.com",
     ),
+    "avalanche": (
+        "https://api.avax.network/ext/bc/C/rpc",
+        "https://avalanche-c-chain-rpc.publicnode.com",
+    ),
+    "bsc": (
+        "https://bsc-dataseed.binance.org",
+        "https://bsc-rpc.publicnode.com",
+    ),
+    "linea": (
+        "https://rpc.linea.build",
+        "https://linea-rpc.publicnode.com",
+    ),
+    "scroll": (
+        "https://rpc.scroll.io",
+        "https://scroll-rpc.publicnode.com",
+    ),
+    "zksync": (
+        "https://mainnet.era.zksync.io",
+        "https://zksync-era-rpc.publicnode.com",
+    ),
+    "blast": (
+        "https://rpc.blast.io",
+        "https://blast-rpc.publicnode.com",
+    ),
 }
+
+# Max addresses per JSON-RPC batch request.
+_BATCH_RPC_SIZE = 100
 
 
 def normalize_address(address: str) -> str:
@@ -91,6 +119,103 @@ def rpc_call(rpc_url: str, method: str, params: list, retries: int = 1) -> Any:
 def get_code(rpc_url: str, address: str) -> str:
     """Fetch the deployed EVM bytecode at an address via eth_getCode."""
     return rpc_call(rpc_url, "eth_getCode", [address, "latest"])
+
+
+def _individual_get_code_throttled(rpc_url: str, addr: str, limiter) -> tuple[str, str]:
+    """Fetch code for a single address with rate limiting — returns (addr, bytecode_hex)."""
+    limiter.wait()
+    try:
+        return addr, get_code(rpc_url, addr)
+    except RuntimeError:
+        return addr, "0x"
+
+
+class _RpcRateLimiter:
+    """Thread-safe rate limiter enforcing a minimum interval between calls."""
+
+    def __init__(self, calls_per_second: float):
+        import threading
+        self._min_interval = 1.0 / calls_per_second
+        self._lock = threading.Lock()
+        self._last_call = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_call = time.monotonic()
+
+
+# Public RPCs typically allow ~4-5 individual requests/sec before throttling.
+_RPC_RATE_LIMIT = 4
+_FALLBACK_WORKERS = 4
+
+
+def batch_get_code(rpc_url: str, addresses: list[str]) -> dict[str, str]:
+    """Batch-fetch eth_getCode for many addresses in a single HTTP request.
+
+    Returns ``{address: bytecode_hex}`` for each address.  Splits into
+    sub-batches of ``_BATCH_RPC_SIZE`` to stay within public RPC limits.
+    Falls back to rate-limited concurrent individual calls if the RPC
+    rejects batching.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    if not addresses:
+        return {}
+
+    results: dict[str, str] = {}
+    for i in range(0, len(addresses), _BATCH_RPC_SIZE):
+        batch = addresses[i : i + _BATCH_RPC_SIZE]
+        payload = json.dumps(
+            [
+                {"jsonrpc": "2.0", "id": idx, "method": "eth_getCode", "params": [addr, "latest"]}
+                for idx, addr in enumerate(batch)
+            ]
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            rpc_url,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "getContractAddresses/1.0",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=max(RPC_TIMEOUT_SECONDS, 30)) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+            body = None
+
+        # A successful batch returns a JSON list.  If we got a dict instead
+        # (e.g. RPC error like "too many calls in batch") or an HTTP error,
+        # fall back to rate-limited concurrent individual calls.
+        if not isinstance(body, list):
+            limiter = _RpcRateLimiter(_RPC_RATE_LIMIT)
+            with ThreadPoolExecutor(max_workers=_FALLBACK_WORKERS) as executor:
+                futures = [
+                    executor.submit(_individual_get_code_throttled, rpc_url, addr, limiter)
+                    for addr in batch
+                ]
+                for future in futures:
+                    addr, code = future.result()
+                    results[addr] = code
+            continue
+
+        for item in body:
+            idx = item.get("id")
+            if idx is not None and 0 <= idx < len(batch):
+                code = item.get("result") or "0x"
+                results[batch[idx]] = code if isinstance(code, str) and code.startswith("0x") else "0x"
+        # Fill in any missing addresses (e.g. from errors in individual items).
+        for addr in batch:
+            if addr not in results:
+                results[addr] = "0x"
+
+    return results
 
 
 def resolve_rpc_for_address(address: str, rpc_url: str | None = None) -> tuple[str, str]:

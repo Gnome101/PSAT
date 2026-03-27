@@ -26,8 +26,10 @@ deploy-as-a-service providers while keeping genuine protocol ops wallets.
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from services.discovery.inventory_domain import _debug_log
@@ -37,6 +39,25 @@ from utils import etherscan
 # Etherscan free-tier allows ~5 req/s.  A small pause between batches avoids
 # 429 errors without meaningfully slowing down the pipeline.
 _RATE_LIMIT_DELAY = 0.25
+# Etherscan free-tier limit is 3 req/s.  Use 2 to stay safely under.
+_MAX_REQUESTS_PER_SECOND = 2
+
+
+class _RateLimiter:
+    """Thread-safe rate limiter enforcing a minimum interval between calls."""
+
+    def __init__(self, calls_per_second: float):
+        self._min_interval = 1.0 / calls_per_second
+        self._lock = threading.Lock()
+        self._last_call = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_call = time.monotonic()
 
 # A deployer must have created at least this many seed contracts.
 _MIN_SEED_COUNT = 3
@@ -102,21 +123,40 @@ def _get_deployed_contracts(deployer: str, debug: bool = False) -> list[str]:
     return deployed
 
 
+def _get_one_name(addr: str, limiter: _RateLimiter) -> tuple[str, str | None]:
+    """Fetch the contract name for a single address (thread-safe, rate-limited)."""
+    limiter.wait()
+    try:
+        data = etherscan.get("contract", "getsourcecode", address=addr)
+        results = data.get("result", [])
+        if results and results[0].get("ContractName"):
+            return addr, results[0]["ContractName"]
+    except RuntimeError:
+        pass
+    return addr, None
+
+
 def _batch_get_names(
     addresses: list[str],
     debug: bool = False,
 ) -> dict[str, str]:
-    """Best-effort contract name lookup.  Returns ``{address: name}``."""
+    """Best-effort contract name lookup using a thread pool.  Returns ``{address: name}``."""
+    if not addresses:
+        return {}
+
     names: dict[str, str] = {}
-    for addr in addresses:
-        try:
-            data = etherscan.get("contract", "getsourcecode", address=addr)
-            results = data.get("result", [])
-            if results and results[0].get("ContractName"):
-                names[addr] = results[0]["ContractName"]
-        except RuntimeError:
-            pass
-        time.sleep(_RATE_LIMIT_DELAY)
+    limiter = _RateLimiter(_MAX_REQUESTS_PER_SECOND)
+
+    with ThreadPoolExecutor(max_workers=_MAX_REQUESTS_PER_SECOND) as executor:
+        futures = {executor.submit(_get_one_name, addr, limiter): addr for addr in addresses}
+        for future in as_completed(futures):
+            try:
+                addr, name = future.result()
+                if name:
+                    names[addr] = name
+            except Exception:
+                pass
+
     _debug_log(debug, f"Resolved names for {len(names)}/{len(addresses)} address(es)")
     return names
 

@@ -66,7 +66,7 @@ CHAIN_SORT_ORDER = {"ethereum": 0, "arbitrum": 1, "optimism": 2, "polygon": 3, "
 def _debug_log(enabled: bool, message: str) -> None:
     if enabled:
         ts = datetime.now().isoformat(timespec="seconds")
-        print(f"[{ts}] [debug] {message}", file=sys.stderr)
+        print(f"[{ts}] [debug] {message}", file=sys.stderr, flush=True)
 
 
 def _get_domain(url: str) -> str:
