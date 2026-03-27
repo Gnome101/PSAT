@@ -14,7 +14,7 @@ SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS protocol (
     id              SERIAL PRIMARY KEY,
     name            VARCHAR(255) NOT NULL,
-    chain           VARCHAR(100),
+    chains          VARCHAR(100)[] DEFAULT '{}',
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS claim_evidence (
 --  INDEXES
 -- ============================================
 
+CREATE INDEX IF NOT EXISTS idx_protocol_chains     ON protocol USING GIN(chains);
 CREATE INDEX IF NOT EXISTS idx_contract_protocol   ON contract(protocol_id);
 CREATE INDEX IF NOT EXISTS idx_source_protocol     ON source(protocol_id);
 CREATE INDEX IF NOT EXISTS idx_document_source     ON document(source_id);
@@ -195,7 +196,8 @@ class DatabaseManager:
         table : str
             Target table name.
         data : dict
-            Column-name → value mapping.
+            Column-name → value mapping. For the protocol table, pass
+            ``chains`` as a Python list, e.g. ``["ethereum", "arbitrum"]``.
 
         Returns
         -------
@@ -271,6 +273,8 @@ class DatabaseManager:
         ----------
         where : dict, optional
             Column-name → value equality filters (ANDed together).
+            To filter protocols by chain use ``get_protocols_by_chain`` instead,
+            which uses the array-aware ``= ANY`` operator.
         order_by : str, optional
             Column name to sort by (prefix with ``-`` for DESC, e.g. ``"-created_at"``).
         limit / offset : int, optional
@@ -350,6 +354,8 @@ class DatabaseManager:
     def update(self, table: str, record_id: int, data: dict[str, Any]) -> Optional[dict]:
         """
         Update a row identified by *record_id*. Returns the updated row or None.
+        For protocol rows, pass ``chains`` as a Python list to replace the full
+        array. Use ``add_chain`` / ``remove_chain`` for surgical single-item updates.
         """
         self._validate_table(table)
         if not data:
@@ -388,6 +394,76 @@ class DatabaseManager:
             deleted = cur.rowcount > 0
         self.conn.commit()
         return deleted
+
+    # Protocol chain helpers
+
+    def add_chain(self, protocol_id: int, chain: str) -> Optional[dict]:
+        """
+        Append *chain* to a protocol's chains array (no-op if already present).
+        Returns the updated protocol row, or None if the protocol doesn't exist.
+        """
+        query = """
+            UPDATE protocol
+            SET chains = ARRAY(
+                SELECT DISTINCT unnest(chains || ARRAY[%s::VARCHAR]) ORDER BY 1
+            )
+            WHERE id = %s
+            RETURNING *
+        """
+        with self._cursor() as cur:
+            cur.execute(query, (chain, protocol_id))
+            row = cur.fetchone()
+        self.conn.commit()
+        return dict(row) if row else None
+
+    def remove_chain(self, protocol_id: int, chain: str) -> Optional[dict]:
+        """
+        Remove *chain* from a protocol's chains array.
+        Returns the updated protocol row, or None if the protocol doesn't exist.
+        """
+        query = """
+            UPDATE protocol
+            SET chains = ARRAY(
+                SELECT c FROM unnest(chains) AS c WHERE c <> %s
+            )
+            WHERE id = %s
+            RETURNING *
+        """
+        with self._cursor() as cur:
+            cur.execute(query, (chain, protocol_id))
+            row = cur.fetchone()
+        self.conn.commit()
+        return dict(row) if row else None
+
+    def get_protocols_by_chain(self, chain: str) -> list[dict]:
+        """
+        Return all protocols associated with *chain*.
+        Uses the GIN-indexed ``= ANY`` operator for efficient lookup.
+        """
+        query = "SELECT * FROM protocol WHERE %s = ANY(chains) ORDER BY id"
+        with self._cursor() as cur:
+            cur.execute(query, (chain,))
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_protocols_by_chains(self, chains: list[str], match_all: bool = False) -> list[dict]:
+        """
+        Return protocols matching the given *chains*.
+
+        Parameters
+        ----------
+        chains : list[str]
+            Chain names to filter by.
+        match_all : bool
+            If True, return only protocols present on *all* supplied chains
+            (array containment: ``chains @> %s``).
+            If False (default), return protocols on *any* of the supplied chains
+            (array overlap: ``chains && %s``).
+        """
+        operator = "@>" if match_all else "&&"
+        query = f"SELECT * FROM protocol WHERE chains {operator} %s::VARCHAR[] ORDER BY id"
+        with self._cursor() as cur:
+            cur.execute(query, (chains,))
+            return [dict(r) for r in cur.fetchall()]
 
     # Junction-table helpers
 
@@ -544,18 +620,26 @@ def interactive_cli():
 
     HELP = """
   Commands:
-    list                 — Show all tables
-    get    <table>       — Show all rows
-    find   <table> <id>  — Show row by ID
-    search <table> <col> <pattern> — ILIKE search
-    add    <table>       — Insert a new row
-    edit   <table> <id>  — Update a row
-    rm     <table> <id>  — Delete a row
-    link   <junction>    — Link finding/claim ↔ evidence
-    unlink <junction>    — Unlink finding/claim ↔ evidence
-    sql    <query>       — Run raw SELECT
-    help                 — Show this message
-    quit                 — Exit
+    list                        — Show all tables
+    get    <table>              — Show all rows
+    find   <table> <id>         — Show row by ID
+    search <table> <col> <pat>  — ILIKE search
+    add    <table>              — Insert a new row
+                                  (for protocol, use chains=ethereum|arbitrum)
+    edit   <table> <id>         — Update a row
+                                  (for protocol, chains=ethereum|arbitrum replaces all)
+    rm     <table> <id>         — Delete a row
+
+    chain-add <protocol_id> <chain>   — Add one chain to a protocol
+    chain-rm  <protocol_id> <chain>   — Remove one chain from a protocol
+    chain-ls  <chain>                 — List protocols on a chain
+
+    link   <junction>           — Link finding/claim ↔ evidence
+    unlink <junction>           — Unlink finding/claim ↔ evidence
+    sql    <query>              — Run raw SELECT
+    count  <table>              — Row count
+    help                        — Show this message
+    quit                        — Exit
 """
     print(HELP)
 
@@ -585,8 +669,6 @@ def interactive_cli():
                 where = None
                 filt = input("  Filter (col=val,… or blank): ").strip()
                 if filt:
-                    where = _prompt_dict(f"  ")  # reparse
-                    # quick inline parse
                     where = {}
                     for t in filt.split(","):
                         if "=" in t:
@@ -615,6 +697,10 @@ def interactive_cli():
             elif cmd == "add":
                 table = parts[1] if len(parts) > 1 else input("  Table: ").strip()
                 data = _prompt_dict("  Column=value pairs (comma-separated): ")
+                # chains are pipe-delimited to avoid clashing with the comma separator
+                # e.g. chains=ethereum|arbitrum|optimism
+                if "chains" in data and isinstance(data["chains"], str):
+                    data["chains"] = [c.strip() for c in data["chains"].split("|") if c.strip()]
                 if data:
                     row = db.insert(table, data)
                     print(f"  ✔ Inserted: {row}")
@@ -625,6 +711,8 @@ def interactive_cli():
                 table = parts[1] if len(parts) > 1 else input("  Table: ").strip()
                 rid = int(parts[2]) if len(parts) > 2 else int(input("  ID: ").strip())
                 data = _prompt_dict("  Column=value pairs to update (comma-separated): ")
+                if "chains" in data and isinstance(data["chains"], str):
+                    data["chains"] = [c.strip() for c in data["chains"].split("|") if c.strip()]
                 if data:
                     row = db.update(table, rid, data)
                     if row:
@@ -641,6 +729,29 @@ def interactive_cli():
                     print(f"  ✔ Deleted id={rid} from {table}.")
                 else:
                     print(f"  Not found (id={rid})")
+
+            elif cmd == "chain-add":
+                pid = int(parts[1]) if len(parts) > 1 else int(input("  Protocol ID: ").strip())
+                chain = parts[2] if len(parts) > 2 else input("  Chain: ").strip()
+                row = db.add_chain(pid, chain)
+                if row:
+                    print(f"  ✔ Chains now: {row['chains']}")
+                else:
+                    print(f"  Not found (id={pid})")
+
+            elif cmd == "chain-rm":
+                pid = int(parts[1]) if len(parts) > 1 else int(input("  Protocol ID: ").strip())
+                chain = parts[2] if len(parts) > 2 else input("  Chain: ").strip()
+                row = db.remove_chain(pid, chain)
+                if row:
+                    print(f"  ✔ Chains now: {row['chains']}")
+                else:
+                    print(f"  Not found (id={pid})")
+
+            elif cmd == "chain-ls":
+                chain = parts[1] if len(parts) > 1 else input("  Chain: ").strip()
+                rows = db.get_protocols_by_chain(chain)
+                _print_rows(rows)
 
             elif cmd == "link":
                 jt = parts[1] if len(parts) > 1 else input("  Junction (finding_evidence / claim_evidence): ").strip()

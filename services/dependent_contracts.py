@@ -228,6 +228,7 @@ def persist_static_results(db: DatabaseManager, protocol_id: int, results: dict,
         "is_proxy": False,
     })
     summary["target_contract_id"] = target_contract["id"]
+    db.add_chain(protocol_id, chain)
 
     rpc_source = db.insert("source", {
         "protocol_id": protocol_id,
@@ -347,7 +348,7 @@ def main():
                     f"Create it first:\n"
                     f'  python -c "from db.db_manager import DatabaseManager; '
                     f"db = DatabaseManager(); db.initialize(); "
-                    f"""print(db.insert('protocol', {{'name': 'MyProtocol', 'chain': 'ethereum'}}))" """
+                    f"print(db.insert('protocol', {{'name': 'MyProtocol', 'chains': ['ethereum']}}))"
                 )
 
             summary = persist_static_results(db, args.protocol_id, output)

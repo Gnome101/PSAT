@@ -377,13 +377,16 @@ def persist_dynamic_results(
         "links_created": 0,
     }
 
+    chain = results.get("chain", results.get("network", "ethereum"))
+
     target_contract = db.insert("contract", {
         "protocol_id": protocol_id,
         "address": results["address"],
-        "chain": "ethereum",
+        "chain": chain,
         "is_proxy": False,
     })
     summary["target_contract_id"] = target_contract["id"]
+    db.add_chain(protocol_id, chain)
 
     rpc_source = db.insert("source", {
         "protocol_id": protocol_id,
@@ -424,7 +427,7 @@ def persist_dynamic_results(
         dep_contract = db.insert("contract", {
             "protocol_id": protocol_id,
             "address": dep_address,
-            "chain": "ethereum",
+            "chain": chain,
             "is_proxy": False,
         })
         summary["dependency_contract_ids"].append(dep_contract["id"])
