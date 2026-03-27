@@ -12,11 +12,19 @@ from pathlib import Path
 
 from db.models import JobStage
 from db.queue import get_artifact, get_source_files, store_artifact
+from services.discovery import (
+    build_unified_dependencies,
+    classify_contracts,
+    enrich_dependency_metadata,
+    find_dependencies,
+    find_dynamic_dependencies,
+    write_dependency_visualization,
+)
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
 from workers.base import BaseWorker
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("workers.static_worker")
 
 # ---------------------------------------------------------------------------
 # Error logging template
@@ -191,6 +199,9 @@ class StaticWorker(BaseWorker):
         try:
             self._scaffold_project(project_dir, sources, meta, build_settings, remappings)
 
+            # Phase 0: Dependency artifacts
+            self._run_dependency_phase(session, job, project_dir, contract_name, address)
+
             # Phase 1: Slither
             slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
 
@@ -255,6 +266,141 @@ class StaticWorker(BaseWorker):
             (project_dir / "remappings.txt").write_text("\n".join(pruned) + "\n")
 
         (project_dir / "contract_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+
+    def _run_dependency_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
+        """Build dependency artifacts before compile-dependent analysis starts."""
+        self.update_detail(session, job, "Discovering dependencies")
+
+        request = job.request if isinstance(job.request, dict) else {}
+        deps_rpc = request.get("rpc_url")
+        dynamic_rpc = request.get("dynamic_rpc") or deps_rpc
+        dynamic_tx_limit = request.get("dynamic_tx_limit", 10)
+        dynamic_tx_hashes = request.get("dynamic_tx_hashes")
+        dependency_errors: dict[str, str] = {}
+
+        logger.info(
+            "Static stage dependency discovery started for job %s address=%s contract=%s",
+            job.id,
+            address,
+            contract_name,
+        )
+
+        deps_output = None
+        try:
+            deps_output = find_dependencies(address, deps_rpc)
+            logger.info(
+                "Static stage static dependencies complete for job %s address=%s count=%d",
+                job.id,
+                address,
+                len(deps_output.get("dependencies", [])),
+            )
+        except Exception as exc:
+            dependency_errors["static"] = str(exc)
+            logger.warning(
+                "Static stage static dependency discovery failed for job %s address=%s: %s",
+                job.id,
+                address,
+                exc,
+            )
+
+        dyn_output = None
+        try:
+            tx_limit = int(dynamic_tx_limit)
+            tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
+            dyn_output = find_dynamic_dependencies(
+                address,
+                rpc_url=dynamic_rpc,
+                tx_limit=tx_limit,
+                tx_hashes=tx_hashes,
+            )
+            logger.info(
+                "Static stage dynamic dependencies complete for job %s address=%s count=%d",
+                job.id,
+                address,
+                len(dyn_output.get("dependencies", [])),
+            )
+        except Exception as exc:
+            dependency_errors["dynamic"] = str(exc)
+            logger.warning(
+                "Static stage dynamic dependency discovery failed for job %s address=%s: %s",
+                job.id,
+                address,
+                exc,
+            )
+
+        resolved_rpc = None
+        if isinstance(deps_output, dict):
+            resolved_rpc = deps_output.get("rpc")
+        if not resolved_rpc and isinstance(dyn_output, dict):
+            resolved_rpc = dyn_output.get("rpc")
+
+        cls_output = None
+        if resolved_rpc:
+            unique_deps = sorted(
+                set((deps_output or {}).get("dependencies", []) + (dyn_output or {}).get("dependencies", []))
+            )
+            try:
+                cls_output = classify_contracts(
+                    address,
+                    unique_deps,
+                    resolved_rpc,
+                    dynamic_edges=(dyn_output or {}).get("dependency_graph"),
+                )
+                logger.info(
+                    "Static stage dependency classification complete for job %s address=%s discovered=%d",
+                    job.id,
+                    address,
+                    len(cls_output.get("discovered_addresses", [])),
+                )
+            except Exception as exc:
+                dependency_errors["classification"] = str(exc)
+                logger.warning(
+                    "Static stage dependency classification failed for job %s address=%s: %s",
+                    job.id,
+                    address,
+                    exc,
+                )
+        else:
+            logger.info(
+                "Static stage dependency classification skipped for job %s address=%s (no resolved RPC)",
+                job.id,
+                address,
+            )
+
+        if deps_output or dyn_output:
+            unified = build_unified_dependencies(address, deps_output, dyn_output, cls_output)
+            enrich_dependency_metadata(unified)
+
+            dependencies_path = project_dir / "dependencies.json"
+            dependencies_path.write_text(json.dumps(unified, indent=2) + "\n")
+            store_artifact(session, job.id, "dependencies", data=unified)
+
+            viz_path = write_dependency_visualization(project_dir)
+            if viz_path and viz_path.exists():
+                dependency_graph = json.loads(viz_path.read_text())
+                store_artifact(session, job.id, "dependency_graph_viz", data=dependency_graph)
+                logger.info(
+                    "Static stage dependency graph complete for job %s address=%s nodes=%d edges=%d",
+                    job.id,
+                    address,
+                    len(dependency_graph.get("nodes", [])),
+                    len(dependency_graph.get("edges", [])),
+                )
+            else:
+                logger.info(
+                    "Static stage dependencies complete for job %s address=%s (no graph nodes)",
+                    job.id,
+                    address,
+                )
+        else:
+            logger.warning(
+                "Static stage dependency artifacts skipped for job %s address=%s (no dependency outputs)",
+                job.id,
+                address,
+            )
+
+        if dependency_errors:
+            store_artifact(session, job.id, "dependency_errors", data=dependency_errors)
 
     def _run_slither_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> bool:
         """Run Slither CLI. Returns True on success, False on failure (non-fatal)."""
@@ -326,7 +472,11 @@ class StaticWorker(BaseWorker):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
     StaticWorker().run_loop()
 
 

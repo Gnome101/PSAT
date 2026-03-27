@@ -15,7 +15,7 @@ from services.resolution.recursive import write_resolved_control_graph
 from services.resolution.tracking import build_control_snapshot
 from workers.base import BaseWorker
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("workers.resolution_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 
@@ -102,7 +102,11 @@ class ResolutionWorker(BaseWorker):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
     ResolutionWorker().run_loop()
 
 

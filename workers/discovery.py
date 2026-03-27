@@ -14,7 +14,7 @@ from services.discovery.fetch import fetch, parse_remappings, parse_sources
 from services.discovery.inventory import search_protocol_inventory
 from workers.base import BaseWorker, JobHandledDirectly
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("workers.discovery")
 
 
 class DiscoveryWorker(BaseWorker):
@@ -144,7 +144,11 @@ class DiscoveryWorker(BaseWorker):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
     DiscoveryWorker().run_loop()
 
 

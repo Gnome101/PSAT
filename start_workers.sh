@@ -5,6 +5,20 @@ cd "$(dirname "$0")"
 
 export PYTHONUNBUFFERED=1
 
+PIDS=()
+
+cleanup() {
+  local exit_code=$?
+  trap - EXIT INT TERM
+  if [ ${#PIDS[@]} -gt 0 ]; then
+    kill "${PIDS[@]}" 2>/dev/null || true
+    wait "${PIDS[@]}" 2>/dev/null || true
+  fi
+  exit $exit_code
+}
+
+trap cleanup EXIT INT TERM
+
 if [ -x ".venv/bin/python" ]; then
   PYTHON_CMD=(./.venv/bin/python)
 elif command -v uv >/dev/null 2>&1; then
@@ -21,9 +35,13 @@ fi
 echo "Starting PSAT workers with: ${PYTHON_CMD[*]}"
 
 "${PYTHON_CMD[@]}" -m workers.discovery &
+PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.static_worker &
+PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.resolution_worker &
+PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.policy_worker &
+PIDS+=($!)
 
-echo "All workers started. Waiting..."
-wait
+echo "All workers started: ${PIDS[*]}"
+wait "${PIDS[@]}"

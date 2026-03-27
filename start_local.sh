@@ -12,6 +12,10 @@ set -a
 source .env
 set +a
 
+WORKER_PATTERN='workers\.(discovery|static_worker|resolution_worker|policy_worker)'
+API_PID=""
+WORKERS_PID=""
+
 # Check required env vars
 missing=()
 [ -z "$DATABASE_URL" ]      && missing+=("DATABASE_URL")
@@ -40,7 +44,33 @@ if ! docker compose ps postgres --status running -q 2>/dev/null | grep -q .; the
   sleep 3
 fi
 
+cleanup_stale_workers() {
+  local stale
+  stale=$(pgrep -af "$WORKER_PATTERN" || true)
+  if [ -z "$stale" ]; then
+    return
+  fi
+
+  echo "Stopping stale workers..."
+  echo "$stale"
+  pkill -f "$WORKER_PATTERN" 2>/dev/null || true
+
+  for _ in $(seq 1 20); do
+    if ! pgrep -f "$WORKER_PATTERN" >/dev/null 2>&1; then
+      echo "Stale workers stopped."
+      return
+    fi
+    sleep 0.5
+  done
+
+  echo "ERROR: Failed to stop stale workers."
+  pgrep -af "$WORKER_PATTERN" || true
+  exit 1
+}
+
 # Run migrations
+cleanup_stale_workers
+
 echo "Running migrations..."
 uv run alembic upgrade head
 
@@ -48,8 +78,14 @@ uv run alembic upgrade head
 cleanup() {
   echo ""
   echo "Shutting down..."
-  kill $API_PID $WORKERS_PID 2>/dev/null
-  wait $API_PID $WORKERS_PID 2>/dev/null
+  if [ -n "$API_PID" ]; then
+    kill "$API_PID" 2>/dev/null || true
+    wait "$API_PID" 2>/dev/null || true
+  fi
+  if [ -n "$WORKERS_PID" ]; then
+    kill "$WORKERS_PID" 2>/dev/null || true
+    wait "$WORKERS_PID" 2>/dev/null || true
+  fi
   echo "Done."
 }
 trap cleanup EXIT INT TERM

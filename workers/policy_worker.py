@@ -14,7 +14,7 @@ from db.queue import get_artifact, store_artifact
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from workers.base import BaseWorker
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("workers.policy_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
@@ -218,7 +218,11 @@ class PolicyWorker(BaseWorker):
 
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
     PolicyWorker().run_loop()
 
 

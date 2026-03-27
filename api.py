@@ -158,7 +158,7 @@ def analyses() -> list[dict]:
         return results
 
 
-@app.get("/api/analyses/{run_name}")
+@app.get("/api/analyses/{run_name:path}")
 def analysis_detail(run_name: str) -> dict:
     """Get analysis detail by job name (run_name) or job_id."""
     with SessionLocal() as session:
@@ -184,6 +184,7 @@ def analysis_detail(run_name: str) -> dict:
         for artifact_name in (
             "contract_analysis",
             "control_snapshot",
+            "dependencies",
             "resolved_control_graph",
             "effective_permissions",
             "principal_labels",
@@ -205,7 +206,7 @@ def analysis_detail(run_name: str) -> dict:
         return payload
 
 
-@app.get("/api/analyses/{run_name}/artifact/{artifact_name:path}")
+@app.get("/api/analyses/{run_name:path}/artifact/{artifact_name:path}")
 def analysis_artifact(run_name: str, artifact_name: str):
     """Get a specific artifact for an analysis."""
     with SessionLocal() as session:
