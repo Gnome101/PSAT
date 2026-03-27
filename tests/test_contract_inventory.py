@@ -60,21 +60,22 @@ class TestBuildContracts:
             _entry(address=addr, name="Vault", chain="ethereum", kind="official_inventory_table", url="https://a.com"),
             _entry(address=addr, name="Vault", chain="ethereum", kind="official_inventory_link", url="https://b.com"),
         ]
-        contracts = _build_contracts(entries, limit=10)
+        contracts, sources_map = _build_contracts(entries, limit=10)
 
         assert len(contracts) == 1
         c = contracts[0]
         assert c["name"] == "Vault"
         assert c["address"] == addr
-        assert c["chain"] == "ethereum"
+        assert c["chains"] == ["ethereum"]
         assert c["confidence"] > 0.7
         assert c["source"] == ["tavily_ai_inventory"]
-        assert "source_1" in c["links"]
-        assert "source_2" in c["links"]
+        assert len(c["source_ids"]) >= 2
+        # Sources map should contain the URLs
+        assert len(sources_map) >= 2
 
     def test_unknown_chain_remapped_and_multi_chain(self):
         """Unknown-chain entry remaps when one specific chain exists;
-        multiple specific chains produce chain='multiple'."""
+        multiple specific chains produce chains with both."""
         addr_a = "0x" + "a" * 40
         addr_b = "0x" + "b" * 40
         entries = [
@@ -83,11 +84,10 @@ class TestBuildContracts:
             _entry(address=addr_b, chain="ethereum"),
             _entry(address=addr_b, chain="arbitrum"),
         ]
-        contracts = _build_contracts(entries, limit=10)
+        contracts, _ = _build_contracts(entries, limit=10)
         by_addr = {c["address"]: c for c in contracts}
 
-        assert by_addr[addr_a]["chain"] == "ethereum"
-        assert by_addr[addr_b]["chain"] == "multiple"
+        assert by_addr[addr_a]["chains"] == ["ethereum"]
         assert set(by_addr[addr_b]["chains"]) == {"ethereum", "arbitrum"}
 
     def test_limit_and_sort_order(self):
@@ -98,7 +98,7 @@ class TestBuildContracts:
         ] + [
             _entry(address="0x" + "f" * 40, name="Best", kind="official_inventory_table"),
         ]
-        contracts = _build_contracts(entries, limit=3)
+        contracts, _ = _build_contracts(entries, limit=3)
 
         assert len(contracts) == 3
         assert contracts[0]["address"] == "0x" + "f" * 40
@@ -106,7 +106,8 @@ class TestBuildContracts:
 
     def test_entries_without_links_excluded(self):
         entries = [_entry(url="", explorer_url=None)]
-        assert _build_contracts(entries, limit=10) == []
+        contracts, _ = _build_contracts(entries, limit=10)
+        assert contracts == []
 
     def test_name_voting_and_aliases(self):
         addr = "0x" + "c" * 40
@@ -115,9 +116,9 @@ class TestBuildContracts:
             _entry(address=addr, name="Alpha", url="https://b.com"),
             _entry(address=addr, name="Beta", url="https://c.com"),
         ]
-        contracts = _build_contracts(entries, limit=10)
+        contracts, _ = _build_contracts(entries, limit=10)
         assert contracts[0]["name"] == "Alpha"
-        assert "Beta" in contracts[0]["aliases"]
+        assert "Beta" in contracts[0].get("aliases", [])
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +225,9 @@ class TestSearchProtocolInventoryOffline:
         assert result["chain"] == "any"
         assert len(result["contracts"]) == 2
 
+        assert "sources" in result  # top-level sources map
         for contract in result["contracts"]:
-            for field in ("name", "address", "chain", "confidence", "source", "reasons", "links"):
+            for field in ("name", "address", "chains", "confidence", "source", "evidence", "source_ids"):
                 assert field in contract
             assert 0 < contract["confidence"] <= 0.99
             assert isinstance(contract["source"], list)
@@ -277,7 +279,7 @@ class TestSearchProtocolInventoryOffline:
         corroborated = by_addr[addr_both]
         assert "tavily_ai_inventory" in corroborated["source"]
         assert "deployer_expansion" in corroborated["source"]
-        assert any("Deployer evidence" in r for r in corroborated["reasons"])
+        assert corroborated["evidence"].get("deployer", 0) > 0
 
         # Deployer-only address appears with deployer source
         assert addr_deployer_only in by_addr
@@ -306,9 +308,9 @@ class TestBuildContractsDeployerMerge:
                 explorer_url=f"https://etherscan.io/address/{addr}",
             ),
         ]
-        contracts = _build_contracts(entries, limit=10)
+        contracts, _ = _build_contracts(entries, limit=10)
         assert len(contracts) == 1
-        assert contracts[0]["chain"] == "ethereum"
+        assert contracts[0]["chains"] == ["ethereum"]
         assert "deployer_expansion" in contracts[0]["source"]
 
     def test_deployer_corroboration_boosts_confidence(self):
@@ -325,8 +327,8 @@ class TestBuildContractsDeployerMerge:
                 explorer_url=f"https://etherscan.io/address/{addr}",
             ),
         ]
-        tavily_contracts = _build_contracts(tavily_only, limit=10)
-        combined_contracts = _build_contracts(combined, limit=10)
+        tavily_contracts, _ = _build_contracts(tavily_only, limit=10)
+        combined_contracts, _ = _build_contracts(combined, limit=10)
 
         assert combined_contracts[0]["confidence"] > tavily_contracts[0]["confidence"]
 
@@ -343,7 +345,7 @@ class TestBuildContractsDeployerMerge:
                 explorer_url=f"https://etherscan.io/address/{addr}",
             ),
         ]
-        contracts = _build_contracts(entries, limit=10)
+        contracts, _ = _build_contracts(entries, limit=10)
         assert len(contracts) == 1
         assert contracts[0]["name"] == "DeployerFound"
         assert contracts[0]["source"] == ["deployer_expansion"]

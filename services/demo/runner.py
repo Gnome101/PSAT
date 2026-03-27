@@ -480,8 +480,35 @@ def run_protocol_analysis(
     inventory_path = _protocol_inventory_path(clean_company)
     inventory_path.write_text(json.dumps(inventory, indent=2) + "\n")
 
-    discovered_contracts = [entry for entry in inventory.get("contracts", []) if entry.get("address")]
-    selected_contracts = discovered_contracts[:analyze_limit]
+    # Flatten grouped contracts: entries may have a "deployments" array (grouped
+    # multi-chain deploys) or a single "address" field.  For analysis we need
+    # individual (address, name, chain) tuples — pick the first deployment per
+    # group (highest-activity chain) so each logical contract is analyzed once.
+    flat_contracts: list[dict[str, Any]] = []
+    for entry in inventory.get("contracts", []):
+        if entry.get("deployments"):
+            # Grouped multi-chain contract — pick first deployment.
+            dep = entry["deployments"][0]
+            flat_contracts.append({
+                "address": dep["address"],
+                "name": entry.get("name"),
+                "chain": dep.get("chains", entry.get("chains", ["unknown"]))[0],
+                "confidence": entry.get("confidence"),
+                "rank_score": dep.get("rank_score", entry.get("rank_score")),
+                "activity": dep.get("activity", entry.get("activity")),
+            })
+        elif entry.get("address"):
+            chains = entry.get("chains", ["unknown"])
+            flat_contracts.append({
+                "address": entry["address"],
+                "name": entry.get("name"),
+                "chain": chains[0] if chains else "unknown",
+                "confidence": entry.get("confidence"),
+                "rank_score": entry.get("rank_score"),
+                "activity": entry.get("activity"),
+            })
+
+    selected_contracts = flat_contracts[:analyze_limit]
     analyzed_runs: list[dict[str, Any]] = []
 
     if not selected_contracts:
@@ -492,7 +519,7 @@ def run_protocol_analysis(
             "chain": chain or "any",
             "inventory_path": str(inventory_path),
             "official_domain": inventory.get("official_domain"),
-            "discovered_contract_count": len(discovered_contracts),
+            "discovered_contract_count": len(flat_contracts),
             "analyzed_contract_count": 0,
             "run_name": None,
             "run_names": [],
@@ -531,7 +558,7 @@ def run_protocol_analysis(
         "chain": chain or "any",
         "inventory_path": str(inventory_path),
         "official_domain": inventory.get("official_domain"),
-        "discovered_contract_count": len(discovered_contracts),
+        "discovered_contract_count": len(flat_contracts),
         "analyzed_contract_count": len(analyzed_runs),
         "run_name": analyzed_runs[0]["run_name"] if analyzed_runs else None,
         "run_names": [run["run_name"] for run in analyzed_runs],

@@ -22,6 +22,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from .activity import enrich_with_activity  # noqa: E402
+from .chain_resolver import resolve_unknown_chains  # noqa: E402
 from .deployer import expand_from_deployers  # noqa: E402
 from .inventory_domain import (  # noqa: E402
     CHAIN_SORT_ORDER,
@@ -35,10 +36,10 @@ from .inventory_domain import (  # noqa: E402
 from .inventory_extract import extract_inventory_entries_from_pages  # noqa: E402
 
 
-def _build_links(evidence: list[dict[str, Any]]) -> dict[str, str]:
-    """Build stable links for the output inventory item."""
-    page_urls = []
-    explorer_urls = []
+def _collect_source_urls(evidence: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """Extract deduplicated page URLs and explorer URLs from evidence."""
+    page_urls: list[str] = []
+    explorer_urls: list[str] = []
     seen_pages: set[str] = set()
     seen_explorers: set[str] = set()
 
@@ -53,12 +54,22 @@ def _build_links(evidence: list[dict[str, Any]]) -> dict[str, str]:
             seen_explorers.add(explorer_url)
             explorer_urls.append(explorer_url)
 
-    links: dict[str, str] = {}
-    for idx, url in enumerate(page_urls[:3], start=1):
-        links[f"source_{idx}"] = url
-    for idx, url in enumerate(explorer_urls[:2], start=1):
-        links[f"explorer_{idx}"] = url
-    return links
+    return page_urls[:3], explorer_urls[:2]
+
+
+def _register_sources(
+    sources_map: dict[str, str],
+    page_urls: list[str],
+    explorer_urls: list[str],
+) -> list[str]:
+    """Register URLs in the top-level sources map and return their IDs."""
+    source_ids: list[str] = []
+    for url in page_urls + explorer_urls:
+        if url not in sources_map:
+            sid = f"s{len(sources_map) + 1}"
+            sources_map[url] = sid
+        source_ids.append(sources_map[url])
+    return source_ids
 
 
 def _collapse_unknown_chain_entries(entries: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -105,7 +116,7 @@ def _select_name(evidence: list[dict[str, Any]]) -> tuple[str | None, list[str]]
     return primary, aliases
 
 
-def _score_inventory_item(chain: str, evidence: list[dict[str, Any]]) -> tuple[float, list[str]]:
+def _score_inventory_item(chain: str, evidence: list[dict[str, Any]]) -> tuple[float, dict[str, Any]]:
     page_count = len({str(item.get("url", "")) for item in evidence if item.get("url")})
     named_count = sum(1 for item in evidence if item.get("name"))
     table_count = sum(1 for item in evidence if item.get("kind") == "official_inventory_table")
@@ -132,22 +143,21 @@ def _score_inventory_item(chain: str, evidence: list[dict[str, Any]]) -> tuple[f
         confidence += 0.05
     confidence = min(confidence, 0.99)
 
-    reasons = [
-        f"Official pages: {page_count}",
-        f"Named evidence: {named_count}",
-    ]
+    evidence_counts: dict[str, Any] = {"official": page_count, "named": named_count}
     if table_count:
-        reasons.append(f"Table/list evidence: {table_count}")
+        evidence_counts["table"] = table_count
     if link_count:
-        reasons.append(f"Explorer-link evidence: {link_count}")
+        evidence_counts["link"] = link_count
     if text_count and not table_count:
-        reasons.append(f"Text evidence: {text_count}")
+        evidence_counts["text"] = text_count
     if deployer_count:
-        reasons.append(f"Deployer evidence: {deployer_count}")
+        evidence_counts["deployer"] = deployer_count
+    if explorer_count:
+        evidence_counts["explorer"] = explorer_count
     if any(item.get("chain_from_hint") for item in evidence):
-        reasons.append("Applied requested chain to chain-agnostic evidence")
+        evidence_counts["chain_hinted"] = True
 
-    return round(confidence, 4), reasons
+    return round(confidence, 4), evidence_counts
 
 
 def _determine_sources(evidence: list[dict[str, Any]]) -> list[str]:
@@ -168,47 +178,137 @@ def _determine_sources(evidence: list[dict[str, Any]]) -> list[str]:
     return sources
 
 
-def _build_contracts(entries: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+def _build_contracts(
+    entries: list[dict[str, Any]], limit: int
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Build the contract list and a top-level sources map.
+
+    Returns (contracts, sources_map) where sources_map is ``{url: id}``
+    and each contract references source IDs instead of full URLs.
+    """
     grouped = _collapse_unknown_chain_entries(entries)
+    sources_map: dict[str, str] = {}  # url → id
     contracts: list[dict[str, Any]] = []
     for address, evidence in grouped.items():
-        chain, chains = _select_chain_summary(evidence)
+        _chain, chains = _select_chain_summary(evidence)
         name, aliases = _select_name(evidence)
-        confidence, reasons = _score_inventory_item(chain, evidence)
-        links = _build_links(evidence)
-        if not links:
+        confidence, evidence_counts = _score_inventory_item(_chain, evidence)
+        page_urls, explorer_urls = _collect_source_urls(evidence)
+        if not page_urls and not explorer_urls:
             continue
-        sources = _determine_sources(evidence)
+        source_types = _determine_sources(evidence)
         # Drop unnamed deployer-only contracts — without a name they can't be
         # catalogued or fed into the analysis pipeline (which needs verified source).
-        if not name and sources == ["deployer_expansion"]:
+        if not name and source_types == ["deployer_expansion"]:
             continue
-        if len(chains) > 1:
-            reasons = [*reasons, f"Published chains: {', '.join(chains)}"]
-        contracts.append(
-            {
-                "name": name,
-                "aliases": aliases,
-                "address": address,
-                "chain": chain,
-                "chains": chains,
-                "confidence": confidence,
-                "source": sources,
-                "reasons": reasons,
-                "links": links,
-            }
-        )
+        source_ids = _register_sources(sources_map, page_urls, explorer_urls)
+        contract: dict[str, Any] = {
+            "name": name,
+            "address": address,
+            "chains": chains,
+            "confidence": confidence,
+            "source": source_types,
+            "evidence": evidence_counts,
+            "source_ids": source_ids,
+        }
+        if aliases:
+            contract["aliases"] = aliases
+        contracts.append(contract)
 
-    return sorted(
+    sorted_contracts = sorted(
         contracts,
         key=lambda item: (
             -float(item["confidence"]),
             item["name"] is None,
             str(item.get("name") or ""),
-            CHAIN_SORT_ORDER.get(item["chain"], 50),
+            CHAIN_SORT_ORDER.get(item["chains"][0] if item["chains"] else "unknown", 50),
             item["address"],
         ),
     )[:limit]
+    return sorted_contracts, sources_map
+
+
+def _group_multi_deployments(contracts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group contracts that share the same name and appear on multiple chains.
+
+    Contracts with the same name but different addresses across chains are
+    collapsed into a single entry with a ``deployments`` array.
+    """
+    # Index by lowercase name — only group named contracts.
+    by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    ungroupable: list[dict[str, Any]] = []
+    for contract in contracts:
+        name = contract.get("name")
+        if not name:
+            ungroupable.append(contract)
+            continue
+        by_name[name.lower()].append(contract)
+
+    result: list[dict[str, Any]] = []
+    for _key, group in by_name.items():
+        if len(group) == 1:
+            result.append(group[0])
+            continue
+
+        # Check if these are actually different addresses (multi-chain deploys).
+        unique_addresses = {c["address"] for c in group}
+        if len(unique_addresses) == 1:
+            # Same address listed multiple times — just keep the best one.
+            result.append(group[0])
+            continue
+
+        # Group into a single entry with deployments array.
+        # Use the highest-confidence entry as the base.
+        group.sort(key=lambda c: -c.get("confidence", 0))
+        base = group[0].copy()
+        all_chains: list[str] = []
+        seen_chains: set[str] = set()
+        deployments: list[dict[str, Any]] = []
+        all_source_ids: list[str] = []
+        seen_source_ids: set[str] = set()
+        max_confidence = 0.0
+
+        for contract in group:
+            dep: dict[str, Any] = {"address": contract["address"]}
+            dep_chains = contract.get("chains", ["unknown"])
+            dep["chains"] = dep_chains
+            for ch in dep_chains:
+                if ch not in seen_chains:
+                    all_chains.append(ch)
+                    seen_chains.add(ch)
+            if contract.get("activity"):
+                dep["activity"] = contract["activity"]
+            if contract.get("rank_score") is not None:
+                dep["rank_score"] = contract["rank_score"]
+            deployments.append(dep)
+            max_confidence = max(max_confidence, contract.get("confidence", 0))
+            for sid in contract.get("source_ids", []):
+                if sid not in seen_source_ids:
+                    all_source_ids.append(sid)
+                    seen_source_ids.add(sid)
+
+        base["chains"] = all_chains
+        base["confidence"] = max_confidence
+        base["source_ids"] = all_source_ids
+        base["deployments"] = deployments
+        # Remove single-address field — use deployments instead.
+        base.pop("address", None)
+        result.append(base)
+
+    result.extend(ungroupable)
+    # Re-sort after grouping.
+    result.sort(
+        key=lambda item: (
+            -float(item.get("rank_score", item.get("confidence", 0))),
+            item.get("name") is None,
+            str(item.get("name") or ""),
+            CHAIN_SORT_ORDER.get(
+                item["chains"][0] if item.get("chains") else "unknown", 50
+            ),
+            item.get("address", ""),
+        ),
+    )
+    return result
 
 
 def search_protocol_inventory(
@@ -312,16 +412,58 @@ def search_protocol_inventory(
             notes.append(f"Deployer expansion failed: {exc}")
 
     entries = tavily_entries + deployer_entries
-    contracts = _build_contracts(entries, limit=limit)
+    contracts, sources_map = _build_contracts(entries, limit=limit)
+
+    # Resolve unknown chains before activity ranking (activity needs correct chain_id).
+    # With the new format, "unknown" is chains == ["unknown"].
+    def _primary_chain(c: dict[str, Any]) -> str:
+        chains = c.get("chains", [])
+        return chains[0] if chains else "unknown"
+
+    unknown_count = sum(1 for c in contracts if _primary_chain(c) == "unknown")
+    if unknown_count:
+        _debug_log(debug, f"Resolving chain for {unknown_count} unknown-chain contract(s)")
+        try:
+            # resolve_unknown_chains expects/updates "chain" key — derive it temporarily.
+            for c in contracts:
+                c["chain"] = _primary_chain(c)
+            contracts = resolve_unknown_chains(contracts, debug=debug)
+            # Sync chains back from resolver updates.
+            for c in contracts:
+                if "chain" in c:
+                    resolved_chain = c.pop("chain")
+                    if resolved_chain != "unknown":
+                        c["chains"] = c.get("chains", [])
+                        if c["chains"] == ["unknown"]:
+                            c["chains"] = [resolved_chain]
+            resolved = unknown_count - sum(1 for c in contracts if _primary_chain(c) == "unknown")
+            notes.append(f"Chain resolution: resolved {resolved}/{unknown_count} unknown chain(s)")
+        except Exception as exc:
+            _debug_log(debug, f"Chain resolution failed: {exc!r}")
+            notes.append(f"Chain resolution failed: {exc}")
+            # Clean up temporary chain keys on failure.
+            for c in contracts:
+                c.pop("chain", None)
 
     if run_activity_ranking and contracts:
         _debug_log(debug, "Running on-chain activity ranking")
         try:
+            # enrich_with_activity expects "chain" key — derive from chains.
+            for c in contracts:
+                c["chain"] = _primary_chain(c)
             contracts = enrich_with_activity(contracts, debug=debug)
+            # Remove the temporary "chain" key after enrichment.
+            for c in contracts:
+                c.pop("chain", None)
             notes.append(f"Activity ranking: enriched {len(contracts)} contract(s)")
         except Exception as exc:
             _debug_log(debug, f"Activity ranking failed: {exc!r}")
             notes.append(f"Activity ranking failed: {exc}")
+            for c in contracts:
+                c.pop("chain", None)
+
+    # Group multi-chain deployments of the same contract.
+    contracts = _group_multi_deployments(contracts)
 
     if not contracts:
         notes.append("No inventory contracts extracted from selected pages")
@@ -335,6 +477,9 @@ def search_protocol_inventory(
         ),
     )
 
+    # Invert sources map for output: {id: url}.
+    sources_by_id = {sid: url for url, sid in sources_map.items()}
+
     return {
         "company": clean_company,
         "chain": requested_chain or "any",
@@ -342,6 +487,7 @@ def search_protocol_inventory(
         "domain_candidates": domain_candidates,
         "pages_considered": considered_urls[:10],
         "pages_selected": selected_urls[:5],
+        "sources": sources_by_id,
         "contracts": contracts,
         "errors": errors[:12],
         "notes": notes[:12],
