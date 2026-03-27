@@ -33,8 +33,8 @@ class AnalyzeRequest(BaseModel):
     company: str | None = Field(default=None, min_length=1)
     name: str | None = None
     chain: str | None = None
-    discover_limit: int = Field(default=25, ge=1, le=100)
-    analyze_limit: int = Field(default=5, ge=1, le=25)
+    discover_limit: int = Field(default=25, ge=1, le=200)
+    analyze_limit: int = Field(default=5, ge=1, le=200)
     rpc_url: str | None = None
 
     @model_validator(mode="after")
@@ -125,25 +125,39 @@ def analyses() -> list[dict]:
         stmt = select(Job).where(Job.status == JobStatus.completed).order_by(Job.updated_at.desc())
         jobs = session.execute(stmt).scalars().all()
 
-        # Build a lookup for parent company names
+        # Build lookups for parent company names and inventory rank scores
         parent_names: dict[str, str] = {}
+        rank_scores: dict[str, float] = {}  # address -> rank_score
         for job in jobs:
             if job.company:
                 parent_names[str(job.id)] = job.company
+                inventory = get_artifact(session, job.id, "contract_inventory")
+                if isinstance(inventory, dict):
+                    for contract in inventory.get("contracts", []):
+                        addr = (contract.get("address") or "").lower()
+                        if addr and "rank_score" in contract:
+                            rank_scores[addr] = contract["rank_score"]
 
         results = []
         for job in jobs:
             run_name = job.name or str(job.id)
             analysis_artifact = get_artifact(session, job.id, "contract_analysis")
+            flags = get_artifact(session, job.id, "contract_flags")
             request = job.request if isinstance(job.request, dict) else {}
             parent_job_id = request.get("parent_job_id")
             company = job.company or (parent_names.get(parent_job_id) if parent_job_id else None)
+            addr_lower = (job.address or "").lower()
             entry: dict[str, Any] = {
                 "run_name": run_name,
                 "job_id": str(job.id),
                 "address": job.address,
                 "company": company,
                 "parent_job_id": parent_job_id,
+                "rank_score": rank_scores.get(addr_lower),
+                "is_proxy": bool(flags and flags.get("is_proxy")),
+                "proxy_type": (flags or {}).get("proxy_type"),
+                "implementation_address": (flags or {}).get("implementation"),
+                "proxy_address": request.get("proxy_address"),
             }
             # List available artifact names
             stmt_artifacts = select(Artifact.name).where(Artifact.job_id == job.id)
@@ -163,8 +177,8 @@ def analysis_detail(run_name: str) -> dict:
     """Get analysis detail by job name (run_name) or job_id."""
     with SessionLocal() as session:
         # Try by name first, then by id
-        stmt = select(Job).where(Job.name == run_name)
-        job = session.execute(stmt).scalar_one_or_none()
+        stmt = select(Job).where(Job.name == run_name).order_by(Job.updated_at.desc())
+        job = session.execute(stmt).scalars().first()
         if job is None:
             try:
                 job = session.get(Job, run_name)
@@ -193,6 +207,21 @@ def analysis_detail(run_name: str) -> dict:
             if artifact_name in all_artifacts and isinstance(all_artifacts[artifact_name], dict):
                 payload[artifact_name] = all_artifacts[artifact_name]
 
+        # For impl jobs, inherit dependency viz from the proxy job if missing
+        request = job.request if isinstance(job.request, dict) else {}
+        proxy_address = request.get("proxy_address")
+        if proxy_address and "dependency_graph_viz" not in payload:
+            proxy_stmt = select(Job).where(Job.address == proxy_address).order_by(Job.updated_at.desc())
+            proxy_job = session.execute(proxy_stmt).scalars().first()
+            if proxy_job:
+                for fallback_name in ("dependency_graph_viz", "dependencies"):
+                    if fallback_name not in payload:
+                        fallback = get_artifact(session, proxy_job.id, fallback_name)
+                        if isinstance(fallback, dict):
+                            payload[fallback_name] = fallback
+
+        payload["proxy_address"] = proxy_address
+
         # Inline text artifacts
         if "analysis_report" in all_artifacts:
             payload["analysis_report"] = all_artifacts["analysis_report"]
@@ -211,8 +240,8 @@ def analysis_artifact(run_name: str, artifact_name: str):
     """Get a specific artifact for an analysis."""
     with SessionLocal() as session:
         # Find job by name or id
-        stmt = select(Job).where(Job.name == run_name)
-        job = session.execute(stmt).scalar_one_or_none()
+        stmt = select(Job).where(Job.name == run_name).order_by(Job.updated_at.desc())
+        job = session.execute(stmt).scalars().first()
         if job is None:
             try:
                 job = session.get(Job, run_name)

@@ -10,8 +10,8 @@ import tempfile
 import textwrap
 from pathlib import Path
 
-from db.models import JobStage
-from db.queue import get_artifact, get_source_files, store_artifact
+from db.models import Job, JobStage, JobStatus
+from db.queue import create_job, get_artifact, get_source_files, store_artifact
 from services.discovery import (
     build_unified_dependencies,
     classify_contracts,
@@ -56,14 +56,22 @@ def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, 
 # ---------------------------------------------------------------------------
 # Source / project helpers
 # ---------------------------------------------------------------------------
+# Minimum solc version to avoid known compiler bugs (e.g. Natspec.cpp assertion in 0.8.21)
+_MIN_SOLC = "0.8.24"  # 0.8.21-0.8.23 have Natspec.cpp internal compiler errors on some OZ contracts
+
+
 def _detect_solc_version(sources: dict[str, str]) -> str:
     versions = []
     for content in sources.values():
         for m in re.finditer(r"pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)", content):
             versions.append(m.group(1))
     if not versions:
-        return "0.8.19"
-    return max(versions, key=lambda v: tuple(int(x) for x in v.split(".")))
+        return _MIN_SOLC
+    detected = max(versions, key=lambda v: tuple(int(x) for x in v.split(".")))
+    # Enforce minimum to avoid buggy solc releases
+    if tuple(int(x) for x in detected.split(".")) < tuple(int(x) for x in _MIN_SOLC.split(".")):
+        return _MIN_SOLC
+    return detected
 
 
 def _relax_pragmas(sources: dict[str, str]) -> dict[str, str]:
@@ -187,11 +195,11 @@ class StaticWorker(BaseWorker):
             contract_name,
         )
 
-        # Detect proxy contracts early
+        # Detect proxy contracts early and resolve implementation
         is_proxy = _is_proxy_contract(contract_name, sources)
         if is_proxy:
             logger.info("Job %s: %s detected as proxy contract", job_id_str, contract_name)
-            store_artifact(session, job.id, "contract_flags", data={"is_proxy": True})
+            self._resolve_proxy(session, job, address, contract_name)
 
         # Create temp directory and write source files
         tmp_dir = tempfile.mkdtemp(prefix="psat_static_")
@@ -222,6 +230,91 @@ class StaticWorker(BaseWorker):
 
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _resolve_proxy(self, session, job, address: str, contract_name: str) -> None:
+        """Use on-chain classification to detect proxy type and resolve implementation.
+
+        If an implementation is found, creates a linked child job for it so the
+        real business logic gets analyzed.
+        """
+        import os
+
+        from services.discovery.classifier import classify_single
+        from sqlalchemy import select
+
+        rpc_url = None
+        if job.request and isinstance(job.request, dict):
+            rpc_url = job.request.get("rpc_url")
+        if not rpc_url:
+            rpc_url = os.getenv("ETH_RPC")
+        if not rpc_url:
+            logger.warning("Job %s: no RPC available for proxy resolution", job.id)
+            store_artifact(session, job.id, "contract_flags", data={"is_proxy": True})
+            return
+
+        try:
+            classification = classify_single(address, rpc_url)
+        except Exception as exc:
+            logger.warning("Job %s: proxy classification failed: %s", job.id, exc)
+            store_artifact(session, job.id, "contract_flags", data={"is_proxy": True})
+            return
+
+        proxy_type = classification.get("proxy_type", "unknown")
+        impl_address = classification.get("implementation")
+        beacon = classification.get("beacon")
+        admin = classification.get("admin")
+        facets = classification.get("facets")
+
+        flags = {
+            "is_proxy": True,
+            "proxy_type": proxy_type,
+            "implementation": impl_address,
+            "beacon": beacon,
+            "admin": admin,
+            "facets": facets,
+        }
+        store_artifact(session, job.id, "contract_flags", data=flags)
+        logger.info(
+            "Job %s: proxy classified as %s, implementation=%s",
+            job.id, proxy_type, impl_address or "unknown",
+        )
+
+        # Queue implementation addresses for analysis
+        impl_entries: list[tuple[str, str]] = []  # (address, label)
+        if impl_address:
+            impl_entries.append((impl_address, "impl"))
+        if facets:
+            for i, facet in enumerate(facets):
+                if facet != impl_address:  # avoid duplicates
+                    impl_entries.append((facet, f"facet {i + 1}"))
+
+        base_name = job.name or contract_name
+        for impl_addr, label in impl_entries:
+            # Check if we already have a job for this implementation
+            existing = session.execute(
+                select(Job).where(Job.address == impl_addr).limit(1)
+            ).scalar_one_or_none()
+            if existing:
+                logger.info(
+                    "Job %s: %s %s already has job %s, skipping",
+                    job.id, label, impl_addr, existing.id,
+                )
+                continue
+
+            impl_name = f"{base_name}: ({label})"
+            child_request = {
+                "address": impl_addr,
+                "name": impl_name,
+                "rpc_url": rpc_url,
+                "parent_job_id": str(job.id),
+                "proxy_address": address,
+                "proxy_type": proxy_type,
+            }
+            child_job = create_job(session, child_request)
+            logger.info(
+                "Job %s: created %s job %s for %s (%s)",
+                job.id, label, child_job.id, impl_addr, impl_name,
+            )
 
     def _scaffold_project(
         self,

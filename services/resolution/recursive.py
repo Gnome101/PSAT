@@ -5,8 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sys
+
+logger = logging.getLogger(__name__)
 from collections import deque
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -124,17 +127,44 @@ def _materialize_contract_artifacts(
     workspace_prefix: str,
     refresh_snapshots: bool,
 ) -> LoadedArtifacts:
-    result = fetch(address)
+    # Check if this address is a proxy — if so, analyze the implementation instead
+    effective_address = address
+    snapshot_address = address  # address to read storage from
+    try:
+        from services.discovery.classifier import classify_single
+
+        classification = classify_single(address, rpc_url)
+        if classification.get("type") == "proxy":
+            impl = classification.get("implementation")
+            if impl:
+                logger.info("Recursive resolve: %s is a proxy, using impl %s", address, impl)
+                effective_address = impl
+                snapshot_address = address  # read storage from proxy, not impl
+    except Exception as exc:
+        logger.debug("Recursive resolve: proxy check failed for %s: %s", address, exc)
+
+    result = fetch(effective_address)
     contract_name = str(result.get("ContractName", "Contract"))
-    project_name = _workspace_name(contract_name, address, workspace_prefix)
+    project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
     project_dir = CONTRACTS_DIR / project_name
     analysis_path = project_dir / "contract_analysis.json"
 
     if not analysis_path.exists():
-        scaffold(address, project_name, result)
-        analyze(project_dir, contract_name, address)
+        scaffold(effective_address, project_name, result)
+        analyze(project_dir, contract_name, effective_address)
         analysis_path = analyze_contract(project_dir)
         write_control_tracking_plan(analysis_path, project_dir / "control_tracking_plan.json")
+
+    # If analyzing through a proxy, override the address in the tracking plan so
+    # snapshot reads go to the proxy (where storage lives)
+    if snapshot_address != effective_address:
+        plan_path = project_dir / "control_tracking_plan.json"
+        if plan_path.exists():
+            import json
+
+            plan = json.loads(plan_path.read_text())
+            plan["contract_address"] = snapshot_address
+            plan_path.write_text(json.dumps(plan, indent=2) + "\n")
 
     return _load_or_build_artifacts(analysis_path, rpc_url, refresh_snapshots=refresh_snapshots)
 

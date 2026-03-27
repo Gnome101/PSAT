@@ -67,14 +67,20 @@ def parse_remappings(result: dict) -> list[str]:
     return [entry.strip() for entry in remappings if isinstance(entry, str) and entry.strip()]
 
 
+_MIN_SOLC = "0.8.24"  # 0.8.21-0.8.23 have Natspec.cpp internal compiler errors on some OZ contracts
+
+
 def _detect_solc_version(sources: dict[str, str]) -> str:
     versions = []
     for content in sources.values():
         for m in re.finditer(r"pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)", content):
             versions.append(m.group(1))
     if not versions:
-        return "0.8.19"
-    return max(versions, key=lambda v: tuple(int(x) for x in v.split(".")))
+        return _MIN_SOLC
+    detected = max(versions, key=lambda v: tuple(int(x) for x in v.split(".")))
+    if tuple(int(x) for x in detected.split(".")) < tuple(int(x) for x in _MIN_SOLC.split(".")):
+        return _MIN_SOLC
+    return detected
 
 
 def _relax_pragmas(sources: dict[str, str]) -> dict[str, str]:

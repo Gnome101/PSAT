@@ -45,6 +45,20 @@ class ResolutionWorker(BaseWorker):
         if not isinstance(contract_analysis, dict):
             raise RuntimeError("contract_analysis artifact not found")
 
+        # For impl jobs, read storage from the proxy address (where state lives)
+        request = job.request if isinstance(job.request, dict) else {}
+        proxy_address = request.get("proxy_address")
+        if proxy_address:
+            tracking_plan = {**tracking_plan, "contract_address": proxy_address}
+            contract_analysis = {
+                **contract_analysis,
+                "subject": {**contract_analysis.get("subject", {}), "address": proxy_address},
+            }
+            logger.info(
+                "Job %s: impl contract — reading state from proxy %s",
+                job.id, proxy_address,
+            )
+
         # Build control snapshot via RPC calls
         self.update_detail(session, job, "Reading current controller state")
         snapshot = build_control_snapshot(tracking_plan, rpc_url)
