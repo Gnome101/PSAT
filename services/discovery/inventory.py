@@ -178,9 +178,7 @@ def _determine_sources(evidence: list[dict[str, Any]]) -> list[str]:
     return sources
 
 
-def _build_contracts(
-    entries: list[dict[str, Any]], limit: int
-) -> tuple[list[dict[str, Any]], dict[str, str]]:
+def _build_contracts(entries: list[dict[str, Any]], limit: int) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Build the contract list and a top-level sources map.
 
     Returns (contracts, sources_map) where sources_map is ``{url: id}``
@@ -302,9 +300,7 @@ def _group_multi_deployments(contracts: list[dict[str, Any]]) -> list[dict[str, 
             -float(item.get("rank_score", item.get("confidence", 0))),
             item.get("name") is None,
             str(item.get("name") or ""),
-            CHAIN_SORT_ORDER.get(
-                item["chains"][0] if item.get("chains") else "unknown", 50
-            ),
+            CHAIN_SORT_ORDER.get(item["chains"][0] if item.get("chains") else "unknown", 50),
             item.get("address", ""),
         ),
     )
@@ -415,7 +411,6 @@ def search_protocol_inventory(
     contracts, sources_map = _build_contracts(entries, limit=limit)
 
     # Resolve unknown chains before activity ranking (activity needs correct chain_id).
-    # With the new format, "unknown" is chains == ["unknown"].
     def _primary_chain(c: dict[str, Any]) -> str:
         chains = c.get("chains", [])
         return chains[0] if chains else "unknown"
@@ -424,43 +419,21 @@ def search_protocol_inventory(
     if unknown_count:
         _debug_log(debug, f"Resolving chain for {unknown_count} unknown-chain contract(s)")
         try:
-            # resolve_unknown_chains expects/updates "chain" key — derive it temporarily.
-            for c in contracts:
-                c["chain"] = _primary_chain(c)
             contracts = resolve_unknown_chains(contracts, debug=debug)
-            # Sync chains back from resolver updates.
-            for c in contracts:
-                if "chain" in c:
-                    resolved_chain = c.pop("chain")
-                    if resolved_chain != "unknown":
-                        c["chains"] = c.get("chains", [])
-                        if c["chains"] == ["unknown"]:
-                            c["chains"] = [resolved_chain]
             resolved = unknown_count - sum(1 for c in contracts if _primary_chain(c) == "unknown")
             notes.append(f"Chain resolution: resolved {resolved}/{unknown_count} unknown chain(s)")
         except Exception as exc:
             _debug_log(debug, f"Chain resolution failed: {exc!r}")
             notes.append(f"Chain resolution failed: {exc}")
-            # Clean up temporary chain keys on failure.
-            for c in contracts:
-                c.pop("chain", None)
 
     if run_activity_ranking and contracts:
         _debug_log(debug, "Running on-chain activity ranking")
         try:
-            # enrich_with_activity expects "chain" key — derive from chains.
-            for c in contracts:
-                c["chain"] = _primary_chain(c)
             contracts = enrich_with_activity(contracts, debug=debug)
-            # Remove the temporary "chain" key after enrichment.
-            for c in contracts:
-                c.pop("chain", None)
             notes.append(f"Activity ranking: enriched {len(contracts)} contract(s)")
         except Exception as exc:
             _debug_log(debug, f"Activity ranking failed: {exc!r}")
             notes.append(f"Activity ranking failed: {exc}")
-            for c in contracts:
-                c.pop("chain", None)
 
     # Group multi-chain deployments of the same contract.
     contracts = _group_multi_deployments(contracts)

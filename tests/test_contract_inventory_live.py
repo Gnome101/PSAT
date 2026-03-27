@@ -2,7 +2,6 @@
 import os
 import re
 import sys
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -105,16 +104,22 @@ ETHERFI_LIVE_SPOTCHECKS = [
 ]
 
 
-def _contract_address_rows(result: dict[str, Any]) -> list[str]:
-    return [
-        str(contract.get("address", "")).lower()
-        for contract in result.get("contracts", [])
-        if isinstance(contract, dict) and str(contract.get("address", "")).strip()
-    ]
-
-
-def _contract_addresses(result: dict[str, Any]) -> set[str]:
-    return set(_contract_address_rows(result))
+def _all_addresses(result: dict[str, Any]) -> list[str]:
+    """Extract all addresses from contracts, including grouped deployments."""
+    out: list[str] = []
+    for contract in result.get("contracts", []):
+        if not isinstance(contract, dict):
+            continue
+        if "deployments" in contract:
+            for dep in contract["deployments"]:
+                addr = str(dep.get("address", "")).lower().strip()
+                if addr:
+                    out.append(addr)
+        else:
+            addr = str(contract.get("address", "")).lower().strip()
+            if addr:
+                out.append(addr)
+    return out
 
 
 def _contracts_by_name(result: dict[str, Any], name: str) -> list[dict[str, Any]]:
@@ -133,20 +138,17 @@ def _assert_contract_present(
     address: str,
 ) -> None:
     normalized = address.lower()
-    matches = [
-        contract
-        for contract in _contracts_by_name(result, name)
-        if str(contract.get("chain")) == chain and str(contract.get("address", "")).lower() == normalized
-    ]
-    assert matches, f"Missing expected contract {name} on {chain} at {address}"
-
-
-def _duplicate_address_sample(counts: Counter[str], limit: int = 5) -> str:
-    duplicates = [(address, count) for address, count in counts.items() if count > 1]
-    if not duplicates:
-        return ""
-    duplicates.sort(key=lambda item: (-item[1], item[0]))
-    return ", ".join(f"{address}x{count}" for address, count in duplicates[:limit])
+    for contract in _contracts_by_name(result, name):
+        if chain not in contract.get("chains", []):
+            continue
+        # Ungrouped contract — check address directly
+        if str(contract.get("address", "")).lower() == normalized:
+            return
+        # Grouped contract — check deployments
+        for dep in contract.get("deployments", []):
+            if str(dep.get("address", "")).lower() == normalized:
+                return
+    raise AssertionError(f"Missing expected contract {name} on {chain} at {address}")
 
 
 def _error_blob(errors: list[dict[str, Any]]) -> str:
@@ -215,35 +217,23 @@ def test_live_protocol_inventory_etherfi():
     assert cap == 4
     assert 0 < used <= cap
 
-    raw_address_rows = _contract_address_rows(result)
-    actual_addresses = set(raw_address_rows)
+    all_addrs = _all_addresses(result)
+    actual_addresses = set(all_addrs)
     assert actual_addresses, f"No contracts extracted: {result}"
 
     matched_addresses = ETHERFI_EXPECTED_ADDRESSES & actual_addresses
     extra_addresses = actual_addresses - ETHERFI_EXPECTED_ADDRESSES
     missing_addresses = ETHERFI_EXPECTED_ADDRESSES - actual_addresses
-    raw_rows = len(raw_address_rows)
     actual_total = len(actual_addresses)
     expected_total = len(ETHERFI_EXPECTED_ADDRESSES)
     matched = len(matched_addresses)
     missing = len(missing_addresses)
     extra = len(extra_addresses)
-    counts = Counter(raw_address_rows)
-    duplicate_rows = raw_rows - actual_total
-    duplicate_addresses = sum(1 for count in counts.values() if count > 1)
     coverage = matched / expected_total
     precision = matched / actual_total
-    duplicate_sample = _duplicate_address_sample(counts)
     print(
-        "Ether.fi raw-address reliability: "
-        f"raw_rows={raw_rows} unique_found={actual_total} duplicate_rows={duplicate_rows} "
-        f"duplicate_addresses={duplicate_addresses}"
-    )
-    if duplicate_sample:
-        print(f"Ether.fi duplicate address sample: {duplicate_sample}")
-    print(
-        "Ether.fi expected-address metrics: "
-        f"expected={expected_total} matched={matched} missing={missing} "
+        "Ether.fi address metrics: "
+        f"expected={expected_total} found={actual_total} matched={matched} missing={missing} "
         f"extra={extra} coverage={coverage:.1%} precision={precision:.1%}"
     )
 

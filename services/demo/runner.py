@@ -489,24 +489,28 @@ def run_protocol_analysis(
         if entry.get("deployments"):
             # Grouped multi-chain contract — pick first deployment.
             dep = entry["deployments"][0]
-            flat_contracts.append({
-                "address": dep["address"],
-                "name": entry.get("name"),
-                "chain": dep.get("chains", entry.get("chains", ["unknown"]))[0],
-                "confidence": entry.get("confidence"),
-                "rank_score": dep.get("rank_score", entry.get("rank_score")),
-                "activity": dep.get("activity", entry.get("activity")),
-            })
+            flat_contracts.append(
+                {
+                    "address": dep["address"],
+                    "name": entry.get("name"),
+                    "chain": dep.get("chains", entry.get("chains", ["unknown"]))[0],
+                    "confidence": entry.get("confidence"),
+                    "rank_score": dep.get("rank_score", entry.get("rank_score")),
+                    "activity": dep.get("activity", entry.get("activity")),
+                }
+            )
         elif entry.get("address"):
             chains = entry.get("chains", ["unknown"])
-            flat_contracts.append({
-                "address": entry["address"],
-                "name": entry.get("name"),
-                "chain": chains[0] if chains else "unknown",
-                "confidence": entry.get("confidence"),
-                "rank_score": entry.get("rank_score"),
-                "activity": entry.get("activity"),
-            })
+            flat_contracts.append(
+                {
+                    "address": entry["address"],
+                    "name": entry.get("name"),
+                    "chain": chains[0] if chains else "unknown",
+                    "confidence": entry.get("confidence"),
+                    "rank_score": entry.get("rank_score"),
+                    "activity": entry.get("activity"),
+                }
+            )
 
     selected_contracts = flat_contracts[:analyze_limit]
     analyzed_runs: list[dict[str, Any]] = []

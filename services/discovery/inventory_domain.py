@@ -59,6 +59,42 @@ LOW_TRUST_DOMAINS = {
 
 CHAIN_SORT_ORDER = {"ethereum": 0, "arbitrum": 1, "optimism": 2, "polygon": 3, "base": 4, "unknown": 99}
 
+# Etherscan v2 chain IDs for chains the inventory pipeline can discover.
+CHAIN_IDS: dict[str, int] = {
+    "ethereum": 1,
+    "arbitrum": 42161,
+    "optimism": 10,
+    "polygon": 137,
+    "base": 8453,
+    "avalanche": 43114,
+    "bsc": 56,
+    "linea": 59144,
+    "scroll": 534352,
+    "zksync": 324,
+    "blast": 81457,
+}
+
+
+class RateLimiter:
+    """Thread-safe rate limiter enforcing a minimum interval between calls."""
+
+    def __init__(self, calls_per_second: float):
+        import threading
+
+        self._min_interval = 1.0 / calls_per_second
+        self._lock = threading.Lock()
+        self._last_call = 0.0
+
+    def wait(self) -> None:
+        import time
+
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_call = time.monotonic()
+
 
 # -- Utility helpers ---------------------------------------------------------
 
