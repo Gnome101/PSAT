@@ -1,0 +1,335 @@
+{
+  "version": "2.8",
+  "children": [
+    {
+      "type": "frame",
+      "id": "C4O7h",
+      "x": 0,
+      "y": 0,
+      "name": "Protocol Security Website",
+      "width": 1440,
+      "height": 1200,
+      "fill": "#F5F7FB",
+      "layout": "vertical",
+      "children": [
+        {
+          "type": "frame",
+          "id": "s5mkS",
+          "name": "Header",
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "stroke": {
+            "align": "inside",
+            "thickness": {
+              "bottom": 1
+            },
+            "fill": "#E5E7EB"
+          },
+          "padding": [
+            20,
+            64
+          ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "s0WwT",
+              "name": "logo",
+              "fill": "#0F172A",
+              "content": "PSAT",
+              "fontFamily": "Geist",
+              "fontSize": 20,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "HzHBH",
+              "name": "nav",
+              "stroke": {
+                "align": "inside",
+                "thickness": 1
+              },
+              "gap": 24,
+              "children": [
+                {
+                  "type": "text",
+                  "id": "fZXUx",
+                  "name": "nav1",
+                  "fill": "#334155",
+                  "content": "Home",
+                  "fontFamily": "Geist",
+                  "fontSize": 14,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "text",
+                  "id": "T9n9S",
+                  "name": "nav2",
+                  "fill": "#334155",
+                  "content": "Features",
+                  "fontFamily": "Geist",
+                  "fontSize": 14,
+                  "fontWeight": "500"
+                },
+                {
+                  "type": "text",
+                  "id": "h4Vjm",
+                  "name": "nav3",
+                  "fill": "#334155",
+                  "content": "Contact",
+                  "fontFamily": "Geist",
+                  "fontSize": 14,
+                  "fontWeight": "500"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "QaV7Y",
+          "name": "Hero",
+          "width": "fill_container",
+          "fill": "#F5F7FB",
+          "layout": "vertical",
+          "gap": 16,
+          "padding": [
+            96,
+            64
+          ],
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "kQup1",
+              "name": "title",
+              "fill": "#0F172A",
+              "content": "Protocal Security Assessment Tool",
+              "textAlign": "center",
+              "fontFamily": "Geist",
+              "fontSize": 56,
+              "fontWeight": "700"
+            },
+            {
+              "type": "text",
+              "id": "436mM",
+              "name": "subtitle",
+              "fill": "#475569",
+              "content": "A simple platform to evaluate, report, and improve your organization’s protocol security posture.",
+              "textAlign": "center",
+              "fontFamily": "Geist",
+              "fontSize": 18
+            },
+            {
+              "type": "frame",
+              "id": "CAiTE",
+              "name": "cta",
+              "fill": "#0F172A",
+              "cornerRadius": 8,
+              "padding": [
+                12,
+                20
+              ],
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "65PJ7",
+                  "name": "ctaText",
+                  "fill": "#FFFFFF",
+                  "content": "Start Assessment",
+                  "fontFamily": "Geist",
+                  "fontSize": 14,
+                  "fontWeight": "600"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "hDK2m",
+          "name": "Features Section",
+          "width": "fill_container",
+          "fill": "#F5F7FB",
+          "layout": "vertical",
+          "gap": 20,
+          "padding": [
+            24,
+            64,
+            64,
+            64
+          ],
+          "children": [
+            {
+              "type": "text",
+              "id": "BmIRl",
+              "name": "featuresTitle",
+              "fill": "#0F172A",
+              "content": "Core Features",
+              "fontFamily": "Geist",
+              "fontSize": 28,
+              "fontWeight": "700"
+            },
+            {
+              "type": "frame",
+              "id": "g2HTH",
+              "name": "cards",
+              "width": "fill_container",
+              "stroke": {
+                "align": "inside",
+                "thickness": 1
+              },
+              "gap": 16,
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "4oN0Z",
+                  "name": "card1",
+                  "width": "fill_container",
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 10,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#E5E7EB"
+                  },
+                  "layout": "vertical",
+                  "gap": 10,
+                  "padding": 20,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "1QsPD",
+                      "name": "card1t",
+                      "fill": "#0F172A",
+                      "content": "Automated Checks",
+                      "fontFamily": "Geist",
+                      "fontSize": 18,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "FKmxY",
+                      "name": "card1d",
+                      "fill": "#475569",
+                      "content": "Run baseline protocol scans and quickly detect common weaknesses.",
+                      "fontFamily": "Geist",
+                      "fontSize": 14
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "t8cOV",
+                  "name": "card2",
+                  "width": "fill_container",
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 10,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#E5E7EB"
+                  },
+                  "layout": "vertical",
+                  "gap": 10,
+                  "padding": 20,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "Vj6Hd",
+                      "name": "card2t",
+                      "fill": "#0F172A",
+                      "content": "Risk Scoring",
+                      "fontFamily": "Geist",
+                      "fontSize": 18,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "4lP9m",
+                      "name": "card2d",
+                      "fill": "#475569",
+                      "content": "Prioritize findings with clear severity ratings and remediation guidance.",
+                      "fontFamily": "Geist",
+                      "fontSize": 14
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "gr4ce",
+                  "name": "card3",
+                  "width": "fill_container",
+                  "fill": "#FFFFFF",
+                  "cornerRadius": 10,
+                  "stroke": {
+                    "align": "inside",
+                    "thickness": 1,
+                    "fill": "#E5E7EB"
+                  },
+                  "layout": "vertical",
+                  "gap": 10,
+                  "padding": 20,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "RzEdj",
+                      "name": "card3t",
+                      "fill": "#0F172A",
+                      "content": "Exportable Reports",
+                      "fontFamily": "Geist",
+                      "fontSize": 18,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "GaFu4",
+                      "name": "card3d",
+                      "fill": "#475569",
+                      "content": "Generate clean reports for stakeholders and compliance documentation.",
+                      "fontFamily": "Geist",
+                      "fontSize": 14
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "RzRMG",
+          "name": "footer",
+          "width": "fill_container",
+          "fill": "#FFFFFF",
+          "stroke": {
+            "align": "inside",
+            "thickness": {
+              "top": 1
+            },
+            "fill": "#E5E7EB"
+          },
+          "padding": [
+            20,
+            64
+          ],
+          "justifyContent": "center",
+          "children": [
+            {
+              "type": "text",
+              "id": "qdiVk",
+              "name": "footerText",
+              "fill": "#64748B",
+              "content": "© 2026 Protocal Security Assessment Tool",
+              "fontFamily": "Geist",
+              "fontSize": 13
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
