@@ -18,6 +18,7 @@ logger = logging.getLogger("workers.policy_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
+RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
 
 class PolicyWorker(BaseWorker):
@@ -101,6 +102,25 @@ class PolicyWorker(BaseWorker):
                     job.id,
                     job.address or "0x0",
                     job.name or "Contract",
+                )
+
+            # Rebuild the resolved graph now that effective_permissions.json exists,
+            # so semantic role/controller principals can be projected into the graph.
+            self.update_detail(session, job, "Refreshing resolved control graph")
+            from services.resolution.recursive import write_resolved_control_graph
+
+            refreshed_graph_path = write_resolved_control_graph(
+                analysis_path,
+                rpc_url=rpc_url,
+                output_path=project_dir / "resolved_control_graph.json",
+                max_depth=RECURSION_MAX_DEPTH,
+                workspace_prefix="recursive",
+                refresh_snapshots=False,
+            )
+            if refreshed_graph_path.exists():
+                resolved_graph_path = refreshed_graph_path
+                store_artifact(
+                    session, job.id, "resolved_control_graph", data=json.loads(refreshed_graph_path.read_text())
                 )
 
             # Label principals

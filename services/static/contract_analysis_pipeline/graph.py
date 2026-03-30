@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -49,12 +50,55 @@ def _variable_name(item) -> str:
     return getattr(item, "name", None) or str(item)
 
 
+def _lower_camel(value: str) -> str:
+    if not value:
+        return value
+    return value[0].lower() + value[1:]
+
+
+def _helper_getter_target(source: str, suffix: str) -> str:
+    explicit = {
+        "owner": "owner",
+        "authority": "authority",
+        "governance": "getGovernance",
+        "adminExecutor": "getAdminExecutor",
+        "emergencyActivationCommittee": "getEmergencyActivationCommittee",
+        "emergencyExecutionCommittee": "getEmergencyExecutionCommittee",
+        "emergencyGovernance": "getEmergencyGovernance",
+    }
+    return explicit.get(source, f"get{suffix}")
+
+
 def _resolve_state_source(item, state_aliases: dict[str, str]) -> str | None:
     if item is None:
         return None
     if type(item).__name__ == "StateVariable":
         return getattr(item, "name", None)
     return state_aliases.get(_variable_name(item))
+
+
+def _looks_like_external_authority_call(function_name: str, destination_name: str) -> bool:
+    function_lower = function_name.lower()
+    destination_lower = destination_name.lower()
+    if any(
+        token in function_lower
+        for token in (
+            "cancall",
+            "haspermission",
+            "canperform",
+            "hasrole",
+            "checkrole",
+            "authorize",
+            "authoriz",
+            "isauthorized",
+            "ispermitted",
+            "caninvoke",
+        )
+    ):
+        return True
+    return function_lower.startswith("can") and any(
+        token in destination_lower for token in ("authority", "auth", "acl", "kernel", "accessmanager")
+    )
 
 
 def _updated_state_aliases(node, state_aliases: dict[str, str]) -> dict[str, str]:
@@ -223,7 +267,7 @@ def _collect_sink_instances(
             )
 
         for ir in getattr(node, "irs", []):
-            if type(ir).__name__ != "InternalCall":
+            if type(ir).__name__ not in {"InternalCall", "LibraryCall"}:
                 continue
             callee = getattr(ir, "function", None)
             if callee is None:
@@ -267,8 +311,14 @@ def _direct_structural_guards(
         if type(ir).__name__ == "HighLevelCall":
             destination = getattr(ir, "destination", None)
             destination_name = _resolve_state_source(destination, state_aliases) or _variable_name(destination)
+            function_name = getattr(ir, "function_name", None) or getattr(getattr(ir, "function", None), "name", None)
             argument_names = {_variable_name(argument) for argument in getattr(ir, "arguments", []) or []}
-            if destination_name and any(name in caller_aliases for name in argument_names):
+            if (
+                destination_name
+                and function_name
+                and any(name in caller_aliases for name in argument_names)
+                and _looks_like_external_authority_call(str(function_name), destination_name)
+            ):
                 guards.append(
                     {
                         "kind": "external_authority_check",
@@ -365,6 +415,33 @@ def _guards_from_internal_call(ir, project_dir: Path, seen: set[str], caller_ali
     if callee_name in seen:
         return guards
 
+    helper_name = getattr(callee, "name", None) or ""
+    helper_match = re.match(r"^checkCallerIs([A-Z][A-Za-z0-9_]*)$", helper_name)
+    if helper_match:
+        suffix = helper_match.group(1)
+        source = _lower_camel(suffix)
+        guards.append(
+            {
+                "kind": "caller_via_helper_function",
+                "confidence": "high",
+                "controllers": [
+                    {
+                        "kind": "state_variable",
+                        "label": source,
+                        "source": source,
+                        "read_spec": {
+                            "strategy": "getter_call",
+                            "target": _helper_getter_target(source, suffix),
+                        },
+                        "confidence": "high",
+                        "evidence": [_source_evidence(callee, project_dir, detail=f"helper {helper_name}")],
+                    }
+                ],
+                "evidence": [_source_evidence(callee, project_dir, detail=f"via {callee_name}")],
+                "details": [f"via:{callee_name}", f"getter:{_helper_getter_target(source, suffix)}"],
+            }
+        )
+
     arguments = [argument for argument in getattr(ir, "arguments", []) or [] if getattr(argument, "name", "")]
     role_arguments = [argument for argument in arguments if _is_role_identifier(argument)]
     if role_arguments:
@@ -400,7 +477,7 @@ def _structural_guards_for_unit(
     for node in getattr(unit, "nodes", []):
         guards.extend(_direct_structural_guards(node, project_dir, caller_aliases, state_aliases))
         for ir in getattr(node, "irs", []):
-            if type(ir).__name__ != "InternalCall":
+            if type(ir).__name__ not in {"InternalCall", "LibraryCall"}:
                 continue
             guards.extend(_guards_from_internal_call(ir, project_dir, seen, caller_aliases))
         state_aliases = _updated_state_aliases(node, state_aliases)
@@ -431,7 +508,7 @@ def _guards_for_sink(function, sink_node, project_dir: Path) -> list[dict[str, A
             continue
         guards.extend(_direct_structural_guards(node, project_dir, {"msg.sender"}, state_aliases))
         for ir in getattr(node, "irs", []):
-            if type(ir).__name__ != "InternalCall":
+            if type(ir).__name__ not in {"InternalCall", "LibraryCall"}:
                 continue
             guards.extend(_guards_from_internal_call(ir, project_dir, set(), {"msg.sender"}))
         state_aliases = _updated_state_aliases(node, state_aliases)
@@ -441,6 +518,8 @@ def _guards_for_sink(function, sink_node, project_dir: Path) -> list[dict[str, A
 def _guard_kind_label(kind: str) -> str:
     if kind == "caller_equals_storage":
         return "storage_guard"
+    if kind == "caller_via_helper_function":
+        return "helper_guard"
     if kind == "caller_in_mapping":
         return "mapping_guard"
     if kind == "external_authority_check":
@@ -487,6 +566,8 @@ def build_permission_graph(contract, project_dir: Path) -> PermissionGraph:
                             "kind": controller["kind"],
                             "label": controller["label"],
                             "source": controller["source"],
+                            **({"read_spec": controller["read_spec"]} if controller.get("read_spec") else {}),
+                            **({"confidence": controller["confidence"]} if controller.get("confidence") else {}),
                             "evidence": controller["evidence"],
                         },
                     )
@@ -500,6 +581,7 @@ def build_permission_graph(contract, project_dir: Path) -> PermissionGraph:
                         "contract": _declaring_contract_name(function, contract.name),
                         "function": getattr(function, "full_name", function.name),
                         "kind": candidate["kind"],
+                        **({"confidence": candidate["confidence"]} if candidate.get("confidence") else {}),
                         "controller_ids": sorted(controller_ids),
                         "evidence": candidate["evidence"],
                         "details": sorted(set(candidate.get("details", []))),
@@ -543,6 +625,7 @@ def privileged_functions_from_graph(contract, permission_graph: PermissionGraph)
                 "guards": [],
                 "guard_kinds": [],
                 "controller_refs": [],
+                "controller_ids": [],
                 "sink_ids": [],
                 "effects": [],
                 "effect_targets": [],
@@ -560,6 +643,7 @@ def privileged_functions_from_graph(contract, permission_graph: PermissionGraph)
                 continue
             entry["guard_kinds"].append(guard["kind"])
             entry["guards"].append(_guard_kind_label(guard["kind"]))
+            entry["controller_ids"].extend(guard["controller_ids"])
 
             for controller_id in guard["controller_ids"]:
                 controller = controllers_by_id.get(controller_id)
@@ -578,6 +662,7 @@ def privileged_functions_from_graph(contract, permission_graph: PermissionGraph)
         entry["guards"] = _dedupe_strings(entry["guards"])
         entry["guard_kinds"] = _dedupe_strings(entry["guard_kinds"])
         entry["controller_refs"] = _dedupe_strings(entry["controller_refs"])
+        entry["controller_ids"] = sorted(set(entry["controller_ids"]))
         entry["sink_ids"] = sorted(set(entry["sink_ids"]))
         entry["effects"] = _dedupe_strings(entry["effects"])
         entry["effect_targets"] = _dedupe_strings(entry["effect_targets"])

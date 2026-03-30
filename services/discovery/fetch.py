@@ -42,6 +42,14 @@ def parse_verification_bundle(result: dict) -> dict | None:
     return parsed
 
 
+def is_vyper_result(result: dict) -> bool:
+    compiler_version = str(result.get("CompilerVersion", "")).lower()
+    if "vyper" in compiler_version:
+        return True
+    raw = str(result.get("SourceCode", "")).lstrip()
+    return raw.startswith("# @version")
+
+
 def parse_sources(result: dict) -> dict[str, str]:
     """Parse Etherscan response into {filepath: source_code} mapping."""
     bundle = parse_verification_bundle(result)
@@ -56,7 +64,8 @@ def parse_sources(result: dict) -> dict[str, str]:
         return sources
 
     raw = result["SourceCode"]
-    return {f"src/{contract_name}.sol": raw}
+    extension = ".vy" if is_vyper_result(result) else ".sol"
+    return {f"src/{contract_name}{extension}": raw}
 
 
 def parse_remappings(result: dict) -> list[str]:
@@ -71,6 +80,7 @@ _MIN_SOLC = "0.8.24"  # 0.8.21-0.8.23 have Natspec.cpp internal compiler errors 
 
 
 def _detect_solc_version(sources: dict[str, str]) -> str:
+    min_tuple = tuple(int(x) for x in _MIN_SOLC.split("."))
     versions = []
     for content in sources.values():
         for m in re.finditer(r"pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)", content):
@@ -78,7 +88,8 @@ def _detect_solc_version(sources: dict[str, str]) -> str:
     if not versions:
         return _MIN_SOLC
     detected = max(versions, key=lambda v: tuple(int(x) for x in v.split(".")))
-    if tuple(int(x) for x in detected.split(".")) < tuple(int(x) for x in _MIN_SOLC.split(".")):
+    detected_tuple = tuple(int(x) for x in detected.split("."))
+    if detected_tuple[:2] == min_tuple[:2] and detected_tuple < min_tuple:
         return _MIN_SOLC
     return detected
 
@@ -112,6 +123,7 @@ def scaffold(address: str, name: str, result: dict) -> Path:
     sources = parse_sources(result)
     remappings = parse_remappings(result)
     bundle = parse_verification_bundle(result)
+    language = "vyper" if is_vyper_result(result) else "solidity"
     solc_version = _detect_solc_version(sources)
     src_dir = _project_src_dir(sources)
     raw_evm = result.get("EVMVersion", "") or ""
@@ -155,6 +167,7 @@ def scaffold(address: str, name: str, result: dict) -> Path:
         "address": address,
         "contract_name": result.get("ContractName", ""),
         "compiler_version": result.get("CompilerVersion", ""),
+        "language": language,
         "optimization_used": result.get("OptimizationUsed", ""),
         "runs": result.get("Runs", ""),
         "evm_version": result.get("EVMVersion", ""),

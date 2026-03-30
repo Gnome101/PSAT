@@ -48,6 +48,7 @@ def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPl
                 "label": target["label"],
                 "source": target["source"],
                 "kind": target["kind"],
+                **({"read_spec": target["read_spec"]} if target.get("read_spec") else {}),
                 "tracking_mode": target["tracking_mode"],
                 "event_watch": event_watch,
                 "polling_fallback": polling_fallback,

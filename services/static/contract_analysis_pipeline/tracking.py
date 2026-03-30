@@ -8,6 +8,7 @@ from typing import Iterable
 from eth_utils.crypto import keccak
 
 from schemas.contract_analysis import (
+    AccessControlAnalysis,
     AssociatedEvent,
     AssociatedEventInput,
     ControllerTrackingTarget,
@@ -207,7 +208,7 @@ def _writer_records_for_targets(
 
 
 def build_controller_tracking(
-    contract, project_dir: Path, permission_graph: PermissionGraph
+    contract, project_dir: Path, permission_graph: PermissionGraph, access_control: AccessControlAnalysis | None = None
 ) -> list[ControllerTrackingTarget]:
     """Build event-first tracking metadata for mutable controllers discovered in the permission graph."""
     event_lookup = _event_index(contract)
@@ -270,6 +271,8 @@ def build_controller_tracking(
                 "label": controller["label"],
                 "source": controller_source,
                 "kind": controller_kind,
+                **({"read_spec": controller["read_spec"]} if controller.get("read_spec") else {}),
+                **({"confidence": controller["confidence"]} if controller.get("confidence") else {}),
                 "tracking_mode": tracking_mode,
                 "writer_functions": writer_functions,
                 "associated_events": associated_events,
@@ -277,6 +280,33 @@ def build_controller_tracking(
                 "notes": notes,
             }
         )
+
+    existing_ids = {target["controller_id"] for target in tracking_targets}
+    if access_control:
+        for privileged in access_control.get("privileged_functions", []):
+            for ref in privileged.get("controller_refs", []):
+                if ref in {"role", "_role"}:
+                    continue
+                kind = "role_identifier" if ref.endswith("_ROLE") else "state_variable"
+                controller_id = f"{kind}:{ref}"
+                if controller_id in existing_ids:
+                    continue
+                tracking_targets.append(
+                    {
+                        "controller_id": controller_id,
+                        "label": ref,
+                        "source": ref,
+                        "kind": kind,  # type: ignore[typeddict-item]
+                        "tracking_mode": "state_only",
+                        "writer_functions": [],
+                        "associated_events": [],
+                        "polling_sources": [ref],
+                        "notes": [
+                            "Synthesized from semantic access-control inference because the permission graph did not expose a runtime controller source directly."
+                        ],
+                    }
+                )
+                existing_ids.add(controller_id)
 
     return sorted(tracking_targets, key=lambda item: item["label"])
 

@@ -26,6 +26,16 @@ SITE_DIST_DIR = SITE_DIR / "dist"
 SITE_ASSETS_DIR = SITE_DIST_DIR / "assets"
 
 DEFAULT_RPC_URL = os.environ.get("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+GENERIC_PROXY_NAMES = {
+    "uupsproxy",
+    "erc1967proxy",
+    "transparentupgradeableproxy",
+    "proxy",
+    "beaconproxy",
+    "ossifiableproxy",
+    "withdrawalsmanagerproxy",
+    "upgradeablebeacon",
+}
 
 
 class AnalyzeRequest(BaseModel):
@@ -77,6 +87,60 @@ def _site_index_response():
     )
 
 
+def _display_name(entry: dict[str, Any]) -> str:
+    explicit = str(entry.get("display_name") or "").strip()
+    if explicit:
+        return explicit
+    contract_name = str(entry.get("contract_name") or "").strip()
+    if contract_name and contract_name.lower() not in GENERIC_PROXY_NAMES:
+        return contract_name
+    return str(entry.get("run_name") or contract_name or "").strip()
+
+
+def _merge_proxy_impl_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    impl_by_proxy: dict[str, dict[str, Any]] = {}
+    merged_proxies: set[str] = set()
+
+    for entry in entries:
+        proxy_address = str(entry.get("proxy_address") or "").lower()
+        if proxy_address:
+            impl_by_proxy[proxy_address] = entry
+
+    merged: list[dict[str, Any]] = []
+    for entry in entries:
+        proxy_address = str(entry.get("proxy_address") or "").lower()
+        if proxy_address:
+            continue
+
+        address = str(entry.get("address") or "").lower()
+        impl = impl_by_proxy.get(address)
+        if entry.get("is_proxy") and entry.get("implementation_address") and impl:
+            merged.append(
+                {
+                    **impl,
+                    "company": entry.get("company") or impl.get("company"),
+                    "rank_score": entry.get("rank_score")
+                    if entry.get("rank_score") is not None
+                    else impl.get("rank_score"),
+                    "proxy_address": entry.get("address"),
+                    "proxy_address_display": entry.get("address"),
+                    "proxy_type_display": entry.get("proxy_type"),
+                    "display_name": impl.get("contract_name") or impl.get("run_name") or _display_name(entry),
+                }
+            )
+            merged_proxies.add(address)
+            continue
+
+        merged.append({**entry, "display_name": _display_name(entry)})
+
+    for entry in entries:
+        proxy_address = str(entry.get("proxy_address") or "").lower()
+        if proxy_address and proxy_address not in merged_proxies:
+            merged.append({**entry, "display_name": _display_name(entry)})
+
+    return merged
+
+
 @app.get("/")
 def index():
     return _site_index_response()
@@ -125,18 +189,32 @@ def analyses() -> list[dict]:
         stmt = select(Job).where(Job.status == JobStatus.completed).order_by(Job.updated_at.desc())
         jobs = session.execute(stmt).scalars().all()
 
-        # Build lookups for parent company names and inventory rank scores
-        parent_names: dict[str, str] = {}
+        jobs_by_id = {str(job.id): job for job in jobs}
+
+        # Build lookups for company names and inventory rank scores
         rank_scores: dict[str, float] = {}  # address -> rank_score
         for job in jobs:
             if job.company:
-                parent_names[str(job.id)] = job.company
                 inventory = get_artifact(session, job.id, "contract_inventory")
                 if isinstance(inventory, dict):
                     for contract in inventory.get("contracts", []):
                         addr = (contract.get("address") or "").lower()
                         if addr and "rank_score" in contract:
                             rank_scores[addr] = contract["rank_score"]
+
+        def company_for_job(job: Job) -> str | None:
+            seen: set[str] = set()
+            current: Job | None = job
+            while current is not None:
+                if current.company:
+                    return current.company
+                request = current.request if isinstance(current.request, dict) else {}
+                parent_job_id = request.get("parent_job_id")
+                if not isinstance(parent_job_id, str) or parent_job_id in seen:
+                    return None
+                seen.add(parent_job_id)
+                current = jobs_by_id.get(parent_job_id)
+            return None
 
         results = []
         for job in jobs:
@@ -145,7 +223,7 @@ def analyses() -> list[dict]:
             flags = get_artifact(session, job.id, "contract_flags")
             request = job.request if isinstance(job.request, dict) else {}
             parent_job_id = request.get("parent_job_id")
-            company = job.company or (parent_names.get(parent_job_id) if parent_job_id else None)
+            company = company_for_job(job)
             addr_lower = (job.address or "").lower()
             entry: dict[str, Any] = {
                 "run_name": run_name,
@@ -169,7 +247,7 @@ def analyses() -> list[dict]:
                 entry["contract_name"] = subject.get("name", run_name)
                 entry["summary"] = analysis_artifact.get("summary")
             results.append(entry)
-        return results
+        return _merge_proxy_impl_entries(results)
 
 
 @app.get("/api/analyses/{run_name:path}")

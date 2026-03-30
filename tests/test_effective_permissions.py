@@ -216,3 +216,251 @@ def test_write_effective_permissions_from_files(tmp_path):
     assert payload["authority_contract"] == "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert payload["principal_resolution"]["status"] == "complete"
     assert payload["functions"][0]["effect_labels"] == ["arbitrary_external_call"]
+
+
+def test_build_effective_permissions_handles_vyper_dynarray_signatures():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "GateSeal",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "seal(DynArray[address,MAX_SEALABLES])",
+                    "controller_refs": ["SEALING_COMMITTEE"],
+                    "effect_targets": [],
+                    "effect_labels": ["external_contract_call", "pause_toggle"],
+                    "action_summary": "Calls an external contract from the contract context.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "GateSeal",
+        "controller_values": {
+            "state_variable:SEALING_COMMITTEE": {
+                "source": "SEALING_COMMITTEE",
+                "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "resolved_type": "safe",
+                "details": {
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "owners": ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                    "threshold": 1,
+                },
+            }
+        },
+    }
+
+    payload = build_effective_permissions(target_analysis, target_snapshot=target_snapshot)
+    function = payload["functions"][0]
+
+    assert function["function"] == "seal(DynArray[address,MAX_SEALABLES])"
+    assert function["selector"].startswith("0x")
+    assert len(function["selector"]) == 10
+    assert function["controllers"] == [
+        {
+            "controller_id": "state_variable:SEALING_COMMITTEE",
+            "label": "SEALING_COMMITTEE",
+            "source": "SEALING_COMMITTEE",
+            "kind": "state_variable",
+            "principals": [
+                {
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "resolved_type": "safe",
+                    "details": {
+                        "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "owners": ["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+                        "threshold": 1,
+                    },
+                    "source_contract": "GateSeal",
+                    "source_controller_id": "state_variable:SEALING_COMMITTEE",
+                }
+            ],
+            "notes": [],
+        }
+    ]
+
+
+def test_build_effective_permissions_derives_role_registry_controller_from_effect_targets():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "EtherFiAdmin",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "upgradeTo(address)",
+                    "controller_refs": ["_authorizeUpgrade", "role"],
+                    "effect_targets": ["roleRegistry.onlyProtocolUpgrader", "target"],
+                    "effect_labels": ["delegatecall_execution", "implementation_update"],
+                    "action_summary": "Calls an external contract from the contract context.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "EtherFiAdmin",
+        "controller_values": {
+            "external_contract:roleRegistry": {
+                "source": "roleRegistry",
+                "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "resolved_type": "contract",
+                "details": {
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "authority_kind": "access_control_like",
+                },
+            },
+            "state_variable:roleRegistry": {
+                "source": "roleRegistry",
+                "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "resolved_type": "contract",
+                "details": {
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "authority_kind": "access_control_like",
+                },
+            },
+        },
+    }
+
+    payload = build_effective_permissions(target_analysis, target_snapshot=target_snapshot)
+    function = payload["functions"][0]
+
+    assert len(function["controllers"]) == 1
+    controller = function["controllers"][0]
+    assert controller["label"] == "roleRegistry"
+    assert controller["source"] == "roleRegistry"
+    assert controller["kind"] in {"external_contract", "state_variable"}
+    assert controller["principals"] == [
+        {
+            "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "resolved_type": "contract",
+            "details": {
+                "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "authority_kind": "access_control_like",
+            },
+            "source_contract": "EtherFiAdmin",
+            "source_controller_id": controller["controller_id"],
+        }
+    ]
+
+
+def test_build_effective_permissions_includes_generic_controller_grants():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "pause()",
+                    "controller_refs": ["governance"],
+                    "effect_targets": ["paused"],
+                    "effect_labels": ["pause_toggle"],
+                    "action_summary": "Pauses the contract.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "Target",
+        "controller_values": {
+            "state_variable:governance": {
+                "source": "governance",
+                "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "resolved_type": "eoa",
+                "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+            }
+        },
+    }
+
+    payload = build_effective_permissions(target_analysis, target_snapshot=target_snapshot)
+
+    pause = payload["functions"][0]
+    assert pause["controllers"] == [
+        {
+            "controller_id": "state_variable:governance",
+            "label": "governance",
+            "source": "governance",
+            "kind": "state_variable",
+            "principals": [
+                {
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "resolved_type": "eoa",
+                    "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                    "source_contract": "Target",
+                    "source_controller_id": "state_variable:governance",
+                }
+            ],
+            "notes": [],
+        }
+    ]
+
+
+def test_build_effective_permissions_uses_resolved_role_principals_and_skips_non_auth_contracts():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "pause()",
+                    "controller_refs": ["PAUSE_ROLE", "LIDO"],
+                    "effect_targets": ["paused"],
+                    "effect_labels": ["pause_toggle"],
+                    "action_summary": "Pauses the contract.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "Target",
+        "controller_values": {
+            "role_identifier:PAUSE_ROLE": {
+                "source": "PAUSE_ROLE",
+                "value": "0x" + "11" * 32,
+                "resolved_type": "unknown",
+                "details": {
+                    "adapter": "access_control_enumerable",
+                    "resolved_principals": [
+                        {
+                            "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                            "resolved_type": "eoa",
+                            "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                        }
+                    ],
+                },
+            },
+            "external_contract:LIDO": {
+                "source": "LIDO",
+                "value": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "resolved_type": "contract",
+                "details": {"address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+            },
+        },
+    }
+
+    payload = build_effective_permissions(target_analysis, target_snapshot=target_snapshot)
+
+    pause = payload["functions"][0]
+    assert pause["controllers"] == [
+        {
+            "controller_id": "role_identifier:PAUSE_ROLE",
+            "label": "PAUSE_ROLE",
+            "source": "PAUSE_ROLE",
+            "kind": "role_identifier",
+            "principals": [
+                {
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "resolved_type": "eoa",
+                    "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                    "source_controller_id": "role_identifier:PAUSE_ROLE",
+                }
+            ],
+            "notes": [],
+        }
+    ]

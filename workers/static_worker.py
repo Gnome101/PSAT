@@ -22,6 +22,7 @@ from services.discovery import (
 )
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
+from services.static.vyper_analysis import is_vyper_project
 from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.static_worker")
@@ -61,6 +62,7 @@ _MIN_SOLC = "0.8.24"  # 0.8.21-0.8.23 have Natspec.cpp internal compiler errors 
 
 
 def _detect_solc_version(sources: dict[str, str]) -> str:
+    min_tuple = tuple(int(x) for x in _MIN_SOLC.split("."))
     versions = []
     for content in sources.values():
         for m in re.finditer(r"pragma\s+solidity\s+[\^~>=<]*\s*(0\.\d+\.\d+)", content):
@@ -68,8 +70,9 @@ def _detect_solc_version(sources: dict[str, str]) -> str:
     if not versions:
         return _MIN_SOLC
     detected = max(versions, key=lambda v: tuple(int(x) for x in v.split(".")))
-    # Enforce minimum to avoid buggy solc releases
-    if tuple(int(x) for x in detected.split(".")) < tuple(int(x) for x in _MIN_SOLC.split(".")):
+    detected_tuple = tuple(int(x) for x in detected.split("."))
+    # Enforce the minimum only for the 0.8.x line that is affected by the bug.
+    if detected_tuple[:2] == min_tuple[:2] and detected_tuple < min_tuple:
         return _MIN_SOLC
     return detected
 
@@ -195,11 +198,10 @@ class StaticWorker(BaseWorker):
             contract_name,
         )
 
-        # Detect proxy contracts early and resolve implementation
-        is_proxy = _is_proxy_contract(contract_name, sources)
-        if is_proxy:
-            logger.info("Job %s: %s detected as proxy contract", job_id_str, contract_name)
-            self._resolve_proxy(session, job, address, contract_name)
+        # Always attempt semantic proxy classification when RPC is available.
+        # Hidden proxies often won't match name-based heuristics, so gating this
+        # behind `_is_proxy_contract()` misses user-facing proxy endpoints.
+        self._resolve_proxy(session, job, address, contract_name)
 
         # Create temp directory and write source files
         tmp_dir = tempfile.mkdtemp(prefix="psat_static_")
@@ -248,15 +250,41 @@ class StaticWorker(BaseWorker):
         if not rpc_url:
             rpc_url = os.getenv("ETH_RPC")
         if not rpc_url:
-            logger.warning("Job %s: no RPC available for proxy resolution", job.id)
-            store_artifact(session, job.id, "contract_flags", data={"is_proxy": True})
+            logger.info("Job %s: no RPC available for proxy classification", job.id)
+            store_artifact(
+                session,
+                job.id,
+                "contract_flags",
+                data={"is_proxy": False, "classification_type": "unknown", "classification_skipped": "no_rpc"},
+            )
             return
 
         try:
             classification = classify_single(address, rpc_url)
         except Exception as exc:
             logger.warning("Job %s: proxy classification failed: %s", job.id, exc)
-            store_artifact(session, job.id, "contract_flags", data={"is_proxy": True})
+            store_artifact(
+                session,
+                job.id,
+                "contract_flags",
+                data={"is_proxy": False, "classification_type": "unknown", "classification_error": str(exc)},
+            )
+            return
+
+        classification_type = classification.get("type", "regular")
+        if classification_type != "proxy":
+            store_artifact(
+                session,
+                job.id,
+                "contract_flags",
+                data={"is_proxy": False, "classification_type": classification_type},
+            )
+            logger.info(
+                "Job %s: semantic proxy classification result=%s for %s",
+                job.id,
+                classification_type,
+                contract_name,
+            )
             return
 
         proxy_type = classification.get("proxy_type", "unknown")
@@ -267,6 +295,7 @@ class StaticWorker(BaseWorker):
 
         flags = {
             "is_proxy": True,
+            "classification_type": classification_type,
             "proxy_type": proxy_type,
             "implementation": impl_address,
             "beacon": beacon,
@@ -497,6 +526,21 @@ class StaticWorker(BaseWorker):
 
     def _run_slither_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> bool:
         """Run Slither CLI. Returns True on success, False on failure (non-fatal)."""
+        if is_vyper_project(project_dir):
+            self.update_detail(session, job, "Skipping Slither for Vyper source")
+            store_artifact(
+                session,
+                job.id,
+                "slither_error",
+                data={"error": "Skipped Slither for Vyper source"},
+            )
+            logger.info(
+                "Static stage skipped Slither for Vyper job %s address=%s contract=%s",
+                job.id,
+                address,
+                contract_name,
+            )
+            return False
         self.update_detail(session, job, "Running Slither")
         try:
             analyze(project_dir, contract_name, address)

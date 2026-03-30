@@ -10,7 +10,7 @@ import logging
 
 from db.models import JobStage
 from db.queue import create_job, store_artifact, store_source_files
-from services.discovery.fetch import fetch, parse_remappings, parse_sources
+from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import search_protocol_inventory
 from workers.base import BaseWorker, JobHandledDirectly
 
@@ -116,6 +116,7 @@ class DiscoveryWorker(BaseWorker):
             "address": address,
             "contract_name": contract_name,
             "compiler_version": result.get("CompilerVersion", ""),
+            "language": "vyper" if is_vyper_result(result) else "solidity",
             "optimization_used": result.get("OptimizationUsed", ""),
             "runs": result.get("Runs", ""),
             "evm_version": result.get("EVMVersion", ""),

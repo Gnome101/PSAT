@@ -18,6 +18,7 @@ from workers.base import BaseWorker
 logger = logging.getLogger("workers.resolution_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
 
 class ResolutionWorker(BaseWorker):
@@ -87,7 +88,7 @@ class ResolutionWorker(BaseWorker):
                 analysis_path,
                 rpc_url=rpc_url,
                 output_path=project_dir / "resolved_control_graph.json",
-                max_depth=4,
+                max_depth=RECURSION_MAX_DEPTH,
                 workspace_prefix="recursive",
                 refresh_snapshots=True,
             )

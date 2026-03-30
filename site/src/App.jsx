@@ -1,6 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import { buildVisualPermissionGraph, layoutVisualPermissionGraph, prettyFunctionName, shortenAddress, wrapText } from "./graph.js";
+import {
+  ADDRESS_GRAPH_COLUMNS,
+  PRINCIPAL_COLUMNS,
+  buildVisualAddressGraph,
+  buildVisualPermissionGraph,
+  layoutVisualAddressGraph,
+  layoutVisualPermissionGraph,
+  prettyFunctionName,
+  shortenAddress,
+  wrapText,
+} from "./graph.js";
 import DependencyGraphTab from "./DependencyGraphTab.jsx";
 
 const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "raw"];
@@ -93,7 +103,11 @@ function buildLocationPath(runName, address, tab) {
 
 function findRunByAddress(analyses, address) {
   const target = String(address || "").toLowerCase();
-  return analyses.find((analysis) => String(analysis.address || "").toLowerCase() === target)?.run_name || null;
+  return analyses.find((analysis) => {
+    const subjectAddress = String(analysis.address || "").toLowerCase();
+    const proxyAddress = String(analysis.proxy_address || analysis.proxy_address_display || "").toLowerCase();
+    return subjectAddress === target || proxyAddress === target;
+  })?.run_name || null;
 }
 
 function renderNodeBody(node) {
@@ -196,7 +210,11 @@ function PermissionsTab({ detail }) {
   return (
     <div className="card-grid">
       {payload.functions.map((entry) => {
-        const principals = (entry.authority_roles || []).flatMap((role) => role.principals || []);
+        const principals = [
+          ...(entry.direct_owner?.address ? [entry.direct_owner] : []),
+          ...(entry.authority_roles || []).flatMap((role) => role.principals || []),
+          ...(entry.controllers || []).flatMap((controller) => controller.principals || []),
+        ];
         return (
           <article className="card" key={entry.selector}>
             <div className="card-header-row">
@@ -376,25 +394,68 @@ function GraphNodeDetails({ node, extra }) {
 function GraphTab({ detail }) {
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedExtra, setSelectedExtra] = useState(null);
+  const [graphMode, setGraphMode] = useState("address");
+  const [panArmed, setPanArmed] = useState(false);
   const stageRef = useRef(null);
   const svgRef = useRef(null);
   const viewportRef = useRef(null);
   const transformRef = useRef({ x: 0, y: 0, scale: 1 });
+  const fitTransformRef = useRef({ x: 0, y: 0, scale: 1 });
   const rafRef = useRef(0);
   const dragRef = useRef(null);
+  const suppressClickUntilRef = useRef(0);
 
   useEffect(() => {
     setSelectedNode(null);
     setSelectedExtra(null);
-  }, [detail?.run_name]);
+  }, [detail?.run_name, graphMode]);
+
+  useEffect(() => {
+    function isTypingTarget(target) {
+      const element = target instanceof HTMLElement ? target : null;
+      if (!element) {
+        return false;
+      }
+      const tag = element.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || element.isContentEditable;
+    }
+
+    function onKeyDown(event) {
+      if (event.code !== "Space" || isTypingTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      setPanArmed(true);
+    }
+
+    function onKeyUp(event) {
+      if (event.code !== "Space") {
+        return;
+      }
+      setPanArmed(false);
+    }
+
+    function onBlur() {
+      setPanArmed(false);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   const graph = useMemo(() => {
-    const visual = buildVisualPermissionGraph(detail);
+    const visual = graphMode === "address" ? buildVisualAddressGraph(detail) : buildVisualPermissionGraph(detail);
     if (!visual) {
       return null;
     }
-    return layoutVisualPermissionGraph(visual);
-  }, [detail]);
+    return graphMode === "address" ? layoutVisualAddressGraph(visual) : layoutVisualPermissionGraph(visual);
+  }, [detail, graphMode]);
 
   const graphBounds = useMemo(() => {
     if (!graph) return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 };
@@ -447,6 +508,7 @@ function GraphTab({ detail }) {
         const curve = Math.max(50, (endX - startX) / 2.2);
         return {
           ...edge,
+          edgeId: `${edge.from.id}|${edge.to.id}|${edge.label || ""}`,
           startX,
           startY,
           endX,
@@ -455,6 +517,69 @@ function GraphTab({ detail }) {
         };
       });
   }, [graph]);
+
+  const connectedSelection = useMemo(() => {
+    if (!graph || !selectedNode) {
+      return { activeNodeIds: null, activeEdgeIds: null };
+    }
+
+    if (selectedNode.id === "contract:root") {
+      return {
+        activeNodeIds: new Set(graph.nodes.map((node) => node.id)),
+        activeEdgeIds: new Set(
+          edgeGeometry
+            .filter((edge) => edge.from && edge.to)
+            .map((edge) => edge.edgeId),
+        ),
+      };
+    }
+
+    const outgoingById = new Map();
+    const incomingById = new Map();
+    for (const edge of graph.edges) {
+      if (!edge.from || !edge.to) {
+        continue;
+      }
+      const outgoing = outgoingById.get(edge.from.id) || [];
+      outgoing.push(edge);
+      outgoingById.set(edge.from.id, outgoing);
+      const incoming = incomingById.get(edge.to.id) || [];
+      incoming.push(edge);
+      incomingById.set(edge.to.id, incoming);
+    }
+
+    const activeNodeIds = new Set();
+    const activeEdgeIds = new Set();
+
+    function walk(startId, direction) {
+      const visited = new Set();
+      const queue = [startId];
+      while (queue.length) {
+        const current = queue.shift();
+        if (!current || visited.has(current)) {
+          continue;
+        }
+        visited.add(current);
+        activeNodeIds.add(current);
+        const edges = direction === "forward" ? outgoingById.get(current) || [] : incomingById.get(current) || [];
+        for (const edge of edges) {
+          if (!edge.from || !edge.to) {
+            continue;
+          }
+          activeEdgeIds.add(`${edge.from.id}|${edge.to.id}|${edge.label || ""}`);
+          const nextId = direction === "forward" ? edge.to.id : edge.from.id;
+          if (!visited.has(nextId)) {
+            queue.push(nextId);
+          }
+        }
+      }
+    }
+
+    walk(selectedNode.id, "forward");
+    walk(selectedNode.id, "backward");
+
+    return { activeNodeIds, activeEdgeIds };
+  }, [graph, edgeGeometry, selectedNode]);
 
   useEffect(() => {
     function applyTransform() {
@@ -482,18 +607,24 @@ function GraphTab({ detail }) {
       return undefined;
     }
 
-    const rect = stage.getBoundingClientRect();
-    const paddingX = 56;
-    const paddingY = 44;
-    const fitScaleX = ((rect.width - paddingX * 2) / graphBounds.width) * (graph.width / rect.width);
-    const fitScaleY = ((rect.height - paddingY * 2) / graphBounds.height) * (graph.height / rect.height);
-    const scale = Math.min(Math.max(Math.min(fitScaleX, fitScaleY) * 1.12, 0.94), 2.9);
-    transformRef.current = {
-      x: (graph.width - graphBounds.width * scale) / 2 - graphBounds.minX * scale,
-      y: (graph.height - graphBounds.height * scale) / 2 - graphBounds.minY * scale,
-      scale,
-    };
-    applyTransform();
+    function fitToView() {
+      const nextRect = stage.getBoundingClientRect();
+      const paddingX = 56;
+      const paddingY = 44;
+      const fitScaleX = ((nextRect.width - paddingX * 2) / graphBounds.width) * (graph.width / nextRect.width);
+      const fitScaleY = ((nextRect.height - paddingY * 2) / graphBounds.height) * (graph.height / nextRect.height);
+      const scale = Math.min(Math.max(Math.min(fitScaleX, fitScaleY) * 1.12, 0.94), 2.9);
+      const nextTransform = {
+        x: (graph.width - graphBounds.width * scale) / 2 - graphBounds.minX * scale,
+        y: (graph.height - graphBounds.height * scale) / 2 - graphBounds.minY * scale,
+        scale,
+      };
+      transformRef.current = nextTransform;
+      fitTransformRef.current = nextTransform;
+      applyTransform();
+    }
+
+    fitToView();
 
     function onWheel(event) {
       event.preventDefault();
@@ -501,6 +632,16 @@ function GraphTab({ detail }) {
       const pointX = event.clientX - svgRect.left;
       const pointY = event.clientY - svgRect.top;
       const current = transformRef.current;
+      if (!event.ctrlKey && !event.metaKey) {
+        const panFactor = event.shiftKey ? 4.2 : 3.1;
+        transformRef.current = {
+          ...current,
+          x: current.x - (event.shiftKey ? event.deltaY : event.deltaX) * panFactor,
+          y: current.y - event.deltaY * (event.shiftKey ? 0 : panFactor),
+        };
+        scheduleApply();
+        return;
+      }
       const factor = event.deltaY < 0 ? 1.08 : 0.92;
       const nextScale = Math.min(3.6, Math.max(0.22, current.scale * factor));
       const worldX = (pointX - current.x) / current.scale;
@@ -513,11 +654,13 @@ function GraphTab({ detail }) {
       scheduleApply();
     }
 
-    function onPointerDown(event) {
-      if (event.button !== 0) {
+    function startDrag(event) {
+      const isPrimary = event.button === 0;
+      const isMiddle = event.button === 1;
+      if (!isPrimary && !isMiddle) {
         return;
       }
-      if (event.target !== stage && event.target !== svg) {
+      if (!panArmed && !isMiddle && event.target !== stage && event.target !== svg) {
         return;
       }
       dragRef.current = {
@@ -526,9 +669,14 @@ function GraphTab({ detail }) {
         startY: event.clientY,
         originX: transformRef.current.x,
         originY: transformRef.current.y,
+        moved: false,
       };
       stage.classList.add("dragging");
       stage.setPointerCapture(event.pointerId);
+    }
+
+    function onPointerDown(event) {
+      startDrag(event);
     }
 
     function onPointerMove(event) {
@@ -536,7 +684,10 @@ function GraphTab({ detail }) {
       if (!drag || drag.pointerId !== event.pointerId) {
         return;
       }
-      const sensitivity = 1.45;
+      const sensitivity = 3.4;
+      if (Math.abs(event.clientX - drag.startX) > 3 || Math.abs(event.clientY - drag.startY) > 3) {
+        drag.moved = true;
+      }
       transformRef.current = {
         ...transformRef.current,
         x: drag.originX + (event.clientX - drag.startX) * sensitivity,
@@ -552,6 +703,9 @@ function GraphTab({ detail }) {
       }
       dragRef.current = null;
       stage.classList.remove("dragging");
+      if (drag.moved) {
+        suppressClickUntilRef.current = Date.now() + 220;
+      }
       if (event) {
         stage.releasePointerCapture(event.pointerId);
       }
@@ -574,9 +728,17 @@ function GraphTab({ detail }) {
         rafRef.current = 0;
       }
     };
-  }, [graph, graphBounds]);
+  }, [graph, graphBounds, panArmed]);
 
   async function selectNode(node) {
+    if (Date.now() < suppressClickUntilRef.current) {
+      return;
+    }
+    if (selectedNode?.id === node?.id) {
+      setSelectedNode(null);
+      setSelectedExtra(null);
+      return;
+    }
     setSelectedNode(node || null);
     setSelectedExtra(null);
 
@@ -604,6 +766,14 @@ function GraphTab({ detail }) {
     }
   }
 
+  function clearSelection() {
+    if (Date.now() < suppressClickUntilRef.current) {
+      return;
+    }
+    setSelectedNode(null);
+    setSelectedExtra(null);
+  }
+
   if (!graph) {
     return <p className="empty">No resolved permission graph available.</p>;
   }
@@ -611,19 +781,78 @@ function GraphTab({ detail }) {
   return (
     <div className="stack">
       <div className="graph-toolbar">
-        <span className="chip alt">{graph.nodes.filter((node) => node.column === "principal").length} principals</span>
-        <span className="chip alt">{graph.nodes.filter((node) => node.column === "controller").length} controllers</span>
-        <span className="chip alt">{graph.nodes.filter((node) => node.column === "function").length} functions</span>
+        <button
+          type="button"
+          className={`chip alt buttonlike ${graphMode === "address" ? "active" : ""}`}
+          onClick={() => setGraphMode("address")}
+        >
+          Address view
+        </button>
+        <button
+          type="button"
+          className={`chip alt buttonlike ${graphMode === "path" ? "active" : ""}`}
+          onClick={() => setGraphMode("path")}
+        >
+          Path view
+        </button>
+        {graphMode === "address" ? (
+          <>
+            <span className="chip alt">{graph.nodes.filter((node) => ADDRESS_GRAPH_COLUMNS.includes(node.column)).length} addresses</span>
+            <span className="chip alt">{graph.edges.length} links</span>
+          </>
+        ) : (
+          <>
+            <span className="chip alt">{graph.nodes.filter((node) => PRINCIPAL_COLUMNS.has(node.column)).length} principals</span>
+            <span className="chip alt">{graph.nodes.filter((node) => node.column === "controller").length} controllers</span>
+            <span className="chip alt">{graph.nodes.filter((node) => node.column === "function").length} functions</span>
+          </>
+        )}
+        <span className="chip alt">Space + drag or middle mouse to pan</span>
+        <button
+          type="button"
+          className="chip alt buttonlike"
+          onClick={() => {
+            transformRef.current = fitTransformRef.current;
+            const viewport = viewportRef.current;
+            if (viewport) {
+              const { x, y, scale } = transformRef.current;
+              viewport.setAttribute("transform", `translate(${x} ${y}) scale(${scale})`);
+            }
+          }}
+        >
+          Reset view
+        </button>
       </div>
       <div className="graph-layout">
         <div className="graph-panel">
           <div className="graph-legend">
-            <span className="chip alt">Left to right: who can call it → gate/role → function → contract</span>
+            <span className="chip alt">
+              {graphMode === "address"
+                ? "Address graph: one node per address, edges are typed control relationships"
+                : "Left to right: who can call it → gate/role → function → contract"}
+            </span>
             <span className="chip alt">Green circle = EOA</span>
             <span className="chip alt">Square = contract-like principal</span>
           </div>
-          <div ref={stageRef} className="graph-stage svg-stage">
-            <svg ref={svgRef} className="graph-svg-root" viewBox={`0 0 ${graph.width} ${graph.height}`}>
+          <div
+            ref={stageRef}
+            className={`graph-stage svg-stage ${panArmed ? "pan-armed" : ""}`}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                clearSelection();
+              }
+            }}
+          >
+            <svg
+              ref={svgRef}
+              className="graph-svg-root"
+              viewBox={`0 0 ${graph.width} ${graph.height}`}
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  clearSelection();
+                }
+              }}
+            >
               <defs>
                 <marker id="graph-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(34, 29, 23, 0.24)" />
@@ -632,8 +861,10 @@ function GraphTab({ detail }) {
               <g ref={viewportRef}>
                 {edgeGeometry.map((edge, index) => (
                   <path
-                    key={`${edge.from.id}-${edge.to.id}-${index}`}
-                    className="graph-edge"
+                    key={edge.edgeId || `${edge.from.id}-${edge.to.id}-${index}`}
+                    className={`graph-edge ${
+                      connectedSelection.activeEdgeIds && !connectedSelection.activeEdgeIds.has(edge.edgeId) ? "dimmed" : ""
+                    }`}
                     d={edge.path}
                     markerEnd="url(#graph-arrow)"
                   />
@@ -641,9 +872,32 @@ function GraphTab({ detail }) {
                 {graph.nodes.map((node) => (
                   <g
                     key={node.id}
-                    className={`graph-svg-node ${node.kind} ${selectedNode?.id === node.id ? "selected" : ""}`}
+                    className={`graph-svg-node ${node.kind} ${selectedNode?.id === node.id ? "selected" : ""} ${
+                      connectedSelection.activeNodeIds && !connectedSelection.activeNodeIds.has(node.id) ? "dimmed" : ""
+                    }`}
                     transform={`translate(${node.x}, ${node.y})`}
-                    onPointerDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => {
+                      if (panArmed || event.button === 1) {
+                        const stage = stageRef.current;
+                        if (stage) {
+                          const isPrimary = event.button === 0;
+                          const isMiddle = event.button === 1;
+                          if (isPrimary || isMiddle) {
+                            dragRef.current = {
+                              pointerId: event.pointerId,
+                              startX: event.clientX,
+                              startY: event.clientY,
+                              originX: transformRef.current.x,
+                              originY: transformRef.current.y,
+                              moved: false,
+                            };
+                            stage.classList.add("dragging");
+                            stage.setPointerCapture(event.pointerId);
+                          }
+                        }
+                      }
+                      event.stopPropagation();
+                    }}
                     onClick={(event) => {
                       event.stopPropagation();
                       selectNode(node);
@@ -666,9 +920,13 @@ function GraphTab({ detail }) {
 
 const PIPELINE_STAGES = ["discovery", "static", "resolution", "policy"];
 const ALL_STAGES = [...PIPELINE_STAGES, "done"];
-const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy"]);
+const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
 
 function displayName(entry) {
+  const explicit = entry?.display_name || "";
+  if (explicit) {
+    return explicit;
+  }
   const contractName = entry?.contract_name || "";
   if (GENERIC_PROXY_NAMES.has(contractName.toLowerCase())) {
     return entry.run_name || contractName;
@@ -1014,7 +1272,7 @@ export default function App() {
 
   async function refreshAnalyses() {
     const payload = await api("/api/analyses");
-    const filtered = mergeProxyImpl(payload.filter((a) => a.address));
+    const filtered = payload.filter((a) => a.address);
     setAnalyses(filtered);
     return filtered;
   }

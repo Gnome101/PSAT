@@ -41,6 +41,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 DEFAULT_DEMO_RPC_URL = os.getenv("PSAT_DEMO_RPC_URL") or os.getenv("ETH_RPC") or "https://ethereum-rpc.publicnode.com"
 DEFAULT_HYPERSYNC_URL = os.getenv("PSAT_HYPERSYNC_URL", "https://eth.hypersync.xyz")
+RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 PROTOCOLS_DIR = Path(__file__).resolve().parents[2] / "protocols"
 JSON_ARTIFACTS = (
     "contract_analysis.json",
@@ -400,7 +401,7 @@ def run_demo_analysis(
         contract_analysis_path,
         rpc_url=rpc_url,
         output_path=project_dir / "resolved_control_graph.json",
-        max_depth=4,
+        max_depth=RECURSION_MAX_DEPTH,
         workspace_prefix="recursive",
         refresh_snapshots=True,
     )
@@ -425,7 +426,7 @@ def run_demo_analysis(
         contract_analysis_path,
         rpc_url=rpc_url,
         output_path=project_dir / "resolved_control_graph.json",
-        max_depth=4,
+        max_depth=RECURSION_MAX_DEPTH,
         workspace_prefix="recursive",
         refresh_snapshots=True,
     )
