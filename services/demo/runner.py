@@ -22,6 +22,7 @@ from services.discovery import (
 )
 from services.discovery.classifier import classify_contracts
 from services.discovery.dependency_graph_builder import write_dependency_visualization
+from services.discovery.upgrade_history import write_upgrade_history as _write_upgrade_history
 from services.policy import (
     run_hypersync_policy_backfill,
     write_effective_permissions_from_files,
@@ -52,6 +53,7 @@ JSON_ARTIFACTS = (
     "principal_labels.json",
     "resolved_control_graph.json",
     "slither_results.json",
+    "upgrade_history.json",
 )
 TEXT_ARTIFACTS = (
     "analysis_report.txt",
@@ -150,6 +152,7 @@ def read_analysis(run_name: str) -> dict:
         "resolved_control_graph.json",
         "effective_permissions.json",
         "principal_labels.json",
+        "upgrade_history.json",
     ):
         path = project_dir / artifact
         if path.exists():
@@ -379,6 +382,13 @@ def run_demo_analysis(
             deps_path = project_dir / "dependencies.json"
             deps_path.write_text(json.dumps(unified, indent=2) + "\n")
             write_dependency_visualization(project_dir)
+
+            # Fetch upgrade history for any proxy contracts
+            try:
+                update("upgrade_history", "Fetching proxy upgrade history")
+                _write_upgrade_history(deps_path)
+            except RuntimeError:
+                pass
     except Exception:
         pass  # Dependency discovery is best-effort; don't block the rest of the pipeline
 

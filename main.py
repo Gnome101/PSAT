@@ -31,6 +31,7 @@ from pathlib import Path
 from services.demo.runner import run_protocol_analysis
 from services.discovery import fetch, find_dependencies, find_dynamic_dependencies, scaffold, search_protocol_inventory
 from services.discovery.classifier import classify_contracts
+from services.discovery.upgrade_history import write_upgrade_history
 from services.discovery.dependency_graph_builder import write_dependency_visualization
 from services.discovery.static_dependencies import normalize_address, resolve_rpc_for_address
 from services.resolution import write_control_tracking_plan
@@ -166,10 +167,12 @@ def process(
     dynamic_tx_limit: int = 10,
     dynamic_tx_hashes: list[str] | None = None,
     run_classify: bool = True,
+    run_upgrade_history: bool = True,
 ):
     """Fetch, scaffold, discover dependencies, classify, and run analyzers."""
     do_classify = run_classify and (run_deps or run_dynamic_deps)
-    steps = 3 + int(run_deps) + int(run_dynamic_deps) + int(do_classify) + int(run_llm)
+    do_upgrade_history = run_upgrade_history and do_classify
+    steps = 3 + int(run_deps) + int(run_dynamic_deps) + int(do_classify) + int(do_upgrade_history) + int(run_llm)
     step = 1
 
     print(f"\n{'─' * 50}")
@@ -322,6 +325,20 @@ def process(
         if viz_path:
             print(f"         Dependency graph visualization: {viz_path}")
 
+        if do_upgrade_history:
+            print(f"[{step}/{steps}] Fetching proxy upgrade history ...")
+            step += 1
+            try:
+                uh_path = write_upgrade_history(deps_path)
+                if uh_path:
+                    uh_data = json.loads(uh_path.read_text())
+                    print(f"         Found {uh_data['total_upgrades']} upgrade(s) across {len(uh_data['proxies'])} prox(ies)")
+                    print(f"         Output: {uh_path}")
+                else:
+                    print("         No proxy contracts found — skipped")
+            except RuntimeError as exc:
+                print(f"         Upgrade history skipped: {exc}")
+
     print(f"[{step}/{steps}] Running Slither analysis ...")
     step += 1
     report_path = analyze(project_dir, contract_name, address)
@@ -387,6 +404,11 @@ def main():
         "--no-classify",
         action="store_true",
         help="Skip dependency classification",
+    )
+    parser.add_argument(
+        "--no-upgrade-history",
+        action="store_true",
+        help="Skip proxy upgrade history discovery",
     )
     parser.add_argument("--deps-rpc", help="Optional RPC URL for dependency discovery")
     parser.add_argument("--dynamic-rpc", help="Tracing-enabled RPC URL for dynamic dependency discovery")
@@ -466,6 +488,7 @@ def main():
     run_deps = not args.no_deps
     run_dynamic_deps = (not args.no_deps) and (not args.no_dynamic_deps)
     run_classify = not args.no_classify
+    run_upgrade_history = not args.no_upgrade_history
 
     if args.dynamic_tx_limit < 1:
         sys.exit("--dynamic-tx-limit must be >= 1")
@@ -486,6 +509,7 @@ def main():
                     dynamic_tx_limit=args.dynamic_tx_limit,
                     dynamic_tx_hashes=args.dynamic_tx_hashes,
                     run_classify=run_classify,
+                    run_upgrade_history=run_upgrade_history,
                 )
             except Exception as e:
                 print(f"  FAILED: {e}")
@@ -501,6 +525,7 @@ def main():
             dynamic_tx_limit=args.dynamic_tx_limit,
             dynamic_tx_hashes=args.dynamic_tx_hashes,
             run_classify=run_classify,
+            run_upgrade_history=run_upgrade_history,
         )
 
     print("\nDone.")

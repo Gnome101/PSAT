@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { buildVisualPermissionGraph, layoutVisualPermissionGraph, prettyFunctionName, shortenAddress, wrapText } from "./graph.js";
 import DependencyGraphTab from "./DependencyGraphTab.jsx";
 
-const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "raw"];
+const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "raw"];
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 async function api(path, options) {
@@ -273,6 +273,158 @@ function PrincipalsTab({ detail }) {
   );
 }
 
+function UpgradesTab({ detail }) {
+  const history = detail?.upgrade_history;
+  if (!history || !Object.keys(history.proxies || {}).length) {
+    return <p className="empty">No proxy upgrade history available.</p>;
+  }
+
+  const deps = detail?.dependencies?.dependencies || {};
+
+  function proxyLabel(addr) {
+    const dep = deps[addr];
+    if (dep?.contract_name) return dep.contract_name;
+    return shortenAddress(addr);
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return null;
+    return new Date(ts * 1000).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  function implLabel(addr, fallbackName) {
+    if (!addr) return "unknown";
+    if (fallbackName) return fallbackName;
+    const dep = deps[addr];
+    if (dep?.contract_name) return dep.contract_name;
+    const nested = Object.values(deps).find(
+      (d) => typeof d.implementation === "object" && d.implementation?.address === addr
+    );
+    if (nested?.implementation?.contract_name) return nested.implementation.contract_name;
+    return null;
+  }
+
+  return (
+    <div className="stack">
+      <div className="summary-grid">
+        <StatCard label="Proxies" value={Object.keys(history.proxies).length} />
+        <StatCard label="Total Upgrades" value={history.total_upgrades} />
+      </div>
+      {Object.entries(history.proxies).map(([addr, proxy]) => (
+        <div className="card" key={addr}>
+          <div className="card-header-row">
+            <h3>{proxyLabel(addr)}</h3>
+            <span className="chip alt">{proxy.proxy_type}</span>
+          </div>
+          <div className="mono muted" style={{ marginBottom: 8 }}>{addr}</div>
+          <div className="kv-grid compact">
+            <div className="kv-row">
+              <span className="key">Current implementation</span>
+              <span>{proxy.current_implementation ? (<>{implLabel(proxy.current_implementation) ? <strong>{implLabel(proxy.current_implementation)} </strong> : null}<span className="mono">{shortenAddress(proxy.current_implementation)}</span></>) : "None"}</span>
+            </div>
+            <div className="kv-row">
+              <span className="key">Upgrade count</span>
+              <span>{proxy.upgrade_count}</span>
+            </div>
+            {proxy.first_upgrade_block ? (
+              <div className="kv-row">
+                <span className="key">First upgrade</span>
+                <span>Block {proxy.first_upgrade_block.toLocaleString()}</span>
+              </div>
+            ) : null}
+            {proxy.last_upgrade_block ? (
+              <div className="kv-row">
+                <span className="key">Last upgrade</span>
+                <span>Block {proxy.last_upgrade_block.toLocaleString()}</span>
+              </div>
+            ) : null}
+          </div>
+
+          {proxy.implementations?.length > 0 ? (
+            <div className="subsection">
+              <div className="subsection-title">Implementation Timeline</div>
+              <div className="timeline">
+                {proxy.implementations.map((impl, idx) => (
+                  <div className={`timeline-entry ${idx === proxy.implementations.length - 1 ? "current" : "past"}`} key={impl.address + idx}>
+                    <div className="timeline-marker" />
+                    <div className="timeline-content">
+                      <div className="timeline-header">
+                        <strong>{implLabel(impl.address, impl.contract_name) || shortenAddress(impl.address)}</strong>
+                        {idx === proxy.implementations.length - 1 ? <span className="chip">current</span> : <span className="chip warn">replaced</span>}
+                      </div>
+                      <div className="kv-grid compact small" style={{ marginTop: 4 }}>
+                        <div className="kv-row">
+                          <span className="key">Address</span>
+                          <span className="mono">{impl.address}</span>
+                        </div>
+                        {impl.block_introduced ? (
+                          <div className="kv-row">
+                            <span className="key">Introduced</span>
+                            <span>
+                              {formatTimestamp(impl.timestamp_introduced) || `Block ${impl.block_introduced.toLocaleString()}`}
+                              {impl.block_replaced ? ` \u2192 replaced ${formatTimestamp(impl.timestamp_replaced) || `block ${impl.block_replaced.toLocaleString()}`}` : ""}
+                            </span>
+                          </div>
+                        ) : null}
+                        {impl.tx_hash ? (
+                          <div className="kv-row">
+                            <span className="key">Tx</span>
+                            <span className="mono">{impl.tx_hash}</span>
+                          </div>
+                        ) : null}
+                        {impl.contract_name ? (
+                          <div className="kv-row">
+                            <span className="key">Contract</span>
+                            <span>{impl.contract_name}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {proxy.events?.length > 0 ? (
+            <div className="subsection">
+              <div className="subsection-title">All Events ({proxy.events.length})</div>
+              <table className="event-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proxy.events.map((evt, idx) => (
+                    <tr key={idx}>
+                      <td>{formatTimestamp(evt.timestamp) || <span className="mono">{evt.block_number?.toLocaleString()}</span>}</td>
+                      <td><span className={`chip ${evt.event_type === "upgraded" ? "alt" : ""}`}>{evt.event_type}</span></td>
+                      <td className="small">
+                        {evt.event_type === "upgraded" && evt.implementation ? (
+                          <><span className="key">New impl: </span><strong>{implLabel(evt.implementation) || ""}</strong> <span className="mono">{shortenAddress(evt.implementation)}</span></>
+                        ) : null}
+                        {evt.event_type === "admin_changed" ? (
+                          <><span className="key">Admin: </span><span className="mono">{shortenAddress(evt.previous_admin)}</span> {"\u2192"} <span className="mono">{shortenAddress(evt.new_admin)}</span></>
+                        ) : null}
+                        {evt.event_type === "beacon_upgraded" && evt.beacon ? (
+                          <><span className="key">Beacon: </span><span className="mono">{shortenAddress(evt.beacon)}</span></>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function RawTab({ detail }) {
   const [selection, setSelection] = useState("contract_analysis");
   const available = {
@@ -283,6 +435,7 @@ function RawTab({ detail }) {
     effective_permissions: detail?.effective_permissions,
     principal_labels: detail?.principal_labels,
     resolved_control_graph: detail?.resolved_control_graph,
+    upgrade_history: detail?.upgrade_history,
   };
 
   return (
@@ -809,6 +962,7 @@ export default function App() {
     principals: <PrincipalsTab detail={selectedDetail} />,
     graph: <GraphTab detail={selectedDetail} />,
     dependencies: <DependencyGraphTab data={selectedDetail?.dependency_graph_viz} runName={selectedRun} />,
+    upgrades: <UpgradesTab detail={selectedDetail} />,
     raw: <RawTab detail={selectedDetail} />,
   };
 
