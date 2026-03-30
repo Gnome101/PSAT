@@ -46,6 +46,8 @@ EVENT_TOPICS = {
 def _hex_to_int(value: str | int) -> int:
     if isinstance(value, int):
         return value
+    if value in ("0x", "0x0", ""):
+        return 0
     return int(value, 16) if value.startswith("0x") else int(value)
 
 
@@ -94,19 +96,37 @@ def parse_upgrade_log(log: dict) -> dict | None:
         event["_emitter"] = normalize_address(emitter)
 
     if event_type == "upgraded":
-        if len(topics) >= 2:
+        if len(topics) >= 2 and topics[1]:
             event["implementation"] = _topic_to_address(topics[1])
+        else:
+            # Some proxies (e.g. OZ legacy) emit Upgraded(address) with the
+            # implementation as a non-indexed parameter, stored in data.
+            data = log.get("data", "0x")
+            if data and data != "0x" and len(data.replace("0x", "")) >= 40:
+                addrs = _data_to_addresses(data, 1)
+                event["implementation"] = addrs[0]
 
     elif event_type == "admin_changed":
+        # Standard: both addresses in data (non-indexed)
         data = log.get("data", "0x")
         if data and data != "0x" and len(data.replace("0x", "")) >= 128:
             addrs = _data_to_addresses(data, 2)
             event["previous_admin"] = addrs[0]
             event["new_admin"] = addrs[1]
+        elif len(topics) >= 3 and topics[1] and topics[2]:
+            # Variant: indexed parameters in topics
+            event["previous_admin"] = _topic_to_address(topics[1])
+            event["new_admin"] = _topic_to_address(topics[2])
 
     elif event_type == "beacon_upgraded":
-        if len(topics) >= 2:
+        if len(topics) >= 2 and topics[1]:
             event["beacon"] = _topic_to_address(topics[1])
+        else:
+            # Fallback: non-indexed parameter in data
+            data = log.get("data", "0x")
+            if data and data != "0x" and len(data.replace("0x", "")) >= 40:
+                addrs = _data_to_addresses(data, 1)
+                event["beacon"] = addrs[0]
 
     return event
 
@@ -204,14 +224,17 @@ def _enrich_implementations(implementations: list[dict], known_names: dict[str, 
     """Add contract names to historical implementations not already named in dependencies.json."""
     from utils.etherscan import get_contract_info
 
+    fetched: dict[str, str | None] = {}
     for impl in implementations:
         addr = impl["address"]
         if addr in known_names:
             impl["contract_name"] = known_names[addr]
             continue
-        name, _ = get_contract_info(addr)
-        if name:
-            impl["contract_name"] = name
+        if addr not in fetched:
+            name, _ = get_contract_info(addr)
+            fetched[addr] = name
+        if fetched[addr]:
+            impl["contract_name"] = fetched[addr]
 
 
 def _extract_proxies_from_dependencies(
@@ -273,12 +296,15 @@ def _strip_internal(event: dict) -> dict:
     return {k: v for k, v in event.items() if not k.startswith("_")}
 
 
-def build_upgrade_history(dependencies_path: Path) -> dict:
+def build_upgrade_history(dependencies_path: Path, *, enrich: bool = True) -> dict:
     """Build upgrade history for all proxy contracts found in dependencies.json.
 
     Args:
         dependencies_path: Path to the dependencies.json file written by
             the dependency pipeline.
+        enrich: If True (default), resolve contract names for historical
+            implementations via Etherscan.  Set to False for faster runs
+            when names are not needed.
 
     Returns:
         UpgradeHistoryOutput dict with per-proxy upgrade timelines.
@@ -325,9 +351,15 @@ def build_upgrade_history(dependencies_path: Path) -> dict:
         total_upgrades += len(upgrade_events)
         all_implementations.extend(implementations)
 
-    # Resolve names: reuse names from dependencies.json, only call Etherscan
-    # for historical implementations not already known
-    _enrich_implementations(all_implementations, known_names)
+    # Resolve names: always apply already-known names from dependencies.json.
+    # When enrich=True, also call Etherscan for historical unknowns.
+    if enrich:
+        _enrich_implementations(all_implementations, known_names)
+    else:
+        # Still apply names we already have — zero extra API calls
+        for impl in all_implementations:
+            if impl["address"] in known_names:
+                impl["contract_name"] = known_names[impl["address"]]
 
     return {
         "schema_version": "0.1",
@@ -340,6 +372,8 @@ def build_upgrade_history(dependencies_path: Path) -> dict:
 def write_upgrade_history(
     dependencies_path: Path,
     output_path: Path | None = None,
+    *,
+    enrich: bool = True,
 ) -> Path | None:
     """Build and write upgrade history JSON.
 
@@ -347,13 +381,15 @@ def write_upgrade_history(
         dependencies_path: Path to dependencies.json.
         output_path: Where to write. Defaults to upgrade_history.json
             in the same directory as dependencies_path.
+        enrich: If True (default), resolve contract names for historical
+            implementations via Etherscan.
 
     Returns the output path if any proxies were found, or None.
     """
     if output_path is None:
         output_path = dependencies_path.parent / "upgrade_history.json"
 
-    result = build_upgrade_history(dependencies_path)
+    result = build_upgrade_history(dependencies_path, enrich=enrich)
     if not result["proxies"]:
         return None
     output_path.write_text(json.dumps(result, indent=2) + "\n")

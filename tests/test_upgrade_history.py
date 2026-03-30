@@ -107,6 +107,80 @@ class TestParseUpgradeLog:
         assert admin_short_data["event_type"] == "admin_changed"
         assert "previous_admin" not in admin_short_data
 
+    def test_hex_to_int_edge_cases(self):
+        """Bare '0x', empty string, and '0x0' all parse to 0."""
+        assert uh._hex_to_int("0x") == 0
+        assert uh._hex_to_int("0x0") == 0
+        assert uh._hex_to_int("") == 0
+        assert uh._hex_to_int(0) == 0
+        assert uh._hex_to_int("0xa") == 10
+        assert uh._hex_to_int(42) == 42
+
+    def test_bare_hex_log_index(self):
+        """Etherscan sometimes returns '0x' for logIndex — must not crash."""
+        log = _make_log(
+            ADDR(1), uh.UPGRADED_TOPIC0, _topic_for(ADDR(42)),
+            log_index="0x",
+        )
+        event = uh.parse_upgrade_log(log)
+        assert event is not None
+        assert event["log_index"] == 0
+
+    def test_non_indexed_upgraded_event(self):
+        """OZ legacy proxies emit Upgraded(address) with impl in data, not topics."""
+        impl = ADDR(42)
+        data = "0x" + "0" * 24 + impl[2:]
+        log = _make_log(ADDR(1), uh.UPGRADED_TOPIC0, data=data)
+        event = uh.parse_upgrade_log(log)
+        assert event["event_type"] == "upgraded"
+        assert event["implementation"] == impl
+
+    def test_non_indexed_beacon_upgraded_event(self):
+        """BeaconUpgraded with beacon address in data instead of topics."""
+        beacon = ADDR(99)
+        data = "0x" + "0" * 24 + beacon[2:]
+        log = _make_log(ADDR(1), uh.BEACON_UPGRADED_TOPIC0, data=data)
+        event = uh.parse_upgrade_log(log)
+        assert event["event_type"] == "beacon_upgraded"
+        assert event["beacon"] == beacon
+
+    def test_indexed_admin_changed_event(self):
+        """AdminChanged with addresses in topics instead of data."""
+        old_admin, new_admin = ADDR(50), ADDR(51)
+        log = {
+            "address": ADDR(1),
+            "topics": [
+                uh.ADMIN_CHANGED_TOPIC0,
+                _topic_for(old_admin),
+                _topic_for(new_admin),
+            ],
+            "data": "0x",
+            "blockNumber": "0x1",
+            "transactionHash": "0xaaa",
+            "logIndex": "0x0",
+            "timeStamp": "0x65a00000",
+        }
+        event = uh.parse_upgrade_log(log)
+        assert event["event_type"] == "admin_changed"
+        assert event["previous_admin"] == old_admin
+        assert event["new_admin"] == new_admin
+
+    def test_none_in_topics_array(self):
+        """Topics list with None entries must not crash."""
+        log = {
+            "address": ADDR(1),
+            "topics": [uh.UPGRADED_TOPIC0, None],
+            "data": "0x",
+            "blockNumber": "0x1",
+            "transactionHash": "0xaaa",
+            "logIndex": "0x0",
+            "timeStamp": "0x65a00000",
+        }
+        event = uh.parse_upgrade_log(log)
+        assert event is not None
+        assert event["event_type"] == "upgraded"
+        assert "implementation" not in event
+
 
 # ---------------------------------------------------------------------------
 # build_upgrade_history — full pipeline integration tests
@@ -338,6 +412,115 @@ class TestBuildUpgradeHistory:
         impls = result["proxies"][proxy]["implementations"]
         assert impls[0]["contract_name"] == "ImplV1"   # fetched via etherscan
         assert impls[1]["contract_name"] == "ImplV2"   # reused from deps
+
+    def test_enrichment_deduplicates_calls(self, monkeypatch, tmp_path):
+        """get_contract_info is called at most once per unique unknown address,
+        even when the same implementation appears in multiple proxies."""
+        proxy_a, proxy_b = ADDR(1), ADDR(2)
+        shared_impl = ADDR(10)
+        deps_path = _write_deps(tmp_path, ADDR(0), {
+            proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": shared_impl},
+            proxy_b: {"type": "proxy", "proxy_type": "eip1967", "implementation": shared_impl},
+        })
+
+        def mock_fetch(address, topic0):
+            if topic0 == uh.UPGRADED_TOPIC0:
+                return [_make_log(address, uh.UPGRADED_TOPIC0, _topic_for(shared_impl), block="0x64")]
+            return []
+
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
+        from utils import etherscan
+        call_count = [0]
+        def counting_get_info(addr):
+            call_count[0] += 1
+            return ("SharedImpl", {})
+        monkeypatch.setattr(etherscan, "get_contract_info", counting_get_info)
+
+        result = uh.build_upgrade_history(deps_path)
+        # shared_impl appears in both proxies' timelines, but should only be fetched once
+        assert call_count[0] == 1
+        for proxy_addr in (proxy_a, proxy_b):
+            impls = result["proxies"][proxy_addr]["implementations"]
+            assert impls[0]["contract_name"] == "SharedImpl"
+
+    def test_enrich_false_skips_etherscan_but_applies_known_names(self, monkeypatch, tmp_path):
+        """enrich=False never calls get_contract_info but still applies names
+        already present in dependencies.json."""
+        proxy = ADDR(1)
+        old_impl, new_impl = ADDR(10), ADDR(11)
+        deps_path = _write_deps(tmp_path, ADDR(0), {
+            proxy: {
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": {"address": new_impl, "contract_name": "ImplV2"},
+            },
+        })
+
+        def mock_fetch(address, topic0):
+            if topic0 == uh.UPGRADED_TOPIC0:
+                return [
+                    _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(old_impl), block="0x64", tx="0xa"),
+                    _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(new_impl), block="0xc8", tx="0xb"),
+                ]
+            return []
+
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
+        from utils import etherscan
+        monkeypatch.setattr(etherscan, "get_contract_info", lambda addr: pytest.fail(
+            "get_contract_info should not be called when enrich=False"
+        ))
+
+        result = uh.build_upgrade_history(deps_path, enrich=False)
+        impls = result["proxies"][proxy]["implementations"]
+        assert impls[1].get("contract_name") == "ImplV2"  # known name applied
+        assert "contract_name" not in impls[0]              # unknown, not fetched
+
+    def test_non_indexed_upgraded_in_full_pipeline(self, monkeypatch, tmp_path):
+        """OZ legacy proxies with implementation in data (not topics) produce
+        correct timelines through the full build_upgrade_history pipeline."""
+        proxy = ADDR(1)
+        impl_v1, impl_v2 = ADDR(10), ADDR(11)
+        deps_path = _write_deps(tmp_path, ADDR(0), {
+            proxy: {"type": "proxy", "proxy_type": "oz_legacy", "implementation": impl_v2},
+        })
+
+        def data_for(addr):
+            return "0x" + "0" * 24 + addr[2:]
+
+        def mock_fetch(address, topic0):
+            if topic0 != uh.UPGRADED_TOPIC0:
+                return []
+            # Return logs with NO topic1 — implementation in data only
+            return [
+                {
+                    "address": proxy,
+                    "topics": [uh.UPGRADED_TOPIC0],
+                    "data": data_for(impl_v1),
+                    "blockNumber": "0x64",
+                    "transactionHash": "0xa",
+                    "logIndex": "0x0",
+                    "timeStamp": "0x65a00000",
+                },
+                {
+                    "address": proxy,
+                    "topics": [uh.UPGRADED_TOPIC0],
+                    "data": data_for(impl_v2),
+                    "blockNumber": "0xc8",
+                    "transactionHash": "0xb",
+                    "logIndex": "0x0",
+                    "timeStamp": "0x65b00000",
+                },
+            ]
+
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
+        _mock_no_enrichment(monkeypatch)
+
+        result = uh.build_upgrade_history(deps_path)
+        h = result["proxies"][proxy]
+        assert h["upgrade_count"] == 2
+        assert len(h["implementations"]) == 2
+        assert h["implementations"][0]["address"] == impl_v1
+        assert h["implementations"][1]["address"] == impl_v2
 
 
 # ---------------------------------------------------------------------------
