@@ -24,28 +24,12 @@ activity dominate the ordering so the most-used contracts surface first.
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 from typing import Any
 
 from utils import etherscan
 
-from .inventory_domain import CHAIN_SORT_ORDER, _debug_log
-
-# Etherscan v2 chain IDs for chains the inventory pipeline can discover.
-CHAIN_IDS: dict[str, int] = {
-    "ethereum": 1,
-    "arbitrum": 42161,
-    "optimism": 10,
-    "polygon": 137,
-    "base": 8453,
-    "avalanche": 43114,
-    "bsc": 56,
-    "linea": 59144,
-    "scroll": 534352,
-    "zksync": 324,
-    "blast": 81457,
-}
+from .inventory_domain import CHAIN_IDS, CHAIN_SORT_ORDER, RateLimiter, _debug_log
 
 # Half-life in days for the activity decay function.
 _HALF_LIFE_DAYS = 30
@@ -53,8 +37,8 @@ _HALF_LIFE_DAYS = 30
 # Score assigned when activity data is unavailable (e.g. unsupported chain).
 _NEUTRAL_SCORE = 0.5
 
-# Etherscan free-tier rate limit (~5 req/s).
-_RATE_LIMIT_DELAY = 0.22
+# Etherscan free-tier limit is 3 req/s.  Use 2 to stay safely under.
+_MAX_REQUESTS_PER_SECOND = 2
 
 # Blended ranking weights.
 _W_CONFIDENCE = 0.35
@@ -107,6 +91,12 @@ def _activity_score(last_active_ts: float | None) -> float:
     return 1.0 / (1.0 + days_since / _HALF_LIFE_DAYS)
 
 
+def _primary_chain(contract: dict[str, Any]) -> str:
+    """Return the first chain from a contract's chains list, or 'unknown'."""
+    chains = contract.get("chains", [])
+    return chains[0] if chains else "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -120,17 +110,22 @@ def enrich_with_activity(
 
     Mutates the contract dicts in-place (adds ``activity`` and ``rank_score``
     keys) and returns the list sorted by ``rank_score`` descending.
+
+    Rate-limited to stay under the Etherscan free-tier limit.
     """
     if not contracts:
         return contracts
 
     _debug_log(debug, f"Fetching on-chain activity for {len(contracts)} contract(s)")
 
+    limiter = RateLimiter(_MAX_REQUESTS_PER_SECOND)
+
     for contract in contracts:
         address = contract["address"]
-        chain = contract.get("chain", "unknown")
+        chain = _primary_chain(contract)
         chain_id = CHAIN_IDS.get(chain, CHAIN_IDS["ethereum"])
 
+        limiter.wait()
         last_ts = _fetch_last_active_ts(address, chain_id=chain_id, debug=debug)
         score = _activity_score(last_ts)
 
@@ -147,8 +142,6 @@ def enrich_with_activity(
             4,
         )
 
-        time.sleep(_RATE_LIMIT_DELAY)
-
     _debug_log(debug, "Activity enrichment complete")
 
     contracts.sort(
@@ -157,7 +150,7 @@ def enrich_with_activity(
             -c.get("confidence", 0),
             c.get("name") is None,
             str(c.get("name") or ""),
-            CHAIN_SORT_ORDER.get(c.get("chain", "unknown"), 50),
+            CHAIN_SORT_ORDER.get(_primary_chain(c), 50),
             c["address"],
         ),
     )

@@ -1,6 +1,7 @@
 """Discovery package."""
 
 from .activity import enrich_with_activity
+from .chain_resolver import resolve_unknown_chains
 from .classifier import classify_contracts
 from .dependency_graph_builder import write_dependency_visualization
 from .deployer import expand_from_deployers
@@ -14,6 +15,7 @@ __all__ = [
     "classify_contracts",
     "enrich_with_activity",
     "expand_from_deployers",
+    "resolve_unknown_chains",
     "fetch",
     "find_dependencies",
     "find_dynamic_dependencies",
