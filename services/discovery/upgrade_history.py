@@ -227,6 +227,19 @@ def _extract_proxies_from_dependencies(
     proxy_meta: dict[str, tuple[str, str | None]] = {}
     known_names: dict[str, str] = {}
 
+    # Check if the target contract itself is a proxy
+    target_cls = deps.get("target_classification", {})
+    if target_cls.get("type") == "proxy":
+        proxy_type = target_cls.get("proxy_type", "unknown")
+        impl = target_cls.get("implementation")
+        if isinstance(impl, dict):
+            current_impl = impl.get("address")
+        elif isinstance(impl, str):
+            current_impl = impl
+        else:
+            current_impl = None
+        proxy_meta[target] = (proxy_type, current_impl)
+
     for addr, info in deps.get("dependencies", {}).items():
         # Collect all known names for reuse
         if info.get("contract_name"):
