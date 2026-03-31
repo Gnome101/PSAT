@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from schemas.effective_permissions import PrincipalResolution
 from services.discovery import (
     CONTRACTS_DIR,
+    build_unified_dependencies,
+    enrich_dependency_metadata,
     fetch,
     find_dependencies,
     find_dynamic_dependencies,
@@ -36,12 +38,13 @@ from services.resolution import (
     write_resolved_control_graph,
 )
 from services.static import analyze, analyze_contract
-from utils.etherscan import get_contract_info
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 DEFAULT_DEMO_RPC_URL = os.getenv("PSAT_DEMO_RPC_URL") or os.getenv("ETH_RPC") or "https://ethereum-rpc.publicnode.com"
+DEFAULT_RPC_URL = DEFAULT_DEMO_RPC_URL
 DEFAULT_HYPERSYNC_URL = os.getenv("PSAT_HYPERSYNC_URL", "https://eth.hypersync.xyz")
+RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 PROTOCOLS_DIR = Path(__file__).resolve().parents[2] / "protocols"
 JSON_ARTIFACTS = (
     "contract_analysis.json",
@@ -306,8 +309,6 @@ def run_demo_analysis(
     # --- Dependency discovery pipeline ---
     update("dependencies", "Discovering dependencies")
     try:
-        from main import _build_unified_deps
-
         deps_output = None
         dyn_output = None
         cls_output = None
@@ -338,46 +339,8 @@ def run_demo_analysis(
             except RuntimeError:
                 pass
 
-            unified = _build_unified_deps(address, deps_output, dyn_output, cls_output)
-
-            # Enrich with contract names and function selectors
-            deps = unified.get("dependencies", {})
-            keyed_graph = unified.get("dependency_graph", {})
-
-            addrs_to_fetch: set[str] = set(deps.keys())
-            for info in deps.values():
-                impl = info.get("implementation")
-                if isinstance(impl, dict):
-                    addrs_to_fetch.add(impl["address"])
-
-            info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
-            for addr in sorted(addrs_to_fetch):
-                info_cache[addr] = get_contract_info(addr)
-
-            for addr, dep_info in deps.items():
-                cname = info_cache.get(addr, (None, {}))[0]
-                if cname:
-                    dep_info["contract_name"] = cname
-                impl = dep_info.get("implementation")
-                if isinstance(impl, dict):
-                    impl_name = info_cache.get(impl["address"], (None, {}))[0]
-                    if impl_name:
-                        impl["contract_name"] = impl_name
-
-            for key, edges in keyed_graph.items():
-                to_addr = key.split("|")[1]
-                for edge in edges:
-                    sel = edge.get("selector")
-                    if not sel or sel == "0x":
-                        continue
-                    fn_name = info_cache.get(to_addr, (None, {}))[1].get(sel)
-                    if not fn_name:
-                        impl = deps.get(to_addr, {}).get("implementation")
-                        impl_addr = impl["address"] if isinstance(impl, dict) else impl
-                        if impl_addr:
-                            fn_name = info_cache.get(impl_addr, (None, {}))[1].get(sel)
-                    if fn_name:
-                        edge["function_name"] = fn_name
+            unified = build_unified_dependencies(address, deps_output, dyn_output, cls_output)
+            enrich_dependency_metadata(unified)
 
             deps_path = project_dir / "dependencies.json"
             deps_path.write_text(json.dumps(unified, indent=2) + "\n")
@@ -410,7 +373,7 @@ def run_demo_analysis(
         contract_analysis_path,
         rpc_url=rpc_url,
         output_path=project_dir / "resolved_control_graph.json",
-        max_depth=4,
+        max_depth=RECURSION_MAX_DEPTH,
         workspace_prefix="recursive",
         refresh_snapshots=True,
     )
@@ -435,7 +398,7 @@ def run_demo_analysis(
         contract_analysis_path,
         rpc_url=rpc_url,
         output_path=project_dir / "resolved_control_graph.json",
-        max_depth=4,
+        max_depth=RECURSION_MAX_DEPTH,
         workspace_prefix="recursive",
         refresh_snapshots=True,
     )

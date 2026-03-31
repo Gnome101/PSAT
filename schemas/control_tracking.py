@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-from .contract_analysis import AssociatedEvent, ControllerKind, ControllerTrackingMode
+from .contract_analysis import AssociatedEvent, ControllerKind, ControllerReadSpec, ControllerTrackingMode
 
 TrackingStrategy = Literal["event_first_with_polling_fallback"]
 PollingCadence = Literal["realtime_confirm", "periodic_reconciliation", "state_only"]
@@ -38,6 +38,7 @@ class TrackedController(TypedDict):
     label: str
     source: str
     kind: ControllerKind
+    read_spec: ControllerReadSpec | None
     tracking_mode: ControllerTrackingMode
     event_watch: EventWatch | None
     polling_fallback: PollingFallback

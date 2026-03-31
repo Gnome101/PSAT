@@ -35,6 +35,15 @@ class AuthorityRoleGrant(TypedDict):
     principals: list[ResolvedPrincipal]
 
 
+class ResolvedControllerGrant(TypedDict):
+    controller_id: str
+    label: str
+    source: str
+    kind: str
+    principals: list[ResolvedPrincipal]
+    notes: list[str]
+
+
 class EffectiveFunctionPermission(TypedDict):
     function: str
     abi_signature: str
@@ -42,6 +51,7 @@ class EffectiveFunctionPermission(TypedDict):
     direct_owner: ResolvedPrincipal | None
     authority_public: bool
     authority_roles: list[AuthorityRoleGrant]
+    controllers: list[ResolvedControllerGrant]
     effect_targets: list[str]
     effect_labels: list[str]
     action_summary: str

@@ -32,7 +32,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
-COPY main.py web_demo.py ./
+COPY main.py api.py alembic.ini ./
+COPY db/ db/
+COPY workers/ workers/
+COPY start_workers.sh ./
+RUN chmod +x start_workers.sh
 COPY services/ services/
 COPY schemas/ schemas/
 COPY utils/ utils/
@@ -41,4 +45,4 @@ COPY --from=site-builder /site/dist /app/site/dist
 
 EXPOSE 8000
 
-CMD ["uv", "run", "--no-sync", "uvicorn", "web_demo:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "--no-sync", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

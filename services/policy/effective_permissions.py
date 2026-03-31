@@ -20,6 +20,7 @@ from schemas.effective_permissions import (
     EffectivePermissions,
     PrincipalResolution,
     ResolvedAddressType,
+    ResolvedControllerGrant,
     ResolvedPrincipal,
 )
 
@@ -36,6 +37,12 @@ ELEMENTARY_TYPE_PREFIXES = (
 )
 
 
+def _lower_string(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).lower()
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text())
 
@@ -45,7 +52,19 @@ def _normalize_abi_type(type_name: str) -> str:
     if not stripped:
         return stripped
 
+    if stripped.startswith("DynArray[") and stripped.endswith("]"):
+        inner = stripped[len("DynArray[") : -1]
+        parts = inner.split(",", 1)
+        return f"{_normalize_abi_type(parts[0])}[]"
+    if stripped.startswith("HashMap[") and stripped.endswith("]"):
+        return "mapping"
+    if stripped.startswith("String[") and stripped.endswith("]"):
+        return "string"
+    if stripped.startswith("Bytes[") and stripped.endswith("]"):
+        return "bytes"
     if stripped.endswith("]"):
+        if "[" not in stripped:
+            return "address"
         base, suffix = stripped.split("[", 1)
         return f"{_normalize_abi_type(base)}[{suffix}"
 
@@ -62,7 +81,25 @@ def _abi_signature(function_signature: str) -> str:
     args = args[:-1]
     if not args:
         return f"{name}()"
-    normalized_args = ",".join(_normalize_abi_type(arg) for arg in args.split(","))
+    raw_args: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for char in args:
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth = max(depth - 1, 0)
+        if char == "," and depth == 0:
+            piece = "".join(current).strip()
+            if piece:
+                raw_args.append(piece)
+            current = []
+            continue
+        current.append(char)
+    piece = "".join(current).strip()
+    if piece:
+        raw_args.append(piece)
+    normalized_args = ",".join(_normalize_abi_type(arg) for arg in raw_args)
     return f"{name}({normalized_args})"
 
 
@@ -103,7 +140,7 @@ def _known_principals(*snapshots: dict[str, Any] | None) -> dict[str, ResolvedPr
             if not isinstance(controller_id, str) or not isinstance(value, dict):
                 continue
             address_raw = value.get("value", "")
-            address = str(address_raw).lower()
+            address = _lower_string(address_raw)
             if not address.startswith("0x"):
                 continue
             details_raw = value.get("details", {})
@@ -123,6 +160,96 @@ def _principal_for_address(address: str, known: dict[str, ResolvedPrincipal]) ->
     return known.get(normalized) or _resolved_principal(normalized, "unknown", {})
 
 
+def _controller_lookup(snapshot: dict[str, Any] | None) -> dict[str, list[tuple[str, dict[str, Any]]]]:
+    lookup: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    controller_values = (snapshot or {}).get("controller_values", {})
+    if not isinstance(controller_values, dict):
+        return lookup
+    for controller_id, value in controller_values.items():
+        if not isinstance(controller_id, str) or not isinstance(value, dict):
+            continue
+        source = str(value.get("source", controller_id))
+        lookup.setdefault(source, []).append((controller_id, value))
+    return lookup
+
+
+def _controller_grants_for_refs(
+    controller_refs: list[str],
+    controller_lookup: dict[str, list[tuple[str, dict[str, Any]]]],
+    known: dict[str, ResolvedPrincipal],
+) -> list[ResolvedControllerGrant]:
+    grants: list[ResolvedControllerGrant] = []
+    seen: set[str] = set()
+    for ref in controller_refs:
+        if ref in {"owner", "authority"}:
+            continue
+        for controller_id, value in controller_lookup.get(ref, []):
+            if controller_id in seen:
+                continue
+            seen.add(controller_id)
+            raw_value = _lower_string(value.get("value", ""))
+            principals: list[ResolvedPrincipal] = []
+            notes: list[str] = []
+            details_raw = value.get("details", {})
+            details = dict(details_raw) if isinstance(details_raw, dict) else {}
+            raw_principals = details.get("resolved_principals", [])
+            if isinstance(raw_principals, list):
+                for principal in raw_principals:
+                    if not isinstance(principal, dict):
+                        continue
+                    address = str(principal.get("address", "")).lower()
+                    if not address.startswith("0x"):
+                        continue
+                    principal_details_raw = principal.get("details", {})
+                    principal_details = dict(principal_details_raw) if isinstance(principal_details_raw, dict) else {}
+                    principals.append(
+                        _resolved_principal(
+                            address,
+                            cast(ResolvedAddressType, str(principal.get("resolved_type", "unknown"))),
+                            principal_details,
+                            source_controller_id=controller_id,
+                        )
+                    )
+            if (
+                raw_value.startswith("0x")
+                and len(raw_value) == 42
+                and raw_value != "0x0000000000000000000000000000000000000000"
+            ):
+                kind = controller_id.split(":", 1)[0] if ":" in controller_id else "unknown"
+                ref_lower = ref.lower()
+                auth_like = any(
+                    token in ref_lower
+                    for token in ("owner", "admin", "govern", "guardian", "authority", "committee", "timelock")
+                )
+                if not principals and (kind in {"state_variable", "singleton_slot", "computed"} or auth_like):
+                    principals.append(_principal_for_address(raw_value, known))
+            elif raw_value and not principals:
+                notes.append(f"value={raw_value}")
+            kind = controller_id.split(":", 1)[0] if ":" in controller_id else "unknown"
+            if not principals:
+                continue
+            grants.append(
+                {
+                    "controller_id": controller_id,
+                    "label": ref,
+                    "source": ref,
+                    "kind": kind,
+                    "principals": principals,
+                    "notes": notes,
+                }
+            )
+    return grants
+
+
+def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]:
+    refs: list[str] = []
+    for target in effect_targets:
+        lowered = str(target or "").lower()
+        if ".onlyprotocolupgrader" in lowered and "roleregistry" in lowered:
+            refs.append("roleRegistry")
+    return sorted(set(refs))
+
+
 def build_effective_permissions(
     target_analysis: dict,
     *,
@@ -138,13 +265,18 @@ def build_effective_permissions(
 
     known = _known_principals(target_snapshot, authority_snapshot)
     target_controller_values = (target_snapshot or {}).get("controller_values", {})
+    controller_lookup = _controller_lookup(target_snapshot)
     owner_value = next(
-        (value.get("value", "").lower() for key, value in target_controller_values.items() if key.endswith(":owner")),
+        (
+            _lower_string(value.get("value", ""))
+            for key, value in target_controller_values.items()
+            if key.endswith(":owner")
+        ),
         None,
     )
     authority_value = next(
         (
-            value.get("value", "").lower()
+            _lower_string(value.get("value", ""))
             for key, value in target_controller_values.items()
             if key.endswith(":authority")
         ),
@@ -172,12 +304,12 @@ def build_effective_permissions(
     functions: list[EffectiveFunctionPermission] = []
     for privileged in target_analysis["access_control"]["privileged_functions"]:
         selector = _selector(privileged["function"])
+        controller_refs = list(privileged.get("controller_refs", [])) + _controller_refs_from_effect_targets(
+            list(privileged.get("effect_targets", []))
+        )
+        controller_refs = sorted(set(controller_refs))
         direct_owner = None
-        if (
-            "owner" in privileged.get("controller_refs", [])
-            and owner_value
-            and owner_value != "0x0000000000000000000000000000000000000000"
-        ):
+        if "owner" in controller_refs and owner_value and owner_value != "0x0000000000000000000000000000000000000000":
             direct_owner = _principal_for_address(owner_value, known)
 
         role_grants: list[AuthorityRoleGrant] = []
@@ -194,26 +326,27 @@ def build_effective_permissions(
                 }
             )
 
+        controller_grants = _controller_grants_for_refs(controller_refs, controller_lookup, known)
         notes = []
-        if "authority" in privileged.get("controller_refs", []) and authority_value:
+        if "authority" in controller_refs and authority_value:
             notes.append(f"authority={authority_value}")
-        if direct_owner is None and "owner" in privileged.get("controller_refs", []) and owner_value:
+        if direct_owner is None and "owner" in controller_refs and owner_value:
             notes.append(f"owner={owner_value}")
 
-        functions.append(
-            {
-                "function": privileged["function"],
-                "abi_signature": _abi_signature(privileged["function"]),
-                "selector": selector,
-                "direct_owner": direct_owner,
-                "authority_public": bool(public_by_selector.get(selector, False)),
-                "authority_roles": role_grants,
-                "effect_targets": list(privileged.get("effect_targets", [])),
-                "effect_labels": list(privileged.get("effect_labels", [])),
-                "action_summary": privileged.get("action_summary", "Performs a permissioned contract action."),
-                "notes": notes,
-            }
-        )
+        function_permission: EffectiveFunctionPermission = {
+            "function": privileged["function"],
+            "abi_signature": _abi_signature(privileged["function"]),
+            "selector": selector,
+            "direct_owner": direct_owner,
+            "authority_public": bool(public_by_selector.get(selector, False)),
+            "authority_roles": role_grants,
+            "controllers": controller_grants,
+            "effect_targets": list(privileged.get("effect_targets", [])),
+            "effect_labels": list(privileged.get("effect_labels", [])),
+            "action_summary": privileged.get("action_summary", "Performs a permissioned contract action."),
+            "notes": notes,
+        }
+        functions.append(function_permission)
 
     return {
         "schema_version": "0.1",

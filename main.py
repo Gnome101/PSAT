@@ -29,14 +29,21 @@ import sys
 from pathlib import Path
 
 from services.demo.runner import run_protocol_analysis
-from services.discovery import fetch, find_dependencies, find_dynamic_dependencies, scaffold, search_protocol_inventory
+from services.discovery import (
+    build_unified_dependencies,
+    enrich_dependency_metadata,
+    fetch,
+    find_dependencies,
+    find_dynamic_dependencies,
+    scaffold,
+    search_protocol_inventory,
+)
 from services.discovery.classifier import classify_contracts
 from services.discovery.dependency_graph_builder import write_dependency_visualization
-from services.discovery.static_dependencies import normalize_address, resolve_rpc_for_address
+from services.discovery.static_dependencies import resolve_rpc_for_address
 from services.discovery.upgrade_history import write_upgrade_history
 from services.resolution import write_control_tracking_plan
 from services.static import analyze, analyze_contract, analyze_with_llm
-from utils.etherscan import get_contract_info
 
 
 def load_addresses(filepath: str) -> list[dict]:
@@ -63,97 +70,7 @@ def load_addresses(filepath: str) -> list[dict]:
     sys.exit(f"Unsupported file type: {path.suffix} (use .json or .csv)")
 
 
-_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "facets")
-
-
-def _build_unified_deps(
-    address: str,
-    static_deps: dict | None,
-    dynamic_deps: dict | None,
-    classifications: dict | None,
-) -> dict:
-    """Merge static deps, dynamic deps, and classifications into one output."""
-    target = normalize_address(address)
-
-    # Collect dependency addresses with their discovery source
-    dep_sources: dict[str, set[str]] = {}
-    if static_deps:
-        for dep in static_deps.get("dependencies", []):
-            dep_sources.setdefault(normalize_address(dep), set()).add("static")
-    if dynamic_deps:
-        for dep in dynamic_deps.get("dependencies", []):
-            dep_sources.setdefault(normalize_address(dep), set()).add("dynamic")
-
-    cls_map = (classifications or {}).get("classifications", {})
-
-    def _dep_entry(addr: str, sources: list[str]) -> dict:
-        entry: dict = {"type": "regular", "source": sources}
-        if addr in cls_map:
-            c = cls_map[addr]
-            entry["type"] = c.get("type", "regular")
-            for k in _CLS_KEYS:
-                if k in c:
-                    entry[k] = c[k]
-        return entry
-
-    deps = {addr: _dep_entry(addr, sorted(sources)) for addr, sources in sorted(dep_sources.items())}
-
-    # Include addresses discovered by classification (not in original dep lists)
-    discovered = (classifications or {}).get("discovered_addresses", [])
-    for addr in discovered:
-        addr = normalize_address(addr)
-        if addr not in deps:
-            deps[addr] = _dep_entry(addr, ["classification"])
-
-    # Nest implementation entries under their proxy instead of top-level keys
-    impl_to_remove: set[str] = set()
-    for addr, info in deps.items():
-        if info.get("type") != "proxy":
-            continue
-        impl_addr = info.get("implementation")
-        if not isinstance(impl_addr, str) or impl_addr not in deps:
-            continue
-        impl_entry = deps[impl_addr].copy()
-        impl_entry["address"] = impl_addr
-        info["implementation"] = impl_entry
-        impl_to_remove.add(impl_addr)
-    for addr in impl_to_remove:
-        del deps[addr]
-
-    output: dict = {"address": target}
-
-    # Target contract classification (only if non-regular)
-    if target in cls_map and cls_map[target].get("type", "regular") != "regular":
-        tc = cls_map[target]
-        info = {"type": tc["type"]}
-        for k in ("proxy_type", "implementation", "beacon", "admin"):
-            if k in tc:
-                info[k] = tc[k]
-        output["target_classification"] = info
-
-    output["dependencies"] = deps
-
-    if dynamic_deps:
-        # Key dependency_graph by from|to pair for O(1) lookups
-        raw_graph = dynamic_deps.get("dependency_graph", [])
-        keyed_graph: dict[str, list[dict]] = {}
-        for edge in raw_graph:
-            key = f"{edge['from']}|{edge['to']}"
-            entry: dict = {"op": edge["op"], "provenance": edge.get("provenance", [])}
-            if edge.get("selector"):
-                entry["selector"] = edge["selector"]
-            if edge.get("function_name"):
-                entry["function_name"] = edge["function_name"]
-            keyed_graph.setdefault(key, []).append(entry)
-        output["dependency_graph"] = keyed_graph
-        output["transactions_analyzed"] = dynamic_deps.get("transactions_analyzed", [])
-        output["trace_methods"] = dynamic_deps.get("trace_methods", [])
-        output["trace_errors"] = dynamic_deps.get("trace_errors", [])
-
-    if static_deps and static_deps.get("network"):
-        output["network"] = static_deps["network"]
-
-    return output
+_build_unified_deps = build_unified_dependencies
 
 
 def process(
@@ -241,61 +158,7 @@ def process(
     # Write unified dependencies output
     if deps_output or dyn_output:
         unified = _build_unified_deps(address, deps_output, dyn_output, cls_output)
-
-        # Resolve contract names and function selectors from Etherscan.
-        # Uses get_contract_info() which fetches name + ABI in one call per address.
-        deps = unified.get("dependencies", {})
-        keyed_graph = unified.get("dependency_graph", {})
-
-        # Collect all addresses we need info for: deps + nested implementations
-        addrs_to_fetch: set[str] = set(deps.keys())
-        for info in deps.values():
-            impl = info.get("implementation")
-            if isinstance(impl, dict):
-                addrs_to_fetch.add(impl["address"])
-
-        # Single Etherscan call per address → name + selector map
-        info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
-        for addr in sorted(addrs_to_fetch):
-            info_cache[addr] = get_contract_info(addr)
-
-        # Apply contract names
-        resolved_names = 0
-        for addr, dep_info in deps.items():
-            cname = info_cache.get(addr, (None, {}))[0]
-            if cname:
-                dep_info["contract_name"] = cname
-                resolved_names += 1
-            impl = dep_info.get("implementation")
-            if isinstance(impl, dict):
-                impl_name = info_cache.get(impl["address"], (None, {}))[0]
-                if impl_name:
-                    impl["contract_name"] = impl_name
-                    resolved_names += 1
-        if resolved_names:
-            print(f"         Resolved {resolved_names}/{len(addrs_to_fetch)} contract name(s)")
-
-        # Apply function names to graph edges
-        if keyed_graph:
-            resolved_fns = 0
-            for key, edges in keyed_graph.items():
-                to_addr = key.split("|")[1]
-                for edge in edges:
-                    sel = edge.get("selector")
-                    if not sel or sel == "0x":
-                        continue
-                    # Try the target's ABI first, then its implementation's
-                    fn_name = info_cache.get(to_addr, (None, {}))[1].get(sel)
-                    if not fn_name:
-                        impl = deps.get(to_addr, {}).get("implementation")
-                        impl_addr = impl["address"] if isinstance(impl, dict) else impl
-                        if impl_addr:
-                            fn_name = info_cache.get(impl_addr, (None, {}))[1].get(sel)
-                    if fn_name:
-                        edge["function_name"] = fn_name
-                        resolved_fns += 1
-            if resolved_fns:
-                print(f"         Resolved {resolved_fns} function selector(s)")
+        enrich_dependency_metadata(unified)
 
         deps_path = project_dir / "dependencies.json"
         deps_path.write_text(json.dumps(unified, indent=2) + "\n")
