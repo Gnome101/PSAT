@@ -68,7 +68,6 @@ def load_addresses(filepath: str) -> list[dict]:
 
     sys.exit(f"Unsupported file type: {path.suffix} (use .json or .csv)")
 
-
 _build_unified_deps = build_unified_dependencies
 
 
@@ -218,13 +217,13 @@ def run_discovery(args) -> None:
     chain = getattr(args, "discover_chain", None)
     limit = getattr(args, "discover_limit", None) or 100
     run_activity = not getattr(args, "no_activity_ranking", False)
+    debug = getattr(args, "debug", False)
 
     result = search_protocol_inventory(
-        args.discover_inventory, chain=chain, limit=limit, run_activity_ranking=run_activity
+        args.discover_inventory, chain=chain, limit=limit, run_activity_ranking=run_activity, debug=debug
     )
 
     output = json.dumps(result, indent=2)
-    print(output)
 
     safe_name = args.discover_inventory.replace("/", "_").replace(" ", "_")
     out_dir = Path("protocols") / safe_name
@@ -289,6 +288,11 @@ def main():
         "--no-activity-ranking",
         action="store_true",
         help="Skip on-chain activity ranking for discovered contracts",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable verbose debug logging to stderr",
     )
 
     args = parser.parse_args()

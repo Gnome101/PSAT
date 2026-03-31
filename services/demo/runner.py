@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from schemas.effective_permissions import PrincipalResolution
 from services.discovery import (
     CONTRACTS_DIR,
+    build_unified_dependencies,
+    enrich_dependency_metadata,
     fetch,
     find_dependencies,
     find_dynamic_dependencies,
@@ -35,7 +37,6 @@ from services.resolution import (
     write_resolved_control_graph,
 )
 from services.static import analyze, analyze_contract
-from utils.etherscan import get_contract_info
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -304,8 +305,6 @@ def run_demo_analysis(
     # --- Dependency discovery pipeline ---
     update("dependencies", "Discovering dependencies")
     try:
-        from main import _build_unified_deps
-
         deps_output = None
         dyn_output = None
         cls_output = None
@@ -336,46 +335,8 @@ def run_demo_analysis(
             except RuntimeError:
                 pass
 
-            unified = _build_unified_deps(address, deps_output, dyn_output, cls_output)
-
-            # Enrich with contract names and function selectors
-            deps = unified.get("dependencies", {})
-            keyed_graph = unified.get("dependency_graph", {})
-
-            addrs_to_fetch: set[str] = set(deps.keys())
-            for info in deps.values():
-                impl = info.get("implementation")
-                if isinstance(impl, dict):
-                    addrs_to_fetch.add(impl["address"])
-
-            info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
-            for addr in sorted(addrs_to_fetch):
-                info_cache[addr] = get_contract_info(addr)
-
-            for addr, dep_info in deps.items():
-                cname = info_cache.get(addr, (None, {}))[0]
-                if cname:
-                    dep_info["contract_name"] = cname
-                impl = dep_info.get("implementation")
-                if isinstance(impl, dict):
-                    impl_name = info_cache.get(impl["address"], (None, {}))[0]
-                    if impl_name:
-                        impl["contract_name"] = impl_name
-
-            for key, edges in keyed_graph.items():
-                to_addr = key.split("|")[1]
-                for edge in edges:
-                    sel = edge.get("selector")
-                    if not sel or sel == "0x":
-                        continue
-                    fn_name = info_cache.get(to_addr, (None, {}))[1].get(sel)
-                    if not fn_name:
-                        impl = deps.get(to_addr, {}).get("implementation")
-                        impl_addr = impl["address"] if isinstance(impl, dict) else impl
-                        if impl_addr:
-                            fn_name = info_cache.get(impl_addr, (None, {}))[1].get(sel)
-                    if fn_name:
-                        edge["function_name"] = fn_name
+            unified = build_unified_dependencies(address, deps_output, dyn_output, cls_output)
+            enrich_dependency_metadata(unified)
 
             deps_path = project_dir / "dependencies.json"
             deps_path.write_text(json.dumps(unified, indent=2) + "\n")
@@ -481,8 +442,39 @@ def run_protocol_analysis(
     inventory_path = _protocol_inventory_path(clean_company)
     inventory_path.write_text(json.dumps(inventory, indent=2) + "\n")
 
-    discovered_contracts = [entry for entry in inventory.get("contracts", []) if entry.get("address")]
-    selected_contracts = discovered_contracts[:analyze_limit]
+    # Flatten grouped contracts: entries may have a "deployments" array (grouped
+    # multi-chain deploys) or a single "address" field.  For analysis we need
+    # individual (address, name, chain) tuples — pick the first deployment per
+    # group (highest-activity chain) so each logical contract is analyzed once.
+    flat_contracts: list[dict[str, Any]] = []
+    for entry in inventory.get("contracts", []):
+        if entry.get("deployments"):
+            # Grouped multi-chain contract — pick first deployment.
+            dep = entry["deployments"][0]
+            flat_contracts.append(
+                {
+                    "address": dep["address"],
+                    "name": entry.get("name"),
+                    "chain": dep.get("chains", entry.get("chains", ["unknown"]))[0],
+                    "confidence": entry.get("confidence"),
+                    "rank_score": dep.get("rank_score", entry.get("rank_score")),
+                    "activity": dep.get("activity", entry.get("activity")),
+                }
+            )
+        elif entry.get("address"):
+            chains = entry.get("chains", ["unknown"])
+            flat_contracts.append(
+                {
+                    "address": entry["address"],
+                    "name": entry.get("name"),
+                    "chain": chains[0] if chains else "unknown",
+                    "confidence": entry.get("confidence"),
+                    "rank_score": entry.get("rank_score"),
+                    "activity": entry.get("activity"),
+                }
+            )
+
+    selected_contracts = flat_contracts[:analyze_limit]
     analyzed_runs: list[dict[str, Any]] = []
 
     if not selected_contracts:
@@ -493,7 +485,7 @@ def run_protocol_analysis(
             "chain": chain or "any",
             "inventory_path": str(inventory_path),
             "official_domain": inventory.get("official_domain"),
-            "discovered_contract_count": len(discovered_contracts),
+            "discovered_contract_count": len(flat_contracts),
             "analyzed_contract_count": 0,
             "run_name": None,
             "run_names": [],
@@ -532,7 +524,7 @@ def run_protocol_analysis(
         "chain": chain or "any",
         "inventory_path": str(inventory_path),
         "official_domain": inventory.get("official_domain"),
-        "discovered_contract_count": len(discovered_contracts),
+        "discovered_contract_count": len(flat_contracts),
         "analyzed_contract_count": len(analyzed_runs),
         "run_name": analyzed_runs[0]["run_name"] if analyzed_runs else None,
         "run_names": [run["run_name"] for run in analyzed_runs],

@@ -49,6 +49,20 @@ def build_unified_dependencies(
         if addr not in deps:
             deps[addr] = _dep_entry(addr, ["classification"])
 
+    impl_to_remove: set[str] = set()
+    for addr, info in deps.items():
+        if info.get("type") != "proxy":
+            continue
+        impl_addr = info.get("implementation")
+        if not isinstance(impl_addr, str) or impl_addr not in deps:
+            continue
+        impl_entry = deps[impl_addr].copy()
+        impl_entry["address"] = impl_addr
+        info["implementation"] = impl_entry
+        impl_to_remove.add(impl_addr)
+    for addr in impl_to_remove:
+        del deps[addr]
+
     output: dict = {"address": target, "dependencies": deps}
 
     if target in cls_map and cls_map[target].get("type", "regular") != "regular":
@@ -60,13 +74,26 @@ def build_unified_dependencies(
         output["target_classification"] = info
 
     if dynamic_deps:
-        output["dependency_graph"] = dynamic_deps.get("dependency_graph", [])
+        raw_graph = dynamic_deps.get("dependency_graph", [])
+        keyed_graph: dict[str, list[dict]] = {}
+        for edge in raw_graph:
+            if not isinstance(edge, dict):
+                continue
+            from_addr = edge.get("from")
+            to_addr = edge.get("to")
+            if not isinstance(from_addr, str) or not isinstance(to_addr, str):
+                continue
+            key = f"{from_addr}|{to_addr}"
+            entry: dict = {"op": edge["op"], "provenance": edge.get("provenance", [])}
+            if edge.get("selector"):
+                entry["selector"] = edge["selector"]
+            if edge.get("function_name"):
+                entry["function_name"] = edge["function_name"]
+            keyed_graph.setdefault(key, []).append(entry)
+        output["dependency_graph"] = keyed_graph
         output["transactions_analyzed"] = dynamic_deps.get("transactions_analyzed", [])
         output["trace_methods"] = dynamic_deps.get("trace_methods", [])
         output["trace_errors"] = dynamic_deps.get("trace_errors", [])
-
-    if discovered:
-        output["discovered_addresses"] = sorted(discovered)
 
     if static_deps and static_deps.get("network"):
         output["network"] = static_deps["network"]
@@ -80,14 +107,16 @@ def enrich_dependency_metadata(unified: dict) -> dict:
     if not isinstance(deps, dict) or not deps:
         return unified
 
-    graph_edges = unified.get("dependency_graph", [])
+    keyed_graph = unified.get("dependency_graph", {})
 
     addrs_to_fetch: set[str] = set(deps.keys())
     for info in deps.values():
         if not isinstance(info, dict):
             continue
         implementation = info.get("implementation")
-        if implementation:
+        if isinstance(implementation, dict):
+            addrs_to_fetch.add(implementation["address"])
+        elif isinstance(implementation, str):
             addrs_to_fetch.add(implementation)
 
     info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
@@ -100,23 +129,31 @@ def enrich_dependency_metadata(unified: dict) -> dict:
         contract_name = info_cache.get(addr, (None, {}))[0]
         if contract_name:
             info["contract_name"] = contract_name
+        implementation = info.get("implementation")
+        if isinstance(implementation, dict):
+            impl_name = info_cache.get(implementation["address"], (None, {}))[0]
+            if impl_name:
+                implementation["contract_name"] = impl_name
 
-    if isinstance(graph_edges, list):
-        for edge in graph_edges:
-            if not isinstance(edge, dict):
+    if isinstance(keyed_graph, dict):
+        for key, edges in keyed_graph.items():
+            parts = key.split("|", 1)
+            if len(parts) != 2:
                 continue
-            selector = edge.get("selector")
-            if not selector or selector == "0x":
-                continue
-            target_addr = edge.get("to")
-            if not isinstance(target_addr, str):
-                continue
-            function_name = info_cache.get(target_addr, (None, {}))[1].get(selector)
-            if not function_name:
-                implementation = deps.get(target_addr, {}).get("implementation")
-                if implementation:
-                    function_name = info_cache.get(implementation, (None, {}))[1].get(selector)
-            if function_name:
-                edge["function_name"] = function_name
+            target_addr = parts[1]
+            for edge in edges:
+                if not isinstance(edge, dict):
+                    continue
+                selector = edge.get("selector")
+                if not selector or selector == "0x":
+                    continue
+                function_name = info_cache.get(target_addr, (None, {}))[1].get(selector)
+                if not function_name:
+                    implementation = deps.get(target_addr, {}).get("implementation")
+                    impl_addr = implementation["address"] if isinstance(implementation, dict) else implementation
+                    if impl_addr:
+                        function_name = info_cache.get(impl_addr, (None, {}))[1].get(selector)
+                if function_name:
+                    edge["function_name"] = function_name
 
     return unified

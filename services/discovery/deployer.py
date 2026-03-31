@@ -28,15 +28,17 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from services.discovery.inventory_domain import _debug_log
+from services.discovery.inventory_domain import RateLimiter, _debug_log
 from services.discovery.static_dependencies import normalize_address
 from utils import etherscan
 
-# Etherscan free-tier allows ~5 req/s.  A small pause between batches avoids
-# 429 errors without meaningfully slowing down the pipeline.
+# Etherscan free-tier limit is ~3 req/s.  A small pause between sequential
+# batches avoids 429 errors without meaningfully slowing down the pipeline.
 _RATE_LIMIT_DELAY = 0.25
+_MAX_REQUESTS_PER_SECOND = 2
 
 # A deployer must have created at least this many seed contracts.
 _MIN_SEED_COUNT = 3
@@ -102,21 +104,40 @@ def _get_deployed_contracts(deployer: str, debug: bool = False) -> list[str]:
     return deployed
 
 
+def _get_one_name(addr: str, limiter: RateLimiter) -> tuple[str, str | None]:
+    """Fetch the contract name for a single address (thread-safe, rate-limited)."""
+    limiter.wait()
+    try:
+        data = etherscan.get("contract", "getsourcecode", address=addr)
+        results = data.get("result", [])
+        if results and results[0].get("ContractName"):
+            return addr, results[0]["ContractName"]
+    except RuntimeError:
+        pass
+    return addr, None
+
+
 def _batch_get_names(
     addresses: list[str],
     debug: bool = False,
 ) -> dict[str, str]:
-    """Best-effort contract name lookup.  Returns ``{address: name}``."""
+    """Best-effort contract name lookup using a thread pool.  Returns ``{address: name}``."""
+    if not addresses:
+        return {}
+
     names: dict[str, str] = {}
-    for addr in addresses:
-        try:
-            data = etherscan.get("contract", "getsourcecode", address=addr)
-            results = data.get("result", [])
-            if results and results[0].get("ContractName"):
-                names[addr] = results[0]["ContractName"]
-        except RuntimeError:
-            pass
-        time.sleep(_RATE_LIMIT_DELAY)
+    limiter = RateLimiter(_MAX_REQUESTS_PER_SECOND)
+
+    with ThreadPoolExecutor(max_workers=_MAX_REQUESTS_PER_SECOND) as executor:
+        futures = {executor.submit(_get_one_name, addr, limiter): addr for addr in addresses}
+        for future in as_completed(futures):
+            try:
+                addr, name = future.result()
+                if name:
+                    names[addr] = name
+            except Exception:
+                pass
+
     _debug_log(debug, f"Resolved names for {len(names)}/{len(addresses)} address(es)")
     return names
 
@@ -209,10 +230,10 @@ def expand_from_deployers(
     seed_set = set(normalized_seeds)
     all_deployed: dict[str, set[str]] = {}  # address → deployers that created it
     for deployer in qualified_deployers:
+        time.sleep(_RATE_LIMIT_DELAY)
         deployed = _get_deployed_contracts(deployer, debug=debug)
         for addr in deployed:
             all_deployed.setdefault(addr, set()).add(deployer)
-        time.sleep(_RATE_LIMIT_DELAY)
 
     _debug_log(
         debug,

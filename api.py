@@ -265,13 +265,49 @@ def analyses() -> list[dict]:
         return _merge_proxy_impl_entries(results)
 
 
+@app.get("/api/analyses/{run_name:path}/artifact/{artifact_name:path}")
+def analysis_artifact(run_name: str, artifact_name: str):
+    """Get a specific artifact for an analysis."""
+    with SessionLocal() as session:
+        # Find job by name or id
+        stmt = select(Job).where(Job.name == run_name).order_by(Job.updated_at.desc()).limit(1)
+        job = session.execute(stmt).scalar_one_or_none()
+        if job is None:
+            try:
+                job = session.get(Job, run_name)
+            except Exception:
+                pass
+        if job is None:
+            raise HTTPException(status_code=404, detail="Analysis not found")
+
+        # Strip .json/.txt extension for artifact lookup
+        lookup_name = artifact_name
+        if artifact_name.endswith(".json"):
+            lookup_name = artifact_name[:-5]
+        elif artifact_name.endswith(".txt"):
+            lookup_name = artifact_name[:-4]
+
+        # Try both with and without extension
+        artifact = get_artifact(session, job.id, lookup_name)
+        if artifact is None:
+            artifact = get_artifact(session, job.id, artifact_name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+
+        if isinstance(artifact, dict):
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(content=artifact)
+        return PlainTextResponse(str(artifact))
+
+
 @app.get("/api/analyses/{run_name:path}")
 def analysis_detail(run_name: str) -> dict:
     """Get analysis detail by job name (run_name) or job_id."""
     with SessionLocal() as session:
         # Try by name first, then by id
-        stmt = select(Job).where(Job.name == run_name).order_by(Job.updated_at.desc())
-        job = session.execute(stmt).scalars().first()
+        stmt = select(Job).where(Job.name == run_name).order_by(Job.updated_at.desc()).limit(1)
+        job = session.execute(stmt).scalar_one_or_none()
         if job is None:
             try:
                 job = session.get(Job, run_name)
@@ -304,8 +340,8 @@ def analysis_detail(run_name: str) -> dict:
         request = job.request if isinstance(job.request, dict) else {}
         proxy_address = request.get("proxy_address")
         if proxy_address and "dependency_graph_viz" not in payload:
-            proxy_stmt = select(Job).where(Job.address == proxy_address).order_by(Job.updated_at.desc())
-            proxy_job = session.execute(proxy_stmt).scalars().first()
+            proxy_stmt = select(Job).where(Job.address == proxy_address).order_by(Job.updated_at.desc()).limit(1)
+            proxy_job = session.execute(proxy_stmt).scalar_one_or_none()
             if proxy_job:
                 for fallback_name in ("dependency_graph_viz", "dependencies"):
                     if fallback_name not in payload:
@@ -326,42 +362,6 @@ def analysis_detail(run_name: str) -> dict:
             payload["summary"] = all_artifacts["contract_analysis"].get("summary")
 
         return payload
-
-
-@app.get("/api/analyses/{run_name:path}/artifact/{artifact_name:path}")
-def analysis_artifact(run_name: str, artifact_name: str):
-    """Get a specific artifact for an analysis."""
-    with SessionLocal() as session:
-        # Find job by name or id
-        stmt = select(Job).where(Job.name == run_name).order_by(Job.updated_at.desc())
-        job = session.execute(stmt).scalars().first()
-        if job is None:
-            try:
-                job = session.get(Job, run_name)
-            except Exception:
-                pass
-        if job is None:
-            raise HTTPException(status_code=404, detail="Analysis not found")
-
-        # Strip .json/.txt extension for artifact lookup
-        lookup_name = artifact_name
-        if artifact_name.endswith(".json"):
-            lookup_name = artifact_name[:-5]
-        elif artifact_name.endswith(".txt"):
-            lookup_name = artifact_name[:-4]
-
-        # Try both with and without extension
-        artifact = get_artifact(session, job.id, lookup_name)
-        if artifact is None:
-            artifact = get_artifact(session, job.id, artifact_name)
-        if artifact is None:
-            raise HTTPException(status_code=404, detail="Artifact not found")
-
-        if isinstance(artifact, dict):
-            from fastapi.responses import JSONResponse
-
-            return JSONResponse(content=artifact)
-        return PlainTextResponse(str(artifact))
 
 
 @app.get("/{full_path:path}")
