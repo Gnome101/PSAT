@@ -1,6 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
-import { buildVisualPermissionGraph, layoutVisualPermissionGraph, prettyFunctionName, shortenAddress, wrapText } from "./graph.js";
+import {
+  ADDRESS_GRAPH_COLUMNS,
+  PRINCIPAL_COLUMNS,
+  buildVisualAddressGraph,
+  buildVisualPermissionGraph,
+  layoutVisualAddressGraph,
+  layoutVisualPermissionGraph,
+  prettyFunctionName,
+  shortenAddress,
+  wrapText,
+} from "./graph.js";
 import DependencyGraphTab from "./DependencyGraphTab.jsx";
 
 const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "raw"];
@@ -49,6 +59,10 @@ function parseLocationPath(pathname) {
     return { mode: "default", value: null, tab: "summary" };
   }
 
+  if (segments[0] === "monitor") {
+    return { mode: "monitor", value: null, tab: "summary" };
+  }
+
   if (segments[0] === "runs" && segments[1]) {
     return {
       mode: "run",
@@ -76,20 +90,24 @@ function parseLocationPath(pathname) {
   return { mode: "default", value: null, tab: "summary" };
 }
 
-function buildLocationPath(runName, address, tab) {
+function buildLocationPath(runId, address, tab) {
   const nextTab = normalizeTab(tab);
   if (isAddress(address)) {
     return `/address/${String(address).trim()}/${nextTab}`;
   }
-  if (runName) {
-    return `/runs/${encodeURIComponent(runName)}/${nextTab}`;
+  if (runId) {
+    return `/runs/${encodeURIComponent(runId)}/${nextTab}`;
   }
   return "/";
 }
 
 function findRunByAddress(analyses, address) {
   const target = String(address || "").toLowerCase();
-  return analyses.find((analysis) => String(analysis.address || "").toLowerCase() === target)?.run_name || null;
+  return analyses.find((analysis) => {
+    const subjectAddress = String(analysis.address || "").toLowerCase();
+    const proxyAddress = String(analysis.proxy_address || analysis.proxy_address_display || "").toLowerCase();
+    return subjectAddress === target || proxyAddress === target;
+  })?.job_id || null;
 }
 
 function renderNodeBody(node) {
@@ -144,7 +162,7 @@ function SummaryTab({ detail }) {
   return (
     <div className="stack">
       <div className="summary-grid">
-        <StatCard label="Contract" value={subject.name || detail?.contract_name || "Unknown"} />
+        <StatCard label="Contract" value={displayName(detail) || subject.name || "Unknown"} />
         <StatCard label="Control Model" value={summary.control_model || "unknown"} />
         <StatCard label="Risk" value={summary.static_risk_level || "unknown"} />
         <StatCard label="Standards" value={standards.length || 0} />
@@ -192,7 +210,11 @@ function PermissionsTab({ detail }) {
   return (
     <div className="card-grid">
       {payload.functions.map((entry) => {
-        const principals = (entry.authority_roles || []).flatMap((role) => role.principals || []);
+        const principals = [
+          ...(entry.direct_owner?.address ? [entry.direct_owner] : []),
+          ...(entry.authority_roles || []).flatMap((role) => role.principals || []),
+          ...(entry.controllers || []).flatMap((controller) => controller.principals || []),
+        ];
         return (
           <article className="card" key={entry.selector}>
             <div className="card-header-row">
@@ -372,30 +394,71 @@ function GraphNodeDetails({ node, extra }) {
 function GraphTab({ detail }) {
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedExtra, setSelectedExtra] = useState(null);
+  const [graphMode, setGraphMode] = useState("address");
+  const [panArmed, setPanArmed] = useState(false);
   const stageRef = useRef(null);
   const svgRef = useRef(null);
   const viewportRef = useRef(null);
   const transformRef = useRef({ x: 0, y: 0, scale: 1 });
+  const fitTransformRef = useRef({ x: 0, y: 0, scale: 1 });
   const rafRef = useRef(0);
   const dragRef = useRef(null);
+  const suppressClickUntilRef = useRef(0);
 
   useEffect(() => {
     setSelectedNode(null);
     setSelectedExtra(null);
-  }, [detail?.run_name]);
+  }, [detail?.run_name, graphMode]);
+
+  useEffect(() => {
+    function isTypingTarget(target) {
+      const element = target instanceof HTMLElement ? target : null;
+      if (!element) {
+        return false;
+      }
+      const tag = element.tagName;
+      return tag === "INPUT" || tag === "TEXTAREA" || element.isContentEditable;
+    }
+
+    function onKeyDown(event) {
+      if (event.code !== "Space" || isTypingTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      setPanArmed(true);
+    }
+
+    function onKeyUp(event) {
+      if (event.code !== "Space") {
+        return;
+      }
+      setPanArmed(false);
+    }
+
+    function onBlur() {
+      setPanArmed(false);
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   const graph = useMemo(() => {
-    const visual = buildVisualPermissionGraph(detail);
+    const visual = graphMode === "address" ? buildVisualAddressGraph(detail) : buildVisualPermissionGraph(detail);
     if (!visual) {
       return null;
     }
-    return layoutVisualPermissionGraph(visual);
-  }, [detail]);
-  if (!graph) {
-    return <p className="empty">No resolved permission graph available.</p>;
-  }
+    return graphMode === "address" ? layoutVisualAddressGraph(visual) : layoutVisualPermissionGraph(visual);
+  }, [detail, graphMode]);
 
   const graphBounds = useMemo(() => {
+    if (!graph) return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 };
     const margin = 40;
     const minX = Math.min(...graph.nodes.map((node) => node.x)) - margin;
     const minY = Math.min(...graph.nodes.map((node) => node.y)) - margin;
@@ -412,6 +475,7 @@ function GraphTab({ detail }) {
   }, [graph]);
 
   const edgeGeometry = useMemo(() => {
+    if (!graph) return [];
     const outgoingById = new Map();
     const incomingById = new Map();
 
@@ -444,6 +508,7 @@ function GraphTab({ detail }) {
         const curve = Math.max(50, (endX - startX) / 2.2);
         return {
           ...edge,
+          edgeId: `${edge.from.id}|${edge.to.id}|${edge.label || ""}`,
           startX,
           startY,
           endX,
@@ -452,6 +517,69 @@ function GraphTab({ detail }) {
         };
       });
   }, [graph]);
+
+  const connectedSelection = useMemo(() => {
+    if (!graph || !selectedNode) {
+      return { activeNodeIds: null, activeEdgeIds: null };
+    }
+
+    if (selectedNode.id === "contract:root") {
+      return {
+        activeNodeIds: new Set(graph.nodes.map((node) => node.id)),
+        activeEdgeIds: new Set(
+          edgeGeometry
+            .filter((edge) => edge.from && edge.to)
+            .map((edge) => edge.edgeId),
+        ),
+      };
+    }
+
+    const outgoingById = new Map();
+    const incomingById = new Map();
+    for (const edge of graph.edges) {
+      if (!edge.from || !edge.to) {
+        continue;
+      }
+      const outgoing = outgoingById.get(edge.from.id) || [];
+      outgoing.push(edge);
+      outgoingById.set(edge.from.id, outgoing);
+      const incoming = incomingById.get(edge.to.id) || [];
+      incoming.push(edge);
+      incomingById.set(edge.to.id, incoming);
+    }
+
+    const activeNodeIds = new Set();
+    const activeEdgeIds = new Set();
+
+    function walk(startId, direction) {
+      const visited = new Set();
+      const queue = [startId];
+      while (queue.length) {
+        const current = queue.shift();
+        if (!current || visited.has(current)) {
+          continue;
+        }
+        visited.add(current);
+        activeNodeIds.add(current);
+        const edges = direction === "forward" ? outgoingById.get(current) || [] : incomingById.get(current) || [];
+        for (const edge of edges) {
+          if (!edge.from || !edge.to) {
+            continue;
+          }
+          activeEdgeIds.add(`${edge.from.id}|${edge.to.id}|${edge.label || ""}`);
+          const nextId = direction === "forward" ? edge.to.id : edge.from.id;
+          if (!visited.has(nextId)) {
+            queue.push(nextId);
+          }
+        }
+      }
+    }
+
+    walk(selectedNode.id, "forward");
+    walk(selectedNode.id, "backward");
+
+    return { activeNodeIds, activeEdgeIds };
+  }, [graph, edgeGeometry, selectedNode]);
 
   useEffect(() => {
     function applyTransform() {
@@ -479,18 +607,24 @@ function GraphTab({ detail }) {
       return undefined;
     }
 
-    const rect = stage.getBoundingClientRect();
-    const paddingX = 56;
-    const paddingY = 44;
-    const fitScaleX = ((rect.width - paddingX * 2) / graphBounds.width) * (graph.width / rect.width);
-    const fitScaleY = ((rect.height - paddingY * 2) / graphBounds.height) * (graph.height / rect.height);
-    const scale = Math.min(Math.max(Math.min(fitScaleX, fitScaleY) * 1.12, 0.94), 2.9);
-    transformRef.current = {
-      x: (graph.width - graphBounds.width * scale) / 2 - graphBounds.minX * scale,
-      y: (graph.height - graphBounds.height * scale) / 2 - graphBounds.minY * scale,
-      scale,
-    };
-    applyTransform();
+    function fitToView() {
+      const nextRect = stage.getBoundingClientRect();
+      const paddingX = 56;
+      const paddingY = 44;
+      const fitScaleX = ((nextRect.width - paddingX * 2) / graphBounds.width) * (graph.width / nextRect.width);
+      const fitScaleY = ((nextRect.height - paddingY * 2) / graphBounds.height) * (graph.height / nextRect.height);
+      const scale = Math.min(Math.max(Math.min(fitScaleX, fitScaleY) * 1.12, 0.94), 2.9);
+      const nextTransform = {
+        x: (graph.width - graphBounds.width * scale) / 2 - graphBounds.minX * scale,
+        y: (graph.height - graphBounds.height * scale) / 2 - graphBounds.minY * scale,
+        scale,
+      };
+      transformRef.current = nextTransform;
+      fitTransformRef.current = nextTransform;
+      applyTransform();
+    }
+
+    fitToView();
 
     function onWheel(event) {
       event.preventDefault();
@@ -498,6 +632,16 @@ function GraphTab({ detail }) {
       const pointX = event.clientX - svgRect.left;
       const pointY = event.clientY - svgRect.top;
       const current = transformRef.current;
+      if (!event.ctrlKey && !event.metaKey) {
+        const panFactor = event.shiftKey ? 4.2 : 3.1;
+        transformRef.current = {
+          ...current,
+          x: current.x - (event.shiftKey ? event.deltaY : event.deltaX) * panFactor,
+          y: current.y - event.deltaY * (event.shiftKey ? 0 : panFactor),
+        };
+        scheduleApply();
+        return;
+      }
       const factor = event.deltaY < 0 ? 1.08 : 0.92;
       const nextScale = Math.min(3.6, Math.max(0.22, current.scale * factor));
       const worldX = (pointX - current.x) / current.scale;
@@ -510,11 +654,13 @@ function GraphTab({ detail }) {
       scheduleApply();
     }
 
-    function onPointerDown(event) {
-      if (event.button !== 0) {
+    function startDrag(event) {
+      const isPrimary = event.button === 0;
+      const isMiddle = event.button === 1;
+      if (!isPrimary && !isMiddle) {
         return;
       }
-      if (event.target !== stage && event.target !== svg) {
+      if (!panArmed && !isMiddle && event.target !== stage && event.target !== svg) {
         return;
       }
       dragRef.current = {
@@ -523,9 +669,14 @@ function GraphTab({ detail }) {
         startY: event.clientY,
         originX: transformRef.current.x,
         originY: transformRef.current.y,
+        moved: false,
       };
       stage.classList.add("dragging");
       stage.setPointerCapture(event.pointerId);
+    }
+
+    function onPointerDown(event) {
+      startDrag(event);
     }
 
     function onPointerMove(event) {
@@ -533,7 +684,10 @@ function GraphTab({ detail }) {
       if (!drag || drag.pointerId !== event.pointerId) {
         return;
       }
-      const sensitivity = 1.45;
+      const sensitivity = 3.4;
+      if (Math.abs(event.clientX - drag.startX) > 3 || Math.abs(event.clientY - drag.startY) > 3) {
+        drag.moved = true;
+      }
       transformRef.current = {
         ...transformRef.current,
         x: drag.originX + (event.clientX - drag.startX) * sensitivity,
@@ -549,6 +703,9 @@ function GraphTab({ detail }) {
       }
       dragRef.current = null;
       stage.classList.remove("dragging");
+      if (drag.moved) {
+        suppressClickUntilRef.current = Date.now() + 220;
+      }
       if (event) {
         stage.releasePointerCapture(event.pointerId);
       }
@@ -571,9 +728,17 @@ function GraphTab({ detail }) {
         rafRef.current = 0;
       }
     };
-  }, [graph, graphBounds]);
+  }, [graph, graphBounds, panArmed]);
 
   async function selectNode(node) {
+    if (Date.now() < suppressClickUntilRef.current) {
+      return;
+    }
+    if (selectedNode?.id === node?.id) {
+      setSelectedNode(null);
+      setSelectedExtra(null);
+      return;
+    }
     setSelectedNode(node || null);
     setSelectedExtra(null);
 
@@ -601,22 +766,93 @@ function GraphTab({ detail }) {
     }
   }
 
+  function clearSelection() {
+    if (Date.now() < suppressClickUntilRef.current) {
+      return;
+    }
+    setSelectedNode(null);
+    setSelectedExtra(null);
+  }
+
+  if (!graph) {
+    return <p className="empty">No resolved permission graph available.</p>;
+  }
+
   return (
     <div className="stack">
       <div className="graph-toolbar">
-        <span className="chip alt">{graph.nodes.filter((node) => node.column === "principal").length} principals</span>
-        <span className="chip alt">{graph.nodes.filter((node) => node.column === "controller").length} controllers</span>
-        <span className="chip alt">{graph.nodes.filter((node) => node.column === "function").length} functions</span>
+        <button
+          type="button"
+          className={`chip alt buttonlike ${graphMode === "address" ? "active" : ""}`}
+          onClick={() => setGraphMode("address")}
+        >
+          Address view
+        </button>
+        <button
+          type="button"
+          className={`chip alt buttonlike ${graphMode === "path" ? "active" : ""}`}
+          onClick={() => setGraphMode("path")}
+        >
+          Path view
+        </button>
+        {graphMode === "address" ? (
+          <>
+            <span className="chip alt">{graph.nodes.filter((node) => ADDRESS_GRAPH_COLUMNS.includes(node.column)).length} addresses</span>
+            <span className="chip alt">{graph.edges.length} links</span>
+          </>
+        ) : (
+          <>
+            <span className="chip alt">{graph.nodes.filter((node) => PRINCIPAL_COLUMNS.has(node.column)).length} principals</span>
+            <span className="chip alt">{graph.nodes.filter((node) => node.column === "controller").length} controllers</span>
+            <span className="chip alt">{graph.nodes.filter((node) => node.column === "function").length} functions</span>
+          </>
+        )}
+        <span className="chip alt">Space + drag or middle mouse to pan</span>
+        <button
+          type="button"
+          className="chip alt buttonlike"
+          onClick={() => {
+            transformRef.current = fitTransformRef.current;
+            const viewport = viewportRef.current;
+            if (viewport) {
+              const { x, y, scale } = transformRef.current;
+              viewport.setAttribute("transform", `translate(${x} ${y}) scale(${scale})`);
+            }
+          }}
+        >
+          Reset view
+        </button>
       </div>
       <div className="graph-layout">
         <div className="graph-panel">
           <div className="graph-legend">
-            <span className="chip alt">Left to right: who can call it → gate/role → function → contract</span>
+            <span className="chip alt">
+              {graphMode === "address"
+                ? "Address graph: one node per address, edges are typed control relationships"
+                : "Left to right: who can call it → gate/role → function → contract"}
+            </span>
             <span className="chip alt">Green circle = EOA</span>
             <span className="chip alt">Square = contract-like principal</span>
           </div>
-          <div ref={stageRef} className="graph-stage svg-stage">
-            <svg ref={svgRef} className="graph-svg-root" viewBox={`0 0 ${graph.width} ${graph.height}`}>
+          <div
+            ref={stageRef}
+            className={`graph-stage svg-stage ${panArmed ? "pan-armed" : ""}`}
+            onClick={(event) => {
+              if (event.target === event.currentTarget) {
+                clearSelection();
+              }
+            }}
+          >
+            <svg
+              ref={svgRef}
+              className="graph-svg-root"
+              viewBox={`0 0 ${graph.width} ${graph.height}`}
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  clearSelection();
+                }
+              }}
+            >
               <defs>
                 <marker id="graph-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(34, 29, 23, 0.24)" />
@@ -625,8 +861,10 @@ function GraphTab({ detail }) {
               <g ref={viewportRef}>
                 {edgeGeometry.map((edge, index) => (
                   <path
-                    key={`${edge.from.id}-${edge.to.id}-${index}`}
-                    className="graph-edge"
+                    key={edge.edgeId || `${edge.from.id}-${edge.to.id}-${index}`}
+                    className={`graph-edge ${
+                      connectedSelection.activeEdgeIds && !connectedSelection.activeEdgeIds.has(edge.edgeId) ? "dimmed" : ""
+                    }`}
                     d={edge.path}
                     markerEnd="url(#graph-arrow)"
                   />
@@ -634,9 +872,32 @@ function GraphTab({ detail }) {
                 {graph.nodes.map((node) => (
                   <g
                     key={node.id}
-                    className={`graph-svg-node ${node.kind} ${selectedNode?.id === node.id ? "selected" : ""}`}
+                    className={`graph-svg-node ${node.kind} ${selectedNode?.id === node.id ? "selected" : ""} ${
+                      connectedSelection.activeNodeIds && !connectedSelection.activeNodeIds.has(node.id) ? "dimmed" : ""
+                    }`}
                     transform={`translate(${node.x}, ${node.y})`}
-                    onPointerDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => {
+                      if (panArmed || event.button === 1) {
+                        const stage = stageRef.current;
+                        if (stage) {
+                          const isPrimary = event.button === 0;
+                          const isMiddle = event.button === 1;
+                          if (isPrimary || isMiddle) {
+                            dragRef.current = {
+                              pointerId: event.pointerId,
+                              startX: event.clientX,
+                              startY: event.clientY,
+                              originX: transformRef.current.x,
+                              originY: transformRef.current.y,
+                              moved: false,
+                            };
+                            stage.classList.add("dragging");
+                            stage.setPointerCapture(event.pointerId);
+                          }
+                        }
+                      }
+                      event.stopPropagation();
+                    }}
                     onClick={(event) => {
                       event.stopPropagation();
                       selectNode(node);
@@ -657,287 +918,558 @@ function GraphTab({ detail }) {
   );
 }
 
+const PIPELINE_STAGES = ["discovery", "static", "resolution", "policy"];
+const ALL_STAGES = [...PIPELINE_STAGES, "done"];
+const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
+
+function displayName(entry) {
+  const explicit = entry?.display_name || "";
+  if (explicit) {
+    return explicit;
+  }
+  const contractName = entry?.contract_name || "";
+  if (GENERIC_PROXY_NAMES.has(contractName.toLowerCase())) {
+    return entry.run_name || contractName;
+  }
+  return contractName || entry?.run_name || "";
+}
+
+function mergeProxyImpl(analyses) {
+  const implByProxy = new Map();
+  const mergedProxies = new Set();
+
+  for (const a of analyses) {
+    if (a.proxy_address) implByProxy.set(a.proxy_address.toLowerCase(), a);
+  }
+
+  const merged = [];
+  for (const a of analyses) {
+    if (a.proxy_address) continue; // skip standalone impl entries — they'll be merged into their proxy
+    if (a.is_proxy && a.implementation_address) {
+      const impl = implByProxy.get(a.address?.toLowerCase());
+      if (impl) {
+        merged.push({
+          ...impl,
+          proxy_address_display: a.address,
+          proxy_type_display: a.proxy_type,
+          display_name: displayName(a) || displayName(impl),
+          rank_score: a.rank_score ?? impl.rank_score,
+          company: a.company || impl.company,
+        });
+        mergedProxies.add(a.address?.toLowerCase());
+        continue;
+      }
+    }
+    merged.push(a);
+  }
+  // Add impl entries whose proxy wasn't in the list
+  for (const a of analyses) {
+    if (a.proxy_address && !mergedProxies.has(a.proxy_address.toLowerCase())) {
+      merged.push(a);
+    }
+  }
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline monitor
+// ---------------------------------------------------------------------------
+
+function PipelineDashboard() {
+  const [allJobs, setAllJobs] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchJobs() {
+      try {
+        const jobs = await api("/api/jobs");
+        if (!cancelled) setAllJobs(jobs);
+      } catch {}
+    }
+    fetchJobs();
+    const timer = setInterval(fetchJobs, 2500);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
+  const buckets = useMemo(() => {
+    const b = {};
+    for (const s of ALL_STAGES) b[s] = { queued: [], processing: [], completed: [], failed: [] };
+    for (const j of allJobs) {
+      const stage = j.stage || "discovery";
+      const status = j.status || "queued";
+      if (b[stage] && b[stage][status]) b[stage][status].push(j);
+    }
+    return b;
+  }, [allJobs]);
+
+  const totals = useMemo(() => {
+    const t = { queued: 0, processing: 0, completed: 0, failed: 0, total: 0 };
+    for (const j of allJobs) { t[j.status] = (t[j.status] || 0) + 1; t.total++; }
+    return t;
+  }, [allJobs]);
+
+  if (!allJobs.length) {
+    return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
+  }
+
+  const stageColors = { discovery: "#0f766e", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", done: "#16a34a" };
+  const statusColors = { queued: "#94a3b8", processing: "#f59e0b", completed: "#22c55e", failed: "#ef4444" };
+  const colW = 160, gapW = 80, headerH = 50, dotR = 6;
+  const totalW = ALL_STAGES.length * colW + (ALL_STAGES.length - 1) * gapW;
+  const dotsPerRow = Math.floor((colW - 20) / (dotR * 2 + 4));
+  const maxDots = Math.max(1, ...ALL_STAGES.map((s) => { const b = buckets[s]; return (b.processing?.length || 0) + (b.queued?.length || 0) + (b.completed?.length || 0) + (b.failed?.length || 0); }));
+  const dotsAreaH = Math.max(60, Math.ceil(maxDots / dotsPerRow) * (dotR * 2 + 4) + 20);
+  const totalH = headerH + dotsAreaH + 40;
+
+  function renderDots(jobs, startX, startY) {
+    return jobs.map((j, i) => {
+      const cx = startX + 10 + (i % dotsPerRow) * (dotR * 2 + 4) + dotR;
+      const cy = startY + Math.floor(i / dotsPerRow) * (dotR * 2 + 4) + dotR;
+      return (
+        <g key={j.job_id}>
+          <title>{`${j.name || j.company || j.address || j.job_id}\n${j.status} / ${j.stage}`}</title>
+          <circle cx={cx} cy={cy} r={dotR} fill={statusColors[j.status] || "#94a3b8"} opacity={j.status === "processing" ? 1 : 0.8}>
+            {j.status === "processing" && <animate attributeName="opacity" values="1;0.4;1" dur="1.5s" repeatCount="indefinite" />}
+          </circle>
+        </g>
+      );
+    });
+  }
+
+  return (
+    <div className="page">
+      <section className="panel">
+        <div className="panel-header">
+          <div><p className="eyebrow">Pipeline Status</p><h2>{totals.total} Jobs</h2></div>
+          <div className="chips">
+            <span className="chip" style={{ background: "#dcfce7", color: "#166534" }}>{totals.completed} done</span>
+            {totals.processing > 0 && <span className="chip" style={{ background: "#fef3c7", color: "#92400e" }}>{totals.processing} running</span>}
+            {totals.queued > 0 && <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>{totals.queued} queued</span>}
+            {totals.failed > 0 && <span className="chip" style={{ background: "#fee2e2", color: "#991b1b" }}>{totals.failed} failed</span>}
+          </div>
+        </div>
+        <svg viewBox={`0 0 ${totalW + 40} ${totalH}`} style={{ width: "100%", height: "auto", marginTop: 16 }}>
+          {ALL_STAGES.map((stage, i) => {
+            const x = 20 + i * (colW + gapW);
+            const b = buckets[stage];
+            const all = [...(b.processing || []), ...(b.queued || []), ...(b.failed || []), ...(b.completed || [])];
+            return (
+              <g key={stage}>
+                <rect x={x} y={0} width={colW} height={totalH} rx="12" fill={stageColors[stage]} opacity="0.06" />
+                <rect x={x} y={0} width={colW} height={headerH} rx="12" fill={stageColors[stage]} opacity="0.12" />
+                <rect x={x} y={headerH - 12} width={colW} height={12} fill={stageColors[stage]} opacity="0.12" />
+                <text x={x + colW / 2} y={24} textAnchor="middle" fontSize="12" fontWeight="700" fill={stageColors[stage]}>{stage.toUpperCase()}</text>
+                <text x={x + colW / 2} y={40} textAnchor="middle" fontSize="11" fill={stageColors[stage]} opacity="0.7">{all.length}</text>
+                {renderDots(all, x, headerH + 10)}
+                {i < ALL_STAGES.length - 1 && <line x1={x + colW + 8} y1={totalH / 2} x2={x + colW + gapW - 8} y2={totalH / 2} stroke="#cbd5e1" strokeWidth="2" markerEnd="url(#pipeline-arrow)" />}
+              </g>
+            );
+          })}
+          <defs><marker id="pipeline-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 z" fill="#cbd5e1" /></marker></defs>
+        </svg>
+        <div className="chips" style={{ marginTop: 12, justifyContent: "center" }}>
+          <span className="chip" style={{ background: "#fef3c7", color: "#92400e", fontSize: 10 }}>Processing</span>
+          <span className="chip" style={{ background: "#f1f5f9", color: "#475569", fontSize: 10 }}>Queued</span>
+          <span className="chip" style={{ background: "#dcfce7", color: "#166534", fontSize: 10 }}>Completed</span>
+          <span className="chip" style={{ background: "#fee2e2", color: "#991b1b", fontSize: 10 }}>Failed</span>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Runs list page
+// ---------------------------------------------------------------------------
+
+function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore }) {
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return analyses;
+    const q = search.toLowerCase();
+    return analyses.filter((a) =>
+      (displayName(a) || "").toLowerCase().includes(q) ||
+      (a.address || "").toLowerCase().includes(q) ||
+      (a.company || "").toLowerCase().includes(q)
+    );
+  }, [analyses, search]);
+
+  const grouped = useMemo(() => {
+    const groups = [];
+    const map = new Map();
+    const standalone = [];
+    const sorted = [...filtered].sort((a, b) => (b.rank_score ?? -1) - (a.rank_score ?? -1));
+    for (const a of sorted) {
+      if (a.company) {
+        if (!map.has(a.company)) { const g = { company: a.company, items: [] }; map.set(a.company, g); groups.push(g); }
+        map.get(a.company).items.push(a);
+      } else {
+        standalone.push(a);
+      }
+    }
+    return { groups, standalone };
+  }, [filtered]);
+
+  const riskColor = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e", unknown: "#94a3b8" };
+
+  return (
+    <div className="page">
+      {activeJobs.length > 0 && (
+        <div className="active-jobs-bar">
+          {activeJobs.slice(0, 8).map((j) => {
+            const stageIdx = PIPELINE_STAGES.indexOf(j.stage);
+            const isDone = j.stage === "done" || j.status === "completed";
+            const isFailed = j.status === "failed";
+            return (
+              <div key={j.job_id} className={`active-job-chip ${isDone ? "done" : ""} ${isFailed ? "err" : ""}`}>
+                <span className="active-job-name">{j.name || j.company || j.address || "Job"}</span>
+                <span className="active-job-stage">{j.stage}</span>
+                <div className="mini-bar">
+                  {PIPELINE_STAGES.map((s, i) => (
+                    <div key={s} className={`mini-step ${isDone || i < stageIdx ? "done" : i === stageIdx ? "current" : ""}`} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {activeJobs.length > 8 && <div className="active-job-chip" style={{ opacity: 0.6 }}>+{activeJobs.length - 8} more</div>}
+        </div>
+      )}
+
+      <div className="runs-search">
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search contracts..." />
+      </div>
+
+      {grouped.groups.map((group) => (
+        <section key={group.company} className="panel runs-group-panel">
+          <div className="runs-group-header">
+            <h3>{group.company}</h3>
+            <div className="chips" style={{ gap: 6 }}>
+              <span className="chip alt">{group.items.length} contracts</span>
+              <button className="discover-more" title={`Discover more`} onClick={() => onDiscoverMore(group.company)}>+</button>
+            </div>
+          </div>
+          <div className="runs-table">
+            <div className="runs-table-header">
+              <span>Contract</span>
+              <span>Address</span>
+              <span>Model</span>
+              <span>Risk</span>
+              <span>Score</span>
+            </div>
+            {group.items.map((a) => (
+              <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
+                <span className="runs-cell-name">
+                  {displayName(a)}
+                  {a.proxy_address_display && <span className="proxy-badge" title={`${a.proxy_type_display || "proxy"} at ${a.proxy_address_display}`}>proxy</span>}
+                  {a.is_proxy && !a.proxy_address_display && <span className="proxy-badge dim">proxy</span>}
+                </span>
+                <span className="mono runs-cell-addr">{a.proxy_address_display || a.address || ""}</span>
+                <span>{a.summary?.control_model || "unknown"}</span>
+                <span><span className="risk-dot" style={{ background: riskColor[a.summary?.static_risk_level] || "#94a3b8" }} />{a.summary?.static_risk_level || "unknown"}</span>
+                <span>{a.rank_score != null ? a.rank_score.toFixed(2) : "-"}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
+
+      {grouped.standalone.length > 0 && (
+        <section className="panel runs-group-panel">
+          <div className="runs-group-header"><h3>Standalone</h3></div>
+          <div className="runs-table">
+            <div className="runs-table-header">
+              <span>Contract</span><span>Address</span><span>Model</span><span>Risk</span><span>Score</span>
+            </div>
+            {grouped.standalone.map((a) => (
+              <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
+                <span className="runs-cell-name">{displayName(a)}</span>
+                <span className="mono runs-cell-addr">{a.address || ""}</span>
+                <span>{a.summary?.control_model || "unknown"}</span>
+                <span><span className="risk-dot" style={{ background: riskColor[a.summary?.static_risk_level] || "#94a3b8" }} />{a.summary?.static_risk_level || "unknown"}</span>
+                <span>{a.rank_score != null ? a.rank_score.toFixed(2) : "-"}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!analyses.length && !activeJobs.length && (
+        <section className="panel empty-state"><p className="empty">No analyses yet. Submit a contract or company to get started.</p></section>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Error boundary
+// ---------------------------------------------------------------------------
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="page" style={{ paddingTop: 80 }}>
+          <div className="card" style={{ maxWidth: 600, margin: "0 auto" }}>
+            <h3>Something went wrong</h3>
+            <p className="muted">{String(this.state.error)}</p>
+            <button onClick={() => { this.setState({ error: null }); window.location.reload(); }}>Reload</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// App
+// ---------------------------------------------------------------------------
+
 export default function App() {
   const [analyses, setAnalyses] = useState([]);
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
+  const [viewMode, setViewMode] = useState(() => parseLocationPath(window.location.pathname).mode);
   const [activeTab, setActiveTab] = useState("summary");
   const [job, setJob] = useState(null);
-  const [form, setForm] = useState({ target: "", name: "", chain: "", analyzeLimit: "5" });
+  const [activeJobs, setActiveJobs] = useState([]);
+  const [form, setForm] = useState({ target: "", name: "", chain: "", discoverLimit: "25", analyzeLimit: "5" });
+  const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const analysesRef = useRef([]);
-  const selectedRunRef = useRef(null);
   const activeTabRef = useRef("summary");
+  const doneTimerRef = useRef(null);
 
-  useEffect(() => {
-    analysesRef.current = analyses;
-  }, [analyses]);
+  useEffect(() => { analysesRef.current = analyses; }, [analyses]);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
-  useEffect(() => {
-    selectedRunRef.current = selectedRun;
-  }, [selectedRun]);
-
-  useEffect(() => {
-    activeTabRef.current = activeTab;
-  }, [activeTab]);
-
-  function syncLocation(runName, detailOrAddress, tab, historyMode = "replace") {
-    const address =
-      typeof detailOrAddress === "string"
-        ? detailOrAddress
-        : detailOrAddress?.address || detailOrAddress?.contract_analysis?.subject?.address || null;
-    const nextPath = buildLocationPath(runName, address, tab);
-    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (currentPath === nextPath) {
-      return;
-    }
-    const method = historyMode === "push" ? "pushState" : "replaceState";
-    window.history[method]({}, "", nextPath);
+  function navigate(path, mode) {
+    setViewMode(mode || parseLocationPath(path).mode);
+    window.history.pushState({}, "", path);
   }
 
-  async function loadAnalysis(runName, options = {}) {
-    const payload = await api(`/api/analyses/${encodeURIComponent(runName)}`);
-    const nextTab = normalizeTab(options.tab ?? activeTabRef.current);
-    setSelectedRun(runName);
-    setSelectedDetail(payload);
-    setActiveTab(nextTab);
-    syncLocation(runName, payload, nextTab, options.history || "replace");
-    return payload;
-  }
-
-  async function resolveRoute(route, analysesPayload, options = {}) {
-    const nextRoute = route || parseLocationPath(window.location.pathname);
-    const list = analysesPayload || analysesRef.current;
-    if (!list.length) {
-      return;
-    }
-
-    let nextRun = options.preferredRun || null;
-    let nextTab = normalizeTab(options.tab ?? nextRoute.tab ?? activeTabRef.current);
-
-    if (!nextRun && nextRoute.mode === "run" && list.some((analysis) => analysis.run_name === nextRoute.value)) {
-      nextRun = nextRoute.value;
-    }
-    if (!nextRun && nextRoute.mode === "address") {
-      nextRun = findRunByAddress(list, nextRoute.value);
-    }
-    if (!nextRun) {
-      nextRun = selectedRunRef.current || list[0]?.run_name || null;
-      nextTab = normalizeTab(options.tab ?? activeTabRef.current);
-    }
-    if (nextRun) {
-      await loadAnalysis(nextRun, { tab: nextTab, history: options.history || "replace" });
+  async function loadAnalysis(runId, options = {}) {
+    try {
+      const payload = await api(`/api/analyses/${encodeURIComponent(runId)}`);
+      const nextTab = normalizeTab(options.tab ?? activeTabRef.current);
+      setSelectedRun(runId);
+      setSelectedDetail(payload);
+      setActiveTab(nextTab);
+      setViewMode("run");
+      const address = payload?.address || payload?.contract_analysis?.subject?.address;
+      const path = buildLocationPath(runId, address, nextTab);
+      window.history[options.history === "replace" ? "replaceState" : "pushState"]({}, "", path);
+      return payload;
+    } catch (err) {
+      console.error("Failed to load analysis:", runId, err);
+      return null;
     }
   }
 
-  async function refreshAnalyses(preferredRun = null, options = {}) {
+  async function refreshAnalyses() {
     const payload = await api("/api/analyses");
-    setAnalyses(payload);
-    await resolveRoute(options.route || parseLocationPath(window.location.pathname), payload, {
-      preferredRun,
-      history: options.history || "replace",
-    });
+    const filtered = payload.filter((a) => a.address);
+    setAnalyses(filtered);
+    return filtered;
   }
 
+  // Initial load
   useEffect(() => {
     function handlePopState() {
-      resolveRoute(parseLocationPath(window.location.pathname), null, { history: "replace" }).catch(() => null);
+      const route = parseLocationPath(window.location.pathname);
+      setViewMode(route.mode);
+      if (route.mode === "run" || route.mode === "address") {
+        const list = analysesRef.current;
+        let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
+        if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
+      }
     }
 
-    refreshAnalyses(null, { route: parseLocationPath(window.location.pathname), history: "replace" }).catch(() => null);
+    refreshAnalyses().then((list) => {
+      const route = parseLocationPath(window.location.pathname);
+      if (route.mode === "run" || route.mode === "address") {
+        let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
+        if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
+      }
+    }).catch(() => null);
+
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
+  // Job polling
   useEffect(() => {
-    if (!job?.job_id || job.status === "completed" || job.status === "failed") {
-      return undefined;
-    }
-    const timer = window.setInterval(async () => {
+    if (!job?.job_id) return undefined;
+    let stopped = false;
+    let timer;
+
+    async function poll() {
+      if (stopped) return;
       try {
-        const next = await api(`/api/jobs/${job.job_id}`);
-        setJob(next);
-        if (next.status === "completed" && next.run_name) {
-          await refreshAnalyses(next.run_name, { history: "push" });
+        const allJobs = await api("/api/jobs");
+        if (stopped) return;
+        const now = new Date();
+        const visible = allJobs.filter((j) =>
+          j.status === "queued" || j.status === "processing" ||
+          ((j.status === "completed" || j.status === "failed") && j.updated_at && now - new Date(j.updated_at) < 30000)
+        );
+        setActiveJobs(visible);
+        const parent = allJobs.find((j) => j.job_id === job.job_id);
+        if (parent) setJob(parent);
+        const stillRunning = allJobs.some((j) => j.status === "queued" || j.status === "processing");
+        if (!stillRunning && !doneTimerRef.current) {
+          doneTimerRef.current = setTimeout(async () => {
+            stopped = true; clearInterval(timer); setActiveJobs([]); doneTimerRef.current = null;
+            await refreshAnalyses();
+          }, 5000);
         }
-      } catch {
-        // ignore transient polling failures in the demo UI
-      }
-    }, 2500);
-    return () => window.clearInterval(timer);
-  }, [job]);
+      } catch {}
+    }
+
+    poll();
+    timer = setInterval(poll, 2000);
+    return () => { stopped = true; clearInterval(timer); if (doneTimerRef.current) { clearTimeout(doneTimerRef.current); doneTimerRef.current = null; } };
+  }, [job?.job_id]);
 
   async function submit(event) {
     event.preventDefault();
-    if (!form.target) {
-      return;
-    }
+    if (!form.target) return;
     setLoading(true);
     try {
       const target = form.target.trim();
       const payload = isAddress(target)
-        ? {
-            address: target,
-            name: form.name.trim() || null,
-          }
+        ? { address: target, name: form.name.trim() || null }
         : {
             company: target,
             chain: form.chain.trim() || null,
-            analyze_limit: Number.parseInt(form.analyzeLimit, 10) || 5,
+            discover_limit: Number.parseInt(form.discoverLimit, 10) || 25,
+            analyze_limit: form.analyzeAll ? Number.parseInt(form.discoverLimit, 10) || 25 : Number.parseInt(form.analyzeLimit, 10) || 5,
           };
-      const nextJob = await api("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const nextJob = await api("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       setJob(nextJob);
-      setForm((current) => ({ ...current, name: "" }));
-    } finally {
-      setLoading(false);
-    }
+      setFormOpen(false);
+      navigate("/monitor", "monitor");
+    } finally { setLoading(false); }
+  }
+
+  async function discoverMore(company) {
+    try {
+      const nextJob = await api("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ company, analyze_limit: 5 }) });
+      setJob(nextJob);
+    } catch (err) { console.error("Failed to start discovery:", err); }
   }
 
   function handleTabChange(tab) {
     const nextTab = normalizeTab(tab);
     setActiveTab(nextTab);
-    syncLocation(selectedRun, selectedDetail, nextTab, "push");
+    const address = selectedDetail?.address || selectedDetail?.contract_analysis?.subject?.address;
+    const path = buildLocationPath(selectedRun, address, nextTab);
+    window.history.pushState({}, "", path);
   }
 
-  const tabContent = {
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
+
+  const isDetail = viewMode === "run" || viewMode === "address";
+  const isMonitor = viewMode === "monitor";
+
+  const detailContent = selectedDetail ? {
     summary: <SummaryTab detail={selectedDetail} />,
     permissions: <PermissionsTab detail={selectedDetail} />,
     principals: <PrincipalsTab detail={selectedDetail} />,
     graph: <GraphTab detail={selectedDetail} />,
     dependencies: <DependencyGraphTab data={selectedDetail?.dependency_graph_viz} runName={selectedRun} />,
     raw: <RawTab detail={selectedDetail} />,
-  };
+  } : {};
 
   return (
-    <div className="shell">
-      <div className="sr-copy">Run an address or company and inspect the control surface</div>
-      <header className="hero">
-        <div className="hero-copy">
-          <p className="eyebrow">Protocol Security Assessment Tool</p>
-          <h1>Run an address or company and inspect the control surface</h1>
-          <p className="lede">
-            Submit a contract address for direct analysis, or a company name to run discovery first and then analyze the top discovered contracts.
-          </p>
+    <ErrorBoundary>
+      {/* Top nav */}
+      <nav className="top-nav">
+        <div className="top-nav-left">
+          <button className="top-nav-brand" onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>PSAT</button>
+          <button className={`top-nav-link ${!isDetail && !isMonitor ? "active" : ""}`} onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>Runs</button>
+          <button className={`top-nav-link ${isMonitor ? "active" : ""}`} onClick={() => navigate("/monitor", "monitor")}>Monitor</button>
         </div>
-        <form className="submit-card" onSubmit={submit}>
-          <label>
-            <span>Address or company</span>
-            <input
-              value={form.target}
-              onChange={(event) => setForm((current) => ({ ...current, target: event.target.value }))}
-              placeholder="0x... or etherfi"
-              required
-            />
-          </label>
-          <label>
-            <span>Run name</span>
-            <input
-              value={form.name}
-              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-              placeholder="Optional, address mode only"
-            />
-          </label>
-          <label>
-            <span>Discovery chain</span>
-            <input
-              value={form.chain}
-              onChange={(event) => setForm((current) => ({ ...current, chain: event.target.value }))}
-              placeholder="Optional, company mode only"
-            />
-          </label>
-          <label>
-            <span>Analyze top N</span>
-            <input
-              type="number"
-              min="1"
-              max="25"
-              value={form.analyzeLimit}
-              onChange={(event) => setForm((current) => ({ ...current, analyzeLimit: event.target.value }))}
-            />
-          </label>
-          <button type="submit" disabled={loading}>
-            {loading ? "Starting..." : "Run Analysis"}
+        <div className="top-nav-right">
+          <button className="top-nav-submit-btn" onClick={() => setFormOpen(!formOpen)}>
+            {formOpen ? "Close" : "+ New Analysis"}
           </button>
-        </form>
-      </header>
+        </div>
+      </nav>
 
-      <main className="layout">
-        <aside className="sidebar">
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Runs</h2>
-              <button className="ghost" onClick={() => refreshAnalyses()}>
-                Refresh
-              </button>
-            </div>
-            <div className="run-list">
-              {analyses.map((analysis) => (
-                <button
-                  className={`run-item ${analysis.run_name === selectedRun ? "active" : ""}`}
-                  key={analysis.run_name}
-                  onClick={() => loadAnalysis(analysis.run_name, { tab: activeTab, history: "push" })}
-                >
-                  <div className="run-name">{analysis.contract_name || analysis.run_name}</div>
-                  <div className="run-address">{analysis.address || "Unknown address"}</div>
-                  <div className="card-subtitle">{(analysis.summary?.standards || []).join(" · ") || "No standards yet"}</div>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Job Status</h2>
-            </div>
-            {!job ? (
-              <div className="job-status empty">No active job</div>
-            ) : (
-              <div className="job-status">
-                <div className={`job-pill ${job.status}`}>{job.status}</div>
-                <div>
-                  <strong>{job.stage || "pending"}</strong>
-                </div>
-                <div>{job.detail || ""}</div>
-                {job.run_name ? <div className="mono">{job.run_name}</div> : null}
-                {job.error ? <pre className="pre-wrap code-block small">{job.error}</pre> : null}
+      {/* Submit form dropdown */}
+      {formOpen && (
+        <div className="submit-dropdown">
+          <form className="submit-form" onSubmit={submit}>
+            <label><span>Address or company</span><input value={form.target} onChange={(e) => setForm((c) => ({ ...c, target: e.target.value }))} placeholder="0x... or etherfi" required /></label>
+            <label><span>Run name</span><input value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} placeholder="Optional" /></label>
+            <label><span>Chain</span><input value={form.chain} onChange={(e) => setForm((c) => ({ ...c, chain: e.target.value }))} placeholder="Optional" /></label>
+            <label><span>Discover</span><input type="number" min="1" max="200" value={form.discoverLimit} onChange={(e) => { const v = e.target.value; setForm((c) => ({ ...c, discoverLimit: v, analyzeLimit: c.analyzeAll ? v : c.analyzeLimit })); }} /></label>
+            <label>
+              <span>Analyze</span>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="number" min="1" max="200" value={form.analyzeAll ? form.discoverLimit : form.analyzeLimit} disabled={form.analyzeAll} onChange={(e) => setForm((c) => ({ ...c, analyzeLimit: e.target.value }))} style={{ flex: 1 }} />
+                <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>
+                  <input type="checkbox" checked={form.analyzeAll || false} onChange={(e) => setForm((c) => ({ ...c, analyzeAll: e.target.checked, analyzeLimit: e.target.checked ? c.discoverLimit : c.analyzeLimit }))} />All
+                </label>
               </div>
-            )}
-          </section>
-        </aside>
+            </label>
+            <button type="submit" disabled={loading}>{loading ? "Starting..." : "Run"}</button>
+          </form>
+        </div>
+      )}
 
-        <section className="content">
+      {/* Page content */}
+      {isMonitor && <PipelineDashboard />}
+
+      {isDetail && selectedDetail && (
+        <div className="page">
+          {/* Proxy banner */}
+          {(selectedDetail.proxy_address_display || selectedDetail.proxy_address) && (
+            <div className="proxy-banner">
+              Proxy at <span className="mono">{shortenAddress(selectedDetail.proxy_address_display || selectedDetail.proxy_address)}</span>
+              {selectedDetail.proxy_type_display && <span className="chip alt" style={{ marginLeft: 8, padding: "2px 8px", fontSize: 10 }}>{selectedDetail.proxy_type_display}</span>}
+              <span style={{ margin: "0 6px" }}>&rarr;</span>
+              Implementation at <span className="mono">{shortenAddress(selectedDetail.address)}</span>
+            </div>
+          )}
           <section className="panel">
             <div className="panel-header">
               <div>
-                <p className="eyebrow">Selected Run</p>
-                <h2>{selectedDetail?.contract_name || selectedRun || "Nothing selected"}</h2>
+                <p className="eyebrow">Contract Analysis</p>
+                <h2>{displayName(selectedDetail) || selectedRun || "Unknown"}</h2>
               </div>
               <div className="meta-stack">
-                <div className="mono">{selectedDetail?.address || "Unknown address"}</div>
-                <div>{selectedDetail?.summary?.control_model || selectedDetail?.contract_analysis?.summary?.control_model || ""}</div>
+                <div className="mono">{selectedDetail.proxy_address_display || selectedDetail.address || ""}</div>
+                <div>{selectedDetail.summary?.control_model || selectedDetail.contract_analysis?.summary?.control_model || ""}</div>
               </div>
             </div>
-
             <div className="tabs">
               {TABS.map((tab) => (
-                <button
-                  key={tab}
-                  className={`tab ${activeTab === tab ? "active" : ""}`}
-                  onClick={() => handleTabChange(tab)}
-                >
+                <button key={tab} className={`tab ${activeTab === tab ? "active" : ""}`} onClick={() => handleTabChange(tab)}>
                   {tab === "raw" ? "Raw JSON" : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
-
-            <div className="tab-panel active">{tabContent[activeTab]}</div>
+            <div className="tab-panel active">{detailContent[activeTab]}</div>
           </section>
-        </section>
-      </main>
-    </div>
+        </div>
+      )}
+
+      {!isDetail && !isMonitor && (
+        <RunsPage
+          analyses={analyses}
+          activeJobs={activeJobs}
+          onSelect={(runId) => loadAnalysis(runId, { history: "push" })}
+          onDiscoverMore={discoverMore}
+        />
+      )}
+    </ErrorBoundary>
   );
 }

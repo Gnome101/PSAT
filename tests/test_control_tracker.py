@@ -165,6 +165,7 @@ def test_build_control_snapshot_and_diff(monkeypatch):
                 "label": "owner",
                 "source": "owner",
                 "kind": "state_variable",
+                "read_spec": None,
                 "tracking_mode": "event_plus_state",
                 "event_watch": {
                     "transport": "wss_logs",
@@ -206,6 +207,18 @@ def test_build_control_snapshot_and_diff(monkeypatch):
         raise AssertionError(f"Unexpected RPC call: {method} {params}")
 
     monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
+    monkeypatch.setattr(
+        "services.resolution.controller_adapters._eth_call_raw",
+        lambda rpc_url, contract_address, calldata, block_tag="latest": (
+            "0x" + "00" * 12 + "22" * 20
+            if contract_address.lower() == "0x1111111111111111111111111111111111111111"
+            else "0x" + "00" * 12 + "33" * 20
+            if contract_address.lower() == "0x2222222222222222222222222222222222222222"
+            else "0x" + "44" * 32
+        ),
+    )
+    monkeypatch.setattr("services.resolution.controller_adapters._rpc_request", fake_rpc)
+    monkeypatch.setattr("services.resolution.controller_adapters._rpc_request", fake_rpc)
 
     first = build_control_snapshot(plan, "https://rpc.example")
     state["owner"] = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -245,6 +258,7 @@ def test_build_control_snapshot_handles_reverting_getter(monkeypatch):
                 "label": "owner",
                 "source": "owner",
                 "kind": "state_variable",
+                "read_spec": None,
                 "tracking_mode": "event_plus_state",
                 "event_watch": None,
                 "polling_fallback": {
@@ -275,6 +289,165 @@ def test_build_control_snapshot_handles_reverting_getter(monkeypatch):
     assert value["observed_via"] == "eth_call_error"
     assert value["resolved_type"] == "unknown"
     assert "execution reverted" in str(value["details"]["error"])
+
+
+def test_build_control_snapshot_expands_role_identifier_principals(monkeypatch):
+    plan: ControlTrackingPlan = {
+        "schema_version": "0.1",
+        "contract_address": "0x1111111111111111111111111111111111111111",
+        "contract_name": "Mock",
+        "tracking_strategy": "event_first_with_polling_fallback",
+        "tracked_controllers": [
+            {
+                "controller_id": "role_identifier:PAUSE_ROLE",
+                "label": "PAUSE_ROLE",
+                "source": "PAUSE_ROLE",
+                "kind": "role_identifier",
+                "read_spec": None,
+                "tracking_mode": "manual_review",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": "0x1111111111111111111111111111111111111111",
+                    "polling_sources": ["PAUSE_ROLE"],
+                    "cadence": "periodic_reconciliation",
+                    "notes": [],
+                },
+                "notes": [],
+            }
+        ],
+        "tracked_policies": [],
+    }
+
+    def fake_rpc(_rpc_url, method, _params):
+        if method == "eth_blockNumber":
+            return "0x10"
+        if method == "eth_call":
+            return "0x" + "11" * 32
+        raise AssertionError(f"Unexpected RPC call: {method}")
+
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
+    monkeypatch.setattr(
+        "services.resolution.tracking.expand_role_identifier_principals",
+        lambda rpc_url, contract_address, role_id, block_tag="latest": (
+            ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            {"adapter": "access_control_enumerable", "member_count": 1},
+        ),
+    )
+    monkeypatch.setattr(
+        "services.resolution.tracking.classify_resolved_address",
+        lambda rpc_url, address, block_tag="latest": ("eoa", {"address": address}),
+    )
+
+    snapshot = build_control_snapshot(plan, "https://rpc.example")
+    value = snapshot["controller_values"]["role_identifier:PAUSE_ROLE"]
+
+    assert value["value"] == "0x" + "11" * 32
+    assert value["observed_via"] == "eth_call+access_control_enumerable"
+    assert value["details"]["adapter"] == "access_control_enumerable"
+    assert value["details"]["resolved_principals"] == [
+        {
+            "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "resolved_type": "eoa",
+            "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        }
+    ]
+
+
+def test_build_control_snapshot_expands_aragon_acl_role_principals(monkeypatch):
+    from services.resolution.controller_adapters import SET_PERMISSION_TOPIC0
+
+    plan: ControlTrackingPlan = {
+        "schema_version": "0.1",
+        "contract_address": "0x1111111111111111111111111111111111111111",
+        "contract_name": "Voting",
+        "tracking_strategy": "event_first_with_polling_fallback",
+        "tracked_controllers": [
+            {
+                "controller_id": "role_identifier:CREATE_VOTES_ROLE",
+                "label": "CREATE_VOTES_ROLE",
+                "source": "CREATE_VOTES_ROLE",
+                "kind": "role_identifier",
+                "read_spec": None,
+                "tracking_mode": "manual_review",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": "0x1111111111111111111111111111111111111111",
+                    "polling_sources": ["CREATE_VOTES_ROLE"],
+                    "cadence": "periodic_reconciliation",
+                    "notes": [],
+                },
+                "notes": [],
+            }
+        ],
+        "tracked_policies": [],
+    }
+
+    def fake_rpc(_rpc_url, method, params):
+        if method == "eth_blockNumber":
+            return "0x10"
+        if method == "eth_call":
+            call = params[0]
+            target = call["to"].lower()
+            if target == "0x1111111111111111111111111111111111111111" and call["data"] == "0x01977c99":
+                return "0x" + "00" * 12 + "22" * 20
+            if target == "0x2222222222222222222222222222222222222222":
+                return "0x" + "00" * 12 + "33" * 20
+            return "0x" + "44" * 32
+        if method == "eth_getLogs":
+            topic0 = params[0]["topics"][0]
+            if topic0 != SET_PERMISSION_TOPIC0:
+                return []
+            return [
+                {
+                    "blockNumber": "0x1",
+                    "transactionIndex": "0x0",
+                    "logIndex": "0x0",
+                    "topics": [
+                        SET_PERMISSION_TOPIC0,
+                        "0x" + "0" * 24 + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "0x" + "0" * 24 + "1111111111111111111111111111111111111111",
+                        "0x" + "44" * 32,
+                    ],
+                    "data": "0x" + "0" * 63 + "1",
+                }
+            ]
+        raise AssertionError(f"Unexpected RPC call: {method} {params}")
+
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
+    monkeypatch.setattr("services.resolution.controller_adapters._rpc_request", fake_rpc)
+    monkeypatch.setattr(
+        "services.resolution.controller_adapters._code_start_block",
+        lambda rpc_url, address, block_tag="latest": 0,
+    )
+    monkeypatch.setattr(
+        "services.resolution.controller_adapters._eth_call_raw",
+        lambda rpc_url, contract_address, calldata, block_tag="latest": (
+            "0x" + "00" * 12 + "22" * 20
+            if contract_address.lower() == "0x1111111111111111111111111111111111111111"
+            else "0x" + "00" * 12 + "33" * 20
+            if contract_address.lower() == "0x2222222222222222222222222222222222222222"
+            else "0x" + "44" * 32
+        ),
+    )
+    monkeypatch.setattr(
+        "services.resolution.tracking.classify_resolved_address",
+        lambda rpc_url, address, block_tag="latest": ("eoa", {"address": address}),
+    )
+
+    snapshot = build_control_snapshot(plan, "https://rpc.example")
+    value = snapshot["controller_values"]["role_identifier:CREATE_VOTES_ROLE"]
+
+    assert value["observed_via"] == "eth_call+aragon_acl"
+    assert value["details"]["adapter"] == "aragon_acl"
+    assert value["details"]["kernel"] == "0x2222222222222222222222222222222222222222"
+    assert value["details"]["acl"] == "0x3333333333333333333333333333333333333333"
+    assert value["details"]["resolved_principals"] == [
+        {
+            "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "resolved_type": "eoa",
+            "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+        }
+    ]
 
 
 def test_classify_resolved_address_detects_safe(monkeypatch):

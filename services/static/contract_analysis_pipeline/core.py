@@ -8,6 +8,7 @@ from pathlib import Path
 from slither.slither import Slither
 
 from schemas.contract_analysis import AuditAlignment, ContractAnalysis, Summary
+from services.static.vyper_analysis import collect_vyper_contract_analysis, is_vyper_project
 
 from .graph import build_permission_graph
 from .shared import _load_json, _select_subject_contract
@@ -35,8 +36,11 @@ def analyze_contract(project_dir: Path) -> Path:
 
 def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
     """Collect a structured static analysis for the project."""
-    slither = Slither(str(project_dir))
     meta = _load_json(project_dir / "contract_meta.json", {})
+    if is_vyper_project(project_dir, meta):
+        return collect_vyper_contract_analysis(project_dir)
+
+    slither = Slither(str(project_dir))
     slither_output = _load_json(project_dir / "slither_results.json", {})
 
     subject_contract = _select_subject_contract(slither, meta.get("contract_name"))
@@ -44,10 +48,10 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
         raise RuntimeError(f"No analyzable contracts found in {project_dir}")
 
     permission_graph = build_permission_graph(subject_contract, project_dir)
-    controller_tracking = build_controller_tracking(subject_contract, project_dir, permission_graph)
-    policy_tracking = build_policy_tracking(subject_contract, project_dir, permission_graph)
     classification = _detect_contract_classification(subject_contract, project_dir)
     access_control = _detect_access_control(subject_contract, project_dir, permission_graph)
+    controller_tracking = build_controller_tracking(subject_contract, project_dir, permission_graph, access_control)
+    policy_tracking = build_policy_tracking(subject_contract, project_dir, permission_graph)
     upgradeability = _detect_upgradeability(subject_contract, project_dir)
     pausability = _detect_pausability(subject_contract, project_dir)
     timelock = _detect_timelock(subject_contract, project_dir, access_control["role_definitions"])

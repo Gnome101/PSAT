@@ -181,6 +181,33 @@ def _access_control_inferred_guards(function, project_dir: Path) -> list[str]:
     return [label for label in _infer_function_guards(function, project_dir) if _is_access_control_guard_label(label)]
 
 
+def _controller_refs_from_inferred_guards(guards: list[str]) -> list[str]:
+    refs = []
+    for guard in guards:
+        normalized = _normalize_guard_label(guard)
+        lowered = guard.lower()
+        if _is_access_control_guard_label(normalized):
+            preserve_explicit = (
+                normalized != guard
+                and not lowered.startswith(("only", "_"))
+                and (
+                    (
+                        normalized in {"owner", "authority", "admin", "timelock", "governance", "guardian", "pauser"}
+                        and ("_" in guard or any(char.isupper() for char in guard))
+                    )
+                    or (
+                        normalized == "role"
+                        and any(token in lowered for token in ("registry", "controller"))
+                        and _state_variable_looks_like_auth(guard)
+                    )
+                )
+            )
+            if preserve_explicit:
+                refs.append(guard)
+            refs.append(normalized)
+    return _dedupe_strings(refs)
+
+
 def _looks_like_control_function(function, effects: list[str]) -> bool:
     if any(effect in CONTROL_EFFECTS for effect in effects):
         return True
@@ -202,6 +229,15 @@ def _looks_like_control_function(function, effects: list[str]) -> bool:
             "cancel",
         )
     )
+
+
+def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]:
+    refs: list[str] = []
+    for target in effect_targets:
+        lowered = str(target).lower()
+        if ".onlyprotocolupgrader" in lowered and "roleregistry" in lowered:
+            refs.append("roleRegistry")
+    return _dedupe_strings(refs)
 
 
 def _has_graph_permission_evidence(graph_entry: dict[str, object] | None) -> bool:
@@ -423,8 +459,13 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
         function_signature = getattr(function, "full_name", getattr(function, "name", ""))
         graph_entry = privileged_functions_by_signature.get(function_signature)
         inferred_guards = _access_control_inferred_guards(function, project_dir)
+        inferred_controller_refs = _controller_refs_from_inferred_guards(inferred_guards)
+        graph_guard_controller_refs = _controller_refs_from_inferred_guards(
+            graph_entry["guards"] if graph_entry else []
+        )
         effects = graph_entry["effects"] if graph_entry else _function_effects(function)
         effect_targets = _effect_targets(function, graph_entry, effects)
+        target_controller_refs = _controller_refs_from_effect_targets(effect_targets)
         effect_labels = _effect_labels(function, effects, effect_targets, graph_entry)
         action_summary = _action_summary(effect_labels, effect_targets)
         if not _has_graph_permission_evidence(graph_entry) and not inferred_guards:
@@ -438,7 +479,12 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
                 "visibility": getattr(function, "visibility", "unknown"),
                 "guards": guards,
                 "guard_kinds": graph_entry["guard_kinds"] if graph_entry else [],
-                "controller_refs": graph_entry["controller_refs"] if graph_entry else [],
+                "controller_refs": _dedupe_strings(
+                    (graph_entry["controller_refs"] if graph_entry else [])
+                    + graph_guard_controller_refs
+                    + inferred_controller_refs
+                    + target_controller_refs
+                ),
                 "sink_ids": graph_entry["sink_ids"] if graph_entry else [],
                 "effects": effects,
                 "effect_targets": effect_targets,

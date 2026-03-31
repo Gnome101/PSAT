@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import os
 import re
 import sys
 from collections import deque
@@ -19,6 +21,7 @@ if __package__ in {None, ""}:
 from schemas.control_tracking import ControlSnapshot
 from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEdge, ResolvedGraphNode
 from services.discovery.fetch import CONTRACTS_DIR, fetch, scaffold
+from services.policy.effective_permissions import write_effective_permissions_from_files
 from services.static import analyze, analyze_contract
 
 from .tracking import (
@@ -29,7 +32,10 @@ from .tracking import (
 )
 from .tracking_plan import write_control_tracking_plan
 
+logger = logging.getLogger(__name__)
+
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
+DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
 
 class LoadedArtifacts(TypedDict):
@@ -72,6 +78,34 @@ def _load_effective_permissions(project_dir: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     return _load_json(path)
+
+
+def _ensure_effective_permissions(
+    analysis_path: Path,
+    snapshot_path: Path,
+    *,
+    force: bool = False,
+) -> Path:
+    output_path = analysis_path.with_name("effective_permissions.json")
+    if force or not output_path.exists():
+        write_effective_permissions_from_files(
+            analysis_path,
+            target_snapshot_path=snapshot_path,
+            output_path=output_path,
+            principal_resolution={"status": "no_authority", "reason": "No non-zero authority found"},
+        )
+    return output_path
+
+
+def _contract_name_for_address(address: str) -> str | None:
+    try:
+        result = fetch(address)
+    except Exception:
+        return None
+    if not isinstance(result, dict):
+        return None
+    name = str(result.get("ContractName", "")).strip()
+    return name or None
 
 
 def _address_node_id(address: str) -> str:
@@ -124,19 +158,57 @@ def _materialize_contract_artifacts(
     workspace_prefix: str,
     refresh_snapshots: bool,
 ) -> LoadedArtifacts:
-    result = fetch(address)
+    # Check if this address is a proxy — if so, analyze the implementation instead
+    effective_address = address
+    snapshot_address = address  # address to read storage from
+    try:
+        from services.discovery.classifier import classify_single
+
+        classification = classify_single(address, rpc_url)
+        if classification.get("type") == "proxy":
+            impl = classification.get("implementation")
+            if impl:
+                logger.info("Recursive resolve: %s is a proxy, using impl %s", address, impl)
+                effective_address = impl
+                snapshot_address = address  # read storage from proxy, not impl
+    except Exception as exc:
+        logger.debug("Recursive resolve: proxy check failed for %s: %s", address, exc)
+
+    result = fetch(effective_address)
     contract_name = str(result.get("ContractName", "Contract"))
-    project_name = _workspace_name(contract_name, address, workspace_prefix)
+    project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
     project_dir = CONTRACTS_DIR / project_name
     analysis_path = project_dir / "contract_analysis.json"
 
-    if not analysis_path.exists():
-        scaffold(address, project_name, result)
-        analyze(project_dir, contract_name, address)
+    if refresh_snapshots or not analysis_path.exists():
+        if not project_dir.exists():
+            scaffold(effective_address, project_name, result)
+        try:
+            analyze(project_dir, contract_name, effective_address)
+        except Exception as exc:
+            logger.warning(
+                "Recursive resolve: Slither CLI failed for %s (%s), continuing with structured analysis only: %s",
+                contract_name,
+                effective_address,
+                exc,
+            )
         analysis_path = analyze_contract(project_dir)
         write_control_tracking_plan(analysis_path, project_dir / "control_tracking_plan.json")
 
-    return _load_or_build_artifacts(analysis_path, rpc_url, refresh_snapshots=refresh_snapshots)
+    # If analyzing through a proxy, override the address in the tracking plan so
+    # snapshot reads go to the proxy (where storage lives)
+    if snapshot_address != effective_address:
+        plan_path = project_dir / "control_tracking_plan.json"
+        if plan_path.exists():
+            import json
+
+            plan = json.loads(plan_path.read_text())
+            plan["contract_address"] = snapshot_address
+            plan_path.write_text(json.dumps(plan, indent=2) + "\n")
+
+    loaded = _load_or_build_artifacts(analysis_path, rpc_url, refresh_snapshots=refresh_snapshots)
+    _ensure_effective_permissions(loaded["analysis_path"], loaded["snapshot_path"], force=refresh_snapshots)
+    return loaded
 
 
 def _ensure_node(
@@ -193,10 +265,19 @@ def _ensure_node(
 
 
 def _edge_key(edge: ResolvedGraphEdge) -> tuple:
+    relation = edge["relation"]
+    # Nested holder edges often appear via multiple upstream controller paths; keep one edge and merge notes.
+    if relation in {"safe_owner", "timelock_owner", "proxy_admin_owner"}:
+        return (
+            edge["from_id"],
+            edge["to_id"],
+            relation,
+            edge.get("label"),
+        )
     return (
         edge["from_id"],
         edge["to_id"],
-        edge["relation"],
+        relation,
         edge.get("label"),
         edge.get("source_controller_id"),
     )
@@ -267,6 +348,37 @@ def _role_principals_from_effective_permissions(effective_permissions: dict[str,
                 merged_details.update(details)
                 payload["details"] = merged_details
 
+        for controller in function.get("controllers", []):
+            if not isinstance(controller, dict):
+                continue
+            controller_label = str(controller.get("label") or controller.get("source") or "controller")
+            for principal in controller.get("principals", []):
+                if not isinstance(principal, dict):
+                    continue
+                address = str(principal.get("address", "")).lower()
+                if not address.startswith("0x"):
+                    continue
+                details_raw = principal.get("details", {})
+                details = dict(details_raw) if isinstance(details_raw, dict) else {}
+                payload = principals.setdefault(
+                    address,
+                    {
+                        "address": address,
+                        "resolved_type": str(principal.get("resolved_type", "unknown")),
+                        "details": details,
+                        "roles": set(),
+                        "functions": set(),
+                    },
+                )
+                if function_signature:
+                    payload["functions"].add(function_signature)
+                if payload.get("resolved_type") in {None, "", "unknown"} and principal.get("resolved_type"):
+                    payload["resolved_type"] = str(principal.get("resolved_type"))
+                merged_details = dict(payload["details"])
+                merged_details.update(details)
+                merged_details.setdefault("controller_label", controller_label)
+                payload["details"] = merged_details
+
     serialized: list[RolePrincipal] = []
     for payload in principals.values():
         serialized.append(
@@ -335,7 +447,7 @@ def resolve_control_graph(
     root_analysis_path: Path,
     *,
     rpc_url: str,
-    max_depth: int = 3,
+    max_depth: int = DEFAULT_RECURSION_MAX_DEPTH,
     workspace_prefix: str = "recursive",
     refresh_snapshots: bool = True,
 ) -> ResolvedControlGraph:
@@ -374,12 +486,34 @@ def resolve_control_graph(
                 refresh_snapshots=refresh_snapshots,
             )
         else:
-            artifacts = _materialize_contract_artifacts(
-                address,
-                rpc_url,
-                workspace_prefix=workspace_prefix,
-                refresh_snapshots=refresh_snapshots,
-            )
+            try:
+                artifacts = _materialize_contract_artifacts(
+                    address,
+                    rpc_url,
+                    workspace_prefix=workspace_prefix,
+                    refresh_snapshots=refresh_snapshots,
+                )
+            except Exception as exc:
+                contract_name = _contract_name_for_address(address)
+                logger.warning(
+                    "Recursive resolve: failed to materialize nested contract %s at depth %s: %s",
+                    address,
+                    depth,
+                    exc,
+                )
+                _ensure_node(
+                    nodes,
+                    address=address,
+                    resolved_type="contract",
+                    label=contract_name or address,
+                    depth=depth,
+                    node_type="contract",
+                    analyzed=False,
+                    contract_name=contract_name,
+                    details={"address": address, "materialize_error": str(exc)},
+                )
+                processed.add(address)
+                continue
 
         processed.add(address)
         analysis = artifacts["analysis"]
@@ -406,7 +540,7 @@ def resolve_control_graph(
 
         for controller_id, controller_value in snapshot.get("controller_values", {}).items():
             controller_address = str(controller_value.get("value", "")).lower()
-            if not controller_address.startswith("0x"):
+            if not controller_address.startswith("0x") or len(controller_address) != 42:
                 continue
             resolved_type = str(controller_value.get("resolved_type", "unknown"))
             details = dict(controller_value.get("details", {}))
@@ -452,6 +586,8 @@ def resolve_control_graph(
 
         for principal_value in _role_principals_from_effective_permissions(effective_permissions or {}):
             principal_address = str(principal_value["address"]).lower()
+            if principal_address == address:
+                continue
             resolved_type = str(principal_value.get("resolved_type", "unknown"))
             details = dict(principal_value["details"])
             if resolved_type == "unknown":
@@ -513,7 +649,7 @@ def write_resolved_control_graph(
     *,
     rpc_url: str,
     output_path: Path | None = None,
-    max_depth: int = 3,
+    max_depth: int = DEFAULT_RECURSION_MAX_DEPTH,
     workspace_prefix: str = "recursive",
     refresh_snapshots: bool = True,
 ) -> Path:
@@ -535,7 +671,12 @@ def main() -> None:
     parser.add_argument("analysis", help="Path to root contract_analysis.json")
     parser.add_argument("--rpc", required=True, help="HTTP RPC URL for state reads")
     parser.add_argument("--out", help="Optional output path for resolved_control_graph.json")
-    parser.add_argument("--max-depth", type=int, default=3, help="Maximum recursion depth (default: 3)")
+    parser.add_argument(
+        "--max-depth",
+        type=int,
+        default=DEFAULT_RECURSION_MAX_DEPTH,
+        help=f"Maximum recursion depth (default: {DEFAULT_RECURSION_MAX_DEPTH})",
+    )
     parser.add_argument(
         "--workspace-prefix",
         default="recursive",

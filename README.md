@@ -49,10 +49,9 @@ Some contracts also produce:
 Common env vars:
 
 - `ETHERSCAN_API_KEY`
-- `ETH_RPC`
-- `PSAT_DEMO_RPC_URL`
-- `ENVIO_API_TOKEN`
-- `PSAT_HYPERSYNC_URL`
+- `ETH_RPC` — Ethereum JSON-RPC endpoint
+- `ENVIO_API_TOKEN` — for HyperSync policy backfill
+- `DATABASE_URL` — PostgreSQL connection string
 - `NVIDIA_API_KEY`
 - `TAVILY_API_KEY`
 - `OPEN_ROUTER_KEY`
@@ -62,7 +61,7 @@ Common env vars:
 Run the FastAPI demo server:
 
 ```bash
-uv run uvicorn web_demo:app --host 127.0.0.1 --port 8000
+uv run uvicorn api:app --host 127.0.0.1 --port 8000
 ```
 
 Backend/API URL:

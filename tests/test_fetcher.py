@@ -88,7 +88,7 @@ def test_scaffold_writes_standard_json_layout_and_metadata(tmp_path, monkeypatch
 
     foundry_toml = (project_dir / "foundry.toml").read_text()
     assert 'src = "src"' in foundry_toml
-    assert 'solc_version = "0.8.21"' in foundry_toml
+    assert 'solc_version = "0.8.24"' in foundry_toml
 
 
 def test_scaffold_flat_source_uses_single_src_file_and_no_remappings(tmp_path, monkeypatch):
@@ -114,3 +114,34 @@ def test_scaffold_flat_source_uses_single_src_file_and_no_remappings(tmp_path, m
     assert meta["source_format"] == "flat"
     assert meta["source_file_count"] == 1
     assert meta["remappings"] == []
+
+
+def test_parse_sources_uses_vyper_extension_for_flat_source():
+    result = {
+        "ContractName": "GateSeal",
+        "CompilerVersion": "vyper:0.3.7",
+        "SourceCode": "# @version 0.3.7\n@external\ndef ping():\n    pass\n",
+    }
+
+    sources = fetcher.parse_sources(result)
+    assert sorted(sources) == ["src/GateSeal.vy"]
+
+
+def test_scaffold_records_vyper_language_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(fetcher, "CONTRACTS_DIR", tmp_path)
+
+    result = {
+        "ContractName": "GateSeal",
+        "CompilerVersion": "vyper:0.3.7",
+        "OptimizationUsed": "0",
+        "Runs": "0",
+        "EVMVersion": "",
+        "LicenseType": "MIT",
+        "SourceCode": "# @version 0.3.7\n@external\ndef ping():\n    pass\n",
+    }
+
+    project_dir = fetcher.scaffold("0x1234", "GateSeal", result)
+    assert (project_dir / "src/GateSeal.vy").exists()
+
+    meta = json.loads((project_dir / "contract_meta.json").read_text())
+    assert meta["language"] == "vyper"

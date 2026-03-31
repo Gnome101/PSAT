@@ -324,6 +324,7 @@ export default function DependencyGraphTab({ data: dataProp, runName }) {
         <span className="chip alt">{graph.edges.length} edges</span>
         {typeCount("proxy") > 0 && <span className="chip alt">{typeCount("proxy")} proxies</span>}
         {typeCount("factory") > 0 && <span className="chip alt">{typeCount("factory")} factories</span>}
+        {typeCount("created") > 0 && <span className="chip alt">{typeCount("created")} created</span>}
         {typeCount("library") > 0 && <span className="chip alt">{typeCount("library")} libraries</span>}
       </div>
       <div className="graph-layout">
@@ -335,6 +336,7 @@ export default function DependencyGraphTab({ data: dataProp, runName }) {
             <span className="chip" style={{ background: "#dcfce7", borderColor: "#16a34a" }}>Implementation</span>
             <span className="chip" style={{ background: "#eff6ff", borderColor: "#2563eb" }}>Library</span>
             <span className="chip" style={{ background: "#fff1f2", borderColor: "#e11d48" }}>Factory</span>
+            <span className="chip" style={{ background: "#fdf2f8", borderColor: "#db2777" }}>Created</span>
             <span className="chip" style={{ background: "#f1f5f9", borderColor: "#64748b" }}>Regular</span>
           </div>
           <div ref={stageRef} className="graph-stage svg-stage">
