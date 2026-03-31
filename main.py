@@ -31,9 +31,9 @@ from pathlib import Path
 from services.demo.runner import run_protocol_analysis
 from services.discovery import fetch, find_dependencies, find_dynamic_dependencies, scaffold, search_protocol_inventory
 from services.discovery.classifier import classify_contracts
-from services.discovery.upgrade_history import write_upgrade_history
 from services.discovery.dependency_graph_builder import write_dependency_visualization
 from services.discovery.static_dependencies import normalize_address, resolve_rpc_for_address
+from services.discovery.upgrade_history import write_upgrade_history
 from services.resolution import write_control_tracking_plan
 from services.static import analyze, analyze_contract, analyze_with_llm
 from utils.etherscan import get_contract_info
@@ -332,7 +332,9 @@ def process(
                 uh_path = write_upgrade_history(deps_path)
                 if uh_path:
                     uh_data = json.loads(uh_path.read_text())
-                    print(f"         Found {uh_data['total_upgrades']} upgrade(s) across {len(uh_data['proxies'])} prox(ies)")
+                    n_upgrades = uh_data["total_upgrades"]
+                    n_proxies = len(uh_data["proxies"])
+                    print(f"         Found {n_upgrades} upgrade(s) across {n_proxies} prox(ies)")
                     print(f"         Output: {uh_path}")
                 else:
                     print("         No proxy contracts found — skipped")

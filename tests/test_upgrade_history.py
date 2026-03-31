@@ -21,7 +21,9 @@ def _admin_data(old: str, new: str) -> str:
     return "0x" + "0" * 24 + old[2:] + "0" * 24 + new[2:]
 
 
-def _make_log(address, topic0, topic1=None, data="0x", block="0x1", tx="0xaaa", log_index="0x0", timestamp="0x65a00000"):
+def _make_log(
+    address, topic0, topic1=None, data="0x", block="0x1", tx="0xaaa", log_index="0x0", timestamp="0x65a00000"
+):
     log = {
         "address": address,
         "topics": [topic0] + ([topic1] if topic1 else []),
@@ -44,6 +46,7 @@ def _write_deps(tmp_path, target, deps_dict):
 def _mock_no_enrichment(monkeypatch):
     """Stub out get_contract_info so no real Etherscan calls are made."""
     from utils import etherscan
+
     monkeypatch.setattr(etherscan, "get_contract_info", lambda addr: (None, {}))
 
 
@@ -58,19 +61,28 @@ class TestParseUpgradeLog:
     def test_all_event_types(self):
         """Each of the three EIP-1967 event types parses correctly."""
         upgraded_log = _make_log(
-            ADDR(1), uh.UPGRADED_TOPIC0, _topic_for(ADDR(42)),
-            block="0xa", tx="0xabc", log_index="0x1",
+            ADDR(1),
+            uh.UPGRADED_TOPIC0,
+            _topic_for(ADDR(42)),
+            block="0xa",
+            tx="0xabc",
+            log_index="0x1",
         )
         admin_log = _make_log(
-            ADDR(1), uh.ADMIN_CHANGED_TOPIC0,
-            data=_admin_data(ADDR(1), ADDR(2)), block="0x14",
+            ADDR(1),
+            uh.ADMIN_CHANGED_TOPIC0,
+            data=_admin_data(ADDR(1), ADDR(2)),
+            block="0x14",
         )
         beacon_log = _make_log(
-            ADDR(1), uh.BEACON_UPGRADED_TOPIC0, _topic_for(ADDR(99)),
+            ADDR(1),
+            uh.BEACON_UPGRADED_TOPIC0,
+            _topic_for(ADDR(99)),
             block="0x1e",
         )
 
         upgraded = uh.parse_upgrade_log(upgraded_log)
+        assert upgraded is not None
         assert upgraded["event_type"] == "upgraded"
         assert upgraded["implementation"] == ADDR(42)
         assert upgraded["block_number"] == 10
@@ -80,11 +92,13 @@ class TestParseUpgradeLog:
         assert upgraded["_emitter"] == ADDR(1)
 
         admin = uh.parse_upgrade_log(admin_log)
+        assert admin is not None
         assert admin["event_type"] == "admin_changed"
         assert admin["previous_admin"] == ADDR(1)
         assert admin["new_admin"] == ADDR(2)
 
         beacon = uh.parse_upgrade_log(beacon_log)
+        assert beacon is not None
         assert beacon["event_type"] == "beacon_upgraded"
         assert beacon["beacon"] == ADDR(99)
 
@@ -95,15 +109,13 @@ class TestParseUpgradeLog:
 
     def test_partial_data(self):
         """Upgraded without topic1 and admin_changed with short data still parse."""
-        upgraded_no_impl = uh.parse_upgrade_log(
-            _make_log(ADDR(1), uh.UPGRADED_TOPIC0)
-        )
+        upgraded_no_impl = uh.parse_upgrade_log(_make_log(ADDR(1), uh.UPGRADED_TOPIC0))
+        assert upgraded_no_impl is not None
         assert upgraded_no_impl["event_type"] == "upgraded"
         assert "implementation" not in upgraded_no_impl
 
-        admin_short_data = uh.parse_upgrade_log(
-            _make_log(ADDR(1), uh.ADMIN_CHANGED_TOPIC0, data="0x00")
-        )
+        admin_short_data = uh.parse_upgrade_log(_make_log(ADDR(1), uh.ADMIN_CHANGED_TOPIC0, data="0x00"))
+        assert admin_short_data is not None
         assert admin_short_data["event_type"] == "admin_changed"
         assert "previous_admin" not in admin_short_data
 
@@ -119,7 +131,9 @@ class TestParseUpgradeLog:
     def test_bare_hex_log_index(self):
         """Etherscan sometimes returns '0x' for logIndex — must not crash."""
         log = _make_log(
-            ADDR(1), uh.UPGRADED_TOPIC0, _topic_for(ADDR(42)),
+            ADDR(1),
+            uh.UPGRADED_TOPIC0,
+            _topic_for(ADDR(42)),
             log_index="0x",
         )
         event = uh.parse_upgrade_log(log)
@@ -132,6 +146,7 @@ class TestParseUpgradeLog:
         data = "0x" + "0" * 24 + impl[2:]
         log = _make_log(ADDR(1), uh.UPGRADED_TOPIC0, data=data)
         event = uh.parse_upgrade_log(log)
+        assert event is not None
         assert event["event_type"] == "upgraded"
         assert event["implementation"] == impl
 
@@ -141,6 +156,7 @@ class TestParseUpgradeLog:
         data = "0x" + "0" * 24 + beacon[2:]
         log = _make_log(ADDR(1), uh.BEACON_UPGRADED_TOPIC0, data=data)
         event = uh.parse_upgrade_log(log)
+        assert event is not None
         assert event["event_type"] == "beacon_upgraded"
         assert event["beacon"] == beacon
 
@@ -161,6 +177,7 @@ class TestParseUpgradeLog:
             "timeStamp": "0x65a00000",
         }
         event = uh.parse_upgrade_log(log)
+        assert event is not None
         assert event["event_type"] == "admin_changed"
         assert event["previous_admin"] == old_admin
         assert event["new_admin"] == new_admin
@@ -195,10 +212,14 @@ class TestBuildUpgradeHistory:
     def test_no_proxies_returns_empty_schema(self, tmp_path):
         """When dependencies.json has no proxy entries, output is a valid
         empty schema with zero upgrades."""
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            ADDR(1): {"type": "regular"},
-            ADDR(2): {"type": "library"},
-        })
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                ADDR(1): {"type": "regular"},
+                ADDR(2): {"type": "library"},
+            },
+        )
         result = uh.build_upgrade_history(deps_path)
         assert result["schema_version"] == "0.1"
         assert result["target_address"] == ADDR(0)
@@ -210,9 +231,13 @@ class TestBuildUpgradeHistory:
         the output with its current implementation as the sole timeline entry."""
         proxy = ADDR(1)
         impl = ADDR(10)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": impl},
-        })
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": impl},
+            },
+        )
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t: [])
         _mock_no_enrichment(monkeypatch)
 
@@ -234,27 +259,34 @@ class TestBuildUpgradeHistory:
         timestamps, block ranges, and enriched contract names."""
         proxy = ADDR(1)
         impl_v1, impl_v2 = ADDR(10), ADDR(11)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {
-                "type": "proxy",
-                "proxy_type": "eip1967",
-                "implementation": impl_v2,
-                "contract_name": "MyProxy",
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {
+                    "type": "proxy",
+                    "proxy_type": "eip1967",
+                    "implementation": impl_v2,
+                    "contract_name": "MyProxy",
+                },
             },
-        })
+        )
 
         def mock_fetch(address, topic0):
             if topic0 != uh.UPGRADED_TOPIC0:
                 return []
             return [
-                _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(impl_v1),
-                          block="0x64", tx="0xa", timestamp="0x65a00000"),
-                _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(impl_v2),
-                          block="0xc8", tx="0xb", timestamp="0x65b00000"),
+                _make_log(
+                    proxy, uh.UPGRADED_TOPIC0, _topic_for(impl_v1), block="0x64", tx="0xa", timestamp="0x65a00000"
+                ),
+                _make_log(
+                    proxy, uh.UPGRADED_TOPIC0, _topic_for(impl_v2), block="0xc8", tx="0xb", timestamp="0x65b00000"
+                ),
             ]
 
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
         from utils import etherscan
+
         monkeypatch.setattr(etherscan, "get_contract_info", lambda addr: ("ImplContract", {}))
 
         result = uh.build_upgrade_history(deps_path)
@@ -269,16 +301,16 @@ class TestBuildUpgradeHistory:
         assert h["current_implementation"] == impl_v2
         assert h["upgrade_count"] == 2
         assert h["first_upgrade_block"] == 0x64
-        assert h["last_upgrade_block"] == 0xc8
+        assert h["last_upgrade_block"] == 0xC8
 
         # Implementation timeline
         impls = h["implementations"]
         assert len(impls) == 2
         assert impls[0]["address"] == impl_v1
         assert impls[0]["block_introduced"] == 0x64
-        assert impls[0]["timestamp_introduced"] == 0x65a00000
-        assert impls[0]["block_replaced"] == 0xc8
-        assert impls[0]["timestamp_replaced"] == 0x65b00000
+        assert impls[0]["timestamp_introduced"] == 0x65A00000
+        assert impls[0]["block_replaced"] == 0xC8
+        assert impls[0]["timestamp_replaced"] == 0x65B00000
         assert "block_replaced" not in impls[1]
 
         # Contract name enrichment happened
@@ -294,10 +326,14 @@ class TestBuildUpgradeHistory:
     def test_multiple_proxies_events_grouped_correctly(self, monkeypatch, tmp_path):
         """Events from multiple proxies are grouped to the correct proxy entry."""
         proxy_a, proxy_b = ADDR(1), ADDR(2)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
-            proxy_b: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(21)},
-        })
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
+                proxy_b: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(21)},
+            },
+        )
 
         def mock_fetch(address, topic0):
             if topic0 != uh.UPGRADED_TOPIC0:
@@ -326,16 +362,23 @@ class TestBuildUpgradeHistory:
         """AdminChanged events appear in the events list alongside upgrades,
         but don't count as upgrades and don't affect the implementation timeline."""
         proxy = ADDR(1)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
-        })
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
+            },
+        )
 
         def mock_fetch(address, topic0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [_make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(ADDR(10)), block="0x64", tx="0xa")]
             if topic0 == uh.ADMIN_CHANGED_TOPIC0:
-                return [_make_log(proxy, uh.ADMIN_CHANGED_TOPIC0,
-                                  data=_admin_data(ADDR(50), ADDR(51)), block="0x65", tx="0xb")]
+                return [
+                    _make_log(
+                        proxy, uh.ADMIN_CHANGED_TOPIC0, data=_admin_data(ADDR(50), ADDR(51)), block="0x65", tx="0xb"
+                    )
+                ]
             return []
 
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
@@ -359,13 +402,17 @@ class TestBuildUpgradeHistory:
         reuses the known name without calling Etherscan."""
         proxy = ADDR(1)
         impl = ADDR(10)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {
-                "type": "proxy",
-                "proxy_type": "eip1967",
-                "implementation": {"address": impl, "contract_name": "KnownImpl"},
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {
+                    "type": "proxy",
+                    "proxy_type": "eip1967",
+                    "implementation": {"address": impl, "contract_name": "KnownImpl"},
+                },
             },
-        })
+        )
 
         def mock_fetch(address, topic0):
             if topic0 == uh.UPGRADED_TOPIC0:
@@ -374,10 +421,13 @@ class TestBuildUpgradeHistory:
 
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
         from utils import etherscan
+
         # Should NOT be called for the known impl
-        monkeypatch.setattr(etherscan, "get_contract_info", lambda addr: pytest.fail(
-            f"get_contract_info should not be called for known address {addr}"
-        ))
+        monkeypatch.setattr(
+            etherscan,
+            "get_contract_info",
+            lambda addr: pytest.fail(f"get_contract_info should not be called for known address {addr}"),
+        )
 
         result = uh.build_upgrade_history(deps_path)
         assert result["proxies"][proxy]["implementations"][0]["contract_name"] == "KnownImpl"
@@ -388,13 +438,17 @@ class TestBuildUpgradeHistory:
         proxy = ADDR(1)
         old_impl, new_impl = ADDR(10), ADDR(11)
         # Only new_impl is named in deps
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {
-                "type": "proxy",
-                "proxy_type": "eip1967",
-                "implementation": {"address": new_impl, "contract_name": "ImplV2"},
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {
+                    "type": "proxy",
+                    "proxy_type": "eip1967",
+                    "implementation": {"address": new_impl, "contract_name": "ImplV2"},
+                },
             },
-        })
+        )
 
         def mock_fetch(address, topic0):
             if topic0 == uh.UPGRADED_TOPIC0:
@@ -406,22 +460,27 @@ class TestBuildUpgradeHistory:
 
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
         from utils import etherscan
+
         monkeypatch.setattr(etherscan, "get_contract_info", lambda addr: ("ImplV1", {}))
 
         result = uh.build_upgrade_history(deps_path)
         impls = result["proxies"][proxy]["implementations"]
-        assert impls[0]["contract_name"] == "ImplV1"   # fetched via etherscan
-        assert impls[1]["contract_name"] == "ImplV2"   # reused from deps
+        assert impls[0]["contract_name"] == "ImplV1"  # fetched via etherscan
+        assert impls[1]["contract_name"] == "ImplV2"  # reused from deps
 
     def test_enrichment_deduplicates_calls(self, monkeypatch, tmp_path):
         """get_contract_info is called at most once per unique unknown address,
         even when the same implementation appears in multiple proxies."""
         proxy_a, proxy_b = ADDR(1), ADDR(2)
         shared_impl = ADDR(10)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": shared_impl},
-            proxy_b: {"type": "proxy", "proxy_type": "eip1967", "implementation": shared_impl},
-        })
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": shared_impl},
+                proxy_b: {"type": "proxy", "proxy_type": "eip1967", "implementation": shared_impl},
+            },
+        )
 
         def mock_fetch(address, topic0):
             if topic0 == uh.UPGRADED_TOPIC0:
@@ -430,10 +489,13 @@ class TestBuildUpgradeHistory:
 
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
         from utils import etherscan
+
         call_count = [0]
+
         def counting_get_info(addr):
             call_count[0] += 1
             return ("SharedImpl", {})
+
         monkeypatch.setattr(etherscan, "get_contract_info", counting_get_info)
 
         result = uh.build_upgrade_history(deps_path)
@@ -448,13 +510,17 @@ class TestBuildUpgradeHistory:
         already present in dependencies.json."""
         proxy = ADDR(1)
         old_impl, new_impl = ADDR(10), ADDR(11)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {
-                "type": "proxy",
-                "proxy_type": "eip1967",
-                "implementation": {"address": new_impl, "contract_name": "ImplV2"},
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {
+                    "type": "proxy",
+                    "proxy_type": "eip1967",
+                    "implementation": {"address": new_impl, "contract_name": "ImplV2"},
+                },
             },
-        })
+        )
 
         def mock_fetch(address, topic0):
             if topic0 == uh.UPGRADED_TOPIC0:
@@ -466,23 +532,30 @@ class TestBuildUpgradeHistory:
 
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
         from utils import etherscan
-        monkeypatch.setattr(etherscan, "get_contract_info", lambda addr: pytest.fail(
-            "get_contract_info should not be called when enrich=False"
-        ))
+
+        monkeypatch.setattr(
+            etherscan,
+            "get_contract_info",
+            lambda addr: pytest.fail("get_contract_info should not be called when enrich=False"),
+        )
 
         result = uh.build_upgrade_history(deps_path, enrich=False)
         impls = result["proxies"][proxy]["implementations"]
         assert impls[1].get("contract_name") == "ImplV2"  # known name applied
-        assert "contract_name" not in impls[0]              # unknown, not fetched
+        assert "contract_name" not in impls[0]  # unknown, not fetched
 
     def test_non_indexed_upgraded_in_full_pipeline(self, monkeypatch, tmp_path):
         """OZ legacy proxies with implementation in data (not topics) produce
         correct timelines through the full build_upgrade_history pipeline."""
         proxy = ADDR(1)
         impl_v1, impl_v2 = ADDR(10), ADDR(11)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {"type": "proxy", "proxy_type": "oz_legacy", "implementation": impl_v2},
-        })
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {"type": "proxy", "proxy_type": "oz_legacy", "implementation": impl_v2},
+            },
+        )
 
         def data_for(addr):
             return "0x" + "0" * 24 + addr[2:]
@@ -535,9 +608,13 @@ class TestWriteUpgradeHistory:
         """write_upgrade_history writes a valid JSON file with the full
         output structure when proxies exist."""
         proxy = ADDR(1)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
-        })
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
+            },
+        )
 
         def mock_fetch(address, topic0):
             if topic0 == uh.UPGRADED_TOPIC0:
@@ -548,6 +625,7 @@ class TestWriteUpgradeHistory:
         _mock_no_enrichment(monkeypatch)
 
         out = uh.write_upgrade_history(deps_path)
+        assert out is not None
         assert out == tmp_path / "upgrade_history.json"
         assert out.exists()
         data = json.loads(out.read_text())
@@ -558,9 +636,13 @@ class TestWriteUpgradeHistory:
     def test_custom_output_path(self, monkeypatch, tmp_path):
         """write_upgrade_history respects a custom output_path argument."""
         proxy = ADDR(1)
-        deps_path = _write_deps(tmp_path, ADDR(0), {
-            proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
-        })
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
+            },
+        )
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t: [])
         _mock_no_enrichment(monkeypatch)
 
