@@ -90,13 +90,13 @@ function parseLocationPath(pathname) {
   return { mode: "default", value: null, tab: "summary" };
 }
 
-function buildLocationPath(runName, address, tab) {
+function buildLocationPath(runId, address, tab) {
   const nextTab = normalizeTab(tab);
   if (isAddress(address)) {
     return `/address/${String(address).trim()}/${nextTab}`;
   }
-  if (runName) {
-    return `/runs/${encodeURIComponent(runName)}/${nextTab}`;
+  if (runId) {
+    return `/runs/${encodeURIComponent(runId)}/${nextTab}`;
   }
   return "/";
 }
@@ -107,7 +107,7 @@ function findRunByAddress(analyses, address) {
     const subjectAddress = String(analysis.address || "").toLowerCase();
     const proxyAddress = String(analysis.proxy_address || analysis.proxy_address_display || "").toLowerCase();
     return subjectAddress === target || proxyAddress === target;
-  })?.run_name || null;
+  })?.job_id || null;
 }
 
 function renderNodeBody(node) {
@@ -1159,7 +1159,7 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore }) {
               <span>Score</span>
             </div>
             {group.items.map((a) => (
-              <button key={a.run_name || a.job_id} className="runs-table-row" onClick={() => onSelect(a.run_name)}>
+              <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
                 <span className="runs-cell-name">
                   {displayName(a)}
                   {a.proxy_address_display && <span className="proxy-badge" title={`${a.proxy_type_display || "proxy"} at ${a.proxy_address_display}`}>proxy</span>}
@@ -1183,7 +1183,7 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore }) {
               <span>Contract</span><span>Address</span><span>Model</span><span>Risk</span><span>Score</span>
             </div>
             {grouped.standalone.map((a) => (
-              <button key={a.run_name || a.job_id} className="runs-table-row" onClick={() => onSelect(a.run_name)}>
+              <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
                 <span className="runs-cell-name">{displayName(a)}</span>
                 <span className="mono runs-cell-addr">{a.address || ""}</span>
                 <span>{a.summary?.control_model || "unknown"}</span>
@@ -1252,20 +1252,20 @@ export default function App() {
     window.history.pushState({}, "", path);
   }
 
-  async function loadAnalysis(runName, options = {}) {
+  async function loadAnalysis(runId, options = {}) {
     try {
-      const payload = await api(`/api/analyses/${encodeURIComponent(runName)}`);
+      const payload = await api(`/api/analyses/${encodeURIComponent(runId)}`);
       const nextTab = normalizeTab(options.tab ?? activeTabRef.current);
-      setSelectedRun(runName);
+      setSelectedRun(runId);
       setSelectedDetail(payload);
       setActiveTab(nextTab);
       setViewMode("run");
       const address = payload?.address || payload?.contract_analysis?.subject?.address;
-      const path = buildLocationPath(runName, address, nextTab);
+      const path = buildLocationPath(runId, address, nextTab);
       window.history[options.history === "replace" ? "replaceState" : "pushState"]({}, "", path);
       return payload;
     } catch (err) {
-      console.error("Failed to load analysis:", runName, err);
+      console.error("Failed to load analysis:", runId, err);
       return null;
     }
   }
@@ -1466,7 +1466,7 @@ export default function App() {
         <RunsPage
           analyses={analyses}
           activeJobs={activeJobs}
-          onSelect={(runName) => loadAnalysis(runName, { history: "push" })}
+          onSelect={(runId) => loadAnalysis(runId, { history: "push" })}
           onDiscoverMore={discoverMore}
         />
       )}

@@ -88,13 +88,23 @@ def _site_index_response():
 
 
 def _display_name(entry: dict[str, Any]) -> str:
+    chain = str(entry.get("chain") or "").strip()
+
+    def with_chain(name: str) -> str:
+        if not name:
+            return name
+        if not chain:
+            return name
+        suffix = f" ({chain})"
+        return name if name.endswith(suffix) else f"{name}{suffix}"
+
     explicit = str(entry.get("display_name") or "").strip()
     if explicit:
-        return explicit
+        return with_chain(explicit)
     contract_name = str(entry.get("contract_name") or "").strip()
     if contract_name and contract_name.lower() not in GENERIC_PROXY_NAMES:
-        return contract_name
-    return str(entry.get("run_name") or contract_name or "").strip()
+        return with_chain(contract_name)
+    return with_chain(str(entry.get("run_name") or contract_name or "").strip())
 
 
 def _merge_proxy_impl_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -119,6 +129,7 @@ def _merge_proxy_impl_entries(entries: list[dict[str, Any]]) -> list[dict[str, A
                 {
                     **impl,
                     "company": entry.get("company") or impl.get("company"),
+                    "chain": entry.get("chain") or impl.get("chain"),
                     "rank_score": entry.get("rank_score")
                     if entry.get("rank_score") is not None
                     else impl.get("rank_score"),
@@ -193,6 +204,7 @@ def analyses() -> list[dict]:
 
         # Build lookups for company names and inventory rank scores
         rank_scores: dict[str, float] = {}  # address -> rank_score
+        chains_by_address: dict[str, str] = {}  # address -> chain
         for job in jobs:
             if job.company:
                 inventory = get_artifact(session, job.id, "contract_inventory")
@@ -201,6 +213,8 @@ def analyses() -> list[dict]:
                         addr = (contract.get("address") or "").lower()
                         if addr and "rank_score" in contract:
                             rank_scores[addr] = contract["rank_score"]
+                        if addr and contract.get("chain"):
+                            chains_by_address[addr] = str(contract["chain"])
 
         def company_for_job(job: Job) -> str | None:
             seen: set[str] = set()
@@ -229,6 +243,7 @@ def analyses() -> list[dict]:
                 "run_name": run_name,
                 "job_id": str(job.id),
                 "address": job.address,
+                "chain": request.get("chain") or chains_by_address.get(addr_lower),
                 "company": company,
                 "parent_job_id": parent_job_id,
                 "rank_score": rank_scores.get(addr_lower),

@@ -334,6 +334,7 @@ class StaticWorker(BaseWorker):
             child_request = {
                 "address": impl_addr,
                 "name": impl_name,
+                "chain": request.get("chain"),
                 "rpc_url": rpc_url,
                 "parent_job_id": str(job.id),
                 "proxy_address": address,

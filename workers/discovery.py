@@ -64,14 +64,16 @@ class DiscoveryWorker(BaseWorker):
         for contract in selected:
             addr = str(contract["address"])
             child_name = str(contract.get("name") or f"{company}_{addr[2:10]}")
+            child_chain = contract.get("chain")
             child_request = {
                 "address": addr,
                 "name": child_name,
+                "chain": child_chain,
                 "rpc_url": request.get("rpc_url"),
                 "parent_job_id": str(job.id),
             }
             child_job = create_job(session, child_request)
-            child_ids.append({"job_id": str(child_job.id), "address": addr, "name": child_name})
+            child_ids.append({"job_id": str(child_job.id), "address": addr, "name": child_name, "chain": child_chain})
             logger.info("Created child job %s for %s (%s)", child_job.id, addr, child_name)
 
         store_artifact(session, job.id, "discovery_summary", data={
