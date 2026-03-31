@@ -9,8 +9,8 @@ from .dynamic_dependencies import find_dynamic_dependencies
 from .fetch import CONTRACTS_DIR, fetch, parse_remappings, parse_sources, parse_verification_bundle, scaffold
 from .inventory import search_protocol_inventory
 from .static_dependencies import find_dependencies
-from .upgrade_history import write_upgrade_history
 from .unified_dependencies import build_unified_dependencies, enrich_dependency_metadata
+from .upgrade_history import write_upgrade_history
 
 __all__ = [
     "build_unified_dependencies",
