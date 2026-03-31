@@ -9,7 +9,9 @@ import time
 import traceback
 import uuid
 
-from db.models import JobStage, SessionLocal
+from sqlalchemy.orm import Session
+
+from db.models import Job, JobStage, SessionLocal
 from db.queue import advance_job, claim_job, fail_job, update_job_detail
 
 logger = logging.getLogger(__name__)
@@ -38,7 +40,7 @@ class BaseWorker:
         logger.info("Worker %s received signal %s, shutting down gracefully", self.worker_id, signum)
         self._running = False
 
-    def process(self, session: object, job: object) -> None:
+    def process(self, session: Session, job: Job) -> None:
         """Subclasses implement this to run their pipeline stage."""
         raise NotImplementedError
 
@@ -95,6 +97,6 @@ class BaseWorker:
 
         logger.info("Worker %s shut down", self.worker_id)
 
-    def update_detail(self, session: object, job: object, detail: str) -> None:
+    def update_detail(self, session: Session, job: Job, detail: str) -> None:
         """Update the job's progress detail message."""
         update_job_detail(session, job.id, detail)

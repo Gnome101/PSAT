@@ -27,8 +27,6 @@ def build_unified_dependencies(
             dep_sources.setdefault(normalize_address(dep), set()).add("dynamic")
 
     cls_map = (classifications or {}).get("classifications", {})
-    dyn_provenance = (dynamic_deps or {}).get("provenance", {})
-
     def _dep_entry(addr: str, sources: list[str]) -> dict:
         entry: dict = {"type": "regular", "source": sources}
         if addr in cls_map:
@@ -37,8 +35,6 @@ def build_unified_dependencies(
             for key in _CLS_KEYS:
                 if key in classification:
                     entry[key] = classification[key]
-        if addr in dyn_provenance:
-            entry["provenance"] = dyn_provenance[addr]
         return entry
 
     deps = {addr: _dep_entry(addr, sorted(sources)) for addr, sources in sorted(dep_sources.items())}
@@ -57,6 +53,7 @@ def build_unified_dependencies(
         if not isinstance(impl_addr, str) or impl_addr not in deps:
             continue
         impl_entry = deps[impl_addr].copy()
+        impl_entry.pop("proxies", None)
         impl_entry["address"] = impl_addr
         info["implementation"] = impl_entry
         impl_to_remove.add(impl_addr)

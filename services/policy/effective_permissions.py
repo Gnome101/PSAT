@@ -19,8 +19,8 @@ from schemas.effective_permissions import (
     EffectiveFunctionPermission,
     EffectivePermissions,
     PrincipalResolution,
-    ResolvedControllerGrant,
     ResolvedAddressType,
+    ResolvedControllerGrant,
     ResolvedPrincipal,
 )
 
@@ -269,7 +269,11 @@ def build_effective_permissions(
     target_controller_values = (target_snapshot or {}).get("controller_values", {})
     controller_lookup = _controller_lookup(target_snapshot)
     owner_value = next(
-        (_lower_string(value.get("value", "")) for key, value in target_controller_values.items() if key.endswith(":owner")),
+        (
+            _lower_string(value.get("value", ""))
+            for key, value in target_controller_values.items()
+            if key.endswith(":owner")
+        ),
         None,
     )
     authority_value = next(
@@ -335,21 +339,20 @@ def build_effective_permissions(
         if direct_owner is None and "owner" in controller_refs and owner_value:
             notes.append(f"owner={owner_value}")
 
-        functions.append(
-            {
-                "function": privileged["function"],
-                "abi_signature": _abi_signature(privileged["function"]),
-                "selector": selector,
-                "direct_owner": direct_owner,
-                "authority_public": bool(public_by_selector.get(selector, False)),
-                "authority_roles": role_grants,
-                **({"controllers": controller_grants} if controller_grants else {}),
-                "effect_targets": list(privileged.get("effect_targets", [])),
-                "effect_labels": list(privileged.get("effect_labels", [])),
-                "action_summary": privileged.get("action_summary", "Performs a permissioned contract action."),
-                "notes": notes,
-            }
-        )
+        function_permission: EffectiveFunctionPermission = {
+            "function": privileged["function"],
+            "abi_signature": _abi_signature(privileged["function"]),
+            "selector": selector,
+            "direct_owner": direct_owner,
+            "authority_public": bool(public_by_selector.get(selector, False)),
+            "authority_roles": role_grants,
+            "controllers": controller_grants,
+            "effect_targets": list(privileged.get("effect_targets", [])),
+            "effect_labels": list(privileged.get("effect_labels", [])),
+            "action_summary": privileged.get("action_summary", "Performs a permissioned contract action."),
+            "notes": notes,
+        }
+        functions.append(function_permission)
 
     return {
         "schema_version": "0.1",

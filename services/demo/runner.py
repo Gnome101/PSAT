@@ -41,6 +41,7 @@ from services.static import analyze, analyze_contract
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 DEFAULT_DEMO_RPC_URL = os.getenv("PSAT_DEMO_RPC_URL") or os.getenv("ETH_RPC") or "https://ethereum-rpc.publicnode.com"
+DEFAULT_RPC_URL = DEFAULT_DEMO_RPC_URL
 DEFAULT_HYPERSYNC_URL = os.getenv("PSAT_HYPERSYNC_URL", "https://eth.hypersync.xyz")
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 PROTOCOLS_DIR = Path(__file__).resolve().parents[2] / "protocols"

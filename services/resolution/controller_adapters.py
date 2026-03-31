@@ -295,7 +295,9 @@ def _try_aragon_acl_role_members(
 
 
 @lru_cache(maxsize=256)
-def _aragon_permission_logs(rpc_url: str, acl: str, contract_address: str, block_tag: str = "latest") -> list[dict[str, Any]]:
+def _aragon_permission_logs(
+    rpc_url: str, acl: str, contract_address: str, block_tag: str = "latest"
+) -> list[dict[str, Any]]:
     return _get_logs(
         rpc_url,
         {

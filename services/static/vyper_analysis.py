@@ -156,7 +156,11 @@ def _parse_vyper_functions(source: str) -> list[dict[str, Any]]:
         functions.append(
             {
                 "name": name,
-                "signature": "constructor" + _abi_signature("", args)[1:] if name == "__init__" else _abi_signature(name, args),
+                "signature": (
+                    "constructor" + _abi_signature("", args)[1:]
+                    if name == "__init__"
+                    else _abi_signature(name, args)
+                ),
                 "args": args,
                 "return_type": return_type,
                 "decorators": decorators,
@@ -318,13 +322,15 @@ def collect_vyper_contract_analysis(project_dir: Path) -> ContractAnalysis:
                     "label": ref,
                     "source": ref,
                     "kind": "state_variable",
-                    **({"read_spec": read_spec} if read_spec else {}),
+                    "read_spec": read_spec,
+                    "confidence": None,
                     "tracking_mode": "state_only",
                     "writer_functions": [],
                     "associated_events": [],
                     "polling_sources": [ref],
                     "notes": [
-                        "Vyper semantic fallback inferred this controller from caller equality checks in verified source."
+                        "Vyper semantic fallback inferred this controller from caller "
+                        "equality checks in verified source."
                     ],
                 }
             )

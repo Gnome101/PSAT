@@ -1,9 +1,11 @@
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from schemas.resolved_control_graph import ResolvedGraphEdge
 from services.resolution.recursive import _add_edge, _materialize_contract_artifacts, resolve_control_graph
 
 
@@ -337,15 +339,12 @@ def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch, 
     monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
     monkeypatch.setattr("services.resolution.recursive.classify_resolved_address", fake_classify)
 
-    graph = resolve_control_graph(
+    resolve_control_graph(
         root_analysis_path,
         rpc_url="http://rpc.example",
         max_depth=3,
         refresh_snapshots=False,
     )
-
-    nodes = {node["address"]: node for node in graph["nodes"]}
-    edges = {(edge["from_id"], edge["relation"], edge["to_id"]) for edge in graph["edges"]}
 
     assert materialize_calls == [role_holder_address]
 
@@ -381,7 +380,13 @@ def test_materialize_contract_artifacts_tolerates_slither_cli_failure(monkeypatc
 
     def fake_analyze_contract(_project_dir):
         analysis_path.write_text(
-            json.dumps({"subject": {"address": address, "name": "TestContract"}, "access_control": {"privileged_functions": []}}) + "\n"
+            json.dumps(
+                {
+                    "subject": {"address": address, "name": "TestContract"},
+                    "access_control": {"privileged_functions": []},
+                }
+            )
+            + "\n"
         )
         return analysis_path
 
@@ -408,7 +413,10 @@ def test_materialize_contract_artifacts_tolerates_slither_cli_failure(monkeypatc
         "analysis_path": analysis_path,
         "plan_path": plan_path,
         "snapshot_path": snapshot_path,
-        "analysis": {"subject": {"address": address, "name": "TestContract"}, "access_control": {"privileged_functions": []}},
+        "analysis": {
+            "subject": {"address": address, "name": "TestContract"},
+            "access_control": {"privileged_functions": []},
+        },
         "snapshot": {
             "schema_version": "0.1",
             "contract_address": address,
@@ -447,11 +455,20 @@ def test_materialize_contract_artifacts_writes_effective_permissions(monkeypatch
         "services.resolution.recursive.fetch",
         lambda _address: {"ContractName": "TestContract"},
     )
-    monkeypatch.setattr("services.resolution.recursive.scaffold", lambda *_args, **_kwargs: project_dir.mkdir(parents=True, exist_ok=True))
+    monkeypatch.setattr(
+        "services.resolution.recursive.scaffold",
+        lambda *_args, **_kwargs: project_dir.mkdir(parents=True, exist_ok=True),
+    )
     monkeypatch.setattr("services.resolution.recursive.analyze", lambda *args, **kwargs: None)
     def fake_analyze_contract(_project_dir):
         analysis_path.write_text(
-            json.dumps({"subject": {"address": address, "name": "TestContract"}, "access_control": {"privileged_functions": []}}) + "\n"
+            json.dumps(
+                {
+                    "subject": {"address": address, "name": "TestContract"},
+                    "access_control": {"privileged_functions": []},
+                }
+            )
+            + "\n"
         )
         return analysis_path
 
@@ -479,7 +496,10 @@ def test_materialize_contract_artifacts_writes_effective_permissions(monkeypatch
             "analysis_path": analysis_path,
             "plan_path": plan_path,
             "snapshot_path": snapshot_path,
-            "analysis": {"subject": {"address": address, "name": "TestContract"}, "access_control": {"privileged_functions": []}},
+            "analysis": {
+                "subject": {"address": address, "name": "TestContract"},
+                "access_control": {"privileged_functions": []},
+            },
             "snapshot": {
                 "schema_version": "0.1",
                 "contract_address": address,
@@ -533,7 +553,7 @@ def test_resolve_control_graph_skips_failed_nested_materialization(monkeypatch, 
     root_address = "0x1111111111111111111111111111111111111111"
     nested_address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-    root_analysis_path = _write_artifact_dir(
+    _write_artifact_dir(
         tmp_path,
         "root",
         address=root_address,
@@ -632,8 +652,8 @@ def test_add_edge_dedupes_nested_safe_owner_edges_across_sources():
         "notes": ["path=role"],
     }
 
-    _add_edge(edges, first)
-    _add_edge(edges, second)
+    _add_edge(edges, cast(ResolvedGraphEdge, first))
+    _add_edge(edges, cast(ResolvedGraphEdge, second))
 
     assert len(edges) == 1
     merged = next(iter(edges.values()))

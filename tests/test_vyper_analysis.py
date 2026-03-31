@@ -48,7 +48,11 @@ def seal():
     assert analysis["analysis_status"]["slither_completed"] is False
     assert analysis["summary"]["control_model"] == "governance"
 
-    privileged = next(item for item in analysis["access_control"]["privileged_functions"] if item["function"] == "seal()")
+    privileged = next(
+        item
+        for item in analysis["access_control"]["privileged_functions"]
+        if item["function"] == "seal()"
+    )
     assert privileged["controller_refs"] == ["SEALING_COMMITTEE"]
     assert privileged["guard_kinds"] == ["caller_equals_storage"]
 

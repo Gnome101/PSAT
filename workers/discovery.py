@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 
-from db.models import JobStage
+from sqlalchemy.orm import Session
+
+from db.models import Job, JobStage
 from db.queue import create_job, store_artifact, store_source_files
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import search_protocol_inventory
@@ -21,7 +23,7 @@ class DiscoveryWorker(BaseWorker):
     stage = JobStage.discovery
     next_stage = JobStage.static
 
-    def process(self, session, job):
+    def process(self, session: Session, job: Job) -> None:
         if job.company and not job.address:
             self._process_company(session, job)
         elif job.address:
@@ -29,10 +31,12 @@ class DiscoveryWorker(BaseWorker):
         else:
             raise ValueError("Job has neither address nor company")
 
-    def _process_company(self, session, job):
+    def _process_company(self, session: Session, job: Job) -> None:
         """Discover contracts for a company and create child jobs for each."""
         company = job.company
-        request = job.request or {}
+        if company is None:
+            raise ValueError("Company job missing company name")
+        request = job.request if isinstance(job.request, dict) else {}
         chain = request.get("chain")
         discover_limit = request.get("discover_limit", 25)
         analyze_limit = request.get("analyze_limit", 5)
@@ -64,7 +68,8 @@ class DiscoveryWorker(BaseWorker):
         for contract in selected:
             addr = str(contract["address"])
             child_name = str(contract.get("name") or f"{company}_{addr[2:10]}")
-            child_chain = contract.get("chain")
+            child_chains = contract.get("chains")
+            child_chain = child_chains[0] if isinstance(child_chains, list) and child_chains else contract.get("chain")
             child_request = {
                 "address": addr,
                 "name": child_name,
@@ -99,9 +104,11 @@ class DiscoveryWorker(BaseWorker):
         complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
         raise JobHandledDirectly()
 
-    def _process_address(self, session, job):
+    def _process_address(self, session: Session, job: Job) -> None:
         """Fetch verified source for a single address."""
         address = job.address
+        if address is None:
+            raise ValueError("Address job missing address")
 
         self.update_detail(session, job, f"Fetching verified source for {address}")
         result = fetch(address)

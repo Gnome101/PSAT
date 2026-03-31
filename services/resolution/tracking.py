@@ -19,7 +19,7 @@ from eth_utils.crypto import keccak
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from schemas.contract_analysis import AssociatedEvent
+from schemas.contract_analysis import AssociatedEvent, ControllerReadSpec
 from schemas.control_tracking import (
     ControlChangeEvent,
     ControlSnapshot,
@@ -28,6 +28,7 @@ from schemas.control_tracking import (
     TrackedController,
     TrackedPolicy,
 )
+
 from .controller_adapters import expand_role_identifier_principals, type_authority_contract
 
 JSON_RPC_TIMEOUT_SECONDS = 10
@@ -195,7 +196,7 @@ def _read_polling_source(
     source: str,
     controller_kind: str,
     block_tag: str = "latest",
-    read_spec: dict[str, object] | None = None,
+    read_spec: ControllerReadSpec | None = None,
 ) -> str:
     target = source
     if isinstance(read_spec, dict) and read_spec.get("strategy") == "getter_call":

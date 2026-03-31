@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -114,6 +115,6 @@ def test_process_attempts_semantic_proxy_classification_for_non_obvious_names(mo
     monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *args, **kwargs: None)
     monkeypatch.setattr(worker, "update_detail", lambda *args, **kwargs: None)
 
-    worker.process(session, job)
+    worker.process(session, cast(Any, job))
 
     assert called == ["resolve"]

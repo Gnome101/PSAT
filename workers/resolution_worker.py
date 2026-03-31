@@ -8,9 +8,13 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
+from typing import cast
 
-from db.models import JobStage
+from sqlalchemy.orm import Session
+
+from db.models import Job, JobStage
 from db.queue import get_artifact, store_artifact
+from schemas.control_tracking import ControlTrackingPlan
 from services.resolution.recursive import write_resolved_control_graph
 from services.resolution.tracking import build_control_snapshot
 from workers.base import BaseWorker
@@ -25,7 +29,7 @@ class ResolutionWorker(BaseWorker):
     stage = JobStage.resolution
     next_stage = JobStage.policy
 
-    def process(self, session, job):
+    def process(self, session: Session, job: Job) -> None:
         logger.info(
             "Resolution stage started for job %s address=%s name=%s",
             job.id,
@@ -62,7 +66,7 @@ class ResolutionWorker(BaseWorker):
 
         # Build control snapshot via RPC calls
         self.update_detail(session, job, "Reading current controller state")
-        snapshot = build_control_snapshot(tracking_plan, rpc_url)
+        snapshot = build_control_snapshot(cast(ControlTrackingPlan, tracking_plan), rpc_url)
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
         logger.info(
             "Resolution stage control snapshot complete for job %s address=%s name=%s",

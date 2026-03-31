@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from schemas.contract_analysis import ControllerRef, GuardRecord, PermissionGraph, SinkRecord
 
@@ -561,31 +561,37 @@ def build_permission_graph(contract, project_dir: Path) -> PermissionGraph:
                     controller_id = _controller_id(controller["kind"], controller["source"])
                     controllers.setdefault(
                         controller_id,
-                        {
+                        cast(
+                            ControllerRef,
+                            {
                             "id": controller_id,
                             "kind": controller["kind"],
                             "label": controller["label"],
                             "source": controller["source"],
-                            **({"read_spec": controller["read_spec"]} if controller.get("read_spec") else {}),
-                            **({"confidence": controller["confidence"]} if controller.get("confidence") else {}),
+                            "read_spec": controller.get("read_spec"),
+                            "confidence": controller.get("confidence"),
                             "evidence": controller["evidence"],
-                        },
+                            },
+                        ),
                     )
                     controller_ids.append(controller_id)
 
                 guard_id = _guard_id(function.full_name, sink_token, candidate["kind"], controller_ids)
                 guards.setdefault(
                     guard_id,
-                    {
+                    cast(
+                        GuardRecord,
+                        {
                         "id": guard_id,
                         "contract": _declaring_contract_name(function, contract.name),
                         "function": getattr(function, "full_name", function.name),
                         "kind": candidate["kind"],
-                        **({"confidence": candidate["confidence"]} if candidate.get("confidence") else {}),
+                        "confidence": candidate.get("confidence"),
                         "controller_ids": sorted(controller_ids),
                         "evidence": candidate["evidence"],
                         "details": sorted(set(candidate.get("details", []))),
-                    },
+                        },
+                    ),
                 )
                 guarded_by.append(guard_id)
 

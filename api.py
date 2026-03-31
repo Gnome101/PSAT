@@ -209,12 +209,21 @@ def analyses() -> list[dict]:
             if job.company:
                 inventory = get_artifact(session, job.id, "contract_inventory")
                 if isinstance(inventory, dict):
-                    for contract in inventory.get("contracts", []):
+                    contracts = inventory.get("contracts", [])
+                    if not isinstance(contracts, list):
+                        continue
+                    for contract in contracts:
+                        if not isinstance(contract, dict):
+                            continue
                         addr = (contract.get("address") or "").lower()
                         if addr and "rank_score" in contract:
                             rank_scores[addr] = contract["rank_score"]
-                        if addr and contract.get("chain"):
-                            chains_by_address[addr] = str(contract["chain"])
+                        chains = contract.get("chains")
+                        chain = contract.get("chain")
+                        if addr and isinstance(chains, list) and chains:
+                            chains_by_address[addr] = str(chains[0])
+                        elif addr and chain:
+                            chains_by_address[addr] = str(chain)
 
         def company_for_job(job: Job) -> str | None:
             seen: set[str] = set()
@@ -247,9 +256,9 @@ def analyses() -> list[dict]:
                 "company": company,
                 "parent_job_id": parent_job_id,
                 "rank_score": rank_scores.get(addr_lower),
-                "is_proxy": bool(flags and flags.get("is_proxy")),
-                "proxy_type": (flags or {}).get("proxy_type"),
-                "implementation_address": (flags or {}).get("implementation"),
+                "is_proxy": bool(flags.get("is_proxy")) if isinstance(flags, dict) else False,
+                "proxy_type": flags.get("proxy_type") if isinstance(flags, dict) else None,
+                "implementation_address": flags.get("implementation") if isinstance(flags, dict) else None,
                 "proxy_address": request.get("proxy_address"),
             }
             # List available artifact names

@@ -195,8 +195,8 @@ class ControllerTrackingTarget(TypedDict):
     label: str
     source: str
     kind: ControllerKind
-    read_spec: NotRequired[ControllerReadSpec]
-    confidence: NotRequired[ControllerConfidence]
+    read_spec: ControllerReadSpec | None
+    confidence: ControllerConfidence | None
     tracking_mode: ControllerTrackingMode
     writer_functions: list[ControllerWriterFunction]
     associated_events: list[AssociatedEvent]
@@ -219,8 +219,8 @@ class ControllerRef(TypedDict):
     kind: ControllerKind
     label: str
     source: str
-    read_spec: NotRequired[ControllerReadSpec]
-    confidence: NotRequired[ControllerConfidence]
+    read_spec: ControllerReadSpec | None
+    confidence: ControllerConfidence | None
     evidence: list[Evidence]
 
 

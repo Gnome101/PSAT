@@ -50,7 +50,12 @@ def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
 
         result_str = str(data.get("result", ""))
         if "rate limit" in result_str.lower() and attempt < _RATE_LIMIT_RETRIES:
-            logger.warning("Etherscan rate limit hit, retrying in %.1fs (attempt %d/%d)", backoff, attempt + 1, _RATE_LIMIT_RETRIES)
+            logger.warning(
+                "Etherscan rate limit hit, retrying in %.1fs (attempt %d/%d)",
+                backoff,
+                attempt + 1,
+                _RATE_LIMIT_RETRIES,
+            )
             time.sleep(backoff)
             backoff *= 2
             continue

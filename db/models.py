@@ -5,11 +5,12 @@ from __future__ import annotations
 import enum
 import os
 import uuid
+from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from sqlalchemy import (
-    Column,
     DateTime,
     Enum,
     ForeignKey,
@@ -21,7 +22,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Session, relationship, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 
 
 class Base(DeclarativeBase):
@@ -46,21 +47,25 @@ class JobStage(str, enum.Enum):
 class Job(Base):
     __tablename__ = "jobs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    address = Column(String(42), nullable=True)
-    company = Column(String, nullable=True)
-    name = Column(String, nullable=True)
-    status = Column(Enum(JobStatus), nullable=False, default=JobStatus.queued)
-    stage = Column(Enum(JobStage), nullable=False, default=JobStage.discovery)
-    detail = Column(Text, nullable=True)
-    request = Column(JSONB, nullable=True)
-    error = Column(Text, nullable=True)
-    worker_id = Column(String, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    address: Mapped[str | None] = mapped_column(String(42), nullable=True)
+    company: Mapped[str | None] = mapped_column(String, nullable=True)
+    name: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[JobStatus] = mapped_column(Enum(JobStatus), nullable=False, default=JobStatus.queued)
+    stage: Mapped[JobStage] = mapped_column(Enum(JobStage), nullable=False, default=JobStage.discovery)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
-    artifacts = relationship("Artifact", back_populates="job", cascade="all, delete-orphan")
-    source_files = relationship("SourceFile", back_populates="job", cascade="all, delete-orphan")
+    artifacts: Mapped[list["Artifact"]] = relationship("Artifact", back_populates="job", cascade="all, delete-orphan")
+    source_files: Mapped[list["SourceFile"]] = relationship(
+        "SourceFile", back_populates="job", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (Index("ix_jobs_stage_status", "stage", "status"),)
 
@@ -70,28 +75,30 @@ class Job(Base):
             "address": self.address,
             "company": self.company,
             "name": self.name,
-            "status": self.status.value if self.status else None,
-            "stage": self.stage.value if self.stage else None,
+            "status": self.status.value,
+            "stage": self.stage.value,
             "detail": self.detail,
             "request": self.request,
             "error": self.error,
             "worker_id": self.worker_id,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
         }
 
 
 class Artifact(Base):
     __tablename__ = "artifacts"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
-    name = Column(String, nullable=False)
-    data = Column(JSONB, nullable=True)
-    text_data = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    data: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    text_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    job = relationship("Job", back_populates="artifacts")
+    job: Mapped[Job] = relationship("Job", back_populates="artifacts")
 
     __table_args__ = (UniqueConstraint("job_id", "name", name="uq_artifact_job_name"),)
 
@@ -99,12 +106,14 @@ class Artifact(Base):
 class SourceFile(Base):
     __tablename__ = "source_files"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
-    path = Column(String, nullable=False)
-    content = Column(Text, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    path: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
 
-    job = relationship("Job", back_populates="source_files")
+    job: Mapped[Job] = relationship("Job", back_populates="source_files")
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")

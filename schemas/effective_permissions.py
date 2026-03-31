@@ -51,7 +51,7 @@ class EffectiveFunctionPermission(TypedDict):
     direct_owner: ResolvedPrincipal | None
     authority_public: bool
     authority_roles: list[AuthorityRoleGrant]
-    controllers: NotRequired[list[ResolvedControllerGrant]]
+    controllers: list[ResolvedControllerGrant]
     effect_targets: list[str]
     effect_labels: list[str]
     action_summary: str

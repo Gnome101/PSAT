@@ -151,11 +151,15 @@ def test_artifact_upsert(db_session):
     job = create_job(db_session, {"address": "0x0000000000000000000000000000000000000005"})
 
     store_artifact(db_session, job.id, "snapshot", data={"v": 1})
-    assert get_artifact(db_session, job.id, "snapshot")["v"] == 1
+    artifact = get_artifact(db_session, job.id, "snapshot")
+    assert isinstance(artifact, dict)
+    assert artifact["v"] == 1
 
     # Upsert should replace
     store_artifact(db_session, job.id, "snapshot", data={"v": 2})
-    assert get_artifact(db_session, job.id, "snapshot")["v"] == 2
+    artifact = get_artifact(db_session, job.id, "snapshot")
+    assert isinstance(artifact, dict)
+    assert artifact["v"] == 2
 
 
 @requires_postgres

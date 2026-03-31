@@ -9,8 +9,11 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from db.models import JobStage
+from sqlalchemy.orm import Session
+
+from db.models import Job, JobStage
 from db.queue import get_artifact, store_artifact
+from schemas.effective_permissions import PrincipalResolution
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from workers.base import BaseWorker
 
@@ -25,7 +28,7 @@ class PolicyWorker(BaseWorker):
     stage = JobStage.policy
     next_stage = JobStage.done
 
-    def process(self, session, job):
+    def process(self, session: Session, job: Job) -> None:
         logger.info(
             "Policy stage started for job %s address=%s name=%s",
             job.id,
@@ -64,7 +67,10 @@ class PolicyWorker(BaseWorker):
             # Determine authority snapshot and policy state
             authority_snapshot_path = None
             policy_state_path = None
-            principal_resolution = {"status": "no_authority", "reason": "Worker-mode authority resolution"}
+            principal_resolution: PrincipalResolution = {
+                "status": "no_authority",
+                "reason": "Worker-mode authority resolution",
+            }
 
             if resolved_graph_path:
                 authority_result = self._resolve_authority(

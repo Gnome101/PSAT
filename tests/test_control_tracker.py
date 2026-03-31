@@ -165,6 +165,7 @@ def test_build_control_snapshot_and_diff(monkeypatch):
                 "label": "owner",
                 "source": "owner",
                 "kind": "state_variable",
+                "read_spec": None,
                 "tracking_mode": "event_plus_state",
                 "event_watch": {
                     "transport": "wss_logs",
@@ -257,6 +258,7 @@ def test_build_control_snapshot_handles_reverting_getter(monkeypatch):
                 "label": "owner",
                 "source": "owner",
                 "kind": "state_variable",
+                "read_spec": None,
                 "tracking_mode": "event_plus_state",
                 "event_watch": None,
                 "polling_fallback": {
@@ -301,6 +303,7 @@ def test_build_control_snapshot_expands_role_identifier_principals(monkeypatch):
                 "label": "PAUSE_ROLE",
                 "source": "PAUSE_ROLE",
                 "kind": "role_identifier",
+                "read_spec": None,
                 "tracking_mode": "manual_review",
                 "event_watch": None,
                 "polling_fallback": {
@@ -364,6 +367,7 @@ def test_build_control_snapshot_expands_aragon_acl_role_principals(monkeypatch):
                 "label": "CREATE_VOTES_ROLE",
                 "source": "CREATE_VOTES_ROLE",
                 "kind": "role_identifier",
+                "read_spec": None,
                 "tracking_mode": "manual_review",
                 "event_watch": None,
                 "polling_fallback": {
@@ -411,7 +415,10 @@ def test_build_control_snapshot_expands_aragon_acl_role_principals(monkeypatch):
 
     monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
     monkeypatch.setattr("services.resolution.controller_adapters._rpc_request", fake_rpc)
-    monkeypatch.setattr("services.resolution.controller_adapters._code_start_block", lambda rpc_url, address, block_tag="latest": 0)
+    monkeypatch.setattr(
+        "services.resolution.controller_adapters._code_start_block",
+        lambda rpc_url, address, block_tag="latest": 0,
+    )
     monkeypatch.setattr(
         "services.resolution.controller_adapters._eth_call_raw",
         lambda rpc_url, contract_address, calldata, block_tag="latest": (

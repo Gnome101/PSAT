@@ -9,8 +9,6 @@ import logging
 import os
 import re
 import sys
-
-logger = logging.getLogger(__name__)
 from collections import deque
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -33,6 +31,8 @@ from .tracking import (
     write_control_snapshot,
 )
 from .tracking_plan import write_control_tracking_plan
+
+logger = logging.getLogger(__name__)
 
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
 DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))

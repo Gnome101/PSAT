@@ -225,6 +225,8 @@ def build_controller_tracking(
                     "label": controller["label"],
                     "source": controller_source,
                     "kind": controller_kind,
+                    "read_spec": controller.get("read_spec"),
+                    "confidence": controller.get("confidence"),
                     "tracking_mode": "manual_review",
                     "writer_functions": [],
                     "associated_events": [],
@@ -271,8 +273,8 @@ def build_controller_tracking(
                 "label": controller["label"],
                 "source": controller_source,
                 "kind": controller_kind,
-                **({"read_spec": controller["read_spec"]} if controller.get("read_spec") else {}),
-                **({"confidence": controller["confidence"]} if controller.get("confidence") else {}),
+                "read_spec": controller.get("read_spec"),
+                "confidence": controller.get("confidence"),
                 "tracking_mode": tracking_mode,
                 "writer_functions": writer_functions,
                 "associated_events": associated_events,
@@ -297,12 +299,16 @@ def build_controller_tracking(
                         "label": ref,
                         "source": ref,
                         "kind": kind,  # type: ignore[typeddict-item]
+                        "read_spec": None,
+                        "confidence": None,
                         "tracking_mode": "state_only",
                         "writer_functions": [],
                         "associated_events": [],
                         "polling_sources": [ref],
                         "notes": [
-                            "Synthesized from semantic access-control inference because the permission graph did not expose a runtime controller source directly."
+                            "Synthesized from semantic access-control inference because "
+                            "the permission graph did not expose a runtime controller "
+                            "source directly."
                         ],
                     }
                 )

@@ -27,7 +27,7 @@ class PrincipalProfile(TypedDict):
     confidence: LabelConfidence
     details: dict[str, object]
     graph_context: list[str]
-    controller_context: NotRequired[list[str]]
+    controller_context: list[str]
     permissions: list[PrincipalPermission]
 
 

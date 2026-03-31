@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import tempfile
 import textwrap
 from pathlib import Path
 
-from db.models import Job, JobStage, JobStatus
+from sqlalchemy import select
+
+from db.models import Job, JobStage
 from db.queue import create_job, get_artifact, get_source_files, store_artifact
 from services.discovery import (
     build_unified_dependencies,
@@ -239,14 +242,12 @@ class StaticWorker(BaseWorker):
         If an implementation is found, creates a linked child job for it so the
         real business logic gets analyzed.
         """
-        import os
-
         from services.discovery.classifier import classify_single
-        from sqlalchemy import select
 
         rpc_url = None
-        if job.request and isinstance(job.request, dict):
-            rpc_url = job.request.get("rpc_url")
+        request = job.request if isinstance(job.request, dict) else {}
+        if request:
+            rpc_url = request.get("rpc_url")
         if not rpc_url:
             rpc_url = os.getenv("ETH_RPC")
         if not rpc_url:
@@ -334,12 +335,13 @@ class StaticWorker(BaseWorker):
             child_request = {
                 "address": impl_addr,
                 "name": impl_name,
-                "chain": request.get("chain"),
                 "rpc_url": rpc_url,
                 "parent_job_id": str(job.id),
                 "proxy_address": address,
                 "proxy_type": proxy_type,
             }
+            if request.get("chain") is not None:
+                child_request["chain"] = request.get("chain")
             child_job = create_job(session, child_request)
             logger.info(
                 "Job %s: created %s job %s for %s (%s)",
