@@ -5,15 +5,12 @@ description = "Protocol Security Assessment Tool"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-  "alembic>=1.13",
   "eth-utils>=5.3.0",
   "fastapi>=0.135.1",
   "hypersync>=0.8.5",
-  "psycopg2-binary>=2.9",
   "python-dotenv>=1.0.1",
   "requests>=2.32.0",
   "slither-analyzer>=0.11.0",
-  "sqlalchemy>=2.0",
   "uvicorn>=0.42.0",
   "websockets>=15.0.1",
 ]

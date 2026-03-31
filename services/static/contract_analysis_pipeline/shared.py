@@ -11,7 +11,7 @@ from slither.slither import Slither
 
 from schemas.contract_analysis import Evidence
 
-from .constants import ROLE_CONSTANT_PATTERN, ROLE_NAME_PATTERNS
+from .constants import ROLE_CONSTANT_PATTERN
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -114,7 +114,7 @@ def _is_mapping_variable(variable) -> bool:
 
 def _is_role_identifier(variable) -> bool:
     name = getattr(variable, "name", "")
-    return bool(ROLE_CONSTANT_PATTERN.fullmatch(name)) or any(pattern.match(name) for pattern in ROLE_NAME_PATTERNS)
+    return bool(ROLE_CONSTANT_PATTERN.fullmatch(name)) or str(getattr(variable, "type", "")) == "bytes32"
 
 
 def _source_evidence(item, project_dir: Path, detail: str | None = None) -> Evidence:

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-from typing_extensions import NotRequired
-
 from .control_tracking import ResolvedControllerType
 
 LabelConfidence = Literal["high", "medium", "low"]
@@ -16,7 +14,6 @@ class PrincipalPermission(TypedDict):
     effect_labels: list[str]
     role: int | None
     authority_public: bool
-    controller: NotRequired[str]
 
 
 class PrincipalProfile(TypedDict):
@@ -27,7 +24,6 @@ class PrincipalProfile(TypedDict):
     confidence: LabelConfidence
     details: dict[str, object]
     graph_context: list[str]
-    controller_context: list[str]
     permissions: list[PrincipalPermission]
 
 

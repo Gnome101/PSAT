@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-from typing_extensions import NotRequired
-
 ControlModel = Literal["ownable", "access_control", "auth", "governance", "custom", "unknown"]
 RiskLevel = Literal["low", "medium", "high", "unknown"]
 UpgradeabilityPattern = Literal["uups", "transparent", "beacon", "custom", "none", "unknown"]
@@ -17,9 +15,6 @@ ControllerKind = Literal[
     "mapping_membership",
     "external_contract",
     "role_identifier",
-    "singleton_slot",
-    "external_policy",
-    "computed",
     "unknown",
 ]
 GuardKind = Literal[
@@ -27,12 +22,9 @@ GuardKind = Literal[
     "caller_in_mapping",
     "external_authority_check",
     "role_membership_check",
-    "caller_via_helper_function",
     "unknown",
 ]
 SinkKind = Literal["state_write", "contract_creation", "external_call", "delegatecall", "selfdestruct"]
-ControllerReadStrategy = Literal["getter_call", "storage_slot", "mapping_lookup", "event_reconstruction", "unknown"]
-ControllerConfidence = Literal["exact", "high", "medium", "low", "unknown"]
 
 
 class Evidence(TypedDict, total=False):
@@ -89,7 +81,6 @@ class PrivilegedFunction(TypedDict):
     guards: list[str]
     guard_kinds: list[GuardKind]
     controller_refs: list[str]
-    controller_ids: NotRequired[list[str]]
     sink_ids: list[str]
     effects: list[str]
     effect_targets: list[str]
@@ -176,11 +167,6 @@ class AssociatedEvent(TypedDict):
     inputs: list[AssociatedEventInput]
 
 
-class ControllerReadSpec(TypedDict):
-    strategy: ControllerReadStrategy
-    target: str
-
-
 class ControllerWriterFunction(TypedDict):
     contract: str
     function: str
@@ -195,8 +181,6 @@ class ControllerTrackingTarget(TypedDict):
     label: str
     source: str
     kind: ControllerKind
-    read_spec: ControllerReadSpec | None
-    confidence: ControllerConfidence | None
     tracking_mode: ControllerTrackingMode
     writer_functions: list[ControllerWriterFunction]
     associated_events: list[AssociatedEvent]
@@ -219,8 +203,6 @@ class ControllerRef(TypedDict):
     kind: ControllerKind
     label: str
     source: str
-    read_spec: ControllerReadSpec | None
-    confidence: ControllerConfidence | None
     evidence: list[Evidence]
 
 
@@ -229,7 +211,6 @@ class GuardRecord(TypedDict):
     contract: str
     function: str
     kind: GuardKind
-    confidence: NotRequired[ControllerConfidence]
     controller_ids: list[str]
     evidence: list[Evidence]
     details: list[str]

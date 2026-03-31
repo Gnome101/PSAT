@@ -1,21 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: psat
-      POSTGRES_PASSWORD: psat
-      POSTGRES_DB: psat
-    ports:
-      - "5433:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U psat"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   api:
     build:
       context: .
@@ -23,30 +6,10 @@ services:
     image: psat-api:latest
     env_file:
       - .env
-    environment:
-      DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
     ports:
       - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-
-  workers:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: psat-api:latest
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
-    command: ["bash", "start_workers.sh"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      api:
-        condition: service_started
+    volumes:
+      - ./contracts:/app/contracts
     restart: unless-stopped
 
   site:
@@ -63,6 +26,3 @@ services:
     depends_on:
       - api
     restart: unless-stopped
-
-volumes:
-  pgdata:

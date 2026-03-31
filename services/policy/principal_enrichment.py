@@ -40,19 +40,6 @@ def _display_from_type(resolved_type: str) -> str:
     }.get(resolved_type, "Unknown principal")
 
 
-def _node_display_name(node: dict[str, Any] | None) -> str:
-    if not isinstance(node, dict):
-        return ""
-    for candidate in (node.get("contract_name"), node.get("label")):
-        name = str(candidate or "").strip()
-        if not name:
-            continue
-        if _slug(name) in {"contract", "role_principal", "roleprincipal", "principal"}:
-            continue
-        return name
-    return ""
-
-
 def _collect_permissions(
     effective_permissions: dict[str, Any],
 ) -> tuple[dict[str, list[PrincipalPermission]], dict[str, str]]:
@@ -65,18 +52,14 @@ def _collect_permissions(
         function_name = str(function.get("function", ""))
         effect_labels = [str(label) for label in function.get("effect_labels", [])]
         authority_public = bool(function.get("authority_public", False))
-        effect_labels_set = set(effect_labels)
         direct_owner = function.get("direct_owner")
         if direct_owner:
             address = direct_owner["address"].lower()
-            if not address.startswith("0x") or len(address) != 42:
-                continue
             permission: PrincipalPermission = {
                 "function": function_name,
                 "effect_labels": effect_labels,
                 "authority_public": authority_public,
                 "role": None,
-                "controller": "owner",
             }
             by_address[address].append(permission)
             permission_labels[address].update({f"{contract_slug}_direct_owner", f"{contract_slug}_permissioned"})
@@ -85,14 +68,11 @@ def _collect_permissions(
             role = int(role_grant["role"])
             for principal in role_grant.get("principals", []):
                 address = principal["address"].lower()
-                if not address.startswith("0x") or len(address) != 42:
-                    continue
                 permission: PrincipalPermission = {
                     "function": function_name,
                     "effect_labels": effect_labels,
                     "authority_public": authority_public,
                     "role": role,
-                    "controller": f"role_{role}",
                 }
                 by_address[address].append(permission)
                 permission_labels[address].update(
@@ -101,6 +81,7 @@ def _collect_permissions(
                         f"{contract_slug}_role_{role}_holder",
                     }
                 )
+                effect_labels_set = set(effect_labels)
                 if "arbitrary_external_call" in effect_labels_set:
                     permission_labels[address].add(f"{contract_slug}_manager")
                 if effect_labels_set.intersection({"asset_pull", "asset_send", "mint", "burn"}):
@@ -116,41 +97,6 @@ def _collect_permissions(
                 ):
                     permission_labels[address].add(f"{contract_slug}_admin")
 
-        for controller in function.get("controllers", []):
-            controller_label = str(controller.get("label") or controller.get("source") or "controller")
-            controller_slug = _slug(controller_label)
-            for principal in controller.get("principals", []):
-                address = principal["address"].lower()
-                if not address.startswith("0x") or len(address) != 42:
-                    continue
-                permission = {
-                    "function": function_name,
-                    "effect_labels": effect_labels,
-                    "authority_public": authority_public,
-                    "role": None,
-                    "controller": controller_label,
-                }
-                by_address[address].append(permission)
-                permission_labels[address].update(
-                    {
-                        f"{contract_slug}_permissioned",
-                        f"{contract_slug}_controller_{controller_slug}",
-                    }
-                )
-                if "arbitrary_external_call" in effect_labels_set:
-                    permission_labels[address].add(f"{contract_slug}_manager")
-                if effect_labels_set.intersection(
-                    {
-                        "authority_update",
-                        "ownership_transfer",
-                        "hook_update",
-                        "implementation_update",
-                        "role_management",
-                        "timelock_operation",
-                    }
-                ):
-                    permission_labels[address].add(f"{contract_slug}_admin")
-
     return by_address, {address: ",".join(sorted(labels)) for address, labels in permission_labels.items()}
 
 
@@ -159,13 +105,6 @@ def _incoming_edges(graph: dict) -> dict[str, list[dict]]:
     for edge in graph.get("edges", []):
         incoming[edge["to_id"]].append(edge)
     return incoming
-
-
-def _outgoing_edges(graph: dict) -> dict[str, list[dict]]:
-    outgoing: dict[str, list[dict]] = defaultdict(list)
-    for edge in graph.get("edges", []):
-        outgoing[edge["from_id"]].append(edge)
-    return outgoing
 
 
 def _node_by_id(graph: dict) -> dict[str, dict]:
@@ -196,7 +135,6 @@ def _graph_labels_for_node(
         if relation == "controller_value":
             labels.add("controller_value")
             labels.add(f"{source_slug}_{edge_label}")
-            labels.add(f"controller_{edge_label}")
             if edge_label == "authority":
                 labels.add("authority_controller")
             if edge_label == "owner":
@@ -220,17 +158,9 @@ def _display_name(
     graph_context: list[str],
     permissions: list[PrincipalPermission],
     contract_name: str,
-    node_name: str = "",
 ) -> tuple[str, str]:
     contract_slug = _slug(contract_name)
     permission_effects = {effect for permission in permissions for effect in permission.get("effect_labels", [])}
-    permission_controllers = sorted(
-        {
-            str(permission.get("controller", "")).strip()
-            for permission in permissions
-            if str(permission.get("controller", "")).strip()
-        }
-    )
 
     if resolved_type == "zero":
         return "Zero address", "high"
@@ -259,28 +189,10 @@ def _display_name(
     if "owner_controller" in labels and resolved_type == "safe":
         owner_of = graph_context[0].split(":", 1)[0] if graph_context else contract_name
         return f"{owner_of} owner Safe", "high"
-    if permission_controllers:
-        controller_name = permission_controllers[0]
-        suffix = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", controller_name).replace("_", " ")
-        if resolved_type == "contract" and node_name:
-            return f"{node_name} ({contract_name} {suffix})", "medium"
-        if resolved_type == "contract":
-            return f"{contract_name} {suffix} contract", "medium"
-        return f"{contract_name} {suffix}", "medium"
     if "safe_signer" in labels:
         return "Safe signer", "high"
     if permission_effects:
         return f"{contract_name} permissioned principal", "medium"
-    if resolved_type == "contract" and node_name:
-        return node_name, "medium"
-    if resolved_type == "contract" and graph_context:
-        source_name, _, relation = graph_context[-1].partition(":")
-        source_name = source_name.strip()
-        relation = relation.strip()
-        if source_name and relation and _slug(relation) not in {"role_principal", "controller_value"}:
-            return f"{source_name} {relation}", "medium"
-        if source_name:
-            return f"{source_name} contract", "medium"
     return _display_from_type(resolved_type), "high" if resolved_type != "unknown" else "low"
 
 
@@ -293,7 +205,6 @@ def build_principal_labels(
     nodes_by_id = _node_by_id(resolved_control_graph or {})
     nodes_by_address = {node["address"].lower(): node for node in (resolved_control_graph or {}).get("nodes", [])}
     incoming_by_id = _incoming_edges(resolved_control_graph or {})
-    outgoing_by_id = _outgoing_edges(resolved_control_graph or {})
     permissions_by_address, permission_label_hints = _collect_permissions(effective_permissions)
 
     addresses = set(nodes_by_address)
@@ -301,8 +212,6 @@ def build_principal_labels(
 
     principals: list[PrincipalProfile] = []
     for address in sorted(addresses):
-        if not address.startswith("0x") or len(address) != 42:
-            continue
         if address == effective_permissions["contract_address"].lower():
             continue
         node = nodes_by_address.get(address)
@@ -311,15 +220,6 @@ def build_principal_labels(
 
         if resolved_type == "unknown" and rpc_url:
             resolved_type, details = classify_resolved_address(rpc_url, address)
-
-        if resolved_type == "contract" and node:
-            if str(details.get("controller_label", "")).strip() == "permissionController":
-                continue
-            outgoing_edges = outgoing_by_id.get(node.get("id", ""), [])
-            if details.get("authority_kind") == "aragon_app_like" and not outgoing_edges:
-                continue
-            if any(edge.get("to_id") != node.get("id") for edge in outgoing_edges):
-                continue
 
         labels, graph_context = _graph_labels_for_node(
             node or {"resolved_type": resolved_type}, incoming_by_id.get((node or {}).get("id", ""), []), nodes_by_id
@@ -339,7 +239,6 @@ def build_principal_labels(
             graph_context,
             permissions,
             effective_permissions["contract_name"],
-            _node_display_name(node),
         )
 
         principals.append(
@@ -351,13 +250,6 @@ def build_principal_labels(
                 "confidence": confidence,  # type: ignore[typeddict-item]
                 "details": details,
                 "graph_context": graph_context,
-                "controller_context": sorted(
-                    {
-                        str(permission.get("controller", "")).strip()
-                        for permission in permissions
-                        if str(permission.get("controller", "")).strip()
-                    }
-                ),
                 "permissions": permissions,
             }
         )

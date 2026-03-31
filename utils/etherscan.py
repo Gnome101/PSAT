@@ -1,20 +1,14 @@
 """Etherscan API client."""
 
 import json as _json
-import logging
 import os
-import time
 from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 from eth_utils.crypto import keccak
 
-logger = logging.getLogger(__name__)
-
 ETHERSCAN_API = "https://api.etherscan.io/v2/api"
-_RATE_LIMIT_RETRIES = 5
-_RATE_LIMIT_BACKOFF = 1.0  # seconds, doubles each retry
 
 
 def _get_api_key() -> str:
@@ -26,43 +20,26 @@ def _get_api_key() -> str:
 
 
 def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
-    """Make an Etherscan API call with automatic retry on rate-limit errors."""
+    """Make an Etherscan API call. Returns the parsed JSON response."""
     api_key = _get_api_key()
-    backoff = _RATE_LIMIT_BACKOFF
+    resp = requests.get(
+        ETHERSCAN_API,
+        params={
+            "chainid": str(chain_id),
+            "module": module,
+            "action": action,
+            "apikey": api_key,
+            **params,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
 
-    for attempt in range(_RATE_LIMIT_RETRIES + 1):
-        resp = requests.get(
-            ETHERSCAN_API,
-            params={
-                "chainid": str(chain_id),
-                "module": module,
-                "action": action,
-                "apikey": api_key,
-                **params,
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    if data.get("status") != "1":
+        raise RuntimeError(f"Etherscan error: {data.get('message', 'unknown')} - {data.get('result', '')}")
 
-        if data.get("status") == "1":
-            return data
-
-        result_str = str(data.get("result", ""))
-        if "rate limit" in result_str.lower() and attempt < _RATE_LIMIT_RETRIES:
-            logger.warning(
-                "Etherscan rate limit hit, retrying in %.1fs (attempt %d/%d)",
-                backoff,
-                attempt + 1,
-                _RATE_LIMIT_RETRIES,
-            )
-            time.sleep(backoff)
-            backoff *= 2
-            continue
-
-        raise RuntimeError(f"Etherscan error: {data.get('message', 'unknown')} - {result_str}")
-
-    raise RuntimeError("Etherscan rate limit: max retries exceeded")
+    return data
 
 
 def _canonical_abi_type(inp: dict) -> str:

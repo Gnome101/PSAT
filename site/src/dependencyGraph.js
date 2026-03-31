@@ -88,14 +88,6 @@ const NODE_STYLES = {
     stroke: "#e11d48",
     text: "#4c0519",
   },
-  created: {
-    shape: "rect",
-    width: 240,
-    height: 128,
-    fill: "#fdf2f8",
-    stroke: "#db2777",
-    text: "#831843",
-  },
   library: {
     shape: "rect",
     width: 260,

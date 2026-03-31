@@ -150,26 +150,14 @@ def _build_edges(
             entry["function_name"] = function_name
         edges.append(entry)
 
-    # Dynamic call-graph edges — supports both keyed dict (new) and flat list (old) formats
-    dep_graph = unified.get("dependency_graph", {})
-    if isinstance(dep_graph, dict):
-        for graph_key, edge_list in dep_graph.items():
-            parts = graph_key.split("|")
-            from_addr, to_addr = parts[0], parts[1]
-            for edge in edge_list:
-                _add(
-                    f"addr:{from_addr}",
-                    f"addr:{to_addr}",
-                    edge["op"],
-                    edge.get("provenance", []),
-                    selector=edge.get("selector"),
-                    function_name=edge.get("function_name"),
-                )
-    elif isinstance(dep_graph, list):
-        for edge in dep_graph:
+    # Dynamic call-graph edges (keyed by from|to)
+    for graph_key, edge_list in unified.get("dependency_graph", {}).items():
+        parts = graph_key.split("|")
+        from_addr, to_addr = parts[0], parts[1]
+        for edge in edge_list:
             _add(
-                f"addr:{edge['from']}",
-                f"addr:{edge['to']}",
+                f"addr:{from_addr}",
+                f"addr:{to_addr}",
                 edge["op"],
                 edge.get("provenance", []),
                 selector=edge.get("selector"),
@@ -180,12 +168,8 @@ def _build_edges(
     # create implicit edges from target.  Skip classification-only discoveries
     # — those are reachable through their proxy's DELEGATES_TO / BEACON edge.
     deps_with_edges: set[str] = set()
-    if isinstance(dep_graph, dict):
-        for graph_key in dep_graph:
-            deps_with_edges.add(graph_key.split("|")[1])
-    elif isinstance(dep_graph, list):
-        for edge in dep_graph:
-            deps_with_edges.add(edge["to"])
+    for graph_key in unified.get("dependency_graph", {}):
+        deps_with_edges.add(graph_key.split("|")[1])
     deps = unified.get("dependencies", {})
     for addr in sorted(deps):
         if addr in deps_with_edges:

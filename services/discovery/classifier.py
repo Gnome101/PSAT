@@ -404,10 +404,9 @@ def classify_contracts(
             info["type"] = "implementation"
             info["proxies"] = sorted(impl_to_proxies[addr])
 
-    # Phase 3 -- behavioral: factory / library / created from dynamic edges
+    # Phase 3 -- behavioral: factory / library from dynamic edges
     if dynamic_edges:
         creators: set[str] = set()
-        created: set[str] = set()
         delegatecall_only: dict[str, bool] = {}
 
         for edge in dynamic_edges:
@@ -417,7 +416,6 @@ def classify_contracts(
 
             if op in ("CREATE", "CREATE2"):
                 creators.add(src)
-                created.add(dst)
             elif op == "DELEGATECALL":
                 if dst in classifications and dst not in delegatecall_only:
                     delegatecall_only[dst] = True
@@ -430,8 +428,6 @@ def classify_contracts(
                 continue
             if addr in creators:
                 info["type"] = "factory"
-            elif addr in created:
-                info["type"] = "created"
             elif delegatecall_only.get(addr, False):
                 info["type"] = "library"
 

@@ -67,7 +67,6 @@ function resolvedGraphIndexes(detail) {
 
 function titleize(value) {
   return String(value || "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -168,51 +167,6 @@ function upstreamColumn(depth) {
   return "upstream4";
 }
 
-export const PRINCIPAL_COLUMNS = new Set(["principal", "upstream1", "upstream2", "upstream3", "upstream4"]);
-export const ADDRESS_GRAPH_COLUMNS = ["upstream4", "upstream3", "upstream2", "upstream1", "contract"];
-
-function addressNodeContent(node, principal) {
-  const normalized = String(node?.address || "").toLowerCase();
-  const resolvedType = principal?.resolved_type || node?.resolved_type || "unknown";
-  const controllerLabel = titleize(node?.details?.controller_label || "");
-  const principalName = String(principal?.display_name || "").trim();
-
-  let title = graphResolvedTitle(node);
-  if (node?.contract_name) {
-    title = node.contract_name;
-  } else if (resolvedType === "safe" && controllerLabel) {
-    title = controllerLabel;
-  } else if (principalName && !["Safe", "Safe signer", "Externally owned account"].includes(principalName)) {
-    title = principalName;
-  }
-
-  let meta = graphResolvedMeta(node);
-  if (resolvedType === "safe") {
-    const threshold = principal?.details?.threshold ?? node?.details?.threshold ?? "?";
-    const owners = principal?.details?.owners || node?.details?.owners || [];
-    meta = `Safe ${threshold} / ${owners.length || "?"}`;
-  } else if (resolvedType === "contract" && node?.details?.authority_kind) {
-    meta = titleize(String(node.details.authority_kind).replace(/_like$/i, ""));
-  }
-
-  return {
-    title,
-    subtitle: shortenAddress(normalized),
-    meta,
-    resolvedType,
-    detailTitle: principal?.display_name || node?.contract_name || title,
-    raw: principal || node,
-    graphNode: node,
-  };
-}
-
-function addressEdgeLabel(edge, toNode) {
-  if (edge.relation === "role_principal" && toNode?.details?.controller_label) {
-    return titleize(toNode.details.controller_label);
-  }
-  return titleize(edge.label || edge.relation || "relation");
-}
-
 export function buildVisualPermissionGraph(detail) {
   const permissions = detail?.effective_permissions;
   if (!permissions?.functions?.length) {
@@ -268,9 +222,7 @@ export function buildVisualPermissionGraph(detail) {
         return;
       }
       const outgoing = (resolvedGraph.outgoingById.get(currentNode.id) || []).filter((edge) =>
-        ["controller_value", "safe_owner", "timelock_owner", "proxy_admin_owner", "role_principal"].includes(
-          edge.relation,
-        ),
+        ["controller_value", "safe_owner", "timelock_owner", "proxy_admin_owner"].includes(edge.relation),
       );
       for (const edge of outgoing) {
         const upstreamNode = resolvedGraph.nodeById.get(edge.to_id);
@@ -278,11 +230,10 @@ export function buildVisualPermissionGraph(detail) {
           continue;
         }
         const upstreamAddress = String(upstreamNode.address).toLowerCase();
-        const upstreamPrincipal = principalIndex.get(upstreamAddress);
         if (isZeroAddress(upstreamAddress) || upstreamNode.resolved_type === "zero") {
           continue;
         }
-        const visitKey = `${currentNode.id}:${upstreamNode.id}:${edge.relation}`;
+        const visitKey = `${depth}:${currentNode.id}:${upstreamNode.id}`;
         if (visited.has(visitKey)) {
           continue;
         }
@@ -293,16 +244,13 @@ export function buildVisualPermissionGraph(detail) {
         addNode({
           id: nodeId,
           column,
-          title: upstreamPrincipal?.display_name || graphResolvedTitle(upstreamNode),
+          title: graphResolvedTitle(upstreamNode),
           subtitle: shortenAddress(upstreamAddress),
-          meta:
-            upstreamPrincipal?.details?.threshold != null
-              ? `Safe ${upstreamPrincipal.details.threshold} / ${(upstreamPrincipal.details.owners || []).length || "?"}`
-              : graphResolvedMeta(upstreamNode),
+          meta: graphResolvedMeta(upstreamNode),
           kind: "principal",
-          resolvedType: upstreamPrincipal?.resolved_type || upstreamNode.resolved_type || "unknown",
-          detailTitle: upstreamPrincipal?.display_name || graphResolvedTitle(upstreamNode),
-          raw: upstreamPrincipal || upstreamNode,
+          resolvedType: upstreamNode.resolved_type || "unknown",
+          detailTitle: graphResolvedTitle(upstreamNode),
+          raw: upstreamNode,
         });
         addEdge({ from: nodeId, to: downstreamNodeId, label: edge.label || titleize(edge.relation), raw: edge });
         walk(upstreamAddress, depth + 1, nodeId);
@@ -337,52 +285,6 @@ export function buildVisualPermissionGraph(detail) {
         raw: { authority_public: true },
       });
       addEdge({ from: "controller:public", to: functionId, label: "can call" });
-    }
-
-    for (const controllerGrant of entry.controllers || []) {
-      const grantId = `controller:grant:${controllerGrant.controller_id}`;
-      const grantPrincipals = controllerGrant.principals || [];
-      addNode({
-        id: grantId,
-        column: "controller",
-        title: titleize(controllerGrant.label || controllerGrant.source || "controller"),
-        subtitle: "Direct controller",
-        meta: grantPrincipals.length
-          ? `${grantPrincipals.length} principal${grantPrincipals.length === 1 ? "" : "s"}`
-          : titleize(controllerGrant.kind || "controller"),
-        kind: "controller",
-        raw: controllerGrant,
-      });
-      addEdge({ from: grantId, to: functionId, label: "can call" });
-
-      for (const principalRef of grantPrincipals) {
-        const address = String(principalRef.address || "").toLowerCase();
-        if (!address) {
-          continue;
-        }
-        const principal = principalIndex.get(address);
-        const principalNode = graphPrincipalNodeContent(
-          address,
-          principal,
-          principalRef.resolved_type,
-          permissions.contract_name,
-          resolvedGraph,
-        );
-        addNode({
-          id: `principal:${address}`,
-          column: "principal",
-          title: principalNode.title,
-          subtitle: principalNode.subtitle,
-          meta: principalNode.meta,
-          kind: "principal",
-          resolvedType: principalNode.resolvedType,
-          detailTitle: principalNode.detailTitle,
-          raw: principal || principalRef || principalNode.sourceGraphNode,
-          graphNode: principalNode.sourceGraphNode || null,
-        });
-        addEdge({ from: `principal:${address}`, to: grantId, label: "controls" });
-        addUpstreamChain(address, `principal:${address}`);
-      }
     }
 
     if (entry.direct_owner?.address) {
@@ -479,77 +381,6 @@ export function buildVisualPermissionGraph(detail) {
   return { nodes, edges };
 }
 
-export function buildVisualAddressGraph(detail) {
-  const graph = detail?.resolved_control_graph;
-  if (!graph?.nodes?.length) {
-    return null;
-  }
-
-  const principalIndex = principalByAddress(detail);
-  const nodes = [];
-  const edges = [];
-  const seenNodes = new Set();
-  const seenEdges = new Set();
-
-  function addNode(node) {
-    if (seenNodes.has(node.id)) {
-      return;
-    }
-    seenNodes.add(node.id);
-    nodes.push(node);
-  }
-
-  function addEdge(edge) {
-    const key = `${edge.from}|${edge.to}|${edge.label}`;
-    if (seenEdges.has(key)) {
-      return;
-    }
-    seenEdges.add(key);
-    edges.push(edge);
-  }
-
-  for (const node of graph.nodes || []) {
-    const address = String(node.address || "").toLowerCase();
-    if (!address || isZeroAddress(address)) {
-      continue;
-    }
-    const principal = principalIndex.get(address);
-    const content = addressNodeContent(node, principal);
-    addNode({
-      id: node.id,
-      column: node.depth === 0 ? "contract" : upstreamColumn(Math.min(Number(node.depth) || 1, 4)),
-      title: content.title,
-      subtitle: content.subtitle,
-      meta: content.meta,
-      kind: node.depth === 0 ? "contract" : "principal",
-      resolvedType: content.resolvedType,
-      detailTitle: content.detailTitle,
-      raw: content.raw,
-      graphNode: content.graphNode || null,
-    });
-  }
-
-  const nodeById = new Map((graph.nodes || []).map((node) => [node.id, node]));
-  for (const edge of graph.edges || []) {
-    const fromNode = nodeById.get(edge.from_id);
-    const toNode = nodeById.get(edge.to_id);
-    if (!fromNode?.address || !toNode?.address) {
-      continue;
-    }
-    if (isZeroAddress(fromNode.address) || isZeroAddress(toNode.address)) {
-      continue;
-    }
-    addEdge({
-      from: edge.from_id,
-      to: edge.to_id,
-      label: addressEdgeLabel(edge, toNode),
-      raw: edge,
-    });
-  }
-
-  return { nodes, edges };
-}
-
 function nodeVisual(node) {
   if (
     node.column === "principal" ||
@@ -630,7 +461,8 @@ function nodeVisual(node) {
   };
 }
 
-function layoutVisualGraph(graph, columns) {
+export function layoutVisualPermissionGraph(graph) {
+  const columns = ["upstream4", "upstream3", "upstream2", "upstream1", "principal", "controller", "function", "contract"];
   const grouped = new Map(columns.map((column) => [column, []]));
   for (const node of graph.nodes) {
     grouped.get(node.column)?.push(node);
@@ -683,14 +515,6 @@ function layoutVisualGraph(graph, columns) {
       to: positioned.get(edge.to),
     })),
   };
-}
-
-export function layoutVisualPermissionGraph(graph) {
-  return layoutVisualGraph(graph, ["upstream4", "upstream3", "upstream2", "upstream1", "principal", "controller", "function", "contract"]);
-}
-
-export function layoutVisualAddressGraph(graph) {
-  return layoutVisualGraph(graph, ADDRESS_GRAPH_COLUMNS);
 }
 
 function nodeVariant(node) {

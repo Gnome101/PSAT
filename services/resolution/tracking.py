@@ -19,7 +19,7 @@ from eth_utils.crypto import keccak
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from schemas.contract_analysis import AssociatedEvent, ControllerReadSpec
+from schemas.contract_analysis import AssociatedEvent
 from schemas.control_tracking import (
     ControlChangeEvent,
     ControlSnapshot,
@@ -28,8 +28,6 @@ from schemas.control_tracking import (
     TrackedController,
     TrackedPolicy,
 )
-
-from .controller_adapters import expand_role_identifier_principals, type_authority_contract
 
 JSON_RPC_TIMEOUT_SECONDS = 10
 TrackedItem = TypeVar("TrackedItem", TrackedController, TrackedPolicy)
@@ -175,9 +173,7 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
             details["owner"] = owner
         return "proxy_admin", details
 
-    details = {"address": normalized}
-    details.update(type_authority_contract(rpc_url, normalized, block_tag))
-    return "contract", details
+    return "contract", {"address": normalized}
 
 
 _classify_resolved_address = classify_resolved_address
@@ -191,19 +187,9 @@ def _current_block_number(rpc_url: str) -> int:
 
 
 def _read_polling_source(
-    rpc_url: str,
-    contract_address: str,
-    source: str,
-    controller_kind: str,
-    block_tag: str = "latest",
-    read_spec: ControllerReadSpec | None = None,
+    rpc_url: str, contract_address: str, source: str, controller_kind: str, block_tag: str = "latest"
 ) -> str:
-    target = source
-    if isinstance(read_spec, dict) and read_spec.get("strategy") == "getter_call":
-        read_target = read_spec.get("target")
-        if isinstance(read_target, str) and read_target:
-            target = read_target
-    raw = _eth_call_raw(rpc_url, contract_address, f"{target}()", block_tag)
+    raw = _eth_call_raw(rpc_url, contract_address, f"{source}()", block_tag)
     return _decode_controller_value(raw, controller_kind)
 
 
@@ -212,51 +198,8 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
     controller_values = {}
     for controller in plan["tracked_controllers"]:
         source = controller["source"]
-        read_spec = controller.get("read_spec")
         try:
-            value = _read_polling_source(
-                rpc_url,
-                plan["contract_address"],
-                source,
-                controller["kind"],
-                block_tag,
-                read_spec=read_spec if isinstance(read_spec, dict) else None,
-            )
-            if controller["kind"] == "role_identifier":
-                member_addresses, adapter_meta = expand_role_identifier_principals(
-                    rpc_url,
-                    plan["contract_address"],
-                    value,
-                    block_tag,
-                )
-                resolved_principals = []
-                for member_address in member_addresses:
-                    resolved_type, details = classify_resolved_address(
-                        rpc_url,
-                        member_address,
-                        block_tag,
-                    )
-                    resolved_principals.append(
-                        {
-                            "address": member_address,
-                            "resolved_type": resolved_type,
-                            "details": details,
-                        }
-                    )
-                controller_values[controller["controller_id"]] = {
-                    "source": source,
-                    "value": value,
-                    "block_number": block_number,
-                    "observed_via": f"eth_call+{adapter_meta.get('adapter', 'none')}",
-                    "resolved_type": "unknown",
-                    "details": {
-                        "source": source,
-                        "role_id": value,
-                        **adapter_meta,
-                        "resolved_principals": resolved_principals,
-                    },
-                }
-                continue
+            value = _read_polling_source(rpc_url, plan["contract_address"], source, controller["kind"], block_tag)
             controller_values[controller["controller_id"]] = {
                 "source": source,
                 "value": value,
