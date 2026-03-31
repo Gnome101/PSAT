@@ -52,14 +52,20 @@ class DiscoveryWorker(BaseWorker):
         if not selected:
             self.update_detail(session, job, "No contracts found to analyze")
             # Store summary and let base worker complete the job
-            store_artifact(session, job.id, "discovery_summary", data={
-                "mode": "company",
-                "company": company,
-                "discovered_count": len(discovered),
-                "analyzed_count": 0,
-            })
+            store_artifact(
+                session,
+                job.id,
+                "discovery_summary",
+                data={
+                    "mode": "company",
+                    "company": company,
+                    "discovered_count": len(discovered),
+                    "analyzed_count": 0,
+                },
+            )
             # Override next_stage to done since there's nothing to process
             from db.queue import complete_job
+
             complete_job(session, job.id, f"Discovery complete for {company}: no contracts found")
             # Signal base worker to skip the normal advance
             raise JobHandledDirectly()
@@ -81,26 +87,33 @@ class DiscoveryWorker(BaseWorker):
             child_ids.append({"job_id": str(child_job.id), "address": addr, "name": child_name, "chain": child_chain})
             logger.info("Created child job %s for %s (%s)", child_job.id, addr, child_name)
 
-        store_artifact(session, job.id, "discovery_summary", data={
-            "mode": "company",
-            "company": company,
-            "official_domain": inventory.get("official_domain"),
-            "discovered_count": len(discovered),
-            "analyzed_count": len(child_ids),
-            "child_jobs": child_ids,
-        })
+        store_artifact(
+            session,
+            job.id,
+            "discovery_summary",
+            data={
+                "mode": "company",
+                "company": company,
+                "official_domain": inventory.get("official_domain"),
+                "discovered_count": len(discovered),
+                "analyzed_count": len(child_ids),
+                "child_jobs": child_ids,
+            },
+        )
 
         if not job.name:
             job.name = company
             session.commit()
 
         self.update_detail(
-            session, job,
+            session,
+            job,
             f"Discovered {len(discovered)} contracts, queued {len(child_ids)} for analysis",
         )
 
         # Complete the parent job — children will run through the pipeline independently
         from db.queue import complete_job
+
         complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
         raise JobHandledDirectly()
 

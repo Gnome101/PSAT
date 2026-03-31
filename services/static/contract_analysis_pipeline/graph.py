@@ -564,13 +564,13 @@ def build_permission_graph(contract, project_dir: Path) -> PermissionGraph:
                         cast(
                             ControllerRef,
                             {
-                            "id": controller_id,
-                            "kind": controller["kind"],
-                            "label": controller["label"],
-                            "source": controller["source"],
-                            "read_spec": controller.get("read_spec"),
-                            "confidence": controller.get("confidence"),
-                            "evidence": controller["evidence"],
+                                "id": controller_id,
+                                "kind": controller["kind"],
+                                "label": controller["label"],
+                                "source": controller["source"],
+                                "read_spec": controller.get("read_spec"),
+                                "confidence": controller.get("confidence"),
+                                "evidence": controller["evidence"],
                             },
                         ),
                     )
@@ -582,14 +582,14 @@ def build_permission_graph(contract, project_dir: Path) -> PermissionGraph:
                     cast(
                         GuardRecord,
                         {
-                        "id": guard_id,
-                        "contract": _declaring_contract_name(function, contract.name),
-                        "function": getattr(function, "full_name", function.name),
-                        "kind": candidate["kind"],
-                        "confidence": candidate.get("confidence"),
-                        "controller_ids": sorted(controller_ids),
-                        "evidence": candidate["evidence"],
-                        "details": sorted(set(candidate.get("details", []))),
+                            "id": guard_id,
+                            "contract": _declaring_contract_name(function, contract.name),
+                            "function": getattr(function, "full_name", function.name),
+                            "kind": candidate["kind"],
+                            "confidence": candidate.get("confidence"),
+                            "controller_ids": sorted(controller_ids),
+                            "evidence": candidate["evidence"],
+                            "details": sorted(set(candidate.get("details", []))),
                         },
                     ),
                 )

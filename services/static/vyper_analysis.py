@@ -85,7 +85,7 @@ def _split_args(arg_string: str) -> list[str]:
     current: list[str] = []
     depth = 0
     for char in arg_string:
-        if char in "([{" :
+        if char in "([{":
             depth += 1
         elif char in ")]}":
             depth = max(depth - 1, 0)
@@ -157,9 +157,7 @@ def _parse_vyper_functions(source: str) -> list[dict[str, Any]]:
             {
                 "name": name,
                 "signature": (
-                    "constructor" + _abi_signature("", args)[1:]
-                    if name == "__init__"
-                    else _abi_signature(name, args)
+                    "constructor" + _abi_signature("", args)[1:] if name == "__init__" else _abi_signature(name, args)
                 ),
                 "args": args,
                 "return_type": return_type,

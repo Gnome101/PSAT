@@ -85,7 +85,7 @@ def _abi_signature(function_signature: str) -> str:
     current: list[str] = []
     depth = 0
     for char in args:
-        if char in "([{" :
+        if char in "([{":
             depth += 1
         elif char in ")]}":
             depth = max(depth - 1, 0)
@@ -201,9 +201,7 @@ def _controller_grants_for_refs(
                     if not address.startswith("0x"):
                         continue
                     principal_details_raw = principal.get("details", {})
-                    principal_details = (
-                        dict(principal_details_raw) if isinstance(principal_details_raw, dict) else {}
-                    )
+                    principal_details = dict(principal_details_raw) if isinstance(principal_details_raw, dict) else {}
                     principals.append(
                         _resolved_principal(
                             address,
@@ -311,11 +309,7 @@ def build_effective_permissions(
         )
         controller_refs = sorted(set(controller_refs))
         direct_owner = None
-        if (
-            "owner" in controller_refs
-            and owner_value
-            and owner_value != "0x0000000000000000000000000000000000000000"
-        ):
+        if "owner" in controller_refs and owner_value and owner_value != "0x0000000000000000000000000000000000000000":
             direct_owner = _principal_for_address(owner_value, known)
 
         role_grants: list[AuthorityRoleGrant] = []

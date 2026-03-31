@@ -68,6 +68,7 @@ def load_addresses(filepath: str) -> list[dict]:
 
     sys.exit(f"Unsupported file type: {path.suffix} (use .json or .csv)")
 
+
 _build_unified_deps = build_unified_dependencies
 
 

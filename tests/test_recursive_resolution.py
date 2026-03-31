@@ -460,6 +460,7 @@ def test_materialize_contract_artifacts_writes_effective_permissions(monkeypatch
         lambda *_args, **_kwargs: project_dir.mkdir(parents=True, exist_ok=True),
     )
     monkeypatch.setattr("services.resolution.recursive.analyze", lambda *args, **kwargs: None)
+
     def fake_analyze_contract(_project_dir):
         analysis_path.write_text(
             json.dumps(
@@ -524,19 +525,22 @@ def test_materialize_contract_artifacts_writes_effective_permissions(monkeypatch
     )
     monkeypatch.setattr(
         "services.resolution.recursive.write_effective_permissions_from_files",
-        lambda analysis_path, target_snapshot_path, output_path, principal_resolution: output_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": "0.1",
-                    "contract_address": address,
-                    "contract_name": "TestContract",
-                    "principal_resolution": principal_resolution,
-                    "artifacts": {},
-                    "functions": [],
-                }
+        lambda analysis_path, target_snapshot_path, output_path, principal_resolution: (
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "0.1",
+                        "contract_address": address,
+                        "contract_name": "TestContract",
+                        "principal_resolution": principal_resolution,
+                        "artifacts": {},
+                        "functions": [],
+                    }
+                )
+                + "\n"
             )
-            + "\n"
-        ) or output_path,
+            or output_path
+        ),
     )
 
     _materialize_contract_artifacts(

@@ -27,6 +27,7 @@ def build_unified_dependencies(
             dep_sources.setdefault(normalize_address(dep), set()).add("dynamic")
 
     cls_map = (classifications or {}).get("classifications", {})
+
     def _dep_entry(addr: str, sources: list[str]) -> dict:
         entry: dict = {"type": "regular", "source": sources}
         if addr in cls_map:

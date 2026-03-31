@@ -61,7 +61,8 @@ class ResolutionWorker(BaseWorker):
             }
             logger.info(
                 "Job %s: impl contract — reading state from proxy %s",
-                job.id, proxy_address,
+                job.id,
+                proxy_address,
             )
 
         # Build control snapshot via RPC calls

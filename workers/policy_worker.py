@@ -141,9 +141,7 @@ class PolicyWorker(BaseWorker):
             )
 
             if principal_labels_path.exists():
-                store_artifact(
-                    session, job.id, "principal_labels", data=json.loads(principal_labels_path.read_text())
-                )
+                store_artifact(session, job.id, "principal_labels", data=json.loads(principal_labels_path.read_text()))
                 logger.info(
                     "Policy stage principal labels complete for job %s address=%s name=%s",
                     job.id,

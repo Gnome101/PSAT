@@ -306,7 +306,9 @@ class StaticWorker(BaseWorker):
         store_artifact(session, job.id, "contract_flags", data=flags)
         logger.info(
             "Job %s: proxy classified as %s, implementation=%s",
-            job.id, proxy_type, impl_address or "unknown",
+            job.id,
+            proxy_type,
+            impl_address or "unknown",
         )
 
         # Queue implementation addresses for analysis
@@ -321,13 +323,14 @@ class StaticWorker(BaseWorker):
         base_name = job.name or contract_name
         for impl_addr, label in impl_entries:
             # Check if we already have a job for this implementation
-            existing = session.execute(
-                select(Job).where(Job.address == impl_addr).limit(1)
-            ).scalar_one_or_none()
+            existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
             if existing:
                 logger.info(
                     "Job %s: %s %s already has job %s, skipping",
-                    job.id, label, impl_addr, existing.id,
+                    job.id,
+                    label,
+                    impl_addr,
+                    existing.id,
                 )
                 continue
 
@@ -345,7 +348,11 @@ class StaticWorker(BaseWorker):
             child_job = create_job(session, child_request)
             logger.info(
                 "Job %s: created %s job %s for %s (%s)",
-                job.id, label, child_job.id, impl_addr, impl_name,
+                job.id,
+                label,
+                child_job.id,
+                impl_addr,
+                impl_name,
             )
 
     def _scaffold_project(
@@ -579,9 +586,7 @@ class StaticWorker(BaseWorker):
             return False
 
         if contract_analysis_path.exists():
-            store_artifact(
-                session, job.id, "contract_analysis", data=json.loads(contract_analysis_path.read_text())
-            )
+            store_artifact(session, job.id, "contract_analysis", data=json.loads(contract_analysis_path.read_text()))
         logger.info(
             "Static stage contract analysis complete for job %s address=%s contract=%s",
             job.id,
