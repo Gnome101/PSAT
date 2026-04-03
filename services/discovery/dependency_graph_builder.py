@@ -32,9 +32,22 @@ def _shorten(address: str) -> str:
     return address
 
 
+_GENERIC_PROXY_NAMES = {
+    "uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy",
+    "beaconproxy", "ossifiableproxy", "upgradeablebeacon",
+}
+
+
 def _contract_label(contract_dir: Path) -> str:
-    """Derive a human label from the contract output directory name."""
-    return contract_dir.name
+    """Derive a human label from contract metadata, falling back to directory name."""
+    meta = _load_json(contract_dir / "contract_meta.json")
+    if not meta:
+        return contract_dir.name
+    name = meta.get("contract_name", "")
+    # For generic proxy contracts, prefer the display name (job name)
+    if name.lower().replace("_", "") in _GENERIC_PROXY_NAMES and meta.get("display_name"):
+        return meta["display_name"]
+    return name or contract_dir.name
 
 
 def _derive_discovered(unified: dict) -> list[str]:

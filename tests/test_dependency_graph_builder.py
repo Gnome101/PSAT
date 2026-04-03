@@ -264,3 +264,54 @@ def test_nested_implementation_label(tmp_path):
     impl_node = next(n for n in result["nodes"] if n["address"] == IMPL)
     assert proxy_node["label"] == "TransparentProxy"
     assert impl_node["label"] == "TokenV2"
+
+
+# ---------------------------------------------------------------------------
+# Regression: root node label must come from contract_meta.json, not dir name
+# ---------------------------------------------------------------------------
+
+
+def test_root_label_from_contract_meta_not_dir_name(tmp_path):
+    """Regression: _contract_label must read contract_meta.json, not use the
+    directory name.  Previously the worker temp dir name (e.g. ``psat_static_abc123``)
+    leaked into the visualization."""
+    # Create a dir whose name looks like a worker temp path
+    bad_dir = tmp_path / "psat_static_abc123"
+    bad_dir.mkdir()
+
+    # Write contract metadata with the real name
+    (bad_dir / "contract_meta.json").write_text(json.dumps({
+        "contract_name": "LiquidityPool",
+        "display_name": "Liquidity Pool",
+    }))
+
+    deps = {DEP_A: {"type": "regular", "source": ["static"]}}
+    _write(bad_dir, _unified(deps=deps))
+
+    result = build_dependency_visualization(bad_dir)
+
+    target_node = next(n for n in result["nodes"] if n["is_target"])
+    # Must be the real contract name, NOT the directory name
+    assert target_node["label"] == "LiquidityPool"
+    assert target_node["label"] != "psat_static_abc123"
+
+
+def test_root_label_prefers_display_name_for_generic_proxy(tmp_path):
+    """Regression: when contract_name is a generic proxy name like 'UUPSProxy',
+    _contract_label should return the display_name (job name) instead."""
+    contract_dir = tmp_path / "some_worker_dir"
+    contract_dir.mkdir()
+
+    (contract_dir / "contract_meta.json").write_text(json.dumps({
+        "contract_name": "UUPSProxy",
+        "display_name": "Rewards Router",
+    }))
+
+    deps = {DEP_A: {"type": "regular", "source": ["static"]}}
+    _write(contract_dir, _unified(deps=deps))
+
+    result = build_dependency_visualization(contract_dir)
+
+    target_node = next(n for n in result["nodes"] if n["is_target"])
+    assert target_node["label"] == "Rewards Router"
+    assert target_node["label"] != "UUPSProxy"

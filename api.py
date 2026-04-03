@@ -345,19 +345,8 @@ def analysis_detail(run_name: str) -> dict:
             if artifact_name in all_artifacts and isinstance(all_artifacts[artifact_name], dict):
                 payload[artifact_name] = all_artifacts[artifact_name]
 
-        # For impl jobs, inherit dependency viz from the proxy job if missing
         request = job.request if isinstance(job.request, dict) else {}
         proxy_address = request.get("proxy_address")
-        if proxy_address and "dependency_graph_viz" not in payload:
-            proxy_stmt = select(Job).where(Job.address == proxy_address).order_by(Job.updated_at.desc()).limit(1)
-            proxy_job = session.execute(proxy_stmt).scalar_one_or_none()
-            if proxy_job:
-                for fallback_name in ("dependency_graph_viz", "dependencies"):
-                    if fallback_name not in payload:
-                        fallback = get_artifact(session, proxy_job.id, fallback_name)
-                        if isinstance(fallback, dict):
-                            payload[fallback_name] = fallback
-
         payload["proxy_address"] = proxy_address
 
         # Inline text artifacts

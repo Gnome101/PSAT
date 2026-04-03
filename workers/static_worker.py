@@ -194,6 +194,11 @@ class StaticWorker(BaseWorker):
         remappings = meta.get("remappings", [])
         job_id_str = str(job.id)
 
+        # Attach the job's display name so downstream tools (e.g. graph builder)
+        # can use it instead of the Etherscan contract name for proxy contracts.
+        if job.name:
+            meta["display_name"] = job.name
+
         logger.info(
             "Static stage started for job %s address=%s contract=%s",
             job_id_str,
@@ -439,11 +444,13 @@ class StaticWorker(BaseWorker):
         try:
             tx_limit = int(dynamic_tx_limit)
             tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
+            proxy_addr = request.get("proxy_address")
             dyn_output = find_dynamic_dependencies(
                 address,
                 rpc_url=dynamic_rpc,
                 tx_limit=tx_limit,
                 tx_hashes=tx_hashes,
+                proxy_address=proxy_addr,
             )
             logger.info(
                 "Static stage dynamic dependencies complete for job %s address=%s count=%d",

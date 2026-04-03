@@ -67,8 +67,15 @@ def _tx_selector(input_data: Any) -> str:
 
 
 def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
-    """Fetch recent normal and internal transactions for an address from Etherscan."""
+    """Fetch recent normal and internal transactions for an address from Etherscan.
+
+    If the most recent normal transactions are all plain ETH transfers
+    (selector ``0x``), a second oldest-first fetch is performed to find
+    function calls that may be buried under high-volume value transfers
+    (common for reward routers, fee vaults, treasury contracts).
+    """
     txs: list[dict] = []
+    normal_txs: list[dict] = []
     for action in ("txlist", "txlistinternal"):
         try:
             data = etherscan_get(
@@ -88,6 +95,33 @@ def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
         result = data.get("result", [])
         if isinstance(result, list):
             txs.extend(result)
+            if action == "txlist":
+                normal_txs = result
+
+    # If every normal tx is a plain ETH transfer, fetch oldest txs too —
+    # early transactions (deployment, init, admin calls) have real selectors.
+    has_function_call = any(
+        len(tx.get("input", "0x") or "0x") >= 10 for tx in normal_txs
+    )
+    if normal_txs and not has_function_call:
+        try:
+            data = etherscan_get(
+                "account",
+                "txlist",
+                address=address,
+                startblock=0,
+                endblock=99_999_999,
+                page=1,
+                offset=max(20, limit),
+                sort="asc",
+            )
+        except RuntimeError:
+            data = {}
+        result = data.get("result", [])
+        if isinstance(result, list):
+            seen_hashes = {tx.get("hash") for tx in txs}
+            txs.extend(tx for tx in result if tx.get("hash") not in seen_hashes)
+
     return txs
 
 
@@ -300,22 +334,29 @@ def find_dynamic_dependencies(
     rpc_url: str | None = None,
     tx_limit: int = 10,
     tx_hashes: list[str] | None = None,
+    proxy_address: str | None = None,
 ) -> dict:
-    """Trace representative transactions and return a dynamic dependency graph."""
+    """Trace representative transactions and return a dynamic dependency graph.
+
+    When *proxy_address* is set, transactions are fetched for the proxy
+    (where real traffic goes) but the returned graph is attributed to
+    *address* (the implementation).
+    """
     if tx_limit < 1:
         raise RuntimeError("tx_limit must be >= 1")
 
     target = normalize_address(address)
+    tx_source = normalize_address(proxy_address) if proxy_address else target
     trace_rpc = resolve_trace_rpc(rpc_url)
 
     if tx_hashes:
         selected_txs = [_fetch_tx_metadata_from_rpc(trace_rpc, tx_hash.strip()) for tx_hash in tx_hashes]
     else:
-        txs = fetch_contract_transactions(target, limit=max(20, tx_limit * 6))
-        selected_txs = pick_representative_transactions(target, txs, max_txs=tx_limit)
+        txs = fetch_contract_transactions(tx_source, limit=max(20, tx_limit * 6))
+        selected_txs = pick_representative_transactions(tx_source, txs, max_txs=tx_limit)
 
     if not selected_txs:
-        raise RuntimeError(f"No representative transactions found for {target}")
+        raise RuntimeError(f"No representative transactions found for {tx_source}")
 
     all_edges = []
     trace_methods = set()
@@ -338,10 +379,17 @@ def find_dynamic_dependencies(
 
     edges = _dedupe_edges(all_edges)
 
-    # Keep only direct calls from the target contract.  Intermediate calls
-    # between dependencies (e.g. DEX pool → oracle) are trace noise — they
-    # don't represent what the *target* depends on.
-    direct_edges = [edge for edge in edges if edge["from"] == target and edge["to"] != target]
+    # Keep only direct calls from the tx source (proxy or target).
+    # Intermediate calls between dependencies (e.g. DEX pool → oracle) are
+    # trace noise — they don't represent what the *target* depends on.
+    # Exclude edges back to the source or to the target itself.
+    exclude_to = {tx_source, target}
+    direct_edges = [edge for edge in edges if edge["from"] == tx_source and edge["to"] not in exclude_to]
+
+    # Rewrite edge source so the graph is attributed to the implementation
+    if proxy_address:
+        for edge in direct_edges:
+            edge["from"] = target
 
     # Filter out precompiles and addresses with no deployed code (EOAs)
     dep_candidates = sorted({edge["to"] for edge in direct_edges})
