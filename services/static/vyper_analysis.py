@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Any, cast
+
+from services.static.contract_analysis_pipeline.shared import _load_json
 
 from schemas.contract_analysis import (
     AccessControlAnalysis,
@@ -45,15 +46,6 @@ def is_vyper_project(project_dir: Path, meta: dict[str, Any] | None = None) -> b
         except OSError:
             continue
     return False
-
-
-def _load_json(path: Path, default: Any) -> Any:
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text())
-    except json.JSONDecodeError:
-        return default
 
 
 def _vyper_source_files(project_dir: Path) -> list[Path]:

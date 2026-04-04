@@ -23,13 +23,10 @@ from schemas.hypersync_backfill import (
     RoleCapabilityStateEntry,
     UserRoleStateEntry,
 )
-from services.resolution.tracking import _decode_event_log_fields, _normalize_hex
+from services.resolution.tracking import _decode_event_log_fields, load_control_tracking_plan
+from utils.rpc import normalize_hex as _normalize_hex
 
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
-
-
-def load_control_tracking_plan(path: Path) -> ControlTrackingPlan:
-    return json.loads(path.read_text())
 
 
 def _create_hypersync_client(hypersync_module, url: str, bearer_token: str):

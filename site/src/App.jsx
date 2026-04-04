@@ -1141,13 +1141,14 @@ function mergeProxyImpl(analyses) {
 
 function PipelineDashboard() {
   const [allJobs, setAllJobs] = useState([]);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function fetchJobs() {
       try {
         const jobs = await api("/api/jobs");
-        if (!cancelled) setAllJobs(jobs);
+        if (!cancelled) { setAllJobs(jobs); setLoaded(true); }
       } catch {}
     }
     fetchJobs();
@@ -1156,11 +1157,22 @@ function PipelineDashboard() {
   }, []);
 
   // Filter to only show meaningful analysis jobs:
-  // - Skip proxy jobs (thin wrappers — the impl child does the real work)
-  // - Skip company/discovery-only jobs (parent orchestrators, not contracts)
-  const analysisJobs = useMemo(() =>
-    allJobs.filter((j) => !j.is_proxy && !j.company),
+  // - Skip proxy jobs once their impl child job exists (the impl does the real work)
+  // - Skip company/discovery-only jobs once child contract jobs exist
+  const hasChildJobs = useMemo(() =>
+    allJobs.some((j) => !j.company && j.address),
   [allJobs]);
+  const implProxyAddresses = useMemo(() =>
+    new Set(allJobs.map((j) => (j.request?.proxy_address || "").toLowerCase()).filter(Boolean)),
+  [allJobs]);
+  const analysisJobs = useMemo(() =>
+    allJobs.filter((j) => {
+      if (j.is_proxy) return false;
+      if (!j.is_proxy && j.address && implProxyAddresses.has(j.address.toLowerCase())) return false;
+      if (j.company && hasChildJobs) return false;
+      return true;
+    }),
+  [allJobs, hasChildJobs, implProxyAddresses]);
 
   const buckets = useMemo(() => {
     const b = {};
@@ -1181,6 +1193,9 @@ function PipelineDashboard() {
     return t;
   }, [analysisJobs]);
 
+  if (!loaded) {
+    return <div className="page"><section className="panel"><p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading pipeline status…</p></section></div>;
+  }
   if (!allJobs.length) {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
   }

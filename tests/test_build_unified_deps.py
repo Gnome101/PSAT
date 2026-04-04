@@ -4,7 +4,7 @@ import types
 
 
 def _get_build_fn():
-    """Import _build_unified_deps from main without triggering heavy deps."""
+    """Import build_unified_dependencies from main without triggering heavy deps."""
     if "requests" not in sys.modules:
         requests_stub = types.ModuleType("requests")
         requests_stub.get = lambda *a, **kw: None  # type: ignore[attr-defined]
@@ -15,7 +15,7 @@ def _get_build_fn():
         dotenv_stub.load_dotenv = lambda *a, **kw: None  # type: ignore[attr-defined]
         sys.modules["dotenv"] = dotenv_stub
     mod = importlib.import_module("main") if "main" not in sys.modules else sys.modules["main"]
-    return mod._build_unified_deps
+    return mod.build_unified_dependencies
 
 
 TARGET = "0x1111111111111111111111111111111111111111"

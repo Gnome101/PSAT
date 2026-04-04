@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from schemas.control_tracking import ControlTrackingPlan
 from services.resolution.tracking import (
-    _classify_resolved_address,
+    classify_resolved_address as _classify_resolved_address,
     build_control_snapshot,
     diff_control_snapshots,
     grouped_event_filters,

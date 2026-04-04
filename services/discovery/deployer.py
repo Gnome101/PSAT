@@ -107,14 +107,7 @@ def _get_deployed_contracts(deployer: str, debug: bool = False) -> list[str]:
 def _get_one_name(addr: str, limiter: RateLimiter) -> tuple[str, str | None]:
     """Fetch the contract name for a single address (thread-safe, rate-limited)."""
     limiter.wait()
-    try:
-        data = etherscan.get("contract", "getsourcecode", address=addr)
-        results = data.get("result", [])
-        if results and results[0].get("ContractName"):
-            return addr, results[0]["ContractName"]
-    except RuntimeError:
-        pass
-    return addr, None
+    return addr, etherscan.get_contract_name(addr)
 
 
 def _batch_get_names(

@@ -87,6 +87,7 @@ class BaseWorker:
                         error,
                     )
                     try:
+                        session.rollback()
                         fail_job(session, job.id, error)
                     except Exception:
                         logger.exception("Failed to mark job %s as failed", job.id)

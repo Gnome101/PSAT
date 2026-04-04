@@ -5,37 +5,17 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-import requests
 from eth_utils.crypto import keccak
+from utils.rpc import (
+    decode_address as _decode_address,
+    normalize_hex as _normalize_hex,
+    rpc_request as _rpc_request,
+    selector as _selector,
+)
 
-JSON_RPC_TIMEOUT_SECONDS = 10
 MAX_ENUMERABLE_ROLE_MEMBERS = 256
 ANY_ENTITY = "0xffffffffffffffffffffffffffffffffffffffff"
 MAX_LOG_BLOCK_RANGE = 50000
-
-
-def _rpc_request(rpc_url: str, method: str, params: list[Any]) -> Any:
-    response = requests.post(
-        rpc_url,
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-        timeout=JSON_RPC_TIMEOUT_SECONDS,
-        headers={"Content-Type": "application/json"},
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("error"):
-        raise RuntimeError(str(payload["error"]))
-    return payload.get("result")
-
-
-def _selector(signature: str) -> str:
-    return "0x" + keccak(text=signature).hex()[:8]
-
-
-def _normalize_hex(value: str | None) -> str:
-    if not isinstance(value, str) or not value.startswith("0x"):
-        return "0x"
-    return value.lower()
 
 
 def _encode_uint256(value: int) -> str:
@@ -57,13 +37,6 @@ def _decode_uint256(raw_value: str) -> int:
     return int(normalized, 16)
 
 
-def _decode_address(raw_value: str) -> str | None:
-    normalized = _normalize_hex(raw_value)
-    if len(normalized) != 66:
-        return None
-    return "0x" + normalized[-40:]
-
-
 def _decode_bytes32(raw_value: str) -> str | None:
     normalized = _normalize_hex(raw_value)
     if len(normalized) != 66:
@@ -71,12 +44,8 @@ def _decode_bytes32(raw_value: str) -> str | None:
     return normalized
 
 
-def _topic_to_address(raw_value: str) -> str | None:
-    normalized = _normalize_hex(raw_value)
-    if len(normalized) != 66:
-        return None
-    return "0x" + normalized[-40:]
-
+# _topic_to_address is identical to _decode_address
+_topic_to_address = _decode_address
 
 ROLE_GRANTED_TOPIC0 = "0x" + keccak(text="RoleGranted(bytes32,address,address)").hex()
 ROLE_REVOKED_TOPIC0 = "0x" + keccak(text="RoleRevoked(bytes32,address,address)").hex()
