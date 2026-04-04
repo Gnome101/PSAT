@@ -533,7 +533,9 @@ class StaticWorker(BaseWorker):
             dependencies_path.write_text(json.dumps(unified, indent=2) + "\n")
             store_artifact(session, job.id, "dependencies", data=unified)
 
-            viz_path = write_dependency_visualization(project_dir)
+            proxy_addr = request.get("proxy_address")
+            proxy_name = (job.name or "").split(":")[0].strip() if proxy_addr else None
+            viz_path = write_dependency_visualization(project_dir, proxy_addr, proxy_name)
             if viz_path and viz_path.exists():
                 dependency_graph = json.loads(viz_path.read_text())
                 store_artifact(session, job.id, "dependency_graph_viz", data=dependency_graph)
