@@ -341,6 +341,7 @@ def analysis_detail(run_name: str) -> dict:
             "effective_permissions",
             "principal_labels",
             "dependency_graph_viz",
+            "upgrade_history",
         ):
             if artifact_name in all_artifacts and isinstance(all_artifacts[artifact_name], dict):
                 payload[artifact_name] = all_artifacts[artifact_name]
@@ -371,6 +372,163 @@ def analysis_detail(run_name: str) -> dict:
             payload["summary"] = all_artifacts["contract_analysis"].get("summary")
 
         return payload
+
+
+@app.get("/api/company/{company_name}")
+def company_overview(company_name: str) -> dict:
+    """Aggregated governance overview for all contracts in a company."""
+    with SessionLocal() as session:
+        # Find the company discovery job
+        company_job = session.execute(
+            select(Job).where(Job.company == company_name).order_by(Job.updated_at.desc()).limit(1)
+        ).scalar_one_or_none()
+        if company_job is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        company_job_id = str(company_job.id)
+
+        # Find all completed jobs belonging to this company (children + grandchildren)
+        all_jobs = session.execute(
+            select(Job).where(Job.status == JobStatus.completed, Job.address.isnot(None))
+        ).scalars().all()
+
+        def belongs_to_company(job: Job) -> bool:
+            seen: set[str] = set()
+            current: Job | None = job
+            jobs_by_id = {str(j.id): j for j in all_jobs}
+            jobs_by_id[company_job_id] = company_job
+            while current is not None:
+                if current.company == company_name:
+                    return True
+                request = current.request if isinstance(current.request, dict) else {}
+                parent_id = request.get("parent_job_id")
+                if not isinstance(parent_id, str) or parent_id in seen:
+                    return False
+                seen.add(parent_id)
+                current = jobs_by_id.get(parent_id)
+            return False
+
+        company_jobs = [j for j in all_jobs if belongs_to_company(j)]
+
+        # Build contract entries with governance info
+        contracts = []
+        # Track unique owner addresses and what they own
+        owner_groups: dict[str, list[dict]] = {}
+
+        for job in company_jobs:
+            request = job.request if isinstance(job.request, dict) else {}
+            is_impl = bool(request.get("proxy_address"))
+            if is_impl:
+                continue  # skip impl jobs, we'll get their data via the proxy
+
+            flags = get_artifact(session, job.id, "contract_flags")
+            is_proxy = flags.get("is_proxy", False) if isinstance(flags, dict) else False
+            proxy_type = flags.get("proxy_type") if isinstance(flags, dict) else None
+            impl_addr = flags.get("implementation") if isinstance(flags, dict) else None
+
+            # Get snapshot — for proxies, try impl job's snapshot
+            snapshot = get_artifact(session, job.id, "control_snapshot")
+            if is_proxy and (not isinstance(snapshot, dict) or not snapshot.get("controller_values")):
+                impl_job = session.execute(
+                    select(Job).where(
+                        Job.address == impl_addr, Job.status == JobStatus.completed
+                    ).limit(1)
+                ).scalar_one_or_none() if impl_addr else None
+                if impl_job:
+                    impl_snap = get_artifact(session, impl_job.id, "control_snapshot")
+                    if isinstance(impl_snap, dict):
+                        snapshot = impl_snap
+
+            # Get analysis summary — for proxies, prefer impl job's analysis
+            impl_job = None
+            impl_job_id = None
+            if impl_addr:
+                impl_job = session.execute(
+                    select(Job).where(
+                        Job.address == impl_addr, Job.status == JobStatus.completed
+                    ).limit(1)
+                ).scalar_one_or_none()
+                if impl_job:
+                    impl_job_id = str(impl_job.id)
+
+            analysis = None
+            if impl_job:
+                analysis = get_artifact(session, impl_job.id, "contract_analysis")
+            if not isinstance(analysis, dict):
+                analysis = get_artifact(session, job.id, "contract_analysis")
+
+            # Get upgrade history
+            uh = get_artifact(session, job.id, "upgrade_history")
+            upgrade_count = None
+            if isinstance(uh, dict):
+                upgrade_count = uh.get("total_upgrades", 0)
+
+            # Extract owner from snapshot
+            owner = None
+            controllers = {}
+            if isinstance(snapshot, dict):
+                for cid, cv in snapshot.get("controller_values", {}).items():
+                    val = cv.get("value")
+                    controllers[cid] = val
+                    if "owner" in cid.lower() and isinstance(val, str) and val.startswith("0x"):
+                        owner = val.lower()
+
+            contract_name = job.name or ""
+            if isinstance(analysis, dict):
+                subject = analysis.get("subject", {})
+                contract_name = subject.get("name", contract_name)
+
+            summary = analysis.get("summary", {}) if isinstance(analysis, dict) else {}
+
+            entry = {
+                "address": job.address,
+                "name": contract_name,
+                "job_id": str(job.id),
+                "impl_job_id": impl_job_id,
+                "is_proxy": is_proxy,
+                "proxy_type": proxy_type,
+                "implementation": impl_addr,
+                "owner": owner,
+                "controllers": controllers,
+                "control_model": summary.get("control_model"),
+                "risk_level": summary.get("static_risk_level"),
+                "upgrade_count": upgrade_count,
+            }
+            contracts.append(entry)
+
+            if owner:
+                owner_groups.setdefault(owner, []).append(entry)
+
+        # Build the ownership hierarchy
+        hierarchy = []
+        assigned = set()
+        for owner_addr, owned in sorted(owner_groups.items(), key=lambda x: -len(x[1])):
+            # Check if this owner is itself one of our contracts
+            owner_contract = next((c for c in contracts if c["address"] and c["address"].lower() == owner_addr), None)
+            hierarchy.append({
+                "owner": owner_addr,
+                "owner_name": owner_contract["name"] if owner_contract else None,
+                "owner_is_contract": owner_contract is not None,
+                "contracts": [{"address": c["address"], "name": c["name"]} for c in owned],
+            })
+            assigned.update(c["address"] for c in owned)
+
+        # Add unowned contracts
+        unowned = [c for c in contracts if c["address"] not in assigned]
+        if unowned:
+            hierarchy.append({
+                "owner": None,
+                "owner_name": "No owner detected",
+                "owner_is_contract": False,
+                "contracts": [{"address": c["address"], "name": c["name"]} for c in unowned],
+            })
+
+        return {
+            "company": company_name,
+            "contract_count": len(contracts),
+            "contracts": contracts,
+            "ownership_hierarchy": hierarchy,
+        }
 
 
 @app.get("/{full_path:path}")

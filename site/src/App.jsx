@@ -12,6 +12,9 @@ import {
   wrapText,
 } from "./graph.js";
 import DependencyGraphTab from "./DependencyGraphTab.jsx";
+import ProtocolGraph from "./ProtocolGraph.jsx";
+import RiskSurface from "./RiskSurface.jsx";
+import ProtocolSurface from "./ProtocolSurface.jsx";
 
 const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "raw"];
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -61,6 +64,10 @@ function parseLocationPath(pathname) {
 
   if (segments[0] === "monitor") {
     return { mode: "monitor", value: null, tab: "summary" };
+  }
+
+  if (segments[0] === "company" && segments[1]) {
+    return { mode: "company", value: segments[1], tab: "summary" };
   }
 
   if (segments[0] === "runs" && segments[1]) {
@@ -1071,6 +1078,116 @@ function GraphTab({ detail }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Company overview
+// ---------------------------------------------------------------------------
+
+function CompanyOverview({ companyName, onSelectContract }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api(`/api/company/${encodeURIComponent(companyName)}`)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setError(e.message); });
+    return () => { cancelled = true; };
+  }, [companyName]);
+
+  if (error) return <div className="page"><section className="panel"><p className="empty">Failed to load company overview: {error}</p></section></div>;
+  if (!data) return <div className="page"><section className="panel"><p className="empty">Loading...</p></section></div>;
+
+  const { contracts, ownership_hierarchy: hierarchy } = data;
+  const riskColor = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e", unknown: "#94a3b8" };
+
+  return (
+    <div className="page">
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Company Overview</p>
+            <h2>{companyName}</h2>
+          </div>
+          <div className="chips"><span className="chip alt">{contracts.length} contracts</span></div>
+        </div>
+      </section>
+
+      {/* Ownership hierarchy */}
+      <section className="panel">
+        <h3 style={{ marginBottom: 16 }}>Ownership Hierarchy</h3>
+        <div className="stack" style={{ gap: 20 }}>
+          {hierarchy.map((group, gi) => (
+            <div key={gi} className="card" style={{ borderLeft: `3px solid ${group.owner ? "#2563eb" : "#94a3b8"}` }}>
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>
+                  {group.owner_name || (group.owner ? "External address" : "No owner detected")}
+                </div>
+                {group.owner && (
+                  <div className="mono" style={{ fontSize: 11, opacity: 0.7 }}>
+                    {group.owner}
+                    {group.owner_is_contract && <span className="chip" style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px" }}>contract</span>}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {group.contracts.map((c) => {
+                  const full = contracts.find((x) => x.address === c.address);
+                  return (
+                    <button
+                      key={c.address}
+                      className="runs-table-row"
+                      style={{ padding: "6px 10px" }}
+                      onClick={() => onSelectContract(full?.job_id)}
+                    >
+                      <span className="runs-cell-name" style={{ flex: 2 }}>
+                        {c.name}
+                        {full?.is_proxy && <span className="proxy-badge" title={full.proxy_type}>{full.proxy_type || "proxy"}</span>}
+                      </span>
+                      <span className="mono runs-cell-addr" style={{ flex: 2 }}>{c.address}</span>
+                      <span style={{ flex: 1 }}>{full?.control_model || ""}</span>
+                      <span style={{ flex: 1 }}>
+                        {full?.risk_level && <span className="risk-dot" style={{ background: riskColor[full.risk_level] || "#94a3b8" }} />}
+                        {full?.risk_level || ""}
+                      </span>
+                      <span style={{ flex: 1 }}>{full?.upgrade_count != null ? `${full.upgrade_count} upgrades` : ""}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* All contracts detail table */}
+      <section className="panel">
+        <h3 style={{ marginBottom: 16 }}>Controller Details</h3>
+        <div className="stack" style={{ gap: 12 }}>
+          {contracts.filter((c) => Object.keys(c.controllers || {}).length > 0).map((c) => (
+            <div key={c.address} className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div>
+                  <strong>{c.name}</strong>
+                  {c.is_proxy && <span className="proxy-badge" style={{ marginLeft: 6 }}>{c.proxy_type || "proxy"}</span>}
+                </div>
+                <span className="mono" style={{ fontSize: 11, opacity: 0.7 }}>{c.address}</span>
+              </div>
+              <div className="kv-grid">
+                {Object.entries(c.controllers).map(([cid, val]) => (
+                  <div className="kv-row" key={cid}>
+                    <span className="key">{cid}</span>
+                    <span className="mono" style={{ fontSize: 11 }}>{val != null ? String(val) : "null"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 const PIPELINE_STAGES = ["discovery", "static", "resolution", "policy"];
 const ALL_STAGES = [...PIPELINE_STAGES, "done"];
 const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
@@ -1235,7 +1352,35 @@ function PipelineDashboard() {
 // Runs list page
 // ---------------------------------------------------------------------------
 
-function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore }) {
+function ProtocolView({ companyName }) {
+  const [protoTab, setProtoTab] = useState("surface");
+  return (
+    <div className="page" style={{ height: "calc(100vh - 60px)", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="proto-tabs">
+        <button className={`proto-tab ${protoTab === "surface" ? "active" : ""}`} onClick={() => setProtoTab("surface")}>surface</button>
+        <button className={`proto-tab ${protoTab === "graph" ? "active" : ""}`} onClick={() => setProtoTab("graph")}>ownership</button>
+        <button className={`proto-tab ${protoTab === "risk" ? "active" : ""}`} onClick={() => setProtoTab("risk")}>risk matrix</button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        {protoTab === "surface" && (
+          <ProtocolSurface companyName={companyName} />
+        )}
+        {protoTab === "graph" && (
+          <div className="protocol-graph-wrapper" style={{ height: "100%" }}>
+            <ProtocolGraph companyName={companyName} />
+          </div>
+        )}
+        {protoTab === "risk" && (
+          <RiskSurface companyName={companyName} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectCompany }) {
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => {
@@ -1297,7 +1442,7 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore }) {
       {grouped.groups.map((group) => (
         <section key={group.company} className="panel runs-group-panel">
           <div className="runs-group-header">
-            <h3>{group.company}</h3>
+            <h3><button className="top-nav-link" style={{ fontSize: "inherit", fontWeight: "inherit" }} onClick={() => onSelectCompany && onSelectCompany(group.company)}>{group.company}</button></h3>
             <div className="chips" style={{ gap: 6 }}>
               <span className="chip alt">{group.items.length} contracts</span>
               <button className="discover-more" title={`Discover more`} onClick={() => onDiscoverMore(group.company)}>+</button>
@@ -1387,6 +1532,7 @@ export default function App() {
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [viewMode, setViewMode] = useState(() => parseLocationPath(window.location.pathname).mode);
+  const [companyName, setCompanyName] = useState(() => { const r = parseLocationPath(window.location.pathname); return r.mode === "company" ? r.value : null; });
   const [activeTab, setActiveTab] = useState("summary");
   const [job, setJob] = useState(null);
   const [activeJobs, setActiveJobs] = useState([]);
@@ -1401,8 +1547,16 @@ export default function App() {
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
   function navigate(path, mode) {
-    setViewMode(mode || parseLocationPath(path).mode);
+    const m = mode || parseLocationPath(path).mode;
+    setViewMode(m);
+    if (m !== "company") setCompanyName(null);
     window.history.pushState({}, "", path);
+  }
+
+  function openCompany(name) {
+    setCompanyName(name);
+    setViewMode("company");
+    window.history.pushState({}, "", `/company/${encodeURIComponent(name)}`);
   }
 
   async function loadAnalysis(runId, options = {}) {
@@ -1435,16 +1589,23 @@ export default function App() {
     function handlePopState() {
       const route = parseLocationPath(window.location.pathname);
       setViewMode(route.mode);
-      if (route.mode === "run" || route.mode === "address") {
+      if (route.mode === "company") {
+        setCompanyName(route.value);
+      } else if (route.mode === "run" || route.mode === "address") {
+        setCompanyName(null);
         const list = analysesRef.current;
         let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
         if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
+      } else {
+        setCompanyName(null);
       }
     }
 
     refreshAnalyses().then((list) => {
       const route = parseLocationPath(window.location.pathname);
-      if (route.mode === "run" || route.mode === "address") {
+      if (route.mode === "company") {
+        setCompanyName(route.value);
+      } else if (route.mode === "run" || route.mode === "address") {
         let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
         if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
       }
@@ -1530,6 +1691,7 @@ export default function App() {
 
   const isDetail = viewMode === "run" || viewMode === "address";
   const isMonitor = viewMode === "monitor";
+  const isCompany = viewMode === "company";
 
   const detailContent = selectedDetail ? {
     summary: <SummaryTab detail={selectedDetail} />,
@@ -1616,12 +1778,17 @@ export default function App() {
         </div>
       )}
 
-      {!isDetail && !isMonitor && (
+      {isCompany && companyName && (
+        <ProtocolView companyName={companyName} />
+      )}
+
+      {!isDetail && !isMonitor && !isCompany && (
         <RunsPage
           analyses={analyses}
           activeJobs={activeJobs}
           onSelect={(runId) => loadAnalysis(runId, { history: "push" })}
           onDiscoverMore={discoverMore}
+          onSelectCompany={openCompany}
         />
       )}
     </ErrorBoundary>

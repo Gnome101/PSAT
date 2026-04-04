@@ -879,3 +879,623 @@ button.ghost {
   min-width: 80px;
   flex-shrink: 0;
 }
+
+
+/* ── Protocol Graph (React Flow) ────────────────────────────────────────── */
+
+.protocol-graph-wrapper {
+  width: 100%;
+  height: 100%;
+  background: #1A1A1A;
+  border-radius: 14px;
+}
+
+.protocol-graph-wrapper .react-flow__node {
+  font-family: "JetBrains Mono", "SF Mono", "Fira Code", monospace;
+}
+
+/* ── Zone (Safe / Timelock containers) ── */
+
+.rf-zone {
+  background: #1A1A1A;
+  border: 2px solid #3D3D3D;
+  border-radius: 16px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rf-zone-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.rf-zone-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rf-zone-tag { font-size: 9px; font-weight: 600; }
+.rf-zone-name { font-family: "Oswald", sans-serif; font-size: 16px; font-weight: 600; color: #fff; }
+.rf-zone-addr { font-size: 8px; color: #777; }
+
+.rf-zone-meta {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  align-items: center;
+  width: fit-content;
+}
+
+.rf-zone-roles { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.rf-zone-role {
+  display: flex;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  font-size: 8px;
+  align-items: center;
+}
+
+/* ── Queue badge ── */
+
+.rf-queue-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #1A1A1A;
+  color: #0D0D0D;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+
+.rf-queue-badge:hover { transform: scale(1.2); }
+
+/* ── Queue panel (inside zones) ── */
+
+.rf-zone-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #21212180;
+  border-radius: 10px;
+  padding: 8px 10px;
+  width: fit-content;
+  min-width: 380px;
+}
+
+.rf-zone-queue-hdr {
+  font-family: "Oswald", sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rf-zone-queue-block {
+  background: #2D2D2D;
+  border-radius: 6px;
+  border-left: 3px solid #3D3D3D;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* ── Contract card ── */
+
+.rf-contract-card {
+  background: #2D2D2D;
+  border: 2px solid #3D3D3D;
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 300px;
+  max-width: 480px;
+}
+
+.rf-contract-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.rf-contract-name { font-family: "Oswald", sans-serif; font-size: 14px; font-weight: 600; color: #fff; }
+.rf-contract-addr { font-size: 8px; color: #777; }
+
+/* ── Role legend ── */
+
+.rf-role-legend {
+  background: #2D2D2D;
+  border: 1px solid #6366F144;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 240px;
+}
+
+.rf-role-legend-hdr {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 9px;
+}
+
+/* ── Shared: pills, functions ── */
+
+.rf-pills { display: flex; gap: 3px; flex-wrap: wrap; }
+
+.rf-fn-group { display: flex; flex-direction: column; gap: 2px; }
+
+.rf-fn-group-hdr {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.rf-fn-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 8px;
+  border-radius: 3px;
+  background: #1A1A1A;
+  flex-wrap: wrap;
+}
+
+.rf-fn-dot { width: 6px; height: 6px; border-radius: 2px; flex-shrink: 0; }
+.rf-fn-name { color: #fff; font-weight: 600; white-space: nowrap; }
+.rf-fn-mutation { color: #777; font-size: 8px; }
+
+/* ── React Flow overrides ── */
+
+.react-flow__controls {
+  background: #2D2D2D !important;
+  border: 1px solid #3D3D3D !important;
+  border-radius: 10px !important;
+}
+
+.react-flow__controls button {
+  background: #2D2D2D !important;
+  border-color: #3D3D3D !important;
+  color: #777 !important;
+  fill: #777 !important;
+}
+
+.react-flow__controls button:hover { background: #3D3D3D !important; }
+
+.react-flow__minimap {
+  border-radius: 10px !important;
+  border: 1px solid #3D3D3D !important;
+}
+
+.react-flow__edge-text { font-family: "JetBrains Mono", monospace !important; }
+.react-flow__background { background: #1A1A1A !important; }
+
+/* ── Risk Surface ─────────────────────────────────────────────────────────── */
+
+.rs-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  font-family: "JetBrains Mono", "SF Mono", monospace;
+  background: #1A1A1A;
+  border-radius: 14px;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+
+.rs-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.rs-title {
+  font-family: "Oswald", sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+  text-transform: lowercase;
+}
+
+.rs-subtitle {
+  font-size: 10px;
+  color: #777;
+}
+
+.rs-stats {
+  display: flex;
+  gap: 16px;
+}
+
+.rs-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 14px;
+  background: #212121;
+  border-radius: 10px;
+}
+
+.rs-stat-value {
+  font-family: "Oswald", sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.rs-stat-label {
+  font-size: 8px;
+  color: #777;
+  font-weight: 600;
+}
+
+.rs-layout {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Principals sidebar ── */
+
+.rs-principals {
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #212121;
+  border-radius: 12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.rs-principals-hdr {
+  font-size: 10px;
+  font-weight: 600;
+  color: #777;
+  margin-bottom: 4px;
+}
+
+.rs-principal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  color: #fff;
+  box-shadow: none;
+  transition: background 100ms;
+  text-align: left;
+}
+
+.rs-principal-row:hover {
+  background: #2D2D2D;
+  transform: none;
+  box-shadow: none;
+}
+
+.rs-principal-row.active {
+  background: #2D2D2D;
+  border-color: #FF6B3544;
+}
+
+.rs-principal-addr {
+  flex: 1;
+}
+
+.rs-principal-count {
+  color: #777;
+  font-weight: 600;
+}
+
+/* ── Categories ── */
+
+.rs-categories {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.rs-category {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rs-category-header {
+  padding: 10px 14px;
+  background: #212121;
+  border-radius: 10px;
+  border-left: 3px solid #777;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rs-category-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rs-category-desc {
+  font-size: 9px;
+  color: #777;
+}
+
+.rs-category-fns {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ── Function rows ── */
+
+.rs-fn-row {
+  padding: 6px 10px;
+  background: #2D2D2D;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 100ms;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rs-fn-row:hover {
+  background: #333;
+}
+
+.rs-fn-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rs-fn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.rs-fn-name {
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.rs-fn-contract {
+  font-size: 9px;
+  color: #777;
+  margin-right: auto;
+}
+
+.rs-fn-chain {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rs-chain-step {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.rs-chain-arrow {
+  color: #555;
+  font-size: 9px;
+  margin: 0 1px;
+}
+
+/* ── Expanded detail ── */
+
+.rs-fn-detail {
+  padding: 6px 8px 4px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rs-fn-sig {
+  font-size: 9px;
+  color: #aaa;
+  word-break: break-all;
+}
+
+.rs-fn-action {
+  font-size: 9px;
+  color: #777;
+}
+
+.rs-fn-effects {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+/* ── Protocol view tabs ── */
+
+.proto-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.proto-tab {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  background: #2D2D2D;
+  color: #777;
+  border: 1px solid transparent;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.proto-tab:hover {
+  background: #3D3D3D;
+  color: #fff;
+  transform: none;
+  box-shadow: none;
+}
+
+.proto-tab.active {
+  background: #FF6B35;
+  color: #0D0D0D;
+}
+
+/* ── Protocol Surface (2D spatial view) ───────────────────────────────────── */
+
+.ps-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #1A1A1A;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.ps-svg {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  user-select: none;
+}
+
+.ps-svg:active { cursor: grabbing; }
+
+/* ── Detail panel ── */
+
+.ps-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 340px;
+  background: #2D2D2DEE;
+  backdrop-filter: blur(16px);
+  border: 1px solid #3D3D3D;
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: "JetBrains Mono", monospace;
+  z-index: 10;
+}
+
+.ps-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.ps-panel-name {
+  font-family: "Oswald", sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.ps-panel-contract { font-size: 9px; color: #777; }
+
+.ps-panel-close {
+  background: #3D3D3D;
+  border: none;
+  color: #777;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: none;
+}
+
+.ps-panel-close:hover { background: #555; color: #fff; transform: none; }
+
+.ps-panel-sig {
+  font-size: 9px;
+  color: #aaa;
+  word-break: break-all;
+  background: #1A1A1A;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.ps-panel-action { font-size: 9px; color: #777; }
+
+.ps-panel-effects { display: flex; gap: 3px; flex-wrap: wrap; }
+
+.ps-panel-pill {
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-size: 8px;
+  font-weight: 600;
+}
+
+.ps-panel-section {
+  font-size: 9px;
+  font-weight: 600;
+  color: #777;
+  margin-top: 4px;
+}
+
+.ps-panel-chain {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.ps-chain-step {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ps-chain-arrow {
+  color: #555;
+  font-size: 9px;
+}

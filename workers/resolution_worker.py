@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from db.models import Job, JobStage
 from db.queue import get_artifact, store_artifact
 from schemas.control_tracking import ControlTrackingPlan
+from services.discovery.upgrade_history import write_upgrade_history
 from services.resolution.recursive import write_resolved_control_graph
 from services.resolution.tracking import build_control_snapshot
 from workers.base import BaseWorker
@@ -109,6 +110,9 @@ class ResolutionWorker(BaseWorker):
                     job.name or "Contract",
                 )
 
+            # Phase: Upgrade history for proxy contracts (non-fatal)
+            self._run_upgrade_history(session, job, project_dir)
+
             self.update_detail(session, job, "Resolution complete")
             logger.info(
                 "Resolution stage complete for job %s address=%s name=%s",
@@ -119,6 +123,41 @@ class ResolutionWorker(BaseWorker):
 
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+    def _run_upgrade_history(self, session: Session, job: Job, project_dir: Path) -> None:
+        """Fetch upgrade history for proxy contracts found in dependencies. Non-fatal."""
+        dependencies = get_artifact(session, job.id, "dependencies")
+        if not isinstance(dependencies, dict):
+            logger.info("Job %s: skipping upgrade history — no dependencies artifact", job.id)
+            return
+
+        self.update_detail(session, job, "Fetching proxy upgrade history")
+        deps_path = project_dir / "dependencies.json"
+        deps_path.write_text(json.dumps(dependencies, indent=2) + "\n")
+
+        try:
+            uh_path = write_upgrade_history(deps_path)
+            if uh_path and uh_path.exists():
+                store_artifact(session, job.id, "upgrade_history", data=json.loads(uh_path.read_text()))
+                logger.info(
+                    "Resolution stage upgrade history complete for job %s address=%s",
+                    job.id,
+                    job.address or "0x0",
+                )
+            else:
+                logger.info(
+                    "Resolution stage upgrade history skipped for job %s — no proxies found",
+                    job.id,
+                )
+        except Exception as exc:
+            logger.warning(
+                "Resolution stage upgrade history failed for job %s address=%s: %s",
+                job.id,
+                job.address or "0x0",
+                exc,
+            )
+            store_artifact(session, job.id, "upgrade_history_error", data={"error": str(exc)})
 
 
 def main():
