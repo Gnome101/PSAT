@@ -58,21 +58,28 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
     new_events: list[ProxyUpgradeEvent] = []
     topics = [list(EVENT_TOPICS.keys())]  # topic0 = any of the 3 event types
 
-    # Pre-load existing events for deduplication
+    # Pre-load existing events for deduplication — only need the overlap
+    # window where proxies have different last_scanned_block values.
+    # Once all proxies converge (normal steady state), this set is empty.
+    max_scanned = max(p.last_scanned_block for p in proxies)
     existing_events: set[tuple] = set()
-    existing_rows = (
-        session.execute(
-            select(
-                ProxyUpgradeEvent.watched_proxy_id,
-                ProxyUpgradeEvent.tx_hash,
-                ProxyUpgradeEvent.block_number,
-                ProxyUpgradeEvent.new_implementation,
-            ).where(ProxyUpgradeEvent.block_number > from_block)
+    if from_block < max_scanned:
+        existing_rows = (
+            session.execute(
+                select(
+                    ProxyUpgradeEvent.watched_proxy_id,
+                    ProxyUpgradeEvent.tx_hash,
+                    ProxyUpgradeEvent.block_number,
+                    ProxyUpgradeEvent.new_implementation,
+                ).where(
+                    ProxyUpgradeEvent.block_number > from_block,
+                    ProxyUpgradeEvent.block_number <= max_scanned,
+                )
+            )
+            .all()
         )
-        .all()
-    )
-    for row in existing_rows:
-        existing_events.add((str(row[0]), row[1], row[2], row[3]))
+        for row in existing_rows:
+            existing_events.add((str(row[0]), row[1], row[2], row[3]))
 
     # Scan in chunks to stay under node limits
     last_successful_block = from_block

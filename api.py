@@ -59,6 +59,7 @@ class WatchProxyRequest(BaseModel):
     chain: str = "ethereum"
     label: str | None = None
     rpc_url: str | None = None
+    from_block: int | None = Field(default=None, ge=0, description="Block to start scanning from. Defaults to current block.")
 
 
 @asynccontextmanager
@@ -457,22 +458,26 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Address must start with 0x")
     address = request.address.lower()
 
+    # Resolve RPC URL: explicit param > env default
+    rpc_url = request.rpc_url or DEFAULT_RPC_URL
+
     # Optionally resolve current implementation
     current_impl = None
-    if request.rpc_url:
-        from services.monitoring.proxy_watcher import resolve_current_implementation
+    from services.monitoring.proxy_watcher import get_latest_block, resolve_current_implementation
 
-        current_impl = resolve_current_implementation(address, request.rpc_url)
+    current_impl = resolve_current_implementation(address, rpc_url)
 
-    # Get current block as starting scan point
-    from_block = 0
-    if request.rpc_url:
-        from services.monitoring.proxy_watcher import get_latest_block
-
+    # Starting scan point: explicit from_block > current block
+    if request.from_block is not None:
+        from_block = request.from_block
+    else:
         try:
-            from_block = get_latest_block(request.rpc_url)
+            from_block = get_latest_block(rpc_url)
         except Exception:
-            pass
+            raise HTTPException(
+                status_code=502,
+                detail="Could not determine current block. Provide from_block explicitly.",
+            )
 
     with SessionLocal() as session:
         proxy = WatchedProxy(
