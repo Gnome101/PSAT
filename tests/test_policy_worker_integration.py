@@ -8,14 +8,13 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workers.policy_worker import PolicyWorker
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,9 +81,7 @@ class TestResolveAuthorityNoAuthority:
             _graph_with_nodes([]),
         )
 
-        result = worker._resolve_authority(
-            tmp_path, graph_path, snapshot_path, _minimal_contract_analysis()
-        )
+        result = worker._resolve_authority(tmp_path, graph_path, snapshot_path, _minimal_contract_analysis())
 
         assert result["principal_resolution"]["status"] == "no_authority"
 
@@ -97,18 +94,14 @@ class TestResolveAuthorityZeroAddress:
 
         snapshot_path = _write_json(
             tmp_path / "control_snapshot.json",
-            _minimal_snapshot(
-                {"state_variable:authority": {"value": ZERO_ADDRESS}}
-            ),
+            _minimal_snapshot({"state_variable:authority": {"value": ZERO_ADDRESS}}),
         )
         graph_path = _write_json(
             tmp_path / "resolved_control_graph.json",
             _graph_with_nodes([]),
         )
 
-        result = worker._resolve_authority(
-            tmp_path, graph_path, snapshot_path, _minimal_contract_analysis()
-        )
+        result = worker._resolve_authority(tmp_path, graph_path, snapshot_path, _minimal_contract_analysis())
 
         assert result["principal_resolution"]["status"] == "no_authority"
         assert "non-zero" in result["principal_resolution"]["reason"].lower()
@@ -122,20 +115,14 @@ class TestResolveAuthorityNoSnapshot:
 
         snapshot_path = _write_json(
             tmp_path / "control_snapshot.json",
-            _minimal_snapshot(
-                {"state_variable:authority": {"value": AUTH_ADDRESS}}
-            ),
+            _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}}),
         )
         graph_path = _write_json(
             tmp_path / "resolved_control_graph.json",
-            _graph_with_nodes(
-                [{"address": AUTH_ADDRESS, "artifacts": {}}]
-            ),
+            _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {}}]),
         )
 
-        result = worker._resolve_authority(
-            tmp_path, graph_path, snapshot_path, _minimal_contract_analysis()
-        )
+        result = worker._resolve_authority(tmp_path, graph_path, snapshot_path, _minimal_contract_analysis())
 
         assert result["principal_resolution"]["status"] == "no_authority_snapshot"
 
@@ -156,9 +143,7 @@ class TestResolveAuthorityWithSnapshot:
 
         snapshot_path = _write_json(
             tmp_path / "control_snapshot.json",
-            _minimal_snapshot(
-                {"state_variable:authority": {"value": AUTH_ADDRESS}}
-            ),
+            _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}}),
         )
         graph_path = _write_json(
             tmp_path / "resolved_control_graph.json",
@@ -172,9 +157,7 @@ class TestResolveAuthorityWithSnapshot:
             ),
         )
 
-        result = worker._resolve_authority(
-            tmp_path, graph_path, snapshot_path, _minimal_contract_analysis()
-        )
+        result = worker._resolve_authority(tmp_path, graph_path, snapshot_path, _minimal_contract_analysis())
 
         assert result["authority_snapshot_path"] == authority_snapshot
         assert result["principal_resolution"]["status"] == "missing_policy_state"
@@ -207,7 +190,13 @@ class TestProcessStoresAllArtifacts:
 
         store_calls: list[tuple[str, Any]] = []
 
-        def fake_store_artifact(_session: Any, _job_id: Any, name: str, data: Any = None, text_data: Any = None) -> None:
+        def fake_store_artifact(
+            _session: Any,
+            _job_id: Any,
+            name: str,
+            data: Any = None,
+            text_data: Any = None,
+        ) -> None:
             store_calls.append((name, data))
 
         monkeypatch.setattr("workers.policy_worker.get_artifact", fake_get_artifact)
@@ -215,23 +204,35 @@ class TestProcessStoresAllArtifacts:
 
         # Mock the three writer functions so they create output files
         def fake_write_effective_permissions(
-            analysis_path: Path, *, target_snapshot_path: Any = None,
-            authority_snapshot_path: Any = None, policy_state_path: Any = None,
-            output_path: Path, principal_resolution: Any = None,
+            analysis_path: Path,
+            *,
+            target_snapshot_path: Any = None,
+            authority_snapshot_path: Any = None,
+            policy_state_path: Any = None,
+            output_path: Path,
+            principal_resolution: Any = None,
         ) -> Path:
             _write_json(output_path, {"schema_version": "1", "functions": []})
             return output_path
 
         def fake_write_resolved_control_graph(
-            analysis_path: Path, *, rpc_url: str = "", output_path: Path,
-            max_depth: int = 6, workspace_prefix: str = "", refresh_snapshots: bool = False,
+            analysis_path: Path,
+            *,
+            rpc_url: str = "",
+            output_path: Path,
+            max_depth: int = 6,
+            workspace_prefix: str = "",
+            refresh_snapshots: bool = False,
         ) -> Path:
             _write_json(output_path, {"nodes": [], "edges": [], "refreshed": True})
             return output_path
 
         def fake_write_principal_labels(
-            effective_permissions_path: Path, *, resolved_control_graph_path: Any = None,
-            rpc_url: str = "", output_path: Path,
+            effective_permissions_path: Path,
+            *,
+            resolved_control_graph_path: Any = None,
+            rpc_url: str = "",
+            output_path: Path,
         ) -> Path:
             _write_json(output_path, {"labels": []})
             return output_path
@@ -262,9 +263,7 @@ class TestGraphRefreshAfterEffectivePermissions:
     write_effective_permissions_from_files, so the effective_permissions file
     exists on disk when the graph refresh runs."""
 
-    def test_refresh_sees_effective_permissions_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_refresh_sees_effective_permissions_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         worker = PolicyWorker()
         session = MagicMock()
         job = _job()
@@ -290,17 +289,26 @@ class TestGraphRefreshAfterEffectivePermissions:
         effective_permissions_file_existed_during_refresh: list[bool] = []
 
         def fake_write_effective_permissions(
-            analysis_path: Path, *, target_snapshot_path: Any = None,
-            authority_snapshot_path: Any = None, policy_state_path: Any = None,
-            output_path: Path, principal_resolution: Any = None,
+            analysis_path: Path,
+            *,
+            target_snapshot_path: Any = None,
+            authority_snapshot_path: Any = None,
+            policy_state_path: Any = None,
+            output_path: Path,
+            principal_resolution: Any = None,
         ) -> Path:
             call_order.append("effective_permissions")
             _write_json(output_path, {"schema_version": "1", "functions": []})
             return output_path
 
         def fake_write_resolved_control_graph(
-            analysis_path: Path, *, rpc_url: str = "", output_path: Path,
-            max_depth: int = 6, workspace_prefix: str = "", refresh_snapshots: bool = False,
+            analysis_path: Path,
+            *,
+            rpc_url: str = "",
+            output_path: Path,
+            max_depth: int = 6,
+            workspace_prefix: str = "",
+            refresh_snapshots: bool = False,
         ) -> Path:
             call_order.append("resolved_control_graph")
             # Check that effective_permissions.json already exists in the same directory
@@ -310,8 +318,11 @@ class TestGraphRefreshAfterEffectivePermissions:
             return output_path
 
         def fake_write_principal_labels(
-            effective_permissions_path: Path, *, resolved_control_graph_path: Any = None,
-            rpc_url: str = "", output_path: Path,
+            effective_permissions_path: Path,
+            *,
+            resolved_control_graph_path: Any = None,
+            rpc_url: str = "",
+            output_path: Path,
         ) -> Path:
             call_order.append("principal_labels")
             _write_json(output_path, {"labels": []})
@@ -343,6 +354,5 @@ class TestGraphRefreshAfterEffectivePermissions:
 
         # Verify the file was on disk when the refresh ran
         assert effective_permissions_file_existed_during_refresh == [True], (
-            "effective_permissions.json must exist on disk when "
-            "write_resolved_control_graph is invoked"
+            "effective_permissions.json must exist on disk when write_resolved_control_graph is invoked"
         )

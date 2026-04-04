@@ -280,10 +280,14 @@ def test_root_label_from_contract_meta_not_dir_name(tmp_path):
     bad_dir.mkdir()
 
     # Write contract metadata with the real name
-    (bad_dir / "contract_meta.json").write_text(json.dumps({
-        "contract_name": "LiquidityPool",
-        "display_name": "Liquidity Pool",
-    }))
+    (bad_dir / "contract_meta.json").write_text(
+        json.dumps(
+            {
+                "contract_name": "LiquidityPool",
+                "display_name": "Liquidity Pool",
+            }
+        )
+    )
 
     deps = {DEP_A: {"type": "regular", "source": ["static"]}}
     _write(bad_dir, _unified(deps=deps))
@@ -302,10 +306,14 @@ def test_root_label_prefers_display_name_for_generic_proxy(tmp_path):
     contract_dir = tmp_path / "some_worker_dir"
     contract_dir.mkdir()
 
-    (contract_dir / "contract_meta.json").write_text(json.dumps({
-        "contract_name": "UUPSProxy",
-        "display_name": "Rewards Router",
-    }))
+    (contract_dir / "contract_meta.json").write_text(
+        json.dumps(
+            {
+                "contract_name": "UUPSProxy",
+                "display_name": "Rewards Router",
+            }
+        )
+    )
 
     deps = {DEP_A: {"type": "regular", "source": ["static"]}}
     _write(contract_dir, _unified(deps=deps))

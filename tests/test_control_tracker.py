@@ -7,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from schemas.control_tracking import ControlTrackingPlan
 from services.resolution.tracking import (
-    classify_resolved_address as _classify_resolved_address,
     build_control_snapshot,
     diff_control_snapshots,
     grouped_event_filters,
@@ -15,6 +14,9 @@ from services.resolution.tracking import (
     matching_policies_for_log,
     policy_change_events,
     run_control_tracker,
+)
+from services.resolution.tracking import (
+    classify_resolved_address as _classify_resolved_address,
 )
 from services.resolution.tracking_plan import build_control_tracking_plan
 from services.static import collect_contract_analysis

@@ -100,9 +100,7 @@ def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
 
     # If every normal tx is a plain ETH transfer, fetch oldest txs too —
     # early transactions (deployment, init, admin calls) have real selectors.
-    has_function_call = any(
-        len(tx.get("input", "0x") or "0x") >= 10 for tx in normal_txs
-    )
+    has_function_call = any(len(tx.get("input", "0x") or "0x") >= 10 for tx in normal_txs)
     if normal_txs and not has_function_call:
         try:
             data = etherscan_get(

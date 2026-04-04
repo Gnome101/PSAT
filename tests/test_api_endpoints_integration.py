@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _fake_api_job(
     job_id: str | None = None,
     address: str | None = None,
@@ -80,6 +81,7 @@ def _make_client() -> TestClient:
 # 1. POST /api/analyze — company payload
 # ---------------------------------------------------------------------------
 
+
 @patch("api.SessionLocal")
 @patch("api.create_job")
 def test_analyze_company_creates_job(mock_create_job, mock_session_cls):
@@ -91,9 +93,15 @@ def test_analyze_company_creates_job(mock_create_job, mock_session_cls):
         company="etherfi",
         status="queued",
         stage="discovery",
-        request={"company": "etherfi", "name": None, "address": None,
-                 "chain": None, "discover_limit": 25, "analyze_limit": 5,
-                 "rpc_url": None},
+        request={
+            "company": "etherfi",
+            "name": None,
+            "address": None,
+            "chain": None,
+            "discover_limit": 25,
+            "analyze_limit": 5,
+            "rpc_url": None,
+        },
     )
     mock_create_job.return_value = fake_job
 
@@ -120,6 +128,7 @@ def test_analyze_company_creates_job(mock_create_job, mock_session_cls):
 # 1b. POST /api/analyze — mutual exclusion validation
 # ---------------------------------------------------------------------------
 
+
 def test_analyze_rejects_both_address_and_company():
     """Providing both address and company should return 422."""
     client = _make_client()
@@ -144,6 +153,7 @@ def test_analyze_rejects_neither_address_nor_company():
 # 2. POST /api/analyze — address payload
 # ---------------------------------------------------------------------------
 
+
 @patch("api.SessionLocal")
 @patch("api.create_job")
 def test_analyze_address_creates_job(mock_create_job, mock_session_cls):
@@ -156,9 +166,15 @@ def test_analyze_address_creates_job(mock_create_job, mock_session_cls):
         address=addr,
         status="queued",
         stage="discovery",
-        request={"address": addr, "name": None, "company": None,
-                 "chain": None, "discover_limit": 25, "analyze_limit": 5,
-                 "rpc_url": None},
+        request={
+            "address": addr,
+            "name": None,
+            "company": None,
+            "chain": None,
+            "discover_limit": 25,
+            "analyze_limit": 5,
+            "rpc_url": None,
+        },
     )
     mock_create_job.return_value = fake_job
 
@@ -183,6 +199,7 @@ def test_analyze_address_creates_job(mock_create_job, mock_session_cls):
 # ---------------------------------------------------------------------------
 # 3. GET /api/analyses — proxy flagging via contract_flags artifact
 # ---------------------------------------------------------------------------
+
 
 @patch("api.get_artifact")
 @patch("api.SessionLocal")
@@ -223,6 +240,7 @@ def test_analyses_list_proxy_flagging(mock_session_cls, mock_get_artifact):
     # Make impl_job.status match the real JobStatus.completed enum so the
     # analyses endpoint's impl-completion check passes.
     from db.models import JobStatus
+
     impl_job.status = JobStatus.completed
 
     # The analyses() endpoint calls session.execute() multiple times:
@@ -240,8 +258,7 @@ def test_analyses_list_proxy_flagging(mock_session_cls, mock_get_artifact):
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
             return result
         # Impl job lookup — returns scalar_one_or_none
-        stmt_str = str(getattr(stmt, 'compile', lambda: stmt)())
-        if hasattr(result, 'scalar_one_or_none') and call_count <= 5:
+        if hasattr(result, "scalar_one_or_none") and call_count <= 5:
             result.scalar_one_or_none.return_value = impl_job
         result.scalars.return_value.all.return_value = [
             "contract_flags",
@@ -350,12 +367,11 @@ def test_analyses_list_non_proxy_has_is_proxy_false(mock_session_cls, mock_get_a
 # 4. GET /api/analyses/{run_name} — impl-to-proxy artifact fallback
 # ---------------------------------------------------------------------------
 
+
 @patch("api.get_artifact")
 @patch("api.get_all_artifacts")
 @patch("api.SessionLocal")
-def test_analysis_detail_falls_back_to_proxy_artifacts(
-    mock_session_cls, mock_get_all_artifacts, mock_get_artifact
-):
+def test_analysis_detail_falls_back_to_proxy_artifacts(mock_session_cls, mock_get_all_artifacts, mock_get_artifact):
     """When an impl job has proxy_address in its request but lacks
     dependency_graph_viz, the detail endpoint should fall back to the proxy
     job's dependency_graph_viz and dependencies artifacts."""
@@ -506,9 +522,7 @@ def test_analysis_detail_no_fallback_when_impl_has_artifacts(
 
 @patch("api.get_all_artifacts")
 @patch("api.SessionLocal")
-def test_analysis_detail_no_fallback_without_proxy_address(
-    mock_session_cls, mock_get_all_artifacts
-):
+def test_analysis_detail_no_fallback_without_proxy_address(mock_session_cls, mock_get_all_artifacts):
     """When the job has no proxy_address in its request, no fallback should
     occur even if dependency_graph_viz is missing."""
     client = _make_client()
@@ -550,12 +564,11 @@ def test_analysis_detail_no_fallback_without_proxy_address(
 # 5. GET /api/analyses/{run_name} — proxy detail inherits impl artifacts
 # ---------------------------------------------------------------------------
 
+
 @patch("api.get_all_artifacts")
 @patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analysis_detail_proxy_inherits_impl_artifacts(
-    mock_session_cls, mock_get_artifact, mock_get_all_artifacts
-):
+def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_get_artifact, mock_get_all_artifacts):
     """When loading a proxy job's detail, analysis artifacts (contract_analysis,
     effective_permissions, etc.) should be inherited from the impl child job.
     This is the reverse of the impl->proxy fallback for dependency artifacts."""

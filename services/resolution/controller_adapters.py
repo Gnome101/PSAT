@@ -6,10 +6,17 @@ from functools import lru_cache
 from typing import Any
 
 from eth_utils.crypto import keccak
+
 from utils.rpc import (
     decode_address as _decode_address,
+)
+from utils.rpc import (
     normalize_hex as _normalize_hex,
+)
+from utils.rpc import (
     rpc_request as _rpc_request,
+)
+from utils.rpc import (
     selector as _selector,
 )
 

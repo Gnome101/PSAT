@@ -46,9 +46,7 @@ def _capture_store_and_create(monkeypatch):
 
     monkeypatch.setattr(
         "workers.static_worker.store_artifact",
-        lambda _session, _job_id, name, data=None, text_data=None: store_calls.append(
-            (name, data, text_data)
-        ),
+        lambda _session, _job_id, name, data=None, text_data=None: store_calls.append((name, data, text_data)),
     )
 
     child_counter = iter(range(100))
@@ -354,8 +352,9 @@ def test_no_rpc_env_fallback_used_when_request_has_no_rpc(monkeypatch):
     captured_rpc = []
     monkeypatch.setattr(
         "services.discovery.classifier.classify_single",
-        lambda address, rpc_url: captured_rpc.append(rpc_url)
-        or {"type": "proxy", "proxy_type": "eip1967", "implementation": _IMPL_ADDR},
+        lambda address, rpc_url: (
+            captured_rpc.append(rpc_url) or {"type": "proxy", "proxy_type": "eip1967", "implementation": _IMPL_ADDR}
+        ),
     )
 
     worker._resolve_proxy(session, job, _ADDR, "TestContract")
@@ -379,9 +378,7 @@ def test_classify_exception_stores_classification_error(monkeypatch):
 
     monkeypatch.setattr(
         "services.discovery.classifier.classify_single",
-        lambda address, rpc_url: (_ for _ in ()).throw(
-            ConnectionError("RPC timeout")
-        ),
+        lambda address, rpc_url: (_ for _ in ()).throw(ConnectionError("RPC timeout")),
     )
 
     worker._resolve_proxy(session, job, _ADDR, "TestContract")

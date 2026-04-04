@@ -6,8 +6,6 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
-from services.static.contract_analysis_pipeline.shared import _load_json
-
 from schemas.contract_analysis import (
     AccessControlAnalysis,
     AnalysisStatus,
@@ -27,6 +25,7 @@ from schemas.contract_analysis import (
     TrackingHint,
     UpgradeabilityAnalysis,
 )
+from services.static.contract_analysis_pipeline.shared import _load_json
 
 
 def is_vyper_project(project_dir: Path, meta: dict[str, Any] | None = None) -> bool:

@@ -33,8 +33,13 @@ def _shorten(address: str) -> str:
 
 
 _GENERIC_PROXY_NAMES = {
-    "uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy",
-    "beaconproxy", "ossifiableproxy", "upgradeablebeacon",
+    "uupsproxy",
+    "erc1967proxy",
+    "transparentupgradeableproxy",
+    "proxy",
+    "beaconproxy",
+    "ossifiableproxy",
+    "upgradeablebeacon",
 }
 
 

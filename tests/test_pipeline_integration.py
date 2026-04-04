@@ -151,7 +151,8 @@ def test_dep_phase_passes_proxy_address(monkeypatch, tmp_path):
 
     def capture_dynamic(address, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None):
         captured.append({"address": address, "proxy_address": proxy_address})
-        return _dynamic_deps(address, deps=[DEP_A], graph=[{"from": address, "to": DEP_A, "op": "CALL", "provenance": []}])
+        graph = [{"from": address, "to": DEP_A, "op": "CALL", "provenance": []}]
+        return _dynamic_deps(address, deps=[DEP_A], graph=graph)
 
     job = _job(
         address=IMPL,
@@ -278,9 +279,12 @@ def test_display_name_chain_suffix_and_generic_fallback():
     to run_name for generic proxy contract names."""
     import api
 
-    assert api._display_name({"contract_name": "Pool", "run_name": "x", "display_name": None, "chain": "base"}) == "Pool (base)"
-    assert api._display_name({"contract_name": "ERC1967Proxy", "run_name": "Router", "display_name": None, "chain": None}) == "Router"
-    assert api._display_name({"contract_name": "Proxy", "run_name": "r", "display_name": "Custom", "chain": None}) == "Custom"
+    entry1 = {"contract_name": "Pool", "run_name": "x", "display_name": None, "chain": "base"}
+    assert api._display_name(entry1) == "Pool (base)"
+    entry2 = {"contract_name": "ERC1967Proxy", "run_name": "Router", "display_name": None, "chain": None}
+    assert api._display_name(entry2) == "Router"
+    entry3 = {"contract_name": "Proxy", "run_name": "r", "display_name": "Custom", "chain": None}
+    assert api._display_name(entry3) == "Custom"
 
 
 def test_proxy_with_completed_impl_visible_after_merge():
@@ -388,10 +392,14 @@ def test_graph_label_prefers_display_name_for_generic_proxy(tmp_path):
     the graph root node label should use display_name."""
     from services.discovery.dependency_graph_builder import build_dependency_visualization
 
-    (tmp_path / "contract_meta.json").write_text(json.dumps({
-        "contract_name": "ERC1967Proxy",
-        "display_name": "Rewards Router",
-    }))
+    (tmp_path / "contract_meta.json").write_text(
+        json.dumps(
+            {
+                "contract_name": "ERC1967Proxy",
+                "display_name": "Rewards Router",
+            }
+        )
+    )
     unified = {"address": TARGET, "dependencies": {DEP_A: {"type": "regular", "source": ["static"]}}}
     (tmp_path / "dependencies.json").write_text(json.dumps(unified))
 
@@ -453,6 +461,7 @@ def test_full_data_flow_unified_through_graph_and_upgrade_history(monkeypatch, t
     # -- upgrade history (mock Etherscan boundary) --
     monkeypatch.setattr("services.discovery.upgrade_history._fetch_logs_etherscan", lambda _a, _t: [])
     from utils import etherscan
+
     monkeypatch.setattr(etherscan, "get_contract_info", lambda _a: (None, {}))
 
     deps_path = tmp_path / "dependencies.json"
@@ -653,6 +662,7 @@ def test_analyses_list_reads_contract_flags_from_static_worker(mock_session_cls,
     _mock_session_ctx(mock_session_cls, mock_session)
 
     from db.models import JobStatus
+
     impl_job.status = JobStatus.completed
 
     # Route execute calls: first returns jobs, subsequent return artifact names
@@ -1250,12 +1260,11 @@ def test_worker_stage_chain_is_complete():
     """The pipeline stage chain must be: discovery -> static -> resolution
     -> policy -> done. If any next_stage doesn't match the following
     worker's stage, jobs will get stuck."""
+    from db.models import JobStage
     from workers.discovery import DiscoveryWorker
     from workers.policy_worker import PolicyWorker
     from workers.resolution_worker import ResolutionWorker
     from workers.static_worker import StaticWorker
-
-    from db.models import JobStage
 
     # Verify the chain
     assert DiscoveryWorker.stage == JobStage.discovery

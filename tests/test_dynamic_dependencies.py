@@ -520,9 +520,7 @@ def test_proxy_address_fetches_txs_from_proxy_and_rewrites_edges(monkeypatch):
     out = ddc.find_dynamic_dependencies(impl, tx_limit=1, proxy_address=proxy)
 
     # Transactions were fetched for the PROXY, not the implementation
-    assert fetch_addresses == [proxy], (
-        f"Expected fetch for proxy {proxy}, got {fetch_addresses}"
-    )
+    assert fetch_addresses == [proxy], f"Expected fetch for proxy {proxy}, got {fetch_addresses}"
 
     # Implementation and proxy are excluded from dependencies
     assert impl not in out["dependencies"]
@@ -531,9 +529,7 @@ def test_proxy_address_fetches_txs_from_proxy_and_rewrites_edges(monkeypatch):
 
     # Graph edges are rewritten to show impl as the source, not proxy
     for edge in out["dependency_graph"]:
-        assert edge["from"] == impl, (
-            f"Edge source should be impl {impl}, got {edge['from']}"
-        )
+        assert edge["from"] == impl, f"Edge source should be impl {impl}, got {edge['from']}"
 
 
 # ---------------------------------------------------------------------------
@@ -554,16 +550,20 @@ def test_fetch_contract_transactions_oldest_first_when_all_eth_transfers(monkeyp
             raise RuntimeError("No transactions found")
         if action == "txlist" and kwargs.get("sort") == "desc":
             # Recent txs are all plain ETH transfers (input='0x')
-            return {"result": [
-                {"hash": "0xeth1", "to": target, "isError": "0", "blockNumber": "100", "input": "0x"},
-                {"hash": "0xeth2", "to": target, "isError": "0", "blockNumber": "99", "input": "0x"},
-            ]}
+            return {
+                "result": [
+                    {"hash": "0xeth1", "to": target, "isError": "0", "blockNumber": "100", "input": "0x"},
+                    {"hash": "0xeth2", "to": target, "isError": "0", "blockNumber": "99", "input": "0x"},
+                ]
+            }
         if action == "txlist" and kwargs.get("sort") == "asc":
             # Oldest txs have real function selectors
-            return {"result": [
-                {"hash": "0xold1", "to": target, "isError": "0", "blockNumber": "1", "input": "0xdeadbeef00"},
-                {"hash": "0xold2", "to": target, "isError": "0", "blockNumber": "2", "input": "0xcafebabe00"},
-            ]}
+            return {
+                "result": [
+                    {"hash": "0xold1", "to": target, "isError": "0", "blockNumber": "1", "input": "0xdeadbeef00"},
+                    {"hash": "0xold2", "to": target, "isError": "0", "blockNumber": "2", "input": "0xcafebabe00"},
+                ]
+            }
         return {"result": []}
 
     monkeypatch.setattr(ddc, "etherscan_get", fake_etherscan_get)
@@ -572,9 +572,7 @@ def test_fetch_contract_transactions_oldest_first_when_all_eth_transfers(monkeyp
 
     # Verify the second (asc) call was made
     txlist_calls = [c for c in etherscan_calls if c["action"] == "txlist"]
-    assert len(txlist_calls) == 2, (
-        f"Expected 2 txlist calls (desc + asc), got {len(txlist_calls)}"
-    )
+    assert len(txlist_calls) == 2, f"Expected 2 txlist calls (desc + asc), got {len(txlist_calls)}"
     assert txlist_calls[0]["sort"] == "desc"
     assert txlist_calls[1]["sort"] == "asc"
 
@@ -599,9 +597,11 @@ def test_fetch_contract_transactions_no_asc_when_selectors_present(monkeypatch):
         if action == "txlistinternal":
             raise RuntimeError("No transactions found")
         if action == "txlist" and kwargs.get("sort") == "desc":
-            return {"result": [
-                {"hash": "0xtx1", "to": target, "isError": "0", "blockNumber": "100", "input": "0xdeadbeef00"},
-            ]}
+            return {
+                "result": [
+                    {"hash": "0xtx1", "to": target, "isError": "0", "blockNumber": "100", "input": "0xdeadbeef00"},
+                ]
+            }
         return {"result": []}
 
     monkeypatch.setattr(ddc, "etherscan_get", fake_etherscan_get)

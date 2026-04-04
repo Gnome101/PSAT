@@ -10,18 +10,19 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workers.discovery import DiscoveryWorker
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _job(**overrides):
+
+def _job(**overrides) -> Any:
     defaults = {
         "id": "job-1",
         "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
@@ -67,9 +68,7 @@ def _patch_discovery(monkeypatch, etherscan_result):
     artifact_calls: list[tuple] = []
     monkeypatch.setattr(
         "workers.discovery.store_artifact",
-        lambda session, job_id, name, data=None, text_data=None: artifact_calls.append(
-            (name, data)
-        ),
+        lambda session, job_id, name, data=None, text_data=None: artifact_calls.append((name, data)),
     )
 
     return source_calls, artifact_calls
@@ -78,6 +77,7 @@ def _patch_discovery(monkeypatch, etherscan_result):
 # ---------------------------------------------------------------------------
 # 1. Happy path
 # ---------------------------------------------------------------------------
+
 
 def test_happy_path_stores_sources_and_artifacts(monkeypatch):
     result = _etherscan_result()
@@ -147,6 +147,7 @@ def test_happy_path_does_not_overwrite_existing_job_name(monkeypatch):
 # 2. Vyper detection
 # ---------------------------------------------------------------------------
 
+
 def test_vyper_detected_from_compiler_version(monkeypatch):
     result = _etherscan_result(
         CompilerVersion="vyper:0.3.7",
@@ -210,6 +211,7 @@ def test_solidity_when_compiler_not_vyper(monkeypatch):
 # ---------------------------------------------------------------------------
 # 3. EVM version fallback
 # ---------------------------------------------------------------------------
+
 
 def test_evm_version_defaults_to_shanghai_when_empty(monkeypatch):
     result = _etherscan_result(EVMVersion="")
@@ -277,6 +279,7 @@ def test_evm_version_defaults_when_key_missing(monkeypatch):
 # 4. Source format detection
 # ---------------------------------------------------------------------------
 
+
 def test_source_format_standard_json(monkeypatch):
     """source_format is 'standard_json' when 'sources' appears within the first 10 chars.
 
@@ -286,13 +289,13 @@ def test_source_format_standard_json(monkeypatch):
     which overflows the 10-char window.  We use a single-brace variant here to
     exercise the 'standard_json' branch.
     """
-    source_code = json.dumps({
-        "sources": {
-            "contracts/Token.sol": {"content": "pragma solidity ^0.8.0; contract Token {}"}
-        },
-        "language": "Solidity",
-        "settings": {"optimizer": {"enabled": True, "runs": 200}, "remappings": []},
-    })
+    source_code = json.dumps(
+        {
+            "sources": {"contracts/Token.sol": {"content": "pragma solidity ^0.8.0; contract Token {}"}},
+            "language": "Solidity",
+            "settings": {"optimizer": {"enabled": True, "runs": 200}, "remappings": []},
+        }
+    )
     # Sanity: confirm the detection will fire
     assert "sources" in source_code[:10]
 
@@ -334,17 +337,19 @@ def test_standard_json_multiple_files_parsed_correctly(monkeypatch):
     correctly extracts all files and remappings even though source_format
     detection falls back to 'flat' due to the [:10] window.
     """
-    inner = json.dumps({
-        "sources": {
-            "contracts/Token.sol": {"content": "pragma solidity ^0.8.0; contract Token {}"},
-            "contracts/Lib.sol": {"content": "pragma solidity ^0.8.0; library Lib {}"},
-            "@openzeppelin/contracts/token/ERC20/ERC20.sol": {
-                "content": "pragma solidity ^0.8.0; contract ERC20 {}"
+    inner = json.dumps(
+        {
+            "sources": {
+                "contracts/Token.sol": {"content": "pragma solidity ^0.8.0; contract Token {}"},
+                "contracts/Lib.sol": {"content": "pragma solidity ^0.8.0; library Lib {}"},
+                "@openzeppelin/contracts/token/ERC20/ERC20.sol": {
+                    "content": "pragma solidity ^0.8.0; contract ERC20 {}"
+                },
             },
-        },
-        "language": "Solidity",
-        "settings": {"remappings": ["@openzeppelin/=node_modules/@openzeppelin/"]},
-    })
+            "language": "Solidity",
+            "settings": {"remappings": ["@openzeppelin/=node_modules/@openzeppelin/"]},
+        }
+    )
     # Etherscan wraps standard-json by prepending one '{' and appending one '}'.
     # json.dumps already produces '{...}', so adding one brace each side yields '{{...}}'.
     source_code = "{" + inner + "}"
@@ -374,6 +379,7 @@ def test_standard_json_multiple_files_parsed_correctly(monkeypatch):
 # ---------------------------------------------------------------------------
 # 5. Build settings edge cases
 # ---------------------------------------------------------------------------
+
 
 def test_optimization_disabled(monkeypatch):
     """OptimizationUsed='0' results in optimization_used=False in build_settings."""

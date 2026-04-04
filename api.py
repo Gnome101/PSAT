@@ -177,9 +177,8 @@ def list_jobs() -> list[dict[str, Any]]:
         job_ids = [job.id for job in jobs]
         proxy_ids: set[str] = set()
         if job_ids:
-            flags_stmt = (
-                select(Artifact.job_id, Artifact.data)
-                .where(Artifact.job_id.in_(job_ids), Artifact.name == "contract_flags")
+            flags_stmt = select(Artifact.job_id, Artifact.data).where(
+                Artifact.job_id.in_(job_ids), Artifact.name == "contract_flags"
             )
             for row in session.execute(flags_stmt):
                 if isinstance(row.data, dict) and row.data.get("is_proxy"):
@@ -289,10 +288,7 @@ def analyses() -> list[dict]:
             # as a merged entry once the impl finishes.
             if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
                 impl_stmt = (
-                    select(Job)
-                    .where(Job.address == flags["implementation"])
-                    .order_by(Job.updated_at.desc())
-                    .limit(1)
+                    select(Job).where(Job.address == flags["implementation"]).order_by(Job.updated_at.desc()).limit(1)
                 )
                 impl_job = session.execute(impl_stmt).scalar_one_or_none()
                 if impl_job and impl_job.status != JobStatus.completed:
@@ -398,12 +394,7 @@ def analysis_detail(run_name: str) -> dict:
         flags = get_artifact(session, job.id, "contract_flags")
         if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
             impl_address = flags["implementation"]
-            impl_stmt = (
-                select(Job)
-                .where(Job.address == impl_address)
-                .order_by(Job.updated_at.desc())
-                .limit(1)
-            )
+            impl_stmt = select(Job).where(Job.address == impl_address).order_by(Job.updated_at.desc()).limit(1)
             impl_job = session.execute(impl_stmt).scalar_one_or_none()
             if impl_job:
                 impl_artifacts = get_all_artifacts(session, impl_job.id)
