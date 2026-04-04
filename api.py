@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
-from db.models import Artifact, Job, JobStatus, SessionLocal
+from db.models import Artifact, Job, JobStatus, ProxyUpgradeEvent, SessionLocal, WatchedProxy
 from db.queue import create_job, get_all_artifacts, get_artifact
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,13 @@ class AnalyzeRequest(BaseModel):
         if bool(self.address) == bool(self.company):
             raise ValueError("Provide exactly one of address or company")
         return self
+
+
+class WatchProxyRequest(BaseModel):
+    address: str = Field(min_length=42, max_length=42)
+    chain: str = "ethereum"
+    label: str | None = None
+    rpc_url: str | None = None
 
 
 @asynccontextmanager
@@ -429,6 +436,104 @@ def analysis_detail(run_name: str) -> dict:
             payload["summary"] = all_artifacts["contract_analysis"].get("summary")
 
         return payload
+
+
+def _watched_proxy_to_dict(proxy: WatchedProxy) -> dict[str, Any]:
+    return {
+        "id": str(proxy.id),
+        "proxy_address": proxy.proxy_address,
+        "chain": proxy.chain,
+        "label": proxy.label,
+        "last_known_implementation": proxy.last_known_implementation,
+        "last_scanned_block": proxy.last_scanned_block,
+        "created_at": proxy.created_at.isoformat(),
+    }
+
+
+@app.post("/api/watched-proxies")
+def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
+    """Subscribe to proxy upgrade notifications."""
+    if not request.address.startswith("0x"):
+        raise HTTPException(status_code=400, detail="Address must start with 0x")
+    address = request.address.lower()
+
+    # Optionally resolve current implementation
+    current_impl = None
+    if request.rpc_url:
+        from services.monitoring.proxy_watcher import resolve_current_implementation
+
+        current_impl = resolve_current_implementation(address, request.rpc_url)
+
+    # Get current block as starting scan point
+    from_block = 0
+    if request.rpc_url:
+        from services.monitoring.proxy_watcher import get_latest_block
+
+        try:
+            from_block = get_latest_block(request.rpc_url)
+        except Exception:
+            pass
+
+    with SessionLocal() as session:
+        proxy = WatchedProxy(
+            proxy_address=address,
+            chain=request.chain,
+            label=request.label,
+            last_known_implementation=current_impl,
+            last_scanned_block=from_block,
+        )
+        session.add(proxy)
+        try:
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Proxy already being watched")
+        session.refresh(proxy)
+        return _watched_proxy_to_dict(proxy)
+
+
+@app.get("/api/watched-proxies")
+def list_watched_proxies() -> list[dict[str, Any]]:
+    """List all watched proxy contracts."""
+    with SessionLocal() as session:
+        stmt = select(WatchedProxy).order_by(WatchedProxy.created_at.desc())
+        proxies = session.execute(stmt).scalars().all()
+        return [_watched_proxy_to_dict(p) for p in proxies]
+
+
+@app.delete("/api/watched-proxies/{proxy_id}")
+def remove_watched_proxy(proxy_id: str) -> dict[str, str]:
+    """Stop watching a proxy contract."""
+    with SessionLocal() as session:
+        proxy = session.get(WatchedProxy, proxy_id)
+        if proxy is None:
+            raise HTTPException(status_code=404, detail="Watched proxy not found")
+        session.delete(proxy)
+        session.commit()
+        return {"status": "removed"}
+
+
+@app.get("/api/proxy-events")
+def list_proxy_events(proxy_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    """List detected proxy upgrade events."""
+    with SessionLocal() as session:
+        stmt = select(ProxyUpgradeEvent).order_by(ProxyUpgradeEvent.detected_at.desc()).limit(limit)
+        if proxy_id:
+            stmt = stmt.where(ProxyUpgradeEvent.watched_proxy_id == proxy_id)
+        events = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(e.id),
+                "watched_proxy_id": str(e.watched_proxy_id),
+                "block_number": e.block_number,
+                "tx_hash": e.tx_hash,
+                "old_implementation": e.old_implementation,
+                "new_implementation": e.new_implementation,
+                "event_type": e.event_type,
+                "detected_at": e.detected_at.isoformat(),
+            }
+            for e in events
+        ]
 
 
 @app.get("/{full_path:path}")
