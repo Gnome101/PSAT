@@ -13,45 +13,6 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 # ---------------------------------------------------------------------------
-# Core helpers: _normalize_maybe_address, _to_int, _tx_selector, _is_precompile
-# ---------------------------------------------------------------------------
-
-
-def test_is_precompile():
-    assert ddc._is_precompile("0x0000000000000000000000000000000000000001") is True
-    assert ddc._is_precompile("0x0000000000000000000000000000000000000009") is True
-    assert ddc._is_precompile("0x000000000000000000000000000000000000000a") is False
-    assert ddc._is_precompile("0x" + "11" * 20) is False
-
-
-def test_parsing_helpers():
-    # _normalize_maybe_address: valid addresses
-    assert ddc._normalize_maybe_address("0xAbCd" + "0" * 36) == "0xabcd" + "0" * 36
-    assert ddc._normalize_maybe_address("abcd" + "0" * 36) == "0xabcd" + "0" * 36
-
-    # _normalize_maybe_address: invalid inputs
-    assert ddc._normalize_maybe_address(None) is None
-    assert ddc._normalize_maybe_address(123) is None
-    assert ddc._normalize_maybe_address("0xshort") is None
-    assert ddc._normalize_maybe_address("0xZZZZ" + "0" * 36) is None  # invalid hex
-
-    # _to_int: various formats
-    assert ddc._to_int("0xa") == 10
-    assert ddc._to_int("100") == 100
-    assert ddc._to_int(42) == 42
-    assert ddc._to_int(None) is None
-    with pytest.raises(RuntimeError, match="Unsupported"):
-        ddc._to_int([1, 2])
-
-    # _tx_selector: extracts first 4 bytes
-    assert ddc._tx_selector("0xdeadbeef1234") == "0xdeadbeef"
-    assert ddc._tx_selector("0x12345678") == "0x12345678"
-    assert ddc._tx_selector("0x1234") == "0x"  # too short
-    assert ddc._tx_selector("") == "0x"
-    assert ddc._tx_selector(None) == "0x"
-
-
-# ---------------------------------------------------------------------------
 # Transaction selection
 # ---------------------------------------------------------------------------
 

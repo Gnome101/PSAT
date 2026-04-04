@@ -26,7 +26,7 @@ from services.discovery import (
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
 from services.static.vyper_analysis import is_vyper_project
-from workers.base import BaseWorker
+from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
 
@@ -211,29 +211,48 @@ class StaticWorker(BaseWorker):
         # behind `_is_proxy_contract()` misses user-facing proxy endpoints.
         self._resolve_proxy(session, job, address, contract_name)
 
+        # Check if proxy classification created an impl child job — if so,
+        # skip Slither/analysis on the proxy source (it's just a thin wrapper).
+        # Dependency discovery still runs because proxy-address deps are useful.
+        flags = get_artifact(session, job.id, "contract_flags")
+        is_proxy = isinstance(flags, dict) and flags.get("is_proxy")
+
         # Create temp directory and write source files
         tmp_dir = tempfile.mkdtemp(prefix="psat_static_")
         project_dir = Path(tmp_dir)
         try:
             self._scaffold_project(project_dir, sources, meta, build_settings, remappings)
 
-            # Phase 0: Dependency artifacts
+            # Phase 0: Dependency artifacts (always runs — proxy deps are useful)
             self._run_dependency_phase(session, job, project_dir, contract_name, address)
 
-            # Phase 1: Slither
-            slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
-
-            # Phase 2: Contract analysis (uses Slither library directly, may succeed even if CLI failed)
-            analysis_ok = self._run_analysis_phase(session, job, project_dir, contract_name, address)
-
-            if not analysis_ok:
-                raise RuntimeError(
-                    f"Contract analysis failed for {contract_name} ({address}). "
-                    f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
+            if is_proxy:
+                self.update_detail(session, job, "Proxy detected — impl job handles analysis")
+                logger.info(
+                    "Static stage skipping analysis for proxy job %s (%s) — impl child job will analyze",
+                    job_id_str,
+                    contract_name,
                 )
+                # Proxy jobs skip resolution/policy — complete directly
+                from db.queue import complete_job
 
-            # Phase 3: Control tracking plan
-            self._run_tracking_plan_phase(session, job, project_dir, contract_name, address)
+                complete_job(session, job.id, f"Proxy {contract_name} — impl child job queued for full analysis")
+                raise JobHandledDirectly()
+            else:
+                # Phase 1: Slither
+                slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
+
+                # Phase 2: Contract analysis
+                analysis_ok = self._run_analysis_phase(session, job, project_dir, contract_name, address)
+
+                if not analysis_ok:
+                    raise RuntimeError(
+                        f"Contract analysis failed for {contract_name} ({address}). "
+                        f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
+                    )
+
+                # Phase 3: Control tracking plan
+                self._run_tracking_plan_phase(session, job, project_dir, contract_name, address)
 
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
@@ -530,6 +549,27 @@ class StaticWorker(BaseWorker):
                     "Static stage dependencies complete for job %s address=%s (no graph nodes)",
                     job.id,
                     address,
+                )
+
+            # Upgrade history for proxy contracts
+            try:
+                from services.discovery.upgrade_history import build_upgrade_history
+
+                uh = build_upgrade_history(dependencies_path)
+                if uh.get("proxies"):
+                    store_artifact(session, job.id, "upgrade_history", data=uh)
+                    logger.info(
+                        "Static stage upgrade history complete for job %s address=%s upgrades=%d",
+                        job.id,
+                        address,
+                        uh.get("total_upgrades", 0),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Static stage upgrade history failed for job %s address=%s: %s",
+                    job.id,
+                    address,
+                    exc,
                 )
         else:
             logger.warning(

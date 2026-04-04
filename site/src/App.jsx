@@ -302,11 +302,19 @@ function UpgradesTab({ detail }) {
   }
 
   const deps = detail?.dependencies?.dependencies || {};
+  const targetAddr = (detail?.address || history.target_address || "").toLowerCase();
 
   function proxyLabel(addr) {
+    if (addr.toLowerCase() === targetAddr) {
+      return detail?.run_name || detail?.contract_name || shortenAddress(addr);
+    }
     const dep = deps[addr];
     if (dep?.contract_name) return dep.contract_name;
     return shortenAddress(addr);
+  }
+
+  function isTarget(addr) {
+    return addr.toLowerCase() === targetAddr;
   }
 
   function formatTimestamp(ts) {
@@ -332,10 +340,13 @@ function UpgradesTab({ detail }) {
         <StatCard label="Proxies" value={Object.keys(history.proxies).length} />
         <StatCard label="Total Upgrades" value={history.total_upgrades} />
       </div>
-      {Object.entries(history.proxies).map(([addr, proxy]) => (
+      {Object.entries(history.proxies)
+        .sort(([a], [b]) => (isTarget(a) ? -1 : isTarget(b) ? 1 : 0))
+        .map(([addr, proxy]) => (
         <div className="card" key={addr}>
           <div className="card-header-row">
             <h3>{proxyLabel(addr)}</h3>
+            {isTarget(addr) ? <span className="chip">target</span> : null}
             <span className="chip alt">{proxy.proxy_type}</span>
           </div>
           <div className="mono muted" style={{ marginBottom: 8 }}>{addr}</div>
@@ -1144,22 +1155,31 @@ function PipelineDashboard() {
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
+  // Filter to only show meaningful analysis jobs:
+  // - Skip proxy jobs (thin wrappers — the impl child does the real work)
+  // - Skip company/discovery-only jobs (parent orchestrators, not contracts)
+  const analysisJobs = useMemo(() =>
+    allJobs.filter((j) => !j.is_proxy && !j.company),
+  [allJobs]);
+
   const buckets = useMemo(() => {
     const b = {};
     for (const s of ALL_STAGES) b[s] = { queued: [], processing: [], completed: [], failed: [] };
-    for (const j of allJobs) {
+    for (const j of analysisJobs) {
       const stage = j.stage || "discovery";
       const status = j.status || "queued";
       if (b[stage] && b[stage][status]) b[stage][status].push(j);
     }
     return b;
-  }, [allJobs]);
+  }, [analysisJobs]);
 
   const totals = useMemo(() => {
     const t = { queued: 0, processing: 0, completed: 0, failed: 0, total: 0 };
-    for (const j of allJobs) { t[j.status] = (t[j.status] || 0) + 1; t.total++; }
+    for (const j of analysisJobs) {
+      t[j.status] = (t[j.status] || 0) + 1; t.total++;
+    }
     return t;
-  }, [allJobs]);
+  }, [analysisJobs]);
 
   if (!allJobs.length) {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;

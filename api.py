@@ -136,7 +136,7 @@ def _merge_proxy_impl_entries(entries: list[dict[str, Any]]) -> list[dict[str, A
                     "proxy_address": entry.get("address"),
                     "proxy_address_display": entry.get("address"),
                     "proxy_type_display": entry.get("proxy_type"),
-                    "display_name": impl.get("contract_name") or impl.get("run_name") or _display_name(entry),
+                    "display_name": impl.get("contract_name") or _display_name(entry),
                 }
             )
             merged_proxies.add(address)
@@ -172,7 +172,25 @@ def list_jobs() -> list[dict[str, Any]]:
     with SessionLocal() as session:
         stmt = select(Job).order_by(Job.created_at.desc())
         jobs = session.execute(stmt).scalars().all()
-        return [job.to_dict() for job in jobs]
+
+        # Batch-fetch contract_flags to tag proxy jobs
+        job_ids = [job.id for job in jobs]
+        proxy_ids: set[str] = set()
+        if job_ids:
+            flags_stmt = (
+                select(Artifact.job_id, Artifact.data)
+                .where(Artifact.job_id.in_(job_ids), Artifact.name == "contract_flags")
+            )
+            for row in session.execute(flags_stmt):
+                if isinstance(row.data, dict) and row.data.get("is_proxy"):
+                    proxy_ids.add(str(row.job_id))
+
+        result = []
+        for job in jobs:
+            d = job.to_dict()
+            d["is_proxy"] = str(job.id) in proxy_ids
+            result.append(d)
+        return result
 
 
 @app.post("/api/analyze")
@@ -266,6 +284,22 @@ def analyses() -> list[dict]:
             artifact_names = [row for row in session.execute(stmt_artifacts).scalars().all()]
             entry["available_artifacts"] = sorted(artifact_names)
 
+            # For proxy jobs, check if the impl child has completed.
+            # If the impl is still running, hide the proxy — it'll appear
+            # as a merged entry once the impl finishes.
+            if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
+                impl_stmt = (
+                    select(Job)
+                    .where(Job.address == flags["implementation"])
+                    .order_by(Job.updated_at.desc())
+                    .limit(1)
+                )
+                impl_job = session.execute(impl_stmt).scalar_one_or_none()
+                if impl_job and impl_job.status != JobStatus.completed:
+                    continue
+                if impl_job and not isinstance(analysis_artifact, dict):
+                    analysis_artifact = get_artifact(session, impl_job.id, "contract_analysis")
+
             if isinstance(analysis_artifact, dict):
                 subject = analysis_artifact.get("subject", {})
                 entry["contract_name"] = subject.get("name", run_name)
@@ -341,13 +375,57 @@ def analysis_detail(run_name: str) -> dict:
             "effective_permissions",
             "principal_labels",
             "dependency_graph_viz",
+            "upgrade_history",
         ):
             if artifact_name in all_artifacts and isinstance(all_artifacts[artifact_name], dict):
                 payload[artifact_name] = all_artifacts[artifact_name]
 
+        # For impl jobs, inherit proxy-specific artifacts from the proxy job
         request = job.request if isinstance(job.request, dict) else {}
         proxy_address = request.get("proxy_address")
+        if proxy_address:
+            proxy_stmt = select(Job).where(Job.address == proxy_address).order_by(Job.updated_at.desc()).limit(1)
+            proxy_job = session.execute(proxy_stmt).scalar_one_or_none()
+            if proxy_job:
+                for fallback_name in ("upgrade_history", "dependency_graph_viz", "dependencies"):
+                    if fallback_name not in payload:
+                        fallback = get_artifact(session, proxy_job.id, fallback_name)
+                        if isinstance(fallback, dict):
+                            payload[fallback_name] = fallback
         payload["proxy_address"] = proxy_address
+
+        # For proxy jobs, inherit analysis artifacts from the impl child job
+        flags = get_artifact(session, job.id, "contract_flags")
+        if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
+            impl_address = flags["implementation"]
+            impl_stmt = (
+                select(Job)
+                .where(Job.address == impl_address)
+                .order_by(Job.updated_at.desc())
+                .limit(1)
+            )
+            impl_job = session.execute(impl_stmt).scalar_one_or_none()
+            if impl_job:
+                impl_artifacts = get_all_artifacts(session, impl_job.id)
+                for fallback_name in (
+                    "contract_analysis",
+                    "control_snapshot",
+                    "resolved_control_graph",
+                    "effective_permissions",
+                    "principal_labels",
+                    "analysis_report",
+                ):
+                    if fallback_name not in payload:
+                        val = impl_artifacts.get(fallback_name)
+                        if val is not None:
+                            payload[fallback_name] = val
+                # Use the impl's subject info if the proxy doesn't have its own
+                if "contract_name" not in payload and isinstance(impl_artifacts.get("contract_analysis"), dict):
+                    subject = impl_artifacts["contract_analysis"].get("subject", {})
+                    payload["contract_name"] = subject.get("name", payload["run_name"])
+                    payload["summary"] = impl_artifacts["contract_analysis"].get("summary")
+                payload["proxy_address"] = payload.get("proxy_address") or job.address
+                payload["implementation_address"] = impl_address
 
         # Inline text artifacts
         if "analysis_report" in all_artifacts:
