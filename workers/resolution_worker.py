@@ -7,6 +7,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import cast
 
@@ -17,7 +18,7 @@ from db.queue import get_artifact, store_artifact
 from schemas.control_tracking import ControlTrackingPlan
 from services.resolution.recursive import write_resolved_control_graph
 from services.resolution.tracking import build_control_snapshot
-from workers.base import BaseWorker
+from workers.base import DEBUG_TIMING, BaseWorker
 
 logger = logging.getLogger("workers.resolution_worker")
 
@@ -67,7 +68,10 @@ class ResolutionWorker(BaseWorker):
 
         # Build control snapshot via RPC calls
         self.update_detail(session, job, "Reading current controller state")
+        t0 = time.monotonic()
         snapshot = build_control_snapshot(cast(ControlTrackingPlan, tracking_plan), rpc_url)
+        if DEBUG_TIMING:
+            logger.info("[TIMING] control snapshot: %.1fs", time.monotonic() - t0)
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
         logger.info(
             "Resolution stage control snapshot complete for job %s address=%s name=%s",
@@ -89,6 +93,7 @@ class ResolutionWorker(BaseWorker):
             (project_dir / "control_snapshot.json").write_text(json.dumps(snapshot, indent=2) + "\n")
 
             self.update_detail(session, job, "Resolving recursive control graph")
+            t0 = time.monotonic()
             resolved_graph_path = write_resolved_control_graph(
                 analysis_path,
                 rpc_url=rpc_url,
@@ -97,6 +102,9 @@ class ResolutionWorker(BaseWorker):
                 workspace_prefix="recursive",
                 refresh_snapshots=True,
             )
+
+            if DEBUG_TIMING:
+                logger.info("[TIMING] recursive graph: %.1fs", time.monotonic() - t0)
 
             if resolved_graph_path.exists():
                 store_artifact(

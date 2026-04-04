@@ -185,6 +185,16 @@ def _read_polling_source(
 def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: str = "latest") -> ControlSnapshot:
     block_number = _current_block_number(rpc_url) if block_tag == "latest" else int(block_tag, 16)
     controller_values = {}
+    # Cache classify_resolved_address results to avoid duplicate RPC calls
+    # when multiple controllers resolve to the same address.
+    _classification_cache: dict[str, tuple[str, dict[str, object]]] = {}
+
+    def _cached_classify(address: str) -> tuple[str, dict[str, object]]:
+        key = _normalize_hex(address)
+        if key not in _classification_cache:
+            _classification_cache[key] = classify_resolved_address(rpc_url, address, block_tag)
+        return _classification_cache[key]
+
     for controller in plan["tracked_controllers"]:
         source = controller["source"]
         read_spec = controller.get("read_spec")
@@ -206,11 +216,7 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
                 )
                 resolved_principals = []
                 for member_address in member_addresses:
-                    resolved_type, details = classify_resolved_address(
-                        rpc_url,
-                        member_address,
-                        block_tag,
-                    )
+                    resolved_type, details = _cached_classify(member_address)
                     resolved_principals.append(
                         {
                             "address": member_address,
@@ -238,11 +244,7 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
                 "block_number": block_number,
                 "observed_via": "eth_call",
             }
-            resolved_type, details = classify_resolved_address(
-                rpc_url,
-                value,
-                block_tag,
-            )
+            resolved_type, details = _cached_classify(value)
             controller_values[controller["controller_id"]]["resolved_type"] = resolved_type
             controller_values[controller["controller_id"]]["details"] = details
         except Exception as exc:

@@ -123,14 +123,22 @@ def _patch_dep_phase(monkeypatch, worker, static=None, dynamic=None, classify=No
         lambda _s, _j, name, data=None, text_data=None: store.update({name: data or text_data}),
     )
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
-    monkeypatch.setattr("workers.static_worker.find_dependencies", lambda addr, rpc_url: static or _static_deps(addr))
+    monkeypatch.setattr(
+        "workers.static_worker.find_dependencies",
+        lambda addr, rpc_url, code_cache=None: static or _static_deps(addr),
+    )
     monkeypatch.setattr(
         "workers.static_worker.find_dynamic_dependencies",
-        dynamic or (lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None: _dynamic_deps(addr)),
+        dynamic
+        or (
+            lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None: _dynamic_deps(
+                addr
+            )
+        ),
     )
     monkeypatch.setattr(
         "workers.static_worker.classify_contracts",
-        classify or (lambda tgt, deps, rpc, dynamic_edges=None: _classifications(tgt)),
+        classify or (lambda tgt, deps, rpc, dynamic_edges=None, code_cache=None: _classifications(tgt)),
     )
     monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda u: u)
     return store
@@ -149,7 +157,7 @@ def test_dep_phase_passes_proxy_address(monkeypatch, tmp_path):
     worker = StaticWorker()
     captured: list[dict] = []
 
-    def capture_dynamic(address, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None):
+    def capture_dynamic(address, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None):
         captured.append({"address": address, "proxy_address": proxy_address})
         graph = [{"from": address, "to": DEP_A, "op": "CALL", "provenance": []}]
         return _dynamic_deps(address, deps=[DEP_A], graph=graph)
@@ -1164,13 +1172,13 @@ def test_dep_phase_stores_dependency_errors_on_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         "workers.static_worker.find_dependencies",
-        lambda addr, rpc_url: (_ for _ in ()).throw(RuntimeError("static dep error")),
+        lambda addr, rpc_url, code_cache=None: (_ for _ in ()).throw(RuntimeError("static dep error")),
     )
     monkeypatch.setattr(
         "workers.static_worker.find_dynamic_dependencies",
-        lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None: (_ for _ in ()).throw(
-            RuntimeError("dynamic dep error")
-        ),
+        lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None: (
+            _ for _ in ()
+        ).throw(RuntimeError("dynamic dep error")),
     )
 
     project_dir = tmp_path / "p"

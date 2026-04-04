@@ -333,6 +333,7 @@ def find_dynamic_dependencies(
     tx_limit: int = 10,
     tx_hashes: list[str] | None = None,
     proxy_address: str | None = None,
+    code_cache: dict[str, str] | None = None,
 ) -> dict:
     """Trace representative transactions and return a dynamic dependency graph.
 
@@ -391,8 +392,16 @@ def find_dynamic_dependencies(
 
     # Filter out precompiles and addresses with no deployed code (EOAs)
     dep_candidates = sorted({edge["to"] for edge in direct_edges})
+    if code_cache is None:
+        code_cache = {}
+
+    def _cached_get_code(addr: str) -> str:
+        if addr not in code_cache:
+            code_cache[addr] = get_code(trace_rpc, addr)
+        return code_cache[addr]
+
     contracts = {
-        addr for addr in dep_candidates if not _is_precompile(addr) and has_deployed_code(get_code(trace_rpc, addr))
+        addr for addr in dep_candidates if not _is_precompile(addr) and has_deployed_code(_cached_get_code(addr))
     }
     direct_edges = [edge for edge in direct_edges if edge["to"] in contracts]
     dependencies = sorted(contracts)

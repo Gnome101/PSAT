@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 import textwrap
+import time
 from pathlib import Path
 
 from sqlalchemy import select
@@ -26,7 +27,7 @@ from services.discovery import (
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
 from services.static.vyper_analysis import is_vyper_project
-from workers.base import BaseWorker, JobHandledDirectly
+from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
 
@@ -240,10 +241,16 @@ class StaticWorker(BaseWorker):
                 raise JobHandledDirectly()
             else:
                 # Phase 1: Slither
+                t0 = time.monotonic()
                 slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] slither: %.1fs", time.monotonic() - t0)
 
                 # Phase 2: Contract analysis
+                t0 = time.monotonic()
                 analysis_ok = self._run_analysis_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
 
                 if not analysis_ok:
                     raise RuntimeError(
@@ -252,7 +259,10 @@ class StaticWorker(BaseWorker):
                     )
 
                 # Phase 3: Control tracking plan
+                t0 = time.monotonic()
                 self._run_tracking_plan_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
 
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
@@ -433,6 +443,9 @@ class StaticWorker(BaseWorker):
         dynamic_tx_limit = request.get("dynamic_tx_limit", 10)
         dynamic_tx_hashes = request.get("dynamic_tx_hashes")
         dependency_errors: dict[str, str] = {}
+        # Shared bytecode cache across all dependency stages to avoid duplicate
+        # eth_getCode RPC calls for the same addresses.
+        code_cache: dict[str, str] = {}
 
         logger.info(
             "Static stage dependency discovery started for job %s address=%s contract=%s",
@@ -443,7 +456,11 @@ class StaticWorker(BaseWorker):
 
         deps_output = None
         try:
-            deps_output = find_dependencies(address, deps_rpc)
+            t0 = time.monotonic()
+            deps_output = find_dependencies(address, deps_rpc, code_cache=code_cache)
+            if DEBUG_TIMING:
+                n = len(deps_output.get("dependencies", []))
+                logger.info("[TIMING] static deps: %.1fs (%d deps)", time.monotonic() - t0, n)
             logger.info(
                 "Static stage static dependencies complete for job %s address=%s count=%d",
                 job.id,
@@ -461,6 +478,7 @@ class StaticWorker(BaseWorker):
 
         dyn_output = None
         try:
+            t0 = time.monotonic()
             tx_limit = int(dynamic_tx_limit)
             tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
             proxy_addr = request.get("proxy_address")
@@ -470,7 +488,11 @@ class StaticWorker(BaseWorker):
                 tx_limit=tx_limit,
                 tx_hashes=tx_hashes,
                 proxy_address=proxy_addr,
+                code_cache=code_cache,
             )
+            if DEBUG_TIMING:
+                n = len(dyn_output.get("dependencies", []))
+                logger.info("[TIMING] dynamic deps: %.1fs (%d deps)", time.monotonic() - t0, n)
             logger.info(
                 "Static stage dynamic dependencies complete for job %s address=%s count=%d",
                 job.id,
@@ -498,12 +520,16 @@ class StaticWorker(BaseWorker):
                 set((deps_output or {}).get("dependencies", []) + (dyn_output or {}).get("dependencies", []))
             )
             try:
+                t0 = time.monotonic()
                 cls_output = classify_contracts(
                     address,
                     unique_deps,
                     resolved_rpc,
                     dynamic_edges=(dyn_output or {}).get("dependency_graph"),
+                    code_cache=code_cache,
                 )
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
                 logger.info(
                     "Static stage dependency classification complete for job %s address=%s discovered=%d",
                     job.id,
@@ -527,7 +553,10 @@ class StaticWorker(BaseWorker):
 
         if deps_output or dyn_output:
             unified = build_unified_dependencies(address, deps_output, dyn_output, cls_output)
+            t0 = time.monotonic()
             enrich_dependency_metadata(unified)
+            if DEBUG_TIMING:
+                logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
 
             dependencies_path = project_dir / "dependencies.json"
             dependencies_path.write_text(json.dumps(unified, indent=2) + "\n")

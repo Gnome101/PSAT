@@ -151,7 +151,7 @@ def test_find_dependencies_falls_back_when_env_rpc_fails(monkeypatch):
     monkeypatch.setattr(
         fdc,
         "discover_dependencies",
-        lambda _rpc_url, _root: ["0x2222222222222222222222222222222222222222"],
+        lambda _rpc_url, _root, code_cache=None: ["0x2222222222222222222222222222222222222222"],
     )
 
     out = fdc.find_dependencies("0x1111111111111111111111111111111111111111")
