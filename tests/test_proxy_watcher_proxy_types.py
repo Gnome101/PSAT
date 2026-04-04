@@ -247,6 +247,93 @@ class TestSupportedProxyTypes:
         assert events[0].event_type == "beacon_upgraded"
         assert events[0].new_implementation.lower() == BEACON_ADDR
 
+    def test_multiple_upgrades_in_sequence(self, db_session):
+        """Two Upgraded events in one scan — verify both are detected and
+        old_implementation chains correctly (second event's old_impl equals
+        the first event's new_impl)."""
+        session, proxy = db_session
+        impl_v2 = "0x" + "b" * 40
+        impl_v3 = "0x" + "c" * 40
+
+        log1 = _make_log(
+            PROXY_ADDR,
+            [UPGRADED_TOPIC0, _addr_to_topic(impl_v2)],
+        )
+        # Second event at a later block
+        log2 = {
+            **_make_log(PROXY_ADDR, [UPGRADED_TOPIC0, _addr_to_topic(impl_v3)]),
+            "blockNumber": hex(BLOCK_INT + 1),
+            "transactionHash": "0x" + "f" * 64,
+            "logIndex": "0x0",
+        }
+
+        events = _run_scan_with_logs(session, [log1, log2])
+
+        assert len(events) == 2
+        assert events[0].event_type == "upgraded"
+        assert events[0].old_implementation.lower() == IMPL_OLD
+        assert events[0].new_implementation.lower() == impl_v2
+
+        assert events[1].event_type == "upgraded"
+        assert events[1].old_implementation.lower() == impl_v2
+        assert events[1].new_implementation.lower() == impl_v3
+
+    def test_upgraded_event_with_extra_topics(self, db_session):
+        """Some contracts emit Upgraded with additional indexed parameters beyond
+        the standard single `address indexed implementation`. For example, a
+        contract might emit Upgraded(address indexed implementation, uint256 indexed version).
+
+        The scanner should still correctly parse topics[1] as the implementation
+        address regardless of extra topics."""
+        session, proxy = db_session
+        extra_topic = "0x" + "0" * 63 + "2"  # e.g., version=2
+
+        log = {
+            "address": PROXY_ADDR,
+            "topics": [UPGRADED_TOPIC0, _addr_to_topic(IMPL_NEW), extra_topic],
+            "data": "0x",
+            "blockNumber": BLOCK_HEX,
+            "transactionHash": TX_HASH,
+            "logIndex": "0x0",
+        }
+
+        events = _run_scan_with_logs(session, [log])
+
+        assert len(events) == 1
+        assert events[0].event_type == "upgraded"
+        assert events[0].new_implementation.lower() == IMPL_NEW
+
+    def test_mixed_event_types_in_one_scan(self, db_session):
+        """Upgraded + AdminChanged + BeaconUpgraded all in one scan for the
+        same proxy. All three events should be detected."""
+        session, proxy = db_session
+
+        upgraded_log = _make_log(
+            PROXY_ADDR,
+            [UPGRADED_TOPIC0, _addr_to_topic(IMPL_NEW)],
+        )
+        admin_log = {
+            **_make_log(
+                PROXY_ADDR,
+                [ADMIN_CHANGED_TOPIC0],
+                data=_two_addrs_to_data(ADMIN_OLD, ADMIN_NEW),
+            ),
+            "logIndex": "0x1",
+        }
+        beacon_log = {
+            **_make_log(
+                PROXY_ADDR,
+                [BEACON_UPGRADED_TOPIC0, _addr_to_topic(BEACON_ADDR)],
+            ),
+            "logIndex": "0x2",
+        }
+
+        events = _run_scan_with_logs(session, [upgraded_log, admin_log, beacon_log])
+
+        assert len(events) == 3
+        types = {e.event_type for e in events}
+        assert types == {"upgraded", "admin_changed", "beacon_upgraded"}
+
 
 # ===========================================================================
 # UNSUPPORTED PROXY TYPES — these document the scanner's coverage gaps
@@ -256,7 +343,7 @@ class TestSupportedProxyTypes:
 DIAMOND_CUT_TOPIC0 = "0x8faa70878671ccd212d20771b795c50af8fd3ff6cf27f4bde57e5d4de0aeb673"
 
 # keccak256("ChangedMasterCopy(address)")
-GNOSIS_MASTER_COPY_TOPIC0 = "0x5765cd750ece20bfa1de865bca0eebc5e72a3e9b6ee7cc9b8deed0d70253ef71"
+GNOSIS_MASTER_COPY_TOPIC0 = "0x75e41bc35ff1bf14d81d1d2f649c0084a0f974f9289c803ec9898eeec4c8d0b8"
 
 # A made-up custom event: ImplementationUpdated(address indexed oldImpl, address indexed newImpl)
 CUSTOM_IMPL_UPDATED_TOPIC0 = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -342,6 +429,131 @@ class TestUnsupportedProxyTypes:
         """
         session, proxy = db_session
         events = _run_scan_with_logs(session, [])
+
+        assert len(events) >= 1
+
+    def test_compound_style_new_implementation(self, db_session):
+        """Compound-style proxy: emits NewImplementation(address oldImpl, address newImpl).
+
+        Real-world example: Compound's Unitroller (0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B)
+        uses NewImplementation instead of the EIP-1967 Upgraded event. The topic0
+        is keccak256("NewImplementation(address,address)").
+
+        The scanner only monitors EIP-1967 event topics (Upgraded, AdminChanged,
+        BeaconUpgraded) so Compound-style events are invisible to it.
+
+        FIX: Add COMPOUND_NEW_IMPL_TOPIC0 to the EVENT_TOPICS map in
+        upgrade_history.py and add a parser case in parse_upgrade_log. The
+        two addresses are non-indexed, ABI-encoded in data.
+        """
+        session, proxy = db_session
+
+        # keccak256("NewImplementation(address,address)")
+        COMPOUND_NEW_IMPL_TOPIC0 = "0xd604de94d45953f9138079ec1b82d533cb2160c906d1076d1f7ed54befbca97a"
+
+        log = _make_log(
+            PROXY_ADDR,
+            [COMPOUND_NEW_IMPL_TOPIC0],
+            data=_two_addrs_to_data(IMPL_OLD, IMPL_NEW),
+        )
+
+        events = _run_scan_with_logs(session, [log])
+
+        # This SHOULD detect the upgrade but currently does not because
+        # the scanner does not recognize this topic0.
+        assert len(events) >= 1
+
+    def test_aave_v2_style_upgraded_uint256(self, db_session):
+        """Aave V2-style proxy: emits Upgraded(uint256 revision) instead of
+        Upgraded(address implementation).
+
+        Some Aave V2 contracts (e.g., the LendingPool implementation at
+        0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9) emit an Upgraded event
+        with a uint256 revision number. The topic0 is keccak256("Upgraded(uint256)")
+        which differs from the standard keccak256("Upgraded(address indexed implementation)").
+
+        The scanner only monitors the standard Upgraded(address) topic0, so
+        this variant is invisible.
+
+        FIX: Add the Upgraded(uint256) topic0 to EVENT_TOPICS, and when
+        detected, read the current implementation from EIP-1967 storage slot
+        since the event data only contains the revision number.
+        """
+        session, proxy = db_session
+
+        # keccak256("Upgraded(uint256)")
+        AAVE_V2_UPGRADED_TOPIC0 = "0x65a5e70879738a94a00f00947edae8111ae0aed9175ce342db680bf1e0fb87fc"
+
+        # Data encodes the revision number (e.g., revision=3)
+        revision_data = "0x" + "0" * 63 + "3"
+
+        log = _make_log(
+            PROXY_ADDR,
+            [AAVE_V2_UPGRADED_TOPIC0],
+            data=revision_data,
+        )
+
+        events = _run_scan_with_logs(session, [log])
+
+        # This SHOULD detect the upgrade but currently does not because
+        # the scanner does not recognize this topic0.
+        assert len(events) >= 1
+
+    def test_synthetix_target_updated(self, db_session):
+        """Synthetix proxy: emits TargetUpdated(address newTarget).
+
+        Real-world example: SNX token proxy (0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F)
+        uses a proxy→target pattern where setTarget() swaps the implementation
+        and emits TargetUpdated. This is a legitimate proxy upgrade mechanism
+        used across the entire Synthetix ecosystem (SNX, sUSD, sBTC, etc.).
+
+        The scanner only monitors EIP-1967 event topics, so Synthetix-style
+        TargetUpdated events are invisible.
+
+        FIX: Add SYNTHETIX_TARGET_UPDATED_TOPIC0 to EVENT_TOPICS and parse
+        the new target address from the log data field (non-indexed).
+        """
+        session, proxy = db_session
+
+        # keccak256("TargetUpdated(address)")
+        SYNTHETIX_TARGET_UPDATED_TOPIC0 = "0x814250a3b8c79fcbe2ead2c131c952a278491c8f4322a79fe84b5040a810373e"
+
+        log = _make_log(
+            PROXY_ADDR,
+            [SYNTHETIX_TARGET_UPDATED_TOPIC0],
+            data=_addr_to_data(IMPL_NEW),
+        )
+
+        events = _run_scan_with_logs(session, [log])
+
+        assert len(events) >= 1
+
+    def test_compound_new_pending_implementation(self, db_session):
+        """Compound two-step upgrade: emits NewPendingImplementation(address,address)
+        before NewImplementation(address,address).
+
+        Real-world example: Compound Unitroller (0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B)
+        uses _setPendingImplementation() which emits NewPendingImplementation,
+        then _acceptImplementation() emits NewImplementation. The pending step
+        signals an upcoming upgrade before it takes effect.
+
+        The scanner does not recognize either Compound event signature.
+
+        FIX: Add COMPOUND_NEW_PENDING_IMPL_TOPIC0 to EVENT_TOPICS and parse
+        the two addresses (old pending, new pending) from ABI-encoded data.
+        """
+        session, proxy = db_session
+
+        # keccak256("NewPendingImplementation(address,address)")
+        COMPOUND_PENDING_TOPIC0 = "0xe945ccee5d701fc83f9b8aa8ca94ea4219ec1fcbd4f4cab4f0ea57c5c3e1d815"
+
+        log = _make_log(
+            PROXY_ADDR,
+            [COMPOUND_PENDING_TOPIC0],
+            data=_two_addrs_to_data(IMPL_OLD, IMPL_NEW),
+        )
+
+        events = _run_scan_with_logs(session, [log])
 
         assert len(events) >= 1
 

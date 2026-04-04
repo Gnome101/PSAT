@@ -544,6 +544,89 @@ class TestBuildUpgradeHistory:
         assert impls[1].get("contract_name") == "ImplV2"  # known name applied
         assert "contract_name" not in impls[0]  # unknown, not fetched
 
+    def test_target_contract_is_itself_a_proxy(self, monkeypatch, tmp_path):
+        """When the target address itself is classified as a proxy (via
+        target_classification.type = "proxy" in dependencies.json), it should
+        appear in the output proxies dict with its upgrade history.
+
+        This happens when the user runs PSAT against a proxy contract directly
+        rather than a non-proxy that depends on proxies.
+        """
+        target = ADDR(0)
+        target_impl = ADDR(10)
+        deps = {
+            "address": target,
+            "target_classification": {
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": target_impl,
+            },
+            "dependencies": {},
+        }
+        p = tmp_path / "dependencies.json"
+        p.write_text(json.dumps(deps))
+
+        def mock_fetch(address, topic0):
+            if address == target and topic0 == uh.UPGRADED_TOPIC0:
+                return [_make_log(target, uh.UPGRADED_TOPIC0, _topic_for(target_impl), block="0x64")]
+            return []
+
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
+        _mock_no_enrichment(monkeypatch)
+
+        result = uh.build_upgrade_history(p)
+        assert target in result["proxies"], (
+            "Target contract is a proxy and should appear in the proxies output"
+        )
+        h = result["proxies"][target]
+        assert h["proxy_type"] == "eip1967"
+        assert h["current_implementation"] == target_impl
+        assert h["upgrade_count"] == 1
+
+    def test_empty_events_for_all_proxies_with_current_impl(self, monkeypatch, tmp_path):
+        """Multiple proxies all have zero events from Etherscan, but each has
+        a current_implementation set. Each proxy should get a single-entry
+        timeline containing just its current implementation address."""
+        proxy_a = ADDR(1)
+        proxy_b = ADDR(2)
+        proxy_c = ADDR(3)
+        impl_a = ADDR(10)
+        impl_b = ADDR(20)
+        impl_c = ADDR(30)
+
+        deps_path = _write_deps(
+            tmp_path,
+            ADDR(0),
+            {
+                proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": impl_a},
+                proxy_b: {"type": "proxy", "proxy_type": "transparent", "implementation": impl_b},
+                proxy_c: {"type": "proxy", "proxy_type": "uups", "implementation": impl_c},
+            },
+        )
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t: [])
+        _mock_no_enrichment(monkeypatch)
+
+        result = uh.build_upgrade_history(deps_path)
+
+        assert result["total_upgrades"] == 0
+
+        for proxy_addr, expected_impl, expected_type in [
+            (proxy_a, impl_a, "eip1967"),
+            (proxy_b, impl_b, "transparent"),
+            (proxy_c, impl_c, "uups"),
+        ]:
+            assert proxy_addr in result["proxies"]
+            h = result["proxies"][proxy_addr]
+            assert h["proxy_type"] == expected_type
+            assert h["current_implementation"] == expected_impl
+            assert h["upgrade_count"] == 0
+            assert h["first_upgrade_block"] is None
+            assert h["last_upgrade_block"] is None
+            assert h["events"] == []
+            # Single-entry timeline with just current implementation
+            assert len(h["implementations"]) == 1
+            assert h["implementations"][0]["address"] == expected_impl
+
     def test_non_indexed_upgraded_in_full_pipeline(self, monkeypatch, tmp_path):
         """OZ legacy proxies with implementation in data (not topics) produce
         correct timelines through the full build_upgrade_history pipeline."""

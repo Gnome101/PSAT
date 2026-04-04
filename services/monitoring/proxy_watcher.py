@@ -58,7 +58,24 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
     new_events: list[ProxyUpgradeEvent] = []
     topics = [list(EVENT_TOPICS.keys())]  # topic0 = any of the 3 event types
 
+    # Pre-load existing events for deduplication
+    existing_events: set[tuple] = set()
+    existing_rows = (
+        session.execute(
+            select(
+                ProxyUpgradeEvent.watched_proxy_id,
+                ProxyUpgradeEvent.tx_hash,
+                ProxyUpgradeEvent.block_number,
+                ProxyUpgradeEvent.new_implementation,
+            ).where(ProxyUpgradeEvent.block_number > from_block)
+        )
+        .all()
+    )
+    for row in existing_rows:
+        existing_events.add((str(row[0]), row[1], row[2], row[3]))
+
     # Scan in chunks to stay under node limits
+    last_successful_block = from_block
     cursor = from_block + 1
     while cursor <= latest_block:
         to_block = min(cursor + MAX_BLOCK_RANGE - 1, latest_block)
@@ -93,6 +110,12 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
             if not new_impl:
                 continue
 
+            # Skip duplicates: same proxy, tx, block, and target already recorded
+            dedup_key = (str(proxy.id), event.get("tx_hash", ""), event["block_number"], new_impl)
+            if dedup_key in existing_events:
+                continue
+            existing_events.add(dedup_key)
+
             upgrade_event = ProxyUpgradeEvent(
                 watched_proxy_id=proxy.id,
                 block_number=event["block_number"],
@@ -114,11 +137,12 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
                 event["block_number"],
             )
 
+        last_successful_block = to_block
         cursor = to_block + 1
 
-    # Update last_scanned_block for all proxies
+    # Only advance last_scanned_block to the last successfully scanned block
     for proxy in proxies:
-        proxy.last_scanned_block = latest_block
+        proxy.last_scanned_block = last_successful_block
 
     session.commit()
     return new_events
