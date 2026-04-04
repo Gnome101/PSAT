@@ -503,3 +503,284 @@ def test_resolve_implementation_empty_slot(mock_rpc):
 
     result = resolve_current_implementation(ADDR(1), "http://localhost:8545")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# 12. test_duplicate_event_with_mixed_last_scanned_block
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_no_duplicate_events_with_mixed_last_scanned_block(mock_rpc, db_session):
+    """Proxy A (last_scanned_block=1000) and proxy B (last_scanned_block=5000).
+    An Upgraded event at block 1500 for proxy A was already detected in a prior
+    scan and exists in the DB.
+
+    The scanner must not create a duplicate ProxyUpgradeEvent when it re-encounters
+    the same log. It should skip events whose (watched_proxy_id, tx_hash, log_index)
+    already exist.
+    """
+    proxy_a_addr = ADDR(1)
+    proxy_b_addr = ADDR(2)
+    new_impl_a = ADDR(11)
+
+    # Proxy A was last scanned at block 1000, proxy B at block 5000
+    proxy_a = _add_proxy(db_session, proxy_a_addr, last_known_impl=ADDR(10), last_scanned_block=1000)
+    proxy_b = _add_proxy(db_session, proxy_b_addr, last_known_impl=ADDR(20), last_scanned_block=5000)
+
+    latest_block = 6000
+
+    # Simulate: proxy A already has an event at block 1500 from a prior scan
+    prior_event = ProxyUpgradeEvent(
+        watched_proxy_id=proxy_a.id,
+        block_number=1500,
+        tx_hash="0x" + "a" * 64,
+        old_implementation=ADDR(10),
+        new_implementation=new_impl_a,
+        event_type="upgraded",
+    )
+    db_session.add(prior_event)
+    db_session.commit()
+
+    # eth_getLogs returns the same event at block 1500 again
+    log_a = _make_log(
+        proxy_a_addr,
+        UPGRADED_TOPIC0,
+        _topic_for(new_impl_a),
+        block=hex(1500),
+        tx="0x" + "a" * 64,
+        log_index="0x0",
+    )
+
+    def rpc_side_effect(url, method, params):
+        if method == "eth_blockNumber":
+            return hex(latest_block)
+        if method == "eth_getLogs":
+            filter_obj = params[0]
+            from_blk = int(filter_obj["fromBlock"], 16)
+            to_blk = int(filter_obj["toBlock"], 16)
+            if from_blk <= 1500 <= to_blk:
+                return [log_a]
+            return []
+        return None
+
+    mock_rpc.side_effect = rpc_side_effect
+
+    events = scan_for_upgrades(db_session, "http://localhost:8545")
+
+    # Scanner must skip the already-recorded event — zero new events returned
+    assert len(events) == 0, (
+        "Scanner should not re-create an event that already exists in the DB."
+    )
+
+    # Verify only the original event exists (no duplicate)
+    from sqlalchemy import select
+    all_events = db_session.execute(
+        select(ProxyUpgradeEvent).where(ProxyUpgradeEvent.watched_proxy_id == proxy_a.id)
+    ).scalars().all()
+    assert len(all_events) == 1, (
+        "Only the original ProxyUpgradeEvent should exist — no duplicate."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 13. test_error_recovery_silent_event_loss
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_error_recovery_resumes_from_last_successful_block(mock_rpc, db_session):
+    """eth_getLogs succeeds for chunk 1 but raises an exception for chunk 2.
+
+    The scanner must only advance last_scanned_block to the end of the last
+    successfully scanned chunk, not to latest_block. This ensures the failed
+    chunk is retried on the next scan cycle and no events are silently lost.
+    """
+    proxy = _add_proxy(db_session, ADDR(1), last_scanned_block=0)
+
+    # Make the range span 2 chunks
+    latest_block = MAX_BLOCK_RANGE + 500
+
+    chunk_calls = []
+
+    def rpc_side_effect(url, method, params):
+        if method == "eth_blockNumber":
+            return hex(latest_block)
+        if method == "eth_getLogs":
+            chunk_calls.append(params)
+            if len(chunk_calls) == 1:
+                # First chunk succeeds with no events
+                return []
+            else:
+                # Second chunk fails
+                raise ConnectionError("RPC node timeout")
+        return None
+
+    mock_rpc.side_effect = rpc_side_effect
+
+    events = scan_for_upgrades(db_session, "http://localhost:8545")
+
+    assert events == []
+    assert len(chunk_calls) == 2, "Should have attempted two chunks"
+
+    # last_scanned_block must stop at the end of chunk 1 (MAX_BLOCK_RANGE),
+    # NOT at latest_block. The failed chunk 2 must be retried next cycle.
+    db_session.refresh(proxy)
+    assert proxy.last_scanned_block == MAX_BLOCK_RANGE, (
+        f"Expected last_scanned_block={MAX_BLOCK_RANGE} (end of last successful chunk), "
+        f"got {proxy.last_scanned_block}. The scanner must not skip past failed chunks."
+    )
+
+
+# ---------------------------------------------------------------------------
+# 14. test_multiple_upgrades_same_block
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_multiple_upgrades_same_block(mock_rpc, db_session):
+    """Two Upgraded events with different log_index values in the same block
+    for the same proxy. Verifies both are detected and the old_implementation
+    chains correctly (first event uses the DB value, second uses the first
+    event's new_implementation)."""
+    proxy_addr = ADDR(1)
+    old_impl = ADDR(10)
+    impl_v2 = ADDR(11)
+    impl_v3 = ADDR(12)
+    proxy = _add_proxy(db_session, proxy_addr, last_known_impl=old_impl, last_scanned_block=90)
+
+    block = hex(95)
+    tx = "0x" + "b" * 64
+    log1 = _make_log(proxy_addr, UPGRADED_TOPIC0, _topic_for(impl_v2), block=block, tx=tx, log_index="0x0")
+    log2 = _make_log(proxy_addr, UPGRADED_TOPIC0, _topic_for(impl_v3), block=block, tx=tx, log_index="0x1")
+
+    def rpc_side_effect(url, method, params):
+        if method == "eth_blockNumber":
+            return hex(100)
+        if method == "eth_getLogs":
+            return [log1, log2]
+        return None
+
+    mock_rpc.side_effect = rpc_side_effect
+
+    events = scan_for_upgrades(db_session, "http://localhost:8545")
+
+    assert len(events) == 2
+
+    # First event: old_impl -> impl_v2
+    assert events[0].old_implementation == old_impl
+    assert events[0].new_implementation == impl_v2
+    assert events[0].block_number == 95
+
+    # Second event: impl_v2 -> impl_v3 (chains from first event's new_impl)
+    assert events[1].old_implementation == impl_v2
+    assert events[1].new_implementation == impl_v3
+    assert events[1].block_number == 95
+
+    # Final state
+    db_session.refresh(proxy)
+    assert proxy.last_known_implementation == impl_v3
+
+
+# ---------------------------------------------------------------------------
+# 15. test_multiple_events_same_transaction
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_multiple_events_same_transaction(mock_rpc, db_session):
+    """Two events (Upgraded + AdminChanged) in the same transaction for
+    the same proxy. Both should be detected."""
+    proxy_addr = ADDR(1)
+    old_impl = ADDR(10)
+    new_impl = ADDR(11)
+    old_admin = ADDR(50)
+    new_admin = ADDR(51)
+    proxy = _add_proxy(db_session, proxy_addr, last_known_impl=old_impl, last_scanned_block=90)
+
+    block = hex(95)
+    tx = "0x" + "c" * 64
+
+    upgrade_log = _make_log(
+        proxy_addr, UPGRADED_TOPIC0, _topic_for(new_impl),
+        block=block, tx=tx, log_index="0x0",
+    )
+    admin_log = _make_log(
+        proxy_addr, ADMIN_CHANGED_TOPIC0,
+        data=_admin_data(old_admin, new_admin),
+        block=block, tx=tx, log_index="0x1",
+    )
+
+    def rpc_side_effect(url, method, params):
+        if method == "eth_blockNumber":
+            return hex(100)
+        if method == "eth_getLogs":
+            return [upgrade_log, admin_log]
+        return None
+
+    mock_rpc.side_effect = rpc_side_effect
+
+    events = scan_for_upgrades(db_session, "http://localhost:8545")
+
+    assert len(events) == 2
+
+    upgraded_evt = next(e for e in events if e.event_type == "upgraded")
+    admin_evt = next(e for e in events if e.event_type == "admin_changed")
+
+    assert upgraded_evt.new_implementation == new_impl
+    assert upgraded_evt.old_implementation == old_impl
+    assert upgraded_evt.tx_hash == tx
+
+    assert admin_evt.new_implementation == new_admin
+    assert admin_evt.old_implementation == new_impl  # after Upgraded changed last_known_impl
+    assert admin_evt.tx_hash == tx
+
+
+# ---------------------------------------------------------------------------
+# 16. test_rapid_successive_upgrades
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_rapid_successive_upgrades(mock_rpc, db_session):
+    """Proxy upgraded at block N, then again at block N+1. Both events
+    should be detected and the implementation chain should be correct."""
+    proxy_addr = ADDR(1)
+    old_impl = ADDR(10)
+    impl_v2 = ADDR(11)
+    impl_v3 = ADDR(12)
+    proxy = _add_proxy(db_session, proxy_addr, last_known_impl=old_impl, last_scanned_block=90)
+
+    log1 = _make_log(
+        proxy_addr, UPGRADED_TOPIC0, _topic_for(impl_v2),
+        block=hex(100), tx="0x" + "d" * 64, log_index="0x0",
+    )
+    log2 = _make_log(
+        proxy_addr, UPGRADED_TOPIC0, _topic_for(impl_v3),
+        block=hex(101), tx="0x" + "e" * 64, log_index="0x0",
+    )
+
+    def rpc_side_effect(url, method, params):
+        if method == "eth_blockNumber":
+            return hex(105)
+        if method == "eth_getLogs":
+            return [log1, log2]
+        return None
+
+    mock_rpc.side_effect = rpc_side_effect
+
+    events = scan_for_upgrades(db_session, "http://localhost:8545")
+
+    assert len(events) == 2
+
+    assert events[0].block_number == 100
+    assert events[0].old_implementation == old_impl
+    assert events[0].new_implementation == impl_v2
+
+    assert events[1].block_number == 101
+    assert events[1].old_implementation == impl_v2
+    assert events[1].new_implementation == impl_v3
+
+    db_session.refresh(proxy)
+    assert proxy.last_known_implementation == impl_v3
+    assert proxy.last_scanned_block == 105
