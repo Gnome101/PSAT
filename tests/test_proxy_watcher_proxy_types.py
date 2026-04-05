@@ -486,7 +486,9 @@ class TestPollingRequired:
         session.commit()
 
         storage_value = "0x" + "0" * 24 + IMPL_NEW[2:]
-        with patch("services.monitoring.proxy_watcher.rpc_request", return_value=storage_value):
+        zero = "0x" + "0" * 64
+        with patch("services.monitoring.proxy_watcher.rpc_batch_request",
+                    return_value=[storage_value] + [zero] * 7):
             poll_events = poll_for_upgrades(session, "http://fake-rpc")
 
         assert len(poll_events) == 1
@@ -506,10 +508,12 @@ class TestPollingRequired:
         proxy.needs_polling = True
         session.commit()
 
-        # Mock eth_getStorageAt to return a new implementation
+        # Mock batch to return new impl via EIP-1967 slot (first discovery method)
         storage_value = "0x" + "0" * 24 + IMPL_NEW[2:]
+        zero = "0x" + "0" * 64
 
-        with patch("services.monitoring.proxy_watcher.rpc_request", return_value=storage_value):
+        with patch("services.monitoring.proxy_watcher.rpc_batch_request",
+                    return_value=[storage_value] + [zero] * 7):
             events = poll_for_upgrades(session, "http://fake-rpc")
 
         assert len(events) == 1

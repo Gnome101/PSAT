@@ -17,7 +17,7 @@ from services.discovery.upgrade_history import (
     UPGRADED_TOPIC0,
     parse_upgrade_log,
 )
-from utils.rpc import normalize_hex, rpc_request
+from utils.rpc import normalize_hex, parse_address_result, rpc_batch_request, rpc_request
 
 # Storage slots used for implementation resolution
 _EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
@@ -222,6 +222,27 @@ _RESOLVE_BY_TYPE: dict[str, tuple[str, str]] = {
     # (diamond has facets, 1167 is immutable) — omitted intentionally.
 }
 
+# Prioritised resolution attempts for proxies with unknown type.
+# All are sent in a single batch; the first hit (in order) wins and its
+# proxy_type is saved so future polls take the fast path.
+_DISCOVERY_METHODS: list[tuple[str, str, str]] = [
+    ("slot", _EIP1967_IMPL_SLOT, "eip1967"),
+    ("slot", _EIP1822_LOGIC_SLOT, "eip1822"),
+    ("slot", _OZ_IMPL_SLOT, "oz_legacy"),
+    ("call", _IMPLEMENTATION_SEL, "custom"),
+    ("call", _MASTER_COPY_SEL, "gnosis_safe"),
+    ("call", _COMPTROLLER_IMPL_SEL, "compound"),
+    ("call", _TARGET_SEL, "synthetix"),
+    ("slot", _GNOSIS_SLOT, "gnosis_safe"),
+]
+
+
+def _build_rpc_call(method_type: str, address: str, arg: str) -> tuple[str, list]:
+    """Return a ``(method, params)`` tuple for use in a JSON-RPC batch."""
+    if method_type == "slot":
+        return ("eth_getStorageAt", [address, arg, "latest"])
+    return ("eth_call", [{"to": address, "data": arg}, "latest"])
+
 
 def resolve_current_implementation(
     proxy_address: str, rpc_url: str, block: str = "latest", proxy_type: str | None = None,
@@ -271,12 +292,13 @@ def resolve_current_implementation(
 
 
 def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]:
-    """Poll for implementation changes on proxies that may be silent.
+    """Poll for implementation changes on proxies that need polling.
 
-    Queries all WatchedProxy rows where needs_polling is True, resolves
-    the current implementation via multiple methods (storage slots and
-    getter calls), and creates a ProxyUpgradeEvent if the implementation
-    has changed.
+    Builds a single JSON-RPC batch for all watched proxies:
+    - Known-type proxies get 1 targeted call each.
+    - Unknown-type proxies get ``len(_DISCOVERY_METHODS)`` calls to discover
+      the right resolution method, which is then saved for future polls.
+    - If no method resolves for an unknown proxy, polling is disabled.
 
     Returns list of new ProxyUpgradeEvent records created.
     """
@@ -288,16 +310,66 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
     if not proxies:
         return []
 
-    new_events: list[ProxyUpgradeEvent] = []
+    # -- Phase 1: build batch -------------------------------------------------
+    batch_calls: list[tuple[str, list]] = []
+    # (proxy, start_index_in_batch, call_count, is_discovery)
+    proxy_plan: list[tuple[WatchedProxy, int, int, bool]] = []
 
     for proxy in proxies:
-        try:
-            current_impl = resolve_current_implementation(
-                proxy.proxy_address, rpc_url, proxy_type=proxy.proxy_type,
-            )
-        except Exception:
-            logger.exception("RPC error polling implementation for %s", proxy.proxy_address)
-            continue
+        start = len(batch_calls)
+        if proxy.proxy_type and proxy.proxy_type in _RESOLVE_BY_TYPE:
+            # Known type — single targeted call
+            method_type, arg = _RESOLVE_BY_TYPE[proxy.proxy_type]
+            batch_calls.append(_build_rpc_call(method_type, proxy.proxy_address, arg))
+            proxy_plan.append((proxy, start, 1, False))
+        else:
+            # Unknown type — try all methods in one batch
+            for method_type, arg, _ in _DISCOVERY_METHODS:
+                batch_calls.append(
+                    _build_rpc_call(method_type, proxy.proxy_address, arg)
+                )
+            proxy_plan.append((proxy, start, len(_DISCOVERY_METHODS), True))
+
+    if not batch_calls:
+        return []
+
+    # -- Phase 2: send batch ---------------------------------------------------
+    try:
+        results = rpc_batch_request(rpc_url, batch_calls)
+    except Exception:
+        logger.exception("Batch RPC request failed during poll")
+        return []
+
+    # -- Phase 3: process results ----------------------------------------------
+    new_events: list[ProxyUpgradeEvent] = []
+
+    for proxy, start, count, is_discovery in proxy_plan:
+        current_impl: str | None = None
+
+        if is_discovery:
+            # Check results in priority order; first hit wins.
+            for i, (_, _, ptype) in enumerate(_DISCOVERY_METHODS):
+                addr = parse_address_result(results[start + i])
+                if addr:
+                    current_impl = addr
+                    proxy.proxy_type = ptype
+                    logger.info(
+                        "Learned proxy type for %s: %s",
+                        proxy.proxy_address,
+                        ptype,
+                    )
+                    break
+            else:
+                # No method resolved — stop polling this proxy.
+                proxy.needs_polling = False
+                logger.info(
+                    "No resolution method found for %s, disabling polling",
+                    proxy.proxy_address,
+                )
+                continue
+        else:
+            # Known type — single result
+            current_impl = parse_address_result(results[start])
 
         if current_impl is None:
             continue

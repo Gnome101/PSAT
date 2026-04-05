@@ -817,8 +817,8 @@ def test_rapid_successive_upgrades(mock_rpc, db_session):
 # ---------------------------------------------------------------------------
 
 
-@patch("services.monitoring.proxy_watcher.rpc_request")
-def test_poll_no_polling_proxies(mock_rpc, db_session):
+@patch("services.monitoring.proxy_watcher.rpc_batch_request")
+def test_poll_no_polling_proxies(mock_batch, db_session):
     """poll_for_upgrades with no needs_polling=True proxies returns empty list
     and makes no RPC calls."""
     # Add a proxy that does NOT need polling
@@ -827,7 +827,7 @@ def test_poll_no_polling_proxies(mock_rpc, db_session):
     result = poll_for_upgrades(db_session, "http://localhost:8545")
 
     assert result == []
-    mock_rpc.assert_not_called()
+    mock_batch.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -835,20 +835,23 @@ def test_poll_no_polling_proxies(mock_rpc, db_session):
 # ---------------------------------------------------------------------------
 
 
-@patch("services.monitoring.proxy_watcher.rpc_request")
-def test_poll_detects_implementation_change(mock_rpc, db_session):
+@patch("services.monitoring.proxy_watcher.rpc_batch_request")
+def test_poll_detects_implementation_change(mock_batch, db_session):
     """Storage slot polling detects when the implementation address changes.
 
-    Mocks eth_getStorageAt to return a different implementation than the proxy's
-    last_known_implementation. Verifies a ProxyUpgradeEvent with event_type
-    'storage_poll' is created and the proxy row is updated.
+    Mocks the batch RPC to return a new implementation via the EIP-1967 slot
+    (first discovery method). Verifies a ProxyUpgradeEvent with event_type
+    'storage_poll' is created, the proxy row is updated, and the proxy type
+    is learned for future fast-path resolution.
     """
     old_impl = ADDR(10)
     new_impl = ADDR(11)
     proxy = _add_proxy(db_session, ADDR(1), last_known_impl=old_impl, needs_polling=True)
 
     storage_value = "0x" + "0" * 24 + new_impl[2:]
-    mock_rpc.return_value = storage_value
+    zero = "0x" + "0" * 64
+    # Unknown type → 8 discovery calls; EIP-1967 slot (index 0) hits
+    mock_batch.return_value = [storage_value] + [zero] * 7
 
     events = poll_for_upgrades(db_session, "http://localhost:8545")
 
@@ -859,9 +862,10 @@ def test_poll_detects_implementation_change(mock_rpc, db_session):
     assert evt.new_implementation == new_impl.lower()
     assert evt.watched_proxy_id == proxy.id
 
-    # Proxy row should be updated with new implementation
+    # Proxy row should be updated with new implementation and learned type
     db_session.refresh(proxy)
     assert proxy.last_known_implementation == new_impl.lower()
+    assert proxy.proxy_type == "eip1967"
 
 
 # ---------------------------------------------------------------------------
@@ -869,14 +873,15 @@ def test_poll_detects_implementation_change(mock_rpc, db_session):
 # ---------------------------------------------------------------------------
 
 
-@patch("services.monitoring.proxy_watcher.rpc_request")
-def test_poll_no_change_no_event(mock_rpc, db_session):
+@patch("services.monitoring.proxy_watcher.rpc_batch_request")
+def test_poll_no_change_no_event(mock_batch, db_session):
     """When the storage slot returns the same implementation, no event is created."""
     same_impl = ADDR(10)
     _add_proxy(db_session, ADDR(1), last_known_impl=same_impl, needs_polling=True)
 
     storage_value = "0x" + "0" * 24 + same_impl[2:]
-    mock_rpc.return_value = storage_value
+    zero = "0x" + "0" * 64
+    mock_batch.return_value = [storage_value] + [zero] * 7
 
     events = poll_for_upgrades(db_session, "http://localhost:8545")
 
@@ -888,8 +893,8 @@ def test_poll_no_change_no_event(mock_rpc, db_session):
 # ---------------------------------------------------------------------------
 
 
-@patch("services.monitoring.proxy_watcher.rpc_request")
-def test_poll_ignores_non_polling_proxies(mock_rpc, db_session):
+@patch("services.monitoring.proxy_watcher.rpc_batch_request")
+def test_poll_ignores_non_polling_proxies(mock_batch, db_session):
     """Only proxies with needs_polling=True are polled. A non-polling proxy
     with a changed implementation should NOT produce an event."""
     old_impl = ADDR(10)
@@ -899,7 +904,9 @@ def test_poll_ignores_non_polling_proxies(mock_rpc, db_session):
     _add_proxy(db_session, ADDR(2), last_known_impl=old_impl, needs_polling=False)
 
     storage_value = "0x" + "0" * 24 + new_impl[2:]
-    mock_rpc.return_value = storage_value
+    zero = "0x" + "0" * 64
+    # Only the polling proxy is in the batch (8 discovery calls)
+    mock_batch.return_value = [storage_value] + [zero] * 7
 
     events = poll_for_upgrades(db_session, "http://localhost:8545")
 
@@ -913,13 +920,13 @@ def test_poll_ignores_non_polling_proxies(mock_rpc, db_session):
 # ---------------------------------------------------------------------------
 
 
-@patch("services.monitoring.proxy_watcher.rpc_request")
-def test_poll_handles_rpc_failure_gracefully(mock_rpc, db_session):
-    """If eth_getStorageAt raises an exception, poll_for_upgrades returns
+@patch("services.monitoring.proxy_watcher.rpc_batch_request")
+def test_poll_handles_rpc_failure_gracefully(mock_batch, db_session):
+    """If the batch RPC request raises an exception, poll_for_upgrades returns
     an empty list without crashing."""
     _add_proxy(db_session, ADDR(1), last_known_impl=ADDR(10), needs_polling=True)
 
-    mock_rpc.side_effect = ConnectionError("RPC node timeout")
+    mock_batch.side_effect = ConnectionError("RPC node timeout")
 
     events = poll_for_upgrades(db_session, "http://localhost:8545")
 
@@ -931,18 +938,21 @@ def test_poll_handles_rpc_failure_gracefully(mock_rpc, db_session):
 # ---------------------------------------------------------------------------
 
 
-@patch("services.monitoring.proxy_watcher.rpc_request")
-def test_poll_skips_none_implementation(mock_rpc, db_session):
-    """When the storage slot is zero-filled (resolve_current_implementation
-    returns None), no event should be created."""
-    _add_proxy(db_session, ADDR(1), last_known_impl=ADDR(10), needs_polling=True)
+@patch("services.monitoring.proxy_watcher.rpc_batch_request")
+def test_poll_skips_none_implementation(mock_batch, db_session):
+    """When all discovery methods return zero, no event is created and
+    polling is disabled for the proxy."""
+    proxy = _add_proxy(db_session, ADDR(1), last_known_impl=ADDR(10), needs_polling=True)
 
-    # Zero-filled slot means no implementation set
-    mock_rpc.return_value = "0x" + "0" * 64
+    zero = "0x" + "0" * 64
+    mock_batch.return_value = [zero] * 8
 
     events = poll_for_upgrades(db_session, "http://localhost:8545")
 
     assert events == []
+    # Proxy should have polling disabled since no method resolved
+    db_session.refresh(proxy)
+    assert proxy.needs_polling is False
 
 
 # ---------------------------------------------------------------------------
@@ -950,11 +960,16 @@ def test_poll_skips_none_implementation(mock_rpc, db_session):
 # ---------------------------------------------------------------------------
 
 
-@patch("services.monitoring.proxy_watcher.rpc_request")
-def test_poll_resolves_non_eip1967_proxies(mock_rpc, db_session):
+@patch("services.monitoring.proxy_watcher.rpc_batch_request")
+def test_poll_resolves_non_eip1967_proxies(mock_batch, db_session):
     """Polling resolves implementation via getter calls when standard storage
     slots are empty — critical for GnosisSafe, Compound, and Synthetix proxies
-    whose implementations live outside EIP-1967 slots."""
+    whose implementations live outside EIP-1967 slots.
+
+    Discovery order: EIP-1967, EIP-1822, OZ, implementation(), masterCopy(),
+                     comptrollerImplementation(), target(), Gnosis slot.
+    Only comptrollerImplementation() (index 5) returns a valid address.
+    """
     old_impl = ADDR(10)
     new_impl = ADDR(11)
     proxy = _add_proxy(db_session, ADDR(1), last_known_impl=old_impl, needs_polling=True)
@@ -962,26 +977,9 @@ def test_poll_resolves_non_eip1967_proxies(mock_rpc, db_session):
     new_impl_padded = "0x" + "0" * 24 + new_impl[2:]
     zero = "0x" + "0" * 64
 
-    def rpc_side_effect(rpc_url, method, params):
-        if method == "eth_getStorageAt":
-            # All storage slots return zero — simulates a proxy that doesn't
-            # use any standard storage slot (like Compound's custom layout).
-            return zero
-        if method == "eth_call":
-            selector = params[0].get("data", "")[:10]
-            # implementation() reverts
-            if selector == "0x5c60da1b":
-                raise RuntimeError("revert")
-            # masterCopy() reverts
-            if selector == "0xa619486e":
-                raise RuntimeError("revert")
-            # comptrollerImplementation() returns the address
-            if selector == "0xbb82aa5e":
-                return new_impl_padded
-            raise RuntimeError("revert")
-        return zero
-
-    mock_rpc.side_effect = rpc_side_effect
+    # Slots return zero, implementation()/masterCopy() revert (None),
+    # comptrollerImplementation() returns the address.
+    mock_batch.return_value = [zero, zero, zero, None, None, new_impl_padded, None, zero]
 
     events = poll_for_upgrades(db_session, "http://localhost:8545")
 
@@ -989,6 +987,10 @@ def test_poll_resolves_non_eip1967_proxies(mock_rpc, db_session):
     assert events[0].event_type == "storage_poll"
     assert events[0].new_implementation == new_impl.lower()
     assert events[0].old_implementation == old_impl
+
+    # Should have learned the compound type
+    db_session.refresh(proxy)
+    assert proxy.proxy_type == "compound"
 
 
 # ---------------------------------------------------------------------------
@@ -1084,10 +1086,10 @@ def test_resolve_with_proxy_type_dispatches_directly(mock_rpc):
 # ---------------------------------------------------------------------------
 
 
-@patch("services.monitoring.proxy_watcher.rpc_request")
-def test_poll_uses_proxy_type_for_resolution(mock_rpc, db_session):
-    """poll_for_upgrades passes proxy_type to resolve_current_implementation
-    so it dispatches directly instead of trying all methods."""
+@patch("services.monitoring.proxy_watcher.rpc_batch_request")
+def test_poll_uses_proxy_type_for_resolution(mock_batch, db_session):
+    """poll_for_upgrades dispatches directly for known proxy_type — single
+    targeted call in the batch, not the full discovery chain."""
     old_impl = ADDR(10)
     new_impl = ADDR(11)
     proxy = _add_proxy(db_session, ADDR(1), last_known_impl=old_impl, needs_polling=True)
@@ -1095,14 +1097,15 @@ def test_poll_uses_proxy_type_for_resolution(mock_rpc, db_session):
     db_session.commit()
 
     new_impl_padded = "0x" + "0" * 24 + new_impl[2:]
-    mock_rpc.return_value = new_impl_padded
+    # Known type → single call in batch
+    mock_batch.return_value = [new_impl_padded]
 
     events = poll_for_upgrades(db_session, "http://localhost:8545")
 
     assert len(events) == 1
     assert events[0].new_implementation == new_impl.lower()
 
-    # Should have called eth_call with comptrollerImplementation() selector,
-    # NOT eth_getStorageAt for EIP-1967 first
-    first_call = mock_rpc.call_args_list[0]
-    assert first_call[0][1] == "eth_call", "Expected direct eth_call dispatch for compound type"
+    # Batch should contain exactly 1 call (direct dispatch for compound type)
+    batch_calls = mock_batch.call_args[0][1]
+    assert len(batch_calls) == 1
+    assert batch_calls[0][0] == "eth_call", "Expected direct eth_call dispatch for compound type"
