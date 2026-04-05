@@ -6,7 +6,7 @@ from utils.etherscan import get_contract_info
 
 from .static_dependencies import normalize_address
 
-_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "proxies", "facets")
+_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "proxies", "facets", "needs_polling")
 
 
 def build_unified_dependencies(

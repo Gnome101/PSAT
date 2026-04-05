@@ -741,3 +741,71 @@ def test_scan_detects_compound_pending_implementation():
     finally:
         session.close()
         engine.dispose()
+
+
+# ===========================================================================
+# Poller implementation resolution — live mainnet tests
+#
+# resolve_current_implementation tries multiple methods (storage slots,
+# getter calls, slot 0 fallback).  These tests verify it works against
+# real contracts for every proxy type that might need polling.
+# ===========================================================================
+
+
+@pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
+def test_resolve_implementation_custom_proxy():
+    """Lido stETH (custom proxy) — resolved via implementation() getter.
+
+    Custom proxies have needs_polling=True, so the poller must be able
+    to resolve their implementation.  Lido uses Aragon's
+    AppProxyUpgradeable which stores the impl in a non-standard slot
+    but exposes implementation().
+    """
+    from services.monitoring.proxy_watcher import resolve_current_implementation
+
+    rpc_url = _get_rpc_url()
+    impl = resolve_current_implementation("0xae7ab96520de3a18e5e111b5eaab095312d7fe84", rpc_url)
+
+    assert impl is not None, "Lido stETH should resolve via implementation() call"
+    assert impl.startswith("0x") and len(impl) == 42 and impl != "0x" + "0" * 40
+
+
+@pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
+def test_resolve_implementation_gnosis_safe():
+    """GnosisSafe proxy — resolved via slot 0 fallback.
+
+    GnosisSafe v1.0 minimal proxies have no getters (all revert).
+    The poller falls back to reading storage slot 0 where the
+    masterCopy/singleton address is stored.
+    """
+    from services.monitoring.proxy_watcher import resolve_current_implementation
+
+    rpc_url = _get_rpc_url()
+    impl = resolve_current_implementation(GNOSIS_PROXY, rpc_url)
+
+    assert impl is not None, "GnosisSafe proxy should resolve via slot 0 fallback"
+    assert impl.startswith("0x") and len(impl) == 42 and impl != "0x" + "0" * 40
+
+
+@pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
+def test_resolve_implementation_compound():
+    """Compound Unitroller — resolved via comptrollerImplementation() getter."""
+    from services.monitoring.proxy_watcher import resolve_current_implementation
+
+    rpc_url = _get_rpc_url()
+    impl = resolve_current_implementation(COMPOUND_PROXY, rpc_url)
+
+    assert impl is not None, "Compound should resolve via comptrollerImplementation()"
+    assert impl.startswith("0x") and len(impl) == 42 and impl != "0x" + "0" * 40
+
+
+@pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
+def test_resolve_implementation_synthetix():
+    """Synthetix SNX proxy — resolved via target() getter."""
+    from services.monitoring.proxy_watcher import resolve_current_implementation
+
+    rpc_url = _get_rpc_url()
+    impl = resolve_current_implementation(SYNTHETIX_PROXY, rpc_url)
+
+    assert impl is not None, "Synthetix should resolve via target()"
+    assert impl.startswith("0x") and len(impl) == 42 and impl != "0x" + "0" * 40

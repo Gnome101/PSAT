@@ -77,12 +77,15 @@ def test_full_classification_pipeline(monkeypatch):
     Phase 1 coverage:
       - EIP-1167 (bytecode pattern), EIP-1967 (storage), beacon (storage),
         EIP-1822 (storage), OZ legacy (storage), EIP-2535 diamond (facetAddresses),
-        custom (implementation() call), heuristic with probe confirmed (Geth),
-        heuristic with probe confirmed (Parity fallback), heuristic with probe
-        rejected (library), heuristic with probe unavailable (static fallback),
-        large bytecode with DELEGATECALL (stays regular).
+        custom (implementation() call), GnosisSafe (masterCopy()), Compound
+        (comptrollerImplementation()), Synthetix (target()), heuristic with
+        probe confirmed (Geth), heuristic with probe confirmed (Parity
+        fallback), heuristic with probe rejected (library), heuristic with
+        probe unavailable (static fallback), large bytecode with DELEGATECALL
+        (stays regular).
     Phase 2: implementation/beacon discovery from proxy pointers + probe + facets.
     Phase 3: factory, library, CALL+DELEGATECALL not-library, proxy priority.
+    needs_polling: known-event proxies get False, custom/unknown get True.
     """
     target = ADDR(1)
     eip1167 = ADDR(2)
@@ -99,6 +102,9 @@ def test_full_classification_pipeline(monkeypatch):
     factory = "0x" + "dd" * 20
     not_lib = "0x" + "ee" * 20  # CALL + DELEGATECALL — stays regular
     large_dc = "0x" + "ff" * 20  # large bytecode with DELEGATECALL — regular
+    gnosis = ADDR(10)  # GnosisSafe — masterCopy()
+    compound = ADDR(11)  # Compound — comptrollerImplementation()
+    synthetix = ADDR(12)  # Synthetix — target()
 
     # Implementation / facet addresses
     eip1967_impl = "0x" + "01" * 20
@@ -112,8 +118,19 @@ def test_full_classification_pipeline(monkeypatch):
     geth_impl = "0x" + "09" * 20
     parity_impl = "0x" + "0a" * 20
     beacon_impl = "0x" + "0b" * 20
+    gnosis_impl = "0x" + "0c" * 20
+    compound_impl = "0x" + "0d" * 20
+    synthetix_impl = "0x" + "0e" * 20
     impl_hex = "aabbccddee11223344556677889900aabbccddee"
     eip1167_bc = "0x" + cls.EIP1167_PREFIX + impl_hex + cls.EIP1167_SUFFIX
+
+    # Bytecode containing DELEGATECALL but longer than SHORT_BYTECODE_THRESHOLD
+    # so the heuristic won't fire — protocol-specific getters catch these instead.
+    MEDIUM_DC_BYTECODE = "0x" + "60" * 400 + "f4"
+
+    # GnosisSafe proxy bytecode: contains the slot-0 pattern (PUSH20 mask + PUSH1(0) + SLOAD + AND)
+    # followed by DELEGATECALL.  Mirrors real GnosisSafe proxy deployed bytecode.
+    GNOSIS_BYTECODE = "0x6080604052" + cls.GNOSIS_SLOT0_PATTERN + "3660008037600080366000845af4" + "00" * 10
 
     short_addrs = {geth_proxy, parity_proxy, lib_dep, static_proxy}
 
@@ -124,6 +141,11 @@ def test_full_classification_pipeline(monkeypatch):
             return SHORT_BYTECODE
         if addr == large_dc:
             return "0x" + "60" * 400 + "f4"
+        if addr == gnosis:
+            return GNOSIS_BYTECODE
+        # Protocol-specific proxies: longer bytecode with DELEGATECALL
+        if addr in (compound, synthetix):
+            return MEDIUM_DC_BYTECODE
         return BIG_BYTECODE
 
     storage = {
@@ -132,6 +154,7 @@ def test_full_classification_pipeline(monkeypatch):
         (beacon_proxy, cls.EIP1967_BEACON_SLOT): _slot_for(beacon_addr),
         (uups, cls.EIP1822_LOGIC_SLOT): _slot_for(uups_impl),
         (oz, cls.OZ_IMPL_SLOT): _slot_for(oz_impl),
+        (gnosis, "0x0"): _slot_for(gnosis_impl),  # GnosisSafe slot 0
     }
 
     def fake_rpc(_rpc, method, params, retries=1):
@@ -148,6 +171,13 @@ def test_full_classification_pipeline(monkeypatch):
                 return _slot_for(custom_impl)
             if addr == beacon_addr and sel == cls.IMPLEMENTATION_SELECTOR:
                 return _slot_for(beacon_impl)
+            # Protocol-specific getters
+            if addr == gnosis and sel == cls.MASTER_COPY_SELECTOR:
+                return _slot_for(gnosis_impl)
+            if addr == compound and sel == cls.COMPTROLLER_IMPL_SELECTOR:
+                return _slot_for(compound_impl)
+            if addr == synthetix and sel == cls.TARGET_SELECTOR:
+                return _slot_for(synthetix_impl)
             raise RuntimeError("revert")
         if method in ("debug_traceCall", "trace_call"):
             addr = params[0].get("to", "")
@@ -197,6 +227,9 @@ def test_full_classification_pipeline(monkeypatch):
         oz,
         diamond,
         custom,
+        gnosis,
+        compound,
+        synthetix,
         geth_proxy,
         parity_proxy,
         lib_dep,
@@ -232,6 +265,18 @@ def test_full_classification_pipeline(monkeypatch):
     assert c[custom]["proxy_type"] == "custom"
     assert c[custom]["implementation"] == custom_impl
 
+    # Protocol-specific: GnosisSafe
+    assert c[gnosis]["proxy_type"] == "gnosis_safe"
+    assert c[gnosis]["implementation"] == gnosis_impl
+
+    # Protocol-specific: Compound
+    assert c[compound]["proxy_type"] == "compound"
+    assert c[compound]["implementation"] == compound_impl
+
+    # Protocol-specific: Synthetix
+    assert c[synthetix]["proxy_type"] == "synthetix"
+    assert c[synthetix]["implementation"] == synthetix_impl
+
     # Heuristic: probe confirmed (Geth), impl extracted
     assert c[geth_proxy]["proxy_type"] == "unknown"
     assert c[geth_proxy]["implementation"] == geth_impl
@@ -255,6 +300,13 @@ def test_full_classification_pipeline(monkeypatch):
     assert c[geth_impl]["type"] == "implementation"
     assert c[parity_impl]["type"] == "implementation"
     assert c[custom_impl]["type"] == "implementation"
+    # Protocol-specific implementations discovered
+    assert gnosis_impl in result["discovered_addresses"]
+    assert c[gnosis_impl]["type"] == "implementation"
+    assert compound_impl in result["discovered_addresses"]
+    assert c[compound_impl]["type"] == "implementation"
+    assert synthetix_impl in result["discovered_addresses"]
+    assert c[synthetix_impl]["type"] == "implementation"
     # Beacon classified as beacon (not custom proxy), impl preserved from Phase 1
     assert c[beacon_addr]["type"] == "beacon"
     assert beacon_proxy in c[beacon_addr]["proxies"]
@@ -270,6 +322,23 @@ def test_full_classification_pipeline(monkeypatch):
     assert c[not_lib]["type"] == "regular"  # CALL+DELEGATECALL — not library
     # Proxy not overridden by CREATE2 edge
     assert c[geth_proxy]["type"] == "proxy"
+
+    # --- needs_polling ---
+    # Known-event types: monitor detects their upgrade events → no polling
+    assert c[eip1167]["needs_polling"] is False
+    assert c[eip1967]["needs_polling"] is False
+    assert c[beacon_proxy]["needs_polling"] is False
+    assert c[uups]["needs_polling"] is False
+    assert c[oz]["needs_polling"] is False
+    assert c[diamond]["needs_polling"] is False
+    assert c[gnosis]["needs_polling"] is False
+    assert c[compound]["needs_polling"] is False
+    assert c[synthetix]["needs_polling"] is False
+    # Custom/unknown: no known event pattern → need polling
+    assert c[custom]["needs_polling"] is True
+    assert c[geth_proxy]["needs_polling"] is True
+    assert c[parity_proxy]["needs_polling"] is True
+    assert c[static_proxy]["needs_polling"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -373,8 +442,8 @@ def test_classify_single_with_bytecode_param(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_live_classify_usdc_proxy():
-    """USDC on Ethereum mainnet is a well-known proxy."""
+def _get_live_rpc():
+    """Return a validated RPC URL or skip the test."""
     rpc_url = os.environ.get("ETH_RPC")
     if not rpc_url:
         pytest.skip("Set ETH_RPC before running this test.")
@@ -384,8 +453,112 @@ def test_live_classify_usdc_proxy():
         rpc_call(rpc_url, "eth_blockNumber", [], retries=0)
     except Exception as exc:
         pytest.skip(f"RPC unreachable: {exc}")
+    return rpc_url
 
-    usdc_proxy = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-    result = cls.classify_single(usdc_proxy, rpc_url)
+
+pytestmark_live = pytest.mark.live
+
+
+@pytestmark_live
+def test_live_classify_eip1967():
+    """Aave V3 Pool is a standard EIP-1967 proxy."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2", rpc_url)
     assert result["type"] == "proxy"
-    assert "implementation" in result
+    assert result["proxy_type"] == "eip1967"
+    assert result.get("implementation"), "Expected a non-empty implementation address"
+
+
+@pytestmark_live
+def test_live_classify_beacon_proxy():
+    """Euler eVault (USDC) is a beacon proxy."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0x797dd80692c3b2dadabce8e30c07fde5307d48a9", rpc_url)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "beacon_proxy"
+    assert result.get("beacon"), "Expected a beacon address"
+    assert result.get("implementation"), "Expected implementation resolved through beacon"
+
+
+@pytestmark_live
+def test_live_classify_oz_legacy():
+    """USDC on Ethereum mainnet is a well-known OZ-legacy proxy."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", rpc_url)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "oz_legacy"
+    assert result.get("implementation"), "Expected implementation address"
+
+
+@pytestmark_live
+def test_live_classify_eip2535_diamond():
+    """Li.Fi Diamond is an EIP-2535 diamond proxy with many facets."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae", rpc_url)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "eip2535"
+    assert result.get("facets"), "Expected non-empty facets list"
+    assert len(result["facets"]) > 1, "Diamond should have multiple facets"
+
+
+@pytestmark_live
+def test_live_classify_eip1167():
+    """Yearn yDAI vault is an EIP-1167 minimal proxy clone."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0xda816459f1ab5631232fe5e97a05bbbb94970c95", rpc_url)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "eip1167"
+    assert result.get("implementation"), "Expected implementation address embedded in bytecode"
+
+
+@pytestmark_live
+def test_live_classify_gnosis_safe():
+    """GnosisSafe proxy detected via slot-0 bytecode pattern."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0x78ecc4ad66c9ea16821df5ef762fe021cac3fd4c", rpc_url)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "gnosis_safe"
+    assert result.get("implementation"), "Expected masterCopy address from slot 0"
+
+
+@pytestmark_live
+def test_live_classify_compound():
+    """Compound Unitroller detected via comptrollerImplementation() getter."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b", rpc_url)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "compound"
+    assert result.get("implementation"), "Expected comptrollerImplementation address"
+
+
+@pytestmark_live
+def test_live_classify_synthetix():
+    """Synthetix SNX token proxy detected via target() getter."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f", rpc_url)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "synthetix"
+    assert result.get("implementation"), "Expected target address"
+
+
+@pytestmark_live
+def test_live_classify_compound_cross_chain():
+    """Moonwell Unitroller on Base — validates Compound detection works cross-chain."""
+    result = cls.classify_single(
+        "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c",
+        "https://base-rpc.publicnode.com",
+    )
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "compound"
+    assert result.get("implementation"), "Expected comptrollerImplementation address"
+
+
+@pytestmark_live
+def test_live_classify_custom():
+    """Lido stETH uses AppProxyUpgradeable (Aragon) with implementation() getter
+    but a non-standard storage slot — classified as custom proxy."""
+    rpc_url = _get_live_rpc()
+    result = cls.classify_single("0xae7ab96520de3a18e5e111b5eaab095312d7fe84", rpc_url)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "custom"
+    assert result.get("implementation"), "Expected implementation address from implementation() call"

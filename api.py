@@ -58,7 +58,6 @@ class WatchProxyRequest(BaseModel):
     address: str = Field(min_length=42, max_length=42)
     chain: str = "ethereum"
     label: str | None = None
-    needs_polling: bool = False
     rpc_url: str | None = None
     from_block: int | None = Field(default=None, ge=0, description="Block to start scanning from. Defaults to current block.")
 
@@ -446,6 +445,7 @@ def _watched_proxy_to_dict(proxy: WatchedProxy) -> dict[str, Any]:
         "proxy_address": proxy.proxy_address,
         "chain": proxy.chain,
         "label": proxy.label,
+        "proxy_type": proxy.proxy_type,
         "needs_polling": proxy.needs_polling,
         "last_known_implementation": proxy.last_known_implementation,
         "last_scanned_block": proxy.last_scanned_block,
@@ -473,11 +473,21 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
     if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("169.254.") or hostname.startswith("10.") or hostname.startswith("192.168."):
         raise HTTPException(status_code=400, detail="rpc_url must not point to internal addresses")
 
-    # Optionally resolve current implementation
-    current_impl = None
+    # Classify the proxy to determine type, needs_polling, and current implementation
+    from services.discovery.classifier import classify_single, _KNOWN_EVENT_PROXY_TYPES
     from services.monitoring.proxy_watcher import get_latest_block, resolve_current_implementation
 
-    current_impl = resolve_current_implementation(address, rpc_url)
+    proxy_type = None
+    needs_polling = False
+    try:
+        classification = classify_single(address, rpc_url)
+        if classification.get("type") == "proxy":
+            proxy_type = classification.get("proxy_type")
+            needs_polling = proxy_type not in _KNOWN_EVENT_PROXY_TYPES
+    except Exception:
+        pass  # classification failure is non-fatal — watch with fallback resolution
+
+    current_impl = resolve_current_implementation(address, rpc_url, proxy_type=proxy_type)
 
     # Starting scan point: explicit from_block > current block
     if request.from_block is not None:
@@ -496,7 +506,8 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
             proxy_address=address,
             chain=request.chain,
             label=request.label,
-            needs_polling=request.needs_polling,
+            proxy_type=proxy_type,
+            needs_polling=needs_polling,
             last_known_implementation=current_impl,
             last_scanned_block=from_block,
         )

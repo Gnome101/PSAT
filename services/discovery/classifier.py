@@ -39,6 +39,11 @@ OZ_IMPL_SLOT = "0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8
 EIP1167_PREFIX = "363d3d373d3d3d363d73"
 EIP1167_SUFFIX = "5af43d82803e903d91602b57fd5bf3"
 
+# GnosisSafe proxy: PUSH20(address_mask) + PUSH1(0) + SLOAD + AND
+# Loads implementation from storage slot 0 and delegates — unique to
+# GnosisSafe/Safe proxy contracts (v1.0 through v1.3+).
+GNOSIS_SLOT0_PATTERN = "73" + "ff" * 20 + "60005416"
+
 # ---------------------------------------------------------------------------
 # Thresholds / selectors
 # ---------------------------------------------------------------------------
@@ -49,6 +54,19 @@ SHORT_BYTECODE_THRESHOLD = 600
 # Function selectors
 IMPLEMENTATION_SELECTOR = "0x5c60da1b"  # implementation()
 FACET_ADDRESSES_SELECTOR = "0x52ef6b2c"  # facetAddresses() — EIP-2535
+MASTER_COPY_SELECTOR = "0xa619486e"  # masterCopy() — GnosisSafe
+COMPTROLLER_IMPL_SELECTOR = "0xbb82aa5e"  # comptrollerImplementation() — Compound
+TARGET_SELECTOR = "0xd4b83992"  # target() — Synthetix
+
+# Proxy types whose upgrade events the monitor recognises.  These get
+# needs_polling=False because the event scan loop detects their upgrades.
+# Custom/unknown types are excluded — we don't know what events (if any)
+# they emit, so they need storage-slot polling as a fallback.
+# EIP-1167 is immutable (no upgrade mechanism) so polling is irrelevant.
+_KNOWN_EVENT_PROXY_TYPES = frozenset({
+    "eip1967", "beacon_proxy", "eip1822", "oz_legacy", "eip2535",
+    "eip1167", "gnosis_safe", "compound", "synthetix",
+})
 
 
 # ---------------------------------------------------------------------------
@@ -173,14 +191,16 @@ def _probe_delegatecall(rpc_url: str, address: str) -> str | None | bool:
     return None  # tracing unavailable
 
 
-def _try_implementation_call(rpc_url: str, address: str) -> str | None:
-    """Call ``implementation()`` (selector 0x5c60da1b) on a contract.
+def _try_implementation_call(
+    rpc_url: str, address: str, selector: str = IMPLEMENTATION_SELECTOR
+) -> str | None:
+    """Call an address-returning getter on a contract.
     Returns the address on success, or None."""
     try:
         result = rpc_call(
             rpc_url,
             "eth_call",
-            [{"to": address, "data": IMPLEMENTATION_SELECTOR}, "latest"],
+            [{"to": address, "data": selector}, "latest"],
             retries=0,
         )
         return _slot_to_address(result)
@@ -305,14 +325,50 @@ def classify_single(
         info.update(type="proxy", proxy_type="eip2535", facets=facets)
         return info
 
-    # 6. implementation() call — catches custom proxies with non-standard
+    # 6. Protocol-specific proxy patterns.  Checked before the generic
+    #    implementation() call so that proxies get their specific type even
+    #    if they also expose implementation().  Only attempt when DELEGATECALL
+    #    is present in bytecode — every proxy must use it, and skipping the
+    #    eth_calls for non-proxy contracts avoids unnecessary RPC traffic.
+    if _bytecode_has_delegatecall(bytecode):
+        raw_bc = (bytecode[2:] if bytecode.startswith("0x") else bytecode).lower()
+
+        # GnosisSafe — bytecode pattern: PUSH20(mask), PUSH1(0), SLOAD, AND
+        # Loads implementation from slot 0 and delegates.  Covers v1.0-1.3+
+        # including minimal proxies where masterCopy()/singleton() revert.
+        if GNOSIS_SLOT0_PATTERN in raw_bc:
+            slot0_impl = _slot_to_address(get_storage_at(rpc_url, address, "0x0"))
+            if slot0_impl:
+                info.update(type="proxy", proxy_type="gnosis_safe", implementation=slot0_impl)
+                return info
+
+        # GnosisSafe fallback — masterCopy() getter (older implementations
+        # that expose the variable but don't use the slot-0 bytecode pattern).
+        master = _try_implementation_call(rpc_url, address, MASTER_COPY_SELECTOR)
+        if master:
+            info.update(type="proxy", proxy_type="gnosis_safe", implementation=master)
+            return info
+
+        # Compound — comptrollerImplementation()
+        comp_impl = _try_implementation_call(rpc_url, address, COMPTROLLER_IMPL_SELECTOR)
+        if comp_impl:
+            info.update(type="proxy", proxy_type="compound", implementation=comp_impl)
+            return info
+
+        # Synthetix — target()
+        target_addr = _try_implementation_call(rpc_url, address, TARGET_SELECTOR)
+        if target_addr:
+            info.update(type="proxy", proxy_type="synthetix", implementation=target_addr)
+            return info
+
+    # 7. implementation() call — catches custom proxies with non-standard
     #    storage slots that still expose the standard interface.
     impl_call = _try_implementation_call(rpc_url, address)
     if impl_call:
         info.update(type="proxy", proxy_type="custom", implementation=impl_call)
         return info
 
-    # 7. Heuristic: short bytecode (<= 300 bytes) with DELEGATECALL opcode.
+    # 8. Heuristic: short bytecode (<= 300 bytes) with DELEGATECALL opcode.
     #    When tracing is available, probe with synthetic calldata to confirm
     #    DELEGATECALL actually fires in the fallback path (eliminates library
     #    false positives) and extract the implementation address from the trace.
@@ -450,6 +506,12 @@ def classify_contracts(
                 info["type"] = "created"
             elif delegatecall_only.get(addr, False):
                 info["type"] = "library"
+
+    # Mark proxies whose upgrade events are unrecognised — these need
+    # storage-slot polling to detect implementation changes.
+    for info in classifications.values():
+        if info["type"] == "proxy":
+            info["needs_polling"] = info.get("proxy_type") not in _KNOWN_EVENT_PROXY_TYPES
 
     return {
         "address": target,

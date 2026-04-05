@@ -124,6 +124,7 @@ class WatchedProxy(Base):
     proxy_address: Mapped[str] = mapped_column(String(42), nullable=False)
     chain: Mapped[str] = mapped_column(String, nullable=False, default="ethereum")
     label: Mapped[str | None] = mapped_column(String, nullable=True)
+    proxy_type: Mapped[str | None] = mapped_column(String, nullable=True)
     last_known_implementation: Mapped[str | None] = mapped_column(String(42), nullable=True)
     last_scanned_block: Mapped[int] = mapped_column(default=0)
     needs_polling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
