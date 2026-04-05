@@ -386,13 +386,66 @@ class TestSupportedProxyTypes:
         assert events[0].event_type == "target_updated"
         assert events[0].new_implementation.lower() == IMPL_NEW
 
+    def test_diamond_proxy_eip2535(self, db_session):
+        """EIP-2535 Diamond proxy DiamondCut event with realistic ABI-encoded data.
+
+        The data encodes: FacetCut[] (one Add facet), _init=0x0, _calldata=empty.
+        """
+        session, proxy = db_session
+        DIAMOND_TOPIC0 = "0x8faa70878671ccd212d20771b795c50af8fd3ff6cf27f4bde57e5d4de0aeb673"
+
+        facet = IMPL_NEW[2:]
+        # Each ABI word is exactly 64 hex chars (32 bytes)
+        data = "0x"
+        data += "0" * 62 + "60"           # word 0: offset to FacetCut[] = 0x60 = 96 bytes
+        data += "0" * 64                   # word 1: _init = address(0)
+        data += "0" * 60 + "0140"          # word 2: offset to _calldata
+        # -- FacetCut[] at byte offset 96 (word 3) --
+        data += "0" * 62 + "01"            # word 3: array length = 1
+        data += "0" * 62 + "40"            # word 4: offset to entry[0] = 0x40 = 64 bytes from array start
+        # -- FacetCut entry[0] at byte offset 96 + 32 = 128 --
+        data += "0" * 24 + facet           # word 5: facetAddress
+        data += "0" * 64                   # word 6: action = 0 (Add)
+        data += "0" * 62 + "60"            # word 7: offset to selectors
+        data += "0" * 62 + "01"            # word 8: selectors length = 1
+        data += "12345678" + "0" * 56      # word 9: one selector
+        # -- _calldata --
+        data += "0" * 64                   # word 10: calldata length = 0
+
+        log = _make_log(PROXY_ADDR, [DIAMOND_TOPIC0], data=data)
+        events = _run_scan_with_logs(session, [log])
+
+        assert len(events) == 1
+        assert events[0].event_type == "diamond_cut"
+        assert events[0].new_implementation.lower() == IMPL_NEW
+
+    def test_aave_v2_upgraded_uint256(self, db_session):
+        """Aave V2 Upgraded(uint256) — scanner reads impl from storage slot."""
+        session, proxy = db_session
+
+        AAVE_V2_TOPIC0 = "0x65a5e70879738a94a00f00947edae8111ae0aed9175ce342db680bf1e0fb87fc"
+        log = _make_log(PROXY_ADDR, [AAVE_V2_TOPIC0], data="0x" + "0" * 63 + "3")
+
+        def mock_rpc(rpc_url, method, params):
+            if method == "eth_blockNumber":
+                return hex(BLOCK_INT + 5)
+            if method == "eth_getLogs":
+                return [log]
+            if method == "eth_getStorageAt":
+                return "0x" + "0" * 24 + IMPL_NEW[2:]
+            return None
+
+        with patch("services.monitoring.proxy_watcher.rpc_request", side_effect=mock_rpc):
+            events = scan_for_upgrades(session, "http://fake-rpc")
+
+        assert len(events) == 1
+        assert events[0].event_type == "upgraded_revision"
+        assert events[0].new_implementation.lower() == IMPL_NEW
+
 
 # ===========================================================================
 # UNSUPPORTED PROXY TYPES — these document the scanner's remaining coverage gaps
 # ===========================================================================
-
-# keccak256("DiamondCut((address,uint8,bytes4[])[],address,bytes)")
-DIAMOND_CUT_TOPIC0 = "0x8faa70878671ccd212d20771b795c50af8fd3ff6cf27f4bde57e5d4de0aeb673"
 
 # A made-up custom event: ImplementationUpdated(address indexed oldImpl, address indexed newImpl)
 CUSTOM_IMPL_UPDATED_TOPIC0 = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -404,29 +457,6 @@ class TestUnsupportedProxyTypes:
     These tests assert that detection SHOULD work (len >= 1). They will
     fail until we add support. Each failure is a coverage gap to fix.
     """
-
-    def test_diamond_proxy_eip2535(self, db_session):
-        """EIP-2535 Diamond proxy: emits DiamondCut, not Upgraded.
-
-        Diamond proxies use facets instead of a single implementation.
-        The DiamondCut event has a completely different topic0 and a complex
-        ABI-encoded struct array for the facet changes.
-
-        FIX: Add DIAMOND_CUT_TOPIC0 to the scanner's topic filter and a
-        custom ABI decoder for the DiamondCut struct. Also requires a data
-        model change since diamonds have multiple facets, not a single impl.
-        """
-        session, proxy = db_session
-        logs = [_make_log(
-            PROXY_ADDR,
-            [DIAMOND_CUT_TOPIC0],
-            data=_addr_to_data(IMPL_NEW),
-        )]
-
-        events = _run_scan_with_logs(session, logs)
-
-        assert len(events) >= 1
-        assert events[0].new_implementation.lower() == IMPL_NEW
 
     def test_custom_proprietary_event(self, db_session):
         """Custom proxy with a proprietary upgrade event name.
@@ -460,31 +490,6 @@ class TestUnsupportedProxyTypes:
         """
         session, proxy = db_session
         events = _run_scan_with_logs(session, [])
-
-        assert len(events) >= 1
-
-    def test_aave_v2_style_upgraded_uint256(self, db_session):
-        """Aave V2 Upgraded(uint256 revision) — event is parsed but contains
-        no implementation address, only a revision number.
-
-        The parser recognizes this event and extracts the revision, but the
-        scanner skips it because there's no implementation address to record.
-        Requires a follow-up eth_getStorageAt call to read the actual impl
-        from the EIP-1967 slot.
-
-        FIX: When the scanner encounters an upgraded_revision event, issue
-        an eth_getStorageAt call to read the implementation slot and use
-        that as new_implementation.
-        """
-        session, proxy = db_session
-
-        # keccak256("Upgraded(uint256)")
-        AAVE_V2_UPGRADED_TOPIC0 = "0x65a5e70879738a94a00f00947edae8111ae0aed9175ce342db680bf1e0fb87fc"
-        revision_data = "0x" + "0" * 63 + "3"
-
-        log = _make_log(PROXY_ADDR, [AAVE_V2_UPGRADED_TOPIC0], data=revision_data)
-
-        events = _run_scan_with_logs(session, [log])
 
         assert len(events) >= 1
 

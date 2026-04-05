@@ -47,6 +47,9 @@ TARGET_UPDATED_TOPIC0 = "0x814250a3b8c79fcbe2ead2c131c952a278491c8f4322a79fe84b5
 # Aave V2 — Upgraded(uint256 revision)
 UPGRADED_REVISION_TOPIC0 = "0x65a5e70879738a94a00f00947edae8111ae0aed9175ce342db680bf1e0fb87fc"
 
+# Diamond (EIP-2535) — DiamondCut((address,uint8,bytes4[])[],address,bytes)
+DIAMOND_CUT_TOPIC0 = "0x8faa70878671ccd212d20771b795c50af8fd3ff6cf27f4bde57e5d4de0aeb673"
+
 EVENT_TOPICS = {
     UPGRADED_TOPIC0: "upgraded",
     ADMIN_CHANGED_TOPIC0: "admin_changed",
@@ -56,6 +59,7 @@ EVENT_TOPICS = {
     NEW_PENDING_IMPLEMENTATION_TOPIC0: "new_pending_implementation",
     TARGET_UPDATED_TOPIC0: "target_updated",
     UPGRADED_REVISION_TOPIC0: "upgraded_revision",
+    DIAMOND_CUT_TOPIC0: "diamond_cut",
 }
 
 # ---------------------------------------------------------------------------
@@ -182,6 +186,43 @@ def parse_upgrade_log(log: dict) -> dict | None:
         data = log.get("data", "0x")
         if data and data != "0x" and len(data.replace("0x", "")) >= 2:
             event["revision"] = _hex_to_int(data)
+
+    elif event_type == "diamond_cut":
+        # EIP-2535 DiamondCut: ABI-encoded FacetCut[] + _init address + _calldata
+        # Extract facet addresses from the FacetCut[] array, filtering out Remove actions.
+        try:
+            data = log.get("data", "0x")
+            raw = data.replace("0x", "")
+            if len(raw) >= 192:  # minimum: 3 words (offsets) + at least array length
+                # bytes 0-63: offset to FacetCut[] array
+                array_offset = int(raw[0:64], 16) * 2  # convert byte offset to hex-char offset
+                # At array_offset: uint256 count of FacetCut entries
+                count_start = array_offset
+                if len(raw) >= count_start + 64:
+                    count = int(raw[count_start : count_start + 64], 16)
+                    # After count: `count` uint256 offsets (relative to array_offset)
+                    entry_offsets_start = count_start + 64
+                    facets: list[str] = []
+                    for i in range(count):
+                        off_pos = entry_offsets_start + i * 64
+                        if len(raw) < off_pos + 64:
+                            break
+                        entry_offset = int(raw[off_pos : off_pos + 64], 16) * 2
+                        # Entry is relative to array_offset
+                        entry_start = array_offset + entry_offset
+                        # Each FacetCut entry: address (32 bytes) + action (32 bytes) + ...
+                        if len(raw) < entry_start + 128:
+                            break
+                        facet_addr = normalize_address("0x" + raw[entry_start + 24 : entry_start + 64])
+                        action = int(raw[entry_start + 64 : entry_start + 128], 16)
+                        # action: 0=Add, 1=Replace, 2=Remove — skip Remove
+                        if action != 2 and facet_addr != normalize_address("0x" + "0" * 40):
+                            facets.append(facet_addr)
+                    if facets:
+                        event["implementation"] = facets[0]
+                        event["facets"] = facets
+        except (ValueError, IndexError):
+            pass  # malformed data — return event without implementation
 
     return event
 
