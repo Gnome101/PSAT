@@ -58,6 +58,7 @@ class WatchProxyRequest(BaseModel):
     address: str = Field(min_length=42, max_length=42)
     chain: str = "ethereum"
     label: str | None = None
+    needs_polling: bool = False
     rpc_url: str | None = None
     from_block: int | None = Field(default=None, ge=0, description="Block to start scanning from. Defaults to current block.")
 
@@ -445,6 +446,7 @@ def _watched_proxy_to_dict(proxy: WatchedProxy) -> dict[str, Any]:
         "proxy_address": proxy.proxy_address,
         "chain": proxy.chain,
         "label": proxy.label,
+        "needs_polling": proxy.needs_polling,
         "last_known_implementation": proxy.last_known_implementation,
         "last_scanned_block": proxy.last_scanned_block,
         "created_at": proxy.created_at.isoformat(),
@@ -484,6 +486,7 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
             proxy_address=address,
             chain=request.chain,
             label=request.label,
+            needs_polling=request.needs_polling,
             last_known_implementation=current_impl,
             last_scanned_block=from_block,
         )

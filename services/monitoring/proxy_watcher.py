@@ -179,6 +179,63 @@ def resolve_current_implementation(proxy_address: str, rpc_url: str) -> str | No
     return None
 
 
+def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]:
+    """Poll storage slots for implementation changes on silent proxies.
+
+    Queries all WatchedProxy rows where needs_polling is True, reads the
+    current EIP-1967 implementation slot, and creates a ProxyUpgradeEvent
+    if the implementation has changed.
+
+    This is O(n) RPC calls per cycle (one eth_getStorageAt per proxy).
+    # TODO: batch via multicall to reduce RPC overhead for large proxy sets.
+
+    Returns list of new ProxyUpgradeEvent records created.
+    """
+    proxies = (
+        session.execute(select(WatchedProxy).where(WatchedProxy.needs_polling == True))  # noqa: E712
+        .scalars()
+        .all()
+    )
+    if not proxies:
+        return []
+
+    new_events: list[ProxyUpgradeEvent] = []
+
+    for proxy in proxies:
+        try:
+            current_impl = resolve_current_implementation(proxy.proxy_address, rpc_url)
+        except Exception:
+            logger.exception("RPC error polling implementation for %s", proxy.proxy_address)
+            continue
+
+        if current_impl is None:
+            continue
+
+        if current_impl != proxy.last_known_implementation:
+            upgrade_event = ProxyUpgradeEvent(
+                watched_proxy_id=proxy.id,
+                block_number=0,
+                tx_hash="",
+                old_implementation=proxy.last_known_implementation,
+                new_implementation=current_impl,
+                event_type="storage_poll",
+            )
+            session.add(upgrade_event)
+            new_events.append(upgrade_event)
+
+            logger.info(
+                "Poll detected implementation change on %s: %s -> %s",
+                proxy.proxy_address,
+                proxy.last_known_implementation,
+                current_impl,
+            )
+
+            proxy.last_known_implementation = current_impl
+
+    session.commit()
+    return new_events
+
+
 def run_scan_loop(rpc_url: str, interval: float = DEFAULT_SCAN_INTERVAL) -> None:
     """Run the proxy upgrade scanner in a blocking loop."""
     logger.info("Starting proxy upgrade monitor (interval=%ss)", interval)
@@ -190,4 +247,21 @@ def run_scan_loop(rpc_url: str, interval: float = DEFAULT_SCAN_INTERVAL) -> None
                     logger.info("Detected %d new upgrade event(s)", len(new_events))
         except Exception:
             logger.exception("Scan cycle failed")
+        time.sleep(interval)
+
+
+DEFAULT_POLL_INTERVAL = 60
+
+
+def run_poll_loop(rpc_url: str, interval: float = DEFAULT_POLL_INTERVAL) -> None:
+    """Run the storage-slot polling loop for silent proxies."""
+    logger.info("Starting proxy poll monitor (interval=%ss)", interval)
+    while True:
+        try:
+            with SessionLocal() as session:
+                new_events = poll_for_upgrades(session, rpc_url)
+                if new_events:
+                    logger.info("Poll detected %d new upgrade(s)", len(new_events))
+        except Exception:
+            logger.exception("Poll cycle failed")
         time.sleep(interval)

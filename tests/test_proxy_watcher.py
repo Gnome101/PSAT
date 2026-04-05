@@ -34,6 +34,7 @@ from services.discovery.upgrade_history import (
 )
 from services.monitoring.proxy_watcher import (
     MAX_BLOCK_RANGE,
+    poll_for_upgrades,
     resolve_current_implementation,
     scan_for_upgrades,
 )
@@ -123,6 +124,7 @@ def _add_proxy(
     label: str | None = None,
     last_known_impl: str | None = None,
     last_scanned_block: int = 0,
+    needs_polling: bool = False,
 ) -> WatchedProxy:
     """Insert a WatchedProxy row and return it."""
     proxy = WatchedProxy(
@@ -132,6 +134,7 @@ def _add_proxy(
         label=label,
         last_known_implementation=last_known_impl,
         last_scanned_block=last_scanned_block,
+        needs_polling=needs_polling,
     )
     session.add(proxy)
     session.commit()
@@ -192,7 +195,7 @@ def test_scan_detects_upgrade(mock_rpc, db_session):
         UPGRADED_TOPIC0,
         _topic_for(new_impl),
         block=hex(95),
-        tx="0xdeadbeef" + "0" * 58,
+        tx="0x" + "de" * 32,
     )
 
     def rpc_side_effect(url, method, params):
@@ -227,18 +230,20 @@ def test_scan_detects_upgrade(mock_rpc, db_session):
 
 @patch("services.monitoring.proxy_watcher.rpc_request")
 def test_scan_detects_admin_changed(mock_rpc, db_session):
-    """AdminChanged event is detected and recorded."""
+    """AdminChanged event is detected and recorded. old_implementation should
+    come from the proxy's DB state, not the event data."""
     proxy_addr = ADDR(2)
+    prior_impl = ADDR(10)  # distinct from admin addresses to verify source
     old_admin = ADDR(50)
     new_admin = ADDR(51)
-    proxy = _add_proxy(db_session, proxy_addr, last_known_impl=old_admin, last_scanned_block=90)
+    proxy = _add_proxy(db_session, proxy_addr, last_known_impl=prior_impl, last_scanned_block=90)
 
     log = _make_log(
         proxy_addr,
         ADMIN_CHANGED_TOPIC0,
         data=_admin_data(old_admin, new_admin),
         block=hex(95),
-        tx="0xadmin" + "0" * 58,
+        tx="0x" + "a" * 64,
     )
 
     def rpc_side_effect(url, method, params):
@@ -256,7 +261,8 @@ def test_scan_detects_admin_changed(mock_rpc, db_session):
     evt = events[0]
     assert evt.event_type == "admin_changed"
     assert evt.new_implementation == new_admin
-    assert evt.old_implementation == old_admin
+    # old_implementation comes from proxy DB row, not the event data
+    assert evt.old_implementation == prior_impl
     assert evt.watched_proxy_id == proxy.id
 
 
@@ -278,7 +284,7 @@ def test_scan_detects_beacon_upgraded(mock_rpc, db_session):
         BEACON_UPGRADED_TOPIC0,
         _topic_for(new_beacon),
         block=hex(95),
-        tx="0xbeacon" + "0" * 56,
+        tx="0x" + "bc" * 32,
     )
 
     def rpc_side_effect(url, method, params):
@@ -401,7 +407,7 @@ def test_scan_ignores_unrelated_events(mock_rpc, db_session):
         UPGRADED_TOPIC0,
         _topic_for(ADDR(42)),
         block=hex(95),
-        tx="0xunrelated" + "0" * 52,
+        tx="0x" + "99" * 32,
     )
 
     def rpc_side_effect(url, method, params):
@@ -431,7 +437,7 @@ def test_scan_idempotent_on_restart(mock_rpc, db_session):
     proxy = _add_proxy(db_session, ADDR(1), last_scanned_block=90)
     latest_block = 100
 
-    log = _make_log(ADDR(1), UPGRADED_TOPIC0, _topic_for(ADDR(11)), block=hex(95), tx="0xfirst" + "0" * 58)
+    log = _make_log(ADDR(1), UPGRADED_TOPIC0, _topic_for(ADDR(11)), block=hex(95), tx="0x" + "f1" * 32)
 
     call_count = {"block_number": 0, "get_logs": 0}
 
@@ -542,13 +548,22 @@ def test_no_duplicate_events_with_mixed_last_scanned_block(mock_rpc, db_session)
     db_session.add(prior_event)
     db_session.commit()
 
-    # eth_getLogs returns the same event at block 1500 again
-    log_a = _make_log(
+    # eth_getLogs returns the duplicate event AND a genuinely new event for proxy B
+    log_a_dup = _make_log(
         proxy_a_addr,
         UPGRADED_TOPIC0,
         _topic_for(new_impl_a),
         block=hex(1500),
         tx="0x" + "a" * 64,
+        log_index="0x0",
+    )
+    new_impl_b = ADDR(22)
+    log_b_new = _make_log(
+        proxy_b_addr,
+        UPGRADED_TOPIC0,
+        _topic_for(new_impl_b),
+        block=hex(5500),
+        tx="0x" + "b" * 64,
         log_index="0x0",
     )
 
@@ -559,27 +574,32 @@ def test_no_duplicate_events_with_mixed_last_scanned_block(mock_rpc, db_session)
             filter_obj = params[0]
             from_blk = int(filter_obj["fromBlock"], 16)
             to_blk = int(filter_obj["toBlock"], 16)
+            logs = []
             if from_blk <= 1500 <= to_blk:
-                return [log_a]
-            return []
+                logs.append(log_a_dup)
+            if from_blk <= 5500 <= to_blk:
+                logs.append(log_b_new)
+            return logs
         return None
 
     mock_rpc.side_effect = rpc_side_effect
 
     events = scan_for_upgrades(db_session, "http://localhost:8545")
 
-    # Scanner must skip the already-recorded event — zero new events returned
-    assert len(events) == 0, (
-        "Scanner should not re-create an event that already exists in the DB."
+    # Dedup must be selective: skip the duplicate for proxy A but create the new event for proxy B
+    assert len(events) == 1, (
+        "Expected 1 new event (proxy B), duplicate for proxy A should be skipped."
     )
+    assert events[0].watched_proxy_id == proxy_b.id
+    assert events[0].new_implementation == new_impl_b
 
-    # Verify only the original event exists (no duplicate)
+    # Verify proxy A still has only the original event (no duplicate)
     from sqlalchemy import select
-    all_events = db_session.execute(
+    all_a_events = db_session.execute(
         select(ProxyUpgradeEvent).where(ProxyUpgradeEvent.watched_proxy_id == proxy_a.id)
     ).scalars().all()
-    assert len(all_events) == 1, (
-        "Only the original ProxyUpgradeEvent should exist — no duplicate."
+    assert len(all_a_events) == 1, (
+        "Only the original ProxyUpgradeEvent for proxy A should exist."
     )
 
 
@@ -784,3 +804,141 @@ def test_rapid_successive_upgrades(mock_rpc, db_session):
     db_session.refresh(proxy)
     assert proxy.last_known_implementation == impl_v3
     assert proxy.last_scanned_block == 105
+
+
+# ===========================================================================
+# Storage slot polling tests
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# 17. test_poll_no_polling_proxies
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_poll_no_polling_proxies(mock_rpc, db_session):
+    """poll_for_upgrades with no needs_polling=True proxies returns empty list
+    and makes no RPC calls."""
+    # Add a proxy that does NOT need polling
+    _add_proxy(db_session, ADDR(1), last_known_impl=ADDR(10), needs_polling=False)
+
+    result = poll_for_upgrades(db_session, "http://localhost:8545")
+
+    assert result == []
+    mock_rpc.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 18. test_poll_detects_implementation_change
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_poll_detects_implementation_change(mock_rpc, db_session):
+    """Storage slot polling detects when the implementation address changes.
+
+    Mocks eth_getStorageAt to return a different implementation than the proxy's
+    last_known_implementation. Verifies a ProxyUpgradeEvent with event_type
+    'storage_poll' is created and the proxy row is updated.
+    """
+    old_impl = ADDR(10)
+    new_impl = ADDR(11)
+    proxy = _add_proxy(db_session, ADDR(1), last_known_impl=old_impl, needs_polling=True)
+
+    storage_value = "0x" + "0" * 24 + new_impl[2:]
+    mock_rpc.return_value = storage_value
+
+    events = poll_for_upgrades(db_session, "http://localhost:8545")
+
+    assert len(events) == 1
+    evt = events[0]
+    assert evt.event_type == "storage_poll"
+    assert evt.old_implementation == old_impl
+    assert evt.new_implementation == new_impl.lower()
+    assert evt.watched_proxy_id == proxy.id
+
+    # Proxy row should be updated with new implementation
+    db_session.refresh(proxy)
+    assert proxy.last_known_implementation == new_impl.lower()
+
+
+# ---------------------------------------------------------------------------
+# 19. test_poll_no_change_no_event
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_poll_no_change_no_event(mock_rpc, db_session):
+    """When the storage slot returns the same implementation, no event is created."""
+    same_impl = ADDR(10)
+    _add_proxy(db_session, ADDR(1), last_known_impl=same_impl, needs_polling=True)
+
+    storage_value = "0x" + "0" * 24 + same_impl[2:]
+    mock_rpc.return_value = storage_value
+
+    events = poll_for_upgrades(db_session, "http://localhost:8545")
+
+    assert events == []
+
+
+# ---------------------------------------------------------------------------
+# 20. test_poll_ignores_non_polling_proxies
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_poll_ignores_non_polling_proxies(mock_rpc, db_session):
+    """Only proxies with needs_polling=True are polled. A non-polling proxy
+    with a changed implementation should NOT produce an event."""
+    old_impl = ADDR(10)
+    new_impl = ADDR(11)
+
+    polling_proxy = _add_proxy(db_session, ADDR(1), last_known_impl=old_impl, needs_polling=True)
+    _add_proxy(db_session, ADDR(2), last_known_impl=old_impl, needs_polling=False)
+
+    storage_value = "0x" + "0" * 24 + new_impl[2:]
+    mock_rpc.return_value = storage_value
+
+    events = poll_for_upgrades(db_session, "http://localhost:8545")
+
+    # Only the polling proxy should produce an event
+    assert len(events) == 1
+    assert events[0].watched_proxy_id == polling_proxy.id
+
+
+# ---------------------------------------------------------------------------
+# 21. test_poll_handles_rpc_failure_gracefully
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_poll_handles_rpc_failure_gracefully(mock_rpc, db_session):
+    """If eth_getStorageAt raises an exception, poll_for_upgrades returns
+    an empty list without crashing."""
+    _add_proxy(db_session, ADDR(1), last_known_impl=ADDR(10), needs_polling=True)
+
+    mock_rpc.side_effect = ConnectionError("RPC node timeout")
+
+    events = poll_for_upgrades(db_session, "http://localhost:8545")
+
+    assert events == []
+
+
+# ---------------------------------------------------------------------------
+# 22. test_poll_skips_none_implementation
+# ---------------------------------------------------------------------------
+
+
+@patch("services.monitoring.proxy_watcher.rpc_request")
+def test_poll_skips_none_implementation(mock_rpc, db_session):
+    """When the storage slot is zero-filled (resolve_current_implementation
+    returns None), no event should be created."""
+    _add_proxy(db_session, ADDR(1), last_known_impl=ADDR(10), needs_polling=True)
+
+    # Zero-filled slot means no implementation set
+    mock_rpc.return_value = "0x" + "0" * 64
+
+    events = poll_for_upgrades(db_session, "http://localhost:8545")
+
+    assert events == []
