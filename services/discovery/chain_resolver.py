@@ -54,7 +54,7 @@ _ALCHEMY_CHAIN_SLUGS: dict[str, str] = {
 _BATCH_RPC_SIZE = 100
 
 # Fallback: rate-limited individual calls if batch is rejected.
-_RPC_RATE_LIMIT = 4
+_RPC_RATE_LIMIT = 15
 _FALLBACK_WORKERS = 4
 
 

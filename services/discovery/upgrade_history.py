@@ -258,16 +258,13 @@ def fetch_upgrade_events(proxy_addresses: list[str]) -> list[dict]:
 
     Queries each proxy for all three event types (Upgraded, AdminChanged,
     BeaconUpgraded). Returns a chronologically sorted list of parsed events.
-    Respects Etherscan's free-tier rate limit (5 calls/sec).
+    Rate-limited centrally by ``utils.etherscan``.
     """
-    import time
-
     all_events: list[dict] = []
 
     for addr in proxy_addresses:
         addr = normalize_address(addr)
         for topic0 in EVENT_TOPICS:
-            time.sleep(0.22)  # ~4.5 calls/sec, stays under 5/sec free-tier limit
             raw_logs = _fetch_logs_etherscan(addr, topic0)
             for log in raw_logs:
                 event = parse_upgrade_log(log)
