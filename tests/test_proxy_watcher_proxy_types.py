@@ -334,16 +334,65 @@ class TestSupportedProxyTypes:
         types = {e.event_type for e in events}
         assert types == {"upgraded", "admin_changed", "beacon_upgraded"}
 
+    def test_gnosis_safe_master_copy(self, db_session):
+        """GnosisSafe ChangedMasterCopy(address) — non-indexed address in data."""
+        session, proxy = db_session
+        # keccak256("ChangedMasterCopy(address)")
+        GNOSIS_TOPIC0 = "0x75e41bc35ff1bf14d81d1d2f649c0084a0f974f9289c803ec9898eeec4c8d0b8"
+        logs = [_make_log(PROXY_ADDR, [GNOSIS_TOPIC0], data=_addr_to_data(IMPL_NEW))]
+
+        events = _run_scan_with_logs(session, logs)
+
+        assert len(events) == 1
+        assert events[0].event_type == "changed_master_copy"
+        assert events[0].new_implementation.lower() == IMPL_NEW
+
+    def test_compound_new_implementation(self, db_session):
+        """Compound NewImplementation(address,address) — two addresses in data."""
+        session, proxy = db_session
+        # keccak256("NewImplementation(address,address)")
+        COMPOUND_TOPIC0 = "0xd604de94d45953f9138079ec1b82d533cb2160c906d1076d1f7ed54befbca97a"
+        log = _make_log(PROXY_ADDR, [COMPOUND_TOPIC0], data=_two_addrs_to_data(IMPL_OLD, IMPL_NEW))
+
+        events = _run_scan_with_logs(session, [log])
+
+        assert len(events) == 1
+        assert events[0].event_type == "new_implementation"
+        assert events[0].new_implementation.lower() == IMPL_NEW
+
+    def test_compound_new_pending_implementation(self, db_session):
+        """Compound NewPendingImplementation(address,address) — two-step upgrade."""
+        session, proxy = db_session
+        # keccak256("NewPendingImplementation(address,address)")
+        COMPOUND_PENDING_TOPIC0 = "0xe945ccee5d701fc83f9b8aa8ca94ea4219ec1fcbd4f4cab4f0ea57c5c3e1d815"
+        log = _make_log(PROXY_ADDR, [COMPOUND_PENDING_TOPIC0], data=_two_addrs_to_data(IMPL_OLD, IMPL_NEW))
+
+        events = _run_scan_with_logs(session, [log])
+
+        assert len(events) == 1
+        assert events[0].event_type == "new_pending_implementation"
+        assert events[0].new_implementation.lower() == IMPL_NEW
+
+    def test_synthetix_target_updated(self, db_session):
+        """Synthetix TargetUpdated(address) — non-indexed address in data."""
+        session, proxy = db_session
+        # keccak256("TargetUpdated(address)")
+        SYNTHETIX_TOPIC0 = "0x814250a3b8c79fcbe2ead2c131c952a278491c8f4322a79fe84b5040a810373e"
+        log = _make_log(PROXY_ADDR, [SYNTHETIX_TOPIC0], data=_addr_to_data(IMPL_NEW))
+
+        events = _run_scan_with_logs(session, [log])
+
+        assert len(events) == 1
+        assert events[0].event_type == "target_updated"
+        assert events[0].new_implementation.lower() == IMPL_NEW
+
 
 # ===========================================================================
-# UNSUPPORTED PROXY TYPES — these document the scanner's coverage gaps
+# UNSUPPORTED PROXY TYPES — these document the scanner's remaining coverage gaps
 # ===========================================================================
 
 # keccak256("DiamondCut((address,uint8,bytes4[])[],address,bytes)")
 DIAMOND_CUT_TOPIC0 = "0x8faa70878671ccd212d20771b795c50af8fd3ff6cf27f4bde57e5d4de0aeb673"
-
-# keccak256("ChangedMasterCopy(address)")
-GNOSIS_MASTER_COPY_TOPIC0 = "0x75e41bc35ff1bf14d81d1d2f649c0084a0f974f9289c803ec9898eeec4c8d0b8"
 
 # A made-up custom event: ImplementationUpdated(address indexed oldImpl, address indexed newImpl)
 CUSTOM_IMPL_UPDATED_TOPIC0 = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
@@ -360,37 +409,18 @@ class TestUnsupportedProxyTypes:
         """EIP-2535 Diamond proxy: emits DiamondCut, not Upgraded.
 
         Diamond proxies use facets instead of a single implementation.
-        The DiamondCut event has a completely different topic0.
+        The DiamondCut event has a completely different topic0 and a complex
+        ABI-encoded struct array for the facet changes.
 
-        FIX: Add DIAMOND_CUT_TOPIC0 to the scanner's topic filter
-        and a parser for the DiamondCut event structure.
+        FIX: Add DIAMOND_CUT_TOPIC0 to the scanner's topic filter and a
+        custom ABI decoder for the DiamondCut struct. Also requires a data
+        model change since diamonds have multiple facets, not a single impl.
         """
         session, proxy = db_session
         logs = [_make_log(
             PROXY_ADDR,
             [DIAMOND_CUT_TOPIC0],
-            # DiamondCut data is complex ABI-encoded struct array — for now
-            # just encode a single facet address in the first slot
             data=_addr_to_data(IMPL_NEW),
-        )]
-
-        events = _run_scan_with_logs(session, logs)
-
-        assert len(events) >= 1
-        assert events[0].new_implementation.lower() == IMPL_NEW
-
-    def test_gnosis_safe_master_copy(self, db_session):
-        """GnosisSafe: emits ChangedMasterCopy(address), not Upgraded.
-
-        Old GnosisSafe proxies use a different event signature.
-
-        FIX: Add GNOSIS_MASTER_COPY_TOPIC0 to the topic filter and
-        parse the implementation from topics[1] or data.
-        """
-        session, proxy = db_session
-        logs = [_make_log(
-            PROXY_ADDR,
-            [GNOSIS_MASTER_COPY_TOPIC0, _addr_to_topic(IMPL_NEW)],
         )]
 
         events = _run_scan_with_logs(session, logs)
@@ -424,134 +454,35 @@ class TestUnsupportedProxyTypes:
         If a proxy writes directly to the implementation slot without
         emitting any event, there is nothing for eth_getLogs to find.
 
-        FIX: Only detectable via storage slot polling (eth_getStorageAt)
-        which is O(n) per proxy per scan cycle.
+        FIX: Only detectable via storage slot polling (eth_getStorageAt),
+        to be implemented as a separate pipeline for proxies flagged as
+        silent-risk by the classifier.
         """
         session, proxy = db_session
         events = _run_scan_with_logs(session, [])
 
         assert len(events) >= 1
 
-    def test_compound_style_new_implementation(self, db_session):
-        """Compound-style proxy: emits NewImplementation(address oldImpl, address newImpl).
-
-        Real-world example: Compound's Unitroller (0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B)
-        uses NewImplementation instead of the EIP-1967 Upgraded event. The topic0
-        is keccak256("NewImplementation(address,address)").
-
-        The scanner only monitors EIP-1967 event topics (Upgraded, AdminChanged,
-        BeaconUpgraded) so Compound-style events are invisible to it.
-
-        FIX: Add COMPOUND_NEW_IMPL_TOPIC0 to the EVENT_TOPICS map in
-        upgrade_history.py and add a parser case in parse_upgrade_log. The
-        two addresses are non-indexed, ABI-encoded in data.
-        """
-        session, proxy = db_session
-
-        # keccak256("NewImplementation(address,address)")
-        COMPOUND_NEW_IMPL_TOPIC0 = "0xd604de94d45953f9138079ec1b82d533cb2160c906d1076d1f7ed54befbca97a"
-
-        log = _make_log(
-            PROXY_ADDR,
-            [COMPOUND_NEW_IMPL_TOPIC0],
-            data=_two_addrs_to_data(IMPL_OLD, IMPL_NEW),
-        )
-
-        events = _run_scan_with_logs(session, [log])
-
-        # This SHOULD detect the upgrade but currently does not because
-        # the scanner does not recognize this topic0.
-        assert len(events) >= 1
-
     def test_aave_v2_style_upgraded_uint256(self, db_session):
-        """Aave V2-style proxy: emits Upgraded(uint256 revision) instead of
-        Upgraded(address implementation).
+        """Aave V2 Upgraded(uint256 revision) — event is parsed but contains
+        no implementation address, only a revision number.
 
-        Some Aave V2 contracts (e.g., the LendingPool implementation at
-        0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9) emit an Upgraded event
-        with a uint256 revision number. The topic0 is keccak256("Upgraded(uint256)")
-        which differs from the standard keccak256("Upgraded(address indexed implementation)").
+        The parser recognizes this event and extracts the revision, but the
+        scanner skips it because there's no implementation address to record.
+        Requires a follow-up eth_getStorageAt call to read the actual impl
+        from the EIP-1967 slot.
 
-        The scanner only monitors the standard Upgraded(address) topic0, so
-        this variant is invisible.
-
-        FIX: Add the Upgraded(uint256) topic0 to EVENT_TOPICS, and when
-        detected, read the current implementation from EIP-1967 storage slot
-        since the event data only contains the revision number.
+        FIX: When the scanner encounters an upgraded_revision event, issue
+        an eth_getStorageAt call to read the implementation slot and use
+        that as new_implementation.
         """
         session, proxy = db_session
 
         # keccak256("Upgraded(uint256)")
         AAVE_V2_UPGRADED_TOPIC0 = "0x65a5e70879738a94a00f00947edae8111ae0aed9175ce342db680bf1e0fb87fc"
-
-        # Data encodes the revision number (e.g., revision=3)
         revision_data = "0x" + "0" * 63 + "3"
 
-        log = _make_log(
-            PROXY_ADDR,
-            [AAVE_V2_UPGRADED_TOPIC0],
-            data=revision_data,
-        )
-
-        events = _run_scan_with_logs(session, [log])
-
-        # This SHOULD detect the upgrade but currently does not because
-        # the scanner does not recognize this topic0.
-        assert len(events) >= 1
-
-    def test_synthetix_target_updated(self, db_session):
-        """Synthetix proxy: emits TargetUpdated(address newTarget).
-
-        Real-world example: SNX token proxy (0xC011a73ee8576Fb46F5E1c5751cA3B9Fe0af2a6F)
-        uses a proxy→target pattern where setTarget() swaps the implementation
-        and emits TargetUpdated. This is a legitimate proxy upgrade mechanism
-        used across the entire Synthetix ecosystem (SNX, sUSD, sBTC, etc.).
-
-        The scanner only monitors EIP-1967 event topics, so Synthetix-style
-        TargetUpdated events are invisible.
-
-        FIX: Add SYNTHETIX_TARGET_UPDATED_TOPIC0 to EVENT_TOPICS and parse
-        the new target address from the log data field (non-indexed).
-        """
-        session, proxy = db_session
-
-        # keccak256("TargetUpdated(address)")
-        SYNTHETIX_TARGET_UPDATED_TOPIC0 = "0x814250a3b8c79fcbe2ead2c131c952a278491c8f4322a79fe84b5040a810373e"
-
-        log = _make_log(
-            PROXY_ADDR,
-            [SYNTHETIX_TARGET_UPDATED_TOPIC0],
-            data=_addr_to_data(IMPL_NEW),
-        )
-
-        events = _run_scan_with_logs(session, [log])
-
-        assert len(events) >= 1
-
-    def test_compound_new_pending_implementation(self, db_session):
-        """Compound two-step upgrade: emits NewPendingImplementation(address,address)
-        before NewImplementation(address,address).
-
-        Real-world example: Compound Unitroller (0x3d9819210A31b4961b30EF54bE2aeD79B9c9Cd3B)
-        uses _setPendingImplementation() which emits NewPendingImplementation,
-        then _acceptImplementation() emits NewImplementation. The pending step
-        signals an upcoming upgrade before it takes effect.
-
-        The scanner does not recognize either Compound event signature.
-
-        FIX: Add COMPOUND_NEW_PENDING_IMPL_TOPIC0 to EVENT_TOPICS and parse
-        the two addresses (old pending, new pending) from ABI-encoded data.
-        """
-        session, proxy = db_session
-
-        # keccak256("NewPendingImplementation(address,address)")
-        COMPOUND_PENDING_TOPIC0 = "0xe945ccee5d701fc83f9b8aa8ca94ea4219ec1fcbd4f4cab4f0ea57c5c3e1d815"
-
-        log = _make_log(
-            PROXY_ADDR,
-            [COMPOUND_PENDING_TOPIC0],
-            data=_two_addrs_to_data(IMPL_OLD, IMPL_NEW),
-        )
+        log = _make_log(PROXY_ADDR, [AAVE_V2_UPGRADED_TOPIC0], data=revision_data)
 
         events = _run_scan_with_logs(session, [log])
 
