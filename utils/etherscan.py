@@ -1,8 +1,14 @@
-"""Etherscan API client."""
+"""Etherscan API client.
+
+All Etherscan calls are routed through :func:`get`, which enforces a
+global rate limit (``ETHERSCAN_RATE_LIMIT`` calls/sec).  Callers do
+**not** need to add their own sleeps or per-module limiters.
+"""
 
 import json as _json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -16,6 +22,24 @@ ETHERSCAN_API = "https://api.etherscan.io/v2/api"
 _RATE_LIMIT_RETRIES = 5
 _RATE_LIMIT_BACKOFF = 1.0  # seconds, doubles each retry
 
+# Global Etherscan rate limit — applies to every call through get().
+ETHERSCAN_RATE_LIMIT = 15  # requests per second
+
+_min_interval = 1.0 / ETHERSCAN_RATE_LIMIT
+_rate_lock = threading.Lock()
+_last_call = 0.0
+
+
+def _wait_rate_limit() -> None:
+    """Block until the minimum interval since the last call has elapsed."""
+    global _last_call
+    with _rate_lock:
+        now = time.monotonic()
+        elapsed = now - _last_call
+        if elapsed < _min_interval:
+            time.sleep(_min_interval - elapsed)
+        _last_call = time.monotonic()
+
 
 def _get_api_key() -> str:
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -26,11 +50,16 @@ def _get_api_key() -> str:
 
 
 def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
-    """Make an Etherscan API call with automatic retry on rate-limit errors."""
+    """Make an Etherscan API call with automatic retry on rate-limit errors.
+
+    Automatically throttled to ``ETHERSCAN_RATE_LIMIT`` req/s — callers
+    should not add their own sleeps.
+    """
     api_key = _get_api_key()
     backoff = _RATE_LIMIT_BACKOFF
 
     for attempt in range(_RATE_LIMIT_RETRIES + 1):
+        _wait_rate_limit()
         resp = requests.get(
             ETHERSCAN_API,
             params={
