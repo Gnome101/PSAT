@@ -65,8 +65,13 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
     latest_block = get_latest_block(rpc_url)
 
     if from_block >= latest_block:
+        logger.debug("Scan: no new blocks (from=%d, latest=%d)", from_block, latest_block)
         return []
 
+    logger.debug(
+        "Scan: %d proxies, block range %d→%d (%d blocks)",
+        len(proxies), from_block + 1, latest_block, latest_block - from_block,
+    )
     new_events: list[ProxyUpgradeEvent] = []
     topics = [list(EVENT_TOPICS.keys())]  # topic0 = any of the 3 event types
 
@@ -314,6 +319,8 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
     batch_calls: list[tuple[str, list]] = []
     # (proxy, start_index_in_batch, call_count, is_discovery)
     proxy_plan: list[tuple[WatchedProxy, int, int, bool]] = []
+    known_count = 0
+    discovery_count = 0
 
     for proxy in proxies:
         start = len(batch_calls)
@@ -322,6 +329,7 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
             method_type, arg = _RESOLVE_BY_TYPE[proxy.proxy_type]
             batch_calls.append(_build_rpc_call(method_type, proxy.proxy_address, arg))
             proxy_plan.append((proxy, start, 1, False))
+            known_count += 1
         else:
             # Unknown type — try all methods in one batch
             for method_type, arg, _ in _DISCOVERY_METHODS:
@@ -329,9 +337,15 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
                     _build_rpc_call(method_type, proxy.proxy_address, arg)
                 )
             proxy_plan.append((proxy, start, len(_DISCOVERY_METHODS), True))
+            discovery_count += 1
 
     if not batch_calls:
         return []
+
+    logger.debug(
+        "Poll batch: %d calls (%d known-type proxies, %d discovery proxies)",
+        len(batch_calls), known_count, discovery_count,
+    )
 
     # -- Phase 2: send batch ---------------------------------------------------
     try:
@@ -359,6 +373,7 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
                         ptype,
                     )
                     break
+                logger.debug("%s: discovery method %s returned nothing", proxy.proxy_address, ptype)
             else:
                 # No method resolved — stop polling this proxy.
                 proxy.needs_polling = False
@@ -370,6 +385,11 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
         else:
             # Known type — single result
             current_impl = parse_address_result(results[start])
+            if current_impl is None:
+                logger.debug(
+                    "%s: known type %s returned nothing",
+                    proxy.proxy_address, proxy.proxy_type,
+                )
 
         if current_impl is None:
             continue

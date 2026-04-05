@@ -14,8 +14,11 @@ Detection methods:
 """
 
 import json
+import logging
 
 from services.discovery.static_dependencies import get_code, normalize_address, rpc_call
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Storage slot constants
@@ -276,10 +279,12 @@ def classify_single(
                 code_cache[address] = bytecode
 
     info: dict = {"address": address}
+    logger.debug("classify_single %s — starting intrinsic checks", address)
 
     # 1. EIP-1167 minimal proxy (bytecode pattern)
     eip1167_impl = detect_eip1167(bytecode)
     if eip1167_impl:
+        logger.debug("%s → eip1167 proxy, impl=%s", address, eip1167_impl)
         info.update(type="proxy", proxy_type="eip1167", implementation=eip1167_impl)
         return info
 
@@ -287,6 +292,7 @@ def classify_single(
     impl = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_IMPL_SLOT))
     beacon = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_BEACON_SLOT))
     admin = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_ADMIN_SLOT))
+    logger.debug("%s EIP-1967 slots: impl=%s beacon=%s admin=%s", address, impl, beacon, admin)
 
     if beacon:
         info.update(type="proxy", proxy_type="beacon_proxy", beacon=beacon)
@@ -295,6 +301,7 @@ def classify_single(
         else:
             # Resolve implementation through the beacon contract
             beacon_impl = _try_implementation_call(rpc_url, beacon)
+            logger.debug("%s beacon %s → resolved impl=%s", address, beacon, beacon_impl)
             if beacon_impl:
                 info["implementation"] = beacon_impl
         if admin:
@@ -302,6 +309,7 @@ def classify_single(
         return info
 
     if impl:
+        logger.debug("%s → eip1967 proxy, impl=%s", address, impl)
         info.update(type="proxy", proxy_type="eip1967", implementation=impl)
         if admin:
             info["admin"] = admin
@@ -310,18 +318,21 @@ def classify_single(
     # 3. EIP-1822 UUPS
     uups = _slot_to_address(get_storage_at(rpc_url, address, EIP1822_LOGIC_SLOT))
     if uups:
+        logger.debug("%s → eip1822 proxy, impl=%s", address, uups)
         info.update(type="proxy", proxy_type="eip1822", implementation=uups)
         return info
 
     # 4. OpenZeppelin legacy slot
     oz = _slot_to_address(get_storage_at(rpc_url, address, OZ_IMPL_SLOT))
     if oz:
+        logger.debug("%s → oz_legacy proxy, impl=%s", address, oz)
         info.update(type="proxy", proxy_type="oz_legacy", implementation=oz)
         return info
 
     # 5. EIP-2535 diamond proxy — facetAddresses() call
     facets = _try_facet_addresses_call(rpc_url, address)
     if facets:
+        logger.debug("%s → eip2535 diamond, %d facets", address, len(facets))
         info.update(type="proxy", proxy_type="eip2535", facets=facets)
         return info
 
@@ -332,6 +343,7 @@ def classify_single(
     #    eth_calls for non-proxy contracts avoids unnecessary RPC traffic.
     if _bytecode_has_delegatecall(bytecode):
         raw_bc = (bytecode[2:] if bytecode.startswith("0x") else bytecode).lower()
+        logger.debug("%s has DELEGATECALL, checking protocol-specific patterns", address)
 
         # GnosisSafe — bytecode pattern: PUSH20(mask), PUSH1(0), SLOAD, AND
         # Loads implementation from slot 0 and delegates.  Covers v1.0-1.3+
@@ -339,6 +351,7 @@ def classify_single(
         if GNOSIS_SLOT0_PATTERN in raw_bc:
             slot0_impl = _slot_to_address(get_storage_at(rpc_url, address, "0x0"))
             if slot0_impl:
+                logger.debug("%s → gnosis_safe proxy (slot0 pattern), impl=%s", address, slot0_impl)
                 info.update(type="proxy", proxy_type="gnosis_safe", implementation=slot0_impl)
                 return info
 
@@ -346,18 +359,21 @@ def classify_single(
         # that expose the variable but don't use the slot-0 bytecode pattern).
         master = _try_implementation_call(rpc_url, address, MASTER_COPY_SELECTOR)
         if master:
+            logger.debug("%s → gnosis_safe proxy (masterCopy), impl=%s", address, master)
             info.update(type="proxy", proxy_type="gnosis_safe", implementation=master)
             return info
 
         # Compound — comptrollerImplementation()
         comp_impl = _try_implementation_call(rpc_url, address, COMPTROLLER_IMPL_SELECTOR)
         if comp_impl:
+            logger.debug("%s → compound proxy, impl=%s", address, comp_impl)
             info.update(type="proxy", proxy_type="compound", implementation=comp_impl)
             return info
 
         # Synthetix — target()
         target_addr = _try_implementation_call(rpc_url, address, TARGET_SELECTOR)
         if target_addr:
+            logger.debug("%s → synthetix proxy, impl=%s", address, target_addr)
             info.update(type="proxy", proxy_type="synthetix", implementation=target_addr)
             return info
 
@@ -365,6 +381,7 @@ def classify_single(
     #    storage slots that still expose the standard interface.
     impl_call = _try_implementation_call(rpc_url, address)
     if impl_call:
+        logger.debug("%s → custom proxy (implementation() call), impl=%s", address, impl_call)
         info.update(type="proxy", proxy_type="custom", implementation=impl_call)
         return info
 
@@ -374,22 +391,27 @@ def classify_single(
     #    false positives) and extract the implementation address from the trace.
     raw = bytecode[2:] if bytecode.startswith("0x") else bytecode
     if 10 <= len(raw) <= SHORT_BYTECODE_THRESHOLD and _bytecode_has_delegatecall(bytecode):
+        logger.debug("%s short bytecode (%d chars) with DELEGATECALL, probing", address, len(raw))
         probe = _probe_delegatecall(rpc_url, address)
         if probe is False:
             # DELEGATECALL exists but isn't triggered by arbitrary calldata —
             # this is a library or utility, not a proxy.
+            logger.debug("%s probe returned False — not a proxy (library/utility)", address)
             info["type"] = "regular"
             return info
         if probe is None:
             # Tracing unavailable — fall back to static heuristic.
+            logger.debug("%s probe unavailable — marking as unknown proxy", address)
             info.update(type="proxy", proxy_type="unknown")
             return info
         # probe is a str: the DELEGATECALL target (implementation address)
+        logger.debug("%s probe confirmed proxy, delegatecall target=%s", address, probe or "(empty)")
         info.update(type="proxy", proxy_type="unknown")
         if probe:  # non-empty address string
             info["implementation"] = probe
         return info
 
+    logger.debug("%s → regular (no proxy pattern matched)", address)
     info["type"] = "regular"
     return info
 
@@ -415,6 +437,7 @@ def classify_contracts(
     """
     target = normalize_address(target)
     all_addrs = list(dict.fromkeys([target] + [normalize_address(a) for a in dependencies]))
+    logger.debug("classify_contracts: target=%s, %d dependencies", target, len(dependencies))
 
     # Phase 1 -- intrinsic classification
     classifications: dict[str, dict] = {}
@@ -427,6 +450,7 @@ def classify_contracts(
         try:
             info = classify_single(addr, rpc_url, code_cache=code_cache)
         except RuntimeError:
+            logger.debug("Phase 1: RPC error classifying %s, defaulting to regular", addr)
             info = {"address": addr, "type": "regular"}
         classifications[addr] = info
 
@@ -443,6 +467,10 @@ def classify_contracts(
             impl_to_proxies.setdefault(facet, []).append(addr)
             if facet not in all_addrs_set:
                 discovered.add(facet)
+
+    if discovered:
+        logger.debug("Phase 1 discovered %d new addresses from proxy slots: %s",
+                      len(discovered), sorted(discovered))
 
     # Classify newly-discovered addresses (found in proxy slots), skip any
     # that were already classified in Phase 1.
@@ -461,6 +489,7 @@ def classify_contracts(
         # Phase 1 may have classified the beacon as "proxy/custom" because
         # UpgradeableBeacon exposes implementation() — override that here.
         if addr in beacon_to_proxies:
+            old_type = info.get("type")
             for key in ("proxy_type", "beacon", "admin"):
                 info.pop(key, None)
             info["type"] = "beacon"
@@ -469,12 +498,15 @@ def classify_contracts(
                 impl = _try_implementation_call(rpc_url, addr)
                 if impl:
                     info["implementation"] = impl
+            logger.debug("Phase 2: %s reclassified %s → beacon (proxies: %s)",
+                          addr, old_type, info["proxies"])
             continue
         if info["type"] != "regular":
             continue
         if addr in impl_to_proxies:
             info["type"] = "implementation"
             info["proxies"] = sorted(impl_to_proxies[addr])
+            logger.debug("Phase 2: %s → implementation (proxies: %s)", addr, info["proxies"])
 
     # Phase 3 -- behavioral: factory / library / created from dynamic edges
     if dynamic_edges:
@@ -502,16 +534,22 @@ def classify_contracts(
                 continue
             if addr in creators:
                 info["type"] = "factory"
+                logger.debug("Phase 3: %s → factory (CREATE/CREATE2 edges)", addr)
             elif addr in created:
                 info["type"] = "created"
+                logger.debug("Phase 3: %s → created (spawned by factory)", addr)
             elif delegatecall_only.get(addr, False):
                 info["type"] = "library"
+                logger.debug("Phase 3: %s → library (DELEGATECALL-only target)", addr)
 
     # Mark proxies whose upgrade events are unrecognised — these need
     # storage-slot polling to detect implementation changes.
     for info in classifications.values():
         if info["type"] == "proxy":
             info["needs_polling"] = info.get("proxy_type") not in _KNOWN_EVENT_PROXY_TYPES
+            if info["needs_polling"]:
+                logger.debug("%s needs_polling=True (proxy_type=%s not in known event types)",
+                              info["address"], info.get("proxy_type"))
 
     return {
         "address": target,
