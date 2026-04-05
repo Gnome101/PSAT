@@ -32,10 +32,30 @@ ADMIN_CHANGED_TOPIC0 = "0x7e644d79422f17c01e4894b5f4f588d331ebfa28653d42ae832dc5
 # BeaconUpgraded(address indexed beacon)
 BEACON_UPGRADED_TOPIC0 = "0x1cf3b03a6cf19fa2baba4df148e9dcabedea7f8a5c07840e207e5c089be95d3e"
 
+# GnosisSafe — ChangedMasterCopy(address)
+CHANGED_MASTER_COPY_TOPIC0 = "0x75e41bc35ff1bf14d81d1d2f649c0084a0f974f9289c803ec9898eeec4c8d0b8"
+
+# Compound — NewImplementation(address oldImplementation, address newImplementation)
+NEW_IMPLEMENTATION_TOPIC0 = "0xd604de94d45953f9138079ec1b82d533cb2160c906d1076d1f7ed54befbca97a"
+
+# Compound — NewPendingImplementation(address oldPendingImplementation, address newPendingImplementation)
+NEW_PENDING_IMPLEMENTATION_TOPIC0 = "0xe945ccee5d701fc83f9b8aa8ca94ea4219ec1fcbd4f4cab4f0ea57c5c3e1d815"
+
+# Synthetix — TargetUpdated(address newTarget)
+TARGET_UPDATED_TOPIC0 = "0x814250a3b8c79fcbe2ead2c131c952a278491c8f4322a79fe84b5040a810373e"
+
+# Aave V2 — Upgraded(uint256 revision)
+UPGRADED_REVISION_TOPIC0 = "0x65a5e70879738a94a00f00947edae8111ae0aed9175ce342db680bf1e0fb87fc"
+
 EVENT_TOPICS = {
     UPGRADED_TOPIC0: "upgraded",
     ADMIN_CHANGED_TOPIC0: "admin_changed",
     BEACON_UPGRADED_TOPIC0: "beacon_upgraded",
+    CHANGED_MASTER_COPY_TOPIC0: "changed_master_copy",
+    NEW_IMPLEMENTATION_TOPIC0: "new_implementation",
+    NEW_PENDING_IMPLEMENTATION_TOPIC0: "new_pending_implementation",
+    TARGET_UPDATED_TOPIC0: "target_updated",
+    UPGRADED_REVISION_TOPIC0: "upgraded_revision",
 }
 
 # ---------------------------------------------------------------------------
@@ -127,6 +147,41 @@ def parse_upgrade_log(log: dict) -> dict | None:
             if data and data != "0x" and len(data.replace("0x", "")) >= 40:
                 addrs = _data_to_addresses(data, 1)
                 event["beacon"] = addrs[0]
+
+    elif event_type == "changed_master_copy":
+        # GnosisSafe: single non-indexed address in data
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 40:
+            addrs = _data_to_addresses(data, 1)
+            event["implementation"] = addrs[0]
+
+    elif event_type == "new_implementation":
+        # Compound: two ABI-encoded addresses in data (old impl, new impl)
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 128:
+            addrs = _data_to_addresses(data, 2)
+            event["old_implementation"] = addrs[0]
+            event["implementation"] = addrs[1]
+
+    elif event_type == "new_pending_implementation":
+        # Compound: two ABI-encoded addresses in data (old pending impl, new pending impl)
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 128:
+            addrs = _data_to_addresses(data, 2)
+            event["implementation"] = addrs[1]
+
+    elif event_type == "target_updated":
+        # Synthetix: single non-indexed address in data
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 40:
+            addrs = _data_to_addresses(data, 1)
+            event["implementation"] = addrs[0]
+
+    elif event_type == "upgraded_revision":
+        # Aave V2: uint256 revision number in data — NOT an implementation address
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 2:
+            event["revision"] = _hex_to_int(data)
 
     return event
 
