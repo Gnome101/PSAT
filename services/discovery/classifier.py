@@ -234,14 +234,26 @@ def _try_facet_addresses_call(rpc_url: str, address: str) -> list[str] | None:
 # ---------------------------------------------------------------------------
 
 
-def classify_single(address: str, rpc_url: str, bytecode: str | None = None) -> dict:
+def classify_single(
+    address: str,
+    rpc_url: str,
+    bytecode: str | None = None,
+    code_cache: dict[str, str] | None = None,
+) -> dict:
     """Classify one contract via bytecode patterns and storage slot inspection.
 
     Returns a dict with ``address``, ``type``, and type-specific metadata.
+    When *code_cache* is provided, bytecode lookups are cached to avoid
+    duplicate ``eth_getCode`` RPC calls across pipeline stages.
     """
     address = normalize_address(address)
     if bytecode is None:
-        bytecode = get_code(rpc_url, address)
+        if code_cache is not None and address in code_cache:
+            bytecode = code_cache[address]
+        else:
+            bytecode = get_code(rpc_url, address)
+            if code_cache is not None:
+                code_cache[address] = bytecode
 
     info: dict = {"address": address}
 
@@ -336,6 +348,7 @@ def classify_contracts(
     dependencies: list[str],
     rpc_url: str,
     dynamic_edges: list[dict] | None = None,
+    code_cache: dict[str, str] | None = None,
 ) -> dict:
     """Classify the target contract and all its dependencies.
 
@@ -356,7 +369,7 @@ def classify_contracts(
 
     for addr in all_addrs:
         try:
-            info = classify_single(addr, rpc_url)
+            info = classify_single(addr, rpc_url, code_cache=code_cache)
         except RuntimeError:
             info = {"address": addr, "type": "regular"}
         classifications[addr] = info
@@ -375,10 +388,13 @@ def classify_contracts(
             if facet not in all_addrs_set:
                 discovered.add(facet)
 
-    # Classify newly-discovered addresses (found in proxy slots)
+    # Classify newly-discovered addresses (found in proxy slots), skip any
+    # that were already classified in Phase 1.
     for addr in sorted(discovered):
+        if addr in classifications:
+            continue
         try:
-            info = classify_single(addr, rpc_url)
+            info = classify_single(addr, rpc_url, code_cache=code_cache)
         except RuntimeError:
             info = {"address": addr, "type": "regular"}
         classifications[addr] = info

@@ -70,9 +70,6 @@ def load_addresses(filepath: str) -> list[dict]:
     sys.exit(f"Unsupported file type: {path.suffix} (use .json or .csv)")
 
 
-_build_unified_deps = build_unified_dependencies
-
-
 def process(
     address: str,
     name: str | None = None,
@@ -157,7 +154,7 @@ def process(
 
     # Write unified dependencies output
     if deps_output or dyn_output:
-        unified = _build_unified_deps(address, deps_output, dyn_output, cls_output)
+        unified = build_unified_dependencies(address, deps_output, dyn_output, cls_output)
         enrich_dependency_metadata(unified)
 
         deps_path = project_dir / "dependencies.json"

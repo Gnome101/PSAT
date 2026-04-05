@@ -280,7 +280,7 @@ def test_full_classification_pipeline(monkeypatch):
 def test_classify_contracts_handles_rpc_failure(monkeypatch):
     """RPC failure for one address falls back to 'regular', doesn't block others."""
 
-    def fake_classify(addr, _rpc, bytecode=None):
+    def fake_classify(addr, _rpc, bytecode=None, code_cache=None):
         if addr == ADDR(2):
             raise RuntimeError("RPC error")
         return {"address": addr, "type": "regular"}

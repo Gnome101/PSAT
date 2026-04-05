@@ -157,6 +157,7 @@ def _materialize_contract_artifacts(
     *,
     workspace_prefix: str,
     refresh_snapshots: bool,
+    skip_slither: bool = True,
 ) -> LoadedArtifacts:
     # Check if this address is a proxy — if so, analyze the implementation instead
     effective_address = address
@@ -183,15 +184,16 @@ def _materialize_contract_artifacts(
     if refresh_snapshots or not analysis_path.exists():
         if not project_dir.exists():
             scaffold(effective_address, project_name, result)
-        try:
-            analyze(project_dir, contract_name, effective_address)
-        except Exception as exc:
-            logger.warning(
-                "Recursive resolve: Slither CLI failed for %s (%s), continuing with structured analysis only: %s",
-                contract_name,
-                effective_address,
-                exc,
-            )
+        if not skip_slither:
+            try:
+                analyze(project_dir, contract_name, effective_address)
+            except Exception as exc:
+                logger.warning(
+                    "Recursive resolve: Slither CLI failed for %s (%s), continuing with structured analysis only: %s",
+                    contract_name,
+                    effective_address,
+                    exc,
+                )
         analysis_path = analyze_contract(project_dir)
         write_control_tracking_plan(analysis_path, project_dir / "control_tracking_plan.json")
 
@@ -415,9 +417,11 @@ def _add_nested_principals(
     details: dict[str, object],
     depth: int,
     max_depth: int,
+    classify_fn: Any | None = None,
 ) -> None:
     for nested_address, relation, label in _nested_principals_for_details(resolved_type, details):
-        nested_type, nested_details = classify_resolved_address(rpc_url, nested_address)
+        classify = classify_fn or (lambda addr: classify_resolved_address(rpc_url, addr))
+        nested_type, nested_details = classify(nested_address)
         nested_node_type = "contract" if nested_type in ANALYZABLE_TYPES else "principal"
         nested_node_id = _ensure_node(
             nodes,
@@ -467,6 +471,13 @@ def resolve_control_graph(
     )
     queued = {root_address}
     processed: set[str] = set()
+    _classify_cache: dict[str, tuple[str, dict[str, object]]] = {}
+
+    def _cached_classify(addr: str) -> tuple[str, dict[str, object]]:
+        key = addr.lower()
+        if key not in _classify_cache:
+            _classify_cache[key] = classify_resolved_address(rpc_url, addr)
+        return _classify_cache[key]
 
     nodes: dict[str, ResolvedGraphNode] = {}
     edges: dict[tuple, ResolvedGraphEdge] = {}
@@ -483,7 +494,7 @@ def resolve_control_graph(
             artifacts = _load_or_build_artifacts(
                 analysis_path,
                 rpc_url,
-                refresh_snapshots=refresh_snapshots,
+                refresh_snapshots=False,  # Already built before the loop
             )
         else:
             try:
@@ -582,6 +593,7 @@ def resolve_control_graph(
                 details=details,
                 depth=depth + 1,
                 max_depth=max_depth,
+                classify_fn=_cached_classify,
             )
 
         for principal_value in _role_principals_from_effective_permissions(effective_permissions or {}):
@@ -591,7 +603,7 @@ def resolve_control_graph(
             resolved_type = str(principal_value.get("resolved_type", "unknown"))
             details = dict(principal_value["details"])
             if resolved_type == "unknown":
-                resolved_type, classified_details = classify_resolved_address(rpc_url, principal_address)
+                resolved_type, classified_details = _cached_classify(principal_address)
                 merged_details = dict(details)
                 merged_details.update(classified_details)
                 details = merged_details
@@ -633,6 +645,7 @@ def resolve_control_graph(
                 details=details,
                 depth=depth + 1,
                 max_depth=max_depth,
+                classify_fn=_cached_classify,
             )
 
     return {

@@ -41,6 +41,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+      PSAT_DEBUG_TIMING: "1"
     command: ["bash", "start_workers.sh"]
     depends_on:
       postgres:

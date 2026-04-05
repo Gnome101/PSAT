@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 import textwrap
+import time
 from pathlib import Path
 
 from sqlalchemy import select
@@ -26,7 +27,7 @@ from services.discovery import (
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
 from services.static.vyper_analysis import is_vyper_project
-from workers.base import BaseWorker
+from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
 
@@ -194,6 +195,11 @@ class StaticWorker(BaseWorker):
         remappings = meta.get("remappings", [])
         job_id_str = str(job.id)
 
+        # Attach the job's display name so downstream tools (e.g. graph builder)
+        # can use it instead of the Etherscan contract name for proxy contracts.
+        if job.name:
+            meta["display_name"] = job.name
+
         logger.info(
             "Static stage started for job %s address=%s contract=%s",
             job_id_str,
@@ -206,29 +212,57 @@ class StaticWorker(BaseWorker):
         # behind `_is_proxy_contract()` misses user-facing proxy endpoints.
         self._resolve_proxy(session, job, address, contract_name)
 
+        # Check if proxy classification created an impl child job — if so,
+        # skip Slither/analysis on the proxy source (it's just a thin wrapper).
+        # Dependency discovery still runs because proxy-address deps are useful.
+        flags = get_artifact(session, job.id, "contract_flags")
+        is_proxy = isinstance(flags, dict) and flags.get("is_proxy")
+
         # Create temp directory and write source files
         tmp_dir = tempfile.mkdtemp(prefix="psat_static_")
         project_dir = Path(tmp_dir)
         try:
             self._scaffold_project(project_dir, sources, meta, build_settings, remappings)
 
-            # Phase 0: Dependency artifacts
+            # Phase 0: Dependency artifacts (always runs — proxy deps are useful)
             self._run_dependency_phase(session, job, project_dir, contract_name, address)
 
-            # Phase 1: Slither
-            slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
-
-            # Phase 2: Contract analysis (uses Slither library directly, may succeed even if CLI failed)
-            analysis_ok = self._run_analysis_phase(session, job, project_dir, contract_name, address)
-
-            if not analysis_ok:
-                raise RuntimeError(
-                    f"Contract analysis failed for {contract_name} ({address}). "
-                    f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
+            if is_proxy:
+                self.update_detail(session, job, "Proxy detected — impl job handles analysis")
+                logger.info(
+                    "Static stage skipping analysis for proxy job %s (%s) — impl child job will analyze",
+                    job_id_str,
+                    contract_name,
                 )
+                # Proxy jobs skip resolution/policy — complete directly
+                from db.queue import complete_job
 
-            # Phase 3: Control tracking plan
-            self._run_tracking_plan_phase(session, job, project_dir, contract_name, address)
+                complete_job(session, job.id, f"Proxy {contract_name} — impl child job queued for full analysis")
+                raise JobHandledDirectly()
+            else:
+                # Phase 1: Slither
+                t0 = time.monotonic()
+                slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] slither: %.1fs", time.monotonic() - t0)
+
+                # Phase 2: Contract analysis
+                t0 = time.monotonic()
+                analysis_ok = self._run_analysis_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
+
+                if not analysis_ok:
+                    raise RuntimeError(
+                        f"Contract analysis failed for {contract_name} ({address}). "
+                        f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
+                    )
+
+                # Phase 3: Control tracking plan
+                t0 = time.monotonic()
+                self._run_tracking_plan_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
 
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
@@ -409,6 +443,9 @@ class StaticWorker(BaseWorker):
         dynamic_tx_limit = request.get("dynamic_tx_limit", 10)
         dynamic_tx_hashes = request.get("dynamic_tx_hashes")
         dependency_errors: dict[str, str] = {}
+        # Shared bytecode cache across all dependency stages to avoid duplicate
+        # eth_getCode RPC calls for the same addresses.
+        code_cache: dict[str, str] = {}
 
         logger.info(
             "Static stage dependency discovery started for job %s address=%s contract=%s",
@@ -419,7 +456,11 @@ class StaticWorker(BaseWorker):
 
         deps_output = None
         try:
-            deps_output = find_dependencies(address, deps_rpc)
+            t0 = time.monotonic()
+            deps_output = find_dependencies(address, deps_rpc, code_cache=code_cache)
+            if DEBUG_TIMING:
+                n = len(deps_output.get("dependencies", []))
+                logger.info("[TIMING] static deps: %.1fs (%d deps)", time.monotonic() - t0, n)
             logger.info(
                 "Static stage static dependencies complete for job %s address=%s count=%d",
                 job.id,
@@ -437,14 +478,21 @@ class StaticWorker(BaseWorker):
 
         dyn_output = None
         try:
+            t0 = time.monotonic()
             tx_limit = int(dynamic_tx_limit)
             tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
+            proxy_addr = request.get("proxy_address")
             dyn_output = find_dynamic_dependencies(
                 address,
                 rpc_url=dynamic_rpc,
                 tx_limit=tx_limit,
                 tx_hashes=tx_hashes,
+                proxy_address=proxy_addr,
+                code_cache=code_cache,
             )
+            if DEBUG_TIMING:
+                n = len(dyn_output.get("dependencies", []))
+                logger.info("[TIMING] dynamic deps: %.1fs (%d deps)", time.monotonic() - t0, n)
             logger.info(
                 "Static stage dynamic dependencies complete for job %s address=%s count=%d",
                 job.id,
@@ -472,12 +520,16 @@ class StaticWorker(BaseWorker):
                 set((deps_output or {}).get("dependencies", []) + (dyn_output or {}).get("dependencies", []))
             )
             try:
+                t0 = time.monotonic()
                 cls_output = classify_contracts(
                     address,
                     unique_deps,
                     resolved_rpc,
                     dynamic_edges=(dyn_output or {}).get("dependency_graph"),
+                    code_cache=code_cache,
                 )
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
                 logger.info(
                     "Static stage dependency classification complete for job %s address=%s discovered=%d",
                     job.id,
@@ -501,13 +553,18 @@ class StaticWorker(BaseWorker):
 
         if deps_output or dyn_output:
             unified = build_unified_dependencies(address, deps_output, dyn_output, cls_output)
+            t0 = time.monotonic()
             enrich_dependency_metadata(unified)
+            if DEBUG_TIMING:
+                logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
 
             dependencies_path = project_dir / "dependencies.json"
             dependencies_path.write_text(json.dumps(unified, indent=2) + "\n")
             store_artifact(session, job.id, "dependencies", data=unified)
 
-            viz_path = write_dependency_visualization(project_dir)
+            proxy_addr = request.get("proxy_address")
+            proxy_name = (job.name or "").split(":")[0].strip() if proxy_addr else None
+            viz_path = write_dependency_visualization(project_dir, proxy_addr, proxy_name)
             if viz_path and viz_path.exists():
                 dependency_graph = json.loads(viz_path.read_text())
                 store_artifact(session, job.id, "dependency_graph_viz", data=dependency_graph)
@@ -523,6 +580,27 @@ class StaticWorker(BaseWorker):
                     "Static stage dependencies complete for job %s address=%s (no graph nodes)",
                     job.id,
                     address,
+                )
+
+            # Upgrade history for proxy contracts
+            try:
+                from services.discovery.upgrade_history import build_upgrade_history
+
+                uh = build_upgrade_history(dependencies_path)
+                if uh.get("proxies"):
+                    store_artifact(session, job.id, "upgrade_history", data=uh)
+                    logger.info(
+                        "Static stage upgrade history complete for job %s address=%s upgrades=%d",
+                        job.id,
+                        address,
+                        uh.get("total_upgrades", 0),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Static stage upgrade history failed for job %s address=%s: %s",
+                    job.id,
+                    address,
+                    exc,
                 )
         else:
             logger.warning(

@@ -302,11 +302,19 @@ function UpgradesTab({ detail }) {
   }
 
   const deps = detail?.dependencies?.dependencies || {};
+  const targetAddr = (detail?.address || history.target_address || "").toLowerCase();
 
   function proxyLabel(addr) {
+    if (addr.toLowerCase() === targetAddr) {
+      return detail?.run_name || detail?.contract_name || shortenAddress(addr);
+    }
     const dep = deps[addr];
     if (dep?.contract_name) return dep.contract_name;
     return shortenAddress(addr);
+  }
+
+  function isTarget(addr) {
+    return addr.toLowerCase() === targetAddr;
   }
 
   function formatTimestamp(ts) {
@@ -332,10 +340,13 @@ function UpgradesTab({ detail }) {
         <StatCard label="Proxies" value={Object.keys(history.proxies).length} />
         <StatCard label="Total Upgrades" value={history.total_upgrades} />
       </div>
-      {Object.entries(history.proxies).map(([addr, proxy]) => (
+      {Object.entries(history.proxies)
+        .sort(([a], [b]) => (isTarget(a) ? -1 : isTarget(b) ? 1 : 0))
+        .map(([addr, proxy]) => (
         <div className="card" key={addr}>
           <div className="card-header-row">
             <h3>{proxyLabel(addr)}</h3>
+            {isTarget(addr) ? <span className="chip">target</span> : null}
             <span className="chip alt">{proxy.proxy_type}</span>
           </div>
           <div className="mono muted" style={{ marginBottom: 8 }}>{addr}</div>
@@ -1130,13 +1141,14 @@ function mergeProxyImpl(analyses) {
 
 function PipelineDashboard() {
   const [allJobs, setAllJobs] = useState([]);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function fetchJobs() {
       try {
         const jobs = await api("/api/jobs");
-        if (!cancelled) setAllJobs(jobs);
+        if (!cancelled) { setAllJobs(jobs); setLoaded(true); }
       } catch {}
     }
     fetchJobs();
@@ -1144,23 +1156,46 @@ function PipelineDashboard() {
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
+  // Filter to only show meaningful analysis jobs:
+  // - Skip proxy jobs once their impl child job exists (the impl does the real work)
+  // - Skip company/discovery-only jobs once child contract jobs exist
+  const hasChildJobs = useMemo(() =>
+    allJobs.some((j) => !j.company && j.address),
+  [allJobs]);
+  const implProxyAddresses = useMemo(() =>
+    new Set(allJobs.map((j) => (j.request?.proxy_address || "").toLowerCase()).filter(Boolean)),
+  [allJobs]);
+  const analysisJobs = useMemo(() =>
+    allJobs.filter((j) => {
+      if (j.is_proxy) return false;
+      if (!j.is_proxy && j.address && implProxyAddresses.has(j.address.toLowerCase())) return false;
+      if (j.company && hasChildJobs) return false;
+      return true;
+    }),
+  [allJobs, hasChildJobs, implProxyAddresses]);
+
   const buckets = useMemo(() => {
     const b = {};
     for (const s of ALL_STAGES) b[s] = { queued: [], processing: [], completed: [], failed: [] };
-    for (const j of allJobs) {
+    for (const j of analysisJobs) {
       const stage = j.stage || "discovery";
       const status = j.status || "queued";
       if (b[stage] && b[stage][status]) b[stage][status].push(j);
     }
     return b;
-  }, [allJobs]);
+  }, [analysisJobs]);
 
   const totals = useMemo(() => {
     const t = { queued: 0, processing: 0, completed: 0, failed: 0, total: 0 };
-    for (const j of allJobs) { t[j.status] = (t[j.status] || 0) + 1; t.total++; }
+    for (const j of analysisJobs) {
+      t[j.status] = (t[j.status] || 0) + 1; t.total++;
+    }
     return t;
-  }, [allJobs]);
+  }, [analysisJobs]);
 
+  if (!loaded) {
+    return <div className="page"><section className="panel"><p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading pipeline status…</p></section></div>;
+  }
   if (!allJobs.length) {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
   }

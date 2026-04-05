@@ -4,7 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
-SEVERITY_ORDER = {"High": 0, "Medium": 1, "Low": 2, "Informational": 3, "Optimization": 4}
+from services.static.contract_analysis_pipeline.constants import SEVERITY_ORDER
 
 
 def run_slither(project_dir: Path) -> dict:

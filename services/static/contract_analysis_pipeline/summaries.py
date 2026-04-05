@@ -24,7 +24,6 @@ from .constants import (
     ACCESS_CONTROL_INHERITANCE,
     ACCESS_GUARD_KEYWORDS,
     ADMIN_VAR_KEYWORDS,
-    CONTROL_EFFECTS,
     FACTORY_NAME_KEYWORDS,
     PAUSE_MODIFIER_KEYWORDS,
     ROLE_CONSTANT_PATTERN,
@@ -206,29 +205,6 @@ def _controller_refs_from_inferred_guards(guards: list[str]) -> list[str]:
                 refs.append(guard)
             refs.append(normalized)
     return _dedupe_strings(refs)
-
-
-def _looks_like_control_function(function, effects: list[str]) -> bool:
-    if any(effect in CONTROL_EFFECTS for effect in effects):
-        return True
-    name = getattr(function, "name", "").lower()
-    return any(
-        token in name
-        for token in (
-            "pause",
-            "unpause",
-            "upgrade",
-            "authorize",
-            "mint",
-            "burn",
-            "grant",
-            "revoke",
-            "schedule",
-            "queue",
-            "execute",
-            "cancel",
-        )
-    )
 
 
 def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]:

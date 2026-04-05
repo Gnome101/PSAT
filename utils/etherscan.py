@@ -119,12 +119,6 @@ def get_contract_name(address: str) -> str | None:
     return name
 
 
-def get_selector_map(address: str) -> dict[str, str]:
-    """Return a mapping of 4-byte selector → function name for a verified contract."""
-    _, selector_map = get_contract_info(address)
-    return selector_map
-
-
 def get_source(address: str) -> dict:
     """Fetch verified source code for a contract address. Returns the first result."""
     data = get("contract", "getsourcecode", address=address)

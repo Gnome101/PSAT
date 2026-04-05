@@ -11,3 +11,4 @@ protocols/
 !tests/fixtures/
 !tests/fixtures/contracts/
 !tests/fixtures/contracts/**
+.coverage
