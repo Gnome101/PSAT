@@ -86,8 +86,8 @@ def _make_log(address: str, topics: list[str], data: str = "0x") -> dict:
 def db_session():
     """Create an in-memory SQLite DB with monitoring tables and a watched proxy."""
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     proxy = WatchedProxy(
@@ -142,6 +142,7 @@ class TestSupportedProxyTypes:
         assert len(events) == 1
         assert events[0].event_type == "upgraded"
         assert events[0].new_implementation.lower() == IMPL_NEW
+        assert events[0].old_implementation is not None
         assert events[0].old_implementation.lower() == IMPL_OLD
         assert events[0].block_number == BLOCK_INT
 
@@ -198,11 +199,13 @@ class TestSupportedProxyTypes:
         Both addresses are non-indexed, stored in log data.
         """
         session, proxy = db_session
-        logs = [_make_log(
-            PROXY_ADDR,
-            [ADMIN_CHANGED_TOPIC0],
-            data=_two_addrs_to_data(ADMIN_OLD, ADMIN_NEW),
-        )]
+        logs = [
+            _make_log(
+                PROXY_ADDR,
+                [ADMIN_CHANGED_TOPIC0],
+                data=_two_addrs_to_data(ADMIN_OLD, ADMIN_NEW),
+            )
+        ]
 
         events = _run_scan_with_logs(session, logs)
 
@@ -217,10 +220,12 @@ class TestSupportedProxyTypes:
         putting them in data.
         """
         session, proxy = db_session
-        logs = [_make_log(
-            PROXY_ADDR,
-            [ADMIN_CHANGED_TOPIC0, _addr_to_topic(ADMIN_OLD), _addr_to_topic(ADMIN_NEW)],
-        )]
+        logs = [
+            _make_log(
+                PROXY_ADDR,
+                [ADMIN_CHANGED_TOPIC0, _addr_to_topic(ADMIN_OLD), _addr_to_topic(ADMIN_NEW)],
+            )
+        ]
 
         events = _run_scan_with_logs(session, logs)
 
@@ -234,11 +239,13 @@ class TestSupportedProxyTypes:
         Fallback encoding where the beacon is a non-indexed parameter.
         """
         session, proxy = db_session
-        logs = [_make_log(
-            PROXY_ADDR,
-            [BEACON_UPGRADED_TOPIC0],
-            data=_addr_to_data(BEACON_ADDR),
-        )]
+        logs = [
+            _make_log(
+                PROXY_ADDR,
+                [BEACON_UPGRADED_TOPIC0],
+                data=_addr_to_data(BEACON_ADDR),
+            )
+        ]
 
         events = _run_scan_with_logs(session, logs)
 
@@ -270,10 +277,12 @@ class TestSupportedProxyTypes:
 
         assert len(events) == 2
         assert events[0].event_type == "upgraded"
+        assert events[0].old_implementation is not None
         assert events[0].old_implementation.lower() == IMPL_OLD
         assert events[0].new_implementation.lower() == impl_v2
 
         assert events[1].event_type == "upgraded"
+        assert events[1].old_implementation is not None
         assert events[1].old_implementation.lower() == impl_v2
         assert events[1].new_implementation.lower() == impl_v3
 
@@ -396,20 +405,20 @@ class TestSupportedProxyTypes:
         facet = IMPL_NEW[2:]
         # Each ABI word is exactly 64 hex chars (32 bytes)
         data = "0x"
-        data += "0" * 62 + "60"           # word 0: offset to FacetCut[] = 0x60 = 96 bytes
-        data += "0" * 64                   # word 1: _init = address(0)
-        data += "0" * 60 + "0140"          # word 2: offset to _calldata
+        data += "0" * 62 + "60"  # word 0: offset to FacetCut[] = 0x60 = 96 bytes
+        data += "0" * 64  # word 1: _init = address(0)
+        data += "0" * 60 + "0140"  # word 2: offset to _calldata
         # -- FacetCut[] at byte offset 96 (word 3) --
-        data += "0" * 62 + "01"            # word 3: array length = 1
-        data += "0" * 62 + "40"            # word 4: offset to entry[0] = 0x40 = 64 bytes from array start
+        data += "0" * 62 + "01"  # word 3: array length = 1
+        data += "0" * 62 + "40"  # word 4: offset to entry[0] = 0x40 = 64 bytes from array start
         # -- FacetCut entry[0] at byte offset 96 + 32 = 128 --
-        data += "0" * 24 + facet           # word 5: facetAddress
-        data += "0" * 64                   # word 6: action = 0 (Add)
-        data += "0" * 62 + "60"            # word 7: offset to selectors
-        data += "0" * 62 + "01"            # word 8: selectors length = 1
-        data += "12345678" + "0" * 56      # word 9: one selector
+        data += "0" * 24 + facet  # word 5: facetAddress
+        data += "0" * 64  # word 6: action = 0 (Add)
+        data += "0" * 62 + "60"  # word 7: offset to selectors
+        data += "0" * 62 + "01"  # word 8: selectors length = 1
+        data += "12345678" + "0" * 56  # word 9: one selector
         # -- _calldata --
-        data += "0" * 64                   # word 10: calldata length = 0
+        data += "0" * 64  # word 10: calldata length = 0
 
         log = _make_log(PROXY_ADDR, [DIAMOND_TOPIC0], data=data)
         events = _run_scan_with_logs(session, [log])
@@ -487,8 +496,7 @@ class TestPollingRequired:
 
         storage_value = "0x" + "0" * 24 + IMPL_NEW[2:]
         zero = "0x" + "0" * 64
-        with patch("services.monitoring.proxy_watcher.rpc_batch_request",
-                    return_value=[storage_value] + [zero] * 7):
+        with patch("services.monitoring.proxy_watcher.rpc_batch_request", return_value=[storage_value] + [zero] * 7):
             poll_events = poll_for_upgrades(session, "http://fake-rpc")
 
         assert len(poll_events) == 1
@@ -512,8 +520,7 @@ class TestPollingRequired:
         storage_value = "0x" + "0" * 24 + IMPL_NEW[2:]
         zero = "0x" + "0" * 64
 
-        with patch("services.monitoring.proxy_watcher.rpc_batch_request",
-                    return_value=[storage_value] + [zero] * 7):
+        with patch("services.monitoring.proxy_watcher.rpc_batch_request", return_value=[storage_value] + [zero] * 7):
             events = poll_for_upgrades(session, "http://fake-rpc")
 
         assert len(events) == 1

@@ -14,9 +14,7 @@ Run with:
 
 from __future__ import annotations
 
-import os
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -34,7 +32,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 _has_anvil = shutil.which("anvil") is not None
 _has_cast = shutil.which("cast") is not None
-
 
 
 def _free_port() -> int:
@@ -71,10 +68,16 @@ def _cast(args: list[str], rpc_url: str) -> str:
 
 def _cast_send(to: str, sig: str, args: list[str], rpc_url: str, private_key: str) -> str:
     """Send a transaction via cast."""
-    cmd = ["cast", "send", to, sig] + args + [
-        "--rpc-url", rpc_url,
-        "--private-key", private_key,
-    ]
+    cmd = (
+        ["cast", "send", to, sig]
+        + args
+        + [
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
+        ]
+    )
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(f"cast send failed: {result.stderr}")
@@ -85,9 +88,14 @@ def _deploy_raw(bytecode: str, rpc_url: str, private_key: str) -> str:
     """Deploy raw bytecode and return the contract address."""
     result = subprocess.run(
         [
-            "cast", "send", "--create", bytecode,
-            "--rpc-url", rpc_url,
-            "--private-key", private_key,
+            "cast",
+            "send",
+            "--create",
+            bytecode,
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            private_key,
         ],
         capture_output=True,
         text=True,
@@ -106,6 +114,7 @@ def _deploy_raw(bytecode: str, rpc_url: str, private_key: str) -> str:
     # Fallback: get address from transaction receipt
     # Look for a hex address in the output
     import re
+
     addresses = re.findall(r"0x[0-9a-fA-F]{40}", result.stdout)
     if addresses:
         return addresses[0].lower()
@@ -183,18 +192,22 @@ contract TestProxy {
 """
 
 
-def _compile_and_deploy(source: str, contract_name: str, constructor_args: list[str],
-                        rpc_url: str, private_key: str, tmp_path: Path) -> str:
+def _compile_and_deploy(
+    source: str, contract_name: str, constructor_args: list[str], rpc_url: str, private_key: str, tmp_path: Path
+) -> str:
     """Write solidity to a temp file, compile with forge, deploy with cast."""
     src_file = tmp_path / f"{contract_name}.sol"
     src_file.write_text(source)
 
     # Use forge create with --broadcast to compile, deploy, and broadcast
     cmd = [
-        "forge", "create",
+        "forge",
+        "create",
         f"{src_file}:{contract_name}",
-        "--rpc-url", rpc_url,
-        "--private-key", private_key,
+        "--rpc-url",
+        rpc_url,
+        "--private-key",
+        private_key,
         "--broadcast",
         "--no-cache",
     ]
@@ -227,7 +240,7 @@ def test_deploy_watch_upgrade_detect(tmp_path):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SASession
 
-    from db.models import Base, ProxyUpgradeEvent, WatchedProxy
+    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import (
         resolve_current_implementation,
         scan_for_upgrades,
@@ -254,15 +267,9 @@ def test_deploy_watch_upgrade_detect(tmp_path):
         foundry_toml = tmp_path / "foundry.toml"
         foundry_toml.write_text("[profile.default]\nsrc = '.'\nout = 'out'\n")
 
-        impl_v1_addr = _compile_and_deploy(
-            IMPL_V1_SOURCE, "ImplV1", [], rpc_url, private_key, tmp_path
-        )
-        impl_v2_addr = _compile_and_deploy(
-            IMPL_V2_SOURCE, "ImplV2", [], rpc_url, private_key, tmp_path
-        )
-        proxy_addr = _compile_and_deploy(
-            PROXY_SOURCE, "TestProxy", [impl_v1_addr], rpc_url, private_key, tmp_path
-        )
+        impl_v1_addr = _compile_and_deploy(IMPL_V1_SOURCE, "ImplV1", [], rpc_url, private_key, tmp_path)
+        impl_v2_addr = _compile_and_deploy(IMPL_V2_SOURCE, "ImplV2", [], rpc_url, private_key, tmp_path)
+        proxy_addr = _compile_and_deploy(PROXY_SOURCE, "TestProxy", [impl_v1_addr], rpc_url, private_key, tmp_path)
 
         assert impl_v1_addr.startswith("0x")
         assert impl_v2_addr.startswith("0x")
@@ -282,8 +289,8 @@ def test_deploy_watch_upgrade_detect(tmp_path):
         engine = create_engine(f"sqlite:///{db_path}")
         # Only create the tables needed for monitoring (not Job which uses
         # PostgreSQL-specific JSONB columns incompatible with SQLite)
-        WatchedProxy.__table__.create(engine, checkfirst=True)
-        ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+        WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+        ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
         session = SASession(engine, expire_on_commit=False)
 
         proxy = WatchedProxy(
@@ -315,6 +322,7 @@ def test_deploy_watch_upgrade_detect(tmp_path):
 
         evt = events[0]
         assert evt.event_type == "upgraded"
+        assert evt.old_implementation is not None
         assert evt.old_implementation.lower() == impl_v1_addr.lower()
         assert evt.new_implementation.lower() == impl_v2_addr.lower()
         assert evt.block_number > current_block
@@ -322,6 +330,7 @@ def test_deploy_watch_upgrade_detect(tmp_path):
 
         # Verify WatchedProxy was updated
         session.refresh(proxy)
+        assert proxy.last_known_implementation is not None
         assert proxy.last_known_implementation.lower() == impl_v2_addr.lower()
         assert proxy.last_scanned_block >= evt.block_number
 
@@ -331,11 +340,7 @@ def test_deploy_watch_upgrade_detect(tmp_path):
         assert new_impl.lower() == impl_v2_addr.lower()
 
         # Verify the event is persisted in the DB
-        db_events = (
-            session.query(ProxyUpgradeEvent)
-            .filter(ProxyUpgradeEvent.watched_proxy_id == proxy.id)
-            .all()
-        )
+        db_events = session.query(ProxyUpgradeEvent).filter(ProxyUpgradeEvent.watched_proxy_id == proxy.id).all()
         assert len(db_events) == 1
         assert db_events[0].new_implementation.lower() == impl_v2_addr.lower()
 

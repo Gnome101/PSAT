@@ -258,9 +258,7 @@ def _llm_select_domain(
     sorted_domains = sorted(domain_info.keys(), key=lambda d: -len(domain_info[d]))
     choices = "\n".join(
         f"{i + 1}. {domain} (pages: {', '.join(titles[:2])})"
-        for i, (domain, titles) in enumerate(
-            (d, domain_info[d]) for d in sorted_domains
-        )
+        for i, (domain, titles) in enumerate((d, domain_info[d]) for d in sorted_domains)
     )
 
     prompt = (
@@ -411,8 +409,7 @@ def _discover_contract_inventory_pages(
         )
 
     combined = _dedupe_results_by_url(
-        [r for r in broad_results if _is_allowed_domain(_get_domain(str(r.get("url", ""))), all_domains)]
-        + site_results
+        [r for r in broad_results if _is_allowed_domain(_get_domain(str(r.get("url", ""))), all_domains)] + site_results
     )
     if not combined:
         _debug_log(debug, "No inventory page candidates returned")
@@ -446,7 +443,11 @@ def _discover_contract_inventory_pages(
         "Reply with ONLY the best URL(s), one per line — nothing else."
     )
     recommended = _llm_select_pages(
-        page_info, company, domain_label, prompt,
-        allowed_domains=all_domains, debug=debug,
+        page_info,
+        company,
+        domain_label,
+        prompt,
+        allowed_domains=all_domains,
+        debug=debug,
     )
     return combined, recommended

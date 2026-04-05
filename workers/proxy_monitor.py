@@ -11,12 +11,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from services.monitoring.proxy_watcher import (
+    DEFAULT_POLL_INTERVAL,
+    DEFAULT_SCAN_INTERVAL,
+    run_poll_loop,
+    run_scan_loop,
+)
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-
-# Ensure project root on sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from services.monitoring.proxy_watcher import DEFAULT_POLL_INTERVAL, DEFAULT_SCAN_INTERVAL, run_poll_loop, run_scan_loop
 
 logger = logging.getLogger(__name__)
 

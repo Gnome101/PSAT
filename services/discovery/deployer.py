@@ -26,7 +26,6 @@ deploy-as-a-service providers while keeping genuine protocol ops wallets.
 
 from __future__ import annotations
 
-
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any

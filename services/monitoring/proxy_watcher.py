@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import ProxyUpgradeEvent, SessionLocal, WatchedProxy
 from services.discovery.upgrade_history import (
-    ADMIN_CHANGED_TOPIC0,
-    BEACON_UPGRADED_TOPIC0,
     EVENT_TOPICS,
-    UPGRADED_TOPIC0,
     parse_upgrade_log,
 )
 from utils.rpc import normalize_hex, parse_address_result, rpc_batch_request, rpc_request
@@ -70,7 +66,10 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
 
     logger.debug(
         "Scan: %d proxies, block range %d→%d (%d blocks)",
-        len(proxies), from_block + 1, latest_block, latest_block - from_block,
+        len(proxies),
+        from_block + 1,
+        latest_block,
+        latest_block - from_block,
     )
     new_events: list[ProxyUpgradeEvent] = []
     topics = [list(EVENT_TOPICS.keys())]  # topic0 = any of the 3 event types
@@ -81,20 +80,17 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
     max_scanned = max(p.last_scanned_block for p in proxies)
     existing_events: set[tuple] = set()
     if from_block < max_scanned:
-        existing_rows = (
-            session.execute(
-                select(
-                    ProxyUpgradeEvent.watched_proxy_id,
-                    ProxyUpgradeEvent.tx_hash,
-                    ProxyUpgradeEvent.block_number,
-                    ProxyUpgradeEvent.new_implementation,
-                ).where(
-                    ProxyUpgradeEvent.block_number > from_block,
-                    ProxyUpgradeEvent.block_number <= max_scanned,
-                )
+        existing_rows = session.execute(
+            select(
+                ProxyUpgradeEvent.watched_proxy_id,
+                ProxyUpgradeEvent.tx_hash,
+                ProxyUpgradeEvent.block_number,
+                ProxyUpgradeEvent.new_implementation,
+            ).where(
+                ProxyUpgradeEvent.block_number > from_block,
+                ProxyUpgradeEvent.block_number <= max_scanned,
             )
-            .all()
-        )
+        ).all()
         for row in existing_rows:
             existing_events.add((str(row[0]), row[1], row[2], row[3]))
 
@@ -250,7 +246,10 @@ def _build_rpc_call(method_type: str, address: str, arg: str) -> tuple[str, list
 
 
 def resolve_current_implementation(
-    proxy_address: str, rpc_url: str, block: str = "latest", proxy_type: str | None = None,
+    proxy_address: str,
+    rpc_url: str,
+    block: str = "latest",
+    proxy_type: str | None = None,
 ) -> str | None:
     """Resolve the current implementation for a proxy.
 
@@ -333,9 +332,7 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
         else:
             # Unknown type — try all methods in one batch
             for method_type, arg, _ in _DISCOVERY_METHODS:
-                batch_calls.append(
-                    _build_rpc_call(method_type, proxy.proxy_address, arg)
-                )
+                batch_calls.append(_build_rpc_call(method_type, proxy.proxy_address, arg))
             proxy_plan.append((proxy, start, len(_DISCOVERY_METHODS), True))
             discovery_count += 1
 
@@ -344,7 +341,9 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
 
     logger.debug(
         "Poll batch: %d calls (%d known-type proxies, %d discovery proxies)",
-        len(batch_calls), known_count, discovery_count,
+        len(batch_calls),
+        known_count,
+        discovery_count,
     )
 
     # -- Phase 2: send batch ---------------------------------------------------
@@ -388,7 +387,8 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
             if current_impl is None:
                 logger.debug(
                     "%s: known type %s returned nothing",
-                    proxy.proxy_address, proxy.proxy_type,
+                    proxy.proxy_address,
+                    proxy.proxy_type,
                 )
 
         if current_impl is None:

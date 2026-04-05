@@ -1,10 +1,19 @@
 #!/bin/bash
 # Deploy and upgrade a test proxy on a local Anvil node.
 #
+# Setup:
+#   1. Change ETH_RPC in .env to http://127.0.0.1:8546
+#   2. anvil --port 8546                              (terminal 1)
+#   3. bash start_local.sh                            (terminal 2)
+#   4. cd site && npm run dev                         (terminal 3)
+#
 # Usage:
-#   anvil --port 8546                                  # start anvil first
-#   bash scripts/demo_proxy_upgrade.sh deploy          # deploy proxy, print address
-#   bash scripts/demo_proxy_upgrade.sh upgrade <addr>  # upgrade the proxy
+#   bash scripts/demo_proxy_upgrade.sh deploy         (terminal 4)
+#   Copy the proxy address, paste it in http://localhost:5173/proxies, click Watch Proxy
+#   bash scripts/demo_proxy_upgrade.sh upgrade <addr> (terminal 4)
+#   Watch the upgrade event appear in the GUI
+#
+# Change ETH_RPC back to your Alchemy URL when done.
 #
 # Requires: anvil running on port 8546, forge + cast on PATH
 
@@ -76,7 +85,7 @@ case "$CMD" in
     echo "  Address: $PROXY"
     echo "  Impl V1: $IMPL_V1"
     echo ""
-    echo "Enter $PROXY in the Proxies page with rpc_url http://127.0.0.1:8546"
+    echo "Paste $PROXY in http://localhost:5173/proxies and click Watch Proxy."
     echo "Then run:  bash scripts/demo_proxy_upgrade.sh upgrade $PROXY"
     ;;
 
@@ -96,13 +105,14 @@ case "$CMD" in
     echo "  Proxy:    $PROXY_ADDR"
     echo "  New impl: $IMPL_V2"
     echo ""
-    echo "The monitor should detect this within ~15s."
+    echo "The upgrade event should appear in the GUI within ~15s."
     ;;
 
   *)
     echo "Usage:"
-    echo "  anvil --port 8546                                  # start anvil first"
     echo "  bash scripts/demo_proxy_upgrade.sh deploy          # deploy a test proxy"
     echo "  bash scripts/demo_proxy_upgrade.sh upgrade <addr>  # upgrade it"
+    echo ""
+    echo "See the header of this script for full setup instructions."
     ;;
 esac

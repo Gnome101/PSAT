@@ -17,16 +17,15 @@ from __future__ import annotations
 import sys
 import uuid
 from pathlib import Path
-from unittest.mock import patch, call
+from unittest.mock import call, patch
 
+import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import Base, ProxyUpgradeEvent, WatchedProxy
+from db.models import ProxyUpgradeEvent, WatchedProxy
 from services.discovery.upgrade_history import (
     ADMIN_CHANGED_TOPIC0,
     BEACON_UPGRADED_TOPIC0,
@@ -87,6 +86,7 @@ def _make_log(
 # Fixtures — in-memory SQLite database
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def db_session():
     """Create an in-memory SQLite database with only the monitoring tables,
@@ -106,8 +106,8 @@ def db_session():
         cursor.close()
 
     # Only create the tables we need for proxy monitoring tests
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = Session(engine, expire_on_commit=False)
     try:
@@ -588,20 +588,19 @@ def test_no_duplicate_events_with_mixed_last_scanned_block(mock_rpc, db_session)
     events = scan_for_upgrades(db_session, "http://localhost:8545")
 
     # Dedup must be selective: skip the duplicate for proxy A but create the new event for proxy B
-    assert len(events) == 1, (
-        "Expected 1 new event (proxy B), duplicate for proxy A should be skipped."
-    )
+    assert len(events) == 1, "Expected 1 new event (proxy B), duplicate for proxy A should be skipped."
     assert events[0].watched_proxy_id == proxy_b.id
     assert events[0].new_implementation == new_impl_b
 
     # Verify proxy A still has only the original event (no duplicate)
     from sqlalchemy import select
-    all_a_events = db_session.execute(
-        select(ProxyUpgradeEvent).where(ProxyUpgradeEvent.watched_proxy_id == proxy_a.id)
-    ).scalars().all()
-    assert len(all_a_events) == 1, (
-        "Only the original ProxyUpgradeEvent for proxy A should exist."
+
+    all_a_events = (
+        db_session.execute(select(ProxyUpgradeEvent).where(ProxyUpgradeEvent.watched_proxy_id == proxy_a.id))
+        .scalars()
+        .all()
     )
+    assert len(all_a_events) == 1, "Only the original ProxyUpgradeEvent for proxy A should exist."
 
 
 # ---------------------------------------------------------------------------
@@ -717,19 +716,26 @@ def test_multiple_events_same_transaction(mock_rpc, db_session):
     new_impl = ADDR(11)
     old_admin = ADDR(50)
     new_admin = ADDR(51)
-    proxy = _add_proxy(db_session, proxy_addr, last_known_impl=old_impl, last_scanned_block=90)
+    _add_proxy(db_session, proxy_addr, last_known_impl=old_impl, last_scanned_block=90)
 
     block = hex(95)
     tx = "0x" + "c" * 64
 
     upgrade_log = _make_log(
-        proxy_addr, UPGRADED_TOPIC0, _topic_for(new_impl),
-        block=block, tx=tx, log_index="0x0",
+        proxy_addr,
+        UPGRADED_TOPIC0,
+        _topic_for(new_impl),
+        block=block,
+        tx=tx,
+        log_index="0x0",
     )
     admin_log = _make_log(
-        proxy_addr, ADMIN_CHANGED_TOPIC0,
+        proxy_addr,
+        ADMIN_CHANGED_TOPIC0,
         data=_admin_data(old_admin, new_admin),
-        block=block, tx=tx, log_index="0x1",
+        block=block,
+        tx=tx,
+        log_index="0x1",
     )
 
     def rpc_side_effect(url, method, params):
@@ -773,12 +779,20 @@ def test_rapid_successive_upgrades(mock_rpc, db_session):
     proxy = _add_proxy(db_session, proxy_addr, last_known_impl=old_impl, last_scanned_block=90)
 
     log1 = _make_log(
-        proxy_addr, UPGRADED_TOPIC0, _topic_for(impl_v2),
-        block=hex(100), tx="0x" + "d" * 64, log_index="0x0",
+        proxy_addr,
+        UPGRADED_TOPIC0,
+        _topic_for(impl_v2),
+        block=hex(100),
+        tx="0x" + "d" * 64,
+        log_index="0x0",
     )
     log2 = _make_log(
-        proxy_addr, UPGRADED_TOPIC0, _topic_for(impl_v3),
-        block=hex(101), tx="0x" + "e" * 64, log_index="0x0",
+        proxy_addr,
+        UPGRADED_TOPIC0,
+        _topic_for(impl_v3),
+        block=hex(101),
+        tx="0x" + "e" * 64,
+        log_index="0x0",
     )
 
     def rpc_side_effect(url, method, params):
@@ -1073,7 +1087,9 @@ def test_resolve_with_proxy_type_dispatches_directly(mock_rpc):
     for proxy_type, expected_method in cases:
         mock_rpc.reset_mock()
         result = resolve_current_implementation(
-            ADDR(1), "http://localhost:8545", proxy_type=proxy_type,
+            ADDR(1),
+            "http://localhost:8545",
+            proxy_type=proxy_type,
         )
         assert result == impl_addr.lower(), f"{proxy_type}: expected {impl_addr}"
         assert mock_rpc.call_count == 1, f"{proxy_type}: expected 1 RPC call, got {mock_rpc.call_count}"

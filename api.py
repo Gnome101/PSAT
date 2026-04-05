@@ -59,7 +59,9 @@ class WatchProxyRequest(BaseModel):
     chain: str = "ethereum"
     label: str | None = None
     rpc_url: str | None = None
-    from_block: int | None = Field(default=None, ge=0, description="Block to start scanning from. Defaults to current block.")
+    from_block: int | None = Field(
+        default=None, ge=0, description="Block to start scanning from. Defaults to current block."
+    )
 
 
 @asynccontextmanager
@@ -472,11 +474,16 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
         if parsed.scheme not in ("http", "https"):
             raise HTTPException(status_code=400, detail="rpc_url must use http or https")
         hostname = parsed.hostname or ""
-        if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("169.254.") or hostname.startswith("10.") or hostname.startswith("192.168."):
+        if (
+            hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+            or hostname.startswith("169.254.")
+            or hostname.startswith("10.")
+            or hostname.startswith("192.168.")
+        ):
             raise HTTPException(status_code=400, detail="rpc_url must not point to internal addresses")
 
     # Classify the proxy to determine type, needs_polling, and current implementation
-    from services.discovery.classifier import classify_single, _KNOWN_EVENT_PROXY_TYPES
+    from services.discovery.classifier import _KNOWN_EVENT_PROXY_TYPES, classify_single
     from services.monitoring.proxy_watcher import get_latest_block, resolve_current_implementation
 
     proxy_type = None

@@ -66,10 +66,19 @@ TARGET_SELECTOR = "0xd4b83992"  # target() — Synthetix
 # Custom/unknown types are excluded — we don't know what events (if any)
 # they emit, so they need storage-slot polling as a fallback.
 # EIP-1167 is immutable (no upgrade mechanism) so polling is irrelevant.
-_KNOWN_EVENT_PROXY_TYPES = frozenset({
-    "eip1967", "beacon_proxy", "eip1822", "oz_legacy", "eip2535",
-    "eip1167", "gnosis_safe", "compound", "synthetix",
-})
+_KNOWN_EVENT_PROXY_TYPES = frozenset(
+    {
+        "eip1967",
+        "beacon_proxy",
+        "eip1822",
+        "oz_legacy",
+        "eip2535",
+        "eip1167",
+        "gnosis_safe",
+        "compound",
+        "synthetix",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +203,7 @@ def _probe_delegatecall(rpc_url: str, address: str) -> str | None | bool:
     return None  # tracing unavailable
 
 
-def _try_implementation_call(
-    rpc_url: str, address: str, selector: str = IMPLEMENTATION_SELECTOR
-) -> str | None:
+def _try_implementation_call(rpc_url: str, address: str, selector: str = IMPLEMENTATION_SELECTOR) -> str | None:
     """Call an address-returning getter on a contract.
     Returns the address on success, or None."""
     try:
@@ -469,8 +476,7 @@ def classify_contracts(
                 discovered.add(facet)
 
     if discovered:
-        logger.debug("Phase 1 discovered %d new addresses from proxy slots: %s",
-                      len(discovered), sorted(discovered))
+        logger.debug("Phase 1 discovered %d new addresses from proxy slots: %s", len(discovered), sorted(discovered))
 
     # Classify newly-discovered addresses (found in proxy slots), skip any
     # that were already classified in Phase 1.
@@ -498,8 +504,7 @@ def classify_contracts(
                 impl = _try_implementation_call(rpc_url, addr)
                 if impl:
                     info["implementation"] = impl
-            logger.debug("Phase 2: %s reclassified %s → beacon (proxies: %s)",
-                          addr, old_type, info["proxies"])
+            logger.debug("Phase 2: %s reclassified %s → beacon (proxies: %s)", addr, old_type, info["proxies"])
             continue
         if info["type"] != "regular":
             continue
@@ -548,8 +553,11 @@ def classify_contracts(
         if info["type"] == "proxy":
             info["needs_polling"] = info.get("proxy_type") not in _KNOWN_EVENT_PROXY_TYPES
             if info["needs_polling"]:
-                logger.debug("%s needs_polling=True (proxy_type=%s not in known event types)",
-                              info["address"], info.get("proxy_type"))
+                logger.debug(
+                    "%s needs_polling=True (proxy_type=%s not in known event types)",
+                    info["address"],
+                    info.get("proxy_type"),
+                )
 
     return {
         "address": target,

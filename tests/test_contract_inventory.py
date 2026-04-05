@@ -381,7 +381,6 @@ class TestExpandFromDeployers:
 
         monkeypatch.setattr("services.discovery.deployer.etherscan.get", fake_etherscan_get)
 
-
         entries = expand_from_deployers(seeds)
 
         # 3 seeds + 1 new contract = 4 entries
@@ -415,7 +414,6 @@ class TestExpandFromDeployers:
 
         monkeypatch.setattr("services.discovery.deployer.etherscan.get", fake_get)
 
-
         # With default thresholds (min_seed_count=3), 1 seed is not enough
         entries = expand_from_deployers([seed])
         assert entries == []
@@ -431,7 +429,6 @@ class TestExpandFromDeployers:
             raise RuntimeError("No data found")
 
         monkeypatch.setattr("services.discovery.deployer.etherscan.get", fake_get)
-
 
         entries = expand_from_deployers(["0x" + "a" * 40])
         assert entries == []
@@ -460,7 +457,6 @@ class TestExpandFromDeployers:
             return {"status": "1", "result": [{"ContractName": ""}]}
 
         monkeypatch.setattr("services.discovery.deployer.etherscan.get", fake_get)
-
 
         entries = expand_from_deployers([seed])
         assert entries == []

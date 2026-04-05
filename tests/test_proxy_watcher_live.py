@@ -59,6 +59,7 @@ def test_resolve_current_implementation_mainnet():
     from services.monitoring.proxy_watcher import resolve_current_implementation
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
     impl = resolve_current_implementation(AAVE_V3_POOL, rpc_url)
 
     assert impl is not None, "Aave V3 Pool proxy should have an EIP-1967 implementation"
@@ -81,10 +82,11 @@ def test_scan_detects_known_aave_upgrade():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -135,10 +137,11 @@ def test_scan_no_events_in_quiet_range():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -206,10 +209,11 @@ def test_scan_detects_usdc_upgrade():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -280,10 +284,11 @@ def test_scan_detects_beacon_upgrade():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -357,10 +362,11 @@ def test_scan_detects_admin_changed():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -439,10 +445,11 @@ def test_scan_detects_diamond_cut():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -506,10 +513,11 @@ def test_scan_detects_gnosis_master_copy_change():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -574,10 +582,11 @@ def test_scan_detects_compound_new_implementation():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -642,10 +651,11 @@ def test_scan_detects_synthetix_target_updated():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -709,10 +719,11 @@ def test_scan_detects_compound_pending_implementation():
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
 
     engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
+    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = SASession(engine, expire_on_commit=False)
     try:
@@ -764,6 +775,7 @@ def test_resolve_implementation_custom_proxy():
     from services.monitoring.proxy_watcher import resolve_current_implementation
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
     impl = resolve_current_implementation("0xae7ab96520de3a18e5e111b5eaab095312d7fe84", rpc_url)
 
     assert impl is not None, "Lido stETH should resolve via implementation() call"
@@ -781,6 +793,7 @@ def test_resolve_implementation_gnosis_safe():
     from services.monitoring.proxy_watcher import resolve_current_implementation
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
     impl = resolve_current_implementation(GNOSIS_PROXY, rpc_url)
 
     assert impl is not None, "GnosisSafe proxy should resolve via slot 0 fallback"
@@ -793,6 +806,7 @@ def test_resolve_implementation_compound():
     from services.monitoring.proxy_watcher import resolve_current_implementation
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
     impl = resolve_current_implementation(COMPOUND_PROXY, rpc_url)
 
     assert impl is not None, "Compound should resolve via comptrollerImplementation()"
@@ -805,6 +819,7 @@ def test_resolve_implementation_synthetix():
     from services.monitoring.proxy_watcher import resolve_current_implementation
 
     rpc_url = _get_rpc_url()
+    assert rpc_url is not None
     impl = resolve_current_implementation(SYNTHETIX_PROXY, rpc_url)
 
     assert impl is not None, "Synthetix should resolve via target()"

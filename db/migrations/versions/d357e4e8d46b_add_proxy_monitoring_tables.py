@@ -5,16 +5,16 @@ Revises: 2004f600d83c
 Create Date: 2026-04-04 15:37:33.914439
 
 """
+
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
-
 # revision identifiers, used by Alembic.
-revision: str = 'd357e4e8d46b'
-down_revision: Union[str, Sequence[str], None] = '2004f600d83c'
+revision: str = "d357e4e8d46b"
+down_revision: Union[str, Sequence[str], None] = "2004f600d83c"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

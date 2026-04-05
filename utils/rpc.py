@@ -27,9 +27,7 @@ def rpc_request(rpc_url: str, method: str, params: list[Any]) -> Any:
     return payload.get("result")
 
 
-def rpc_batch_request(
-    rpc_url: str, calls: list[tuple[str, list[Any]]]
-) -> list[Any]:
+def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[Any]:
     """Send a JSON-RPC batch request and return results in call order.
 
     Each element of *calls* is ``(method, params)``.  Returns a list of the

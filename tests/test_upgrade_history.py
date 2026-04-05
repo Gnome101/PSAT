@@ -575,9 +575,7 @@ class TestBuildUpgradeHistory:
         _mock_no_enrichment(monkeypatch)
 
         result = uh.build_upgrade_history(p)
-        assert target in result["proxies"], (
-            "Target contract is a proxy and should appear in the proxies output"
-        )
+        assert target in result["proxies"], "Target contract is a proxy and should appear in the proxies output"
         h = result["proxies"][target]
         assert h["proxy_type"] == "eip1967"
         assert h["current_implementation"] == target_impl
