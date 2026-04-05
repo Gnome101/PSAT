@@ -464,14 +464,16 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
     rpc_url = request.rpc_url or DEFAULT_RPC_URL
 
     # Block SSRF: reject non-http(s) schemes and private/internal URLs
-    from urllib.parse import urlparse
+    # Skip check when using the server's own default RPC (from ETH_RPC env var)
+    if request.rpc_url:
+        from urllib.parse import urlparse
 
-    parsed = urlparse(rpc_url)
-    if parsed.scheme not in ("http", "https"):
-        raise HTTPException(status_code=400, detail="rpc_url must use http or https")
-    hostname = parsed.hostname or ""
-    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("169.254.") or hostname.startswith("10.") or hostname.startswith("192.168."):
-        raise HTTPException(status_code=400, detail="rpc_url must not point to internal addresses")
+        parsed = urlparse(rpc_url)
+        if parsed.scheme not in ("http", "https"):
+            raise HTTPException(status_code=400, detail="rpc_url must use http or https")
+        hostname = parsed.hostname or ""
+        if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("169.254.") or hostname.startswith("10.") or hostname.startswith("192.168."):
+            raise HTTPException(status_code=400, detail="rpc_url must not point to internal addresses")
 
     # Classify the proxy to determine type, needs_polling, and current implementation
     from services.discovery.classifier import classify_single, _KNOWN_EVENT_PROXY_TYPES
