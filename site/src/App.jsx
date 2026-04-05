@@ -63,6 +63,10 @@ function parseLocationPath(pathname) {
     return { mode: "monitor", value: null, tab: "summary" };
   }
 
+  if (segments[0] === "proxies") {
+    return { mode: "proxies", value: null, tab: "summary" };
+  }
+
   if (segments[0] === "runs" && segments[1]) {
     return {
       mode: "run",
@@ -1136,6 +1140,192 @@ function mergeProxyImpl(analyses) {
 }
 
 // ---------------------------------------------------------------------------
+// Proxy Watcher (WIP)
+// ---------------------------------------------------------------------------
+
+function ProxyWatcherPage() {
+  const [proxies, setProxies] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [address, setAddress] = useState("");
+  const [label, setLabel] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function refresh() {
+    try {
+      const [p, e] = await Promise.all([
+        api("/api/watched-proxies"),
+        api("/api/proxy-events?limit=100"),
+      ]);
+      setProxies(p);
+      setEvents(e);
+      setLoaded(true);
+    } catch (err) {
+      console.error("Failed to load proxy data:", err);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function addProxy(e) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api("/api/watched-proxies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: address.trim(), label: label.trim() || null }),
+      });
+      setAddress("");
+      setLabel("");
+      refresh();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function removeProxy(id) {
+    try {
+      await api(`/api/watched-proxies/${id}`, { method: "DELETE" });
+      refresh();
+    } catch (err) {
+      console.error("Failed to remove proxy:", err);
+    }
+  }
+
+  if (!loaded) {
+    return (
+      <div className="page">
+        <section className="panel">
+          <p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading proxy watcher...</p>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page">
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Proxy Watcher</p>
+            <h2>Watched Proxies ({proxies.length})</h2>
+          </div>
+          <span className="chip" style={{ background: "#fef3c7", color: "#92400e", fontSize: 11 }}>Work in Progress</span>
+        </div>
+
+        <form onSubmit={addProxy} style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="Proxy address (0x...)"
+            required
+            style={{ flex: "1 1 300px", fontFamily: "monospace", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+          />
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Label (optional)"
+            style={{ flex: "0 1 200px", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+          />
+          <button type="submit" disabled={submitting} style={{ padding: "8px 16px", borderRadius: 6, background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+            {submitting ? "Adding..." : "Watch Proxy"}
+          </button>
+        </form>
+        {error && <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 12 }}>{error}</p>}
+
+        {proxies.length === 0 ? (
+          <p className="empty">No proxies being watched. Add one above to start monitoring for upgrades.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #334155", textAlign: "left" }}>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Label</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Address</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Type</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Implementation</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Polling</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Last Block</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {proxies.map((p) => (
+                  <tr key={p.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                    <td style={{ padding: "8px 12px" }}>{p.label || <span style={{ color: "#475569" }}>-</span>}</td>
+                    <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(p.proxy_address)}</span></td>
+                    <td style={{ padding: "8px 12px" }}>{p.proxy_type ? <span className="chip alt">{p.proxy_type}</span> : <span style={{ color: "#475569" }}>unknown</span>}</td>
+                    <td style={{ padding: "8px 12px" }}><span className="mono">{p.last_known_implementation ? shortenAddress(p.last_known_implementation) : "-"}</span></td>
+                    <td style={{ padding: "8px 12px" }}>{p.needs_polling ? <span className="chip warn">polling</span> : <span className="chip">events</span>}</td>
+                    <td style={{ padding: "8px 12px" }}>{p.last_scanned_block ? p.last_scanned_block.toLocaleString() : "-"}</td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <button onClick={() => removeProxy(p.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12 }}>remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Detected Events</p>
+            <h2>Upgrade Events ({events.length})</h2>
+          </div>
+        </div>
+        {events.length === 0 ? (
+          <p className="empty">No upgrade events detected yet.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #334155", textAlign: "left" }}>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Time</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Proxy</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Type</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Old Impl</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>New Impl</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Block</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((evt) => {
+                  const proxy = proxies.find((p) => p.id === evt.watched_proxy_id);
+                  return (
+                    <tr key={evt.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                      <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{new Date(evt.detected_at).toLocaleString()}</td>
+                      <td style={{ padding: "8px 12px" }}>{proxy?.label || <span className="mono">{shortenAddress(proxy?.proxy_address || "")}</span>}</td>
+                      <td style={{ padding: "8px 12px" }}><span className="chip alt">{evt.event_type}</span></td>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{evt.old_implementation ? shortenAddress(evt.old_implementation) : "-"}</span></td>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(evt.new_implementation)}</span></td>
+                      <td style={{ padding: "8px 12px" }}>{evt.block_number || "-"}</td>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{evt.tx_hash ? shortenAddress(evt.tx_hash) : "-"}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline monitor
 // ---------------------------------------------------------------------------
 
@@ -1565,6 +1755,7 @@ export default function App() {
 
   const isDetail = viewMode === "run" || viewMode === "address";
   const isMonitor = viewMode === "monitor";
+  const isProxies = viewMode === "proxies";
 
   const detailContent = selectedDetail ? {
     summary: <SummaryTab detail={selectedDetail} />,
@@ -1582,8 +1773,9 @@ export default function App() {
       <nav className="top-nav">
         <div className="top-nav-left">
           <button className="top-nav-brand" onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>PSAT</button>
-          <button className={`top-nav-link ${!isDetail && !isMonitor ? "active" : ""}`} onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>Runs</button>
+          <button className={`top-nav-link ${!isDetail && !isMonitor && !isProxies ? "active" : ""}`} onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>Runs</button>
           <button className={`top-nav-link ${isMonitor ? "active" : ""}`} onClick={() => navigate("/monitor", "monitor")}>Monitor</button>
+          <button className={`top-nav-link ${isProxies ? "active" : ""}`} onClick={() => navigate("/proxies", "proxies")}>Proxies</button>
         </div>
         <div className="top-nav-right">
           <button className="top-nav-submit-btn" onClick={() => setFormOpen(!formOpen)}>
@@ -1616,6 +1808,7 @@ export default function App() {
 
       {/* Page content */}
       {isMonitor && <PipelineDashboard />}
+      {isProxies && <ProxyWatcherPage />}
 
       {isDetail && selectedDetail && (
         <div className="page">
@@ -1651,7 +1844,7 @@ export default function App() {
         </div>
       )}
 
-      {!isDetail && !isMonitor && (
+      {!isDetail && !isMonitor && !isProxies && (
         <RunsPage
           analyses={analyses}
           activeJobs={activeJobs}
