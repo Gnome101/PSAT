@@ -200,6 +200,8 @@ def parse_upgrade_log(log: dict) -> dict | None:
                 count_start = array_offset
                 if len(raw) >= count_start + 64:
                     count = int(raw[count_start : count_start + 64], 16)
+                    if count > 1000:  # cap to prevent DoS from crafted events
+                        count = 0
                     # After count: `count` uint256 offsets (relative to array_offset)
                     entry_offsets_start = count_start + 64
                     facets: list[str] = []

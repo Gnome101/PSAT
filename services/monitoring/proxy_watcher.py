@@ -118,7 +118,9 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
                 # Aave V2 Upgraded(uint256) has no implementation address in the event;
                 # fall back to reading the current impl from the EIP-1967 storage slot.
                 if event.get("event_type") == "upgraded_revision":
-                    resolved = resolve_current_implementation(proxy.proxy_address, rpc_url)
+                    resolved = resolve_current_implementation(
+                        proxy.proxy_address, rpc_url, block=hex(event["block_number"])
+                    )
                     if resolved:
                         new_impl = resolved
                     else:
@@ -143,7 +145,6 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
             session.add(upgrade_event)
             new_events.append(upgrade_event)
 
-            proxy.last_known_implementation = new_impl
             logger.info(
                 "Detected %s on %s: %s -> %s (block %d)",
                 event["event_type"],
@@ -152,30 +153,34 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
                 new_impl,
                 event["block_number"],
             )
+            proxy.last_known_implementation = new_impl
 
         last_successful_block = to_block
         cursor = to_block + 1
 
-    # Only advance last_scanned_block to the last successfully scanned block
+    # Only advance last_scanned_block, never regress
     for proxy in proxies:
-        proxy.last_scanned_block = last_successful_block
+        if last_successful_block > proxy.last_scanned_block:
+            proxy.last_scanned_block = last_successful_block
 
     session.commit()
     return new_events
 
 
-def resolve_current_implementation(proxy_address: str, rpc_url: str) -> str | None:
-    """Read the current EIP-1967 implementation slot for a proxy."""
+def resolve_current_implementation(
+    proxy_address: str, rpc_url: str, block: str = "latest"
+) -> str | None:
+    """Read the EIP-1967 implementation slot for a proxy at a given block."""
     # EIP-1967 implementation slot:
     # bytes32(uint256(keccak256('eip1967.proxy.implementation')) - 1)
     slot = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
     try:
-        result = rpc_request(rpc_url, "eth_getStorageAt", [proxy_address, slot, "latest"])
+        result = rpc_request(rpc_url, "eth_getStorageAt", [proxy_address, slot, block])
         if result and result != "0x" + "0" * 64:
             addr = "0x" + result[-40:]
             return normalize_hex(addr)
     except Exception:
-        logger.debug("Could not read implementation slot for %s", proxy_address)
+        logger.debug("Could not read implementation slot for %s at block %s", proxy_address, block)
     return None
 
 

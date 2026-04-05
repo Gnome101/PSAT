@@ -463,6 +463,16 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
     # Resolve RPC URL: explicit param > env default
     rpc_url = request.rpc_url or DEFAULT_RPC_URL
 
+    # Block SSRF: reject non-http(s) schemes and private/internal URLs
+    from urllib.parse import urlparse
+
+    parsed = urlparse(rpc_url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="rpc_url must use http or https")
+    hostname = parsed.hostname or ""
+    if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or hostname.startswith("169.254.") or hostname.startswith("10.") or hostname.startswith("192.168."):
+        raise HTTPException(status_code=400, detail="rpc_url must not point to internal addresses")
+
     # Optionally resolve current implementation
     current_impl = None
     from services.monitoring.proxy_watcher import get_latest_block, resolve_current_implementation
