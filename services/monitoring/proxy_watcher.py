@@ -115,7 +115,16 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
 
             new_impl = event.get("implementation") or event.get("beacon") or event.get("new_admin")
             if not new_impl:
-                continue
+                # Aave V2 Upgraded(uint256) has no implementation address in the event;
+                # fall back to reading the current impl from the EIP-1967 storage slot.
+                if event.get("event_type") == "upgraded_revision":
+                    resolved = resolve_current_implementation(proxy.proxy_address, rpc_url)
+                    if resolved:
+                        new_impl = resolved
+                    else:
+                        continue
+                else:
+                    continue
 
             # Skip duplicates: same proxy, tx, block, and target already recorded
             dedup_key = (str(proxy.id), event.get("tx_hash", ""), event["block_number"], new_impl)
