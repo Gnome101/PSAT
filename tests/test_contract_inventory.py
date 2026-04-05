@@ -182,7 +182,7 @@ class TestSearchProtocolInventoryOffline:
 
     def test_no_domain_returns_valid_structure(self, monkeypatch):
         monkeypatch.setattr("services.discovery.inventory._tavily_search", lambda *_a, **_kw: [])
-        monkeypatch.setattr("services.discovery.inventory._llm_select_domain", lambda *_a, **_kw: None)
+        monkeypatch.setattr("services.discovery.inventory._llm_select_domain", lambda *_a, **_kw: (None, []))
 
         result = search_protocol_inventory("nonexistent_xyz")
         assert result["official_domain"] is None

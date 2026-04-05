@@ -23,7 +23,7 @@ _RATE_LIMIT_RETRIES = 5
 _RATE_LIMIT_BACKOFF = 1.0  # seconds, doubles each retry
 
 # Global Etherscan rate limit — applies to every call through get().
-ETHERSCAN_RATE_LIMIT = 15  # requests per second
+ETHERSCAN_RATE_LIMIT = 5  # requests per second
 
 _min_interval = 1.0 / ETHERSCAN_RATE_LIMIT
 _rate_lock = threading.Lock()
