@@ -16,7 +16,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 # Ensure project root on sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.monitoring.proxy_watcher import DEFAULT_SCAN_INTERVAL, run_scan_loop
+from services.monitoring.proxy_watcher import DEFAULT_POLL_INTERVAL, DEFAULT_SCAN_INTERVAL, run_poll_loop, run_scan_loop
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,13 @@ def main():
     parser.add_argument(
         "--interval",
         type=float,
-        default=DEFAULT_SCAN_INTERVAL,
-        help=f"Scan interval in seconds (default: {DEFAULT_SCAN_INTERVAL})",
+        default=None,
+        help="Scan/poll interval in seconds (default depends on mode)",
+    )
+    parser.add_argument(
+        "--poll",
+        action="store_true",
+        help="Run storage-slot polling loop instead of event-based scanning",
     )
     args = parser.parse_args()
 
@@ -44,8 +49,14 @@ def main():
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
 
-    logger.info("Proxy monitor starting (rpc=%s, interval=%ss)", args.rpc_url, args.interval)
-    run_scan_loop(args.rpc_url, args.interval)
+    if args.poll:
+        interval = args.interval if args.interval is not None else DEFAULT_POLL_INTERVAL
+        logger.info("Proxy poll monitor starting (rpc=%s, interval=%ss)", args.rpc_url, interval)
+        run_poll_loop(args.rpc_url, interval)
+    else:
+        interval = args.interval if args.interval is not None else DEFAULT_SCAN_INTERVAL
+        logger.info("Proxy monitor starting (rpc=%s, interval=%ss)", args.rpc_url, interval)
+        run_scan_loop(args.rpc_url, interval)
 
 
 if __name__ == "__main__":

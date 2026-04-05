@@ -190,7 +190,7 @@ USDC_SCAN_TO = USDC_UPGRADE_BLOCK + 5
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
 def test_scan_detects_usdc_upgrade():
-    """Detect a known USDC FiatTokenProxy upgrade at block 10800677.
+    """Detect a known USDC FiatTokenProxy upgrade at block 10743414.
 
     USDC uses an OZ legacy proxy pattern that emits Upgraded(address)
     with the implementation address in the log data field (non-indexed),
@@ -401,12 +401,10 @@ def test_scan_detects_admin_changed():
 
 
 # ===========================================================================
-# UNSUPPORTED PROXY TYPES — live mainnet tests that document coverage gaps
+# Non-EIP-1967 proxy types — live mainnet tests for protocol-specific events
 #
-# These tests point the scanner at real contracts that emitted non-EIP-1967
-# upgrade events. The scanner only monitors for Upgraded, AdminChanged, and
-# BeaconUpgraded topics, so it will NOT detect these events. Each test
-# asserts len(events) >= 1 and is EXPECTED TO FAIL, documenting the gap.
+# These tests validate detection of upgrade events from protocols that use
+# their own event signatures rather than the EIP-1967 standard.
 # ===========================================================================
 
 
@@ -428,18 +426,11 @@ DIAMOND_SCAN_TO = DIAMOND_CUT_BLOCK + 5
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
 def test_scan_detects_diamond_cut():
-    """UNSUPPORTED: Diamond proxy (EIP-2535) DiamondCut event at block 14004881.
+    """Detect a known EIP-2535 DiamondCut event at block 14004881.
 
     Contract 0x3caca7b48d0573d793d3b0279b5f0029180e83b6 emitted a DiamondCut
-    event (topic0 0x8faa7087...) which uses a completely different event
-    signature than EIP-1967. The scanner only monitors for EIP-1967 topics
-    (Upgraded, AdminChanged, BeaconUpgraded) so this event is invisible.
-
-    This test is EXPECTED TO FAIL because the scanner does not support
-    Diamond proxy events. The failure documents the coverage gap.
-
-    To fix: add the DiamondCut topic0 to EVENT_TOPICS in upgrade_history.py
-    and implement a parser for the DiamondCut ABI structure.
+    event encoding facet add/replace/remove operations. The scanner parses
+    the ABI-encoded FacetCut[] struct array and extracts facet addresses.
     """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SASession
@@ -472,13 +463,11 @@ def test_scan_detects_diamond_cut():
         ):
             events = scan_for_upgrades(session, rpc_url)
 
-        # This SHOULD detect the DiamondCut event but currently does not
-        # because the scanner does not include the DiamondCut topic0 in
-        # its eth_getLogs filter. The RPC call never returns this log.
-        assert len(events) >= 1, (
-            f"Diamond DiamondCut event at block {DIAMOND_CUT_BLOCK} was not detected. "
-            f"The scanner does not support EIP-2535 DiamondCut events."
-        )
+        assert len(events) >= 1, f"Expected DiamondCut event at block {DIAMOND_CUT_BLOCK}"
+
+        diamond_event = next((e for e in events if e.event_type == "diamond_cut"), None)
+        assert diamond_event is not None, "Expected a 'diamond_cut' event"
+        assert diamond_event.block_number == DIAMOND_CUT_BLOCK
     finally:
         session.close()
         engine.dispose()
@@ -504,18 +493,11 @@ GNOSIS_SCAN_TO = GNOSIS_CHANGE_BLOCK + 5
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
 def test_scan_detects_gnosis_master_copy_change():
-    """UNSUPPORTED: GnosisSafe ChangedMasterCopy event at block 9304839.
+    """Detect a known GnosisSafe ChangedMasterCopy event at block 9304839.
 
     GnosisSafe proxy 0x78ecc4ad66c9ea16821df5ef762fe021cac3fd4c emitted
-    ChangedMasterCopy(address) (topic0 0x75e41bc3...) when switching its
-    singleton implementation. This is a legacy event from GnosisSafe v1.0-1.1
-    that predates the EIP-1967 standard.
-
-    This test is EXPECTED TO FAIL because the scanner only monitors EIP-1967
-    event topics and does not recognize the ChangedMasterCopy signature.
-
-    To fix: add the ChangedMasterCopy topic0 to EVENT_TOPICS and parse
-    the new master copy address from the log data field.
+    ChangedMasterCopy(address) when switching its singleton implementation.
+    Legacy event from GnosisSafe v1.0-1.1 that predates EIP-1967.
     """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SASession
@@ -548,13 +530,12 @@ def test_scan_detects_gnosis_master_copy_change():
         ):
             events = scan_for_upgrades(session, rpc_url)
 
-        # This SHOULD detect the ChangedMasterCopy event but currently does
-        # not because the scanner does not include the ChangedMasterCopy
-        # topic0 in its eth_getLogs filter.
-        assert len(events) >= 1, (
-            f"GnosisSafe ChangedMasterCopy event at block {GNOSIS_CHANGE_BLOCK} was not "
-            f"detected. The scanner does not support GnosisSafe-style upgrade events."
-        )
+        assert len(events) >= 1, f"Expected ChangedMasterCopy event at block {GNOSIS_CHANGE_BLOCK}"
+
+        gnosis_event = next((e for e in events if e.event_type == "changed_master_copy"), None)
+        assert gnosis_event is not None, "Expected a 'changed_master_copy' event"
+        assert gnosis_event.block_number == GNOSIS_CHANGE_BLOCK
+        assert gnosis_event.new_implementation.lower() == GNOSIS_NEW_MASTER.lower()
     finally:
         session.close()
         engine.dispose()
@@ -580,18 +561,11 @@ COMPOUND_SCAN_TO = COMPOUND_UPGRADE_BLOCK + 5
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
 def test_scan_detects_compound_new_implementation():
-    """UNSUPPORTED: Compound NewImplementation event at block 7710677.
+    """Detect a known Compound NewImplementation event at block 7710677.
 
     Compound Unitroller 0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b emitted
-    NewImplementation(address oldImpl, address newImpl) (topic0 0xd604de94...)
-    when upgrading its comptroller logic. This is Compound's proprietary
-    upgrade event that predates EIP-1967.
-
-    This test is EXPECTED TO FAIL because the scanner only monitors EIP-1967
-    event topics and does not recognize the NewImplementation signature.
-
-    To fix: add the NewImplementation topic0 to EVENT_TOPICS and parse the
-    two addresses from the ABI-encoded log data (old impl, new impl).
+    NewImplementation(address oldImpl, address newImpl) when upgrading its
+    comptroller logic. Compound's proprietary event predating EIP-1967.
     """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SASession
@@ -624,13 +598,12 @@ def test_scan_detects_compound_new_implementation():
         ):
             events = scan_for_upgrades(session, rpc_url)
 
-        # This SHOULD detect the NewImplementation event but currently does
-        # not because the scanner does not include the NewImplementation
-        # topic0 in its eth_getLogs filter.
-        assert len(events) >= 1, (
-            f"Compound NewImplementation event at block {COMPOUND_UPGRADE_BLOCK} was not "
-            f"detected. The scanner does not support Compound-style upgrade events."
-        )
+        assert len(events) >= 1, f"Expected NewImplementation event at block {COMPOUND_UPGRADE_BLOCK}"
+
+        compound_event = next((e for e in events if e.event_type == "new_implementation"), None)
+        assert compound_event is not None, "Expected a 'new_implementation' event"
+        assert compound_event.block_number == COMPOUND_UPGRADE_BLOCK
+        assert compound_event.new_implementation.lower() == COMPOUND_NEW_IMPL.lower()
     finally:
         session.close()
         engine.dispose()
@@ -656,18 +629,11 @@ SYNTHETIX_SCAN_TO = SYNTHETIX_UPGRADE_BLOCK + 5
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
 def test_scan_detects_synthetix_target_updated():
-    """UNSUPPORTED: Synthetix TargetUpdated event at block 10203309.
+    """Detect a known Synthetix TargetUpdated event at block 10203309.
 
     SNX token proxy 0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f emitted
-    TargetUpdated(address) (topic0 0x81425...) when switching its target
-    implementation contract. Synthetix uses a custom proxy→target pattern
-    across its entire ecosystem (SNX, sUSD, sBTC, sETH, etc.).
-
-    This test is EXPECTED TO FAIL because the scanner only monitors EIP-1967
-    event topics and does not recognize the TargetUpdated signature.
-
-    To fix: add the TargetUpdated topic0 to EVENT_TOPICS and parse the
-    new target address from the ABI-encoded log data field.
+    TargetUpdated(address) when switching its target implementation.
+    Synthetix uses a custom proxy-target pattern across its ecosystem.
     """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SASession
@@ -700,10 +666,12 @@ def test_scan_detects_synthetix_target_updated():
         ):
             events = scan_for_upgrades(session, rpc_url)
 
-        assert len(events) >= 1, (
-            f"Synthetix TargetUpdated event at block {SYNTHETIX_UPGRADE_BLOCK} was not "
-            f"detected. The scanner does not support Synthetix-style proxy events."
-        )
+        assert len(events) >= 1, f"Expected TargetUpdated event at block {SYNTHETIX_UPGRADE_BLOCK}"
+
+        synthetix_event = next((e for e in events if e.event_type == "target_updated"), None)
+        assert synthetix_event is not None, "Expected a 'target_updated' event"
+        assert synthetix_event.block_number == SYNTHETIX_UPGRADE_BLOCK
+        assert synthetix_event.new_implementation.lower() == SYNTHETIX_NEW_TARGET.lower()
     finally:
         session.close()
         engine.dispose()
@@ -727,18 +695,12 @@ COMPOUND_PENDING_SCAN_TO = COMPOUND_PENDING_BLOCK + 5
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
 def test_scan_detects_compound_pending_implementation():
-    """UNSUPPORTED: Compound NewPendingImplementation at block 7710675.
+    """Detect a known Compound NewPendingImplementation event at block 7710675.
 
     Compound Unitroller 0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b emitted
-    NewPendingImplementation(address oldPending, address newPending)
-    (topic0 0xe945ccee...) as the first step of its two-step upgrade process.
-    Two blocks later, NewImplementation is emitted to finalize the upgrade.
-
-    This test is EXPECTED TO FAIL because the scanner does not recognize
-    either Compound event signature.
-
-    To fix: add the NewPendingImplementation topic0 to EVENT_TOPICS and parse
-    the two addresses from the ABI-encoded log data.
+    NewPendingImplementation(address oldPending, address newPending) as the
+    first step of its two-step upgrade process. Two blocks later,
+    NewImplementation is emitted to finalize the upgrade.
     """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SASession
@@ -771,10 +733,11 @@ def test_scan_detects_compound_pending_implementation():
         ):
             events = scan_for_upgrades(session, rpc_url)
 
-        assert len(events) >= 1, (
-            f"Compound NewPendingImplementation event at block {COMPOUND_PENDING_BLOCK} "
-            f"was not detected. The scanner does not support Compound-style events."
-        )
+        assert len(events) >= 1, f"Expected NewPendingImplementation event at block {COMPOUND_PENDING_BLOCK}"
+
+        pending_event = next((e for e in events if e.event_type == "new_pending_implementation"), None)
+        assert pending_event is not None, "Expected a 'new_pending_implementation' event"
+        assert pending_event.block_number == COMPOUND_PENDING_BLOCK
     finally:
         session.close()
         engine.dispose()

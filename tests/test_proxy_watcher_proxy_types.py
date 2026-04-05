@@ -2,23 +2,22 @@
 
 Each test simulates a realistic eth_getLogs response from a specific proxy
 type and runs it through the full scan_for_upgrades pipeline to verify
-detection. Tests that are expected to fail (unsupported proxy types) are
-marked so the results document the scanner's coverage gaps.
+detection. Tests that require storage slot polling (rather than event-based
+detection) are grouped in TestPollingRequired.
 
 Proxy types tested:
-  SUPPORTED:
+  SUPPORTED (event-based detection):
     1. EIP-1967 TransparentProxy — Upgraded(address indexed impl)
     2. EIP-1967 UUPS — same Upgraded event
     3. EIP-1967 BeaconProxy — BeaconUpgraded(address indexed beacon)
     4. OZ Legacy (USDC-style) — Upgraded(address) with impl in data, not topics
     5. AdminChanged — addresses in data (standard)
     6. AdminChanged — addresses in indexed topics (variant)
+    7. EIP-1167 minimal proxy — immutable clone, no upgrade possible
 
-  UNSUPPORTED (expected to produce 0 events):
-    7. Diamond proxy (EIP-2535) — DiamondCut event, different topic
-    8. GnosisSafe MasterCopy — ChangedMasterCopy event
-    9. Custom proxy — proprietary ImplementationUpdated event
-   10. Silent upgrade — SSTORE to impl slot with no event emission
+  POLLING REQUIRED (no events emitted — requires storage slot polling):
+    8. Custom proxy — proprietary ImplementationUpdated event
+    9. Silent upgrade — SSTORE to impl slot with no event emission
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ from services.discovery.upgrade_history import (
     BEACON_UPGRADED_TOPIC0,
     UPGRADED_TOPIC0,
 )
-from services.monitoring.proxy_watcher import scan_for_upgrades
+from services.monitoring.proxy_watcher import poll_for_upgrades, scan_for_upgrades
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -50,7 +49,7 @@ PROXY_ADDR = "0x1111111111111111111111111111111111111111"
 IMPL_OLD = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 IMPL_NEW = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 BEACON_ADDR = "0xcccccccccccccccccccccccccccccccccccccccc"
-ADMIN_OLD = "0xdddddddddddddddddddddddddddddddddddddddd"
+ADMIN_OLD = "0x" + "d" * 40
 ADMIN_NEW = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 BLOCK_HEX = "0x100"
 BLOCK_INT = 256
@@ -442,57 +441,6 @@ class TestSupportedProxyTypes:
         assert events[0].event_type == "upgraded_revision"
         assert events[0].new_implementation.lower() == IMPL_NEW
 
-
-# ===========================================================================
-# UNSUPPORTED PROXY TYPES — these document the scanner's remaining coverage gaps
-# ===========================================================================
-
-# A made-up custom event: ImplementationUpdated(address indexed oldImpl, address indexed newImpl)
-CUSTOM_IMPL_UPDATED_TOPIC0 = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-
-
-class TestUnsupportedProxyTypes:
-    """Proxy types the scanner does NOT yet detect.
-
-    These tests assert that detection SHOULD work (len >= 1). They will
-    fail until we add support. Each failure is a coverage gap to fix.
-    """
-
-    def test_custom_proprietary_event(self, db_session):
-        """Custom proxy with a proprietary upgrade event name.
-
-        Some projects define their own events like ImplementationUpdated
-        or ContractUpgraded. Unrecognized topic0 is filtered out.
-
-        FIX: No single fix — requires enumerating known custom signatures
-        or falling back to storage slot polling.
-        """
-        session, proxy = db_session
-        logs = [_make_log(
-            PROXY_ADDR,
-            [CUSTOM_IMPL_UPDATED_TOPIC0, _addr_to_topic(IMPL_OLD), _addr_to_topic(IMPL_NEW)],
-        )]
-
-        events = _run_scan_with_logs(session, logs)
-
-        assert len(events) >= 1
-        assert events[0].new_implementation.lower() == IMPL_NEW
-
-    def test_silent_upgrade_no_event(self, db_session):
-        """Proxy that upgrades via raw SSTORE with no event emission.
-
-        If a proxy writes directly to the implementation slot without
-        emitting any event, there is nothing for eth_getLogs to find.
-
-        FIX: Only detectable via storage slot polling (eth_getStorageAt),
-        to be implemented as a separate pipeline for proxies flagged as
-        silent-risk by the classifier.
-        """
-        session, proxy = db_session
-        events = _run_scan_with_logs(session, [])
-
-        assert len(events) >= 1
-
     def test_eip1167_minimal_proxy(self, db_session):
         """EIP-1167 minimal proxy (clone): immutable, never upgrades.
 
@@ -503,3 +451,67 @@ class TestUnsupportedProxyTypes:
         session, proxy = db_session
         events = _run_scan_with_logs(session, [])
         assert len(events) == 0, "EIP-1167 clones don't upgrade (expected)"
+
+
+# ===========================================================================
+# POLLING REQUIRED — proxy types detected via storage slot polling
+# ===========================================================================
+
+
+class TestPollingRequired:
+    """Proxy types that require the storage slot polling pipeline.
+
+    These proxy types do not emit standard upgrade events that the
+    event-based scanner can detect. They are flagged with needs_polling=True
+    and detected by poll_for_upgrades which reads the EIP-1967 implementation
+    storage slot directly via eth_getStorageAt.
+    """
+
+    def test_custom_proprietary_event_detected_by_polling(self, db_session):
+        """Custom proxy with a proprietary upgrade event (unrecognized topic0).
+
+        First verifies the event-based scanner ignores the unknown topic0,
+        then verifies the storage slot poller catches the implementation change.
+        """
+        session, proxy = db_session
+
+        # Step 1: event-based scanner ignores the custom event
+        custom_topic = "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        logs = [_make_log(PROXY_ADDR, [custom_topic, _addr_to_topic(IMPL_NEW)])]
+        scan_events = _run_scan_with_logs(session, logs)
+        assert len(scan_events) == 0, "Event scanner should ignore unknown topic0"
+
+        # Step 2: polling pipeline catches the change
+        proxy.needs_polling = True
+        session.commit()
+
+        storage_value = "0x" + "0" * 24 + IMPL_NEW[2:]
+        with patch("services.monitoring.proxy_watcher.rpc_request", return_value=storage_value):
+            poll_events = poll_for_upgrades(session, "http://fake-rpc")
+
+        assert len(poll_events) == 1
+        assert poll_events[0].event_type == "storage_poll"
+        assert poll_events[0].new_implementation.lower() == IMPL_NEW
+        assert poll_events[0].old_implementation == IMPL_OLD
+
+    def test_silent_upgrade_detected_by_polling(self, db_session):
+        """Proxy that upgrades via raw SSTORE with no event emission.
+
+        The event-based scanner has nothing to find (no logs). The storage
+        slot poller reads the EIP-1967 slot directly and detects the change.
+        """
+        session, proxy = db_session
+
+        # Re-create the proxy with needs_polling=True
+        proxy.needs_polling = True
+        session.commit()
+
+        # Mock eth_getStorageAt to return a new implementation
+        storage_value = "0x" + "0" * 24 + IMPL_NEW[2:]
+
+        with patch("services.monitoring.proxy_watcher.rpc_request", return_value=storage_value):
+            events = poll_for_upgrades(session, "http://fake-rpc")
+
+        assert len(events) == 1
+        assert events[0].event_type == "storage_poll"
+        assert events[0].new_implementation.lower() == IMPL_NEW
