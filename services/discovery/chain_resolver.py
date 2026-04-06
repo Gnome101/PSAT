@@ -54,7 +54,8 @@ _ALCHEMY_CHAIN_SLUGS: dict[str, str] = {
 _BATCH_RPC_SIZE = 100
 
 # Fallback: rate-limited individual calls if batch is rejected.
-_RPC_RATE_LIMIT = 15
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+_RPC_RATE_LIMIT = int(os.getenv("RPC_RATE_LIMIT", "15"))
 _FALLBACK_WORKERS = 4
 
 

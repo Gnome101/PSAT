@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
+from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,6 +17,8 @@ from services.discovery.upgrade_history import (
     parse_upgrade_log,
 )
 from utils.rpc import normalize_hex, parse_address_result, rpc_batch_request, rpc_request
+
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 # Storage slots used for implementation resolution
 _EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
@@ -32,7 +37,7 @@ logger = logging.getLogger(__name__)
 # Maximum block range per eth_getLogs call (stay under node limits)
 MAX_BLOCK_RANGE = 2000
 # Default scan interval in seconds
-DEFAULT_SCAN_INTERVAL = 15
+DEFAULT_SCAN_INTERVAL = int(os.getenv("PROXY_SCAN_INTERVAL", "15"))
 
 
 def get_latest_block(rpc_url: str) -> int:
@@ -433,7 +438,7 @@ def run_scan_loop(rpc_url: str, interval: float = DEFAULT_SCAN_INTERVAL) -> None
         time.sleep(interval)
 
 
-DEFAULT_POLL_INTERVAL = 60
+DEFAULT_POLL_INTERVAL = int(os.getenv("PROXY_POLL_INTERVAL", "60"))
 
 
 def run_poll_loop(rpc_url: str, interval: float = DEFAULT_POLL_INTERVAL) -> None:

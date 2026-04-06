@@ -23,7 +23,8 @@ _RATE_LIMIT_RETRIES = 5
 _RATE_LIMIT_BACKOFF = 1.0  # seconds, doubles each retry
 
 # Global Etherscan rate limit — applies to every call through get().
-ETHERSCAN_RATE_LIMIT = 5  # requests per second
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+ETHERSCAN_RATE_LIMIT = int(os.getenv("ETHERSCAN_RATE_LIMIT", "5"))
 
 _min_interval = 1.0 / ETHERSCAN_RATE_LIMIT
 _rate_lock = threading.Lock()
