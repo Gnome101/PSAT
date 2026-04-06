@@ -42,10 +42,6 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.policy_worker &
 PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.proxy_monitor &
-PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.proxy_monitor --poll &
-PIDS+=($!)
 
 echo "All workers started: ${PIDS[*]}"
 wait "${PIDS[@]}"
