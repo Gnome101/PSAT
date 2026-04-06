@@ -50,6 +50,36 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  proxy-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: psat-api:latest
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+    command: ["uv", "run", "--no-sync", "python", "-m", "workers.proxy_monitor"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  proxy-poller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: psat-api:latest
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+    command: ["uv", "run", "--no-sync", "python", "-m", "workers.proxy_monitor", "--poll"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   site:
     build:
       context: .

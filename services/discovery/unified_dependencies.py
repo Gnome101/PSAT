@@ -6,7 +6,7 @@ from utils.etherscan import get_contract_info
 
 from .static_dependencies import normalize_address
 
-_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "proxies", "facets")
+_CLS_KEYS = ("proxy_type", "implementation", "beacon", "admin", "proxies", "facets", "needs_polling")
 
 
 def build_unified_dependencies(
@@ -14,8 +14,15 @@ def build_unified_dependencies(
     static_deps: dict | None,
     dynamic_deps: dict | None,
     classifications: dict | None,
+    target_classification: dict | None = None,
 ) -> dict:
-    """Merge static deps, dynamic deps, and classifications into one output."""
+    """Merge static deps, dynamic deps, and classifications into one output.
+
+    *target_classification* is an optional fallback from an earlier
+    ``classify_single`` call.  When ``classifications`` is ``None`` (e.g.
+    because ``classify_contracts`` was skipped or failed), this ensures the
+    target's proxy type still reaches the unified output.
+    """
     target = normalize_address(address)
 
     dep_sources: dict[str, set[str]] = {}
@@ -63,12 +70,12 @@ def build_unified_dependencies(
 
     output: dict = {"address": target, "dependencies": deps}
 
-    if target in cls_map and cls_map[target].get("type", "regular") != "regular":
-        target_classification = cls_map[target]
-        info = {"type": target_classification["type"]}
+    effective_target_cls = cls_map.get(target) or target_classification
+    if effective_target_cls and effective_target_cls.get("type", "regular") != "regular":
+        info = {"type": effective_target_cls["type"]}
         for key in ("proxy_type", "implementation", "beacon", "admin"):
-            if key in target_classification:
-                info[key] = target_classification[key]
+            if key in effective_target_cls:
+                info[key] = effective_target_cls[key]
         output["target_classification"] = info
 
     if dynamic_deps:

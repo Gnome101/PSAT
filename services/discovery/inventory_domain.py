@@ -230,10 +230,14 @@ def _llm_select_domain(
     results: list[dict],
     company: str,
     debug: bool = False,
-) -> str | None:
-    """Ask the LLM to identify the official domain for a company from search results."""
+) -> tuple[str | None, list[str]]:
+    """Ask the LLM to identify the best domain(s) for finding deployed contract addresses.
+
+    Returns ``(primary_domain, extra_domains)`` where *extra_domains* are
+    secondary docs sites (e.g. gitbook) that should also be searched.
+    """
     if not results:
-        return None
+        return None, []
 
     # Collect unique non-explorer, non-low-trust domains with their URLs/titles
     domain_info: dict[str, list[str]] = defaultdict(list)
@@ -248,18 +252,22 @@ def _llm_select_domain(
         domain_info[domain].append(title or url)
 
     if not domain_info:
-        return None
+        return None, []
 
     # Present as numbered choices (more reliable across LLM models)
+    sorted_domains = sorted(domain_info.keys(), key=lambda d: -len(domain_info[d]))
     choices = "\n".join(
         f"{i + 1}. {domain} (pages: {', '.join(titles[:2])})"
-        for i, (domain, titles) in enumerate(sorted(domain_info.items(), key=lambda x: -len(x[1])))
+        for i, (domain, titles) in enumerate((d, domain_info[d]) for d in sorted_domains)
     )
 
     prompt = (
-        f"Which of these is the official documentation or website for the "
-        f"{company} protocol?\n\n{choices}\n\n"
-        f"Reply with ONLY the number."
+        f"Which of these domains contain official documentation or deployed "
+        f"smart contract addresses for the {company} protocol?\n"
+        f"Many protocols use a separate docs site (e.g. gitbook, readthedocs, "
+        f"notion) alongside their main website.\n\n{choices}\n\n"
+        f"Reply with the number(s), comma-separated if more than one. "
+        f"Put the most important domain first."
     )
 
     try:
@@ -268,19 +276,18 @@ def _llm_select_domain(
             max_tokens=32,
             temperature=0.0,
         )
-        # Accept the first number from the response (e.g., "2" or "1, 2, 6").
-        first_num = re.search(r"\d+", response.strip())
-        if first_num:
-            idx = int(first_num.group()) - 1
-            sorted_domains = sorted(domain_info.keys(), key=lambda d: -len(domain_info[d]))
-            if 0 <= idx < len(sorted_domains):
-                selected = sorted_domains[idx]
-                _debug_log(debug, f"LLM selected domain #{idx + 1}: {selected}")
-                return selected
+        nums = [int(m) - 1 for m in re.findall(r"\d+", response.strip())]
+        selected: list[str] = []
+        for idx in nums:
+            if 0 <= idx < len(sorted_domains) and sorted_domains[idx] not in selected:
+                selected.append(sorted_domains[idx])
+        if selected:
+            _debug_log(debug, f"LLM selected domain(s): {selected}")
+            return selected[0], selected[1:]
         _debug_log(debug, f"LLM returned unparseable response: {response!r}")
     except (_requests.RequestException, json.JSONDecodeError, RuntimeError) as exc:
         _debug_log(debug, f"LLM domain selection failed: {exc!r}")
-    return None
+    return None, []
 
 
 def _domain_candidates_from_results(results: list[dict[str, Any]]) -> list[str]:
@@ -318,8 +325,9 @@ def _collect_in_domain_pages(results: list[dict[str, Any]], domain: str) -> list
 def _llm_select_pages(
     page_info: list[dict[str, str]],
     company: str,
-    domain: str,
+    domain_label: str,
     prompt: str,
+    allowed_domains: list[str],
     debug: bool = False,
 ) -> list[str]:
     """Ask the LLM to choose the most relevant in-domain pages from a candidate list."""
@@ -333,7 +341,7 @@ def _llm_select_pages(
 
     try:
         response = llm.chat(
-            [{"role": "user", "content": prompt.format(company=company, domain=domain, page_list=page_list)}],
+            [{"role": "user", "content": prompt.format(company=company, domain=domain_label, page_list=page_list)}],
             max_tokens=2048,
             temperature=0.0,
         )
@@ -343,7 +351,7 @@ def _llm_select_pages(
             clean_url = url_match.rstrip(".,;:!?)")
             if clean_url in seen:
                 continue
-            if _is_allowed_domain(_get_domain(clean_url), [domain]):
+            if _is_allowed_domain(_get_domain(clean_url), allowed_domains):
                 seen.add(clean_url)
                 recommended.append(clean_url)
         _debug_log(debug, f"LLM recommended {len(recommended)} in-domain URL(s)")
@@ -380,31 +388,50 @@ def _discover_contract_inventory_pages(
     queries_used: list[int],
     max_queries: int,
     errors: list[dict],
+    extra_domains: list[str] | None = None,
     debug: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Discover pages that likely contain official multi-contract inventory information."""
-    _debug_log(debug, f"Inventory page discovery on domain={domain}")
-    site_results = _tavily_search(
-        f"site:{domain} {company} contract addresses deployments smart contracts",
-        max_results=12,
-        queries_used=queries_used,
-        max_queries=max_queries,
-        errors=errors,
-        debug=debug,
-    )
+    all_domains = [domain] + sorted(set(extra_domains or []) - {domain})
+    _debug_log(debug, f"Inventory page discovery on domain(s)={all_domains}")
+
+    site_results: list[dict[str, Any]] = []
+    for d in all_domains:
+        site_results.extend(
+            _tavily_search(
+                f"site:{d} {company} contract addresses deployments smart contracts",
+                max_results=12,
+                queries_used=queries_used,
+                max_queries=max_queries,
+                errors=errors,
+                debug=debug,
+            )
+        )
 
     combined = _dedupe_results_by_url(
-        [r for r in broad_results if _is_allowed_domain(_get_domain(str(r.get("url", ""))), [domain])] + site_results
+        [r for r in broad_results if _is_allowed_domain(_get_domain(str(r.get("url", ""))), all_domains)] + site_results
     )
     if not combined:
         _debug_log(debug, "No inventory page candidates returned")
         return [], []
 
-    page_info = _collect_in_domain_pages(combined, domain)
+    page_info: list[dict[str, str]] = []
+    for d in all_domains:
+        page_info.extend(_collect_in_domain_pages(combined, d))
+    # Dedupe by URL in case of overlap
+    seen: set[str] = set()
+    unique_page_info: list[dict[str, str]] = []
+    for p in page_info:
+        if p["url"] not in seen:
+            seen.add(p["url"])
+            unique_page_info.append(p)
+    page_info = unique_page_info
+
     if not page_info:
         _debug_log(debug, "No in-domain inventory page candidates available")
         return combined, []
 
+    domain_label = " / ".join(all_domains)
     prompt = (
         "Below are pages from the {company} documentation or official website ({domain}).\n"
         "Which of these pages are most likely to contain an authoritative inventory of deployed "
@@ -415,5 +442,12 @@ def _discover_contract_inventory_pages(
         "{page_list}\n\n"
         "Reply with ONLY the best URL(s), one per line — nothing else."
     )
-    recommended = _llm_select_pages(page_info, company, domain, prompt, debug=debug)
+    recommended = _llm_select_pages(
+        page_info,
+        company,
+        domain_label,
+        prompt,
+        allowed_domains=all_domains,
+        debug=debug,
+    )
     return combined, recommended

@@ -11,6 +11,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum,
     ForeignKey,
@@ -114,6 +115,43 @@ class SourceFile(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     job: Mapped[Job] = relationship("Job", back_populates="source_files")
+
+
+class WatchedProxy(Base):
+    __tablename__ = "watched_proxies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    proxy_address: Mapped[str] = mapped_column(String(42), nullable=False)
+    chain: Mapped[str] = mapped_column(String, nullable=False, default="ethereum")
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    proxy_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_known_implementation: Mapped[str | None] = mapped_column(String(42), nullable=True)
+    last_scanned_block: Mapped[int] = mapped_column(default=0)
+    needs_polling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    events: Mapped[list["ProxyUpgradeEvent"]] = relationship(
+        "ProxyUpgradeEvent", back_populates="watched_proxy", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (UniqueConstraint("proxy_address", "chain", name="uq_watched_proxy_address_chain"),)
+
+
+class ProxyUpgradeEvent(Base):
+    __tablename__ = "proxy_upgrade_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    watched_proxy_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("watched_proxies.id", ondelete="CASCADE"), nullable=False
+    )
+    block_number: Mapped[int] = mapped_column(nullable=False)
+    tx_hash: Mapped[str] = mapped_column(String(66), nullable=False)
+    old_implementation: Mapped[str | None] = mapped_column(String(42), nullable=True)
+    new_implementation: Mapped[str] = mapped_column(String(42), nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False, default="upgraded")
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    watched_proxy: Mapped[WatchedProxy] = relationship("WatchedProxy", back_populates="events")
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")

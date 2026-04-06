@@ -353,9 +353,10 @@ def search_protocol_inventory(
         domain_candidates = _domain_candidates_from_results(broad_results)
         if domain_candidates:
             notes.append(f"Domain candidates: {', '.join(domain_candidates[:5])}")
-        official_domain = _llm_select_domain(broad_results, clean_company, debug=debug)
+        official_domain, extra_domains = _llm_select_domain(broad_results, clean_company, debug=debug)
         if not official_domain and len(domain_candidates) == 1:
             official_domain = domain_candidates[0]
+            extra_domains = []
             notes.append(f"Falling back to sole domain candidate: {official_domain}")
 
     if not official_domain:
@@ -381,6 +382,7 @@ def search_protocol_inventory(
         queries_used,
         max_queries,
         errors,
+        extra_domains=extra_domains if "extra_domains" in locals() else None,
         debug=debug,
     )
 

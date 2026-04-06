@@ -32,10 +32,34 @@ ADMIN_CHANGED_TOPIC0 = "0x7e644d79422f17c01e4894b5f4f588d331ebfa28653d42ae832dc5
 # BeaconUpgraded(address indexed beacon)
 BEACON_UPGRADED_TOPIC0 = "0x1cf3b03a6cf19fa2baba4df148e9dcabedea7f8a5c07840e207e5c089be95d3e"
 
+# GnosisSafe — ChangedMasterCopy(address)
+CHANGED_MASTER_COPY_TOPIC0 = "0x75e41bc35ff1bf14d81d1d2f649c0084a0f974f9289c803ec9898eeec4c8d0b8"
+
+# Compound — NewImplementation(address oldImplementation, address newImplementation)
+NEW_IMPLEMENTATION_TOPIC0 = "0xd604de94d45953f9138079ec1b82d533cb2160c906d1076d1f7ed54befbca97a"
+
+# Compound — NewPendingImplementation(address oldPendingImplementation, address newPendingImplementation)
+NEW_PENDING_IMPLEMENTATION_TOPIC0 = "0xe945ccee5d701fc83f9b8aa8ca94ea4219ec1fcbd4f4cab4f0ea57c5c3e1d815"
+
+# Synthetix — TargetUpdated(address newTarget)
+TARGET_UPDATED_TOPIC0 = "0x814250a3b8c79fcbe2ead2c131c952a278491c8f4322a79fe84b5040a810373e"
+
+# Aave V2 — Upgraded(uint256 revision)
+UPGRADED_REVISION_TOPIC0 = "0x65a5e70879738a94a00f00947edae8111ae0aed9175ce342db680bf1e0fb87fc"
+
+# Diamond (EIP-2535) — DiamondCut((address,uint8,bytes4[])[],address,bytes)
+DIAMOND_CUT_TOPIC0 = "0x8faa70878671ccd212d20771b795c50af8fd3ff6cf27f4bde57e5d4de0aeb673"
+
 EVENT_TOPICS = {
     UPGRADED_TOPIC0: "upgraded",
     ADMIN_CHANGED_TOPIC0: "admin_changed",
     BEACON_UPGRADED_TOPIC0: "beacon_upgraded",
+    CHANGED_MASTER_COPY_TOPIC0: "changed_master_copy",
+    NEW_IMPLEMENTATION_TOPIC0: "new_implementation",
+    NEW_PENDING_IMPLEMENTATION_TOPIC0: "new_pending_implementation",
+    TARGET_UPDATED_TOPIC0: "target_updated",
+    UPGRADED_REVISION_TOPIC0: "upgraded_revision",
+    DIAMOND_CUT_TOPIC0: "diamond_cut",
 }
 
 # ---------------------------------------------------------------------------
@@ -128,6 +152,80 @@ def parse_upgrade_log(log: dict) -> dict | None:
                 addrs = _data_to_addresses(data, 1)
                 event["beacon"] = addrs[0]
 
+    elif event_type == "changed_master_copy":
+        # GnosisSafe: single non-indexed address in data
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 40:
+            addrs = _data_to_addresses(data, 1)
+            event["implementation"] = addrs[0]
+
+    elif event_type == "new_implementation":
+        # Compound: two ABI-encoded addresses in data (old impl, new impl)
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 128:
+            addrs = _data_to_addresses(data, 2)
+            event["old_implementation"] = addrs[0]
+            event["implementation"] = addrs[1]
+
+    elif event_type == "new_pending_implementation":
+        # Compound: two ABI-encoded addresses in data (old pending impl, new pending impl)
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 128:
+            addrs = _data_to_addresses(data, 2)
+            event["implementation"] = addrs[1]
+
+    elif event_type == "target_updated":
+        # Synthetix: single non-indexed address in data
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 40:
+            addrs = _data_to_addresses(data, 1)
+            event["implementation"] = addrs[0]
+
+    elif event_type == "upgraded_revision":
+        # Aave V2: uint256 revision number in data — NOT an implementation address
+        data = log.get("data", "0x")
+        if data and data != "0x" and len(data.replace("0x", "")) >= 2:
+            event["revision"] = _hex_to_int(data)
+
+    elif event_type == "diamond_cut":
+        # EIP-2535 DiamondCut: ABI-encoded FacetCut[] + _init address + _calldata
+        # Extract facet addresses from the FacetCut[] array, filtering out Remove actions.
+        try:
+            data = log.get("data", "0x")
+            raw = data.replace("0x", "")
+            if len(raw) >= 192:  # minimum: 3 words (offsets) + at least array length
+                # bytes 0-63: offset to FacetCut[] array
+                array_offset = int(raw[0:64], 16) * 2  # convert byte offset to hex-char offset
+                # At array_offset: uint256 count of FacetCut entries
+                count_start = array_offset
+                if len(raw) >= count_start + 64:
+                    count = int(raw[count_start : count_start + 64], 16)
+                    if count > 1000:  # cap to prevent DoS from crafted events
+                        count = 0
+                    # After count: `count` uint256 offsets (relative to array_offset)
+                    entry_offsets_start = count_start + 64
+                    facets: list[str] = []
+                    for i in range(count):
+                        off_pos = entry_offsets_start + i * 64
+                        if len(raw) < off_pos + 64:
+                            break
+                        entry_offset = int(raw[off_pos : off_pos + 64], 16) * 2
+                        # Entry is relative to array_offset
+                        entry_start = array_offset + entry_offset
+                        # Each FacetCut entry: address (32 bytes) + action (32 bytes) + ...
+                        if len(raw) < entry_start + 128:
+                            break
+                        facet_addr = normalize_address("0x" + raw[entry_start + 24 : entry_start + 64])
+                        action = int(raw[entry_start + 64 : entry_start + 128], 16)
+                        # action: 0=Add, 1=Replace, 2=Remove — skip Remove
+                        if action != 2 and facet_addr != normalize_address("0x" + "0" * 40):
+                            facets.append(facet_addr)
+                    if facets:
+                        event["implementation"] = facets[0]
+                        event["facets"] = facets
+        except (ValueError, IndexError):
+            pass  # malformed data — return event without implementation
+
     return event
 
 
@@ -160,16 +258,13 @@ def fetch_upgrade_events(proxy_addresses: list[str]) -> list[dict]:
 
     Queries each proxy for all three event types (Upgraded, AdminChanged,
     BeaconUpgraded). Returns a chronologically sorted list of parsed events.
-    Respects Etherscan's free-tier rate limit (5 calls/sec).
+    Rate-limited centrally by ``utils.etherscan``.
     """
-    import time
-
     all_events: list[dict] = []
 
     for addr in proxy_addresses:
         addr = normalize_address(addr)
         for topic0 in EVENT_TOPICS:
-            time.sleep(0.22)  # ~4.5 calls/sec, stays under 5/sec free-tier limit
             raw_logs = _fetch_logs_etherscan(addr, topic0)
             for log in raw_logs:
                 event = parse_upgrade_log(log)

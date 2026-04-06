@@ -1,21 +1,17 @@
-import importlib
 import sys
-import types
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from services.discovery.unified_dependencies import build_unified_dependencies, enrich_dependency_metadata
 
 
 def _get_build_fn():
-    """Import build_unified_dependencies from main without triggering heavy deps."""
-    if "requests" not in sys.modules:
-        requests_stub = types.ModuleType("requests")
-        requests_stub.get = lambda *a, **kw: None  # type: ignore[attr-defined]
-        requests_stub.post = lambda *a, **kw: None  # type: ignore[attr-defined]
-        sys.modules["requests"] = requests_stub
-    if "dotenv" not in sys.modules:
-        dotenv_stub = types.ModuleType("dotenv")
-        dotenv_stub.load_dotenv = lambda *a, **kw: None  # type: ignore[attr-defined]
-        sys.modules["dotenv"] = dotenv_stub
-    mod = importlib.import_module("main") if "main" not in sys.modules else sys.modules["main"]
-    return mod.build_unified_dependencies
+    return build_unified_dependencies
+
+
+def _get_enrich_fn():
+    return enrich_dependency_metadata
 
 
 TARGET = "0x1111111111111111111111111111111111111111"
@@ -140,6 +136,33 @@ def test_classification_merging():
     assert "target_classification" not in r
 
 
+def test_target_classification_fallback():
+    """target_classification kwarg is used when classify_contracts is unavailable."""
+    build = _get_build_fn()
+    fallback = {"address": TARGET, "type": "proxy", "proxy_type": "eip1967", "implementation": IMPL}
+
+    # No cls_output — fallback fills target_classification
+    r = build(TARGET, _static([DEP_A]), None, None, target_classification=fallback)
+    assert r["target_classification"]["type"] == "proxy"
+    assert r["target_classification"]["proxy_type"] == "eip1967"
+
+    # cls_output present and has target — cls_output wins
+    cls = {
+        "classifications": {
+            TARGET: {"address": TARGET, "type": "proxy", "proxy_type": "beacon_proxy"},
+            DEP_A: {"address": DEP_A, "type": "regular"},
+        },
+        "discovered_addresses": [],
+    }
+    r = build(TARGET, _static([DEP_A]), None, cls, target_classification=fallback)
+    assert r["target_classification"]["proxy_type"] == "beacon_proxy"
+
+    # Regular fallback is ignored
+    regular_fallback = {"address": TARGET, "type": "regular"}
+    r = build(TARGET, _static([DEP_A]), None, None, target_classification=regular_fallback)
+    assert "target_classification" not in r
+
+
 def test_edge_cases():
     """Empty deps, no classification, and discovered-address deduplication."""
     build = _get_build_fn()
@@ -226,3 +249,72 @@ def test_dependency_graph_keyed():
     assert key_b in dg
     assert len(dg[key_b]) == 1
     assert dg[key_b][0]["op"] == "STATICCALL"
+
+
+def test_enrich_dependency_metadata(monkeypatch):
+    """enrich_dependency_metadata resolves contract names and maps selectors to function names."""
+    enrich = _get_enrich_fn()
+    build = _get_build_fn()
+
+    # Mock get_contract_info to return name + selector map per address
+    selector_a = "0xdeadbeef"
+    info_map = {
+        DEP_A: ("TokenVault", {selector_a: "deposit"}),
+        DEP_B: ("PriceOracle", {}),
+        IMPL: ("VaultImpl", {}),
+    }
+    monkeypatch.setattr(
+        "services.discovery.unified_dependencies.get_contract_info",
+        lambda addr: info_map.get(addr, (None, {})),
+    )
+
+    # Build a unified output with a proxy dep (impl nested) and a dependency graph
+    cls = {
+        "address": TARGET,
+        "rpc": "https://rpc.example",
+        "classifications": {
+            TARGET: {"address": TARGET, "type": "regular"},
+            DEP_A: {
+                "address": DEP_A,
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": IMPL,
+            },
+            IMPL: {"address": IMPL, "type": "implementation", "proxies": [DEP_A]},
+            DEP_B: {"address": DEP_B, "type": "regular"},
+        },
+        "discovered_addresses": [IMPL],
+    }
+    graph = [
+        {
+            "from": TARGET,
+            "to": DEP_A,
+            "op": "CALL",
+            "provenance": [],
+            "selector": selector_a,
+        },
+    ]
+    dyn = {
+        "address": TARGET,
+        "rpc": "https://trace.example",
+        "transactions_analyzed": [],
+        "trace_methods": [],
+        "dependencies": [DEP_A, DEP_B],
+        "dependency_graph": graph,
+        "trace_errors": [],
+    }
+    unified = build(TARGET, _static([DEP_A, DEP_B]), dyn, cls)
+    enrich(unified)
+
+    # Contract names resolved
+    assert unified["dependencies"][DEP_A]["contract_name"] == "TokenVault"
+    assert unified["dependencies"][DEP_B]["contract_name"] == "PriceOracle"
+
+    # Nested implementation name resolved
+    impl_entry = unified["dependencies"][DEP_A]["implementation"]
+    assert impl_entry["contract_name"] == "VaultImpl"
+
+    # Selector resolved to function name in dependency_graph via impl fallback
+    key = f"{TARGET}|{DEP_A}"
+    edge = unified["dependency_graph"][key][0]
+    assert edge["function_name"] == "deposit"

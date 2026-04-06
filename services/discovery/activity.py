@@ -29,16 +29,13 @@ from typing import Any
 
 from utils import etherscan
 
-from .inventory_domain import CHAIN_IDS, CHAIN_SORT_ORDER, RateLimiter, _debug_log
+from .inventory_domain import CHAIN_IDS, CHAIN_SORT_ORDER, _debug_log
 
 # Half-life in days for the activity decay function.
 _HALF_LIFE_DAYS = 30
 
 # Score assigned when activity data is unavailable (e.g. unsupported chain).
 _NEUTRAL_SCORE = 0.5
-
-# Etherscan free-tier limit is 3 req/s.  Use 2 to stay safely under.
-_MAX_REQUESTS_PER_SECOND = 2
 
 # Blended ranking weights.
 _W_CONFIDENCE = 0.35
@@ -111,21 +108,18 @@ def enrich_with_activity(
     Mutates the contract dicts in-place (adds ``activity`` and ``rank_score``
     keys) and returns the list sorted by ``rank_score`` descending.
 
-    Rate-limited to stay under the Etherscan free-tier limit.
+    Rate-limited centrally by ``utils.etherscan``.
     """
     if not contracts:
         return contracts
 
     _debug_log(debug, f"Fetching on-chain activity for {len(contracts)} contract(s)")
 
-    limiter = RateLimiter(_MAX_REQUESTS_PER_SECOND)
-
     for contract in contracts:
         address = contract["address"]
         chain = _primary_chain(contract)
         chain_id = CHAIN_IDS.get(chain, CHAIN_IDS["ethereum"])
 
-        limiter.wait()
         last_ts = _fetch_last_active_ts(address, chain_id=chain_id, debug=debug)
         score = _activity_score(last_ts)
 

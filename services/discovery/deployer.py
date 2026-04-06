@@ -26,19 +26,13 @@ deploy-as-a-service providers while keeping genuine protocol ops wallets.
 
 from __future__ import annotations
 
-import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from services.discovery.inventory_domain import RateLimiter, _debug_log
+from services.discovery.inventory_domain import _debug_log
 from services.discovery.static_dependencies import normalize_address
 from utils import etherscan
-
-# Etherscan free-tier limit is ~3 req/s.  A small pause between sequential
-# batches avoids 429 errors without meaningfully slowing down the pipeline.
-_RATE_LIMIT_DELAY = 0.25
-_MAX_REQUESTS_PER_SECOND = 2
 
 # A deployer must have created at least this many seed contracts.
 _MIN_SEED_COUNT = 3
@@ -75,8 +69,6 @@ def _batch_get_creators(
         except RuntimeError:
             # Address(es) may not be contracts or Etherscan returned no data.
             _debug_log(debug, f"getcontractcreation batch failed for {len(batch)} address(es)")
-        if i + batch_size < len(addresses):
-            time.sleep(_RATE_LIMIT_DELAY)
     return creators
 
 
@@ -104,9 +96,8 @@ def _get_deployed_contracts(deployer: str, debug: bool = False) -> list[str]:
     return deployed
 
 
-def _get_one_name(addr: str, limiter: RateLimiter) -> tuple[str, str | None]:
-    """Fetch the contract name for a single address (thread-safe, rate-limited)."""
-    limiter.wait()
+def _get_one_name(addr: str) -> tuple[str, str | None]:
+    """Fetch the contract name for a single address (rate-limited centrally by etherscan.get)."""
     return addr, etherscan.get_contract_name(addr)
 
 
@@ -119,10 +110,9 @@ def _batch_get_names(
         return {}
 
     names: dict[str, str] = {}
-    limiter = RateLimiter(_MAX_REQUESTS_PER_SECOND)
 
-    with ThreadPoolExecutor(max_workers=_MAX_REQUESTS_PER_SECOND) as executor:
-        futures = {executor.submit(_get_one_name, addr, limiter): addr for addr in addresses}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(_get_one_name, addr): addr for addr in addresses}
         for future in as_completed(futures):
             try:
                 addr, name = future.result()
@@ -223,7 +213,6 @@ def expand_from_deployers(
     seed_set = set(normalized_seeds)
     all_deployed: dict[str, set[str]] = {}  # address → deployers that created it
     for deployer in qualified_deployers:
-        time.sleep(_RATE_LIMIT_DELAY)
         deployed = _get_deployed_contracts(deployer, debug=debug)
         for addr in deployed:
             all_deployed.setdefault(addr, set()).add(deployer)
