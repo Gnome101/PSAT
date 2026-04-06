@@ -1,0 +1,228 @@
+import importlib
+import sys
+import types
+
+
+def _get_build_fn():
+    """Import build_unified_dependencies from main without triggering heavy deps."""
+    if "requests" not in sys.modules:
+        requests_stub = types.ModuleType("requests")
+        requests_stub.get = lambda *a, **kw: None  # type: ignore[attr-defined]
+        requests_stub.post = lambda *a, **kw: None  # type: ignore[attr-defined]
+        sys.modules["requests"] = requests_stub
+    if "dotenv" not in sys.modules:
+        dotenv_stub = types.ModuleType("dotenv")
+        dotenv_stub.load_dotenv = lambda *a, **kw: None  # type: ignore[attr-defined]
+        sys.modules["dotenv"] = dotenv_stub
+    mod = importlib.import_module("main") if "main" not in sys.modules else sys.modules["main"]
+    return mod.build_unified_dependencies
+
+
+TARGET = "0x1111111111111111111111111111111111111111"
+DEP_A = "0x2222222222222222222222222222222222222222"
+DEP_B = "0x3333333333333333333333333333333333333333"
+DEP_C = "0x4444444444444444444444444444444444444444"
+IMPL = "0x5555555555555555555555555555555555555555"
+
+
+def _static(deps, network="ethereum"):
+    return {
+        "address": TARGET,
+        "dependencies": deps,
+        "rpc": "https://rpc.example",
+        "network": network,
+    }
+
+
+def _dynamic(deps, provenance=None, graph=None):
+    return {
+        "address": TARGET,
+        "rpc": "https://trace.example",
+        "transactions_analyzed": [{"tx_hash": "0xaa", "block_number": 1, "method_selector": "0xdeadbeef"}],
+        "trace_methods": ["debug_traceTransaction"],
+        "dependencies": deps,
+        "provenance": provenance or {},
+        "dependency_graph": graph or [],
+        "trace_errors": [],
+    }
+
+
+def test_source_tracking():
+    """Static-only, dynamic-only, and merged sources are all tracked correctly."""
+    build = _get_build_fn()
+
+    # Static only
+    r = build(TARGET, _static([DEP_A]), None, None)
+    assert r["dependencies"][DEP_A]["source"] == ["static"]
+    assert r["network"] == "ethereum"
+    assert "dependency_graph" not in r
+
+    # Dynamic only (with graph)
+    graph = [
+        {
+            "from": TARGET,
+            "to": DEP_A,
+            "op": "CALL",
+            "provenance": [{"tx_hash": "0xaa", "block_number": 1}],
+        }
+    ]
+    r = build(TARGET, None, _dynamic([DEP_A], graph=graph), None)
+    assert r["dependencies"][DEP_A]["source"] == ["dynamic"]
+    # Provenance lives only in dependency_graph, not on dep entries
+    assert "provenance" not in r["dependencies"][DEP_A]
+    # dependency_graph is keyed by from|to
+    key = f"{TARGET}|{DEP_A}"
+    assert key in r["dependency_graph"]
+    assert r["dependency_graph"][key][0]["op"] == "CALL"
+    assert "network" not in r
+
+    # Merged: DEP_A in both, DEP_B static-only, DEP_C dynamic-only
+    r = build(TARGET, _static([DEP_A, DEP_B]), _dynamic([DEP_A, DEP_C]), None)
+    assert r["dependencies"][DEP_A]["source"] == ["dynamic", "static"]
+    assert r["dependencies"][DEP_B]["source"] == ["static"]
+    assert r["dependencies"][DEP_C]["source"] == ["dynamic"]
+
+    # Duplicates within a source are deduplicated
+    r = build(TARGET, _static([DEP_A, DEP_A]), _dynamic([DEP_A]), None)
+    assert r["dependencies"][DEP_A]["source"] == ["dynamic", "static"]
+
+
+def test_classification_merging():
+    """Classification types, target classification, and nested implementations."""
+    build = _get_build_fn()
+    cls = {
+        "address": TARGET,
+        "rpc": "https://rpc.example",
+        "classifications": {
+            TARGET: {
+                "address": TARGET,
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": IMPL,
+            },
+            DEP_A: {
+                "address": DEP_A,
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": IMPL,
+            },
+            IMPL: {"address": IMPL, "type": "implementation", "proxies": [DEP_A]},
+        },
+        "discovered_addresses": [IMPL],
+    }
+    r = build(TARGET, _static([DEP_A]), None, cls)
+
+    # Dep classification
+    assert r["dependencies"][DEP_A]["type"] == "proxy"
+    assert r["dependencies"][DEP_A]["proxy_type"] == "eip1967"
+
+    # Implementation is nested under its proxy, not a top-level key
+    impl = r["dependencies"][DEP_A]["implementation"]
+    assert isinstance(impl, dict)
+    assert impl["address"] == IMPL
+    assert impl["type"] == "implementation"
+    assert impl["source"] == ["classification"]
+    assert "proxies" not in impl  # reverse link removed
+
+    # IMPL is NOT a top-level dependency
+    assert IMPL not in r["dependencies"]
+
+    # discovered_addresses is not stored — derived from source=["classification"]
+    assert "discovered_addresses" not in r
+
+    # Target classification included when non-regular
+    assert r["target_classification"]["type"] == "proxy"
+    assert r["target_classification"]["implementation"] == IMPL
+
+    # Target classification omitted when regular
+    cls["classifications"][TARGET]["type"] = "regular"
+    r = build(TARGET, _static([DEP_A]), None, cls)
+    assert "target_classification" not in r
+
+
+def test_edge_cases():
+    """Empty deps, no classification, and discovered-address deduplication."""
+    build = _get_build_fn()
+
+    # Empty deps
+    r = build(TARGET, _static([]), None, None)
+    assert r["dependencies"] == {}
+
+    # No classification — all regular
+    r = build(TARGET, _static([DEP_A, DEP_B]), None, None)
+    assert all(d["type"] == "regular" for d in r["dependencies"].values())
+    assert "discovered_addresses" not in r
+
+    # Discovered address already in dep list — not duplicated, keeps original source,
+    # and gets nested under its proxy
+    cls = {
+        "address": TARGET,
+        "rpc": "https://rpc.example",
+        "classifications": {
+            TARGET: {"address": TARGET, "type": "regular"},
+            DEP_A: {
+                "address": DEP_A,
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": DEP_B,
+            },
+            DEP_B: {"address": DEP_B, "type": "implementation", "proxies": [DEP_A]},
+        },
+        "discovered_addresses": [DEP_B],
+    }
+    r = build(TARGET, _static([DEP_A, DEP_B]), None, cls)
+    # DEP_B is nested under DEP_A (its proxy), not top-level
+    assert DEP_B not in r["dependencies"]
+    impl = r["dependencies"][DEP_A]["implementation"]
+    assert isinstance(impl, dict)
+    assert impl["address"] == DEP_B
+    assert impl["source"] == ["static"]
+    assert impl["type"] == "implementation"
+
+
+def test_dependency_graph_keyed():
+    """dependency_graph is keyed by from|to pair."""
+    build = _get_build_fn()
+
+    graph = [
+        {
+            "from": TARGET,
+            "to": DEP_A,
+            "op": "CALL",
+            "provenance": [{"tx_hash": "0xaa", "block_number": 1}],
+            "selector": "0xdeadbeef",
+        },
+        {
+            "from": TARGET,
+            "to": DEP_A,
+            "op": "CALL",
+            "provenance": [{"tx_hash": "0xbb", "block_number": 2}],
+            "selector": "0xcafebabe",
+        },
+        {
+            "from": TARGET,
+            "to": DEP_B,
+            "op": "STATICCALL",
+            "provenance": [],
+        },
+    ]
+    r = build(TARGET, None, _dynamic([DEP_A, DEP_B], graph=graph), None)
+
+    dg = r["dependency_graph"]
+    assert isinstance(dg, dict)
+
+    # Two edges for TARGET→DEP_A
+    key_a = f"{TARGET}|{DEP_A}"
+    assert key_a in dg
+    assert len(dg[key_a]) == 2
+    assert dg[key_a][0]["selector"] == "0xdeadbeef"
+    assert dg[key_a][1]["selector"] == "0xcafebabe"
+    # from/to not repeated inside entries
+    assert "from" not in dg[key_a][0]
+    assert "to" not in dg[key_a][0]
+
+    # One edge for TARGET→DEP_B
+    key_b = f"{TARGET}|{DEP_B}"
+    assert key_b in dg
+    assert len(dg[key_b]) == 1
+    assert dg[key_b][0]["op"] == "STATICCALL"

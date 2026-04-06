@@ -4,3 +4,11 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+site/node_modules/
+site/dist/
+contracts/
+protocols/
+!tests/fixtures/
+!tests/fixtures/contracts/
+!tests/fixtures/contracts/**
+.coverage

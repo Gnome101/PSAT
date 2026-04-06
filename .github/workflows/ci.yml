@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+      - run: uv run pyright
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+      - run: forge --version
+      - run: uv run pytest -k "not live" -q
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+      - run: uv run --with coverage coverage run -m pytest -k "not live" -q
+      - name: Coverage report
+        run: |
+          uv run --with coverage coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          TOTAL=$(uv run --with coverage coverage report --format=total)
+          echo "**Total coverage: ${TOTAL}%** (minimum: 70%)" >> $GITHUB_STEP_SUMMARY
+          echo "Total coverage: ${TOTAL}%"
+          uv run --with coverage coverage report
