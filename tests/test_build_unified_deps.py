@@ -1,28 +1,16 @@
-import importlib
 import sys
-import types
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from services.discovery.unified_dependencies import build_unified_dependencies, enrich_dependency_metadata
 
 
 def _get_build_fn():
-    """Import build_unified_dependencies from main without triggering heavy deps."""
-    if "requests" not in sys.modules:
-        requests_stub = types.ModuleType("requests")
-        requests_stub.get = lambda *a, **kw: None  # type: ignore[attr-defined]
-        requests_stub.post = lambda *a, **kw: None  # type: ignore[attr-defined]
-        sys.modules["requests"] = requests_stub
-    if "dotenv" not in sys.modules:
-        dotenv_stub = types.ModuleType("dotenv")
-        dotenv_stub.load_dotenv = lambda *a, **kw: None  # type: ignore[attr-defined]
-        sys.modules["dotenv"] = dotenv_stub
-    mod = importlib.import_module("main") if "main" not in sys.modules else sys.modules["main"]
-    return mod.build_unified_dependencies
+    return build_unified_dependencies
 
 
 def _get_enrich_fn():
-    """Import enrich_dependency_metadata."""
-    _get_build_fn()  # ensure stubs are in place
-    from services.discovery.unified_dependencies import enrich_dependency_metadata
-
     return enrich_dependency_metadata
 
 
@@ -145,6 +133,33 @@ def test_classification_merging():
     # Target classification omitted when regular
     cls["classifications"][TARGET]["type"] = "regular"
     r = build(TARGET, _static([DEP_A]), None, cls)
+    assert "target_classification" not in r
+
+
+def test_target_classification_fallback():
+    """target_classification kwarg is used when classify_contracts is unavailable."""
+    build = _get_build_fn()
+    fallback = {"address": TARGET, "type": "proxy", "proxy_type": "eip1967", "implementation": IMPL}
+
+    # No cls_output — fallback fills target_classification
+    r = build(TARGET, _static([DEP_A]), None, None, target_classification=fallback)
+    assert r["target_classification"]["type"] == "proxy"
+    assert r["target_classification"]["proxy_type"] == "eip1967"
+
+    # cls_output present and has target — cls_output wins
+    cls = {
+        "classifications": {
+            TARGET: {"address": TARGET, "type": "proxy", "proxy_type": "beacon_proxy"},
+            DEP_A: {"address": DEP_A, "type": "regular"},
+        },
+        "discovered_addresses": [],
+    }
+    r = build(TARGET, _static([DEP_A]), None, cls, target_classification=fallback)
+    assert r["target_classification"]["proxy_type"] == "beacon_proxy"
+
+    # Regular fallback is ignored
+    regular_fallback = {"address": TARGET, "type": "regular"}
+    r = build(TARGET, _static([DEP_A]), None, None, target_classification=regular_fallback)
     assert "target_classification" not in r
 
 

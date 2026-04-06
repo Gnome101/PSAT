@@ -547,7 +547,9 @@ class StaticWorker(BaseWorker):
             )
 
         if deps_output or dyn_output:
-            unified = build_unified_dependencies(address, deps_output, dyn_output, cls_output)
+            unified = build_unified_dependencies(
+                address, deps_output, dyn_output, cls_output, target_classification=target_classification
+            )
             t0 = time.monotonic()
             enrich_dependency_metadata(unified)
             if DEBUG_TIMING:
@@ -559,7 +561,8 @@ class StaticWorker(BaseWorker):
 
             proxy_addr = request.get("proxy_address")
             proxy_name = (job.name or "").split(":")[0].strip() if proxy_addr else None
-            viz_path = write_dependency_visualization(project_dir, proxy_addr, proxy_name)
+            proxy_type = request.get("proxy_type") if proxy_addr else None
+            viz_path = write_dependency_visualization(project_dir, proxy_addr, proxy_name, proxy_type)
             if viz_path and viz_path.exists():
                 dependency_graph = json.loads(viz_path.read_text())
                 store_artifact(session, job.id, "dependency_graph_viz", data=dependency_graph)

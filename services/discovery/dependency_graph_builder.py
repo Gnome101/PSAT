@@ -78,6 +78,7 @@ def _build_nodes(
     unified: dict,
     proxy_address: str | None = None,
     proxy_name: str | None = None,
+    proxy_type: str | None = None,
 ) -> list[dict]:
     nodes: list[dict] = []
 
@@ -89,7 +90,7 @@ def _build_nodes(
                 "address": proxy_address,
                 "label": proxy_name or _shorten(proxy_address),
                 "type": "proxy",
-                "proxy_type": None,
+                "proxy_type": proxy_type,
                 "is_target": False,
                 "is_proxy_context": True,
                 "source": [],
@@ -258,6 +259,7 @@ def build_dependency_visualization(
     contract_dir: str | Path,
     proxy_address: str | None = None,
     proxy_name: str | None = None,
+    proxy_type: str | None = None,
 ) -> dict:
     """Read the unified dependencies.json and produce a visualization graph.
 
@@ -275,7 +277,7 @@ def build_dependency_visualization(
 
     target = unified.get("address", "")
 
-    nodes = _build_nodes(target, contract_dir, unified, proxy_address, proxy_name)
+    nodes = _build_nodes(target, contract_dir, unified, proxy_address, proxy_name, proxy_type)
     node_ids = {n["id"] for n in nodes}
     edges = _build_edges(target, unified, node_ids, proxy_address)
 
@@ -296,13 +298,14 @@ def write_dependency_visualization(
     contract_dir: str | Path,
     proxy_address: str | None = None,
     proxy_name: str | None = None,
+    proxy_type: str | None = None,
 ) -> Path | None:
     """Build the visualization graph and write it to *contract_dir*.
 
     Returns the output path, or ``None`` if no dependency data was found.
     """
     contract_dir = Path(contract_dir)
-    result = build_dependency_visualization(contract_dir, proxy_address, proxy_name)
+    result = build_dependency_visualization(contract_dir, proxy_address, proxy_name, proxy_type)
     if not result["nodes"]:
         return None
 
