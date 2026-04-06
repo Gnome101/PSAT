@@ -64,11 +64,11 @@ def build_unified_dependencies(
     output: dict = {"address": target, "dependencies": deps}
 
     if target in cls_map and cls_map[target].get("type", "regular") != "regular":
-        target_classification = cls_map[target]
-        info = {"type": target_classification["type"]}
+        target_cls = cls_map[target]
+        info = {"type": target_cls["type"]}
         for key in ("proxy_type", "implementation", "beacon", "admin"):
-            if key in target_classification:
-                info[key] = target_classification[key]
+            if key in target_cls:
+                info[key] = target_cls[key]
         output["target_classification"] = info
 
     if dynamic_deps:

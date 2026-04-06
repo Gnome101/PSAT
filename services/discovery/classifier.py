@@ -434,6 +434,7 @@ def classify_contracts(
     rpc_url: str,
     dynamic_edges: list[dict] | None = None,
     code_cache: dict[str, str] | None = None,
+    pre_classified: dict[str, dict] | None = None,
 ) -> dict:
     """Classify the target contract and all its dependencies.
 
@@ -441,6 +442,11 @@ def classify_contracts(
       1. **Intrinsic** -- storage slots and bytecode patterns.
       2. **Relational** -- mark implementations / beacons discovered via proxy pointers.
       3. **Behavioral** -- factory / library labels from dynamic call-graph edges.
+
+    *pre_classified* is an optional mapping of ``{address: classify_single result}``
+    for addresses that have already been classified (e.g. by a prior
+    ``_resolve_proxy`` call).  These are reused in Phase 1, avoiding
+    duplicate RPC calls.
     """
     target = normalize_address(target)
     all_addrs = list(dict.fromkeys([target] + [normalize_address(a) for a in dependencies]))
@@ -454,11 +460,14 @@ def classify_contracts(
     all_addrs_set = set(all_addrs)
 
     for addr in all_addrs:
-        try:
-            info = classify_single(addr, rpc_url, code_cache=code_cache)
-        except RuntimeError:
-            logger.debug("Phase 1: RPC error classifying %s, defaulting to regular", addr)
-            info = {"address": addr, "type": "regular"}
+        if pre_classified and addr in pre_classified:
+            info = pre_classified[addr]
+        else:
+            try:
+                info = classify_single(addr, rpc_url, code_cache=code_cache)
+            except RuntimeError:
+                logger.debug("Phase 1: RPC error classifying %s, defaulting to regular", addr)
+                info = {"address": addr, "type": "regular"}
         classifications[addr] = info
 
         # Track reverse mappings

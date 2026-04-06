@@ -116,19 +116,6 @@ def _detect_src_dir(sources: dict[str, str]) -> str:
     return "."
 
 
-def _find_main_contract_file(sources: dict[str, str], contract_name: str) -> str | None:
-    """Find the source file most likely to contain the main contract."""
-    target = f"{contract_name}.sol"
-    # Prefer src/ or contracts/ over lib/
-    for path in sources:
-        if path.endswith(target) and not path.startswith("lib/"):
-            return path
-    for path in sources:
-        if path.endswith(target):
-            return path
-    return None
-
-
 def _prune_remappings(remappings: list[str], source_paths: set[str]) -> list[str]:
     """Keep only remappings whose target directory actually contains files in the source bundle.
 
@@ -158,19 +145,6 @@ def _prune_remappings(remappings: list[str], source_paths: set[str]) -> list[str
             ", ".join(d.split("=")[0] for d in dropped),
         )
     return kept
-
-
-def _is_proxy_contract(contract_name: str, sources: dict[str, str]) -> bool:
-    """Detect if this is a proxy contract based on name and source content."""
-    proxy_names = {"proxy", "erc1967proxy", "transparentupgradeableproxy", "beaconproxy", "uupsproxy"}
-    if contract_name.lower().replace("_", "") in proxy_names:
-        return True
-    main_file = _find_main_contract_file(sources, contract_name)
-    if main_file and main_file in sources:
-        content = sources[main_file].lower()
-        if "delegatecall" in content and ("_implementation" in content or "fallback" in content):
-            return True
-    return False
 
 
 class StaticWorker(BaseWorker):
@@ -208,9 +182,10 @@ class StaticWorker(BaseWorker):
         )
 
         # Always attempt semantic proxy classification when RPC is available.
-        # Hidden proxies often won't match name-based heuristics, so gating this
-        # behind `_is_proxy_contract()` misses user-facing proxy endpoints.
-        self._resolve_proxy(session, job, address, contract_name)
+        # Hidden proxies often won't match name-based heuristics so we run
+        # this unconditionally.  The result is reused by classify_contracts()
+        # in the dependency phase to avoid duplicate RPC calls.
+        target_classification = self._resolve_proxy(session, job, address, contract_name)
 
         # Check if proxy classification created an impl child job — if so,
         # skip Slither/analysis on the proxy source (it's just a thin wrapper).
@@ -225,7 +200,7 @@ class StaticWorker(BaseWorker):
             self._scaffold_project(project_dir, sources, meta, build_settings, remappings)
 
             # Phase 0: Dependency artifacts (always runs — proxy deps are useful)
-            self._run_dependency_phase(session, job, project_dir, contract_name, address)
+            self._run_dependency_phase(session, job, project_dir, contract_name, address, target_classification)
 
             if is_proxy:
                 self.update_detail(session, job, "Proxy detected — impl job handles analysis")
@@ -270,11 +245,15 @@ class StaticWorker(BaseWorker):
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def _resolve_proxy(self, session, job, address: str, contract_name: str) -> None:
+    def _resolve_proxy(self, session, job, address: str, contract_name: str) -> dict | None:
         """Use on-chain classification to detect proxy type and resolve implementation.
 
         If an implementation is found, creates a linked child job for it so the
         real business logic gets analyzed.
+
+        Returns the raw ``classify_single`` result dict so callers can pass it
+        to ``classify_contracts(pre_classified=...)`` and avoid duplicate RPC calls.
+        Returns ``None`` when classification was skipped or failed.
         """
         from services.discovery.classifier import classify_single
 
@@ -292,7 +271,7 @@ class StaticWorker(BaseWorker):
                 "contract_flags",
                 data={"is_proxy": False, "classification_type": "unknown", "classification_skipped": "no_rpc"},
             )
-            return
+            return None
 
         try:
             classification = classify_single(address, rpc_url)
@@ -304,7 +283,7 @@ class StaticWorker(BaseWorker):
                 "contract_flags",
                 data={"is_proxy": False, "classification_type": "unknown", "classification_error": str(exc)},
             )
-            return
+            return None
 
         classification_type = classification.get("type", "regular")
         if classification_type != "proxy":
@@ -320,7 +299,7 @@ class StaticWorker(BaseWorker):
                 classification_type,
                 contract_name,
             )
-            return
+            return classification
 
         proxy_type = classification.get("proxy_type", "unknown")
         impl_address = classification.get("implementation")
@@ -389,6 +368,8 @@ class StaticWorker(BaseWorker):
                 impl_name,
             )
 
+        return classification
+
     def _scaffold_project(
         self,
         project_dir: Path,
@@ -433,7 +414,10 @@ class StaticWorker(BaseWorker):
 
         (project_dir / "contract_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
 
-    def _run_dependency_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
+    def _run_dependency_phase(
+        self, session, job, project_dir: Path, contract_name: str, address: str,
+        target_classification: dict | None = None,
+    ) -> None:
         """Build dependency artifacts before compile-dependent analysis starts."""
         self.update_detail(session, job, "Discovering dependencies")
 
@@ -521,12 +505,17 @@ class StaticWorker(BaseWorker):
             )
             try:
                 t0 = time.monotonic()
+                pre_classified = None
+                if target_classification:
+                    from services.discovery.static_dependencies import normalize_address
+                    pre_classified = {normalize_address(address): target_classification}
                 cls_output = classify_contracts(
                     address,
                     unique_deps,
                     resolved_rpc,
                     dynamic_edges=(dyn_output or {}).get("dependency_graph"),
                     code_cache=code_cache,
+                    pre_classified=pre_classified,
                 )
                 if DEBUG_TIMING:
                     logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
