@@ -18,6 +18,14 @@ def _get_build_fn():
     return mod.build_unified_dependencies
 
 
+def _get_enrich_fn():
+    """Import enrich_dependency_metadata."""
+    _get_build_fn()  # ensure stubs are in place
+    from services.discovery.unified_dependencies import enrich_dependency_metadata
+
+    return enrich_dependency_metadata
+
+
 TARGET = "0x1111111111111111111111111111111111111111"
 DEP_A = "0x2222222222222222222222222222222222222222"
 DEP_B = "0x3333333333333333333333333333333333333333"
@@ -226,3 +234,72 @@ def test_dependency_graph_keyed():
     assert key_b in dg
     assert len(dg[key_b]) == 1
     assert dg[key_b][0]["op"] == "STATICCALL"
+
+
+def test_enrich_dependency_metadata(monkeypatch):
+    """enrich_dependency_metadata resolves contract names and maps selectors to function names."""
+    enrich = _get_enrich_fn()
+    build = _get_build_fn()
+
+    # Mock get_contract_info to return name + selector map per address
+    selector_a = "0xdeadbeef"
+    info_map = {
+        DEP_A: ("TokenVault", {selector_a: "deposit"}),
+        DEP_B: ("PriceOracle", {}),
+        IMPL: ("VaultImpl", {}),
+    }
+    monkeypatch.setattr(
+        "services.discovery.unified_dependencies.get_contract_info",
+        lambda addr: info_map.get(addr, (None, {})),
+    )
+
+    # Build a unified output with a proxy dep (impl nested) and a dependency graph
+    cls = {
+        "address": TARGET,
+        "rpc": "https://rpc.example",
+        "classifications": {
+            TARGET: {"address": TARGET, "type": "regular"},
+            DEP_A: {
+                "address": DEP_A,
+                "type": "proxy",
+                "proxy_type": "eip1967",
+                "implementation": IMPL,
+            },
+            IMPL: {"address": IMPL, "type": "implementation", "proxies": [DEP_A]},
+            DEP_B: {"address": DEP_B, "type": "regular"},
+        },
+        "discovered_addresses": [IMPL],
+    }
+    graph = [
+        {
+            "from": TARGET,
+            "to": DEP_A,
+            "op": "CALL",
+            "provenance": [],
+            "selector": selector_a,
+        },
+    ]
+    dyn = {
+        "address": TARGET,
+        "rpc": "https://trace.example",
+        "transactions_analyzed": [],
+        "trace_methods": [],
+        "dependencies": [DEP_A, DEP_B],
+        "dependency_graph": graph,
+        "trace_errors": [],
+    }
+    unified = build(TARGET, _static([DEP_A, DEP_B]), dyn, cls)
+    enrich(unified)
+
+    # Contract names resolved
+    assert unified["dependencies"][DEP_A]["contract_name"] == "TokenVault"
+    assert unified["dependencies"][DEP_B]["contract_name"] == "PriceOracle"
+
+    # Nested implementation name resolved
+    impl_entry = unified["dependencies"][DEP_A]["implementation"]
+    assert impl_entry["contract_name"] == "VaultImpl"
+
+    # Selector resolved to function name in dependency_graph via impl fallback
+    key = f"{TARGET}|{DEP_A}"
+    edge = unified["dependency_graph"][key][0]
+    assert edge["function_name"] == "deposit"

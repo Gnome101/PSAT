@@ -361,6 +361,45 @@ def test_classify_contracts_handles_rpc_failure(monkeypatch):
     assert result["classifications"][ADDR(3)]["type"] == "regular"
 
 
+def test_classify_contracts_pre_classified_skips_rpc(monkeypatch):
+    """pre_classified entries are reused in Phase 1 — classify_single is not called for them."""
+    target = ADDR(1)
+    dep = ADDR(2)
+    impl = ADDR(3)
+
+    pre_classified_result = {
+        "address": target,
+        "type": "proxy",
+        "proxy_type": "eip1967",
+        "implementation": impl,
+    }
+
+    calls = []
+
+    def tracking_classify(addr, _rpc, bytecode=None, code_cache=None):
+        calls.append(addr)
+        return {"address": addr, "type": "regular"}
+
+    monkeypatch.setattr(cls, "classify_single", tracking_classify)
+
+    result = cls.classify_contracts(
+        target,
+        [dep],
+        RPC,
+        pre_classified={target: pre_classified_result},
+    )
+
+    # Target should use the pre_classified result, not call classify_single
+    assert target not in calls
+    assert dep in calls
+    assert result["classifications"][target]["type"] == "proxy"
+    assert result["classifications"][target]["proxy_type"] == "eip1967"
+    # Dependency was classified normally
+    assert result["classifications"][dep]["type"] == "regular"
+    # Implementation discovered from pre_classified proxy slots
+    assert impl in result["discovered_addresses"]
+
+
 # ---------------------------------------------------------------------------
 # Direct classify_single tests
 # ---------------------------------------------------------------------------

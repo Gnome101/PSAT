@@ -1125,3 +1125,66 @@ def test_poll_uses_proxy_type_for_resolution(mock_batch, db_session):
     batch_calls = mock_batch.call_args[0][1]
     assert len(batch_calls) == 1
     assert batch_calls[0][0] == "eth_call", "Expected direct eth_call dispatch for compound type"
+
+
+# ---------------------------------------------------------------------------
+# Proxy monitor worker (workers/proxy_monitor.py) argument parsing
+# ---------------------------------------------------------------------------
+
+
+class TestProxyMonitorWorker:
+    """Tests for the proxy_monitor CLI entry point."""
+
+    def test_scan_mode_is_default(self, monkeypatch):
+        """Without --poll, main() calls run_scan_loop with the default interval."""
+        monkeypatch.setattr("sys.argv", ["proxy_monitor", "--rpc-url", "http://rpc.test"])
+        calls = []
+        monkeypatch.setattr(
+            "workers.proxy_monitor.run_scan_loop",
+            lambda rpc, interval: calls.append(("scan", rpc, interval)),
+        )
+        monkeypatch.setattr(
+            "workers.proxy_monitor.run_poll_loop",
+            lambda rpc, interval: (_ for _ in ()).throw(AssertionError("should not be called")),
+        )
+
+        from workers.proxy_monitor import main
+
+        main()
+        assert len(calls) == 1
+        assert calls[0][0] == "scan"
+        assert calls[0][1] == "http://rpc.test"
+
+    def test_poll_mode(self, monkeypatch):
+        """With --poll, main() calls run_poll_loop with the default poll interval."""
+        monkeypatch.setattr("sys.argv", ["proxy_monitor", "--rpc-url", "http://rpc.test", "--poll"])
+        calls = []
+        monkeypatch.setattr(
+            "workers.proxy_monitor.run_poll_loop",
+            lambda rpc, interval: calls.append(("poll", rpc, interval)),
+        )
+        monkeypatch.setattr(
+            "workers.proxy_monitor.run_scan_loop",
+            lambda rpc, interval: (_ for _ in ()).throw(AssertionError("should not be called")),
+        )
+
+        from workers.proxy_monitor import main
+
+        main()
+        assert len(calls) == 1
+        assert calls[0][0] == "poll"
+        assert calls[0][1] == "http://rpc.test"
+
+    def test_custom_interval(self, monkeypatch):
+        """--interval overrides the default for both modes."""
+        monkeypatch.setattr("sys.argv", ["proxy_monitor", "--rpc-url", "http://rpc.test", "--interval", "42"])
+        calls = []
+        monkeypatch.setattr(
+            "workers.proxy_monitor.run_scan_loop",
+            lambda rpc, interval: calls.append(interval),
+        )
+
+        from workers.proxy_monitor import main
+
+        main()
+        assert calls[0] == 42.0

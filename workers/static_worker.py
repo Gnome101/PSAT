@@ -415,7 +415,12 @@ class StaticWorker(BaseWorker):
         (project_dir / "contract_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
 
     def _run_dependency_phase(
-        self, session, job, project_dir: Path, contract_name: str, address: str,
+        self,
+        session,
+        job,
+        project_dir: Path,
+        contract_name: str,
+        address: str,
         target_classification: dict | None = None,
     ) -> None:
         """Build dependency artifacts before compile-dependent analysis starts."""
@@ -508,6 +513,7 @@ class StaticWorker(BaseWorker):
                 pre_classified = None
                 if target_classification:
                     from services.discovery.static_dependencies import normalize_address
+
                     pre_classified = {normalize_address(address): target_classification}
                 cls_output = classify_contracts(
                     address,
