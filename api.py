@@ -548,9 +548,15 @@ def analysis_detail(run_name: str) -> dict:
             impl_stmt = select(Job).where(Job.address == impl_addr).order_by(Job.updated_at.desc()).limit(1)
             impl_job = session.execute(impl_stmt).scalar_one_or_none()
             if impl_job:
-                # Inherit artifacts
                 impl_artifacts = get_all_artifacts(session, impl_job.id)
-                for fallback_name in ("contract_analysis", "analysis_report"):
+                for fallback_name in (
+                    "contract_analysis",
+                    "control_snapshot",
+                    "resolved_control_graph",
+                    "effective_permissions",
+                    "principal_labels",
+                    "analysis_report",
+                ):
                     if fallback_name not in payload:
                         val = impl_artifacts.get(fallback_name)
                         if val is not None:

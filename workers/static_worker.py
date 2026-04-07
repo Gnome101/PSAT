@@ -187,6 +187,8 @@ class StaticWorker(BaseWorker):
         }
         remappings = meta.get("remappings", [])
 
+        # Attach the job's display name so downstream tools (e.g. graph builder)
+        # can use it instead of the Etherscan contract name for proxy contracts.
         if job.name:
             meta["display_name"] = job.name
 
@@ -205,6 +207,7 @@ class StaticWorker(BaseWorker):
 
         # Check if proxy classification marked this as a proxy — if so,
         # skip Slither/analysis on the proxy source (it's just a thin wrapper).
+        # Dependency discovery still runs because proxy-address deps are useful.
         session.refresh(contract_row)
         is_proxy = contract_row.is_proxy
 
