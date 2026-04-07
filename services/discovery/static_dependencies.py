@@ -140,10 +140,15 @@ def extract_push20_addresses(bytecode_hex: str) -> set[str]:
     return out
 
 
-def discover_dependencies(rpc_url: str, root: str) -> list[str]:
+def discover_dependencies(
+    rpc_url: str,
+    root: str,
+    code_cache: dict[str, str] | None = None,
+) -> list[str]:
     """BFS-traverse embedded PUSH20 addresses and return deployed contract dependencies."""
     root = normalize_address(root)
-    code_cache = {}
+    if code_cache is None:
+        code_cache = {}
 
     # Cache eth_getCode lookups so repeated scans don’t spam the RPC endpoint.
     def cached_get_code(address: str) -> str:
@@ -173,7 +178,7 @@ def discover_dependencies(rpc_url: str, root: str) -> list[str]:
     return sorted(deps)
 
 
-def find_dependencies(address: str, rpc_url: str | None = None) -> dict:
+def find_dependencies(address: str, rpc_url: str | None = None, code_cache: dict[str, str] | None = None) -> dict:
     """Resolve an RPC endpoint and return discovered static contract dependencies."""
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     env_rpc = os.getenv("ETH_RPC")
@@ -189,7 +194,7 @@ def find_dependencies(address: str, rpc_url: str | None = None) -> dict:
     else:
         network, resolved_rpc = resolve_rpc_for_address(address, None)
 
-    deps = discover_dependencies(resolved_rpc, address)
+    deps = discover_dependencies(resolved_rpc, address, code_cache=code_cache)
 
     output = {
         "address": normalize_address(address),

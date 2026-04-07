@@ -10,7 +10,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStage
+from db.models import Contract, Job, JobStage
 from db.queue import create_job, store_artifact, store_source_files
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import search_protocol_inventory
@@ -105,6 +105,9 @@ class DiscoveryWorker(BaseWorker):
             job.name = company
             session.commit()
 
+        # Spawn parallel discovery jobs via DApp crawl and DefiLlama adapter scan
+        self._spawn_parallel_discovery(session, job, company, request)
+
         self.update_detail(
             session,
             job,
@@ -116,6 +119,51 @@ class DiscoveryWorker(BaseWorker):
 
         complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
         raise JobHandledDirectly()
+
+    def _spawn_parallel_discovery(self, session: Session, job: Job, company: str, request: dict) -> None:
+        """Spawn DApp crawl and DefiLlama scan jobs if we can resolve the protocol."""
+        from services.discovery.protocol_resolver import resolve_protocol
+
+        protocol = resolve_protocol(company)
+        if not protocol.get("slug") and not protocol.get("url"):
+            logger.info("Job %s: no DefiLlama match for '%s', skipping parallel discovery", job.id, company)
+            return
+
+        logger.info(
+            "Job %s: resolved '%s' → slug=%s url=%s",
+            job.id, company, protocol.get("slug"), protocol.get("url"),
+        )
+
+        # Spawn DefiLlama adapter scan
+        if protocol.get("slug"):
+            defillama_request = {
+                "defillama_protocol": protocol["slug"],
+                "name": f"{company}_defillama",
+                "parent_job_id": str(job.id),
+                "analyze_limit": request.get("analyze_limit", 5),
+                "rpc_url": request.get("rpc_url"),
+            }
+            dl_job = create_job(session, defillama_request, initial_stage=JobStage.defillama_scan)
+            dl_job.company = company
+            session.commit()
+            logger.info("Job %s: spawned DefiLlama scan job %s (slug=%s)", job.id, dl_job.id, protocol["slug"])
+
+        # Spawn DApp crawl
+        dapp_url = protocol.get("url")
+        if dapp_url:
+            dapp_request = {
+                "dapp_urls": [dapp_url],
+                "name": f"{company}_dapp_crawl",
+                "parent_job_id": str(job.id),
+                "analyze_limit": request.get("analyze_limit", 5),
+                "chain_id": request.get("chain_id") or 1,
+                "wait": request.get("wait", 10),
+                "rpc_url": request.get("rpc_url"),
+            }
+            crawl_job = create_job(session, dapp_request, initial_stage=JobStage.dapp_crawl)
+            crawl_job.company = company
+            session.commit()
+            logger.info("Job %s: spawned DApp crawl job %s (url=%s)", job.id, crawl_job.id, dapp_url)
 
     def _process_address(self, session: Session, job: Job) -> None:
         """Fetch verified source for a single address."""
@@ -134,29 +182,29 @@ class DiscoveryWorker(BaseWorker):
         self.update_detail(session, job, "Storing source files")
         store_source_files(session, job.id, sources)
 
-        meta = {
-            "address": address,
-            "contract_name": contract_name,
-            "compiler_version": result.get("CompilerVersion", ""),
-            "language": "vyper" if is_vyper_result(result) else "solidity",
-            "optimization_used": result.get("OptimizationUsed", ""),
-            "runs": result.get("Runs", ""),
-            "evm_version": result.get("EVMVersion", ""),
-            "license": result.get("LicenseType", ""),
-            "source_format": "standard_json" if "sources" in str(result.get("SourceCode", ""))[:10] else "flat",
-            "source_file_count": len(sources),
-            "remappings": remappings,
-        }
-        store_artifact(session, job.id, "contract_meta", data=meta)
-
         raw_evm = result.get("EVMVersion", "") or ""
         evm_version = raw_evm if raw_evm.lower() not in ("", "default") else "shanghai"
-        build_settings = {
-            "evm_version": evm_version,
-            "optimization_used": result.get("OptimizationUsed", "1") == "1",
-            "runs": int(result.get("Runs", "200") or 200),
-        }
-        store_artifact(session, job.id, "build_settings", data=build_settings)
+
+        # Write to contracts table (replaces contract_meta + build_settings artifacts)
+        request = job.request if isinstance(job.request, dict) else {}
+        contract = Contract(
+            job_id=job.id,
+            address=address,
+            chain=request.get("chain"),
+            contract_name=contract_name,
+            compiler_version=result.get("CompilerVersion", ""),
+            language="vyper" if is_vyper_result(result) else "solidity",
+            evm_version=evm_version,
+            optimization=result.get("OptimizationUsed", "1") == "1",
+            optimization_runs=int(result.get("Runs", "200") or 200),
+            source_format="standard_json" if "sources" in str(result.get("SourceCode", ""))[:10] else "flat",
+            source_file_count=len(sources),
+            license=result.get("LicenseType", ""),
+            remappings=remappings or [],
+        )
+        session.merge(contract)
+        session.commit()
+
 
         if not job.name:
             job.name = f"{contract_name}_{address[2:10]}"

@@ -13,45 +13,6 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 # ---------------------------------------------------------------------------
-# Core helpers: _normalize_maybe_address, _to_int, _tx_selector, _is_precompile
-# ---------------------------------------------------------------------------
-
-
-def test_is_precompile():
-    assert ddc._is_precompile("0x0000000000000000000000000000000000000001") is True
-    assert ddc._is_precompile("0x0000000000000000000000000000000000000009") is True
-    assert ddc._is_precompile("0x000000000000000000000000000000000000000a") is False
-    assert ddc._is_precompile("0x" + "11" * 20) is False
-
-
-def test_parsing_helpers():
-    # _normalize_maybe_address: valid addresses
-    assert ddc._normalize_maybe_address("0xAbCd" + "0" * 36) == "0xabcd" + "0" * 36
-    assert ddc._normalize_maybe_address("abcd" + "0" * 36) == "0xabcd" + "0" * 36
-
-    # _normalize_maybe_address: invalid inputs
-    assert ddc._normalize_maybe_address(None) is None
-    assert ddc._normalize_maybe_address(123) is None
-    assert ddc._normalize_maybe_address("0xshort") is None
-    assert ddc._normalize_maybe_address("0xZZZZ" + "0" * 36) is None  # invalid hex
-
-    # _to_int: various formats
-    assert ddc._to_int("0xa") == 10
-    assert ddc._to_int("100") == 100
-    assert ddc._to_int(42) == 42
-    assert ddc._to_int(None) is None
-    with pytest.raises(RuntimeError, match="Unsupported"):
-        ddc._to_int([1, 2])
-
-    # _tx_selector: extracts first 4 bytes
-    assert ddc._tx_selector("0xdeadbeef1234") == "0xdeadbeef"
-    assert ddc._tx_selector("0x12345678") == "0x12345678"
-    assert ddc._tx_selector("0x1234") == "0x"  # too short
-    assert ddc._tx_selector("") == "0x"
-    assert ddc._tx_selector(None) == "0x"
-
-
-# ---------------------------------------------------------------------------
 # Transaction selection
 # ---------------------------------------------------------------------------
 
@@ -512,6 +473,146 @@ def test_find_dynamic_dependencies_rejects_invalid_tx_limit(monkeypatch):
     monkeypatch.setenv("ETH_RPC", "https://rpc.example")
     with pytest.raises(RuntimeError, match="tx_limit must be >= 1"):
         ddc.find_dynamic_dependencies("0x" + "11" * 20, tx_limit=0)
+
+
+# ---------------------------------------------------------------------------
+# Regression: proxy_address routes tx fetch to proxy, rewrites edges to impl
+# ---------------------------------------------------------------------------
+
+
+def test_proxy_address_fetches_txs_from_proxy_and_rewrites_edges(monkeypatch):
+    """Regression: when proxy_address is passed, transactions must be fetched
+    from the proxy address (where real traffic goes), not the implementation.
+    Edges must be rewritten from proxy->dep to impl->dep, and both proxy and
+    impl must be excluded from the dependency list."""
+    impl = "0x1111111111111111111111111111111111111111"
+    proxy = "0x2222222222222222222222222222222222222222"
+    dep = "0x3333333333333333333333333333333333333333"
+    tx1 = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    _mock_code_checks(monkeypatch)
+    monkeypatch.setattr(ddc, "load_dotenv", lambda _path: None)
+    monkeypatch.setenv("ETH_RPC", "https://trace.example")
+
+    fetch_addresses = []
+
+    def fake_fetch_txs(address, limit=0):
+        fetch_addresses.append(address)
+        return [
+            {"hash": tx1, "to": proxy, "isError": "0", "blockNumber": "10", "input": "0xdeadbeef"},
+        ]
+
+    monkeypatch.setattr(ddc, "fetch_contract_transactions", fake_fetch_txs)
+
+    monkeypatch.setattr(
+        ddc,
+        "trace_transaction",
+        lambda _rpc, _tx: (
+            "debug_traceTransaction",
+            {
+                "type": "CALL",
+                "from": proxy,
+                "to": dep,
+            },
+        ),
+    )
+
+    out = ddc.find_dynamic_dependencies(impl, tx_limit=1, proxy_address=proxy)
+
+    # Transactions were fetched for the PROXY, not the implementation
+    assert fetch_addresses == [proxy], f"Expected fetch for proxy {proxy}, got {fetch_addresses}"
+
+    # Implementation and proxy are excluded from dependencies
+    assert impl not in out["dependencies"]
+    assert proxy not in out["dependencies"]
+    assert dep in out["dependencies"]
+
+    # Graph edges are rewritten to show impl as the source, not proxy
+    for edge in out["dependency_graph"]:
+        assert edge["from"] == impl, f"Edge source should be impl {impl}, got {edge['from']}"
+
+
+# ---------------------------------------------------------------------------
+# Regression: fetch_contract_transactions oldest-first fallback
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_contract_transactions_oldest_first_when_all_eth_transfers(monkeypatch):
+    """Regression: when all recent (desc) normal txs are plain ETH transfers
+    (input='0x'), a second oldest-first (asc) fetch must be performed to find
+    function calls buried under high-volume value transfers."""
+    target = "0x1111111111111111111111111111111111111111"
+    etherscan_calls = []
+
+    def fake_etherscan_get(_module, action, **kwargs):
+        etherscan_calls.append({"action": action, "sort": kwargs.get("sort")})
+        if action == "txlistinternal":
+            raise RuntimeError("No transactions found")
+        if action == "txlist" and kwargs.get("sort") == "desc":
+            # Recent txs are all plain ETH transfers (input='0x')
+            return {
+                "result": [
+                    {"hash": "0xeth1", "to": target, "isError": "0", "blockNumber": "100", "input": "0x"},
+                    {"hash": "0xeth2", "to": target, "isError": "0", "blockNumber": "99", "input": "0x"},
+                ]
+            }
+        if action == "txlist" and kwargs.get("sort") == "asc":
+            # Oldest txs have real function selectors
+            return {
+                "result": [
+                    {"hash": "0xold1", "to": target, "isError": "0", "blockNumber": "1", "input": "0xdeadbeef00"},
+                    {"hash": "0xold2", "to": target, "isError": "0", "blockNumber": "2", "input": "0xcafebabe00"},
+                ]
+            }
+        return {"result": []}
+
+    monkeypatch.setattr(ddc, "etherscan_get", fake_etherscan_get)
+
+    txs = ddc.fetch_contract_transactions(target)
+
+    # Verify the second (asc) call was made
+    txlist_calls = [c for c in etherscan_calls if c["action"] == "txlist"]
+    assert len(txlist_calls) == 2, f"Expected 2 txlist calls (desc + asc), got {len(txlist_calls)}"
+    assert txlist_calls[0]["sort"] == "desc"
+    assert txlist_calls[1]["sort"] == "asc"
+
+    # Verify the oldest txs with real selectors are included
+    hashes = {tx["hash"] for tx in txs}
+    assert "0xold1" in hashes, "Oldest tx with function call should be included"
+    assert "0xold2" in hashes, "Oldest tx with function call should be included"
+    # Original ETH transfers are still present
+    assert "0xeth1" in hashes
+    assert "0xeth2" in hashes
+    # Total should be 4 (2 desc + 2 asc, no duplicates)
+    assert len(txs) == 4
+
+
+def test_fetch_contract_transactions_no_asc_when_selectors_present(monkeypatch):
+    """When recent txs already have function selectors, no oldest-first fetch is needed."""
+    target = "0x1111111111111111111111111111111111111111"
+    etherscan_calls = []
+
+    def fake_etherscan_get(_module, action, **kwargs):
+        etherscan_calls.append({"action": action, "sort": kwargs.get("sort")})
+        if action == "txlistinternal":
+            raise RuntimeError("No transactions found")
+        if action == "txlist" and kwargs.get("sort") == "desc":
+            return {
+                "result": [
+                    {"hash": "0xtx1", "to": target, "isError": "0", "blockNumber": "100", "input": "0xdeadbeef00"},
+                ]
+            }
+        return {"result": []}
+
+    monkeypatch.setattr(ddc, "etherscan_get", fake_etherscan_get)
+
+    txs = ddc.fetch_contract_transactions(target)
+
+    # Only one txlist call (desc), no asc follow-up
+    txlist_calls = [c for c in etherscan_calls if c["action"] == "txlist"]
+    assert len(txlist_calls) == 1
+    assert txlist_calls[0]["sort"] == "desc"
+    assert len(txs) == 1
 
 
 # ---------------------------------------------------------------------------

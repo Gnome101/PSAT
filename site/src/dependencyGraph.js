@@ -115,13 +115,15 @@ const NODE_STYLES = {
 };
 
 function nodeVisual(node) {
+  if (node.is_proxy_context) return NODE_STYLES.proxy;
   if (node.is_target) return NODE_STYLES.target;
   return NODE_STYLES[node.type] || NODE_STYLES.regular;
 }
 
 /** Meta text shown on a node — summarizes type + discovery source. */
 function nodeMeta(node) {
-  if (node.is_target) return "TARGET";
+  if (node.is_proxy_context) return node.proxy_type ? `PROXY ROOT · ${node.proxy_type.toUpperCase()}` : "PROXY ROOT";
+  if (node.is_target) return node.type === "implementation" ? "TARGET · IMPLEMENTATION" : "TARGET";
   const parts = [];
   const type = node.proxy_type || node.type || "regular";
   parts.push(type.toUpperCase());
@@ -211,11 +213,24 @@ export function layoutDependencyGraph(graph) {
     }
   }
 
+  // Proxy context nodes go to depth -1 (left of target)
+  for (const node of graph.nodes) {
+    if (node.is_proxy_context && !depthMap.has(node.id)) {
+      depthMap.set(node.id, -1);
+    }
+  }
+
   // Assign orphan nodes (not reachable from target) to depth 1
   for (const node of graph.nodes) {
     if (!depthMap.has(node.id)) {
       depthMap.set(node.id, 1);
     }
+  }
+
+  // Shift all depths so minimum is 0
+  const minDepth = Math.min(...depthMap.values(), 0);
+  if (minDepth < 0) {
+    for (const [id, d] of depthMap) depthMap.set(id, d - minDepth);
   }
 
   // Group by depth

@@ -32,9 +32,27 @@ def _shorten(address: str) -> str:
     return address
 
 
+_GENERIC_PROXY_NAMES = {
+    "uupsproxy",
+    "erc1967proxy",
+    "transparentupgradeableproxy",
+    "proxy",
+    "beaconproxy",
+    "ossifiableproxy",
+    "upgradeablebeacon",
+}
+
+
 def _contract_label(contract_dir: Path) -> str:
-    """Derive a human label from the contract output directory name."""
-    return contract_dir.name
+    """Derive a human label from contract metadata, falling back to directory name."""
+    meta = _load_json(contract_dir / "contract_meta.json")
+    if not meta:
+        return contract_dir.name
+    name = meta.get("contract_name", "")
+    # For generic proxy contracts, prefer the display name (job name)
+    if name.lower().replace("_", "") in _GENERIC_PROXY_NAMES and meta.get("display_name"):
+        return meta["display_name"]
+    return name or contract_dir.name
 
 
 def _derive_discovered(unified: dict) -> list[str]:
@@ -58,17 +76,36 @@ def _build_nodes(
     target: str,
     contract_dir: Path,
     unified: dict,
+    proxy_address: str | None = None,
+    proxy_name: str | None = None,
+    proxy_type: str | None = None,
 ) -> list[dict]:
     nodes: list[dict] = []
 
+    # Proxy node — shown as context when the target is an implementation
+    if proxy_address:
+        nodes.append(
+            {
+                "id": f"addr:{proxy_address}",
+                "address": proxy_address,
+                "label": proxy_name or _shorten(proxy_address),
+                "type": "proxy",
+                "proxy_type": proxy_type,
+                "is_target": False,
+                "is_proxy_context": True,
+                "source": [],
+            }
+        )
+
     # Target (root) node
     target_cls = unified.get("target_classification", {})
+    default_type = "implementation" if proxy_address else "target"
     nodes.append(
         {
             "id": f"addr:{target}",
             "address": target,
             "label": _contract_label(contract_dir),
-            "type": target_cls.get("type", "target"),
+            "type": target_cls.get("type", default_type),
             "proxy_type": target_cls.get("proxy_type"),
             "is_target": True,
             "source": [],
@@ -120,6 +157,7 @@ def _build_edges(
     target: str,
     unified: dict,
     node_ids: set[str],
+    proxy_address: str | None = None,
 ) -> list[dict]:
     edges: list[dict] = []
     seen: set[tuple[str, str, str, str]] = set()
@@ -205,6 +243,10 @@ def _build_edges(
         if info.get("beacon"):
             _add(f"addr:{addr}", f"addr:{info['beacon']}", "BEACON")
 
+    # Proxy → implementation root edge (when this target is behind a proxy)
+    if proxy_address:
+        _add(f"addr:{proxy_address}", f"addr:{target}", "DELEGATES_TO")
+
     return edges
 
 
@@ -213,11 +255,19 @@ def _build_edges(
 # ---------------------------------------------------------------------------
 
 
-def build_dependency_visualization(contract_dir: str | Path) -> dict:
+def build_dependency_visualization(
+    contract_dir: str | Path,
+    proxy_address: str | None = None,
+    proxy_name: str | None = None,
+    proxy_type: str | None = None,
+) -> dict:
     """Read the unified dependencies.json and produce a visualization graph.
 
     Returns a dict with ``nodes``, ``edges``, and ``metadata`` keys ready for
     the JS visualization layer.
+
+    When *proxy_address* is provided, a proxy context node and DELEGATES_TO
+    edge are added so the graph shows the proxy → implementation relationship.
     """
     contract_dir = Path(contract_dir)
 
@@ -227,12 +277,13 @@ def build_dependency_visualization(contract_dir: str | Path) -> dict:
 
     target = unified.get("address", "")
 
-    nodes = _build_nodes(target, contract_dir, unified)
+    nodes = _build_nodes(target, contract_dir, unified, proxy_address, proxy_name, proxy_type)
     node_ids = {n["id"] for n in nodes}
-    edges = _build_edges(target, unified, node_ids)
+    edges = _build_edges(target, unified, node_ids, proxy_address)
 
     metadata: dict[str, Any] = {
         "target": target,
+        "proxy_address": proxy_address,
         "network": unified.get("network"),
         "transactions_analyzed": unified.get("transactions_analyzed", []),
         "trace_methods": unified.get("trace_methods", []),
@@ -243,13 +294,18 @@ def build_dependency_visualization(contract_dir: str | Path) -> dict:
     return {"nodes": nodes, "edges": edges, "metadata": metadata}
 
 
-def write_dependency_visualization(contract_dir: str | Path) -> Path | None:
+def write_dependency_visualization(
+    contract_dir: str | Path,
+    proxy_address: str | None = None,
+    proxy_name: str | None = None,
+    proxy_type: str | None = None,
+) -> Path | None:
     """Build the visualization graph and write it to *contract_dir*.
 
     Returns the output path, or ``None`` if no dependency data was found.
     """
     contract_dir = Path(contract_dir)
-    result = build_dependency_visualization(contract_dir)
+    result = build_dependency_visualization(contract_dir, proxy_address, proxy_name, proxy_type)
     if not result["nodes"]:
         return None
 

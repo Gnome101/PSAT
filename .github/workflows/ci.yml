@@ -34,4 +34,50 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --dev
       - run: forge --version
-      - run: uv run pytest -k "not live"
+      - run: uv run pytest -k "not live" -q
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Baseline coverage (main)
+        if: github.event_name == 'pull_request'
+        run: |
+          git checkout origin/main
+          uv sync --dev
+          uv run --with coverage coverage run -m pytest -k "not live" -q
+          MAIN_COV=$(uv run --with coverage coverage report --format=total)
+          echo "MAIN_COV=$MAIN_COV" >> $GITHUB_ENV
+          echo "Main coverage: ${MAIN_COV}%"
+          git checkout -
+
+      - run: uv sync --dev
+      - run: uv run --with coverage coverage run -m pytest -k "not live" -q
+
+      - name: Coverage report
+        run: |
+          uv run --with coverage coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          TOTAL=$(uv run --with coverage coverage report --format=total)
+          echo "**Total coverage: ${TOTAL}%** (minimum: 70%)" >> $GITHUB_STEP_SUMMARY
+          echo "Total coverage: ${TOTAL}%"
+          uv run --with coverage coverage report
+
+      - name: Coverage regression check
+        if: github.event_name == 'pull_request'
+        run: |
+          PR_COV=$(uv run --with coverage coverage report --format=total)
+          echo "main: ${MAIN_COV}% → PR: ${PR_COV}%"
+          echo "**Coverage: ${MAIN_COV}% (main) → ${PR_COV}% (PR)**" >> $GITHUB_STEP_SUMMARY
+          if [ "$PR_COV" -lt "$MAIN_COV" ]; then
+            echo "::error::Coverage regression: ${MAIN_COV}% → ${PR_COV}%"
+            exit 1
+          fi

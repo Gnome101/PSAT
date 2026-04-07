@@ -11,10 +11,8 @@ import time
 from pathlib import Path
 from typing import Any, TypeVar
 
-import requests
 import websockets
 from eth_abi.abi import decode
-from eth_utils.crypto import keccak
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -28,39 +26,23 @@ from schemas.control_tracking import (
     TrackedController,
     TrackedPolicy,
 )
+from utils.rpc import (
+    normalize_hex as _normalize_hex,
+)
+from utils.rpc import (
+    rpc_request as _rpc_request,
+)
+from utils.rpc import (
+    selector as _selector,
+)
 
 from .controller_adapters import expand_role_identifier_principals, type_authority_contract
 
-JSON_RPC_TIMEOUT_SECONDS = 10
 TrackedItem = TypeVar("TrackedItem", TrackedController, TrackedPolicy)
 
 
 def load_control_tracking_plan(path: Path) -> ControlTrackingPlan:
     return json.loads(path.read_text())
-
-
-def _rpc_request(rpc_url: str, method: str, params: list[Any]) -> Any:
-    response = requests.post(
-        rpc_url,
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-        timeout=JSON_RPC_TIMEOUT_SECONDS,
-        headers={"Content-Type": "application/json"},
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("error"):
-        raise RuntimeError(str(payload["error"]))
-    return payload.get("result")
-
-
-def _selector(signature: str) -> str:
-    return "0x" + keccak(text=signature).hex()[:8]
-
-
-def _normalize_hex(value: str | None) -> str:
-    if not isinstance(value, str) or not value.startswith("0x"):
-        return "0x"
-    return value.lower()
 
 
 def _decode_controller_value(raw_value: Any, controller_kind: str) -> str:
@@ -70,12 +52,8 @@ def _decode_controller_value(raw_value: Any, controller_kind: str) -> str:
     return value
 
 
-def _call_selector(signature: str) -> str:
-    return _selector(signature)
-
-
 def _eth_call_raw(rpc_url: str, contract_address: str, signature: str, block_tag: str = "latest") -> str:
-    call = {"to": contract_address, "data": _call_selector(signature)}
+    call = {"to": contract_address, "data": _selector(signature)}
     raw = _rpc_request(rpc_url, "eth_call", [call, block_tag])
     if not isinstance(raw, str) or not raw.startswith("0x"):
         raise RuntimeError(f"Unexpected eth_call result for {signature}: {raw!r}")
@@ -180,9 +158,6 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
     return "contract", details
 
 
-_classify_resolved_address = classify_resolved_address
-
-
 def _current_block_number(rpc_url: str) -> int:
     raw = _rpc_request(rpc_url, "eth_blockNumber", [])
     if not isinstance(raw, str) or not raw.startswith("0x"):
@@ -210,6 +185,16 @@ def _read_polling_source(
 def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: str = "latest") -> ControlSnapshot:
     block_number = _current_block_number(rpc_url) if block_tag == "latest" else int(block_tag, 16)
     controller_values = {}
+    # Cache classify_resolved_address results to avoid duplicate RPC calls
+    # when multiple controllers resolve to the same address.
+    _classification_cache: dict[str, tuple[str, dict[str, object]]] = {}
+
+    def _cached_classify(address: str) -> tuple[str, dict[str, object]]:
+        key = _normalize_hex(address)
+        if key not in _classification_cache:
+            _classification_cache[key] = classify_resolved_address(rpc_url, address, block_tag)
+        return _classification_cache[key]
+
     for controller in plan["tracked_controllers"]:
         source = controller["source"]
         read_spec = controller.get("read_spec")
@@ -231,11 +216,7 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
                 )
                 resolved_principals = []
                 for member_address in member_addresses:
-                    resolved_type, details = classify_resolved_address(
-                        rpc_url,
-                        member_address,
-                        block_tag,
-                    )
+                    resolved_type, details = _cached_classify(member_address)
                     resolved_principals.append(
                         {
                             "address": member_address,
@@ -263,11 +244,7 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
                 "block_number": block_number,
                 "observed_via": "eth_call",
             }
-            resolved_type, details = classify_resolved_address(
-                rpc_url,
-                value,
-                block_tag,
-            )
+            resolved_type, details = _cached_classify(value)
             controller_values[controller["controller_id"]]["resolved_type"] = resolved_type
             controller_values[controller["controller_id"]]["details"] = details
         except Exception as exc:

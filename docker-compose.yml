@@ -41,12 +41,48 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+      PSAT_DEBUG_TIMING: "1"
+      DAPP_CRAWLER_PATH: /app/dapp-crawler
+      DEFILLAMA_CRAWLER_PATH: /app/defillama-crawler
+    volumes:
+      - ../dapp-crawler:/app/dapp-crawler:ro
+      - ../defillama-crawler:/app/defillama-crawler:ro
     command: ["bash", "start_workers.sh"]
     depends_on:
       postgres:
         condition: service_healthy
       api:
         condition: service_started
+    restart: unless-stopped
+
+  proxy-scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: psat-api:latest
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+    command: ["uv", "run", "--no-sync", "python", "-m", "workers.proxy_monitor"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  proxy-poller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: psat-api:latest
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+    command: ["uv", "run", "--no-sync", "python", "-m", "workers.proxy_monitor", "--poll"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   site:

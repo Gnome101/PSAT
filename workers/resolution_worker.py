@@ -7,18 +7,24 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import cast
 
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStage
-from db.queue import get_artifact, store_artifact
+from sqlalchemy import select
+
+from db.models import (
+    Contract, ControlGraphEdge, ControlGraphNode, ControllerValue,
+    Job, JobStage, JobStatus, UpgradeEvent,
+)
+from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlTrackingPlan
 from services.discovery.upgrade_history import write_upgrade_history
 from services.resolution.recursive import write_resolved_control_graph
 from services.resolution.tracking import build_control_snapshot
-from workers.base import BaseWorker
+from workers.base import DEBUG_TIMING, BaseWorker
 
 logger = logging.getLogger("workers.resolution_worker")
 
@@ -68,8 +74,33 @@ class ResolutionWorker(BaseWorker):
 
         # Build control snapshot via RPC calls
         self.update_detail(session, job, "Reading current controller state")
+        t0 = time.monotonic()
         snapshot = build_control_snapshot(cast(ControlTrackingPlan, tracking_plan), rpc_url)
+        if DEBUG_TIMING:
+            logger.info("[TIMING] control snapshot: %.1fs", time.monotonic() - t0)
+        # Keep as artifact — policy stage reads it as JSON
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
+
+        # Write to controller_values table
+        contract_row = session.execute(
+            select(Contract).where(Contract.job_id == job.id).limit(1)
+        ).scalar_one_or_none()
+        if contract_row:
+            session.query(ControllerValue).filter(
+                ControllerValue.contract_id == contract_row.id
+            ).delete()
+            for cid, cv in snapshot.get("controller_values", {}).items():
+                session.add(ControllerValue(
+                    contract_id=contract_row.id,
+                    controller_id=cid,
+                    value=cv.get("value"),
+                    resolved_type=cv.get("resolved_type"),
+                    source=cv.get("source"),
+                    block_number=snapshot.get("block_number"),
+                    details=cv.get("details"),
+                ))
+            session.commit()
+
         logger.info(
             "Resolution stage control snapshot complete for job %s address=%s name=%s",
             job.id,
@@ -90,6 +121,7 @@ class ResolutionWorker(BaseWorker):
             (project_dir / "control_snapshot.json").write_text(json.dumps(snapshot, indent=2) + "\n")
 
             self.update_detail(session, job, "Resolving recursive control graph")
+            t0 = time.monotonic()
             resolved_graph_path = write_resolved_control_graph(
                 analysis_path,
                 rpc_url=rpc_url,
@@ -99,16 +131,52 @@ class ResolutionWorker(BaseWorker):
                 refresh_snapshots=True,
             )
 
+            if DEBUG_TIMING:
+                logger.info("[TIMING] recursive graph: %.1fs", time.monotonic() - t0)
+
             if resolved_graph_path.exists():
-                store_artifact(
-                    session, job.id, "resolved_control_graph", data=json.loads(resolved_graph_path.read_text())
-                )
+                resolved_graph = json.loads(resolved_graph_path.read_text())
+                # Keep as artifact — policy stage reads it as JSON
+                store_artifact(session, job.id, "resolved_control_graph", data=resolved_graph)
                 logger.info(
                     "Resolution stage graph complete for job %s address=%s name=%s",
                     job.id,
                     job.address or "0x0",
                     job.name or "Contract",
                 )
+
+                # Write to control_graph_nodes and control_graph_edges tables
+                if contract_row:
+                    session.query(ControlGraphNode).filter(
+                        ControlGraphNode.contract_id == contract_row.id
+                    ).delete()
+                    session.query(ControlGraphEdge).filter(
+                        ControlGraphEdge.contract_id == contract_row.id
+                    ).delete()
+                    for node in resolved_graph.get("nodes", []):
+                        session.add(ControlGraphNode(
+                            contract_id=contract_row.id,
+                            address=(node.get("address") or "").lower(),
+                            node_type=node.get("node_type"),
+                            resolved_type=node.get("resolved_type"),
+                            label=node.get("label"),
+                            contract_name=node.get("contract_name"),
+                            depth=node.get("depth"),
+                            analyzed=node.get("analyzed", False),
+                        ))
+                    for edge in resolved_graph.get("edges", []):
+                        session.add(ControlGraphEdge(
+                            contract_id=contract_row.id,
+                            from_node_id=edge.get("from_id", ""),
+                            to_node_id=edge.get("to_id", ""),
+                            relation=edge.get("relation"),
+                            label=edge.get("label"),
+                            source_controller_id=edge.get("source_controller_id"),
+                        ))
+                    session.commit()
+
+                # Queue analysis jobs for contracts discovered during resolution
+                self._queue_discovered_contracts(session, job, resolved_graph, rpc_url)
 
             # Phase: Upgrade history for proxy contracts (non-fatal)
             self._run_upgrade_history(session, job, project_dir)
@@ -125,6 +193,81 @@ class ResolutionWorker(BaseWorker):
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+    def _queue_discovered_contracts(
+        self, session: Session, job: Job, resolved_graph: dict, rpc_url: str
+    ) -> None:
+        """Queue analysis jobs for contracts found during resolution that have no existing job."""
+        request = job.request if isinstance(job.request, dict) else {}
+        parent_company = job.company
+
+        # Walk up parent chain to find company if not set on this job
+        if not parent_company:
+            seen: set[str] = set()
+            current_req = request
+            while not parent_company:
+                parent_id = current_req.get("parent_job_id")
+                if not isinstance(parent_id, str) or parent_id in seen:
+                    break
+                seen.add(parent_id)
+                parent_job = session.get(Job, parent_id)
+                if parent_job is None:
+                    break
+                if parent_job.company:
+                    parent_company = parent_job.company
+                    break
+                current_req = parent_job.request if isinstance(parent_job.request, dict) else {}
+
+        nodes = resolved_graph.get("nodes", [])
+        root_address = resolved_graph.get("root_contract_address", "").lower()
+        queued_count = 0
+
+        for node in nodes:
+            addr = (node.get("address") or "").lower()
+            if not addr or not addr.startswith("0x") or len(addr) != 42:
+                continue
+            if addr == root_address:
+                continue
+            # Only queue contracts that were analyzed during resolution
+            if not node.get("analyzed"):
+                continue
+            if node.get("node_type") != "contract":
+                continue
+
+            # Skip if a job already exists for this address
+            existing = session.execute(
+                select(Job).where(Job.address == addr).limit(1)
+            ).scalar_one_or_none()
+            if existing:
+                continue
+
+            contract_name = node.get("contract_name") or node.get("label") or addr
+            child_request = {
+                "address": addr,
+                "name": contract_name,
+                "rpc_url": rpc_url,
+                "parent_job_id": str(job.id),
+                "discovered_by": "resolution",
+            }
+            if request.get("chain"):
+                child_request["chain"] = request["chain"]
+
+            child_job = create_job(session, child_request, initial_stage=JobStage.discovery)
+            if parent_company:
+                child_job.company = parent_company
+                session.commit()
+
+            queued_count += 1
+            logger.info(
+                "Job %s: queued discovered contract %s (%s) as job %s",
+                job.id, contract_name, addr, child_job.id,
+            )
+
+        if queued_count:
+            logger.info(
+                "Job %s: queued %d contracts discovered during resolution",
+                job.id, queued_count,
+            )
+
     def _run_upgrade_history(self, session: Session, job: Job, project_dir: Path) -> None:
         """Fetch upgrade history for proxy contracts found in dependencies. Non-fatal."""
         dependencies = get_artifact(session, job.id, "dependencies")
@@ -139,7 +282,26 @@ class ResolutionWorker(BaseWorker):
         try:
             uh_path = write_upgrade_history(deps_path)
             if uh_path and uh_path.exists():
-                store_artifact(session, job.id, "upgrade_history", data=json.loads(uh_path.read_text()))
+                uh_data = json.loads(uh_path.read_text())
+                # Write to upgrade_events table
+                contract_row = session.execute(
+                    select(Contract).where(Contract.job_id == job.id).limit(1)
+                ).scalar_one_or_none()
+                if contract_row and isinstance(uh_data, dict):
+                    session.query(UpgradeEvent).filter(
+                        UpgradeEvent.contract_id == contract_row.id
+                    ).delete()
+                    for evt in uh_data.get("upgrades", []):
+                        session.add(UpgradeEvent(
+                            contract_id=contract_row.id,
+                            proxy_address=evt.get("proxy", ""),
+                            old_impl=evt.get("old_implementation"),
+                            new_impl=evt.get("new_implementation"),
+                            block_number=evt.get("block_number"),
+                            tx_hash=evt.get("tx_hash"),
+                        ))
+                    session.commit()
+
                 logger.info(
                     "Resolution stage upgrade history complete for job %s address=%s",
                     job.id,

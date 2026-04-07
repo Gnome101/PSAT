@@ -39,6 +39,13 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 
+[tool.coverage.run]
+source = ["api", "workers", "services", "db", "utils"]
+
+[tool.coverage.report]
+fail_under = 70
+skip_empty = true
+
 [tool.pyright]
 pythonVersion = "3.10"
 typeCheckingMode = "basic"

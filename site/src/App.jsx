@@ -70,6 +70,10 @@ function parseLocationPath(pathname) {
     return { mode: "company", value: segments[1], tab: "summary" };
   }
 
+  if (segments[0] === "proxies") {
+    return { mode: "proxies", value: null, tab: "summary" };
+  }
+
   if (segments[0] === "runs" && segments[1]) {
     return {
       mode: "run",
@@ -309,11 +313,19 @@ function UpgradesTab({ detail }) {
   }
 
   const deps = detail?.dependencies?.dependencies || {};
+  const targetAddr = (detail?.address || history.target_address || "").toLowerCase();
 
   function proxyLabel(addr) {
+    if (addr.toLowerCase() === targetAddr) {
+      return detail?.run_name || detail?.contract_name || shortenAddress(addr);
+    }
     const dep = deps[addr];
     if (dep?.contract_name) return dep.contract_name;
     return shortenAddress(addr);
+  }
+
+  function isTarget(addr) {
+    return addr.toLowerCase() === targetAddr;
   }
 
   function formatTimestamp(ts) {
@@ -339,10 +351,13 @@ function UpgradesTab({ detail }) {
         <StatCard label="Proxies" value={Object.keys(history.proxies).length} />
         <StatCard label="Total Upgrades" value={history.total_upgrades} />
       </div>
-      {Object.entries(history.proxies).map(([addr, proxy]) => (
+      {Object.entries(history.proxies)
+        .sort(([a], [b]) => (isTarget(a) ? -1 : isTarget(b) ? 1 : 0))
+        .map(([addr, proxy]) => (
         <div className="card" key={addr}>
           <div className="card-header-row">
             <h3>{proxyLabel(addr)}</h3>
+            {isTarget(addr) ? <span className="chip">target</span> : null}
             <span className="chip alt">{proxy.proxy_type}</span>
           </div>
           <div className="mono muted" style={{ marginBottom: 8 }}>{addr}</div>
@@ -1188,7 +1203,7 @@ function CompanyOverview({ companyName, onSelectContract }) {
   );
 }
 
-const PIPELINE_STAGES = ["discovery", "static", "resolution", "policy"];
+const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy"];
 const ALL_STAGES = [...PIPELINE_STAGES, "done"];
 const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
 
@@ -1242,18 +1257,205 @@ function mergeProxyImpl(analyses) {
 }
 
 // ---------------------------------------------------------------------------
+// Proxy Watcher (WIP)
+// ---------------------------------------------------------------------------
+
+function ProxyWatcherPage() {
+  const [proxies, setProxies] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [address, setAddress] = useState("");
+  const [label, setLabel] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function refresh() {
+    try {
+      const [p, e] = await Promise.all([
+        api("/api/watched-proxies"),
+        api("/api/proxy-events?limit=100"),
+      ]);
+      setProxies(p);
+      setEvents(e);
+      setLoaded(true);
+    } catch (err) {
+      console.error("Failed to load proxy data:", err);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function addProxy(e) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api("/api/watched-proxies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address: address.trim(), label: label.trim() || null }),
+      });
+      setAddress("");
+      setLabel("");
+      refresh();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function removeProxy(id) {
+    try {
+      await api(`/api/watched-proxies/${id}`, { method: "DELETE" });
+      refresh();
+    } catch (err) {
+      console.error("Failed to remove proxy:", err);
+    }
+  }
+
+  if (!loaded) {
+    return (
+      <div className="page">
+        <section className="panel">
+          <p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading proxy watcher...</p>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page">
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Proxy Watcher</p>
+            <h2>Watched Proxies ({proxies.length})</h2>
+          </div>
+          <span className="chip" style={{ background: "#fef3c7", color: "#92400e", fontSize: 11 }}>Work in Progress</span>
+        </div>
+
+        <form onSubmit={addProxy} style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="Proxy address (0x...)"
+            required
+            style={{ flex: "1 1 300px", fontFamily: "monospace", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+          />
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Label (optional)"
+            style={{ flex: "0 1 200px", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+          />
+          <button type="submit" disabled={submitting} style={{ padding: "8px 16px", borderRadius: 6, background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+            {submitting ? "Adding..." : "Watch Proxy"}
+          </button>
+        </form>
+        {error && <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 12 }}>{error}</p>}
+
+        {proxies.length === 0 ? (
+          <p className="empty">No proxies being watched. Add one above to start monitoring for upgrades.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #334155", textAlign: "left" }}>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Label</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Address</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Type</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Implementation</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Polling</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Last Block</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {proxies.map((p) => (
+                  <tr key={p.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                    <td style={{ padding: "8px 12px" }}>{p.label || <span style={{ color: "#475569" }}>-</span>}</td>
+                    <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(p.proxy_address)}</span></td>
+                    <td style={{ padding: "8px 12px" }}>{p.proxy_type ? <span className="chip alt">{p.proxy_type}</span> : <span style={{ color: "#475569" }}>unknown</span>}</td>
+                    <td style={{ padding: "8px 12px" }}><span className="mono">{p.last_known_implementation ? shortenAddress(p.last_known_implementation) : "-"}</span></td>
+                    <td style={{ padding: "8px 12px" }}>{p.needs_polling ? <span className="chip warn">polling</span> : <span className="chip">events</span>}</td>
+                    <td style={{ padding: "8px 12px" }}>{p.last_scanned_block ? p.last_scanned_block.toLocaleString() : "-"}</td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <button onClick={() => removeProxy(p.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12 }}>remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Detected Events</p>
+            <h2>Upgrade Events ({events.length})</h2>
+          </div>
+        </div>
+        {events.length === 0 ? (
+          <p className="empty">No upgrade events detected yet.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #334155", textAlign: "left" }}>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Time</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Proxy</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Type</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Old Impl</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>New Impl</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Block</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((evt) => {
+                  const proxy = proxies.find((p) => p.id === evt.watched_proxy_id);
+                  return (
+                    <tr key={evt.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                      <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{new Date(evt.detected_at).toLocaleString()}</td>
+                      <td style={{ padding: "8px 12px" }}>{proxy?.label || <span className="mono">{shortenAddress(proxy?.proxy_address || "")}</span>}</td>
+                      <td style={{ padding: "8px 12px" }}><span className="chip alt">{evt.event_type}</span></td>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{evt.old_implementation ? shortenAddress(evt.old_implementation) : "-"}</span></td>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(evt.new_implementation)}</span></td>
+                      <td style={{ padding: "8px 12px" }}>{evt.block_number || "-"}</td>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{evt.tx_hash ? shortenAddress(evt.tx_hash) : "-"}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Pipeline monitor
 // ---------------------------------------------------------------------------
 
 function PipelineDashboard() {
   const [allJobs, setAllJobs] = useState([]);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function fetchJobs() {
       try {
         const jobs = await api("/api/jobs");
-        if (!cancelled) setAllJobs(jobs);
+        if (!cancelled) { setAllJobs(jobs); setLoaded(true); }
       } catch {}
     }
     fetchJobs();
@@ -1261,28 +1463,51 @@ function PipelineDashboard() {
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
+  // Filter to only show meaningful analysis jobs:
+  // - Skip proxy jobs once their impl child job exists (the impl does the real work)
+  // - Skip company/discovery-only jobs once child contract jobs exist
+  const hasChildJobs = useMemo(() =>
+    allJobs.some((j) => !j.company && j.address),
+  [allJobs]);
+  const implProxyAddresses = useMemo(() =>
+    new Set(allJobs.map((j) => (j.request?.proxy_address || "").toLowerCase()).filter(Boolean)),
+  [allJobs]);
+  const analysisJobs = useMemo(() =>
+    allJobs.filter((j) => {
+      if (j.is_proxy) return false;
+      if (!j.is_proxy && j.address && implProxyAddresses.has(j.address.toLowerCase())) return false;
+      if (j.company && hasChildJobs) return false;
+      return true;
+    }),
+  [allJobs, hasChildJobs, implProxyAddresses]);
+
   const buckets = useMemo(() => {
     const b = {};
     for (const s of ALL_STAGES) b[s] = { queued: [], processing: [], completed: [], failed: [] };
-    for (const j of allJobs) {
+    for (const j of analysisJobs) {
       const stage = j.stage || "discovery";
       const status = j.status || "queued";
       if (b[stage] && b[stage][status]) b[stage][status].push(j);
     }
     return b;
-  }, [allJobs]);
+  }, [analysisJobs]);
 
   const totals = useMemo(() => {
     const t = { queued: 0, processing: 0, completed: 0, failed: 0, total: 0 };
-    for (const j of allJobs) { t[j.status] = (t[j.status] || 0) + 1; t.total++; }
+    for (const j of analysisJobs) {
+      t[j.status] = (t[j.status] || 0) + 1; t.total++;
+    }
     return t;
-  }, [allJobs]);
+  }, [analysisJobs]);
 
+  if (!loaded) {
+    return <div className="page"><section className="panel"><p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading pipeline status…</p></section></div>;
+  }
   if (!allJobs.length) {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
   }
 
-  const stageColors = { discovery: "#0f766e", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", done: "#16a34a" };
+  const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", done: "#16a34a" };
   const statusColors = { queued: "#94a3b8", processing: "#f59e0b", completed: "#22c55e", failed: "#ef4444" };
   const colW = 160, gapW = 80, headerH = 50, dotR = 6;
   const totalW = ALL_STAGES.length * colW + (ALL_STAGES.length - 1) * gapW;
@@ -1343,6 +1568,50 @@ function PipelineDashboard() {
           <span className="chip" style={{ background: "#dcfce7", color: "#166534", fontSize: 10 }}>Completed</span>
           <span className="chip" style={{ background: "#fee2e2", color: "#991b1b", fontSize: 10 }}>Failed</span>
         </div>
+      </section>
+
+      {/* Active / Recent jobs table */}
+      <section className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-header">
+          <div><p className="eyebrow">Recent Activity</p></div>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid rgba(148,163,184,0.15)", color: "#94a3b8", textAlign: "left" }}>
+              <th style={{ padding: "8px 12px" }}>Name</th>
+              <th style={{ padding: "8px 12px" }}>Address</th>
+              <th style={{ padding: "8px 12px" }}>Stage</th>
+              <th style={{ padding: "8px 12px" }}>Status</th>
+              <th style={{ padding: "8px 12px" }}>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allJobs
+              .filter((j) => j.status === "processing" || j.status === "failed" || j.status === "queued")
+              .sort((a, b) => {
+                const order = { processing: 0, failed: 1, queued: 2 };
+                return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+              })
+              .slice(0, 30)
+              .map((j) => (
+                <tr key={j.job_id} style={{ borderBottom: "1px solid rgba(148,163,184,0.08)" }}>
+                  <td style={{ padding: "6px 12px", color: "#e2e8f0", fontWeight: 600 }}>{j.name || j.company || "—"}</td>
+                  <td style={{ padding: "6px 12px", color: "#64748b", fontFamily: "monospace", fontSize: 11 }}>{j.address ? j.address.slice(0, 10) + ".." : "—"}</td>
+                  <td style={{ padding: "6px 12px" }}>
+                    <span style={{ color: stageColors[j.stage] || "#94a3b8", fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{j.stage}</span>
+                  </td>
+                  <td style={{ padding: "6px 12px" }}>
+                    <span style={{ color: statusColors[j.status] || "#94a3b8", fontWeight: 600, fontSize: 11 }}>
+                      {j.status === "processing" ? "⚡ " : j.status === "failed" ? "✕ " : ""}{j.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: "6px 12px", color: "#64748b", fontSize: 11, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {j.status === "failed" ? (j.error || "").split("\n").pop()?.slice(0, 80) : j.detail || ""}
+                  </td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
       </section>
     </div>
   );
@@ -1692,6 +1961,7 @@ export default function App() {
   const isDetail = viewMode === "run" || viewMode === "address";
   const isMonitor = viewMode === "monitor";
   const isCompany = viewMode === "company";
+  const isProxies = viewMode === "proxies";
 
   const detailContent = selectedDetail ? {
     summary: <SummaryTab detail={selectedDetail} />,
@@ -1709,8 +1979,9 @@ export default function App() {
       <nav className="top-nav">
         <div className="top-nav-left">
           <button className="top-nav-brand" onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>PSAT</button>
-          <button className={`top-nav-link ${!isDetail && !isMonitor ? "active" : ""}`} onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>Runs</button>
+          <button className={`top-nav-link ${!isDetail && !isMonitor && !isProxies ? "active" : ""}`} onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>Runs</button>
           <button className={`top-nav-link ${isMonitor ? "active" : ""}`} onClick={() => navigate("/monitor", "monitor")}>Monitor</button>
+          <button className={`top-nav-link ${isProxies ? "active" : ""}`} onClick={() => navigate("/proxies", "proxies")}>Proxies</button>
         </div>
         <div className="top-nav-right">
           <button className="top-nav-submit-btn" onClick={() => setFormOpen(!formOpen)}>
@@ -1743,6 +2014,7 @@ export default function App() {
 
       {/* Page content */}
       {isMonitor && <PipelineDashboard />}
+      {isProxies && <ProxyWatcherPage />}
 
       {isDetail && selectedDetail && (
         <div className="page">
@@ -1782,7 +2054,7 @@ export default function App() {
         <ProtocolView companyName={companyName} />
       )}
 
-      {!isDetail && !isMonitor && !isCompany && (
+      {!isDetail && !isMonitor && !isCompany && !isProxies && (
         <RunsPage
           analyses={analyses}
           activeJobs={activeJobs}

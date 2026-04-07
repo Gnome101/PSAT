@@ -9,11 +9,12 @@ import re
 import shutil
 import tempfile
 import textwrap
+import time
 from pathlib import Path
 
 from sqlalchemy import select
 
-from db.models import Job, JobStage
+from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition, SlitherFinding
 from db.queue import create_job, get_artifact, get_source_files, store_artifact
 from services.discovery import (
     build_unified_dependencies,
@@ -26,7 +27,7 @@ from services.discovery import (
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
 from services.static.vyper_analysis import is_vyper_project
-from workers.base import BaseWorker
+from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
 
@@ -115,19 +116,6 @@ def _detect_src_dir(sources: dict[str, str]) -> str:
     return "."
 
 
-def _find_main_contract_file(sources: dict[str, str], contract_name: str) -> str | None:
-    """Find the source file most likely to contain the main contract."""
-    target = f"{contract_name}.sol"
-    # Prefer src/ or contracts/ over lib/
-    for path in sources:
-        if path.endswith(target) and not path.startswith("lib/"):
-            return path
-    for path in sources:
-        if path.endswith(target):
-            return path
-    return None
-
-
 def _prune_remappings(remappings: list[str], source_paths: set[str]) -> list[str]:
     """Keep only remappings whose target directory actually contains files in the source bundle.
 
@@ -159,40 +147,48 @@ def _prune_remappings(remappings: list[str], source_paths: set[str]) -> list[str
     return kept
 
 
-def _is_proxy_contract(contract_name: str, sources: dict[str, str]) -> bool:
-    """Detect if this is a proxy contract based on name and source content."""
-    proxy_names = {"proxy", "erc1967proxy", "transparentupgradeableproxy", "beaconproxy", "uupsproxy"}
-    if contract_name.lower().replace("_", "") in proxy_names:
-        return True
-    main_file = _find_main_contract_file(sources, contract_name)
-    if main_file and main_file in sources:
-        content = sources[main_file].lower()
-        if "delegatecall" in content and ("_implementation" in content or "fallback" in content):
-            return True
-    return False
-
-
 class StaticWorker(BaseWorker):
     stage = JobStage.static
     next_stage = JobStage.resolution
 
     def process(self, session, job):
+        from sqlalchemy import select as sa_select
+
         sources = get_source_files(session, job.id)
         if not sources:
             raise RuntimeError("No source files found in DB for this job")
 
-        meta = get_artifact(session, job.id, "contract_meta")
-        if not isinstance(meta, dict):
-            raise RuntimeError("contract_meta artifact not found or invalid")
+        # Read from contracts table instead of artifacts
+        contract_row = session.execute(
+            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+        ).scalar_one_or_none()
+        if not contract_row:
+            raise RuntimeError("Contract row not found for this job")
 
-        build_settings = get_artifact(session, job.id, "build_settings")
-        if not isinstance(build_settings, dict):
-            build_settings = {}
-
-        contract_name = meta.get("contract_name", "Contract")
-        address = meta.get("address", job.address or "0x0")
-        remappings = meta.get("remappings", [])
+        contract_name = contract_row.contract_name or "Contract"
+        address = contract_row.address or job.address or "0x0"
         job_id_str = str(job.id)
+
+        # Build meta dict for downstream tools that still expect it
+        meta = {
+            "address": address,
+            "contract_name": contract_name,
+            "compiler_version": contract_row.compiler_version or "",
+            "language": contract_row.language or "solidity",
+            "evm_version": contract_row.evm_version or "shanghai",
+            "source_format": contract_row.source_format or "flat",
+            "source_file_count": contract_row.source_file_count or len(sources),
+            "remappings": list(contract_row.remappings or []),
+        }
+        build_settings = {
+            "evm_version": contract_row.evm_version or "shanghai",
+            "optimization_used": contract_row.optimization or False,
+            "runs": contract_row.optimization_runs or 200,
+        }
+        remappings = meta.get("remappings", [])
+
+        if job.name:
+            meta["display_name"] = job.name
 
         logger.info(
             "Static stage started for job %s address=%s contract=%s",
@@ -202,9 +198,15 @@ class StaticWorker(BaseWorker):
         )
 
         # Always attempt semantic proxy classification when RPC is available.
-        # Hidden proxies often won't match name-based heuristics, so gating this
-        # behind `_is_proxy_contract()` misses user-facing proxy endpoints.
-        self._resolve_proxy(session, job, address, contract_name)
+        # Hidden proxies often won't match name-based heuristics so we run
+        # this unconditionally.  The result is reused by classify_contracts()
+        # in the dependency phase to avoid duplicate RPC calls.
+        target_classification = self._resolve_proxy(session, job, address, contract_name)
+
+        # Check if proxy classification marked this as a proxy — if so,
+        # skip Slither/analysis on the proxy source (it's just a thin wrapper).
+        session.refresh(contract_row)
+        is_proxy = contract_row.is_proxy
 
         # Create temp directory and write source files
         tmp_dir = tempfile.mkdtemp(prefix="psat_static_")
@@ -212,23 +214,45 @@ class StaticWorker(BaseWorker):
         try:
             self._scaffold_project(project_dir, sources, meta, build_settings, remappings)
 
-            # Phase 0: Dependency artifacts
-            self._run_dependency_phase(session, job, project_dir, contract_name, address)
+            # Phase 0: Dependency artifacts (always runs — proxy deps are useful)
+            self._run_dependency_phase(session, job, project_dir, contract_name, address, target_classification)
 
-            # Phase 1: Slither
-            slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
-
-            # Phase 2: Contract analysis (uses Slither library directly, may succeed even if CLI failed)
-            analysis_ok = self._run_analysis_phase(session, job, project_dir, contract_name, address)
-
-            if not analysis_ok:
-                raise RuntimeError(
-                    f"Contract analysis failed for {contract_name} ({address}). "
-                    f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
+            if is_proxy:
+                self.update_detail(session, job, "Proxy detected — impl job handles analysis")
+                logger.info(
+                    "Static stage skipping analysis for proxy job %s (%s) — impl child job will analyze",
+                    job_id_str,
+                    contract_name,
                 )
+                # Proxy jobs skip resolution/policy — complete directly
+                from db.queue import complete_job
 
-            # Phase 3: Control tracking plan
-            self._run_tracking_plan_phase(session, job, project_dir, contract_name, address)
+                complete_job(session, job.id, f"Proxy {contract_name} — impl child job queued for full analysis")
+                raise JobHandledDirectly()
+            else:
+                # Phase 1: Slither
+                t0 = time.monotonic()
+                slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] slither: %.1fs", time.monotonic() - t0)
+
+                # Phase 2: Contract analysis
+                t0 = time.monotonic()
+                analysis_ok = self._run_analysis_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
+
+                if not analysis_ok:
+                    raise RuntimeError(
+                        f"Contract analysis failed for {contract_name} ({address}). "
+                        f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
+                    )
+
+                # Phase 3: Control tracking plan
+                t0 = time.monotonic()
+                self._run_tracking_plan_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
 
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
@@ -236,11 +260,15 @@ class StaticWorker(BaseWorker):
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def _resolve_proxy(self, session, job, address: str, contract_name: str) -> None:
+    def _resolve_proxy(self, session, job, address: str, contract_name: str) -> dict | None:
         """Use on-chain classification to detect proxy type and resolve implementation.
 
         If an implementation is found, creates a linked child job for it so the
         real business logic gets analyzed.
+
+        Returns the raw ``classify_single`` result dict so callers can pass it
+        to ``classify_contracts(pre_classified=...)`` and avoid duplicate RPC calls.
+        Returns ``None`` when classification was skipped or failed.
         """
         from services.discovery.classifier import classify_single
 
@@ -258,7 +286,7 @@ class StaticWorker(BaseWorker):
                 "contract_flags",
                 data={"is_proxy": False, "classification_type": "unknown", "classification_skipped": "no_rpc"},
             )
-            return
+            return None
 
         try:
             classification = classify_single(address, rpc_url)
@@ -270,7 +298,7 @@ class StaticWorker(BaseWorker):
                 "contract_flags",
                 data={"is_proxy": False, "classification_type": "unknown", "classification_error": str(exc)},
             )
-            return
+            return None
 
         classification_type = classification.get("type", "regular")
         if classification_type != "proxy":
@@ -286,7 +314,7 @@ class StaticWorker(BaseWorker):
                 classification_type,
                 contract_name,
             )
-            return
+            return classification
 
         proxy_type = classification.get("proxy_type", "unknown")
         impl_address = classification.get("implementation")
@@ -303,7 +331,19 @@ class StaticWorker(BaseWorker):
             "admin": admin,
             "facets": facets,
         }
-        store_artifact(session, job.id, "contract_flags", data=flags)
+        # Update contracts table with proxy info
+        from sqlalchemy import select as sa_select
+        contract_row = session.execute(
+            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+        ).scalar_one_or_none()
+        if contract_row:
+            contract_row.is_proxy = True
+            contract_row.proxy_type = proxy_type
+            contract_row.implementation = impl_address
+            contract_row.beacon = beacon
+            contract_row.admin = admin
+            session.commit()
+
         logger.info(
             "Job %s: proxy classified as %s, implementation=%s",
             job.id,
@@ -355,6 +395,8 @@ class StaticWorker(BaseWorker):
                 impl_name,
             )
 
+        return classification
+
     def _scaffold_project(
         self,
         project_dir: Path,
@@ -399,7 +441,15 @@ class StaticWorker(BaseWorker):
 
         (project_dir / "contract_meta.json").write_text(json.dumps(meta, indent=2) + "\n")
 
-    def _run_dependency_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
+    def _run_dependency_phase(
+        self,
+        session,
+        job,
+        project_dir: Path,
+        contract_name: str,
+        address: str,
+        target_classification: dict | None = None,
+    ) -> None:
         """Build dependency artifacts before compile-dependent analysis starts."""
         self.update_detail(session, job, "Discovering dependencies")
 
@@ -409,6 +459,9 @@ class StaticWorker(BaseWorker):
         dynamic_tx_limit = request.get("dynamic_tx_limit", 10)
         dynamic_tx_hashes = request.get("dynamic_tx_hashes")
         dependency_errors: dict[str, str] = {}
+        # Shared bytecode cache across all dependency stages to avoid duplicate
+        # eth_getCode RPC calls for the same addresses.
+        code_cache: dict[str, str] = {}
 
         logger.info(
             "Static stage dependency discovery started for job %s address=%s contract=%s",
@@ -419,7 +472,11 @@ class StaticWorker(BaseWorker):
 
         deps_output = None
         try:
-            deps_output = find_dependencies(address, deps_rpc)
+            t0 = time.monotonic()
+            deps_output = find_dependencies(address, deps_rpc, code_cache=code_cache)
+            if DEBUG_TIMING:
+                n = len(deps_output.get("dependencies", []))
+                logger.info("[TIMING] static deps: %.1fs (%d deps)", time.monotonic() - t0, n)
             logger.info(
                 "Static stage static dependencies complete for job %s address=%s count=%d",
                 job.id,
@@ -437,14 +494,21 @@ class StaticWorker(BaseWorker):
 
         dyn_output = None
         try:
+            t0 = time.monotonic()
             tx_limit = int(dynamic_tx_limit)
             tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
+            proxy_addr = request.get("proxy_address")
             dyn_output = find_dynamic_dependencies(
                 address,
                 rpc_url=dynamic_rpc,
                 tx_limit=tx_limit,
                 tx_hashes=tx_hashes,
+                proxy_address=proxy_addr,
+                code_cache=code_cache,
             )
+            if DEBUG_TIMING:
+                n = len(dyn_output.get("dependencies", []))
+                logger.info("[TIMING] dynamic deps: %.1fs (%d deps)", time.monotonic() - t0, n)
             logger.info(
                 "Static stage dynamic dependencies complete for job %s address=%s count=%d",
                 job.id,
@@ -472,12 +536,22 @@ class StaticWorker(BaseWorker):
                 set((deps_output or {}).get("dependencies", []) + (dyn_output or {}).get("dependencies", []))
             )
             try:
+                t0 = time.monotonic()
+                pre_classified = None
+                if target_classification:
+                    from services.discovery.static_dependencies import normalize_address
+
+                    pre_classified = {normalize_address(address): target_classification}
                 cls_output = classify_contracts(
                     address,
                     unique_deps,
                     resolved_rpc,
                     dynamic_edges=(dyn_output or {}).get("dependency_graph"),
+                    code_cache=code_cache,
+                    pre_classified=pre_classified,
                 )
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
                 logger.info(
                     "Static stage dependency classification complete for job %s address=%s discovered=%d",
                     job.id,
@@ -500,14 +574,22 @@ class StaticWorker(BaseWorker):
             )
 
         if deps_output or dyn_output:
-            unified = build_unified_dependencies(address, deps_output, dyn_output, cls_output)
+            unified = build_unified_dependencies(
+                address, deps_output, dyn_output, cls_output, target_classification=target_classification
+            )
+            t0 = time.monotonic()
             enrich_dependency_metadata(unified)
+            if DEBUG_TIMING:
+                logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
 
             dependencies_path = project_dir / "dependencies.json"
             dependencies_path.write_text(json.dumps(unified, indent=2) + "\n")
             store_artifact(session, job.id, "dependencies", data=unified)
 
-            viz_path = write_dependency_visualization(project_dir)
+            proxy_addr = request.get("proxy_address")
+            proxy_name = (job.name or "").split(":")[0].strip() if proxy_addr else None
+            proxy_type = request.get("proxy_type") if proxy_addr else None
+            viz_path = write_dependency_visualization(project_dir, proxy_addr, proxy_name, proxy_type)
             if viz_path and viz_path.exists():
                 dependency_graph = json.loads(viz_path.read_text())
                 store_artifact(session, job.id, "dependency_graph_viz", data=dependency_graph)
@@ -523,6 +605,27 @@ class StaticWorker(BaseWorker):
                     "Static stage dependencies complete for job %s address=%s (no graph nodes)",
                     job.id,
                     address,
+                )
+
+            # Upgrade history for proxy contracts
+            try:
+                from services.discovery.upgrade_history import build_upgrade_history
+
+                uh = build_upgrade_history(dependencies_path)
+                if uh.get("proxies"):
+                    store_artifact(session, job.id, "upgrade_history", data=uh)
+                    logger.info(
+                        "Static stage upgrade history complete for job %s address=%s upgrades=%d",
+                        job.id,
+                        address,
+                        uh.get("total_upgrades", 0),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Static stage upgrade history failed for job %s address=%s: %s",
+                    job.id,
+                    address,
+                    exc,
                 )
         else:
             logger.warning(
@@ -561,7 +664,26 @@ class StaticWorker(BaseWorker):
 
         slither_path = project_dir / "slither_results.json"
         if slither_path.exists():
-            store_artifact(session, job.id, "slither_results", data=json.loads(slither_path.read_text()))
+            slither_data = json.loads(slither_path.read_text())
+
+            # Write to slither_findings table
+            from sqlalchemy import select as sa_select
+            contract_row = session.execute(
+                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+            ).scalar_one_or_none()
+            if contract_row:
+                session.query(SlitherFinding).filter(
+                    SlitherFinding.contract_id == contract_row.id
+                ).delete()
+                for finding in slither_data.get("results", {}).get("detectors", []):
+                    session.add(SlitherFinding(
+                        contract_id=contract_row.id,
+                        detector=finding.get("check"),
+                        severity=finding.get("impact"),
+                        description=finding.get("description"),
+                        elements=finding.get("elements"),
+                    ))
+                session.commit()
 
         report_path = project_dir / "analysis_report.txt"
         if report_path.exists():
@@ -586,7 +708,10 @@ class StaticWorker(BaseWorker):
             return False
 
         if contract_analysis_path.exists():
-            store_artifact(session, job.id, "contract_analysis", data=json.loads(contract_analysis_path.read_text()))
+            analysis_data = json.loads(contract_analysis_path.read_text())
+            # Keep as artifact — resolution/policy stages read it as JSON
+            store_artifact(session, job.id, "contract_analysis", data=analysis_data)
+            self._write_analysis_tables(session, job, analysis_data)
         logger.info(
             "Static stage contract analysis complete for job %s address=%s contract=%s",
             job.id,
@@ -594,6 +719,73 @@ class StaticWorker(BaseWorker):
             contract_name,
         )
         return True
+
+    def _write_analysis_tables(self, session, job: Job, analysis: dict) -> None:
+        """Extract structured data from contract_analysis JSON into relational tables."""
+        from sqlalchemy import select as sa_select
+
+        contract_row = session.execute(
+            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+        ).scalar_one_or_none()
+        if not contract_row:
+            return
+
+        summary = analysis.get("summary", {})
+        subject = analysis.get("subject", {})
+
+        # Update contract name from analysis if available
+        if subject.get("name"):
+            contract_row.contract_name = subject["name"]
+
+        # Write contract_summary
+        existing_summary = session.execute(
+            sa_select(ContractSummary).where(ContractSummary.contract_id == contract_row.id)
+        ).scalar_one_or_none()
+        if existing_summary:
+            session.delete(existing_summary)
+            session.flush()
+
+        session.add(ContractSummary(
+            contract_id=contract_row.id,
+            control_model=summary.get("control_model"),
+            is_upgradeable=summary.get("is_upgradeable"),
+            is_pausable=summary.get("is_pausable"),
+            has_timelock=summary.get("has_timelock"),
+            risk_level=summary.get("static_risk_level"),
+            is_factory=summary.get("is_factory"),
+            is_nft=summary.get("is_nft"),
+            standards=summary.get("standards", []),
+            source_verified=subject.get("source_verified"),
+        ))
+
+        # Write privileged_functions
+        session.query(PrivilegedFunction).filter(
+            PrivilegedFunction.contract_id == contract_row.id
+        ).delete()
+        ac = analysis.get("access_control", {})
+        for pf in ac.get("privileged_functions", []):
+            session.add(PrivilegedFunction(
+                contract_id=contract_row.id,
+                function_name=pf.get("function", ""),
+                selector=pf.get("selector"),
+                abi_signature=pf.get("abi_signature"),
+                effect_labels=pf.get("effect_labels", []),
+                action_summary=pf.get("action_summary"),
+                authority_public=False,
+            ))
+
+        # Write role_definitions
+        session.query(RoleDefinition).filter(
+            RoleDefinition.contract_id == contract_row.id
+        ).delete()
+        for rd in ac.get("role_definitions", []):
+            session.add(RoleDefinition(
+                contract_id=contract_row.id,
+                role_name=rd.get("role", ""),
+                declared_in=rd.get("declared_in"),
+            ))
+
+        session.commit()
 
     def _run_tracking_plan_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
         """Build control tracking plan. Non-fatal on failure."""

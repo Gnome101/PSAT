@@ -16,6 +16,8 @@ from db.queue import advance_job, claim_job, fail_job, update_job_detail
 
 logger = logging.getLogger(__name__)
 
+DEBUG_TIMING = os.getenv("PSAT_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
+
 
 class JobHandledDirectly(Exception):
     """Raised by process() when it has already completed/failed the job itself."""
@@ -56,6 +58,7 @@ class BaseWorker:
                     continue
 
                 logger.info("Worker %s claimed job %s", self.worker_id, job.id)
+                t0 = time.monotonic()
                 try:
                     self.process(session, job)
                     if self.next_stage == JobStage.done:
@@ -64,7 +67,13 @@ class BaseWorker:
                         complete_job(session, job.id)
                     else:
                         advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
-                    logger.info("Worker %s completed job %s", self.worker_id, job.id)
+                    elapsed = time.monotonic() - t0
+                    logger.info(
+                        "Worker %s completed job %s in %.1fs",
+                        self.worker_id,
+                        job.id,
+                        elapsed,
+                    )
                 except JobHandledDirectly:
                     logger.info("Worker %s: job %s handled directly by process()", self.worker_id, job.id)
                 except Exception:
@@ -87,6 +96,7 @@ class BaseWorker:
                         error,
                     )
                     try:
+                        session.rollback()
                         fail_job(session, job.id, error)
                     except Exception:
                         logger.exception("Failed to mark job %s as failed", job.id)

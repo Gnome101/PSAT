@@ -11,14 +11,18 @@ from sqlalchemy.orm import Session
 from .models import Artifact, Job, JobStage, JobStatus, SourceFile
 
 
-def create_job(session: Session, request_dict: dict[str, Any]) -> Job:
-    """Insert a new job with stage=discovery, status=queued."""
+def create_job(
+    session: Session,
+    request_dict: dict[str, Any],
+    initial_stage: JobStage = JobStage.discovery,
+) -> Job:
+    """Insert a new job at the given stage with status=queued."""
     job = Job(
         address=request_dict.get("address"),
         company=request_dict.get("company"),
         name=request_dict.get("name"),
         status=JobStatus.queued,
-        stage=JobStage.discovery,
+        stage=initial_stage,
         detail="Queued for analysis",
         request=request_dict,
     )
