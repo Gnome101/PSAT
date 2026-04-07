@@ -16,6 +16,7 @@ from services.discovery.upgrade_history import (
     EVENT_TOPICS,
     parse_upgrade_log,
 )
+from services.monitoring.notifier import notify_upgrades
 from utils.rpc import normalize_hex, parse_address_result, rpc_batch_request, rpc_request
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
@@ -433,6 +434,7 @@ def run_scan_loop(rpc_url: str, interval: float = DEFAULT_SCAN_INTERVAL) -> None
                 new_events = scan_for_upgrades(session, rpc_url)
                 if new_events:
                     logger.info("Detected %d new upgrade event(s)", len(new_events))
+                    notify_upgrades(session, new_events)
         except Exception:
             logger.exception("Scan cycle failed")
         time.sleep(interval)
@@ -450,6 +452,7 @@ def run_poll_loop(rpc_url: str, interval: float = DEFAULT_POLL_INTERVAL) -> None
                 new_events = poll_for_upgrades(session, rpc_url)
                 if new_events:
                     logger.info("Poll detected %d new upgrade(s)", len(new_events))
+                    notify_upgrades(session, new_events)
         except Exception:
             logger.exception("Poll cycle failed")
         time.sleep(interval)

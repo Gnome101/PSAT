@@ -12,9 +12,11 @@ set -a
 source .env
 set +a
 
-WORKER_PATTERN='workers\.(discovery|static_worker|resolution_worker|policy_worker)'
+WORKER_PATTERN='workers\.(discovery|static_worker|resolution_worker|policy_worker|proxy_monitor)'
 API_PID=""
 WORKERS_PID=""
+PROXY_SCANNER_PID=""
+PROXY_POLLER_PID=""
 
 # Check required env vars
 missing=()
@@ -86,6 +88,14 @@ cleanup() {
     kill "$WORKERS_PID" 2>/dev/null || true
     wait "$WORKERS_PID" 2>/dev/null || true
   fi
+  if [ -n "$PROXY_SCANNER_PID" ]; then
+    kill "$PROXY_SCANNER_PID" 2>/dev/null || true
+    wait "$PROXY_SCANNER_PID" 2>/dev/null || true
+  fi
+  if [ -n "$PROXY_POLLER_PID" ]; then
+    kill "$PROXY_POLLER_PID" 2>/dev/null || true
+    wait "$PROXY_POLLER_PID" 2>/dev/null || true
+  fi
   echo "Done."
 }
 trap cleanup EXIT INT TERM
@@ -100,6 +110,13 @@ sleep 2
 echo "Starting workers..."
 bash start_workers.sh &
 WORKERS_PID=$!
+
+# Start proxy monitor (event scanner + storage poller)
+echo "Starting proxy monitor..."
+uv run python -m workers.proxy_monitor &
+PROXY_SCANNER_PID=$!
+uv run python -m workers.proxy_monitor --poll &
+PROXY_POLLER_PID=$!
 
 echo ""
 echo "=== PSAT running ==="
