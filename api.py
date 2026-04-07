@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
-from db.models import Artifact, Job, JobStatus, ProxyUpgradeEvent, SessionLocal, WatchedProxy
+from db.models import Artifact, Job, JobStatus, ProxySubscription, ProxyUpgradeEvent, SessionLocal, WatchedProxy
 from db.queue import create_job, get_all_artifacts, get_artifact
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,12 @@ class WatchProxyRequest(BaseModel):
     from_block: int | None = Field(
         default=None, ge=0, description="Block to start scanning from. Defaults to current block."
     )
+    discord_webhook_url: str | None = Field(default=None, description="Discord webhook URL for upgrade notifications.")
+
+
+class SubscribeRequest(BaseModel):
+    discord_webhook_url: str = Field(min_length=1, description="Discord webhook URL for upgrade notifications.")
+    label: str | None = None
 
 
 @asynccontextmanager
@@ -511,23 +518,46 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
             )
 
     with SessionLocal() as session:
-        proxy = WatchedProxy(
-            proxy_address=address,
-            chain=request.chain,
-            label=request.label,
-            proxy_type=proxy_type,
-            needs_polling=needs_polling,
-            last_known_implementation=current_impl,
-            last_scanned_block=from_block,
-        )
-        session.add(proxy)
-        try:
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise HTTPException(status_code=409, detail="Proxy already being watched")
+        # Check if proxy is already watched — if so, just add a subscription
+        existing = session.execute(
+            select(WatchedProxy).where(
+                WatchedProxy.proxy_address == address,
+                WatchedProxy.chain == request.chain,
+            )
+        ).scalar_one_or_none()
+
+        if existing:
+            proxy = existing
+        else:
+            proxy = WatchedProxy(
+                proxy_address=address,
+                chain=request.chain,
+                label=request.label,
+                proxy_type=proxy_type,
+                needs_polling=needs_polling,
+                last_known_implementation=current_impl,
+                last_scanned_block=from_block,
+            )
+            session.add(proxy)
+            session.flush()
+
+        # Create subscription if discord webhook provided
+        subscription = None
+        if request.discord_webhook_url:
+            subscription = ProxySubscription(
+                watched_proxy_id=proxy.id,
+                discord_webhook_url=request.discord_webhook_url,
+                label=request.label,
+            )
+            session.add(subscription)
+
+        session.commit()
         session.refresh(proxy)
-        return _watched_proxy_to_dict(proxy)
+        result = _watched_proxy_to_dict(proxy)
+        if subscription:
+            session.refresh(subscription)
+            result["subscription_id"] = str(subscription.id)
+        return result
 
 
 @app.get("/api/watched-proxies")
@@ -543,7 +573,7 @@ def list_watched_proxies() -> list[dict[str, Any]]:
 def remove_watched_proxy(proxy_id: str) -> dict[str, str]:
     """Stop watching a proxy contract."""
     with SessionLocal() as session:
-        proxy = session.get(WatchedProxy, proxy_id)
+        proxy = session.get(WatchedProxy, uuid.UUID(proxy_id))
         if proxy is None:
             raise HTTPException(status_code=404, detail="Watched proxy not found")
         session.delete(proxy)
@@ -572,6 +602,63 @@ def list_proxy_events(proxy_id: str | None = None, limit: int = 50) -> list[dict
             }
             for e in events
         ]
+
+
+@app.get("/api/watched-proxies/{proxy_id}/subscriptions")
+def list_subscriptions(proxy_id: str) -> list[dict[str, Any]]:
+    """List notification subscriptions for a watched proxy."""
+    with SessionLocal() as session:
+        proxy = session.get(WatchedProxy, uuid.UUID(proxy_id))
+        if proxy is None:
+            raise HTTPException(status_code=404, detail="Watched proxy not found")
+        stmt = select(ProxySubscription).where(ProxySubscription.watched_proxy_id == proxy.id)
+        subs = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(s.id),
+                "watched_proxy_id": str(s.watched_proxy_id),
+                "discord_webhook_url": s.discord_webhook_url,
+                "label": s.label,
+                "created_at": s.created_at.isoformat(),
+            }
+            for s in subs
+        ]
+
+
+@app.post("/api/watched-proxies/{proxy_id}/subscriptions")
+def add_subscription(proxy_id: str, request: SubscribeRequest) -> dict[str, Any]:
+    """Add a notification subscription to an existing watched proxy."""
+    with SessionLocal() as session:
+        proxy = session.get(WatchedProxy, uuid.UUID(proxy_id))
+        if proxy is None:
+            raise HTTPException(status_code=404, detail="Watched proxy not found")
+        sub = ProxySubscription(
+            watched_proxy_id=proxy.id,
+            discord_webhook_url=request.discord_webhook_url,
+            label=request.label,
+        )
+        session.add(sub)
+        session.commit()
+        session.refresh(sub)
+        return {
+            "id": str(sub.id),
+            "watched_proxy_id": str(sub.watched_proxy_id),
+            "discord_webhook_url": sub.discord_webhook_url,
+            "label": sub.label,
+            "created_at": sub.created_at.isoformat(),
+        }
+
+
+@app.delete("/api/subscriptions/{subscription_id}")
+def remove_subscription(subscription_id: str) -> dict[str, str]:
+    """Remove a notification subscription."""
+    with SessionLocal() as session:
+        sub = session.get(ProxySubscription, uuid.UUID(subscription_id))
+        if sub is None:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        session.delete(sub)
+        session.commit()
+        return {"status": "removed"}
 
 
 @app.get("/{full_path:path}")
