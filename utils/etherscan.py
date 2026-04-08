@@ -235,12 +235,18 @@ def get_token_balances(address: str, chain_id: int = 1) -> list[dict]:
     for entry in data.get("result", []):
         raw_balance = int(entry.get("TokenQuantity", "0") or "0")
         if raw_balance > 0:
+            decimals = int(entry.get("TokenDivisor", "18") or "18")
+            price_usd = float(entry.get("TokenPriceUSD", "0") or "0")
+            human_balance = raw_balance / (10 ** decimals)
+            usd_value = human_balance * price_usd if price_usd > 0 else None
             results.append({
                 "token_address": (entry.get("TokenAddress") or "").lower(),
                 "token_name": entry.get("TokenName", ""),
                 "token_symbol": entry.get("TokenSymbol", ""),
-                "decimals": int(entry.get("TokenDivisor", "18") or "18"),
+                "decimals": decimals,
                 "balance": raw_balance,
+                "price_usd": price_usd,
+                "usd_value": usd_value,
             })
 
-    return sorted(results, key=lambda t: t.get("balance", 0), reverse=True)
+    return sorted(results, key=lambda t: t.get("usd_value") or 0, reverse=True)

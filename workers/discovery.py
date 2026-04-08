@@ -11,7 +11,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage
-from db.queue import create_job, store_artifact, store_source_files
+from db.queue import count_analysis_children, create_job, store_artifact, store_source_files
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import search_protocol_inventory
 from workers.base import BaseWorker, JobHandledDirectly
@@ -38,16 +38,18 @@ class DiscoveryWorker(BaseWorker):
             raise ValueError("Company job missing company name")
         request = job.request if isinstance(job.request, dict) else {}
         chain = request.get("chain")
-        discover_limit = request.get("discover_limit", 25)
         analyze_limit = request.get("analyze_limit", 5)
+        root_job_id = str(job.id)
 
         self.update_detail(session, job, f"Discovering contracts for {company}")
-        inventory = search_protocol_inventory(company, chain=chain, limit=discover_limit)
+        inventory = search_protocol_inventory(company, chain=chain)
 
         store_artifact(session, job.id, "contract_inventory", data=inventory)
 
         discovered = [e for e in inventory.get("contracts", []) if e.get("address")]
-        selected = discovered[:analyze_limit]
+        already_used = count_analysis_children(session, root_job_id)
+        remaining = max(0, analyze_limit - already_used)
+        selected = discovered[:remaining]
 
         if not selected:
             self.update_detail(session, job, "No contracts found to analyze")
@@ -81,7 +83,8 @@ class DiscoveryWorker(BaseWorker):
                 "name": child_name,
                 "chain": child_chain,
                 "rpc_url": request.get("rpc_url"),
-                "parent_job_id": str(job.id),
+                "parent_job_id": root_job_id,
+                "root_job_id": root_job_id,
             }
             child_job = create_job(session, child_request)
             child_ids.append({"job_id": str(child_job.id), "address": addr, "name": child_name, "chain": child_chain})
@@ -105,8 +108,8 @@ class DiscoveryWorker(BaseWorker):
             job.name = company
             session.commit()
 
-        # Spawn parallel discovery jobs via DApp crawl and DefiLlama adapter scan
-        self._spawn_parallel_discovery(session, job, company, request)
+        # TODO: re-enable when dapp-crawler and defillama-crawler repos are available
+        # self._spawn_parallel_discovery(session, job, company, request, root_job_id)
 
         self.update_detail(
             session,
@@ -120,7 +123,7 @@ class DiscoveryWorker(BaseWorker):
         complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
         raise JobHandledDirectly()
 
-    def _spawn_parallel_discovery(self, session: Session, job: Job, company: str, request: dict) -> None:
+    def _spawn_parallel_discovery(self, session: Session, job: Job, company: str, request: dict, root_job_id: str) -> None:
         """Spawn DApp crawl and DefiLlama scan jobs if we can resolve the protocol."""
         from services.discovery.protocol_resolver import resolve_protocol
 
@@ -134,19 +137,23 @@ class DiscoveryWorker(BaseWorker):
             job.id, company, protocol.get("slug"), protocol.get("url"),
         )
 
-        # Spawn DefiLlama adapter scan
-        if protocol.get("slug"):
+        # Spawn DefiLlama adapter scans — one per sub-protocol
+        all_slugs = protocol.get("all_slugs", [])
+        if not all_slugs and protocol.get("slug"):
+            all_slugs = [protocol["slug"]]
+        for slug in all_slugs:
             defillama_request = {
-                "defillama_protocol": protocol["slug"],
-                "name": f"{company}_defillama",
+                "defillama_protocol": slug,
+                "name": f"{company}_defillama_{slug}",
                 "parent_job_id": str(job.id),
+                "root_job_id": root_job_id,
                 "analyze_limit": request.get("analyze_limit", 5),
                 "rpc_url": request.get("rpc_url"),
             }
             dl_job = create_job(session, defillama_request, initial_stage=JobStage.defillama_scan)
             dl_job.company = company
             session.commit()
-            logger.info("Job %s: spawned DefiLlama scan job %s (slug=%s)", job.id, dl_job.id, protocol["slug"])
+            logger.info("Job %s: spawned DefiLlama scan job %s (slug=%s)", job.id, dl_job.id, slug)
 
         # Spawn DApp crawl
         dapp_url = protocol.get("url")
@@ -155,6 +162,7 @@ class DiscoveryWorker(BaseWorker):
                 "dapp_urls": [dapp_url],
                 "name": f"{company}_dapp_crawl",
                 "parent_job_id": str(job.id),
+                "root_job_id": root_job_id,
                 "analyze_limit": request.get("analyze_limit", 5),
                 "chain_id": request.get("chain_id") or 1,
                 "wait": request.get("wait", 10),

@@ -6,6 +6,7 @@ import {
   Controls,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   ReactFlowProvider,
   Handle,
   Position,
@@ -480,8 +481,9 @@ function LaneColumn({ title, laneKey, items, onSelect }) {
 }
 
 function ContractMachine({ machine, onSelectGuard }) {
+  const usdLabel = formatUsd(machine.total_usd);
   return (
-    <article className="ps-machine">
+    <article className="ps-machine" style={machine.total_usd ? { borderLeft: "2px solid #f59e0b33" } : undefined}>
       <header className="ps-machine-header">
         <div className="ps-machine-name">{machine.name || shortAddr(machine.address)}</div>
         <div className="ps-machine-address">{shortAddr(machine.address)}</div>
@@ -490,6 +492,7 @@ function ContractMachine({ machine, onSelectGuard }) {
           {machine.is_proxy ? <span className="ps-badge" style={{ "--badge-accent": "#9a8a6e" }}>{machine.proxy_type || "proxy"}</span> : null}
           {machine.upgrade_count != null ? <span className="ps-badge" style={{ "--badge-accent": "#8b92a8" }}>{machine.upgrade_count} upgrades</span> : null}
           <span className="ps-badge" style={{ "--badge-accent": "#6b7590" }}>{machine.totalFunctions} functions</span>
+          {usdLabel && <span className="ps-badge" style={{ "--badge-accent": "#f59e0b" }}>{usdLabel}</span>}
         </div>
       </header>
 
@@ -497,6 +500,43 @@ function ContractMachine({ machine, onSelectGuard }) {
       {machine.lanes.ops.length > 0 && <OpsLane items={machine.lanes.ops} onSelect={onSelectGuard} />}
       <LaneColumn title={LANE_META.left.label} laneKey="left" items={machine.lanes.left} onSelect={onSelectGuard} />
       <LaneColumn title={LANE_META.right.label} laneKey="right" items={machine.lanes.right} onSelect={onSelectGuard} />
+
+      {machine.balances && machine.balances.length > 0 && (
+        <section className="ps-balance-section">
+          <div className="ps-balance-header">
+            <span>Balances</span>
+            {machine.total_usd ? <span className="ps-balance-total">{formatUsd(machine.total_usd)}</span> : null}
+          </div>
+          <table className="ps-balance-table">
+            <thead>
+              <tr>
+                <th>Token</th>
+                <th style={{ textAlign: "right" }}>Amount</th>
+                <th style={{ textAlign: "right" }}>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {machine.balances.map((b, i) => {
+                const human = Number(b.raw_balance) / (10 ** b.decimals);
+                const amount = human >= 1e6 ? `${(human / 1e6).toFixed(1)}M`
+                  : human >= 1e3 ? `${(human / 1e3).toFixed(1)}K`
+                  : human >= 1 ? human.toFixed(2)
+                  : human.toFixed(6);
+                return (
+                  <tr key={i}>
+                    <td>
+                      <span className="ps-balance-symbol">{b.token_symbol}</span>
+                      <span className="ps-balance-name">{b.token_name}</span>
+                    </td>
+                    <td style={{ textAlign: "right" }} className="ps-balance-amount">{amount}</td>
+                    <td style={{ textAlign: "right" }} className="ps-balance-usd">{b.usd_value ? formatUsd(b.usd_value) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </section>
+      )}
     </article>
   );
 }
@@ -524,7 +564,7 @@ function principalDetail(principal) {
   return "Controller path";
 }
 
-function InspectorCard({ selected }) {
+function InspectorCard({ selected, onNavigate }) {
   if (!selected) {
     return null;
   }
@@ -563,10 +603,15 @@ function InspectorCard({ selected }) {
             {selected.principals.map((principal) => {
               const type = TYPE_META[principal.resolvedType] || TYPE_META.unknown;
               return (
-                <div key={principal.address} className="ps-principal-card">
+                <div
+                  key={principal.address}
+                  className="ps-principal-card ps-principal-clickable"
+                  onClick={() => onNavigate && onNavigate({ type: principal.resolvedType, address: principal.address, label: principalDetail(principal), details: principal.details })}
+                >
                   <div className="ps-principal-top">
                     <span className="ps-principal-type" style={{ "--principal-accent": type.accent }}>{type.label}</span>
                     <span className="ps-principal-address">{shortAddr(principal.address)}</span>
+                    <span className="ps-principal-goto">→</span>
                   </div>
                   <div className="ps-principal-meta">{principalDetail(principal)}</div>
                   <div className="ps-principal-origin">{principal.origins.join(" · ")}</div>
@@ -581,6 +626,99 @@ function InspectorCard({ selected }) {
         )}
       </div>
     </aside>
+  );
+}
+
+function PrincipalDetail({ principal, machines, onNavigate, onFocusContract }) {
+  const [focusIdx, setFocusIdx] = useState(0);
+  if (!principal) return null;
+  const type = TYPE_META[principal.type] || TYPE_META.unknown;
+  const controlled = (principal.controls || []);
+  const controlledMachines = machines.filter((m) =>
+    controlled.some((a) => a.toLowerCase() === m.address?.toLowerCase())
+  );
+  const owners = principal.details?.owners || [];
+  const threshold = principal.details?.threshold;
+  const delay = principal.details?.delay;
+
+  return (
+    <article className="ps-machine" style={{ borderLeft: `2px solid ${type.accent}` }}>
+      <header className="ps-machine-header">
+        <div className="ps-machine-name">{principal.label || shortAddr(principal.address)}</div>
+        <div className="ps-machine-address">{principal.address}</div>
+        <div className="ps-machine-badges">
+          <span className="ps-badge" style={{ "--badge-accent": type.accent }}>{type.label}</span>
+          {principal.type === "safe" && threshold && (
+            <span className="ps-badge" style={{ "--badge-accent": "#6a9e94" }}>{threshold}/{owners.length} threshold</span>
+          )}
+          {principal.type === "timelock" && delay > 0 && (
+            <span className="ps-badge" style={{ "--badge-accent": "#9a8a6e" }}>{formatDelay(delay)} delay</span>
+          )}
+        </div>
+      </header>
+
+      {principal.type === "safe" && owners.length > 0 && (
+        <section className="ps-principal-section">
+          <div className="ps-principal-section-hdr">Signers ({owners.length})</div>
+          {owners.map((addr) => (
+            <div key={addr} className="ps-principal-signer">{addr}</div>
+          ))}
+        </section>
+      )}
+
+      {controlledMachines.length > 0 && (
+        <section className="ps-principal-section">
+          <div className="ps-principal-section-hdr" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>Controls ({controlledMachines.length} contracts)</span>
+            {controlledMachines.length > 1 && (
+              <div className="ps-search-arrows" style={{ marginLeft: 8 }}>
+                <button onClick={() => {
+                  const prev = (focusIdx - 1 + controlledMachines.length) % controlledMachines.length;
+                  setFocusIdx(prev);
+                  onFocusContract && onFocusContract(controlledMachines[prev].address);
+                }}>◀</button>
+                <span className="ps-search-counter">{focusIdx + 1} / {controlledMachines.length}</span>
+                <button onClick={() => {
+                  const next = (focusIdx + 1) % controlledMachines.length;
+                  setFocusIdx(next);
+                  onFocusContract && onFocusContract(controlledMachines[next].address);
+                }}>▶</button>
+              </div>
+            )}
+          </div>
+          {controlledMachines.map((m, i) => (
+            <div
+              key={m.address}
+              className={`ps-principal-controlled ps-principal-clickable${i === focusIdx ? " ps-principal-focused" : ""}`}
+              onClick={() => {
+                setFocusIdx(i);
+                onFocusContract && onFocusContract(m.address);
+              }}
+            >
+              <span className="ps-principal-controlled-name">{m.name || shortAddr(m.address)}</span>
+              <span className="ps-principal-controlled-addr">{shortAddr(m.address)}</span>
+              {m.total_usd ? <span className="ps-search-preview-value">{formatUsd(m.total_usd)}</span> : null}
+              <span className="ps-principal-goto">→</span>
+            </div>
+          ))}
+        </section>
+      )}
+    </article>
+  );
+}
+
+function Breadcrumbs({ items, onNavigate }) {
+  if (!items.length) return null;
+  return (
+    <div className="ps-breadcrumbs">
+      {items.map((item, i) => (
+        <span key={i} className="ps-breadcrumb" onClick={() => onNavigate(item, i)}>
+          <span className="ps-breadcrumb-type">{item.type}</span>
+          <span className="ps-breadcrumb-label">{item.label || shortAddr(item.address)}</span>
+          {i < items.length - 1 && <span className="ps-breadcrumb-sep">›</span>}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -654,6 +792,7 @@ function ContractNode({ data }) {
       )}
       <div className="ps-node-addr">{shortAddr(m.address)}</div>
       <div className="ps-node-role" style={{ color: roleColor }}>{(ROLE_META[m.role] || ROLE_META.utility).label.replace(/s$/, "")}</div>
+      {m.total_usd ? <div className="ps-node-balance">{formatUsd(m.total_usd)}</div> : null}
     </div>
   );
 }
@@ -796,11 +935,11 @@ function hierarchicalLayout(machines, edgePairs) {
     return outCount[b] - outCount[a];
   });
 
-  const NODE_W = 300;
-  const NODE_H = 220;
+  const NODE_W = 250;
+  const NODE_H = 160;
   // Scale columns based on node count — more nodes = wider layout
   const colCount = n <= 9 ? 3 : n <= 20 ? 4 : 5;
-  const spread = NODE_W * 1.4;
+  const spread = NODE_W * 1.15;
   const positions = new Array(n);
 
   // Connected nodes: multi-column stagger, spreading wider as we go down
@@ -808,14 +947,14 @@ function hierarchicalLayout(machines, edgePairs) {
     const idx = connected[rank];
     const col = rank % colCount;
     const row = Math.floor(rank / colCount);
-    const rowSpread = spread * (1 + row * 0.15);
+    const rowSpread = spread * (1 + row * 0.08);
     let x, y;
     y = row * NODE_H;
     // Spread columns evenly around center
     const colOffset = (col - (colCount - 1) / 2) * rowSpread;
-    // Deterministic jitter
-    const jx = ((rank * 7 + 13) % 60 - 30);
-    const jy = ((rank * 11 + 7) % 30 - 15);
+    // Deterministic jitter (subtle)
+    const jx = ((rank * 7 + 13) % 30 - 15);
+    const jy = ((rank * 11 + 7) % 16 - 8);
     x = colOffset + jx;
     y += jy;
     positions[idx] = { x: Math.round(x), y: Math.round(y) };
@@ -827,8 +966,8 @@ function hierarchicalLayout(machines, edgePairs) {
     const cys = connected.map((i) => positions[i].y);
     const cx = connected.length > 0 ? (Math.min(...cxs) + Math.max(...cxs)) / 2 : 0;
     const cy = connected.length > 0 ? (Math.min(...cys) + Math.max(...cys)) / 2 : 0;
-    const rx = connected.length > 0 ? (Math.max(...cxs) - Math.min(...cxs)) / 2 + NODE_W * 2.2 : NODE_W * 3;
-    const ry = connected.length > 0 ? (Math.max(...cys) - Math.min(...cys)) / 2 + NODE_H * 1.8 : NODE_H * 3;
+    const rx = connected.length > 0 ? (Math.max(...cxs) - Math.min(...cxs)) / 2 + NODE_W * 1.5 : NODE_W * 2;
+    const ry = connected.length > 0 ? (Math.max(...cys) - Math.min(...cys)) / 2 + NODE_H * 1.3 : NODE_H * 2;
 
     for (let i = 0; i < isolated.length; i++) {
       const angle = (2 * Math.PI * i) / isolated.length - Math.PI / 2;
@@ -890,7 +1029,7 @@ function buildGraphLayout(machines, fundFlows, principals) {
   });
 
   // Position principals near the contracts they control
-  const PRINCIPAL_OFFSET_Y = -160; // above their contracts
+  const PRINCIPAL_OFFSET_Y = -100; // above their contracts
   const usedPrincipalPositions = [];
   for (const p of principalList) {
     const controls = (p.controls || []).map((a) => a.toLowerCase());
@@ -984,15 +1123,15 @@ async function elkLayout(machines, fundFlows, principals) {
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "DOWN",
-      "elk.spacing.nodeNode": "60",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "100",
+      "elk.spacing.nodeNode": "30",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "50",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
       "elk.layered.edgeRouting": "ORTHOGONAL",
-      "elk.spacing.edgeNode": "40",
-      "elk.spacing.edgeEdge": "30",
-      "elk.layered.spacing.edgeEdgeBetweenLayers": "25",
-      "elk.layered.spacing.edgeNodeBetweenLayers": "35",
+      "elk.spacing.edgeNode": "20",
+      "elk.spacing.edgeEdge": "15",
+      "elk.layered.spacing.edgeEdgeBetweenLayers": "15",
+      "elk.layered.spacing.edgeNodeBetweenLayers": "20",
     },
     children: rawNodes.map((n) => ({
       id: n.id,
@@ -1023,7 +1162,31 @@ async function elkLayout(machines, fundFlows, principals) {
   }
 }
 
-function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, onSelectMachine }) {
+function FocusOnNode({ address, focusKey }) {
+  const { setCenter, getNodes } = useReactFlow();
+  const lastKey = useRef(null);
+  useEffect(() => {
+    if (!address || focusKey === lastKey.current) return;
+    lastKey.current = focusKey;
+    // Small delay to let ReactFlow finish rendering positions
+    const timer = setTimeout(() => {
+      const allNodes = getNodes();
+      let node = allNodes.find((n) => n.id === address);
+      if (!node) node = allNodes.find((n) => n.id?.toLowerCase() === address.toLowerCase());
+      if (node) {
+        const w = node.measured?.width || node.width || 220;
+        const h = node.measured?.height || node.height || 120;
+        const x = node.positionAbsolute?.x ?? node.position?.x ?? 0;
+        const y = node.positionAbsolute?.y ?? node.position?.y ?? 0;
+        setCenter(x + w / 2, y + h / 2, { zoom: 1.2, duration: 400 });
+      }
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [address, focusKey, getNodes, setCenter]);
+  return null;
+}
+
+function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, onSelectMachine }) {
   const [initNodes, setInitNodes] = useState([]);
   const [initEdges, setInitEdges] = useState([]);
 
@@ -1106,6 +1269,7 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, onSel
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         nodeTypes={nodeTypes}
+        onPaneClick={() => onSelectMachine(null)}
         fitView
         minZoom={0.2}
         maxZoom={2}
@@ -1113,6 +1277,7 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, onSel
       >
         <Background color="#1e293b" gap={24} size={1} />
         <Controls showInteractive={false} />
+        <FocusOnNode address={focusAddress?.address} focusKey={focusAddress?.key} />
       </ReactFlow>
     </div>
   );
@@ -1149,11 +1314,213 @@ function DraggableSidebar({ children }) {
   );
 }
 
+function formatUsd(value) {
+  if (!value || value < 0.01) return null;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
+  if (value >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
+  return `$${value.toFixed(2)}`;
+}
+
+// ── Search Navigator ────────────────────────────────────────────────────────
+
+const SEARCH_MODES = [
+  { key: "all", icon: "⊕", label: "All", accent: "#94a3b8" },
+  { key: "safe", icon: "🔒", label: "Safes", accent: "#6a9e94" },
+  { key: "eoa", icon: "👤", label: "EOAs", accent: "#a09870" },
+  { key: "timelock", icon: "⏳", label: "Timelocks", accent: "#9a8a6e" },
+  { key: "funds", icon: "💰", label: "Has Funds", accent: "#f59e0b" },
+];
+
+const SORT_OPTIONS = [
+  { key: "value", label: "Value ↓" },
+  { key: "signers", label: "Signers ↓" },
+  { key: "functions", label: "Functions ↓" },
+  { key: "name", label: "Name A-Z" },
+];
+
+function buildSearchResults(machines, principals, mode, sortKey, query) {
+  let items = [];
+
+  if (mode === "safe" || mode === "eoa" || mode === "timelock") {
+    // Show principals of this type
+    const targetType = mode;
+    for (const p of principals) {
+      if (p.type !== targetType) continue;
+      const controlled = (p.controls || []);
+      const controlledMachines = machines.filter((m) =>
+        controlled.some((a) => a.toLowerCase() === m.address?.toLowerCase())
+      );
+      const totalValue = controlledMachines.reduce((sum, m) => sum + (m.total_usd || 0), 0);
+      const signers = p.details?.threshold || (p.details?.owners?.length) || 0;
+      const delay = p.details?.delay || 0;
+      items.push({
+        kind: "principal",
+        address: p.address,
+        name: p.label || "",
+        type: p.type,
+        value: totalValue,
+        signers,
+        delay,
+        functions: controlled.length,
+        controlledMachines,
+        // Select the first controlled contract when navigating to this principal
+        machine: controlledMachines[0] || null,
+        principal: p,
+      });
+    }
+  } else {
+    // Show contracts
+    for (const m of machines) {
+      const ownerPrincipal = principals.find((p) =>
+        (p.controls || []).some((a) => a.toLowerCase() === m.address?.toLowerCase())
+      );
+      items.push({
+        kind: "contract",
+        address: m.address,
+        name: m.name || "",
+        type: ownerPrincipal?.type || "unknown",
+        value: m.total_usd || 0,
+        signers: ownerPrincipal?.details?.threshold || 0,
+        delay: 0,
+        functions: m.totalFunctions || 0,
+        machine: m,
+        principal: ownerPrincipal,
+      });
+    }
+    if (mode === "funds") items = items.filter((i) => i.value > 0);
+  }
+
+  // Text query
+  if (query) {
+    const q = query.toLowerCase().trim();
+    const minMatch = q.match(/(?:min(?:imum)?\s*)?value\s*(?:of\s*|>\s*|>=\s*)?\$?(\d+(?:\.\d+)?)\s*(m|k)?/i);
+    if (minMatch) {
+      let threshold = parseFloat(minMatch[1]);
+      const unit = (minMatch[2] || "").toLowerCase();
+      if (unit === "m") threshold *= 1e6;
+      else if (unit === "k") threshold *= 1e3;
+      items = items.filter((i) => i.value >= threshold);
+    } else {
+      items = items.filter((i) => {
+        const haystack = [i.name, i.address, i.type].join(" ").toLowerCase();
+        return haystack.includes(q);
+      });
+    }
+  }
+
+  // Sort
+  if (sortKey === "value") items.sort((a, b) => b.value - a.value);
+  else if (sortKey === "signers") items.sort((a, b) => b.signers - a.signers);
+  else if (sortKey === "functions") items.sort((a, b) => b.functions - a.functions);
+  else if (sortKey === "name") items.sort((a, b) => a.name.localeCompare(b.name));
+
+  return items;
+}
+
+function SearchNavigator({ machines, principals, onFocus }) {
+  const [mode, setMode] = useState("all");
+  const [sortKey, setSortKey] = useState("value");
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+
+  const results = useMemo(
+    () => buildSearchResults(machines, principals, mode, sortKey, query),
+    [machines, principals, mode, sortKey, query]
+  );
+
+  // Reset index when results change
+  useEffect(() => { setIndex(0); }, [results.length, mode, sortKey, query]);
+
+  // Notify parent when focused result changes
+  useEffect(() => {
+    if (results.length > 0 && results[index]) {
+      onFocus(results[index]);
+    } else {
+      onFocus(null);
+    }
+  }, [index, results]);
+
+  const prev = () => setIndex((i) => (i > 0 ? i - 1 : results.length - 1));
+  const next = () => setIndex((i) => (i < results.length - 1 ? i + 1 : 0));
+
+  const current = results[index];
+
+  return (
+    <div className="ps-search-nav">
+      <div className="ps-search-modes">
+        {SEARCH_MODES.map((m) => (
+          <button
+            key={m.key}
+            className={`ps-search-mode${mode === m.key ? " active" : ""}`}
+            style={{ "--mode-accent": m.accent }}
+            onClick={() => setMode(m.key)}
+            title={m.label}
+          >
+            <span className="ps-search-mode-icon">{m.icon}</span>
+            <span className="ps-search-mode-label">{m.label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="ps-search-controls">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search... (e.g. 'min value 3M')"
+          className="ps-search-input"
+        />
+        <select
+          value={sortKey}
+          onChange={(e) => setSortKey(e.target.value)}
+          className="ps-search-sort"
+        >
+          {SORT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+        </select>
+        <div className="ps-search-arrows">
+          <button onClick={prev} disabled={results.length === 0} title="Previous">▲</button>
+          <span className="ps-search-counter">
+            {results.length > 0 ? `${index + 1} / ${results.length}` : "0"}
+          </span>
+          <button onClick={next} disabled={results.length === 0} title="Next">▼</button>
+        </div>
+      </div>
+      {current && (
+        <div className="ps-search-preview">
+          <span className="ps-search-preview-name">{current.name || shortAddr(current.address)}</span>
+          <span className="ps-search-preview-type">{current.type}</span>
+          <span className="ps-search-preview-addr">{shortAddr(current.address)}</span>
+          {current.value > 0 && <span className="ps-search-preview-value">{formatUsd(current.value)}</span>}
+          {current.kind === "principal" && current.type === "safe" && current.signers > 0 && (
+            <span className="ps-search-preview-meta">{current.signers}/{current.principal?.details?.owners?.length || "?"} signers</span>
+          )}
+          {current.kind === "principal" && current.type === "timelock" && current.delay > 0 && (
+            <span className="ps-search-preview-meta">{formatDelay(current.delay)} delay</span>
+          )}
+          {current.kind === "principal" && (
+            <span className="ps-search-preview-meta">controls {current.functions} contracts</span>
+          )}
+          {current.kind === "contract" && (
+            <span className="ps-search-preview-meta">{current.functions} fns</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ProtocolSurface({ companyName }) {
   const [companyData, setCompanyData] = useState(null);
   const [functionData, setFunctionData] = useState({});
   const [selectedGuard, setSelectedGuard] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
+  const [selectedPrincipal, setSelectedPrincipal] = useState(null);
+  const [breadcrumbs, setBreadcrumbs] = useState([]);
+  const [focusAddress, setFocusAddress] = useState(null);
+  const focusKeyRef = useRef(0);
+  const triggerFocus = useCallback((addr) => {
+    focusKeyRef.current += 1;
+    setFocusAddress({ address: addr, key: focusKeyRef.current });
+  }, []);
   const [error, setError] = useState(null);
   const [enabledRoles, setEnabledRoles] = useState(() => {
     const initial = new Set();
@@ -1216,6 +1583,7 @@ export default function ProtocolSurface({ companyName }) {
 
   const handleSelectMachine = useCallback((machine) => {
     setSelectedMachine(machine);
+    setSelectedPrincipal(null);
     setSelectedGuard(null);
   }, []);
 
@@ -1226,14 +1594,75 @@ export default function ProtocolSurface({ companyName }) {
     );
   }, [machines, companyData]);
 
+  const handleNavigate = useCallback((target) => {
+    // Push current view to breadcrumbs before navigating
+    setBreadcrumbs((prev) => {
+      const current = selectedPrincipal
+        ? { type: selectedPrincipal.type, address: selectedPrincipal.address, label: selectedPrincipal.label }
+        : selectedMachine
+        ? { type: "contract", address: selectedMachine.address, label: selectedMachine.name }
+        : null;
+      return current ? [...prev, current] : prev;
+    });
+
+    if (target.type === "contract") {
+      const machine = machines.find((m) => m.address?.toLowerCase() === target.address?.toLowerCase());
+      if (machine) {
+        setSelectedMachine(machine);
+        setSelectedPrincipal(null);
+        setSelectedGuard(null);
+        triggerFocus(machine.address);
+      }
+    } else {
+      // Navigate to a principal (safe, eoa, timelock)
+      let principal = visiblePrincipals.find((p) => p.address?.toLowerCase() === target.address?.toLowerCase());
+      if (!principal) {
+        // Build a minimal principal from what we know (guard inspector data)
+        principal = {
+          address: target.address,
+          type: target.type,
+          label: target.label || target.type,
+          details: target.details || {},
+          controls: machines
+            .filter((m) => {
+              const owner = m.owner?.toLowerCase();
+              return owner === target.address?.toLowerCase();
+            })
+            .map((m) => m.address),
+        };
+      }
+      setSelectedPrincipal(principal);
+      setSelectedMachine(null);
+      setSelectedGuard(null);
+      // Principal may not be a canvas node — focus its first controlled contract instead
+      const firstControlled = (principal.controls || []).find((a) =>
+        machines.some((m) => m.address?.toLowerCase() === a.toLowerCase())
+      );
+      triggerFocus(firstControlled || target.address);
+    }
+  }, [machines, visiblePrincipals, selectedMachine, selectedPrincipal, triggerFocus]);
+
+  const handleBreadcrumbNav = useCallback((item, index) => {
+    // Truncate breadcrumbs to this point
+    setBreadcrumbs((prev) => prev.slice(0, index));
+    if (item.type === "contract") {
+      const machine = machines.find((m) => m.address?.toLowerCase() === item.address?.toLowerCase());
+      if (machine) { setSelectedMachine(machine); setSelectedPrincipal(null); setSelectedGuard(null); }
+    } else {
+      const principal = visiblePrincipals.find((p) => p.address?.toLowerCase() === item.address?.toLowerCase());
+      if (principal) { setSelectedPrincipal(principal); setSelectedMachine(null); setSelectedGuard(null); }
+    }
+  }, [machines, visiblePrincipals]);
+
   const totals = useMemo(() => {
     return machines.reduce(
       (acc, machine) => {
         acc.contracts += 1;
         acc.functions += machine.totalFunctions;
+        if (machine.total_usd) { acc.withBalance += 1; acc.totalUsd += machine.total_usd; }
         return acc;
       },
-      { contracts: 0, functions: 0 }
+      { contracts: 0, functions: 0, withBalance: 0, totalUsd: 0 }
     );
   }, [machines]);
 
@@ -1259,10 +1688,43 @@ export default function ProtocolSurface({ companyName }) {
             <span>{totals.functions}</span>
             <label>functions</label>
           </div>
+          {totals.withBalance > 0 && (
+            <div className="ps-surface-stat">
+              <span style={{ color: "#f59e0b" }}>{totals.withBalance}</span>
+              <label>with funds</label>
+            </div>
+          )}
+          {totals.totalUsd > 0 && (
+            <div className="ps-surface-stat">
+              <span style={{ color: "#f59e0b" }}>{formatUsd(totals.totalUsd)}</span>
+              <label>total value</label>
+            </div>
+          )}
         </div>
       </div>
 
       <RoleFilterBar machines={allMachines} enabledRoles={enabledRoles} onToggle={handleToggleRole} />
+
+      <SearchNavigator
+        machines={machines}
+        principals={visiblePrincipals}
+        onFocus={(item) => {
+          if (!item) { setSelectedMachine(null); setSelectedPrincipal(null); return; }
+          setBreadcrumbs([]);
+          if (item.kind === "principal" && item.principal) {
+            setSelectedPrincipal(item.principal);
+            setSelectedMachine(item.machine);
+            setSelectedGuard(null);
+            // Focus on the principal node or its first controlled contract
+            triggerFocus(item.address || item.machine?.address);
+          } else if (item.machine) {
+            setSelectedMachine(item.machine);
+            setSelectedPrincipal(null);
+            setSelectedGuard(null);
+            triggerFocus(item.machine.address);
+          }
+        }}
+      />
 
       <div className="ps-layout">
         <ReactFlowProvider>
@@ -1271,18 +1733,29 @@ export default function ProtocolSurface({ companyName }) {
             fundFlows={companyData?.fund_flows}
             principals={visiblePrincipals}
             selectedAddress={selectedMachine?.address}
+            focusAddress={focusAddress}
             onSelectMachine={handleSelectMachine}
           />
         </ReactFlowProvider>
         <DraggableSidebar>
-          {selectedMachine && (
+          <Breadcrumbs items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
+          {selectedPrincipal && (
+            <PrincipalDetail
+              key={selectedPrincipal.address}
+              principal={selectedPrincipal}
+              machines={machines}
+              onNavigate={handleNavigate}
+              onFocusContract={(addr) => triggerFocus(addr)}
+            />
+          )}
+          {selectedMachine && !selectedPrincipal && (
             <ContractMachine
               key={selectedMachine.address}
               machine={selectedMachine}
               onSelectGuard={setSelectedGuard}
             />
           )}
-          <InspectorCard selected={selectedGuard} />
+          {!selectedPrincipal && <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />}
         </DraggableSidebar>
       </div>
     </div>

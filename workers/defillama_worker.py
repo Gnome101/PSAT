@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage
-from db.queue import complete_job, create_job, store_artifact
+from db.queue import complete_job, count_analysis_children, create_job, store_artifact
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.defillama")
@@ -110,8 +110,11 @@ class DefiLlamaWorker(BaseWorker):
             "addresses": addresses,
         })
 
-        # Deduplicate against existing jobs and create children
-        selected = addresses[:analyze_limit]
+        # Deduplicate against existing jobs and create children (shared global cap)
+        root_job_id = request.get("root_job_id", str(job.id))
+        already_used = count_analysis_children(session, root_job_id)
+        remaining = max(0, analyze_limit - already_used)
+        selected = addresses[:remaining]
         child_ids = []
         for addr in selected:
             existing = session.execute(
@@ -125,6 +128,7 @@ class DefiLlamaWorker(BaseWorker):
                 "address": addr,
                 "name": f"{protocol}_{addr[2:10]}",
                 "parent_job_id": str(job.id),
+                "root_job_id": root_job_id,
                 "rpc_url": request.get("rpc_url"),
             }
             chain = chain_by_address.get(addr.lower()) or request.get("chain")

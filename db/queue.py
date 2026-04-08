@@ -95,6 +95,19 @@ def fail_job(session: Session, job_id: Any, error: str) -> None:
     session.commit()
 
 
+def count_analysis_children(session: Session, root_job_id: str) -> int:
+    """Count analysis jobs (jobs with an address) linked to a root job."""
+    from sqlalchemy import func
+
+    count = session.execute(
+        select(func.count(Job.id)).where(
+            Job.address.isnot(None),
+            Job.request["root_job_id"].as_string() == root_job_id,
+        )
+    ).scalar() or 0
+    return count
+
+
 def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, text_data: str | None = None) -> None:
     """Upsert an artifact for a job (unique on job_id + name)."""
     stmt = pg_insert(Artifact).values(

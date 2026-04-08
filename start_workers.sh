@@ -38,6 +38,8 @@ echo "Starting PSAT workers with: ${PYTHON_CMD[*]}"
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.static_worker &
 PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.static_worker &
+PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.resolution_worker &
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.policy_worker &

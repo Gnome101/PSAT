@@ -51,7 +51,6 @@ class AnalyzeRequest(BaseModel):
     chain: str | None = None
     chain_id: int | None = Field(default=None, ge=1)
     wait: int | None = Field(default=None, ge=1, le=120)
-    discover_limit: int = Field(default=25, ge=1, le=200)
     analyze_limit: int = Field(default=5, ge=1, le=200)
     rpc_url: str | None = None
 
@@ -184,6 +183,29 @@ def health() -> dict[str, str]:
 @app.get("/api/config")
 def config() -> dict[str, str]:
     return {"default_rpc_url": DEFAULT_RPC_URL}
+
+
+@app.get("/api/stats")
+def pipeline_stats() -> dict[str, Any]:
+    """Quick stats: unique addresses stored, total jobs, etc."""
+    from sqlalchemy import func, distinct
+    with SessionLocal() as session:
+        unique_addresses = session.execute(
+            select(func.count(distinct(Job.address))).where(Job.address.isnot(None))
+        ).scalar() or 0
+        total_jobs = session.execute(select(func.count(Job.id))).scalar() or 0
+        completed_jobs = session.execute(
+            select(func.count(Job.id)).where(Job.status == JobStatus.completed)
+        ).scalar() or 0
+        failed_jobs = session.execute(
+            select(func.count(Job.id)).where(Job.status == JobStatus.failed)
+        ).scalar() or 0
+        return {
+            "unique_addresses": unique_addresses,
+            "total_jobs": total_jobs,
+            "completed_jobs": completed_jobs,
+            "failed_jobs": failed_jobs,
+        }
 
 
 @app.get("/api/jobs")
@@ -882,6 +904,28 @@ def company_overview(company_name: str) -> dict:
                     }
                     functions_list.append(fn_entry)
 
+            # Fetch balances
+            from db.models import ContractBalance
+            balance_contract = lookup_contract or contract_row
+            balances_list = []
+            total_usd = 0.0
+            if balance_contract:
+                for b in session.execute(
+                    select(ContractBalance).where(ContractBalance.contract_id == balance_contract.id)
+                ).scalars().all():
+                    usd = float(b.usd_value) if b.usd_value is not None else None
+                    balances_list.append({
+                        "token_symbol": b.token_symbol,
+                        "token_name": b.token_name,
+                        "token_address": b.token_address,
+                        "raw_balance": b.raw_balance,
+                        "decimals": b.decimals,
+                        "usd_value": usd,
+                        "price_usd": float(b.price_usd) if b.price_usd is not None else None,
+                    })
+                    if usd:
+                        total_usd += usd
+
             entry = {
                 "address": job.address,
                 "name": contract_name,
@@ -902,6 +946,8 @@ def company_overview(company_name: str) -> dict:
                 "has_timelock": has_timelock,
                 "capabilities": capabilities,
                 "functions": functions_list,
+                "balances": balances_list,
+                "total_usd": round(total_usd, 2) if total_usd > 0 else None,
             }
             contracts.append(entry)
 

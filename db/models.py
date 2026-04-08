@@ -310,6 +310,9 @@ class Contract(Base):
     dependencies: Mapped[list["ContractDependency"]] = relationship(
         "ContractDependency", back_populates="contract", cascade="all, delete-orphan"
     )
+    balances: Mapped[list["ContractBalance"]] = relationship(
+        "ContractBalance", back_populates="contract", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (Index("ix_contracts_job_id", "job_id"),)
 
@@ -387,7 +390,7 @@ class ControllerValue(Base):
         Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
     )
     controller_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    value: Mapped[str | None] = mapped_column(String(42), nullable=True)
+    value: Mapped[str | None] = mapped_column(String(66), nullable=True)
     resolved_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     source: Mapped[str | None] = mapped_column(String(255), nullable=True)
     block_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -508,6 +511,27 @@ class ContractDependency(Base):
     relationship_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="dependencies")
+
+
+class ContractBalance(Base):
+    __tablename__ = "contract_balances"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
+    )
+    token_address: Mapped[str | None] = mapped_column(String(42), nullable=True)  # NULL = native ETH
+    token_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    token_symbol: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    decimals: Mapped[int] = mapped_column(Integer, nullable=False, default=18)
+    raw_balance: Mapped[str] = mapped_column(String, nullable=False)  # stored as string to avoid overflow
+    usd_value: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
+    price_usd: Mapped[float | None] = mapped_column(Numeric(20, 8), nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    contract: Mapped[Contract] = relationship("Contract", back_populates="balances")
+
+    __table_args__ = (Index("ix_contract_balances_contract_id", "contract_id"),)
 
 
 # ---------------------------------------------------------------------------

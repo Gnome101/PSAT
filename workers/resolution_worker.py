@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from db.models import (
-    Contract, ControlGraphEdge, ControlGraphNode, ControllerValue,
+    Contract, ContractBalance, ControlGraphEdge, ControlGraphNode, ControllerValue,
     Job, JobStage, JobStatus, UpgradeEvent,
 )
 from db.queue import create_job, get_artifact, store_artifact
@@ -108,6 +108,9 @@ class ResolutionWorker(BaseWorker):
             job.name or "Contract",
         )
 
+        # Fetch token balances
+        self._fetch_balances(session, job, contract_row)
+
         # For recursive resolution, we need a temp workspace with the contract_analysis.json
         # because write_resolved_control_graph reads from filesystem
         tmp_dir = tempfile.mkdtemp(prefix="psat_resolution_")
@@ -192,6 +195,60 @@ class ResolutionWorker(BaseWorker):
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+
+    def _fetch_balances(self, session: Session, job: Job, contract_row: Contract | None) -> None:
+        """Fetch ETH + token balances and store in contract_balances table."""
+        from utils.etherscan import get_eth_balance, get_token_balances
+
+        address = job.address
+        if not address or not contract_row:
+            return
+
+        request = job.request if isinstance(job.request, dict) else {}
+        target_address = request.get("proxy_address") or address
+
+        self.update_detail(session, job, "Fetching token balances")
+        try:
+            eth_wei = get_eth_balance(target_address)
+            tokens = get_token_balances(target_address)
+        except Exception as exc:
+            logger.warning("Job %s: balance fetch failed: %s", job.id, exc)
+            return
+
+        # Clear old balances
+        session.query(ContractBalance).filter(
+            ContractBalance.contract_id == contract_row.id
+        ).delete()
+
+        # Native ETH balance
+        if eth_wei > 0:
+            session.add(ContractBalance(
+                contract_id=contract_row.id,
+                token_address=None,
+                token_name="Ether",
+                token_symbol="ETH",
+                decimals=18,
+                raw_balance=str(eth_wei),
+                price_usd=None,
+                usd_value=None,
+            ))
+
+        # ERC-20 token balances
+        for tok in tokens:
+            session.add(ContractBalance(
+                contract_id=contract_row.id,
+                token_address=tok["token_address"],
+                token_name=tok["token_name"],
+                token_symbol=tok["token_symbol"],
+                decimals=tok["decimals"],
+                raw_balance=str(tok["balance"]),
+                price_usd=tok.get("price_usd"),
+                usd_value=tok.get("usd_value"),
+            ))
+
+        session.commit()
+        total = len(tokens) + (1 if eth_wei > 0 else 0)
+        logger.info("Job %s: stored %d balance(s) for %s", job.id, total, target_address)
 
     def _queue_discovered_contracts(
         self, session: Session, job: Job, resolved_graph: dict, rpc_url: str

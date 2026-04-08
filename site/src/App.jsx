@@ -1446,21 +1446,57 @@ function ProxyWatcherPage() {
 // Pipeline monitor
 // ---------------------------------------------------------------------------
 
+function shortFailReason(error) {
+  if (!error) return "Unknown";
+  if (error.includes("No verified source")) return "Not Verified";
+  if (error.includes("No such file or directory")) return "Crawler Missing";
+  if (error.includes("Read timed out")) return "RPC Timeout";
+  if (error.includes("name resolution") || error.includes("NameResolutionError")) return "DNS Failure";
+  if (error.includes("Max retries exceeded")) return "RPC Unreachable";
+  if (error.includes("value too long")) return "DB Column Overflow";
+  if (error.includes("StringDataRightTruncation")) return "DB Column Overflow";
+  if (error.includes("execution reverted")) return "Contract Reverted";
+  if (error.includes("rate limit") || error.includes("429")) return "Rate Limited";
+  if (error.includes("PendingRollbackError")) return "DB Session Error";
+  const last = error.split("\n").filter(Boolean).pop() || "";
+  const match = last.match(/^\w+Error:\s*(.{0,40})/);
+  return match ? match[1] : last.slice(0, 40) || "Unknown";
+}
+
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return `${m}m ${rem}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
 function PipelineDashboard() {
   const [allJobs, setAllJobs] = useState([]);
+  const [stats, setStats] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const [expandedError, setExpandedError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    async function fetchJobs() {
+    async function fetchAll() {
       try {
-        const jobs = await api("/api/jobs");
-        if (!cancelled) { setAllJobs(jobs); setLoaded(true); }
+        const [jobs, s] = await Promise.all([api("/api/jobs"), api("/api/stats")]);
+        if (!cancelled) { setAllJobs(jobs); setStats(s); setLoaded(true); }
       } catch {}
     }
-    fetchJobs();
-    const timer = setInterval(fetchJobs, 2500);
+    fetchAll();
+    const timer = setInterval(fetchAll, 2500);
     return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
+  // Tick every second so elapsed timers update live
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
   }, []);
 
   // Filter to only show meaningful analysis jobs:
@@ -1537,6 +1573,7 @@ function PipelineDashboard() {
         <div className="panel-header">
           <div><p className="eyebrow">Pipeline Status</p><h2>{totals.total} Jobs</h2></div>
           <div className="chips">
+            {stats && <span className="chip" style={{ background: "#e0e7ff", color: "#3730a3" }}>{stats.unique_addresses} addresses</span>}
             <span className="chip" style={{ background: "#dcfce7", color: "#166534" }}>{totals.completed} done</span>
             {totals.processing > 0 && <span className="chip" style={{ background: "#fef3c7", color: "#92400e" }}>{totals.processing} running</span>}
             {totals.queued > 0 && <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>{totals.queued} queued</span>}
@@ -1582,6 +1619,7 @@ function PipelineDashboard() {
               <th style={{ padding: "8px 12px" }}>Address</th>
               <th style={{ padding: "8px 12px" }}>Stage</th>
               <th style={{ padding: "8px 12px" }}>Status</th>
+              <th style={{ padding: "8px 12px" }}>Time</th>
               <th style={{ padding: "8px 12px" }}>Detail</th>
             </tr>
           </thead>
@@ -1594,21 +1632,44 @@ function PipelineDashboard() {
               })
               .slice(0, 30)
               .map((j) => (
-                <tr key={j.job_id} style={{ borderBottom: "1px solid rgba(148,163,184,0.08)" }}>
-                  <td style={{ padding: "6px 12px", color: "#e2e8f0", fontWeight: 600 }}>{j.name || j.company || "—"}</td>
-                  <td style={{ padding: "6px 12px", color: "#64748b", fontFamily: "monospace", fontSize: 11 }}>{j.address ? j.address.slice(0, 10) + ".." : "—"}</td>
-                  <td style={{ padding: "6px 12px" }}>
-                    <span style={{ color: stageColors[j.stage] || "#94a3b8", fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{j.stage}</span>
-                  </td>
-                  <td style={{ padding: "6px 12px" }}>
-                    <span style={{ color: statusColors[j.status] || "#94a3b8", fontWeight: 600, fontSize: 11 }}>
-                      {j.status === "processing" ? "⚡ " : j.status === "failed" ? "✕ " : ""}{j.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: "6px 12px", color: "#64748b", fontSize: 11, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {j.status === "failed" ? (j.error || "").split("\n").pop()?.slice(0, 80) : j.detail || ""}
-                  </td>
-                </tr>
+                <React.Fragment key={j.job_id}>
+                  <tr
+                    style={{ borderBottom: "1px solid rgba(148,163,184,0.08)", cursor: j.status === "failed" ? "pointer" : "default" }}
+                    onClick={() => j.status === "failed" && setExpandedError(expandedError === j.job_id ? null : j.job_id)}
+                  >
+                    <td style={{ padding: "6px 12px", color: "#e2e8f0", fontWeight: 600 }}>{j.name || j.company || "—"}</td>
+                    <td style={{ padding: "6px 12px", color: "#64748b", fontFamily: "monospace", fontSize: 11 }}>{j.address ? j.address.slice(0, 10) + ".." : "—"}</td>
+                    <td style={{ padding: "6px 12px" }}>
+                      <span style={{ color: stageColors[j.stage] || "#94a3b8", fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{j.stage}</span>
+                    </td>
+                    <td style={{ padding: "6px 12px" }}>
+                      <span style={{ color: statusColors[j.status] || "#94a3b8", fontWeight: 600, fontSize: 11 }}>
+                        {j.status === "processing" ? "⚡ " : j.status === "failed" ? "✕ " : ""}{j.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: "6px 12px", color: "#94a3b8", fontSize: 11, fontFamily: "monospace" }}>
+                      {(() => {
+                        const created = new Date(j.created_at).getTime();
+                        const end = (j.status === "completed" || j.status === "failed") ? new Date(j.updated_at).getTime() : now;
+                        return formatElapsed(end - created);
+                      })()}
+                    </td>
+                    <td style={{ padding: "6px 12px", color: "#64748b", fontSize: 11, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {j.status === "failed"
+                        ? <span style={{ color: "#fca5a5", fontWeight: 600 }}>{shortFailReason(j.error)}</span>
+                        : j.detail || ""}
+                    </td>
+                  </tr>
+                  {j.status === "failed" && expandedError === j.job_id && (
+                    <tr>
+                      <td colSpan={6} style={{ padding: 0 }}>
+                        <pre style={{ margin: 0, padding: "12px 16px", background: "rgba(239,68,68,0.06)", color: "#fca5a5", fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 300, overflow: "auto", borderBottom: "1px solid rgba(239,68,68,0.15)" }}>
+                          {j.error || "No error details available"}
+                        </pre>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
           </tbody>
         </table>
@@ -1805,7 +1866,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("summary");
   const [job, setJob] = useState(null);
   const [activeJobs, setActiveJobs] = useState([]);
-  const [form, setForm] = useState({ target: "", name: "", chain: "", discoverLimit: "25", analyzeLimit: "5" });
+  const [form, setForm] = useState({ target: "", name: "", chain: "", analyzeLimit: "5" });
   const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const analysesRef = useRef([]);
@@ -1929,8 +1990,7 @@ export default function App() {
         : {
             company: target,
             chain: form.chain.trim() || null,
-            discover_limit: Number.parseInt(form.discoverLimit, 10) || 25,
-            analyze_limit: form.analyzeAll ? Number.parseInt(form.discoverLimit, 10) || 25 : Number.parseInt(form.analyzeLimit, 10) || 5,
+            analyze_limit: Number.parseInt(form.analyzeLimit, 10) || 5,
           };
       const nextJob = await api("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       setJob(nextJob);
@@ -1997,16 +2057,7 @@ export default function App() {
             <label><span>Address or company</span><input value={form.target} onChange={(e) => setForm((c) => ({ ...c, target: e.target.value }))} placeholder="0x... or etherfi" required /></label>
             <label><span>Run name</span><input value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} placeholder="Optional" /></label>
             <label><span>Chain</span><input value={form.chain} onChange={(e) => setForm((c) => ({ ...c, chain: e.target.value }))} placeholder="Optional" /></label>
-            <label><span>Discover</span><input type="number" min="1" max="200" value={form.discoverLimit} onChange={(e) => { const v = e.target.value; setForm((c) => ({ ...c, discoverLimit: v, analyzeLimit: c.analyzeAll ? v : c.analyzeLimit })); }} /></label>
-            <label>
-              <span>Analyze</span>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input type="number" min="1" max="200" value={form.analyzeAll ? form.discoverLimit : form.analyzeLimit} disabled={form.analyzeAll} onChange={(e) => setForm((c) => ({ ...c, analyzeLimit: e.target.value }))} style={{ flex: 1 }} />
-                <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>
-                  <input type="checkbox" checked={form.analyzeAll || false} onChange={(e) => setForm((c) => ({ ...c, analyzeAll: e.target.checked, analyzeLimit: e.target.checked ? c.discoverLimit : c.analyzeLimit }))} />All
-                </label>
-              </div>
-            </label>
+            <label><span>Analyze limit</span><input type="number" min="1" max="200" value={form.analyzeLimit} onChange={(e) => setForm((c) => ({ ...c, analyzeLimit: e.target.value }))} /></label>
             <button type="submit" disabled={loading}>{loading ? "Starting..." : "Run"}</button>
           </form>
         </div>
