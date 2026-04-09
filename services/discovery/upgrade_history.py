@@ -358,11 +358,21 @@ def _extract_proxies_from_dependencies(
             current_impl = None
         proxy_meta[target] = (proxy_type, current_impl)
 
-    # Collect known names from dependencies for enrichment, but only
-    # fetch upgrade history for the target contract itself.
+    # Collect known names and proxy metadata from dependencies.
     for addr, info in deps.get("dependencies", {}).items():
         if info.get("contract_name"):
             known_names[normalize_address(addr)] = info["contract_name"]
+        # Also extract proxies from the dependencies dict
+        if info.get("type") == "proxy":
+            dep_proxy_type = info.get("proxy_type", "unknown")
+            dep_impl = info.get("implementation")
+            if isinstance(dep_impl, dict):
+                dep_current_impl = dep_impl.get("address")
+            elif isinstance(dep_impl, str):
+                dep_current_impl = dep_impl
+            else:
+                dep_current_impl = None
+            proxy_meta[normalize_address(addr)] = (dep_proxy_type, dep_current_impl)
         impl = info.get("implementation")
         if isinstance(impl, dict) and impl.get("contract_name"):
             known_names[normalize_address(impl["address"])] = impl["contract_name"]

@@ -30,6 +30,7 @@ def _job(**overrides: Any) -> SimpleNamespace:
         "id": uuid.uuid4(),
         "address": TARGET_ADDRESS,
         "name": "TestContract",
+        "company": None,
         "request": {"rpc_url": "https://rpc.example"},
     }
     payload.update(overrides)

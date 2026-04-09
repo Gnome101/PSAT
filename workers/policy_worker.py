@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Contract, EffectiveFunction, FunctionPrincipal, Job, JobStage, JobStatus, PrincipalLabel
-from db.queue import get_artifact
+from db.queue import get_artifact, store_artifact
 from schemas.effective_permissions import PrincipalResolution
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from workers.base import BaseWorker
@@ -159,6 +159,8 @@ class PolicyWorker(BaseWorker):
                                     )
                     session.commit()
 
+                store_artifact(session, job.id, "effective_permissions", data=ep_data)
+
                 logger.info(
                     "Policy stage effective permissions complete for job %s address=%s name=%s",
                     job.id,
@@ -181,6 +183,8 @@ class PolicyWorker(BaseWorker):
             )
             if refreshed_graph_path.exists():
                 resolved_graph_path = refreshed_graph_path
+                rg_data = json.loads(refreshed_graph_path.read_text())
+                store_artifact(session, job.id, "resolved_control_graph", data=rg_data)
 
             # Label principals
             self.update_detail(session, job, "Labeling principals")
@@ -210,6 +214,8 @@ class PolicyWorker(BaseWorker):
                                 )
                             )
                     session.commit()
+
+                store_artifact(session, job.id, "principal_labels", data=pl_data)
 
                 logger.info(
                     "Policy stage principal labels complete for job %s address=%s name=%s",

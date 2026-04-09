@@ -53,6 +53,7 @@ def _job(**overrides) -> Any:
         "address": TARGET,
         "name": "TestContract",
         "request": {"rpc_url": "https://rpc.example"},
+        "company": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -484,29 +485,28 @@ def test_full_data_flow_unified_through_graph_and_upgrade_history(monkeypatch, t
 
 
 def test_discovery_artifact_names_match_static_worker_reads():
-    """The artifact names that discovery stores must match what static reads.
+    """The data that discovery stores must match what static reads.
 
-    Discovery stores: 'contract_meta', 'build_settings', and source files.
-    Static reads: get_artifact(job_id, 'contract_meta'),
-                  get_artifact(job_id, 'build_settings'),
-                  get_source_files(job_id).
-    This test verifies the names are consistent by checking both modules
-    reference the same string literals.
+    Discovery writes to the Contract table and stores source files via
+    store_source_files.  Static reads from the Contract table via
+    session.execute(select(Contract)...) and source files via
+    get_source_files.  This test verifies both modules reference the
+    same DB model (Contract) and source-file helpers.
     """
     import inspect
 
     import workers.discovery as disc
     import workers.static_worker as sw
 
-    # Discovery stores these artifact names
+    # Discovery writes to Contract table and stores source files
     disc_source = inspect.getsource(disc.DiscoveryWorker._process_address)
-    assert '"contract_meta"' in disc_source
-    assert '"build_settings"' in disc_source
+    assert "Contract(" in disc_source
+    assert "store_source_files" in disc_source
 
-    # Static reads these same artifact names
+    # Static reads from Contract table and source files
     sw_source = inspect.getsource(sw.StaticWorker.process)
-    assert '"contract_meta"' in sw_source
-    assert '"build_settings"' in sw_source
+    assert "Contract" in sw_source
+    assert "get_source_files" in sw_source
 
 
 # ===================================================================
@@ -608,15 +608,73 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
     fake_job = _fake_api_job(name="full_run", address=TARGET)
 
     mock_session = MagicMock()
-    mock_session.execute.return_value.scalar_one_or_none.return_value = fake_job
+
+    # Build mock relational objects for effective_permissions and principal_labels.
+    # The API now reads these from the EffectiveFunction / PrincipalLabel tables,
+    # not from artifacts.
+    fake_contract_row = MagicMock()
+    fake_contract_row.id = "contract-1"
+    fake_contract_row.contract_name = "Vault"
+    fake_contract_row.address = TARGET
+    fake_contract_row.is_proxy = False
+    fake_contract_row.implementation = None
+    fake_contract_row.summary = None
+
+    fake_ef = MagicMock()
+    fake_ef.id = "ef-1"
+    fake_ef.abi_signature = "pause()"
+    fake_ef.function_name = "pause"
+    fake_ef.selector = "0x12"
+    fake_ef.effect_labels = []
+    fake_ef.action_summary = None
+    fake_ef.authority_public = False
+
+    fake_fp = MagicMock()
+    fake_fp.address = "0xaa"
+    fake_fp.resolved_type = "admin"
+    fake_fp.origin = None
+    fake_fp.details = {}
+
+    fake_pl = MagicMock()
+    fake_pl.address = "0xaa"
+    fake_pl.label = "admin"
+    fake_pl.resolved_type = "eoa"
+
+    # Route session.execute calls based on what the API queries
+    call_count = {"n": 0}
+
+    def route_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        result = MagicMock()
+        stmt_str = str(stmt)
+        if call_count["n"] == 1:
+            # First call: select(Job) to find job by name
+            result.scalar_one_or_none.return_value = fake_job
+        elif "contract" in stmt_str.lower() and "job_id" in stmt_str.lower() and call_count["n"] == 2:
+            # Second call: select(Contract) for contract_row
+            result.scalar_one_or_none.return_value = fake_contract_row
+        elif "effective" in stmt_str.lower():
+            # EffectiveFunction query
+            result.scalars.return_value.all.return_value = [fake_ef]
+        elif "function_principal" in stmt_str.lower():
+            # FunctionPrincipal query
+            result.scalars.return_value.all.return_value = [fake_fp]
+        elif "principal_label" in stmt_str.lower():
+            # PrincipalLabel query
+            result.scalars.return_value.all.return_value = [fake_pl]
+        else:
+            result.scalar_one_or_none.return_value = None
+            result.scalars.return_value.all.return_value = []
+        return result
+
+    mock_session.execute.side_effect = route_execute
+    mock_session.get.return_value = None
     _mock_session_ctx(mock_session_cls, mock_session)
 
     mock_get_all_artifacts.return_value = {
         "contract_analysis": {"subject": {"name": "Vault"}, "summary": {"control_model": "authority"}},
         "control_snapshot": {"schema_version": "0.1", "controller_values": {"state_variable:owner": {"value": "0xaa"}}},
         "resolved_control_graph": {"nodes": [{"id": "a", "address": TARGET}], "edges": []},
-        "effective_permissions": {"functions": [{"function": "pause()", "selector": "0x12"}]},
-        "principal_labels": {"principals": [{"address": "0xaa", "labels": ["admin"]}]},
         "dependencies": {"address": TARGET, "dependencies": {}},
         "analysis_report": "High-level report text",
     }
@@ -625,13 +683,17 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
     assert resp.status_code == 200
     body = resp.json()
 
-    # All JSON artifacts should be inlined
+    # JSON artifacts inlined from all_artifacts
     assert body["contract_analysis"]["summary"]["control_model"] == "authority"
     assert "state_variable:owner" in body["control_snapshot"]["controller_values"]
     assert len(body["resolved_control_graph"]["nodes"]) == 1
-    assert body["effective_permissions"]["functions"][0]["function"] == "pause()"
-    assert body["principal_labels"]["principals"][0]["labels"] == ["admin"]
     assert body["dependencies"]["address"] == TARGET
+
+    # effective_permissions built from EffectiveFunction + FunctionPrincipal tables
+    assert body["effective_permissions"]["functions"][0]["function"] == "pause()"
+
+    # principal_labels built from PrincipalLabel table
+    assert body["principal_labels"]["principals"][0]["label"] == "admin"
 
     # Text artifact should be inlined
     assert body["analysis_report"] == "High-level report text"
@@ -969,9 +1031,17 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
     )
     monkeypatch.setattr(
         "workers.discovery.create_job",
-        lambda _s, req: created_jobs.append(req) or SimpleNamespace(id=f"child-{len(created_jobs)}"),
+        lambda _s, req, initial_stage=None: (
+            created_jobs.append(req) or SimpleNamespace(id=f"child-{len(created_jobs)}", company=None)
+        ),
     )
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
+
+    # Mock count_analysis_children (now called before selecting contracts)
+    monkeypatch.setattr(
+        "workers.discovery.count_analysis_children",
+        lambda _s, _root_id: 0,
+    )
 
     # Mock inventory search to return 2 contracts
     monkeypatch.setattr(
@@ -987,6 +1057,9 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
 
     # Mock complete_job
     monkeypatch.setattr("db.queue.complete_job", lambda _s, _j, detail="": None)
+
+    # Mock _spawn_parallel_discovery (calls external services)
+    monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *_a, **_kw: None)
 
     try:
         worker.process(session, job)  # type: ignore[arg-type]
@@ -1020,9 +1093,9 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
 
 
 def test_static_worker_reads_discovery_artifacts(monkeypatch):
-    """StaticWorker.process reads contract_meta, build_settings, and
-    source files from the DB. Verify it handles the expected data shapes
-    and passes them to _scaffold_project correctly."""
+    """StaticWorker.process reads contract metadata from the Contract table
+    and source files from get_source_files. Verify it handles the expected
+    data shapes and passes them to _scaffold_project correctly."""
     from workers.static_worker import StaticWorker
 
     worker = StaticWorker()
@@ -1032,20 +1105,25 @@ def test_static_worker_reads_discovery_artifacts(monkeypatch):
 
     # Mock what discovery stored
     sources = {"src/Test.sol": "pragma solidity ^0.8.19;\ncontract Test {}"}
-    meta = {
-        "address": TARGET,
-        "contract_name": "Test",
-        "compiler_version": "v0.8.19",
-        "language": "solidity",
-        "remappings": [],
-    }
-    build_settings = {"evm_version": "shanghai", "optimization_used": True, "runs": 200}
 
     monkeypatch.setattr("workers.static_worker.get_source_files", lambda _s, _j: sources)
-    monkeypatch.setattr(
-        "workers.static_worker.get_artifact",
-        lambda _s, _j, name: {"contract_meta": meta, "build_settings": build_settings}.get(name),
+
+    # Mock the Contract table row that discovery now writes
+    contract_row = SimpleNamespace(
+        address=TARGET,
+        contract_name="Test",
+        compiler_version="v0.8.19",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+        is_proxy=False,
     )
+    session.execute.return_value.scalar_one_or_none.return_value = contract_row
+    session.refresh = MagicMock()
 
     # Capture calls to worker phases
     scaffold_args: list[tuple] = []
@@ -1211,29 +1289,27 @@ def test_static_worker_proxy_skips_analysis_and_completes(monkeypatch):
     job = _job(name="MyProxy")
 
     sources = {"src/Proxy.sol": "pragma solidity ^0.8.19;\ncontract Proxy {}"}
-    meta = {
-        "address": TARGET,
-        "contract_name": "Proxy",
-        "compiler_version": "v0.8.19",
-        "language": "solidity",
-        "remappings": [],
-    }
-    build_settings = {"evm_version": "shanghai", "optimization_used": True, "runs": 200}
 
     # Mock DB reads
     monkeypatch.setattr("workers.static_worker.get_source_files", lambda _s, _j: sources)
 
-    def fake_get_artifact(_s, _j, name):
-        if name == "contract_meta":
-            return meta
-        if name == "build_settings":
-            return build_settings
-        # _resolve_proxy stored contract_flags with is_proxy=True
-        if name == "contract_flags":
-            return {"is_proxy": True, "proxy_type": "eip1967", "implementation": IMPL}
-        return None
-
-    monkeypatch.setattr("workers.static_worker.get_artifact", fake_get_artifact)
+    # Mock the Contract table row — after _resolve_proxy runs and session.refresh
+    # is called, is_proxy should be True
+    contract_row = SimpleNamespace(
+        address=TARGET,
+        contract_name="Proxy",
+        compiler_version="v0.8.19",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+        is_proxy=True,
+    )
+    session.execute.return_value.scalar_one_or_none.return_value = contract_row
+    session.refresh = MagicMock()
 
     # Mock external calls
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *_a, **_kw: None)

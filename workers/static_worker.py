@@ -339,6 +339,21 @@ class StaticWorker(BaseWorker):
             contract_row.admin = admin
             session.commit()
 
+        store_artifact(
+            session,
+            job.id,
+            "contract_flags",
+            data={
+                "is_proxy": True,
+                "classification_type": classification_type,
+                "proxy_type": proxy_type,
+                "implementation": impl_address,
+                "beacon": beacon,
+                "admin": admin,
+                "facets": facets,
+            },
+        )
+
         logger.info(
             "Job %s: proxy classified as %s, implementation=%s",
             job.id,
@@ -680,6 +695,8 @@ class StaticWorker(BaseWorker):
                         )
                     )
                 session.commit()
+
+            store_artifact(session, job.id, "slither_results", data=slither_data)
 
         report_path = project_dir / "analysis_report.txt"
         if report_path.exists():

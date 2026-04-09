@@ -540,9 +540,23 @@ def test_analysis_detail_no_fallback_without_proxy_address(mock_session_cls, moc
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
-    mock_exec = MagicMock()
-    mock_exec.scalar_one_or_none.return_value = job
-    mock_session.execute.return_value = mock_exec
+    # The endpoint calls session.execute() multiple times:
+    # 1. select(Job).where(name==...) -> returns job
+    # 2. select(Contract).where(job_id==...) -> returns None (no Contract row)
+    call_count = {"n": 0}
+
+    def route_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        result = MagicMock()
+        if call_count["n"] == 1:
+            result.scalar_one_or_none.return_value = job
+        else:
+            # Contract query and any others: return None
+            result.scalar_one_or_none.return_value = None
+            result.scalars.return_value.all.return_value = []
+        return result
+
+    mock_session.execute.side_effect = route_execute
 
     # No dependency_graph_viz in artifacts
     mock_get_all_artifacts.return_value = {
@@ -599,8 +613,31 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
-    # First execute returns proxy_job (name lookup), second returns impl_job
-    # (implementation address lookup from proxy->impl fallback)
+    # Build Contract mocks for the relational-table queries
+    proxy_contract = MagicMock()
+    proxy_contract.id = uuid.uuid4()
+    proxy_contract.is_proxy = True
+    proxy_contract.implementation = impl_addr
+    proxy_contract.contract_name = "MyProxy"
+    proxy_contract.address = proxy_addr
+    proxy_contract.summary = None
+
+    impl_contract = MagicMock()
+    impl_contract.id = uuid.uuid4()
+    impl_contract.is_proxy = False
+    impl_contract.implementation = None
+    impl_contract.contract_name = "VaultImpl"
+    impl_contract.address = impl_addr
+    impl_contract.summary = None
+
+    # The endpoint calls session.execute() many times:
+    # 1. select(Job) by name -> proxy_job
+    # 2. select(Contract) by job_id (proxy) -> proxy_contract
+    # 3-7. EffectiveFunction/PrincipalLabel/ControllerValue/CGN/CGE for proxy -> empty
+    # 8. select(Job) by address==impl_addr -> impl_job
+    #    (get_all_artifacts for impl is not an execute call)
+    # 9. select(Contract) by job_id (impl) -> impl_contract
+    #    (relational queries for impl are skipped since artifacts already filled them)
     call_count = 0
 
     def route_execute(stmt, *args, **kwargs):
@@ -609,20 +646,28 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
         result = MagicMock()
         if call_count == 1:
             result.scalar_one_or_none.return_value = proxy_job
-        else:
+        elif call_count == 2:
+            result.scalar_one_or_none.return_value = proxy_contract
+        elif call_count == 8:
             result.scalar_one_or_none.return_value = impl_job
+        elif call_count == 9:
+            result.scalar_one_or_none.return_value = impl_contract
+        else:
+            # Relational queries for proxy/impl → empty
+            result.scalar_one_or_none.return_value = None
+            result.scalars.return_value.all.return_value = []
         return result
 
     mock_session.execute.side_effect = route_execute
     mock_session.get.return_value = None
 
     # Proxy job has only dependency artifacts (no analysis)
-    mock_get_all_artifacts.return_value = {
+    proxy_artifacts = {
         "dependencies": {"address": proxy_addr, "dependencies": {}},
         "dependency_graph_viz": {"nodes": [], "edges": []},
     }
 
-    # get_artifact returns contract_flags for proxy, and impl artifacts
+    # Impl artifacts (from get_all_artifacts)
     impl_analysis = {
         "subject": {"name": "VaultImpl"},
         "summary": {"control_model": "authority"},
@@ -644,16 +689,15 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
 
     mock_get_artifact.side_effect = fake_get_artifact
 
-    # Second call to get_all_artifacts is for the impl job
+    # get_all_artifacts: first call for proxy, second for impl
     call_count_artifacts = 0
-    original_return = mock_get_all_artifacts.return_value
 
     def fake_get_all(session, jid):
         nonlocal call_count_artifacts
         call_count_artifacts += 1
         if call_count_artifacts == 1:
-            return original_return  # proxy artifacts
-        return impl_all_artifacts  # impl artifacts
+            return proxy_artifacts
+        return impl_all_artifacts
 
     mock_get_all_artifacts.side_effect = fake_get_all
 
