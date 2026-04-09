@@ -1,16 +1,13 @@
 """DefiLlama worker — discovers contract addresses from DefiLlama adapter source code.
 
-Invokes the defillama-crawler repo as a subprocess, parses discovered addresses
-with chain context, and creates child jobs for each.
+Calls the integrated defillama crawler directly (no subprocess) to scan
+adapter source for contract addresses, then creates child jobs for each.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import subprocess
-import tempfile
 from pathlib import Path
 
 from sqlalchemy import select
@@ -18,22 +15,13 @@ from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage
 from db.queue import complete_job, count_analysis_children, create_job, store_artifact
+from services.crawlers.defillama.scan import scan_protocol
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.defillama")
 
-PSAT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CRAWLER_PATH = str(PSAT_ROOT.parent / "defillama-crawler")
-CRAWLER_PATH = os.getenv("DEFILLAMA_CRAWLER_PATH", DEFAULT_CRAWLER_PATH)
-SUBPROCESS_TIMEOUT = int(os.getenv("DEFILLAMA_CRAWL_TIMEOUT", "300"))
-
-
-def _find_python(crawler_dir: str) -> list[str]:
-    """Find the best Python command to run the crawler."""
-    venv_python = Path(crawler_dir) / ".venv" / "bin" / "python"
-    if venv_python.exists():
-        return [str(venv_python)]
-    return ["uv", "run", "--no-sync", "python"]
+DEFAULT_REPO_PATH = Path(__file__).resolve().parents[1] / "repo" / "DefiLlama-Adapters"
+REPO_PATH = Path(os.getenv("DEFILLAMA_REPO_PATH", str(DEFAULT_REPO_PATH)))
 
 
 class DefiLlamaWorker(BaseWorker):
@@ -52,56 +40,22 @@ class DefiLlamaWorker(BaseWorker):
         self.update_detail(session, job, f"Scanning DefiLlama adapters for {protocol}")
         logger.info("DefiLlama scan started for job %s: protocol=%s", job.id, protocol)
 
-        with tempfile.TemporaryDirectory(prefix="psat_defillama_") as tmp:
-            psat_export = Path(tmp) / "psat_addresses.json"
-            full_output = Path(tmp) / "protocols.json"
+        # Call crawler directly — no subprocess
+        result = scan_protocol(
+            protocol_name=protocol,
+            repo_path=REPO_PATH,
+            no_clone=no_clone,
+        )
 
-            python_cmd = _find_python(CRAWLER_PATH)
-            cmd = [
-                *python_cmd,
-                str(Path(CRAWLER_PATH) / "main.py"),
-                "--protocol", protocol,
-                "--output", str(full_output),
-                "--psat-export", str(psat_export),
-            ]
-            if no_clone:
-                cmd.append("--no-clone")
-
-            logger.info("Running: %s", " ".join(cmd))
-            result = subprocess.run(
-                cmd,
-                cwd=CRAWLER_PATH,
-                capture_output=True,
-                text=True,
-                timeout=SUBPROCESS_TIMEOUT,
-            )
-
-            if result.returncode != 0:
-                error_msg = result.stderr[-2000:] if result.stderr else "Unknown error"
-                logger.error("DefiLlama crawler failed for job %s: %s", job.id, error_msg)
-                raise RuntimeError(f"defillama-crawler exited {result.returncode}: {error_msg}")
-
-            # Parse discovered addresses
-            if not psat_export.exists():
-                logger.warning("Job %s: defillama-crawler produced no PSAT export", job.id)
-                addresses = []
-            else:
-                export_data = json.loads(psat_export.read_text())
-                addresses = export_data.get("addresses", [])
-
-            # Parse full output for chain context
-            chain_by_address: dict[str, str | None] = {}
-            if full_output.exists():
-                full_data = json.loads(full_output.read_text())
-                store_artifact(session, job.id, "defillama_full_scan", data=full_data)
-                for proto in full_data.get("protocols", []):
-                    for entry in proto.get("addresses", []):
-                        addr = entry.get("address", "").lower()
-                        chain = entry.get("chain")
-                        if addr and chain:
-                            chain_by_address[addr] = chain
-
+        addresses = result["addresses"]
         logger.info("DefiLlama scan found %d addresses for job %s", len(addresses), job.id)
+
+        # Store full scan details as artifact
+        store_artifact(session, job.id, "defillama_full_scan", data={
+            "protocol": protocol,
+            "scan_time": result["scan_time"],
+            "address_details": result["address_details"],
+        })
 
         # Store raw results
         store_artifact(session, job.id, "defillama_scan_results", data={
@@ -109,6 +63,14 @@ class DefiLlamaWorker(BaseWorker):
             "addresses_found": len(addresses),
             "addresses": addresses,
         })
+
+        # Build chain lookup from detailed results
+        chain_by_address: dict[str, str | None] = {}
+        for entry in result.get("address_details", []):
+            addr = entry.get("address", "").lower()
+            chain = entry.get("chain")
+            if addr and chain:
+                chain_by_address[addr] = chain
 
         # Deduplicate against existing jobs and create children (shared global cap)
         root_job_id = request.get("root_job_id", str(job.id))

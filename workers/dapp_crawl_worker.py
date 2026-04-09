@@ -1,39 +1,23 @@
 """DApp Crawl worker — discovers contract addresses by crawling DApp frontends.
 
-Invokes the dapp-crawler repo as a subprocess, parses discovered addresses,
-and creates child jobs for each so they enter the normal PSAT pipeline.
+Calls the integrated dapp crawler directly (no subprocess) to visit DApp URLs
+with a spoofed wallet and capture contract interactions, then creates child
+jobs for each discovered address.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import subprocess
-import tempfile
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage
 from db.queue import complete_job, count_analysis_children, create_job, store_artifact
+from services.crawlers.dapp.crawl import crawl_dapp
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.dapp_crawl")
-
-PSAT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CRAWLER_PATH = str(PSAT_ROOT.parent / "dapp-crawler")
-CRAWLER_PATH = os.getenv("DAPP_CRAWLER_PATH", DEFAULT_CRAWLER_PATH)
-SUBPROCESS_TIMEOUT = int(os.getenv("DAPP_CRAWL_TIMEOUT", "600"))
-
-
-def _find_python(crawler_dir: str) -> list[str]:
-    """Find the best Python command to run the crawler."""
-    venv_python = Path(crawler_dir) / ".venv" / "bin" / "python"
-    if venv_python.exists():
-        return [str(venv_python)]
-    return ["uv", "run", "--no-sync", "python"]
 
 
 class DAppCrawlWorker(BaseWorker):
@@ -53,51 +37,14 @@ class DAppCrawlWorker(BaseWorker):
         self.update_detail(session, job, f"Crawling {len(urls)} DApp URL(s)")
         logger.info("DApp crawl started for job %s: %d URLs", job.id, len(urls))
 
-        with tempfile.TemporaryDirectory(prefix="psat_dapp_crawl_") as tmp:
-            url_file = Path(tmp) / "urls.json"
-            url_file.write_text(json.dumps(urls))
+        # Call crawler directly — no subprocess
+        result = crawl_dapp(
+            urls,
+            chain_id=chain_id,
+            wait=wait,
+        )
 
-            psat_export = Path(tmp) / "psat_addresses.json"
-            interactions_out = Path(tmp) / "interactions.json"
-
-            python_cmd = _find_python(CRAWLER_PATH)
-            cmd = [
-                *python_cmd,
-                str(Path(CRAWLER_PATH) / "main.py"),
-                "--url-file", str(url_file),
-                "--output", str(interactions_out),
-                "--psat-export", str(psat_export),
-                "--chain-id", str(chain_id),
-                "--wait", str(wait),
-            ]
-
-            logger.info("Running: %s", " ".join(cmd))
-            result = subprocess.run(
-                cmd,
-                cwd=CRAWLER_PATH,
-                capture_output=True,
-                text=True,
-                timeout=SUBPROCESS_TIMEOUT,
-            )
-
-            if result.returncode != 0:
-                error_msg = result.stderr[-2000:] if result.stderr else "Unknown error"
-                logger.error("DApp crawler failed for job %s: %s", job.id, error_msg)
-                raise RuntimeError(f"dapp-crawler exited {result.returncode}: {error_msg}")
-
-            # Parse discovered addresses
-            if not psat_export.exists():
-                logger.warning("Job %s: dapp-crawler produced no PSAT export", job.id)
-                addresses = []
-            else:
-                export_data = json.loads(psat_export.read_text())
-                addresses = export_data.get("addresses", [])
-
-            # Store full interaction log as artifact if available
-            if interactions_out.exists():
-                interactions = json.loads(interactions_out.read_text())
-                store_artifact(session, job.id, "dapp_crawl_interactions", data=interactions)
-
+        addresses = result["addresses"]
         logger.info("DApp crawl found %d addresses for job %s", len(addresses), job.id)
 
         # Store raw results
@@ -105,6 +52,7 @@ class DAppCrawlWorker(BaseWorker):
             "urls_crawled": urls,
             "addresses_found": len(addresses),
             "addresses": addresses,
+            "interaction_count": result.get("interaction_count", 0),
         })
 
         # Deduplicate against existing jobs and create children (shared global cap)

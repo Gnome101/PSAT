@@ -201,6 +201,12 @@ def get_eth_balance(address: str, chain_id: int = 1) -> int:
     return int(data["result"])
 
 
+def get_eth_price(chain_id: int = 1) -> float:
+    """Return the current ETH price in USD via Etherscan's ethprice endpoint."""
+    data = get("stats", "ethprice", chain_id=chain_id)
+    return float(data["result"]["ethusd"])
+
+
 _token_balance_lock = threading.Lock()
 _token_balance_last_call = 0.0
 

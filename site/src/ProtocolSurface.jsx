@@ -4,6 +4,7 @@ import {
   ReactFlow,
   Background,
   Controls,
+  Panel,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -353,20 +354,44 @@ function buildMachines(companyData, functionData) {
     });
 }
 
-function GuardButton({ fnView, onSelect }) {
-  const isUnknown = fnView.guard.kind === "unknown";
+function GuardButton({ fnView, onSelect, onNavigate }) {
+  const kind = fnView.guard.kind;
+  const principals = fnView.guard.principals || [];
+  const isNavigable = onNavigate && principals.length > 0
+    && kind !== "unknown" && kind !== "open";
+
+  const handleClick = (e) => {
+    if (isNavigable) {
+      e.stopPropagation();
+      // Sort by address for consistent ordering
+      const sorted = [...principals].sort((a, b) => a.address.localeCompare(b.address));
+      const first = sorted[0];
+      onNavigate({
+        type: first.resolvedType || kind,
+        address: first.address,
+        label: first.label,
+        details: first.details,
+        _allPrincipals: sorted.length > 1 ? sorted : null,
+        _sourceFunction: fnView.name,
+        _sourceContract: fnView.contractAddress,
+      });
+    } else {
+      onSelect(fnView);
+    }
+  };
+
   return (
     <button
       type="button"
-      className={`ps-guard-button${isUnknown ? " ps-guard-icon-only" : ""}`}
+      className={`ps-guard-button${kind === "unknown" ? " ps-guard-icon-only" : ""}${isNavigable ? " ps-guard-navigable" : ""}`}
       style={{ "--guard-accent": fnView.guard.accent }}
-      onClick={() => onSelect(fnView)}
-      title={isUnknown ? "Unresolved guard" : `Inspect guard details for ${fnView.name}`}
+      onClick={handleClick}
+      title={isNavigable ? `Go to ${fnView.guard.label}` : kind === "unknown" ? "Unresolved guard" : `Inspect guard details for ${fnView.name}`}
     >
       <span className="ps-guard-icon">
-        <GuardGlyph kind={fnView.guard.kind} accent={fnView.guard.accent} title={fnView.guard.label} />
+        <GuardGlyph kind={kind} accent={fnView.guard.accent} title={fnView.guard.label} />
       </span>
-      {!isUnknown && (
+      {kind !== "unknown" && (
         <span className="ps-guard-copy">
           <span className="ps-guard-label">{fnView.guard.label}</span>
           <span className="ps-guard-meta">{fnView.guard.sublabel}</span>
@@ -376,14 +401,14 @@ function GuardButton({ fnView, onSelect }) {
   );
 }
 
-function FunctionPort({ fnView, onSelect, orientation }) {
+function FunctionPort({ fnView, onSelect, onNavigate, orientation }) {
   return (
     <div className={`ps-port ps-port-${orientation}`} style={{ "--port-accent": fnView.tone }}>
-      <div className="ps-port-copy">
+      <div className="ps-port-copy" onClick={() => onSelect(fnView)} style={{ cursor: "pointer" }}>
         <div className="ps-port-name">{fnView.name}</div>
         {fnView.action && <div className="ps-port-action">{fnView.action}</div>}
       </div>
-      <GuardButton fnView={fnView} onSelect={onSelect} />
+      <GuardButton fnView={fnView} onSelect={onSelect} onNavigate={onNavigate} />
     </div>
   );
 }
@@ -413,7 +438,7 @@ function categorizeOps(items) {
   return groups.filter((g) => g.items.length > 0);
 }
 
-function OpsCategory({ category, onSelect }) {
+function OpsCategory({ category, onSelect, onNavigate }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="ps-ops-category">
@@ -429,7 +454,7 @@ function OpsCategory({ category, onSelect }) {
       {expanded && (
         <div className="ps-ops-category-body">
           {category.items.map((fnView) => (
-            <FunctionPort key={fnView.key} fnView={fnView} orientation="ops" onSelect={onSelect} />
+            <FunctionPort key={fnView.key} fnView={fnView} orientation="ops" onSelect={onSelect} onNavigate={onNavigate} />
           ))}
         </div>
       )}
@@ -437,7 +462,7 @@ function OpsCategory({ category, onSelect }) {
   );
 }
 
-function OpsLane({ items, onSelect }) {
+function OpsLane({ items, onSelect, onNavigate }) {
   const categories = useMemo(() => categorizeOps(items), [items]);
   return (
     <section className="ps-lane ps-lane-ops">
@@ -448,7 +473,7 @@ function OpsLane({ items, onSelect }) {
       <div className="ps-lane-body ps-ops-groups">
         {categories.length ? (
           categories.map((cat) => (
-            <OpsCategory key={cat.key} category={cat} onSelect={onSelect} />
+            <OpsCategory key={cat.key} category={cat} onSelect={onSelect} onNavigate={onNavigate} />
           ))
         ) : (
           <div className="ps-lane-empty">No mapped functions</div>
@@ -458,7 +483,7 @@ function OpsLane({ items, onSelect }) {
   );
 }
 
-function LaneColumn({ title, laneKey, items, onSelect }) {
+function LaneColumn({ title, laneKey, items, onSelect, onNavigate }) {
   return (
     <section className={`ps-lane ps-lane-${laneKey}`}>
       <div className="ps-lane-header">
@@ -470,7 +495,7 @@ function LaneColumn({ title, laneKey, items, onSelect }) {
       <div className="ps-lane-body">
         {items.length ? (
           items.map((fnView) => (
-            <FunctionPort key={fnView.key} fnView={fnView} orientation={laneKey} onSelect={onSelect} />
+            <FunctionPort key={fnView.key} fnView={fnView} orientation={laneKey} onSelect={onSelect} onNavigate={onNavigate} />
           ))
         ) : (
           <div className="ps-lane-empty">No mapped functions</div>
@@ -480,8 +505,74 @@ function LaneColumn({ title, laneKey, items, onSelect }) {
   );
 }
 
-function ContractMachine({ machine, onSelectGuard }) {
+function BalanceTable({ machine }) {
+  const [hideDust, setHideDust] = useState(true);
+
+  if (!machine.balances || machine.balances.length === 0) {
+    return <div className="ps-lane-empty">No token balances</div>;
+  }
+
+  const filtered = hideDust
+    ? machine.balances.filter((b) => b.usd_value == null || b.usd_value >= 10)
+    : machine.balances;
+  const hiddenCount = machine.balances.length - filtered.length;
+
+  return (
+    <section className="ps-balance-section">
+      <div className="ps-balance-header">
+        <span>Balances</span>
+        {machine.total_usd ? <span className="ps-balance-total">{formatUsd(machine.total_usd)}</span> : null}
+      </div>
+      <button
+        className={`ps-balance-filter${hideDust ? " active" : ""}`}
+        onClick={() => setHideDust(!hideDust)}
+      >
+        {hideDust ? `Hide <$10 (${hiddenCount})` : "Show all"}
+      </button>
+      <div className="ps-balance-list">
+        {filtered.map((b, i) => {
+          const human = Number(b.raw_balance) / (10 ** b.decimals);
+          const amount = human >= 1e6 ? `${(human / 1e6).toFixed(1)}M`
+            : human >= 1e3 ? `${(human / 1e3).toFixed(1)}K`
+            : human >= 1 ? human.toFixed(2)
+            : human.toFixed(6);
+          return (
+            <div key={i} className="ps-balance-row">
+              <div className="ps-balance-token">
+                <span className="ps-balance-symbol">{b.token_symbol}</span>
+                <span className="ps-balance-name">{b.token_name}</span>
+              </div>
+              <div className="ps-balance-values">
+                <span className="ps-balance-amount">{amount}</span>
+                <span className="ps-balance-usd">{b.usd_value ? formatUsd(b.usd_value) : "—"}</span>
+              </div>
+            </div>
+          );
+        })}
+        {filtered.length === 0 && <div className="ps-lane-empty">No balances above $10</div>}
+      </div>
+    </section>
+  );
+}
+
+const MACHINE_TABS = [
+  { key: "control", label: "Control" },
+  { key: "inflows", label: "Inflows" },
+  { key: "outflows", label: "Outflows" },
+  { key: "balances", label: "Balances" },
+];
+
+function ContractMachine({ machine, onSelectGuard, onNavigate }) {
+  const [activeTab, setActiveTab] = useState("control");
   const usdLabel = formatUsd(machine.total_usd);
+
+  const tabCounts = {
+    control: machine.lanes.top.length + machine.lanes.ops.length,
+    inflows: machine.lanes.left.length,
+    outflows: machine.lanes.right.length,
+    balances: machine.balances?.length || 0,
+  };
+
   return (
     <article className="ps-machine" style={machine.total_usd ? { borderLeft: "2px solid #f59e0b33" } : undefined}>
       <header className="ps-machine-header">
@@ -496,46 +587,33 @@ function ContractMachine({ machine, onSelectGuard }) {
         </div>
       </header>
 
-      <LaneColumn title={LANE_META.top.label} laneKey="top" items={machine.lanes.top} onSelect={onSelectGuard} />
-      {machine.lanes.ops.length > 0 && <OpsLane items={machine.lanes.ops} onSelect={onSelectGuard} />}
-      <LaneColumn title={LANE_META.left.label} laneKey="left" items={machine.lanes.left} onSelect={onSelectGuard} />
-      <LaneColumn title={LANE_META.right.label} laneKey="right" items={machine.lanes.right} onSelect={onSelectGuard} />
+      <div className="ps-machine-tabs">
+        {MACHINE_TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`ps-machine-tab${activeTab === t.key ? " active" : ""}`}
+            onClick={() => setActiveTab(t.key)}
+          >
+            {t.label}
+            {tabCounts[t.key] > 0 && <span className="ps-machine-tab-count">{tabCounts[t.key]}</span>}
+          </button>
+        ))}
+      </div>
 
-      {machine.balances && machine.balances.length > 0 && (
-        <section className="ps-balance-section">
-          <div className="ps-balance-header">
-            <span>Balances</span>
-            {machine.total_usd ? <span className="ps-balance-total">{formatUsd(machine.total_usd)}</span> : null}
-          </div>
-          <table className="ps-balance-table">
-            <thead>
-              <tr>
-                <th>Token</th>
-                <th style={{ textAlign: "right" }}>Amount</th>
-                <th style={{ textAlign: "right" }}>Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {machine.balances.map((b, i) => {
-                const human = Number(b.raw_balance) / (10 ** b.decimals);
-                const amount = human >= 1e6 ? `${(human / 1e6).toFixed(1)}M`
-                  : human >= 1e3 ? `${(human / 1e3).toFixed(1)}K`
-                  : human >= 1 ? human.toFixed(2)
-                  : human.toFixed(6);
-                return (
-                  <tr key={i}>
-                    <td>
-                      <span className="ps-balance-symbol">{b.token_symbol}</span>
-                      <span className="ps-balance-name">{b.token_name}</span>
-                    </td>
-                    <td style={{ textAlign: "right" }} className="ps-balance-amount">{amount}</td>
-                    <td style={{ textAlign: "right" }} className="ps-balance-usd">{b.usd_value ? formatUsd(b.usd_value) : "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
+      {activeTab === "control" && (
+        <>
+          <LaneColumn title={LANE_META.top.label} laneKey="top" items={machine.lanes.top} onSelect={onSelectGuard} onNavigate={onNavigate} />
+          {machine.lanes.ops.length > 0 && <OpsLane items={machine.lanes.ops} onSelect={onSelectGuard} onNavigate={onNavigate} />}
+        </>
+      )}
+      {activeTab === "inflows" && (
+        <LaneColumn title={LANE_META.left.label} laneKey="left" items={machine.lanes.left} onSelect={onSelectGuard} onNavigate={onNavigate} />
+      )}
+      {activeTab === "outflows" && (
+        <LaneColumn title={LANE_META.right.label} laneKey="right" items={machine.lanes.right} onSelect={onSelectGuard} onNavigate={onNavigate} />
+      )}
+      {activeTab === "balances" && (
+        <BalanceTable machine={machine} />
       )}
     </article>
   );
@@ -769,7 +847,7 @@ function ContractNode({ data }) {
   const roleColor = (ROLE_META[m.role] || ROLE_META.utility).color;
   return (
     <div
-      className={`ps-node${data.selected ? " ps-node-selected" : ""}`}
+      className={`ps-node${data.selected ? " ps-node-selected" : ""}${data.focused ? " ps-node-focused" : ""}`}
       style={{ borderLeftColor: roleColor }}
       onClick={data.onSelect}
     >
@@ -812,7 +890,7 @@ function PrincipalNode({ data }) {
   const delay = p.details?.delay;
 
   return (
-    <div className="ps-principal-node" style={{ "--principal-color": color }}>
+    <div className={`ps-principal-node${data.focused ? " ps-node-focused" : ""}`} style={{ "--principal-color": color }}>
       <Handle type="target" position={Position.Top} id="ctrl-in" className="ps-handle" />
       <Handle type="source" position={Position.Bottom} id="ctrl-out" className="ps-handle" />
       <div className="ps-principal-badge" style={{ background: color + "22", color }}>
@@ -1162,6 +1240,42 @@ async function elkLayout(machines, fundFlows, principals) {
   }
 }
 
+function PrincipalTourNav({ tour, onGo, onBack }) {
+  if (!tour || tour.principals.length < 2) return null;
+  const current = tour.principals[tour.index];
+  const type = TYPE_META[current.resolvedType] || TYPE_META.unknown;
+  return (
+    <div className="ps-tour-nav">
+      <button
+        className="ps-tour-back"
+        onClick={onBack}
+        title="Back to contract"
+      >
+        ← {tour.sourceFunction || "back"}
+      </button>
+      <div className="ps-tour-controls">
+        <button
+          onClick={() => onGo(tour.index > 0 ? tour.index - 1 : tour.principals.length - 1)}
+          title="Previous principal"
+        >
+          ◀
+        </button>
+        <span className="ps-tour-label">
+          <span className="ps-tour-type" style={{ color: type.accent }}>{type.label}</span>
+          <span className="ps-tour-addr">{shortAddr(current.address)}</span>
+          <span className="ps-tour-counter">{tour.index + 1} / {tour.principals.length}</span>
+        </span>
+        <button
+          onClick={() => onGo(tour.index < tour.principals.length - 1 ? tour.index + 1 : 0)}
+          title="Next principal"
+        >
+          ▶
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function FocusOnNode({ address, focusKey }) {
   const { setCenter, getNodes } = useReactFlow();
   const lastKey = useRef(null);
@@ -1186,7 +1300,7 @@ function FocusOnNode({ address, focusKey }) {
   return null;
 }
 
-function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, onSelectMachine }) {
+function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, onSelectMachine, principalTour, onTourGo, onTourBack }) {
   const [initNodes, setInitNodes] = useState([]);
   const [initEdges, setInitEdges] = useState([]);
 
@@ -1220,16 +1334,19 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
       }
     }
 
+    const foc = focusedAddress?.toLowerCase();
     setNodes(
       initNodes.map((n) => {
         const nid = n.id?.toLowerCase();
         const dimmed = sel && !connectedNodes.has(nid);
+        const focused = foc && nid === foc;
         return {
           ...n,
           style: dimmed ? { opacity: 0.25 } : {},
           data: {
             ...n.data,
             selected: n.id === selectedAddress,
+            focused,
             onSelect: () => onSelectMachine(n.data.machine),
           },
         };
@@ -1259,7 +1376,7 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
         };
       })
     );
-  }, [initNodes, initEdges, selectedAddress, onSelectMachine]);
+  }, [initNodes, initEdges, selectedAddress, focusedAddress, onSelectMachine]);
 
   return (
     <div className="ps-canvas-wrap">
@@ -1278,6 +1395,11 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
         <Background color="#1e293b" gap={24} size={1} />
         <Controls showInteractive={false} />
         <FocusOnNode address={focusAddress?.address} focusKey={focusAddress?.key} />
+        {principalTour && principalTour.principals.length > 1 && (
+          <Panel position="top-right">
+            <PrincipalTourNav tour={principalTour} onGo={onTourGo} onBack={onTourBack} />
+          </Panel>
+        )}
       </ReactFlow>
     </div>
   );
@@ -1516,11 +1638,26 @@ export default function ProtocolSurface({ companyName }) {
   const [selectedPrincipal, setSelectedPrincipal] = useState(null);
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [focusAddress, setFocusAddress] = useState(null);
+  const [focusedAddress, setFocusedAddress] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("focus") || null;
+  });
   const focusKeyRef = useRef(0);
   const triggerFocus = useCallback((addr) => {
     focusKeyRef.current += 1;
     setFocusAddress({ address: addr, key: focusKeyRef.current });
+    setFocusedAddress(addr || null);
+    // Sync focus address to URL
+    const url = new URL(window.location.href);
+    if (addr) {
+      url.searchParams.set("focus", addr);
+    } else {
+      url.searchParams.delete("focus");
+    }
+    window.history.replaceState({}, "", url.toString());
   }, []);
+  // Multi-principal tour state: { principals: [...], index: 0, sourceContract: "0x...", sourceFunction: "fn" }
+  const [principalTour, setPrincipalTour] = useState(null);
   const [error, setError] = useState(null);
   const [enabledRoles, setEnabledRoles] = useState(() => {
     const initial = new Set();
@@ -1572,6 +1709,18 @@ export default function ProtocolSurface({ companyName }) {
     [allMachines, enabledRoles]
   );
 
+  // Restore focus from URL on initial data load
+  const restoredFocus = useRef(false);
+  useEffect(() => {
+    if (restoredFocus.current || !machines.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const urlFocus = params.get("focus");
+    if (urlFocus) {
+      restoredFocus.current = true;
+      triggerFocus(urlFocus);
+    }
+  }, [machines, triggerFocus]);
+
   const handleToggleRole = useCallback((role) => {
     setEnabledRoles((prev) => {
       const next = new Set(prev);
@@ -1594,6 +1743,25 @@ export default function ProtocolSurface({ companyName }) {
     );
   }, [machines, companyData]);
 
+  const navigateToPrincipal = useCallback((target) => {
+    let principal = visiblePrincipals.find((p) => p.address?.toLowerCase() === target.address?.toLowerCase());
+    if (!principal) {
+      principal = {
+        address: target.address,
+        type: target.type,
+        label: target.label || target.type,
+        details: target.details || {},
+        controls: machines
+          .filter((m) => m.owner?.toLowerCase() === target.address?.toLowerCase())
+          .map((m) => m.address),
+      };
+    }
+    setSelectedPrincipal(principal);
+    setSelectedMachine(null);
+    setSelectedGuard(null);
+    triggerFocus(target.address);
+  }, [machines, visiblePrincipals, triggerFocus]);
+
   const handleNavigate = useCallback((target) => {
     // Push current view to breadcrumbs before navigating
     setBreadcrumbs((prev) => {
@@ -1611,36 +1779,24 @@ export default function ProtocolSurface({ companyName }) {
         setSelectedMachine(machine);
         setSelectedPrincipal(null);
         setSelectedGuard(null);
+        setPrincipalTour(null);
         triggerFocus(machine.address);
       }
     } else {
-      // Navigate to a principal (safe, eoa, timelock)
-      let principal = visiblePrincipals.find((p) => p.address?.toLowerCase() === target.address?.toLowerCase());
-      if (!principal) {
-        // Build a minimal principal from what we know (guard inspector data)
-        principal = {
-          address: target.address,
-          type: target.type,
-          label: target.label || target.type,
-          details: target.details || {},
-          controls: machines
-            .filter((m) => {
-              const owner = m.owner?.toLowerCase();
-              return owner === target.address?.toLowerCase();
-            })
-            .map((m) => m.address),
-        };
+      // Set up multi-principal tour if multiple principals
+      if (target._allPrincipals && target._allPrincipals.length > 1) {
+        setPrincipalTour({
+          principals: target._allPrincipals,
+          index: 0,
+          sourceContract: target._sourceContract,
+          sourceFunction: target._sourceFunction,
+        });
+      } else {
+        setPrincipalTour(null);
       }
-      setSelectedPrincipal(principal);
-      setSelectedMachine(null);
-      setSelectedGuard(null);
-      // Principal may not be a canvas node — focus its first controlled contract instead
-      const firstControlled = (principal.controls || []).find((a) =>
-        machines.some((m) => m.address?.toLowerCase() === a.toLowerCase())
-      );
-      triggerFocus(firstControlled || target.address);
+      navigateToPrincipal(target);
     }
-  }, [machines, visiblePrincipals, selectedMachine, selectedPrincipal, triggerFocus]);
+  }, [machines, visiblePrincipals, selectedMachine, selectedPrincipal, triggerFocus, navigateToPrincipal]);
 
   const handleBreadcrumbNav = useCallback((item, index) => {
     // Truncate breadcrumbs to this point
@@ -1709,7 +1865,14 @@ export default function ProtocolSurface({ companyName }) {
         machines={machines}
         principals={visiblePrincipals}
         onFocus={(item) => {
-          if (!item) { setSelectedMachine(null); setSelectedPrincipal(null); return; }
+          if (!item) {
+            setSelectedMachine(null); setSelectedPrincipal(null);
+            setFocusedAddress(null);
+            const url = new URL(window.location.href);
+            url.searchParams.delete("focus");
+            window.history.replaceState({}, "", url.toString());
+            return;
+          }
           setBreadcrumbs([]);
           if (item.kind === "principal" && item.principal) {
             setSelectedPrincipal(item.principal);
@@ -1734,7 +1897,31 @@ export default function ProtocolSurface({ companyName }) {
             principals={visiblePrincipals}
             selectedAddress={selectedMachine?.address}
             focusAddress={focusAddress}
+            focusedAddress={focusedAddress}
             onSelectMachine={handleSelectMachine}
+            principalTour={principalTour}
+            onTourGo={(nextIndex) => {
+              const p = principalTour.principals[nextIndex];
+              setPrincipalTour((prev) => ({ ...prev, index: nextIndex }));
+              navigateToPrincipal({
+                type: p.resolvedType || "unknown",
+                address: p.address,
+                label: p.label,
+                details: p.details,
+              });
+            }}
+            onTourBack={() => {
+              setPrincipalTour(null);
+              if (principalTour?.sourceContract) {
+                const machine = machines.find((m) => m.address?.toLowerCase() === principalTour.sourceContract?.toLowerCase());
+                if (machine) {
+                  setSelectedMachine(machine);
+                  setSelectedPrincipal(null);
+                  setSelectedGuard(null);
+                  triggerFocus(machine.address);
+                }
+              }
+            }}
           />
         </ReactFlowProvider>
         <DraggableSidebar>
@@ -1753,6 +1940,7 @@ export default function ProtocolSurface({ companyName }) {
               key={selectedMachine.address}
               machine={selectedMachine}
               onSelectGuard={setSelectedGuard}
+              onNavigate={handleNavigate}
             />
           )}
           {!selectedPrincipal && <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />}

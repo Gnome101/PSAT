@@ -198,7 +198,7 @@ class ResolutionWorker(BaseWorker):
 
     def _fetch_balances(self, session: Session, job: Job, contract_row: Contract | None) -> None:
         """Fetch ETH + token balances and store in contract_balances table."""
-        from utils.etherscan import get_eth_balance, get_token_balances
+        from utils.etherscan import get_eth_balance, get_eth_price, get_token_balances
 
         address = job.address
         if not address or not contract_row:
@@ -222,6 +222,13 @@ class ResolutionWorker(BaseWorker):
 
         # Native ETH balance
         if eth_wei > 0:
+            eth_price = None
+            eth_usd = None
+            try:
+                eth_price = get_eth_price()
+                eth_usd = (eth_wei / 1e18) * eth_price
+            except Exception as exc:
+                logger.warning("Job %s: ETH price fetch failed: %s", job.id, exc)
             session.add(ContractBalance(
                 contract_id=contract_row.id,
                 token_address=None,
@@ -229,8 +236,8 @@ class ResolutionWorker(BaseWorker):
                 token_symbol="ETH",
                 decimals=18,
                 raw_balance=str(eth_wei),
-                price_usd=None,
-                usd_value=None,
+                price_usd=eth_price,
+                usd_value=round(eth_usd, 2) if eth_usd else None,
             ))
 
         # ERC-20 token balances

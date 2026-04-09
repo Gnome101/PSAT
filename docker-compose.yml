@@ -80,6 +80,20 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  dapp-crawler:
+    build:
+      context: .
+      dockerfile: docker/dapp-crawler.Dockerfile
+    image: psat-dapp-crawler:latest
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   site:
     build:
       context: .

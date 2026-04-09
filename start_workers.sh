@@ -44,8 +44,7 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.policy_worker &
 PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.dapp_crawl_worker &
-PIDS+=($!)
+# dapp_crawl_worker runs in its own container (needs Playwright/Chromium)
 "${PYTHON_CMD[@]}" -m workers.defillama_worker &
 PIDS+=($!)
 

@@ -6,8 +6,11 @@ __pycache__/
 .pytest_cache/
 site/node_modules/
 site/dist/
+site/test-results/
 contracts/
 protocols/
+repo/
+.wallet.json
 !tests/fixtures/
 !tests/fixtures/contracts/
 !tests/fixtures/contracts/**

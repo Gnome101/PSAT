@@ -108,8 +108,7 @@ class DiscoveryWorker(BaseWorker):
             job.name = company
             session.commit()
 
-        # TODO: re-enable when dapp-crawler and defillama-crawler repos are available
-        # self._spawn_parallel_discovery(session, job, company, request, root_job_id)
+        self._spawn_parallel_discovery(session, job, company, request, root_job_id)
 
         self.update_detail(
             session,
