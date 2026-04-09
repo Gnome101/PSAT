@@ -17,8 +17,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType
-from urllib.request import urlopen
 from unittest.mock import MagicMock
+from urllib.request import urlopen
 
 import pytest
 from sqlalchemy import create_engine, select, text
@@ -226,7 +226,9 @@ def test_process_runs_against_real_queue_and_fake_dapp(
     assert [child.address for child in child_jobs] == [ADDR_B, ADDR_C]
     assert all(child.stage == JobStage.discovery for child in child_jobs)
     assert all(child.status == JobStatus.queued for child in child_jobs)
-    assert child_jobs[0].request["root_job_id"] == root_job_id
-    assert child_jobs[0].request["parent_job_id"] == str(job.id)
-    assert child_jobs[0].request["rpc_url"] == "https://rpc.example"
-    assert child_jobs[0].request["chain"] == "polygon"
+    req0 = child_jobs[0].request
+    assert isinstance(req0, dict)
+    assert req0["root_job_id"] == root_job_id
+    assert req0["parent_job_id"] == str(job.id)
+    assert req0["rpc_url"] == "https://rpc.example"
+    assert req0["chain"] == "polygon"

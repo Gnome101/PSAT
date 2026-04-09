@@ -4,23 +4,19 @@ from __future__ import annotations
 
 import json
 import subprocess
-from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
 from services.static.slither import analyze, format_report, run_slither
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _completed(stdout: str = "", stderr: str = "", returncode: int = 0):
     """Return a ``subprocess.CompletedProcess`` with the given fields."""
-    return subprocess.CompletedProcess(
-        args=["slither"], returncode=returncode, stdout=stdout, stderr=stderr
-    )
+    return subprocess.CompletedProcess(args=["slither"], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 SAMPLE_DETECTORS = [

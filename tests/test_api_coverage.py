@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -1566,21 +1565,21 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
     # Call 8: impl Contract lookup (from is_proxy block)
     # Calls 9+: impl's relational queries (EF, FP, CV, CGN, CGE, PL)
     call_results = [
-        make_result(scalar=proxy_job),           # 0: Job lookup by name
-        make_result(scalar=proxy_contract),       # 1: Contract lookup for proxy
-        make_result(scalars_all=[]),              # 2: EffectiveFunction for proxy (empty)
-        make_result(scalars_all=[]),              # 3: PrincipalLabel for proxy (empty)
-        make_result(scalars_all=[]),              # 4: ControllerValue for proxy (empty)
-        make_result(scalars_all=[]),              # 5: ControlGraphNode for proxy (empty)
-        make_result(scalars_all=[]),              # 6: ControlGraphEdge for proxy (empty)
-        make_result(scalar=impl_job),             # 7: impl job lookup by address
-        make_result(scalar=impl_contract),        # 8: impl Contract lookup
-        make_result(scalars_all=[ef]),            # 9: EffectiveFunction for impl
-        make_result(scalars_all=[fp]),            # 10: FunctionPrincipal for impl ef
-        make_result(scalars_all=[cv]),            # 11: ControllerValue for impl
-        make_result(scalars_all=[cgn]),           # 12: ControlGraphNode for impl
-        make_result(scalars_all=[cge]),           # 13: ControlGraphEdge for impl
-        make_result(scalars_all=[pl]),            # 14: PrincipalLabel for impl
+        make_result(scalar=proxy_job),  # 0: Job lookup by name
+        make_result(scalar=proxy_contract),  # 1: Contract lookup for proxy
+        make_result(scalars_all=[]),  # 2: EffectiveFunction for proxy (empty)
+        make_result(scalars_all=[]),  # 3: PrincipalLabel for proxy (empty)
+        make_result(scalars_all=[]),  # 4: ControllerValue for proxy (empty)
+        make_result(scalars_all=[]),  # 5: ControlGraphNode for proxy (empty)
+        make_result(scalars_all=[]),  # 6: ControlGraphEdge for proxy (empty)
+        make_result(scalar=impl_job),  # 7: impl job lookup by address
+        make_result(scalar=impl_contract),  # 8: impl Contract lookup
+        make_result(scalars_all=[ef]),  # 9: EffectiveFunction for impl
+        make_result(scalars_all=[fp]),  # 10: FunctionPrincipal for impl ef
+        make_result(scalars_all=[cv]),  # 11: ControllerValue for impl
+        make_result(scalars_all=[cgn]),  # 12: ControlGraphNode for impl
+        make_result(scalars_all=[cge]),  # 13: ControlGraphEdge for impl
+        make_result(scalars_all=[pl]),  # 14: PrincipalLabel for impl
     ]
     # Add extra fallback results
     for _ in range(10):
@@ -1748,21 +1747,21 @@ def test_company_overview_with_proxy_and_effects(mock_session_cls):
     # Then fund_flows and principal queries:
     # 16+. Contract lookups for ControlGraphNode
     call_results = [
-        make_result(scalar=company_job),                            # 1
-        make_result(scalars_all=[company_job, proxy_job, impl_job]),# 2
-        make_result(scalar=proxy_contract),                         # 3
-        make_result(scalar=impl_job),                               # 4
-        make_result(scalar=impl_contract),                          # 5
-        make_result(scalar=impl_contract),                          # 6
-        make_result(scalar=cv),                                     # 7
-        make_result(scalars_all=[cv]),                              # 8
-        make_result(scalars_all=[ue]),                              # 9
-        make_result(scalar=impl_contract),                          # 10
-        make_result(scalars_all=[ef]),                              # 11
-        make_result(scalars_all=[ef]),                              # 12
-        make_result(scalars_all=[fp]),                              # 13
-        make_result(scalar=impl_contract),                          # 14
-        make_result(scalars_all=[bal]),                             # 15
+        make_result(scalar=company_job),  # 1
+        make_result(scalars_all=[company_job, proxy_job, impl_job]),  # 2
+        make_result(scalar=proxy_contract),  # 3
+        make_result(scalar=impl_job),  # 4
+        make_result(scalar=impl_contract),  # 5
+        make_result(scalar=impl_contract),  # 6
+        make_result(scalar=cv),  # 7
+        make_result(scalars_all=[cv]),  # 8
+        make_result(scalars_all=[ue]),  # 9
+        make_result(scalar=impl_contract),  # 10
+        make_result(scalars_all=[ef]),  # 11
+        make_result(scalars_all=[ef]),  # 12
+        make_result(scalars_all=[fp]),  # 13
+        make_result(scalar=impl_contract),  # 14
+        make_result(scalars_all=[bal]),  # 15
     ]
     # Add many fallback empty results for fund_flows/principal queries
     for _ in range(30):
@@ -1833,11 +1832,7 @@ def test_analyses_chain_from_single_chain_field(mock_session_cls, mock_get_artif
 
     def fake_artifact(session, jid, name):
         if str(jid) == str(company_job.id) and name == "contract_inventory":
-            return {
-                "contracts": [
-                    {"address": "0xdddd", "rank_score": 5, "chain": "arbitrum"}
-                ]
-            }
+            return {"contracts": [{"address": "0xdddd", "rank_score": 5, "chain": "arbitrum"}]}
         if name == "contract_analysis":
             return {"subject": {"name": "ChainTest"}, "summary": {}}
         return None

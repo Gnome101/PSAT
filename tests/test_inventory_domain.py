@@ -6,14 +6,11 @@ external-service functions (Tavily search, LLM domain/page selection).
 
 from __future__ import annotations
 
-import io
 import sys
 import time
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
-
-import pytest
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -100,7 +97,7 @@ class TestURLRE:
         assert match.group() == "https://example.com/path"
 
     def test_stops_at_angle_bracket(self):
-        match = URL_RE.search("<a href=\"https://example.com/page\">")
+        match = URL_RE.search('<a href="https://example.com/page">')
         assert match is not None
         # Should stop before the closing quote or angle bracket
         assert ">" not in match.group()
@@ -254,7 +251,7 @@ class TestGetDomain:
         """Trigger the defensive ValueError branch in _get_domain."""
         from urllib import parse as _urlparse_mod
 
-        original_urlparse = _urlparse_mod.urlparse
+        _ = _urlparse_mod.urlparse  # keep reference before patching
 
         def bad_urlparse(url, *a, **kw):
             raise ValueError("bad url")
@@ -336,7 +333,7 @@ class TestExtractAddresses:
 
     def test_none_values_skipped(self):
         # Falsy values should be skipped
-        assert _extract_addresses("", None) == set()
+        assert _extract_addresses("", cast(Any, None)) == set()
 
     def test_deduplication(self):
         addr = "0x" + "cc" * 20
@@ -796,7 +793,9 @@ class TestLlmSelectPages:
             lambda *a, **kw: "https://docs.example.com/contracts",
         )
         result = _llm_select_pages(
-            pages, "TestCo", "docs.example.com",
+            pages,
+            "TestCo",
+            "docs.example.com",
             "Select pages for {company} on {domain}:\n{page_list}",
             ["docs.example.com", "example.com"],
         )
@@ -809,7 +808,9 @@ class TestLlmSelectPages:
             lambda *a, **kw: "https://docs.example.com/page\nhttps://evil.com/hack",
         )
         result = _llm_select_pages(
-            pages, "TestCo", "example.com",
+            pages,
+            "TestCo",
+            "example.com",
             "{page_list}",
             ["example.com"],
         )

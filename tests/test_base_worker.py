@@ -9,6 +9,7 @@ import signal
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -356,7 +357,7 @@ def test_update_detail_delegates_to_queue(mock_update, mock_signal):
     w = _TestWorker()
     mock_session = MagicMock()
     mock_job = _make_job()
-    w.update_detail(mock_session, mock_job, "50% done")
+    w.update_detail(mock_session, cast(Any, mock_job), "50% done")
     mock_update.assert_called_once_with(mock_session, mock_job.id, "50% done")
 
 
@@ -369,9 +370,7 @@ def test_update_detail_delegates_to_queue(mock_update, mock_signal):
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
 @patch("workers.base.fail_job")
-def test_run_loop_fail_job_exception_retries_with_fresh_session(
-    mock_fail, mock_claim, mock_session_cls, mock_signal
-):
+def test_run_loop_fail_job_exception_retries_with_fresh_session(mock_fail, mock_claim, mock_session_cls, mock_signal):
     """When fail_job raises, the loop retries with a fresh session."""
     job = _make_job()
     mock_session = MagicMock()
@@ -420,9 +419,7 @@ def test_run_loop_fail_job_exception_retries_with_fresh_session(
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
 @patch("workers.base.fail_job")
-def test_run_loop_both_fail_job_attempts_fail_gracefully(
-    mock_fail, mock_claim, mock_session_cls, mock_signal
-):
+def test_run_loop_both_fail_job_attempts_fail_gracefully(mock_fail, mock_claim, mock_session_cls, mock_signal):
     """When both fail_job attempts raise, the loop continues without crashing."""
     job = _make_job()
     mock_session = MagicMock()

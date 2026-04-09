@@ -501,10 +501,12 @@ class TestChildRequestPropagation:
         crawl_result = {"addresses": [ADDR_A], "interaction_count": 1}
         spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
         session = _session_with_dedup(set())
-        job = _job(request={
-            "dapp_urls": ["https://example.com"],
-            "root_job_id": "custom-root-123",
-        })
+        job = _job(
+            request={
+                "dapp_urls": ["https://example.com"],
+                "root_job_id": "custom-root-123",
+            }
+        )
 
         worker = dapp_worker_module.DAppCrawlWorker()
         with pytest.raises(JobHandledDirectly):
@@ -530,10 +532,12 @@ class TestChildRequestPropagation:
         crawl_result = {"addresses": [ADDR_A], "interaction_count": 1}
         spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
         session = _session_with_dedup(set())
-        job = _job(request={
-            "dapp_urls": ["https://example.com"],
-            "rpc_url": "https://rpc.mainnet.example",
-        })
+        job = _job(
+            request={
+                "dapp_urls": ["https://example.com"],
+                "rpc_url": "https://rpc.mainnet.example",
+            }
+        )
 
         worker = dapp_worker_module.DAppCrawlWorker()
         with pytest.raises(JobHandledDirectly):

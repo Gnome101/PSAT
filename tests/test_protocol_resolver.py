@@ -64,9 +64,7 @@ PROTOCOLS = [LIDO, AAVE, ETHERFI, AAVE_V2]
 @pytest.fixture(autouse=True)
 def _reset_cache(monkeypatch):
     """Reset the module-level protocol cache before every test."""
-    monkeypatch.setattr(
-        "services.discovery.protocol_resolver._protocols_cache", None
-    )
+    monkeypatch.setattr("services.discovery.protocol_resolver._protocols_cache", None)
 
 
 # ---------------------------------------------------------------------------
@@ -244,10 +242,14 @@ class TestMatchProtocol:
 
 class TestResolveProtocol:
     def test_happy_path_with_siblings(self, monkeypatch):
-        mock_resp = type("Resp", (), {
-            "raise_for_status": lambda self: None,
-            "json": lambda self: list(PROTOCOLS),
-        })()
+        mock_resp = type(
+            "Resp",
+            (),
+            {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: list(PROTOCOLS),
+            },
+        )()
         monkeypatch.setattr(requests, "get", lambda *a, **kw: mock_resp)
 
         result = resolve_protocol("Aave V3")
@@ -257,10 +259,14 @@ class TestResolveProtocol:
         assert "aave-v3" in result["all_slugs"]
 
     def test_no_match_returns_empty_result(self, monkeypatch):
-        mock_resp = type("Resp", (), {
-            "raise_for_status": lambda self: None,
-            "json": lambda self: list(PROTOCOLS),
-        })()
+        mock_resp = type(
+            "Resp",
+            (),
+            {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: list(PROTOCOLS),
+            },
+        )()
         monkeypatch.setattr(requests, "get", lambda *a, **kw: mock_resp)
 
         result = resolve_protocol("totally-unknown-protocol-zzz")
@@ -290,10 +296,14 @@ class TestFetchProtocols:
         def _mock_get(*a, **kw):
             nonlocal call_count
             call_count += 1
-            resp = type("Resp", (), {
-                "raise_for_status": lambda self: None,
-                "json": lambda self: [{"slug": "x", "tvl": 1}],
-            })()
+            resp = type(
+                "Resp",
+                (),
+                {
+                    "raise_for_status": lambda self: None,
+                    "json": lambda self: [{"slug": "x", "tvl": 1}],
+                },
+            )()
             return resp
 
         monkeypatch.setattr(requests, "get", _mock_get)
@@ -310,10 +320,14 @@ class TestFetchProtocols:
             {"slug": "high", "tvl": 9999},
             {"slug": "mid", "tvl": 500},
         ]
-        mock_resp = type("Resp", (), {
-            "raise_for_status": lambda self: None,
-            "json": lambda self: list(data),
-        })()
+        mock_resp = type(
+            "Resp",
+            (),
+            {
+                "raise_for_status": lambda self: None,
+                "json": lambda self: list(data),
+            },
+        )()
         monkeypatch.setattr(requests, "get", lambda *a, **kw: mock_resp)
 
         result = _fetch_protocols()
@@ -321,11 +335,13 @@ class TestFetchProtocols:
 
     def test_raises_on_http_error(self, monkeypatch):
         def _mock_get(*a, **kw):
-            resp = type("Resp", (), {
-                "raise_for_status": lambda self: (_ for _ in ()).throw(
-                    requests.HTTPError("500")
-                ),
-            })()
+            resp = type(
+                "Resp",
+                (),
+                {
+                    "raise_for_status": lambda self: (_ for _ in ()).throw(requests.HTTPError("500")),
+                },
+            )()
             return resp
 
         monkeypatch.setattr(requests, "get", _mock_get)

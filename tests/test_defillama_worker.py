@@ -239,7 +239,7 @@ class TestDeduplication:
         existing_job = SimpleNamespace(id=uuid.uuid4())
         session.execute.return_value.scalar_one_or_none.side_effect = [
             existing_job,  # ADDR_1 already exists
-            None,          # ADDR_2 is new
+            None,  # ADDR_2 is new
         ]
         job = _job()
 

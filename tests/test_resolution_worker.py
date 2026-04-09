@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -98,7 +98,6 @@ def _patch_all(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> dict[str, A
         artifact_store[name] = data
 
     create_job_calls: list[dict] = []
-    fake_child = SimpleNamespace(id=uuid.uuid4(), company=None)
 
     def fake_create_job(_session: Any, request_dict: dict, initial_stage: Any = None) -> Any:
         create_job_calls.append(request_dict)
@@ -188,7 +187,16 @@ class TestProcessHappyPath:
         session.execute.return_value.scalar_one_or_none.return_value = fake_contract
 
         graph = _resolved_graph(
-            nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "resolved_type": "eoa", "label": "child", "depth": 1, "analyzed": True}],
+            nodes=[
+                {
+                    "address": CHILD_ADDRESS,
+                    "node_type": "contract",
+                    "resolved_type": "eoa",
+                    "label": "child",
+                    "depth": 1,
+                    "analyzed": True,
+                }
+            ],
             edges=[{"from_id": TARGET_ADDRESS, "to_id": CHILD_ADDRESS, "relation": "owner", "label": "owns"}],
         )
 
@@ -220,7 +228,7 @@ class TestProxyAddressOverride:
             captured_plan.append(plan)
             return _minimal_snapshot()
 
-        ctx = _patch_all(monkeypatch, tracking_plan=original_tracking)
+        _patch_all(monkeypatch, tracking_plan=original_tracking)
         monkeypatch.setattr("workers.resolution_worker.build_control_snapshot", fake_build)
 
         job = _job(request={"rpc_url": "https://rpc.example", "proxy_address": PROXY_ADDRESS})
@@ -262,7 +270,7 @@ class TestFetchBalancesHappyPath:
         )
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
-        worker._fetch_balances(session, cast(Any, job), fake_contract)
+        cast(Any, worker)._fetch_balances(session, job, fake_contract)
 
         # 2 add calls: 1 ETH + 1 token
         assert session.add.call_count == 2
@@ -279,7 +287,7 @@ class TestFetchBalancesHappyPath:
         monkeypatch.setattr("utils.etherscan.get_token_balances", lambda addr: [])
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
-        worker._fetch_balances(session, cast(Any, job), fake_contract)
+        cast(Any, worker)._fetch_balances(session, job, fake_contract)
 
         # Should still add ETH balance even if price failed
         assert session.add.call_count == 1
@@ -295,7 +303,7 @@ class TestFetchBalancesHappyPath:
         monkeypatch.setattr("utils.etherscan.get_token_balances", lambda addr: [])
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
-        worker._fetch_balances(session, cast(Any, job), fake_contract)
+        cast(Any, worker)._fetch_balances(session, job, fake_contract)
 
         # No balances stored on exception
         session.add.assert_not_called()
@@ -315,7 +323,7 @@ class TestFetchBalancesEarlyReturn:
         job = _job(address=None)
         fake_contract = SimpleNamespace(id=42)
 
-        worker._fetch_balances(session, cast(Any, job), fake_contract)
+        cast(Any, worker)._fetch_balances(session, job, fake_contract)
         session.add.assert_not_called()
 
     def test_no_contract_row_returns_early(self) -> None:
@@ -323,7 +331,7 @@ class TestFetchBalancesEarlyReturn:
         session = MagicMock()
         job = _job()
 
-        worker._fetch_balances(session, cast(Any, job), None)
+        cast(Any, worker)._fetch_balances(session, job, None)
         session.add.assert_not_called()
 
 
@@ -483,9 +491,7 @@ class TestQueueDiscoveredContracts:
             lambda _s, req, **kw: create_calls.append(req) or SimpleNamespace(id=uuid.uuid4(), company=None),
         )
 
-        graph = _resolved_graph(
-            nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}]
-        )
+        graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
 
         job = _job(request={"rpc_url": "https://rpc.example", "chain": "ethereum"})
         worker._queue_discovered_contracts(session, cast(Any, job), graph, "https://rpc.example")
@@ -515,7 +521,6 @@ class TestQueueDiscoveredContractsCompanyInheritance:
 
         # First call (select Job where address=...) returns None (no existing job)
         # session.get(Job, parent_id) returns parent_job
-        call_count = [0]
 
         def fake_execute(stmt):
             result = MagicMock()
@@ -534,9 +539,7 @@ class TestQueueDiscoveredContractsCompanyInheritance:
 
         monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
 
-        graph = _resolved_graph(
-            nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}]
-        )
+        graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
 
         job = _job(company=None, request={"rpc_url": "https://rpc.example", "parent_job_id": parent_id})
         worker._queue_discovered_contracts(session, cast(Any, job), graph, "https://rpc.example")
@@ -559,9 +562,7 @@ class TestQueueDiscoveredContractsCompanyInheritance:
 
         monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
 
-        graph = _resolved_graph(
-            nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}]
-        )
+        graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
 
         job = _job(company="Direct Corp")
         worker._queue_discovered_contracts(session, cast(Any, job), graph, "https://rpc.example")
@@ -736,7 +737,7 @@ class TestFetchBalancesZeroEth:
         monkeypatch.setattr("utils.etherscan.get_token_balances", lambda addr: [])
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
-        worker._fetch_balances(session, cast(Any, job), fake_contract)
+        cast(Any, worker)._fetch_balances(session, job, fake_contract)
 
         session.add.assert_not_called()
         session.commit.assert_called()
@@ -766,7 +767,7 @@ class TestFetchBalancesProxyAddress:
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
         job = _job(request={"proxy_address": PROXY_ADDRESS})
-        worker._fetch_balances(session, cast(Any, job), fake_contract)
+        cast(Any, worker)._fetch_balances(session, job, fake_contract)
 
         assert captured_addrs[0] == PROXY_ADDRESS
 
@@ -792,9 +793,7 @@ class TestQueueDiscoveredContractsParentChainEdgeCases:
             lambda _s, req, **kw: create_calls.append(req) or SimpleNamespace(id=uuid.uuid4(), company=None),
         )
 
-        graph = _resolved_graph(
-            nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}]
-        )
+        graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
         job = _job(company=None, request={"rpc_url": "https://rpc.example", "parent_job_id": str(uuid.uuid4())})
         worker._queue_discovered_contracts(session, cast(Any, job), graph, "https://rpc.example")
 
@@ -812,7 +811,8 @@ class TestQueueDiscoveredContractsParentChainEdgeCases:
 
         grandparent_job = SimpleNamespace(id=grandparent_id, company="GrandCorp", request={})
         parent_job = SimpleNamespace(
-            id=parent_id, company=None,
+            id=parent_id,
+            company=None,
             request={"parent_job_id": grandparent_id},
         )
 
@@ -834,9 +834,7 @@ class TestQueueDiscoveredContractsParentChainEdgeCases:
 
         monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
 
-        graph = _resolved_graph(
-            nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}]
-        )
+        graph = _resolved_graph(nodes=[{"address": CHILD_ADDRESS, "node_type": "contract", "analyzed": True}])
         job = _job(company=None, request={"rpc_url": "https://rpc.example", "parent_job_id": parent_id})
         worker._queue_discovered_contracts(session, cast(Any, job), graph, "https://rpc.example")
 
@@ -858,7 +856,15 @@ class TestResolvedGraphPathMissing:
         session.execute.return_value.scalar_one_or_none.return_value = None
         job = _job()
 
-        def fake_write_resolved_graph(analysis_path: Path, *, rpc_url: str = "", output_path: Path, max_depth: int = 6, workspace_prefix: str = "", refresh_snapshots: bool = False) -> Path:
+        def fake_write_resolved_graph(
+            analysis_path: Path,
+            *,
+            rpc_url: str = "",
+            output_path: Path,
+            max_depth: int = 6,
+            workspace_prefix: str = "",
+            refresh_snapshots: bool = False,
+        ) -> Path:
             # Do NOT write the file — simulate no graph produced
             return output_path
 

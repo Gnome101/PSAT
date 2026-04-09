@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+
 def _random_address() -> str:
     return "0x" + secrets.token_hex(20)
 

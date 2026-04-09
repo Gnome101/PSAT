@@ -150,6 +150,7 @@ class TestBuildPayload:
 # 5-11. search()
 # ---------------------------------------------------------------------------
 
+
 # Helper to create a mock response object
 def _mock_response(status_code=200, json_data=None, text="", raise_on_json=False):
     resp = MagicMock(spec=requests.Response)
@@ -218,9 +219,7 @@ class TestSearch:
     # 7. HTTP 500 retries then raises
     @patch("utils.tavily.load_dotenv")
     @patch("utils.tavily.time.sleep")
-    def test_http_500_retries_then_raises(
-        self, mock_sleep, _mock_dotenv, monkeypatch
-    ):
+    def test_http_500_retries_then_raises(self, mock_sleep, _mock_dotenv, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
         resp = _mock_response(status_code=500, text="Internal Server Error")
 
@@ -261,9 +260,7 @@ class TestSearch:
     # 9. timeout retries
     @patch("utils.tavily.load_dotenv")
     @patch("utils.tavily.time.sleep")
-    def test_timeout_retries_then_raises(
-        self, mock_sleep, _mock_dotenv, monkeypatch
-    ):
+    def test_timeout_retries_then_raises(self, mock_sleep, _mock_dotenv, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
 
         with patch(
@@ -278,9 +275,7 @@ class TestSearch:
     # 9b. generic RequestException retries
     @patch("utils.tavily.load_dotenv")
     @patch("utils.tavily.time.sleep")
-    def test_request_exception_retries_then_raises(
-        self, mock_sleep, _mock_dotenv, monkeypatch
-    ):
+    def test_request_exception_retries_then_raises(self, mock_sleep, _mock_dotenv, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
 
         with patch(
@@ -295,9 +290,7 @@ class TestSearch:
     # 10. invalid JSON raises TavilyError (non-retryable)
     @patch("utils.tavily.load_dotenv")
     @patch("utils.tavily.time.sleep")
-    def test_invalid_json_raises_no_retry(
-        self, mock_sleep, _mock_dotenv, monkeypatch
-    ):
+    def test_invalid_json_raises_no_retry(self, mock_sleep, _mock_dotenv, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
         resp = _mock_response(status_code=200, raise_on_json=True)
 
@@ -316,9 +309,7 @@ class TestSearch:
         resp = _mock_response(json_data={"results": "not a list"})
 
         with patch("utils.tavily.requests.post", return_value=resp):
-            with pytest.raises(
-                TavilyError, match="did not include a list"
-            ):
+            with pytest.raises(TavilyError, match="did not include a list"):
                 search("query", max_results=3)
 
         mock_sleep.assert_not_called()
@@ -336,9 +327,7 @@ class TestSearch:
     # Edge: HTTP 500 with empty body -> detail should be None
     @patch("utils.tavily.load_dotenv")
     @patch("utils.tavily.time.sleep")
-    def test_http_500_empty_body_detail_none(
-        self, mock_sleep, _mock_dotenv, monkeypatch
-    ):
+    def test_http_500_empty_body_detail_none(self, mock_sleep, _mock_dotenv, monkeypatch):
         monkeypatch.setenv("TAVILY_API_KEY", "test-key")
         resp = _mock_response(status_code=500, text="")
 

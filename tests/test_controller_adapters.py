@@ -58,6 +58,7 @@ ROLE = "0x" + "cc" * 32
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _addr(n: int) -> str:
     return "0x" + hex(n)[2:].zfill(40)
 
@@ -544,18 +545,18 @@ class TestTryAragonAclRoleMembers:
 
         mock_call.side_effect = [
             _padded_addr(kernel),  # kernel()
-            _padded_addr(acl),     # acl()
+            _padded_addr(acl),  # acl()
         ]
 
         mock_perm_logs.return_value = [
             {
                 "topics": [
                     SET_PERMISSION_TOPIC0,
-                    _padded_addr(member),            # entity
-                    _padded_addr(CONTRACT),           # app
-                    ROLE,                             # role
+                    _padded_addr(member),  # entity
+                    _padded_addr(CONTRACT),  # app
+                    ROLE,  # role
                 ],
-                "data": _padded_int(1),              # allowed = true
+                "data": _padded_int(1),  # allowed = true
                 "blockNumber": "0x1",
                 "transactionIndex": "0x0",
                 "logIndex": "0x0",
@@ -712,8 +713,8 @@ class TestTryAragonAppDetails:
 
         mock_call.side_effect = [
             _padded_addr(kernel),  # kernel()
-            app_id,                # appId() -- already 66 chars
-            _padded_addr(acl),     # acl()
+            app_id,  # appId() -- already 66 chars
+            _padded_addr(acl),  # acl()
         ]
 
         result = _try_aragon_app_details(RPC, CONTRACT)
@@ -740,7 +741,7 @@ class TestTryAragonAppDetails:
         kernel = _addr(10)
         mock_call.side_effect = [
             _padded_addr(kernel),  # kernel()
-            "0xshort",             # appId() -> not 66 chars -> decode_bytes32 returns None
+            "0xshort",  # appId() -> not 66 chars -> decode_bytes32 returns None
         ]
         result = _try_aragon_app_details(RPC, CONTRACT)
         assert result is None
@@ -982,7 +983,7 @@ class TestTryAragonAclEdgeCases:
             {
                 "topics": [
                     SET_PERMISSION_TOPIC0,
-                    "0xshort",                  # entity topic -> decode_address returns None
+                    "0xshort",  # entity topic -> decode_address returns None
                     _padded_addr(CONTRACT),
                     ROLE,
                 ],
