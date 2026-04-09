@@ -10,11 +10,11 @@ import json
 import logging
 import time
 
-from playwright.async_api import async_playwright, Page, BrowserContext
+from playwright.async_api import BrowserContext, Page, async_playwright
 
-from services.crawlers.dapp.wallet import HoneypotWallet
 from services.crawlers.dapp.inject import build_provider_script
 from services.crawlers.dapp.interaction_log import InteractionLog
+from services.crawlers.dapp.wallet import HoneypotWallet
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,7 @@ class DAppCrawler:
         self.token_balance = token_balance
         self.headless = headless
         self.interaction_log = InteractionLog()
-        self._provider_script = build_provider_script(
-            wallet, chain_id, eth_balance, token_balance
-        )
+        self._provider_script = build_provider_script(wallet, chain_id, eth_balance, token_balance)
 
     # ------------------------------------------------------------------ #
     #  Page setup & message handling                                       #
@@ -55,9 +53,7 @@ class DAppCrawler:
         await page.add_init_script(self._provider_script)
 
         # Listen for captured interactions via postMessage
-        await page.expose_function(
-            "_dappCrawlerCapture", self._handle_capture
-        )
+        await page.expose_function("_dappCrawlerCapture", self._handle_capture)
         await page.add_init_script("""
             window.addEventListener('message', (event) => {
                 if (event.data?.source === 'dapp-crawler') {
@@ -67,9 +63,7 @@ class DAppCrawler:
         """)
 
         # Handle signing requests from the injected provider
-        await page.expose_function(
-            "_dappCrawlerSign", self._handle_sign_request
-        )
+        await page.expose_function("_dappCrawlerSign", self._handle_sign_request)
         await page.add_init_script("""
             window.addEventListener('message', (event) => {
                 if (event.data?.source === 'dapp-crawler-sign') {
@@ -86,27 +80,47 @@ class DAppCrawler:
         """)
 
         # Intercept API responses and JS bundles for contract addresses
-        page.on("response", lambda resp: asyncio.ensure_future(
-            self._sniff_response(resp, page.url)
-        ))
+        page.on("response", lambda resp: asyncio.ensure_future(self._sniff_response(resp, page.url)))
 
         # Also sniff JS bundles for hardcoded addresses
-        page.on("response", lambda resp: asyncio.ensure_future(
-            self._sniff_js_bundle(resp, page.url)
-        ))
+        page.on("response", lambda resp: asyncio.ensure_future(self._sniff_js_bundle(resp, page.url)))
 
     # URL patterns that return user/wallet data, not contract addresses
     _USER_DATA_PATTERNS = [
-        "leaderboard", "ranking", "referral", "profile", "user",
-        "account", "history", "trades", "orders", "position",
-        "notification", "activity", "analytics", "stats/user",
+        "leaderboard",
+        "ranking",
+        "referral",
+        "profile",
+        "user",
+        "account",
+        "history",
+        "trades",
+        "orders",
+        "position",
+        "notification",
+        "activity",
+        "analytics",
+        "stats/user",
     ]
 
     # URL patterns likely to contain contract/protocol config
     _CONTRACT_DATA_PATTERNS = [
-        "config", "contract", "address", "market", "pool", "vault",
-        "token", "asset", "reserve", "collateral", "protocol",
-        "registry", "factory", "deploy", "pair", "farm",
+        "config",
+        "contract",
+        "address",
+        "market",
+        "pool",
+        "vault",
+        "token",
+        "asset",
+        "reserve",
+        "collateral",
+        "protocol",
+        "registry",
+        "factory",
+        "deploy",
+        "pair",
+        "farm",
     ]
 
     async def _sniff_response(self, response, page_url: str):
@@ -149,10 +163,12 @@ class DAppCrawler:
 
             if not is_contract_endpoint:
                 import re
+
                 contract_context = re.findall(
-                    r'(?:address|contract|token|pool|vault|market|factory|proxy|implementation)'
+                    r"(?:address|contract|token|pool|vault|market|factory|proxy|implementation)"
                     r'["\s:]+["\'](0x[a-fA-F0-9]{40})',
-                    body, re.IGNORECASE,
+                    body,
+                    re.IGNORECASE,
                 )
                 if contract_context:
                     addrs = set(a.lower() for a in contract_context)
@@ -165,16 +181,19 @@ class DAppCrawler:
             if new_addrs:
                 logger.info(
                     "Sniffed %d new addresses from API: %s",
-                    len(new_addrs), url[:100],
+                    len(new_addrs),
+                    url[:100],
                 )
                 for addr in new_addrs:
-                    self.interaction_log.add({
-                        "type": "apiResponse",
-                        "url": page_url,
-                        "timestamp": int(time.time() * 1000),
-                        "to": addr,
-                        "data": f"api:{url[:200]}",
-                    })
+                    self.interaction_log.add(
+                        {
+                            "type": "apiResponse",
+                            "url": page_url,
+                            "timestamp": int(time.time() * 1000),
+                            "to": addr,
+                            "data": f"api:{url[:200]}",
+                        }
+                    )
         except Exception:
             pass
 
@@ -193,6 +212,7 @@ class DAppCrawler:
 
             # Only scan same-origin JS files
             from urllib.parse import urlparse
+
             page_origin = urlparse(page_url).netloc
             js_origin = urlparse(url).netloc
             if page_origin and js_origin and page_origin != js_origin:
@@ -203,22 +223,25 @@ class DAppCrawler:
                 return
 
             import re
+
             contract_context = re.findall(
-                r'(?:address|contract|token|vault|pool|diamond|proxy|factory|router|collateral|market|gToken|lending|borrowing)'
-                r'.{0,80}?(0x[a-fA-F0-9]{40})',
-                body, re.IGNORECASE,
+                r"(?:address|contract|token|vault|pool|diamond|proxy|factory|router|collateral|market|gToken|lending|borrowing)"
+                r".{0,80}?(0x[a-fA-F0-9]{40})",
+                body,
+                re.IGNORECASE,
             )
             contract_context2 = re.findall(
-                r'(0x[a-fA-F0-9]{40})'
-                r'.{0,80}?(?:address|contract|token|vault|pool|diamond|proxy|factory|router|collateral|market|gToken|lending|borrowing)',
-                body, re.IGNORECASE,
+                r"(0x[a-fA-F0-9]{40})"
+                r".{0,80}?(?:address|contract|token|vault|pool|diamond|proxy|factory|router|collateral|market|gToken|lending|borrowing)",
+                body,
+                re.IGNORECASE,
             )
 
             addrs = set(a.lower() for a in contract_context + contract_context2)
             addrs.discard(self.wallet.address.lower())
             addrs.discard("0x" + "0" * 40)
             addrs.discard("0x" + "f" * 40)
-            addrs -= {f"0x{'f' * i}{'0' * (40-i)}" for i in range(1, 40)}  # mask patterns
+            addrs -= {f"0x{'f' * i}{'0' * (40 - i)}" for i in range(1, 40)}  # mask patterns
 
             if not addrs:
                 return
@@ -229,16 +252,19 @@ class DAppCrawler:
             if new_addrs:
                 logger.info(
                     "Sniffed %d addresses from JS bundle: %s",
-                    len(new_addrs), url.split("/")[-1][:60],
+                    len(new_addrs),
+                    url.split("/")[-1][:60],
                 )
                 for addr in new_addrs:
-                    self.interaction_log.add({
-                        "type": "jsBundle",
-                        "url": page_url,
-                        "timestamp": int(time.time() * 1000),
-                        "to": addr,
-                        "data": f"js:{url.split('/')[-1][:100]}",
-                    })
+                    self.interaction_log.add(
+                        {
+                            "type": "jsBundle",
+                            "url": page_url,
+                            "timestamp": int(time.time() * 1000),
+                            "to": addr,
+                            "data": f"js:{url.split('/')[-1][:100]}",
+                        }
+                    )
         except Exception:
             pass
 
@@ -295,7 +321,7 @@ class DAppCrawler:
         '[class*="connectWallet" i]',
         '[class*="connect-wallet" i]',
         '[class*="iekbcc0"]',
-        'w3m-connect-button',
+        "w3m-connect-button",
         'button:has-text("Connect")',
     ]
 
@@ -311,7 +337,7 @@ class DAppCrawler:
         '[data-testid="rk-wallet-option-injected"]',
         'w3m-wallet-button[name="MetaMask"]',
         'w3m-wallet-button[name="Injected"]',
-        'text=MetaMask',
+        "text=MetaMask",
     ]
 
     COOKIE_DISMISS_SELECTORS = [
@@ -336,14 +362,24 @@ class DAppCrawler:
     ]
 
     BROWSER_TAB_SELECTORS = [
-        'text=Browser',
+        "text=Browser",
         'xpath=//*[contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "browser") and (self::button or self::div[@role="tab"] or self::span)]',
         '[data-testid="tab-browser"]',
     ]
 
     ACTION_KEYWORDS = [
-        "deposit", "stake", "swap", "approve", "supply", "mint",
-        "bridge", "borrow", "lend", "withdraw", "claim", "redeem",
+        "deposit",
+        "stake",
+        "swap",
+        "approve",
+        "supply",
+        "mint",
+        "bridge",
+        "borrow",
+        "lend",
+        "withdraw",
+        "claim",
+        "redeem",
     ]
 
     # ------------------------------------------------------------------ #
@@ -382,8 +418,7 @@ class DAppCrawler:
                     try:
                         el = page.locator(selector).first
                         if await el.is_visible(timeout=1000):
-                            logger.info("Round %d: clicking %s: %s",
-                                        round_num + 1, category, selector)
+                            logger.info("Round %d: clicking %s: %s", round_num + 1, category, selector)
                             await el.click()
                             await page.wait_for_timeout(3000)
                             clicked = True
@@ -467,9 +502,22 @@ class DAppCrawler:
     async def _click_all_tabs(self, page: Page):
         """Click through all visible tab-like buttons to reveal hidden content."""
         tab_keywords = [
-            "stake", "deposit", "supply", "lend", "borrow", "swap",
-            "withdraw", "redeem", "claim", "editor", "payoff",
-            "managed", "wallet", "positions", "overview", "details",
+            "stake",
+            "deposit",
+            "supply",
+            "lend",
+            "borrow",
+            "swap",
+            "withdraw",
+            "redeem",
+            "claim",
+            "editor",
+            "payoff",
+            "managed",
+            "wallet",
+            "positions",
+            "overview",
+            "details",
         ]
         clicked_tabs = []
         for kw in tab_keywords:
@@ -533,9 +581,22 @@ class DAppCrawler:
                 continue
 
         submit_patterns = [
-            "stake now", "deposit now", "swap now", "open position",
-            "confirm", "approve", "deposit", "stake", "swap", "supply",
-            "submit", "send", "mint", "bridge", "lend", "borrow",
+            "stake now",
+            "deposit now",
+            "swap now",
+            "open position",
+            "confirm",
+            "approve",
+            "deposit",
+            "stake",
+            "swap",
+            "supply",
+            "submit",
+            "send",
+            "mint",
+            "bridge",
+            "lend",
+            "borrow",
         ]
         for kw in submit_patterns:
             for tag in ["button", "a"]:
@@ -658,13 +719,15 @@ class DAppCrawler:
                 if addr.lower() in already_seen:
                     continue
                 logger.info("Scraped address from page: %s (source: %s)", addr, source)
-                self.interaction_log.add({
-                    "type": "pageAddress",
-                    "url": page.url,
-                    "timestamp": int(time.time() * 1000),
-                    "to": addr,
-                    "data": source,
-                })
+                self.interaction_log.add(
+                    {
+                        "type": "pageAddress",
+                        "url": page.url,
+                        "timestamp": int(time.time() * 1000),
+                        "to": addr,
+                        "data": source,
+                    }
+                )
         except Exception as e:
             logger.warning("Page address scraping failed: %s", e)
 
@@ -672,7 +735,9 @@ class DAppCrawler:
     #  Main crawl orchestration                                            #
     # ------------------------------------------------------------------ #
 
-    async def _explore_page(self, page: Page, context: BrowserContext, depth: int = 0, max_depth: int = 1, visited: set | None = None):
+    async def _explore_page(
+        self, page: Page, context: BrowserContext, depth: int = 0, max_depth: int = 1, visited: set | None = None
+    ):
         """
         Explore a page: scrape addresses, discover action links to follow,
         then on leaf pages try to fill forms and trigger transactions.
@@ -741,9 +806,7 @@ class DAppCrawler:
 
                 logger.info("Visiting %s", url)
                 try:
-                    await page.goto(
-                        url, wait_until="domcontentloaded", timeout=30000
-                    )
+                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                     await page.wait_for_timeout(3000)
 
                     await self._try_connect_wallet(page)

@@ -48,12 +48,17 @@ class DAppCrawlWorker(BaseWorker):
         logger.info("DApp crawl found %d addresses for job %s", len(addresses), job.id)
 
         # Store raw results
-        store_artifact(session, job.id, "dapp_crawl_results", data={
-            "urls_crawled": urls,
-            "addresses_found": len(addresses),
-            "addresses": addresses,
-            "interaction_count": result.get("interaction_count", 0),
-        })
+        store_artifact(
+            session,
+            job.id,
+            "dapp_crawl_results",
+            data={
+                "urls_crawled": urls,
+                "addresses_found": len(addresses),
+                "addresses": addresses,
+                "interaction_count": result.get("interaction_count", 0),
+            },
+        )
 
         # Deduplicate against existing jobs and create children (shared global cap)
         root_job_id = request.get("root_job_id", str(job.id))
@@ -62,9 +67,7 @@ class DAppCrawlWorker(BaseWorker):
         selected = addresses[:remaining]
         child_ids = []
         for addr in selected:
-            existing = session.execute(
-                select(Job).where(Job.address == addr).limit(1)
-            ).scalar_one_or_none()
+            existing = session.execute(select(Job).where(Job.address == addr).limit(1)).scalar_one_or_none()
             if existing:
                 logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
                 continue
@@ -83,20 +86,26 @@ class DAppCrawlWorker(BaseWorker):
             child_ids.append({"job_id": str(child_job.id), "address": addr})
             logger.info("Created child job %s for %s", child_job.id, addr)
 
-        store_artifact(session, job.id, "discovery_summary", data={
-            "mode": "dapp_crawl",
-            "urls": urls,
-            "discovered_count": len(addresses),
-            "analyzed_count": len(child_ids),
-            "child_jobs": child_ids,
-        })
+        store_artifact(
+            session,
+            job.id,
+            "discovery_summary",
+            data={
+                "mode": "dapp_crawl",
+                "urls": urls,
+                "discovered_count": len(addresses),
+                "analyzed_count": len(child_ids),
+                "child_jobs": child_ids,
+            },
+        )
 
         if not job.name:
             job.name = f"DApp crawl ({len(urls)} URLs)"
             session.commit()
 
         complete_job(
-            session, job.id,
+            session,
+            job.id,
             f"DApp crawl complete: {len(addresses)} addresses found, {len(child_ids)} queued",
         )
         raise JobHandledDirectly()

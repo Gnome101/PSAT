@@ -7,11 +7,10 @@ at the RPC level.
 """
 
 import json
-import os
 from pathlib import Path
 
 from eth_account import Account
-from eth_account.messages import encode_defunct, encode_typed_data
+from eth_account.messages import encode_defunct
 
 
 class HoneypotWallet:
@@ -39,13 +38,12 @@ class HoneypotWallet:
 
     def sign_typed_data(self, typed_data: str | dict) -> str:
         """Sign EIP-712 typed data (permits, auth, etc.)."""
-        if isinstance(typed_data, str):
-            typed_data = json.loads(typed_data)
+        data: dict = json.loads(typed_data) if isinstance(typed_data, str) else typed_data
 
         signed = self.account.sign_typed_data(
-            typed_data.get("domain", {}),
-            typed_data.get("types", {}),
-            typed_data.get("message", {}),
+            data.get("domain", {}),
+            data.get("types", {}),
+            data.get("message", {}),
         )
         return signed.signature.hex()
 

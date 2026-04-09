@@ -57,11 +57,11 @@ def test_extract_protocol_directory():
         proto_dir = Path(tmp) / "test-protocol"
         proto_dir.mkdir()
         (proto_dir / "index.js").write_text(
-            'module.exports = {\n'
-            '  ethereum: {\n'
+            "module.exports = {\n"
+            "  ethereum: {\n"
             '    staking: staking("0xaabbccddee00112233445566778899aabbccddee"),\n'
-            '  }\n'
-            '};\n'
+            "  }\n"
+            "};\n"
         )
         result = extract_protocol(proto_dir)
 
@@ -76,9 +76,7 @@ def test_extract_protocol_with_chain_inference():
         proto_dir = Path(tmp) / "my-protocol"
         proto_dir.mkdir()
         (proto_dir / "index.js").write_text(
-            'const arbitrum = {\n'
-            '  vault: "0x1111111111111111111111111111111111111111",\n'
-            '};\n'
+            'const arbitrum = {\n  vault: "0x1111111111111111111111111111111111111111",\n};\n'
         )
         result = extract_protocol(proto_dir)
 

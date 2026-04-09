@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from services.crawlers.defillama.core_assets import load_core_assets, build_address_to_chain_map
+from services.crawlers.defillama.core_assets import build_address_to_chain_map, load_core_assets
 
 
 def _make_repo_with_core_assets(tmp: str, assets: dict) -> Path:
@@ -18,15 +18,18 @@ def _make_repo_with_core_assets(tmp: str, assets: dict) -> Path:
 
 def test_load_core_assets_basic():
     with tempfile.TemporaryDirectory() as tmp:
-        repo = _make_repo_with_core_assets(tmp, {
-            "ethereum": {
-                "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-                "USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+        repo = _make_repo_with_core_assets(
+            tmp,
+            {
+                "ethereum": {
+                    "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "USDC": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                },
+                "arbitrum": {
+                    "WETH": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+                },
             },
-            "arbitrum": {
-                "WETH": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
-            },
-        })
+        )
         result = load_core_assets(repo)
 
     assert "ethereum" in result
@@ -38,13 +41,16 @@ def test_load_core_assets_basic():
 
 def test_load_core_assets_filters_invalid():
     with tempfile.TemporaryDirectory() as tmp:
-        repo = _make_repo_with_core_assets(tmp, {
-            "ethereum": {
-                "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-                "bad": "not-an-address",
-                "short": "0x1234",
+        repo = _make_repo_with_core_assets(
+            tmp,
+            {
+                "ethereum": {
+                    "WETH": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+                    "bad": "not-an-address",
+                    "short": "0x1234",
+                },
             },
-        })
+        )
         result = load_core_assets(repo)
 
     assert len(result["ethereum"]) == 1

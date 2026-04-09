@@ -153,11 +153,13 @@ def extract_protocol(project_dir: Path) -> dict:
                     line_num = i
                     break
 
-            addresses.append({
-                "address": lower,
-                "chain": chain,
-                "source": f"{rel_path}:{line_num}" if line_num else str(rel_path),
-            })
+            addresses.append(
+                {
+                    "address": lower,
+                    "chain": chain,
+                    "source": f"{rel_path}:{line_num}" if line_num else str(rel_path),
+                }
+            )
 
     return {
         "protocol": protocol_name,

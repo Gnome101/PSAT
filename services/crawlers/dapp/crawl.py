@@ -11,9 +11,9 @@ import asyncio
 import logging
 from pathlib import Path
 
-from services.crawlers.dapp.wallet import HoneypotWallet
 from services.crawlers.dapp.browser import DAppCrawler
 from services.crawlers.dapp.interaction_log import InteractionLog
+from services.crawlers.dapp.wallet import HoneypotWallet
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +64,14 @@ def crawl_dapp(
             "session_start": "...",
         }
     """
-    interaction_log = asyncio.run(_crawl_async(
-        urls,
-        chain_id=chain_id,
-        wait=wait,
-        wallet_path=wallet_path,
-    ))
+    interaction_log = asyncio.run(
+        _crawl_async(
+            urls,
+            chain_id=chain_id,
+            wait=wait,
+            wallet_path=wallet_path,
+        )
+    )
 
     addresses = interaction_log.get_contract_addresses()
     logger.info("Discovered %d unique contract addresses", len(addresses))

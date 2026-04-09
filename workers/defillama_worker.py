@@ -51,18 +51,28 @@ class DefiLlamaWorker(BaseWorker):
         logger.info("DefiLlama scan found %d addresses for job %s", len(addresses), job.id)
 
         # Store full scan details as artifact
-        store_artifact(session, job.id, "defillama_full_scan", data={
-            "protocol": protocol,
-            "scan_time": result["scan_time"],
-            "address_details": result["address_details"],
-        })
+        store_artifact(
+            session,
+            job.id,
+            "defillama_full_scan",
+            data={
+                "protocol": protocol,
+                "scan_time": result["scan_time"],
+                "address_details": result["address_details"],
+            },
+        )
 
         # Store raw results
-        store_artifact(session, job.id, "defillama_scan_results", data={
-            "protocol": protocol,
-            "addresses_found": len(addresses),
-            "addresses": addresses,
-        })
+        store_artifact(
+            session,
+            job.id,
+            "defillama_scan_results",
+            data={
+                "protocol": protocol,
+                "addresses_found": len(addresses),
+                "addresses": addresses,
+            },
+        )
 
         # Build chain lookup from detailed results
         chain_by_address: dict[str, str | None] = {}
@@ -79,9 +89,7 @@ class DefiLlamaWorker(BaseWorker):
         selected = addresses[:remaining]
         child_ids = []
         for addr in selected:
-            existing = session.execute(
-                select(Job).where(Job.address == addr).limit(1)
-            ).scalar_one_or_none()
+            existing = session.execute(select(Job).where(Job.address == addr).limit(1)).scalar_one_or_none()
             if existing:
                 logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
                 continue
@@ -101,20 +109,26 @@ class DefiLlamaWorker(BaseWorker):
             child_ids.append({"job_id": str(child_job.id), "address": addr, "chain": chain})
             logger.info("Created child job %s for %s (chain=%s)", child_job.id, addr, chain)
 
-        store_artifact(session, job.id, "discovery_summary", data={
-            "mode": "defillama_scan",
-            "protocol": protocol,
-            "discovered_count": len(addresses),
-            "analyzed_count": len(child_ids),
-            "child_jobs": child_ids,
-        })
+        store_artifact(
+            session,
+            job.id,
+            "discovery_summary",
+            data={
+                "mode": "defillama_scan",
+                "protocol": protocol,
+                "discovered_count": len(addresses),
+                "analyzed_count": len(child_ids),
+                "child_jobs": child_ids,
+            },
+        )
 
         if not job.name:
             job.name = f"DefiLlama: {protocol}"
             session.commit()
 
         complete_job(
-            session, job.id,
+            session,
+            job.id,
             f"DefiLlama scan complete for {protocol}: {len(addresses)} addresses found, {len(child_ids)} queued",
         )
         raise JobHandledDirectly()

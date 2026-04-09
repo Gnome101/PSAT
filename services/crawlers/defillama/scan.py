@@ -32,9 +32,7 @@ def clone_or_update_repo(repo_path: Path) -> None:
         logger.info("Cloning DefiLlama-Adapters (shallow)...")
         repo_path.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
-            ["git", "clone", "--depth", "1",
-             "https://github.com/DefiLlama/DefiLlama-Adapters.git",
-             str(repo_path)],
+            ["git", "clone", "--depth", "1", "https://github.com/DefiLlama/DefiLlama-Adapters.git", str(repo_path)],
             check=True,
         )
 
@@ -79,10 +77,7 @@ def scan_protocol(
 
     # Find the matching protocol directory
     protocol_dirs = _discover_protocols(projects_dir)
-    matching = [
-        p for p in protocol_dirs
-        if p.name == protocol_name or p.stem == protocol_name
-    ]
+    matching = [p for p in protocol_dirs if p.name == protocol_name or p.stem == protocol_name]
     if not matching:
         logger.warning("Protocol '%s' not found in DefiLlama-Adapters", protocol_name)
         return {
@@ -100,10 +95,7 @@ def scan_protocol(
         result = {
             "protocol": proto_path.stem,
             "files_scanned": 1,
-            "addresses": [
-                {"address": a, "chain": None, "source": proto_path.name}
-                for a in addrs
-            ],
+            "addresses": [{"address": a, "chain": None, "source": proto_path.name} for a in addrs],
         }
     else:
         result = extract_protocol(proto_path)
@@ -157,10 +149,7 @@ def scan_all_protocols(
             result = {
                 "protocol": proto_path.stem,
                 "files_scanned": 1,
-                "addresses": [
-                    {"address": a, "chain": None, "source": proto_path.name}
-                    for a in addrs
-                ],
+                "addresses": [{"address": a, "chain": None, "source": proto_path.name} for a in addrs],
             }
         else:
             result = extract_protocol(proto_path)

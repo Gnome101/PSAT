@@ -4,7 +4,7 @@ contract addresses) discovered during crawling.
 """
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -31,9 +31,7 @@ class InteractionLog:
     """Collection of all captured interactions from a crawl session."""
 
     interactions: list[CapturedInteraction] = field(default_factory=list)
-    session_start: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    session_start: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def add(self, raw_entry: dict):
         """Add a raw interaction entry from the browser."""
