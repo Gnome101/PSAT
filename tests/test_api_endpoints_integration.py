@@ -709,6 +709,10 @@ def test_add_watched_proxy(mock_session_cls, mock_block, mock_classify, mock_res
     _mock_session_ctx(mock_session_cls, mock_session)
 
     proxy = _fake_watched_proxy(last_scanned_block=12345)
+    # Existence check: no existing proxy found
+    mock_execute = MagicMock()
+    mock_execute.scalar_one_or_none.return_value = None
+    mock_session.execute.return_value = mock_execute
     mock_session.refresh.side_effect = lambda p: (
         setattr(p, "id", proxy.id) or setattr(p, "created_at", proxy.created_at)
     )

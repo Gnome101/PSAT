@@ -1266,8 +1266,12 @@ function ProxyWatcherPage() {
   const [loaded, setLoaded] = useState(false);
   const [address, setAddress] = useState("");
   const [label, setLabel] = useState("");
+  const [discordWebhook, setDiscordWebhook] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+  const [subscriptions, setSubscriptions] = useState({});
+  const [expandedProxy, setExpandedProxy] = useState(null);
+  const [newWebhook, setNewWebhook] = useState("");
 
   async function refresh() {
     try {
@@ -1277,9 +1281,45 @@ function ProxyWatcherPage() {
       ]);
       setProxies(p);
       setEvents(e);
+      // Fetch subscriptions for all proxies
+      const subMap = {};
+      await Promise.all(
+        p.map(async (proxy) => {
+          try {
+            subMap[proxy.id] = await api(`/api/watched-proxies/${proxy.id}/subscriptions`);
+          } catch {
+            subMap[proxy.id] = [];
+          }
+        })
+      );
+      setSubscriptions(subMap);
       setLoaded(true);
     } catch (err) {
       console.error("Failed to load proxy data:", err);
+    }
+  }
+
+  async function addSubscription(proxyId) {
+    if (!newWebhook.trim()) return;
+    try {
+      await api(`/api/watched-proxies/${proxyId}/subscriptions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ discord_webhook_url: newWebhook.trim() }),
+      });
+      setNewWebhook("");
+      refresh();
+    } catch (err) {
+      setError(String(err.message || err));
+    }
+  }
+
+  async function removeSubscription(subId) {
+    try {
+      await api(`/api/subscriptions/${subId}`, { method: "DELETE" });
+      refresh();
+    } catch (err) {
+      console.error("Failed to remove subscription:", err);
     }
   }
 
@@ -1297,10 +1337,11 @@ function ProxyWatcherPage() {
       await api("/api/watched-proxies", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ address: address.trim(), label: label.trim() || null }),
+        body: JSON.stringify({ address: address.trim(), label: label.trim() || null, discord_webhook_url: discordWebhook.trim() || null }),
       });
       setAddress("");
       setLabel("");
+      setDiscordWebhook("");
       refresh();
     } catch (err) {
       setError(String(err.message || err));
@@ -1353,6 +1394,12 @@ function ProxyWatcherPage() {
             placeholder="Label (optional)"
             style={{ flex: "0 1 200px", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
           />
+          <input
+            value={discordWebhook}
+            onChange={(e) => setDiscordWebhook(e.target.value)}
+            placeholder="Discord webhook URL (optional)"
+            style={{ flex: "1 1 300px", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+          />
           <button type="submit" disabled={submitting} style={{ padding: "8px 16px", borderRadius: 6, background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
             {submitting ? "Adding..." : "Watch Proxy"}
           </button>
@@ -1371,24 +1418,63 @@ function ProxyWatcherPage() {
                   <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Type</th>
                   <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Implementation</th>
                   <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Polling</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Notifications</th>
                   <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Last Block</th>
                   <th style={{ padding: "8px 12px", color: "#94a3b8" }}></th>
                 </tr>
               </thead>
               <tbody>
-                {proxies.map((p) => (
-                  <tr key={p.id} style={{ borderBottom: "1px solid #1e293b" }}>
-                    <td style={{ padding: "8px 12px" }}>{p.label || <span style={{ color: "#475569" }}>-</span>}</td>
-                    <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(p.proxy_address)}</span></td>
-                    <td style={{ padding: "8px 12px" }}>{p.proxy_type ? <span className="chip alt">{p.proxy_type}</span> : <span style={{ color: "#475569" }}>unknown</span>}</td>
-                    <td style={{ padding: "8px 12px" }}><span className="mono">{p.last_known_implementation ? shortenAddress(p.last_known_implementation) : "-"}</span></td>
-                    <td style={{ padding: "8px 12px" }}>{p.needs_polling ? <span className="chip warn">polling</span> : <span className="chip">events</span>}</td>
-                    <td style={{ padding: "8px 12px" }}>{p.last_scanned_block ? p.last_scanned_block.toLocaleString() : "-"}</td>
-                    <td style={{ padding: "8px 12px" }}>
-                      <button onClick={() => removeProxy(p.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12 }}>remove</button>
-                    </td>
-                  </tr>
-                ))}
+                {proxies.map((p) => {
+                  const subs = subscriptions[p.id] || [];
+                  const isExpanded = expandedProxy === p.id;
+                  return (
+                    <React.Fragment key={p.id}>
+                      <tr style={{ borderBottom: isExpanded ? "none" : "1px solid #1e293b" }}>
+                        <td style={{ padding: "8px 12px" }}>{p.label || <span style={{ color: "#475569" }}>-</span>}</td>
+                        <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(p.proxy_address)}</span></td>
+                        <td style={{ padding: "8px 12px" }}>{p.proxy_type ? <span className="chip alt">{p.proxy_type}</span> : <span style={{ color: "#475569" }}>unknown</span>}</td>
+                        <td style={{ padding: "8px 12px" }}><span className="mono">{p.last_known_implementation ? shortenAddress(p.last_known_implementation) : "-"}</span></td>
+                        <td style={{ padding: "8px 12px" }}>{p.needs_polling ? <span className="chip warn">polling</span> : <span className="chip">events</span>}</td>
+                        <td style={{ padding: "8px 12px" }}>
+                          <button
+                            onClick={() => setExpandedProxy(isExpanded ? null : p.id)}
+                            style={{ background: "none", border: "none", color: subs.length > 0 ? "#22c55e" : "#64748b", cursor: "pointer", fontSize: 12 }}
+                          >
+                            {subs.length > 0 ? `${subs.length} webhook${subs.length > 1 ? "s" : ""}` : "none"} {isExpanded ? "\u25B2" : "\u25BC"}
+                          </button>
+                        </td>
+                        <td style={{ padding: "8px 12px" }}>{p.last_scanned_block ? p.last_scanned_block.toLocaleString() : "-"}</td>
+                        <td style={{ padding: "8px 12px" }}>
+                          <button onClick={() => removeProxy(p.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12 }}>remove</button>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr style={{ borderBottom: "1px solid #1e293b" }}>
+                          <td colSpan={8} style={{ padding: "8px 12px 16px 24px", background: "#0c1222" }}>
+                            <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 8 }}>Discord Subscriptions</div>
+                            {subs.map((s) => (
+                              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                <span className="mono" style={{ fontSize: 12, color: "#cbd5e1" }}>{s.discord_webhook_url ? s.discord_webhook_url.slice(0, 60) + (s.discord_webhook_url.length > 60 ? "..." : "") : "-"}</span>
+                                {s.label && <span style={{ fontSize: 11, color: "#64748b" }}>({s.label})</span>}
+                                <button onClick={() => removeSubscription(s.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 11, marginLeft: "auto" }}>remove</button>
+                              </div>
+                            ))}
+                            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                              <input
+                                value={newWebhook}
+                                onChange={(e) => setNewWebhook(e.target.value)}
+                                placeholder="Discord webhook URL"
+                                style={{ flex: 1, fontSize: 12, padding: "6px 10px", borderRadius: 4, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+                                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSubscription(p.id); } }}
+                              />
+                              <button onClick={() => addSubscription(p.id)} style={{ padding: "6px 12px", borderRadius: 4, background: "#7c3aed", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: 12 }}>Add</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>

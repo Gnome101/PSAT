@@ -14,18 +14,11 @@ Uses an in-memory SQLite database for WatchedProxy / ProxyUpgradeEvent rows.
 
 from __future__ import annotations
 
-import sys
-import uuid
-from pathlib import Path
 from unittest.mock import call, patch
 
-import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import Session
+from conftest import ADDR, _add_proxy, _admin_data, _make_log, _topic_for
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-from db.models import ProxyUpgradeEvent, WatchedProxy
+from db.models import ProxyUpgradeEvent
 from services.discovery.upgrade_history import (
     ADMIN_CHANGED_TOPIC0,
     BEACON_UPGRADED_TOPIC0,
@@ -38,107 +31,7 @@ from services.monitoring.proxy_watcher import (
     scan_for_upgrades,
 )
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
-
-
-def ADDR(n: int) -> str:
-    """Generate a deterministic 0x-prefixed address from an integer."""
-    return "0x" + hex(n)[2:].zfill(40)
-
-
-def _topic_for(addr: str) -> str:
-    """Pad a 20-byte address to a 32-byte topic."""
-    return "0x" + "0" * 24 + addr[2:]
-
-
-def _admin_data(old: str, new: str) -> str:
-    """ABI-encode two addresses as data for AdminChanged events."""
-    return "0x" + "0" * 24 + old[2:] + "0" * 24 + new[2:]
-
-
-def _make_log(
-    address: str,
-    topic0: str,
-    topic1: str | None = None,
-    data: str = "0x",
-    block: str = "0x64",
-    tx: str = "0xaaa",
-    log_index: str = "0x0",
-    timestamp: str = "0x65a00000",
-) -> dict:
-    """Build a mock eth_getLogs result entry."""
-    return {
-        "address": address,
-        "topics": [topic0] + ([topic1] if topic1 else []),
-        "data": data,
-        "blockNumber": block,
-        "transactionHash": tx,
-        "logIndex": log_index,
-        "timeStamp": timestamp,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Fixtures — in-memory SQLite database
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def db_session():
-    """Create an in-memory SQLite database with only the monitoring tables,
-    yield a session, then tear down.
-
-    We only create the WatchedProxy and ProxyUpgradeEvent tables (not Job,
-    Artifact, etc.) because the Job model uses PostgreSQL-specific JSONB
-    columns that SQLite cannot handle.
-    """
-    engine = create_engine("sqlite:///:memory:")
-
-    # SQLite needs foreign key enforcement turned on explicitly
-    @event.listens_for(engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    # Only create the tables we need for proxy monitoring tests
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-
-    session = Session(engine, expire_on_commit=False)
-    try:
-        yield session
-    finally:
-        session.close()
-        engine.dispose()
-
-
-def _add_proxy(
-    session: Session,
-    address: str,
-    chain: str = "ethereum",
-    label: str | None = None,
-    last_known_impl: str | None = None,
-    last_scanned_block: int = 0,
-    needs_polling: bool = False,
-) -> WatchedProxy:
-    """Insert a WatchedProxy row and return it."""
-    proxy = WatchedProxy(
-        id=uuid.uuid4(),
-        proxy_address=address,
-        chain=chain,
-        label=label,
-        last_known_implementation=last_known_impl,
-        last_scanned_block=last_scanned_block,
-        needs_polling=needs_polling,
-    )
-    session.add(proxy)
-    session.commit()
-    return proxy
 
 
 # ---------------------------------------------------------------------------
