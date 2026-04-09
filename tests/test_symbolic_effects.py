@@ -9,14 +9,11 @@ Every test uses fully randomized names to ensure zero name dependence.
 Tests are grouped by the security question they answer.
 """
 
-import json
 import random
 import string
 import sys
 import tempfile
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -31,7 +28,7 @@ def _rand(n: int = 8) -> str:
     return "".join(random.choices(string.ascii_lowercase, k=n))
 
 
-def _analyze(source: str, name: str = "Target") -> dict:
+def _analyze(source: str, name: str = "Target"):
     with tempfile.TemporaryDirectory(prefix="psat_test_sym_") as tmp:
         p = Path(tmp) / f"{name}.sol"
         p.write_text(source)
@@ -43,7 +40,7 @@ def _analyze(source: str, name: str = "Target") -> dict:
         return _detect_access_control(subject, Path(tmp), pg)
 
 
-def _labels(ac: dict, fn_name: str) -> set[str]:
+def _labels(ac, fn_name: str) -> set[str]:
     for pf in ac.get("privileged_functions", []):
         if pf["function"].split("(")[0] == fn_name:
             return set(pf.get("effect_labels", []))
@@ -221,7 +218,6 @@ contract Target {{
 def test_q3_internal_mint_random_names():
     """Internal mint with random function names."""
     fn = _rand()
-    mint_internal = f"_{_rand()}"
     # We need the internal to actually be named _mint or mint for current detection
     # This tests whether random internal names work
     source = f"""
@@ -402,7 +398,6 @@ contract Target {{
 # =========================================================================
 
 
-
 def test_q6_random_authority_var():
     """Random variable stores authority contract, called in modifier for auth checks."""
     auth_var = f"_{_rand()}"
@@ -424,7 +419,6 @@ contract Target {{
 """
     ac = _analyze(source)
     assert "authority_update" in _labels(ac, set_fn)
-
 
 
 def test_q6_random_hook_var():

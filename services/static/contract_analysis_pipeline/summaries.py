@@ -247,12 +247,12 @@ def _effect_targets(function, graph_entry: dict | None, effects: list[str]) -> l
 
 # Known ERC20 function selectors (decimal form as Slither represents them)
 _KNOWN_SELECTORS: dict[int, str] = {
-    0xA9059CBB: "asset_send",     # transfer(address,uint256)
-    0x23B872DD: "asset_pull",     # transferFrom(address,address,uint256)
-    0x40C10F19: "mint",           # mint(address,uint256)
-    0x42966C68: "burn",           # burn(uint256)
-    0x9DC29FAC: "burn",           # burn(address,uint256)
-    0x79CC6790: "burn",           # burnFrom(address,uint256)
+    0xA9059CBB: "asset_send",  # transfer(address,uint256)
+    0x23B872DD: "asset_pull",  # transferFrom(address,address,uint256)
+    0x40C10F19: "mint",  # mint(address,uint256)
+    0x42966C68: "burn",  # burn(uint256)
+    0x9DC29FAC: "burn",  # burn(address,uint256)
+    0x79CC6790: "burn",  # burnFrom(address,uint256)
 }
 
 
@@ -347,13 +347,11 @@ def _writes_pause_like_bool(function) -> bool:
     """Structural pause detection: does this function write a bool state var
     that a modifier reads, and that modifier gates other functions?"""
     contract = function.contract
-    written_bools = {v for v in function.all_state_variables_written()
-                     if str(getattr(v, "type", "")) == "bool"}
+    written_bools = {v for v in function.all_state_variables_written() if str(getattr(v, "type", "")) == "bool"}
     if not written_bools:
         return False
     for modifier in contract.modifiers:
-        mod_bools = {v for v in modifier.all_state_variables_read()
-                     if str(getattr(v, "type", "")) == "bool"}
+        mod_bools = {v for v in modifier.all_state_variables_read() if str(getattr(v, "type", "")) == "bool"}
         if not (written_bools & mod_bools):
             continue
         # This modifier reads a bool we write — check if it gates other functions
@@ -367,8 +365,7 @@ def _writes_owner_like_address(function) -> bool:
     """Structural ownership detection: does this function write an address state var
     that a modifier compares against msg.sender?"""
     contract = function.contract
-    written_addrs = {v for v in function.all_state_variables_written()
-                     if str(getattr(v, "type", "")) == "address"}
+    written_addrs = {v for v in function.all_state_variables_written() if str(getattr(v, "type", "")) == "address"}
     if not written_addrs:
         return False
     written_names = {getattr(v, "name", "").lower() for v in written_addrs}
@@ -415,10 +412,7 @@ def _writes_hook_reference(function) -> bool:
         if fn == function or fn.is_constructor:
             continue
         # Does this function write to a mapping? (balance-changing function)
-        writes_mapping = any(
-            "mapping" in str(getattr(v, "type", ""))
-            for v in fn.all_state_variables_written()
-        )
+        writes_mapping = any("mapping" in str(getattr(v, "type", "")) for v in fn.all_state_variables_written())
         if not writes_mapping:
             continue
         # Does it call a state var that our function writes?
@@ -451,7 +445,7 @@ def _detect_encoded_selectors(function) -> set[str]:
                 paren_start = ir_str.rfind("(")
                 if paren_start < 0:
                     continue
-                args = ir_str[paren_start + 1:].rstrip(")")
+                args = ir_str[paren_start + 1 :].rstrip(")")
                 first_arg = args.split(",")[0].strip()
                 try:
                     selector_val = int(first_arg)
@@ -611,13 +605,15 @@ def _extract_value_flows(function) -> list[dict]:
 
         direction = _TRANSFER_METHODS.get(called_fn.lower())
         if direction:
-            flows.append({
-                "direction": direction,
-                "token_var": var_name,
-                "token_type": var_type or None,
-                "method": called_fn,
-                "is_parameter": var_name.lower() in param_names,
-            })
+            flows.append(
+                {
+                    "direction": direction,
+                    "token_var": var_name,
+                    "token_type": var_type or None,
+                    "method": called_fn,
+                    "is_parameter": var_name.lower() in param_names,
+                }
+            )
 
     # Low-level calls with value: ETH transfer
     visited: set[int] = set()
@@ -631,13 +627,15 @@ def _extract_value_flows(function) -> list[dict]:
             for ir in node.irs:
                 ir_str = str(ir)
                 if "LOW_LEVEL_CALL" in ir_str and "value:" in ir_str:
-                    flows.append({
-                        "direction": "eth_out",
-                        "token_var": None,
-                        "token_type": "ETH",
-                        "method": "call{value}",
-                        "is_parameter": False,
-                    })
+                    flows.append(
+                        {
+                            "direction": "eth_out",
+                            "token_var": None,
+                            "token_type": "ETH",
+                            "method": "call{value}",
+                            "is_parameter": False,
+                        }
+                    )
                     return
         for call in _call_or_value(fn, "all_internal_calls"):
             callee = getattr(call, "function", call) if not callable(call) else call

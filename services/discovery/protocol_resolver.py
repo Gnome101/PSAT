@@ -26,7 +26,7 @@ def _fetch_protocols() -> list[dict]:
     data = resp.json()
     data.sort(key=lambda p: p.get("tvl") or 0, reverse=True)
     _protocols_cache = data
-    return _protocols_cache
+    return data
 
 
 def _normalize(s: str) -> str:
@@ -101,7 +101,10 @@ def _match_protocol(name: str, protocols: list[dict]) -> dict | None:
     if best_protocol and best_score >= _SIMILARITY_THRESHOLD:
         logger.info(
             "Fuzzy matched '%s' → '%s' (slug=%s, score=%.2f)",
-            name, best_protocol.get("name"), best_protocol.get("slug"), best_score,
+            name,
+            best_protocol.get("name"),
+            best_protocol.get("slug"),
+            best_score,
         )
         return best_protocol
 
@@ -132,6 +135,8 @@ def resolve_protocol(name: str) -> dict:
     if len(siblings) > 1:
         logger.info(
             "Resolved '%s' → %s (%d sibling protocols)",
-            name, match.get("slug"), len(siblings),
+            name,
+            match.get("slug"),
+            len(siblings),
         )
     return result

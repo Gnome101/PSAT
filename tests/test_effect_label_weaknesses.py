@@ -9,13 +9,10 @@ Tests that currently FAIL (labels are missed) are marked with
 ``pytest.mark.xfail`` — once we fix the detection, we flip them to pass.
 """
 
-import json
 import sys
 import tempfile
 import textwrap
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -25,9 +22,6 @@ from services.static.contract_analysis_pipeline.graph import build_permission_gr
 from services.static.contract_analysis_pipeline.shared import _select_subject_contract
 from services.static.contract_analysis_pipeline.summaries import (
     _detect_access_control,
-    _effect_labels,
-    _effect_targets,
-    _internal_call_names,
 )
 
 
@@ -77,7 +71,6 @@ def _all_labels(analysis: dict) -> dict[str, set[str]]:
 # =========================================================================
 
 
-
 def test_nonstandard_impl_slot_name():
     source = textwrap.dedent("""\
         // SPDX-License-Identifier: MIT
@@ -111,9 +104,7 @@ def test_nonstandard_impl_slot_name():
     """)
     analysis = _scaffold_and_analyze(source)
     labels = _get_function_labels(analysis, "setLogic")
-    assert "implementation_update" in labels, (
-        f"Expected implementation_update for setLogic, got: {labels}"
-    )
+    assert "implementation_update" in labels, f"Expected implementation_update for setLogic, got: {labels}"
 
 
 # =========================================================================
@@ -121,7 +112,6 @@ def test_nonstandard_impl_slot_name():
 # The heuristic checks for "paused", "_paused", "live", "_live".
 # If a contract uses "stopped" or "active", it's missed.
 # =========================================================================
-
 
 
 def test_nonstandard_pause_var_name():
@@ -159,12 +149,8 @@ def test_nonstandard_pause_var_name():
     analysis = _scaffold_and_analyze(source)
     labels_stop = _get_function_labels(analysis, "emergencyStop")
     labels_resume = _get_function_labels(analysis, "resume")
-    assert "pause_toggle" in labels_stop, (
-        f"Expected pause_toggle for emergencyStop, got: {labels_stop}"
-    )
-    assert "pause_toggle" in labels_resume, (
-        f"Expected pause_toggle for resume, got: {labels_resume}"
-    )
+    assert "pause_toggle" in labels_stop, f"Expected pause_toggle for emergencyStop, got: {labels_stop}"
+    assert "pause_toggle" in labels_resume, f"Expected pause_toggle for resume, got: {labels_resume}"
 
 
 # =========================================================================
@@ -172,7 +158,6 @@ def test_nonstandard_pause_var_name():
 # The heuristic looks for .safeTransfer / .safeTransferFrom. Raw
 # address.call{value:} or token.transfer() are not caught.
 # =========================================================================
-
 
 
 def test_raw_eth_transfer():
@@ -198,9 +183,7 @@ def test_raw_eth_transfer():
     """)
     analysis = _scaffold_and_analyze(source)
     labels = _get_function_labels(analysis, "sweep")
-    assert "asset_send" in labels, (
-        f"Expected asset_send for sweep (raw ETH transfer), got: {labels}"
-    )
+    assert "asset_send" in labels, f"Expected asset_send for sweep (raw ETH transfer), got: {labels}"
 
 
 # =========================================================================
@@ -208,7 +191,6 @@ def test_raw_eth_transfer():
 # Many contracts use IERC20(token).transfer() directly instead of
 # SafeERC20.safeTransfer(). The heuristic only matches safeTransfer.
 # =========================================================================
-
 
 
 def test_raw_erc20_transfer():
@@ -238,9 +220,7 @@ def test_raw_erc20_transfer():
     """)
     analysis = _scaffold_and_analyze(source)
     labels = _get_function_labels(analysis, "withdrawTokens")
-    assert "asset_send" in labels, (
-        f"Expected asset_send for withdrawTokens (ERC20.transfer), got: {labels}"
-    )
+    assert "asset_send" in labels, f"Expected asset_send for withdrawTokens (ERC20.transfer), got: {labels}"
 
 
 # =========================================================================
@@ -249,7 +229,6 @@ def test_raw_erc20_transfer():
 # "external_contract_call" but doesn't recognize it as minting
 # because _mint/mint are only checked as internal calls.
 # =========================================================================
-
 
 
 def test_cross_contract_mint():
@@ -277,9 +256,7 @@ def test_cross_contract_mint():
     """)
     analysis = _scaffold_and_analyze(source)
     labels = _get_function_labels(analysis, "mintRewards")
-    assert "mint" in labels, (
-        f"Expected mint for mintRewards (cross-contract), got: {labels}"
-    )
+    assert "mint" in labels, f"Expected mint for mintRewards (cross-contract), got: {labels}"
 
 
 # =========================================================================
@@ -309,9 +286,7 @@ def test_standard_ownable_transfer():
     """)
     analysis = _scaffold_and_analyze(source)
     labels = _get_function_labels(analysis, "transferOwnership")
-    assert "ownership_transfer" in labels, (
-        f"Expected ownership_transfer, got: {labels}"
-    )
+    assert "ownership_transfer" in labels, f"Expected ownership_transfer, got: {labels}"
 
 
 def test_standard_pause():

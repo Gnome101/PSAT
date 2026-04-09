@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition, SlitherFinding
-from db.queue import create_job, get_artifact, get_source_files, store_artifact
+from db.queue import create_job, get_source_files, store_artifact
 from services.discovery import (
     build_unified_dependencies,
     classify_contracts,
@@ -325,17 +325,9 @@ class StaticWorker(BaseWorker):
         admin = classification.get("admin")
         facets = classification.get("facets")
 
-        flags = {
-            "is_proxy": True,
-            "classification_type": classification_type,
-            "proxy_type": proxy_type,
-            "implementation": impl_address,
-            "beacon": beacon,
-            "admin": admin,
-            "facets": facets,
-        }
         # Update contracts table with proxy info
         from sqlalchemy import select as sa_select
+
         contract_row = session.execute(
             sa_select(Contract).where(Contract.job_id == job.id).limit(1)
         ).scalar_one_or_none()
@@ -671,21 +663,22 @@ class StaticWorker(BaseWorker):
 
             # Write to slither_findings table
             from sqlalchemy import select as sa_select
+
             contract_row = session.execute(
                 sa_select(Contract).where(Contract.job_id == job.id).limit(1)
             ).scalar_one_or_none()
             if contract_row:
-                session.query(SlitherFinding).filter(
-                    SlitherFinding.contract_id == contract_row.id
-                ).delete()
+                session.query(SlitherFinding).filter(SlitherFinding.contract_id == contract_row.id).delete()
                 for finding in slither_data.get("results", {}).get("detectors", []):
-                    session.add(SlitherFinding(
-                        contract_id=contract_row.id,
-                        detector=finding.get("check"),
-                        severity=finding.get("impact"),
-                        description=finding.get("description"),
-                        elements=finding.get("elements"),
-                    ))
+                    session.add(
+                        SlitherFinding(
+                            contract_id=contract_row.id,
+                            detector=finding.get("check"),
+                            severity=finding.get("impact"),
+                            description=finding.get("description"),
+                            elements=finding.get("elements"),
+                        )
+                    )
                 session.commit()
 
         report_path = project_dir / "analysis_report.txt"
@@ -748,45 +741,47 @@ class StaticWorker(BaseWorker):
             session.delete(existing_summary)
             session.flush()
 
-        session.add(ContractSummary(
-            contract_id=contract_row.id,
-            control_model=summary.get("control_model"),
-            is_upgradeable=summary.get("is_upgradeable"),
-            is_pausable=summary.get("is_pausable"),
-            has_timelock=summary.get("has_timelock"),
-            risk_level=summary.get("static_risk_level"),
-            is_factory=summary.get("is_factory"),
-            is_nft=summary.get("is_nft"),
-            standards=summary.get("standards", []),
-            source_verified=subject.get("source_verified"),
-        ))
+        session.add(
+            ContractSummary(
+                contract_id=contract_row.id,
+                control_model=summary.get("control_model"),
+                is_upgradeable=summary.get("is_upgradeable"),
+                is_pausable=summary.get("is_pausable"),
+                has_timelock=summary.get("has_timelock"),
+                risk_level=summary.get("static_risk_level"),
+                is_factory=summary.get("is_factory"),
+                is_nft=summary.get("is_nft"),
+                standards=summary.get("standards", []),
+                source_verified=subject.get("source_verified"),
+            )
+        )
 
         # Write privileged_functions
-        session.query(PrivilegedFunction).filter(
-            PrivilegedFunction.contract_id == contract_row.id
-        ).delete()
+        session.query(PrivilegedFunction).filter(PrivilegedFunction.contract_id == contract_row.id).delete()
         ac = analysis.get("access_control", {})
         for pf in ac.get("privileged_functions", []):
-            session.add(PrivilegedFunction(
-                contract_id=contract_row.id,
-                function_name=pf.get("function", ""),
-                selector=pf.get("selector"),
-                abi_signature=pf.get("abi_signature"),
-                effect_labels=pf.get("effect_labels", []),
-                action_summary=pf.get("action_summary"),
-                authority_public=False,
-            ))
+            session.add(
+                PrivilegedFunction(
+                    contract_id=contract_row.id,
+                    function_name=pf.get("function", ""),
+                    selector=pf.get("selector"),
+                    abi_signature=pf.get("abi_signature"),
+                    effect_labels=pf.get("effect_labels", []),
+                    action_summary=pf.get("action_summary"),
+                    authority_public=False,
+                )
+            )
 
         # Write role_definitions
-        session.query(RoleDefinition).filter(
-            RoleDefinition.contract_id == contract_row.id
-        ).delete()
+        session.query(RoleDefinition).filter(RoleDefinition.contract_id == contract_row.id).delete()
         for rd in ac.get("role_definitions", []):
-            session.add(RoleDefinition(
-                contract_id=contract_row.id,
-                role_name=rd.get("role", ""),
-                declared_in=rd.get("declared_in"),
-            ))
+            session.add(
+                RoleDefinition(
+                    contract_id=contract_row.id,
+                    role_name=rd.get("role", ""),
+                    declared_in=rd.get("declared_in"),
+                )
+            )
 
         session.commit()
 

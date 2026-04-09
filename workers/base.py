@@ -9,9 +9,8 @@ import time
 import traceback
 import uuid
 
-from sqlalchemy.orm import Session
-
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage, JobStatus, SessionLocal
 from db.queue import advance_job, claim_job, fail_job, update_job_detail
@@ -54,17 +53,24 @@ class BaseWorker:
         from datetime import datetime, timedelta, timezone
 
         cutoff = datetime.now(timezone.utc) - timedelta(seconds=STALE_JOB_TIMEOUT)
-        stale = session.execute(
-            select(Job).where(
-                Job.stage == self.stage,
-                Job.status == JobStatus.processing,
-                Job.updated_at < cutoff,
+        stale = (
+            session.execute(
+                select(Job).where(
+                    Job.stage == self.stage,
+                    Job.status == JobStatus.processing,
+                    Job.updated_at < cutoff,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for job in stale:
             logger.warning(
                 "Worker %s: requeuing stale job %s (%s) — stuck since %s",
-                self.worker_id, job.id, job.name or job.address, job.updated_at.isoformat(),
+                self.worker_id,
+                job.id,
+                job.name or job.address,
+                job.updated_at.isoformat(),
             )
             job.status = JobStatus.queued
             job.worker_id = None

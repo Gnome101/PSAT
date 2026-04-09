@@ -122,7 +122,14 @@ class DiscoveryWorker(BaseWorker):
         complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
         raise JobHandledDirectly()
 
-    def _spawn_parallel_discovery(self, session: Session, job: Job, company: str, request: dict, root_job_id: str) -> None:
+    def _spawn_parallel_discovery(
+        self,
+        session: Session,
+        job: Job,
+        company: str,
+        request: dict,
+        root_job_id: str,
+    ) -> None:
         """Spawn DApp crawl and DefiLlama scan jobs if we can resolve the protocol."""
         from services.discovery.protocol_resolver import resolve_protocol
 
@@ -133,7 +140,10 @@ class DiscoveryWorker(BaseWorker):
 
         logger.info(
             "Job %s: resolved '%s' → slug=%s url=%s",
-            job.id, company, protocol.get("slug"), protocol.get("url"),
+            job.id,
+            company,
+            protocol.get("slug"),
+            protocol.get("url"),
         )
 
         # Spawn DefiLlama adapter scans — one per sub-protocol
@@ -211,7 +221,6 @@ class DiscoveryWorker(BaseWorker):
         )
         session.merge(contract)
         session.commit()
-
 
         if not job.name:
             job.name = f"{contract_name}_{address[2:10]}"

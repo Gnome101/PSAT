@@ -10,7 +10,7 @@ import json
 import logging
 import time
 
-from playwright.async_api import BrowserContext, Page, async_playwright
+from playwright.async_api import BrowserContext, Page, async_playwright  # pyright: ignore[reportMissingImports]
 
 from services.crawlers.dapp.inject import build_provider_script
 from services.crawlers.dapp.interaction_log import InteractionLog

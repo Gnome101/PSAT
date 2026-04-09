@@ -9,8 +9,6 @@ import string
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.static.cross_contract import build_callee_effect_map, enrich_cross_contract_effects
@@ -51,7 +49,7 @@ def test_basic_cross_contract_mint():
         "access_control": {
             "privileged_functions": [
                 {
-                    "function": f"doStuff(address,uint256)",
+                    "function": "doStuff(address,uint256)",
                     "effect_labels": ["external_contract_call"],
                     "effect_targets": [f"token.{mint_fn}"],
                 }
@@ -166,15 +164,17 @@ def test_no_enrichment_when_callee_not_analyzed():
 
 def test_no_enrichment_when_address_unknown():
     """If the state variable's address isn't resolved, nothing happens."""
-    callee_map = build_callee_effect_map({
-        TOKEN_ADDRESS: {
-            "access_control": {
-                "privileged_functions": [
-                    {"function": "mint(address,uint256)", "effect_labels": ["mint"], "effect_targets": []}
-                ]
+    callee_map = build_callee_effect_map(
+        {
+            TOKEN_ADDRESS: {
+                "access_control": {
+                    "privileged_functions": [
+                        {"function": "mint(address,uint256)", "effect_labels": ["mint"], "effect_targets": []}
+                    ]
+                }
             }
         }
-    })
+    )
 
     caller_analysis = {
         "access_control": {
@@ -195,15 +195,17 @@ def test_no_enrichment_when_address_unknown():
 
 def test_no_duplicate_labels():
     """If the caller already has the label, don't add it again."""
-    callee_map = build_callee_effect_map({
-        TOKEN_ADDRESS: {
-            "access_control": {
-                "privileged_functions": [
-                    {"function": "transfer(address,uint256)", "effect_labels": ["asset_send"], "effect_targets": []}
-                ]
+    callee_map = build_callee_effect_map(
+        {
+            TOKEN_ADDRESS: {
+                "access_control": {
+                    "privileged_functions": [
+                        {"function": "transfer(address,uint256)", "effect_labels": ["asset_send"], "effect_targets": []}
+                    ]
+                }
             }
         }
-    })
+    )
 
     caller_analysis = {
         "access_control": {
@@ -226,15 +228,17 @@ def test_external_contract_controller_id_format():
     """Controller IDs can be 'external_contract:xxx' not just 'state_variable:xxx'."""
     fn = _rand()
 
-    callee_map = build_callee_effect_map({
-        TOKEN_ADDRESS: {
-            "access_control": {
-                "privileged_functions": [
-                    {"function": f"{fn}(uint256)", "effect_labels": ["pause_toggle"], "effect_targets": []}
-                ]
+    callee_map = build_callee_effect_map(
+        {
+            TOKEN_ADDRESS: {
+                "access_control": {
+                    "privileged_functions": [
+                        {"function": f"{fn}(uint256)", "effect_labels": ["pause_toggle"], "effect_targets": []}
+                    ]
+                }
             }
         }
-    })
+    )
 
     caller_analysis = {
         "access_control": {

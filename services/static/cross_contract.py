@@ -138,7 +138,10 @@ def enrich_cross_contract_effects(
                         new_labels.add(label)
                         logger.info(
                             "Cross-contract: %s calls %s.%s → propagating '%s'",
-                            fn_sig.split("(")[0], var_name, called_fn, label,
+                            fn_sig.split("(")[0],
+                            var_name,
+                            called_fn,
+                            label,
                         )
 
         if new_labels:

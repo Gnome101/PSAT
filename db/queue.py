@@ -99,12 +99,15 @@ def count_analysis_children(session: Session, root_job_id: str) -> int:
     """Count analysis jobs (jobs with an address) linked to a root job."""
     from sqlalchemy import func
 
-    count = session.execute(
-        select(func.count(Job.id)).where(
-            Job.address.isnot(None),
-            Job.request["root_job_id"].as_string() == root_job_id,
-        )
-    ).scalar() or 0
+    count = (
+        session.execute(
+            select(func.count(Job.id)).where(
+                Job.address.isnot(None),
+                Job.request["root_job_id"].as_string() == root_job_id,
+            )
+        ).scalar()
+        or 0
+    )
     return count
 
 

@@ -204,7 +204,11 @@ class Source(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     protocol: Mapped[Protocol] = relationship("Protocol", back_populates="sources")
-    documents: Mapped[list["Document"]] = relationship("Document", back_populates="source", cascade="all, delete-orphan")
+    documents: Mapped[list["Document"]] = relationship(
+        "Document",
+        back_populates="source",
+        cascade="all, delete-orphan",
+    )
 
 
 class Document(Base):
@@ -358,9 +362,7 @@ class PrivilegedFunction(Base):
     __tablename__ = "privileged_functions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     function_name: Mapped[str] = mapped_column(String(255), nullable=False)
     selector: Mapped[str | None] = mapped_column(String(10), nullable=True)
     abi_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -375,9 +377,7 @@ class RoleDefinition(Base):
     __tablename__ = "role_definitions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     role_name: Mapped[str] = mapped_column(String(255), nullable=False)
     declared_in: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -388,9 +388,7 @@ class SlitherFinding(Base):
     __tablename__ = "slither_findings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     detector: Mapped[str | None] = mapped_column(String(255), nullable=True)
     severity: Mapped[str | None] = mapped_column(String(20), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -403,9 +401,7 @@ class ControllerValue(Base):
     __tablename__ = "controller_values"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     controller_id: Mapped[str] = mapped_column(String(255), nullable=False)
     value: Mapped[str | None] = mapped_column(String(66), nullable=True)
     resolved_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -420,9 +416,7 @@ class ControlGraphNode(Base):
     __tablename__ = "control_graph_nodes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     address: Mapped[str] = mapped_column(String(42), nullable=False)
     node_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     resolved_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -438,9 +432,7 @@ class ControlGraphEdge(Base):
     __tablename__ = "control_graph_edges"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     from_node_id: Mapped[str] = mapped_column(String(255), nullable=False)
     to_node_id: Mapped[str] = mapped_column(String(255), nullable=False)
     relation: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -454,9 +446,7 @@ class UpgradeEvent(Base):
     __tablename__ = "upgrade_events"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     proxy_address: Mapped[str] = mapped_column(String(42), nullable=False)
     old_impl: Mapped[str | None] = mapped_column(String(42), nullable=True)
     new_impl: Mapped[str | None] = mapped_column(String(42), nullable=True)
@@ -471,9 +461,7 @@ class EffectiveFunction(Base):
     __tablename__ = "effective_functions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     function_name: Mapped[str] = mapped_column(String(255), nullable=False)
     selector: Mapped[str | None] = mapped_column(String(10), nullable=True)
     abi_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -506,9 +494,7 @@ class PrincipalLabel(Base):
     __tablename__ = "principal_labels"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     address: Mapped[str] = mapped_column(String(42), nullable=False)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     resolved_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -520,9 +506,7 @@ class ContractDependency(Base):
     __tablename__ = "contract_dependencies"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     dependency_address: Mapped[str] = mapped_column(String(42), nullable=False)
     dependency_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     relationship_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -534,9 +518,7 @@ class ContractBalance(Base):
     __tablename__ = "contract_balances"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     token_address: Mapped[str | None] = mapped_column(String(42), nullable=True)  # NULL = native ETH
     token_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     token_symbol: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -555,7 +537,7 @@ class ContractBalance(Base):
 # Junction tables for findings/claims ↔ evidence
 # ---------------------------------------------------------------------------
 
-from sqlalchemy import Table, Column  # noqa: E402
+from sqlalchemy import Column, Table  # noqa: E402
 
 finding_evidence = Table(
     "finding_evidence",
@@ -584,17 +566,24 @@ def create_tables() -> None:
     """Create all tables (idempotent). Call this instead of alembic migrations."""
     # Ensure enum types exist before creating tables
     from sqlalchemy import text
+
     with engine.connect() as conn:
         for enum_val in ("queued", "processing", "completed", "failed"):
-            conn.execute(text(
-                f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'jobstatus') "
-                f"THEN CREATE TYPE jobstatus AS ENUM ('queued','processing','completed','failed'); END IF; END $$;"
-            ))
+            conn.execute(
+                text(
+                    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'jobstatus') "
+                    "THEN CREATE TYPE jobstatus AS ENUM ('queued','processing','completed','failed'); END IF; END $$;"
+                )
+            )
         for enum_val in ("discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy", "done"):
-            conn.execute(text(
-                f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'jobstage') "
-                f"THEN CREATE TYPE jobstage AS ENUM ('discovery','dapp_crawl','defillama_scan','static','resolution','policy','done'); END IF; END $$;"
-            ))
+            conn.execute(
+                text(
+                    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'jobstage') "
+                    "THEN CREATE TYPE jobstage AS ENUM ("
+                    "'discovery','dapp_crawl','defillama_scan','static','resolution','policy','done'"
+                    "); END IF; END $$;"
+                )
+            )
         conn.commit()
     Base.metadata.create_all(engine)
 

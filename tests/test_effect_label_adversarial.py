@@ -5,7 +5,6 @@ These test whether the detection works based on *what the code does*
 (AST structure, data flow, IR) rather than *what things are called*.
 """
 
-import json
 import random
 import string
 import sys
@@ -88,7 +87,6 @@ contract Target {{
 # =========================================================================
 
 
-
 def test_random_pause_variable():
     var_name = f"_{_rand()}"
     pause_fn = _rand()
@@ -120,7 +118,6 @@ contract Target {{
 #    Malicious dev uses sstore to a hardcoded slot that the fallback
 #    reads via sload and delegatecalls to.
 # =========================================================================
-
 
 
 def test_raw_assembly_storage_slot_impl():
@@ -203,9 +200,7 @@ contract Target {{
 """
     analysis = _scaffold_and_analyze(source)
     labels = _get_function_labels(analysis, fn_name)
-    assert "mint" in labels, (
-        f"Cross-contract mint fn '{fn_name}': expected mint, got {labels}"
-    )
+    assert "mint" in labels, f"Cross-contract mint fn '{fn_name}': expected mint, got {labels}"
 
 
 # =========================================================================
@@ -239,9 +234,7 @@ contract Target {{
 """
     analysis = _scaffold_and_analyze(source)
     labels = _get_function_labels(analysis, fn_name)
-    assert "mint" in labels, (
-        f"Randomized interface mint '{mint_name}', fn '{fn_name}': expected mint, got {labels}"
-    )
+    assert "mint" in labels, f"Randomized interface mint '{mint_name}', fn '{fn_name}': expected mint, got {labels}"
 
 
 # =========================================================================
@@ -283,7 +276,6 @@ contract Target {{
 # =========================================================================
 
 
-
 def test_erc20_transfer_via_encode_selector():
     fn_name = _rand()
     source = f"""
@@ -301,9 +293,7 @@ contract Target {{
 """
     analysis = _scaffold_and_analyze(source)
     labels = _get_function_labels(analysis, fn_name)
-    assert "asset_send" in labels, (
-        f"ERC20 via encodeWithSelector fn '{fn_name}': expected asset_send, got {labels}"
-    )
+    assert "asset_send" in labels, f"ERC20 via encodeWithSelector fn '{fn_name}': expected asset_send, got {labels}"
 
 
 # =========================================================================
@@ -311,7 +301,6 @@ contract Target {{
 #    The "owner" variable has a random name, so the target-name heuristic misses it.
 #    But Slither should still detect the ownership pattern via the modifier.
 # =========================================================================
-
 
 
 def test_random_owner_variable_name():

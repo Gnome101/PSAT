@@ -9,9 +9,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from sqlalchemy.orm import Session
-
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from db.models import Contract, EffectiveFunction, FunctionPrincipal, Job, JobStage, JobStatus, PrincipalLabel
 from db.queue import get_artifact
@@ -109,9 +108,7 @@ class PolicyWorker(BaseWorker):
                     select(Contract).where(Contract.job_id == job.id).limit(1)
                 ).scalar_one_or_none()
                 if contract_row:
-                    session.query(EffectiveFunction).filter(
-                        EffectiveFunction.contract_id == contract_row.id
-                    ).delete()
+                    session.query(EffectiveFunction).filter(EffectiveFunction.contract_id == contract_row.id).delete()
                     for fn in ep_data.get("functions", []):
                         ef = EffectiveFunction(
                             contract_id=contract_row.id,
@@ -127,33 +124,39 @@ class PolicyWorker(BaseWorker):
                         # Add principals from all sources
                         do = fn.get("direct_owner")
                         if isinstance(do, dict) and do.get("address"):
-                            session.add(FunctionPrincipal(
-                                function_id=ef.id,
-                                address=do["address"].lower(),
-                                resolved_type=do.get("resolved_type"),
-                                origin="direct owner",
-                                details=do.get("details"),
-                            ))
+                            session.add(
+                                FunctionPrincipal(
+                                    function_id=ef.id,
+                                    address=do["address"].lower(),
+                                    resolved_type=do.get("resolved_type"),
+                                    origin="direct owner",
+                                    details=do.get("details"),
+                                )
+                            )
                         for ctrl in fn.get("controllers") or []:
                             for p in ctrl.get("principals") or []:
                                 if isinstance(p, dict) and p.get("address"):
-                                    session.add(FunctionPrincipal(
-                                        function_id=ef.id,
-                                        address=p["address"].lower(),
-                                        resolved_type=p.get("resolved_type"),
-                                        origin=ctrl.get("label") or ctrl.get("controller_id", "controller"),
-                                        details=p.get("details"),
-                                    ))
+                                    session.add(
+                                        FunctionPrincipal(
+                                            function_id=ef.id,
+                                            address=p["address"].lower(),
+                                            resolved_type=p.get("resolved_type"),
+                                            origin=ctrl.get("label") or ctrl.get("controller_id", "controller"),
+                                            details=p.get("details"),
+                                        )
+                                    )
                         for role in fn.get("authority_roles") or []:
                             for p in role.get("principals") or []:
                                 if isinstance(p, dict) and p.get("address"):
-                                    session.add(FunctionPrincipal(
-                                        function_id=ef.id,
-                                        address=p["address"].lower(),
-                                        resolved_type=p.get("resolved_type"),
-                                        origin=f"role {role.get('role', '?')}",
-                                        details=p.get("details"),
-                                    ))
+                                    session.add(
+                                        FunctionPrincipal(
+                                            function_id=ef.id,
+                                            address=p["address"].lower(),
+                                            resolved_type=p.get("resolved_type"),
+                                            origin=f"role {role.get('role', '?')}",
+                                            details=p.get("details"),
+                                        )
+                                    )
                     session.commit()
 
                 logger.info(
@@ -195,17 +198,17 @@ class PolicyWorker(BaseWorker):
 
                 # Write to principal_labels table
                 if contract_row:
-                    session.query(PrincipalLabel).filter(
-                        PrincipalLabel.contract_id == contract_row.id
-                    ).delete()
+                    session.query(PrincipalLabel).filter(PrincipalLabel.contract_id == contract_row.id).delete()
                     for p in pl_data.get("principals", []):
                         if p.get("address"):
-                            session.add(PrincipalLabel(
-                                contract_id=contract_row.id,
-                                address=p["address"].lower(),
-                                label=p.get("label"),
-                                resolved_type=p.get("resolved_type"),
-                            ))
+                            session.add(
+                                PrincipalLabel(
+                                    contract_id=contract_row.id,
+                                    address=p["address"].lower(),
+                                    label=p.get("label"),
+                                    resolved_type=p.get("resolved_type"),
+                                )
+                            )
                     session.commit()
 
                 logger.info(
@@ -229,9 +232,7 @@ class PolicyWorker(BaseWorker):
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def _enrich_cross_contract(
-        self, session, job: Job, contract_analysis: dict, control_snapshot: dict
-    ) -> None:
+    def _enrich_cross_contract(self, session, job: Job, contract_analysis: dict, control_snapshot: dict) -> None:
         """Propagate effect labels across contract boundaries.
 
         For each external call this contract makes, look up the callee's analysis
@@ -246,9 +247,11 @@ class PolicyWorker(BaseWorker):
 
         # Collect analyses of all completed sibling contracts
         sibling_analyses: dict[str, dict] = {}
-        completed_jobs = session.execute(
-            select(Job).where(Job.status == JobStatus.completed, Job.address.isnot(None))
-        ).scalars().all()
+        completed_jobs = (
+            session.execute(select(Job).where(Job.status == JobStatus.completed, Job.address.isnot(None)))
+            .scalars()
+            .all()
+        )
 
         for sj in completed_jobs:
             if sj.id == job.id or not sj.address:
@@ -277,7 +280,8 @@ class PolicyWorker(BaseWorker):
         if enriched:
             logger.info(
                 "Job %s: cross-contract enrichment added labels: %s",
-                job.id, enriched,
+                job.id,
+                enriched,
             )
             # Update the effective_functions table with new labels
             contract_row = session.execute(

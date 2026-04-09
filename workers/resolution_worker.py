@@ -11,13 +11,18 @@ import time
 from pathlib import Path
 from typing import cast
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from sqlalchemy import select
-
 from db.models import (
-    Contract, ContractBalance, ControlGraphEdge, ControlGraphNode, ControllerValue,
-    Job, JobStage, JobStatus, UpgradeEvent,
+    Contract,
+    ContractBalance,
+    ControlGraphEdge,
+    ControlGraphNode,
+    ControllerValue,
+    Job,
+    JobStage,
+    UpgradeEvent,
 )
 from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlTrackingPlan
@@ -82,23 +87,21 @@ class ResolutionWorker(BaseWorker):
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
 
         # Write to controller_values table
-        contract_row = session.execute(
-            select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
         if contract_row:
-            session.query(ControllerValue).filter(
-                ControllerValue.contract_id == contract_row.id
-            ).delete()
+            session.query(ControllerValue).filter(ControllerValue.contract_id == contract_row.id).delete()
             for cid, cv in snapshot.get("controller_values", {}).items():
-                session.add(ControllerValue(
-                    contract_id=contract_row.id,
-                    controller_id=cid,
-                    value=cv.get("value"),
-                    resolved_type=cv.get("resolved_type"),
-                    source=cv.get("source"),
-                    block_number=snapshot.get("block_number"),
-                    details=cv.get("details"),
-                ))
+                session.add(
+                    ControllerValue(
+                        contract_id=contract_row.id,
+                        controller_id=cid,
+                        value=cv.get("value"),
+                        resolved_type=cv.get("resolved_type"),
+                        source=cv.get("source"),
+                        block_number=snapshot.get("block_number"),
+                        details=cv.get("details"),
+                    )
+                )
             session.commit()
 
         logger.info(
@@ -150,32 +153,32 @@ class ResolutionWorker(BaseWorker):
 
                 # Write to control_graph_nodes and control_graph_edges tables
                 if contract_row:
-                    session.query(ControlGraphNode).filter(
-                        ControlGraphNode.contract_id == contract_row.id
-                    ).delete()
-                    session.query(ControlGraphEdge).filter(
-                        ControlGraphEdge.contract_id == contract_row.id
-                    ).delete()
+                    session.query(ControlGraphNode).filter(ControlGraphNode.contract_id == contract_row.id).delete()
+                    session.query(ControlGraphEdge).filter(ControlGraphEdge.contract_id == contract_row.id).delete()
                     for node in resolved_graph.get("nodes", []):
-                        session.add(ControlGraphNode(
-                            contract_id=contract_row.id,
-                            address=(node.get("address") or "").lower(),
-                            node_type=node.get("node_type"),
-                            resolved_type=node.get("resolved_type"),
-                            label=node.get("label"),
-                            contract_name=node.get("contract_name"),
-                            depth=node.get("depth"),
-                            analyzed=node.get("analyzed", False),
-                        ))
+                        session.add(
+                            ControlGraphNode(
+                                contract_id=contract_row.id,
+                                address=(node.get("address") or "").lower(),
+                                node_type=node.get("node_type"),
+                                resolved_type=node.get("resolved_type"),
+                                label=node.get("label"),
+                                contract_name=node.get("contract_name"),
+                                depth=node.get("depth"),
+                                analyzed=node.get("analyzed", False),
+                            )
+                        )
                     for edge in resolved_graph.get("edges", []):
-                        session.add(ControlGraphEdge(
-                            contract_id=contract_row.id,
-                            from_node_id=edge.get("from_id", ""),
-                            to_node_id=edge.get("to_id", ""),
-                            relation=edge.get("relation"),
-                            label=edge.get("label"),
-                            source_controller_id=edge.get("source_controller_id"),
-                        ))
+                        session.add(
+                            ControlGraphEdge(
+                                contract_id=contract_row.id,
+                                from_node_id=edge.get("from_id", ""),
+                                to_node_id=edge.get("to_id", ""),
+                                relation=edge.get("relation"),
+                                label=edge.get("label"),
+                                source_controller_id=edge.get("source_controller_id"),
+                            )
+                        )
                     session.commit()
 
                 # Queue analysis jobs for contracts discovered during resolution
@@ -194,7 +197,6 @@ class ResolutionWorker(BaseWorker):
 
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-
 
     def _fetch_balances(self, session: Session, job: Job, contract_row: Contract | None) -> None:
         """Fetch ETH + token balances and store in contract_balances table."""
@@ -216,9 +218,7 @@ class ResolutionWorker(BaseWorker):
             return
 
         # Clear old balances
-        session.query(ContractBalance).filter(
-            ContractBalance.contract_id == contract_row.id
-        ).delete()
+        session.query(ContractBalance).filter(ContractBalance.contract_id == contract_row.id).delete()
 
         # Native ETH balance
         if eth_wei > 0:
@@ -229,37 +229,39 @@ class ResolutionWorker(BaseWorker):
                 eth_usd = (eth_wei / 1e18) * eth_price
             except Exception as exc:
                 logger.warning("Job %s: ETH price fetch failed: %s", job.id, exc)
-            session.add(ContractBalance(
-                contract_id=contract_row.id,
-                token_address=None,
-                token_name="Ether",
-                token_symbol="ETH",
-                decimals=18,
-                raw_balance=str(eth_wei),
-                price_usd=eth_price,
-                usd_value=round(eth_usd, 2) if eth_usd else None,
-            ))
+            session.add(
+                ContractBalance(
+                    contract_id=contract_row.id,
+                    token_address=None,
+                    token_name="Ether",
+                    token_symbol="ETH",
+                    decimals=18,
+                    raw_balance=str(eth_wei),
+                    price_usd=eth_price,
+                    usd_value=round(eth_usd, 2) if eth_usd else None,
+                )
+            )
 
         # ERC-20 token balances
         for tok in tokens:
-            session.add(ContractBalance(
-                contract_id=contract_row.id,
-                token_address=tok["token_address"],
-                token_name=tok["token_name"],
-                token_symbol=tok["token_symbol"],
-                decimals=tok["decimals"],
-                raw_balance=str(tok["balance"]),
-                price_usd=tok.get("price_usd"),
-                usd_value=tok.get("usd_value"),
-            ))
+            session.add(
+                ContractBalance(
+                    contract_id=contract_row.id,
+                    token_address=tok["token_address"],
+                    token_name=tok["token_name"],
+                    token_symbol=tok["token_symbol"],
+                    decimals=tok["decimals"],
+                    raw_balance=str(tok["balance"]),
+                    price_usd=tok.get("price_usd"),
+                    usd_value=tok.get("usd_value"),
+                )
+            )
 
         session.commit()
         total = len(tokens) + (1 if eth_wei > 0 else 0)
         logger.info("Job %s: stored %d balance(s) for %s", job.id, total, target_address)
 
-    def _queue_discovered_contracts(
-        self, session: Session, job: Job, resolved_graph: dict, rpc_url: str
-    ) -> None:
+    def _queue_discovered_contracts(self, session: Session, job: Job, resolved_graph: dict, rpc_url: str) -> None:
         """Queue analysis jobs for contracts found during resolution that have no existing job."""
         request = job.request if isinstance(job.request, dict) else {}
         parent_company = job.company
@@ -298,9 +300,7 @@ class ResolutionWorker(BaseWorker):
                 continue
 
             # Skip if a job already exists for this address
-            existing = session.execute(
-                select(Job).where(Job.address == addr).limit(1)
-            ).scalar_one_or_none()
+            existing = session.execute(select(Job).where(Job.address == addr).limit(1)).scalar_one_or_none()
             if existing:
                 continue
 
@@ -323,13 +323,17 @@ class ResolutionWorker(BaseWorker):
             queued_count += 1
             logger.info(
                 "Job %s: queued discovered contract %s (%s) as job %s",
-                job.id, contract_name, addr, child_job.id,
+                job.id,
+                contract_name,
+                addr,
+                child_job.id,
             )
 
         if queued_count:
             logger.info(
                 "Job %s: queued %d contracts discovered during resolution",
-                job.id, queued_count,
+                job.id,
+                queued_count,
             )
 
     def _run_upgrade_history(self, session: Session, job: Job, project_dir: Path) -> None:
@@ -352,18 +356,18 @@ class ResolutionWorker(BaseWorker):
                     select(Contract).where(Contract.job_id == job.id).limit(1)
                 ).scalar_one_or_none()
                 if contract_row and isinstance(uh_data, dict):
-                    session.query(UpgradeEvent).filter(
-                        UpgradeEvent.contract_id == contract_row.id
-                    ).delete()
+                    session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == contract_row.id).delete()
                     for evt in uh_data.get("upgrades", []):
-                        session.add(UpgradeEvent(
-                            contract_id=contract_row.id,
-                            proxy_address=evt.get("proxy", ""),
-                            old_impl=evt.get("old_implementation"),
-                            new_impl=evt.get("new_implementation"),
-                            block_number=evt.get("block_number"),
-                            tx_hash=evt.get("tx_hash"),
-                        ))
+                        session.add(
+                            UpgradeEvent(
+                                contract_id=contract_row.id,
+                                proxy_address=evt.get("proxy", ""),
+                                old_impl=evt.get("old_implementation"),
+                                new_impl=evt.get("new_implementation"),
+                                block_number=evt.get("block_number"),
+                                tx_hash=evt.get("tx_hash"),
+                            )
+                        )
                     session.commit()
 
                 logger.info(
