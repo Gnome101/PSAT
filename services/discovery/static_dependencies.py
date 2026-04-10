@@ -5,12 +5,16 @@ import argparse
 import json
 import os
 import time
+import sys
+import hashlib
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+
+from db.db_manager import DatabaseManager
 
 EMPTY_CODE_VALUES = {"0x", "0x0"}
 RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
@@ -163,6 +167,7 @@ def discover_dependencies(
     stack = [root]
     seen = {root}
     deps = set()
+    parent_map: dict[str, str] = {}
 
     while stack:
         current = stack.pop()
@@ -173,9 +178,10 @@ def discover_dependencies(
             seen.add(candidate)
             if has_deployed_code(cached_get_code(candidate)):
                 deps.add(candidate)
+                parent_map[candidate] = current
                 stack.append(candidate)
 
-    return sorted(deps)
+    return sorted(deps), code_cache, parent_map
 
 
 def find_dependencies(address: str, rpc_url: str | None = None, code_cache: dict[str, str] | None = None) -> dict:
@@ -205,11 +211,119 @@ def find_dependencies(address: str, rpc_url: str | None = None, code_cache: dict
         output["network"] = network
     return output
 
+def persist_static_results(db: DatabaseManager, protocol_id: int, results: dict,) -> dict:
+    """
+    Persist the output of find_dependencies() into the PSAT database and 
+    returns a summary dict with inserted row counts and IDs.
+    """
+    from typing import Any
+
+    summary: dict[str, Any] = {
+        "protocol_id": protocol_id,
+        "target_contract_id": None,
+        "source_ids": [],
+        "document_ids": [],
+        "dependency_contract_ids": [],
+        "claim_ids": [],
+        "evidence_ids": [],
+        "links_created": 0,
+    }
+
+    chain = results.get("chain", results.get("network", "unknown"))
+    code_cache: dict[str, str] = results.get("code_cache", {})
+    parent_map: dict[str, str] = results.get("parent_map", {})
+
+    target_contract = db.insert("contract", {
+        "protocol_id": protocol_id,
+        "address": results["address"],
+        "chain": chain,
+        "is_proxy": False,
+    })
+    summary["target_contract_id"] = target_contract["id"]
+    db.add_chain(protocol_id, chain)
+
+    rpc_source = db.insert("source", {
+        "protocol_id": protocol_id,
+        "type": "rpc_getcode",
+        "url": results["rpc"],
+        "authority_score": 95.0,
+    })
+    summary["source_ids"].append(rpc_source["id"])
+
+    address_doc_map: dict[str, int] = {}
+
+    for address, bytecode in code_cache.items():
+        if not has_deployed_code(bytecode):
+            continue
+
+        content_hash = hashlib.sha256(bytecode.encode()).hexdigest()
+        doc = db.insert("document", {
+            "source_id": rpc_source["id"],
+            "format": "evm_bytecode",
+            "content_hash": f"sha256:{content_hash}",
+            "storage_path": f"bytecode/{chain}/{address}.bin",
+        })
+        address_doc_map[address] = doc["id"]
+        summary["document_ids"].append(doc["id"])
+
+    for dep_address in results.get("dependencies", []):
+        dep_contract = db.insert("contract", {
+            "protocol_id": protocol_id,
+            "address": dep_address,
+            "chain": chain,
+            "is_proxy": False,
+        })
+        summary["dependency_contract_ids"].append(dep_contract["id"])
+
+        parent_address = parent_map.get(dep_address, results["address"])
+
+        evidence = db.insert("evidence", {
+            "reference": f"PUSH20 {dep_address} in bytecode of {parent_address}",
+            "type": "push20",
+            "checksum": hashlib.sha256(
+                f"{parent_address}:{dep_address}".encode()
+            ).hexdigest(),
+        })
+        summary["evidence_ids"].append(evidence["id"])
+
+        doc_id = address_doc_map.get(parent_address)
+        if doc_id is None and summary["document_ids"]:
+            doc_id = summary["document_ids"][0]
+
+        if doc_id is not None:
+            claim = db.insert("claims", {
+                "document_id": doc_id,
+                "category": "static_dependency",
+                "value": json.dumps({
+                    "target": results["address"],
+                    "dependency": dep_address,
+                    "found_in": parent_address,
+                    "method": "push20_extraction",
+                }),
+                "confidence": 1.0,
+            })
+            summary["claim_ids"].append(claim["id"])
+
+            db.link_claim_evidence(claim["id"], evidence["id"])
+            summary["links_created"] += 1
+
+    return summary
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("address")
     parser.add_argument("--rpc")
+
+    parser.add_argument("--save", action="store_true", default=False, help="Persist results to the PSAT database")
+    parser.add_argument("--protocol-id", type=int, default=None, help="Protocol ID to associate results with (required with --save)")
+    parser.add_argument("--db-name", default="psat_db", help="Database name")
+    parser.add_argument("--db-user", default="postgres", help="Database user")
+    parser.add_argument("--db-password", default="postgres", help="Database password")
+    parser.add_argument("--db-host", default="localhost", help="Database host")
+    parser.add_argument("--db-port", type=int, default=5432, help="Database port")
+
+    parser.add_argument("--db-url", default=None, help="PostgreSQL connection string (overrides individual --db-* args)")
+
     args = parser.parse_args()
 
     try:
@@ -217,7 +331,53 @@ def main():
     except RuntimeError as exc:
         raise SystemExit(str(exc)) from exc
 
-    print(json.dumps(output))
+    printable = {k: v for k, v in output.items() if k not in ("code_cache", "parent_map")}
+    print(json.dumps(printable))
+
+    if args.save:
+        if args.protocol_id is None:
+            raise SystemExit("--protocol-id is required when using --save")
+
+        if args.db_url:
+            db = DatabaseManager(dsn=args.db_url)
+        else:
+            db = DatabaseManager(
+                dbname=args.db_name,
+                user=args.db_user,
+                password=args.db_password,
+                host=args.db_host,
+                port=args.db_port,
+            )
+
+        try:
+            db.initialize()
+
+            # Verify the protocol exists
+            protocol = db.get_by_id("protocol", args.protocol_id)
+            if protocol is None:
+                raise SystemExit(
+                    f"Protocol with id={args.protocol_id} not found. "
+                    f"Create it first:\n"
+                    f'  python -c "from db.db_manager import DatabaseManager; '
+                    f"db = DatabaseManager(); db.initialize(); "
+                    f"print(db.insert('protocol', {{'name': 'MyProtocol', 'chains': ['ethereum']}}))"
+                )
+
+            summary = persist_static_results(db, args.protocol_id, output)
+
+            print(f"\nSaved to database:", file=sys.stderr)
+            print(f"  Target contract ID : {summary['target_contract_id']}", file=sys.stderr)
+            print(f"  Sources created    : {len(summary['source_ids'])}", file=sys.stderr)
+            print(f"  Documents created  : {len(summary['document_ids'])}", file=sys.stderr)
+            print(f"  Dependencies stored: {len(summary['dependency_contract_ids'])}", file=sys.stderr)
+            print(f"  Claims created     : {len(summary['claim_ids'])}", file=sys.stderr)
+            print(f"  Evidence created   : {len(summary['evidence_ids'])}", file=sys.stderr)
+            print(f"  Links created      : {summary['links_created']}", file=sys.stderr)
+
+        except Exception as exc:
+            raise SystemExit(f"Database error: {exc}") from exc
+        finally:
+            db.close()
 
 
 if __name__ == "__main__":
