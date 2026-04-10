@@ -20,6 +20,12 @@ from .static_dependencies import (
 
 TRACE_OPS = {"CALL", "STATICCALL", "DELEGATECALL", "CALLCODE", "CREATE", "CREATE2"}
 
+
+class NoNewTransactionsError(RuntimeError):
+    """Raised when no representative transactions are found for tracing."""
+
+    pass
+
 # EVM precompile addresses (ecrecover, sha256, ripemd160, identity, etc.)
 _MAX_PRECOMPILE_ADDR = 9
 
@@ -66,7 +72,7 @@ def _tx_selector(input_data: Any) -> str:
     return "0x"
 
 
-def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
+def fetch_contract_transactions(address: str, limit: int = 30, start_block: int = 0) -> list[dict]:
     """Fetch recent normal and internal transactions for an address from Etherscan.
 
     If the most recent normal transactions are all plain ETH transfers
@@ -82,7 +88,7 @@ def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
                 "account",
                 action,
                 address=address,
-                startblock=0,
+                startblock=start_block,
                 endblock=99_999_999,
                 page=1,
                 offset=max(20, limit),
@@ -107,7 +113,7 @@ def fetch_contract_transactions(address: str, limit: int = 30) -> list[dict]:
                 "account",
                 "txlist",
                 address=address,
-                startblock=0,
+                startblock=start_block,
                 endblock=99_999_999,
                 page=1,
                 offset=max(20, limit),
@@ -334,6 +340,7 @@ def find_dynamic_dependencies(
     tx_hashes: list[str] | None = None,
     proxy_address: str | None = None,
     code_cache: dict[str, str] | None = None,
+    start_block: int | None = None,
 ) -> dict:
     """Trace representative transactions and return a dynamic dependency graph.
 
@@ -351,11 +358,12 @@ def find_dynamic_dependencies(
     if tx_hashes:
         selected_txs = [_fetch_tx_metadata_from_rpc(trace_rpc, tx_hash.strip()) for tx_hash in tx_hashes]
     else:
-        txs = fetch_contract_transactions(tx_source, limit=max(20, tx_limit * 6))
+        fetch_start = start_block if start_block is not None else 0
+        txs = fetch_contract_transactions(tx_source, limit=max(20, tx_limit * 6), start_block=fetch_start)
         selected_txs = pick_representative_transactions(tx_source, txs, max_txs=tx_limit)
 
     if not selected_txs:
-        raise RuntimeError(f"No representative transactions found for {tx_source}")
+        raise NoNewTransactionsError(f"No representative transactions found for {tx_source}")
 
     all_edges = []
     trace_methods = set()

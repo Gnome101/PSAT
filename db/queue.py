@@ -182,7 +182,7 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
 # Static data caching
 # ---------------------------------------------------------------------------
 
-# Artifact names that constitute cached static data.
+# Artifact names that constitute cached static data (immutable, never change).
 _STATIC_ARTIFACT_NAMES = frozenset(
     {
         "contract_analysis",
@@ -190,6 +190,13 @@ _STATIC_ARTIFACT_NAMES = frozenset(
         "analysis_report",
         "control_tracking_plan",
         "static_dependencies",
+    }
+)
+
+# Artifacts copied as a starting baseline but appended to on subsequent runs.
+_SEED_ARTIFACT_NAMES = frozenset(
+    {
+        "dynamic_dependencies",
     }
 )
 
@@ -344,11 +351,11 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
         for row in src_rows:
             copy_row(session, row, contract_id=new_contract.id)
 
-    # --- artifacts ---
+    # --- artifacts (static + seed) ---
     src_artifacts = session.execute(
         select(Artifact).where(
             Artifact.job_id == source_job_id,
-            Artifact.name.in_(_STATIC_ARTIFACT_NAMES),
+            Artifact.name.in_(_STATIC_ARTIFACT_NAMES | _SEED_ARTIFACT_NAMES),
         )
     ).scalars().all()
     for art in src_artifacts:

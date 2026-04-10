@@ -169,7 +169,7 @@ def test_find_dynamic_dependencies_aggregates_graph(monkeypatch):
     monkeypatch.setattr(
         ddc,
         "fetch_contract_transactions",
-        lambda _address, limit=0: [
+        lambda _address, limit=0, start_block=0: [
             {
                 "hash": tx1,
                 "to": target,
@@ -237,7 +237,7 @@ def test_find_dynamic_dependencies_filters_precompiles_and_eoas(monkeypatch):
     monkeypatch.setattr(
         ddc,
         "fetch_contract_transactions",
-        lambda _addr, limit=0: [
+        lambda _addr, limit=0, start_block=0: [
             {"hash": tx1, "to": target, "isError": "0", "blockNumber": "10", "input": "0xaa"},
         ],
     )
@@ -274,7 +274,7 @@ def test_find_dynamic_dependencies_continues_on_single_trace_failure(monkeypatch
     monkeypatch.setattr(
         ddc,
         "fetch_contract_transactions",
-        lambda _address, limit=0: [
+        lambda _address, limit=0, start_block=0: [
             {
                 "hash": tx1,
                 "to": target,
@@ -318,7 +318,7 @@ def test_find_dynamic_dependencies_raises_if_all_traces_fail(monkeypatch):
     monkeypatch.setattr(
         ddc,
         "fetch_contract_transactions",
-        lambda _address, limit=0: [
+        lambda _address, limit=0, start_block=0: [
             {
                 "hash": "0xtx1",
                 "to": target,
@@ -496,7 +496,7 @@ def test_proxy_address_fetches_txs_from_proxy_and_rewrites_edges(monkeypatch):
 
     fetch_addresses = []
 
-    def fake_fetch_txs(address, limit=0):
+    def fake_fetch_txs(address, limit=0, start_block=0):
         fetch_addresses.append(address)
         return [
             {"hash": tx1, "to": proxy, "isError": "0", "blockNumber": "10", "input": "0xdeadbeef"},

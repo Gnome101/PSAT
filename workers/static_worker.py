@@ -26,6 +26,7 @@ from services.discovery import (
     find_dynamic_dependencies,
     write_dependency_visualization,
 )
+from services.discovery.dynamic_dependencies import NoNewTransactionsError
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
 from services.static.vyper_analysis import is_vyper_project
@@ -58,6 +59,144 @@ def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, 
             error=error,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Dynamic dependency merge helper
+# ---------------------------------------------------------------------------
+
+
+def _merge_dynamic_deps(prev: dict, new: dict) -> dict:
+    """Merge previous and new dynamic dependency results (append-only).
+
+    Unions dependencies, provenance, edges, transactions, trace methods,
+    and trace errors — deduplicating where appropriate.
+    """
+    # Union dependencies (sorted, deduplicated)
+    prev_deps = set(prev.get("dependencies", []))
+    new_deps = set(new.get("dependencies", []))
+    merged_deps = sorted(prev_deps | new_deps)
+
+    # Union provenance dicts (merge per-address lists, deduplicate)
+    merged_provenance: dict[str, list[dict]] = {}
+    for prov_dict in [prev.get("provenance", {}), new.get("provenance", {})]:
+        for addr, records in prov_dict.items():
+            existing = merged_provenance.setdefault(addr, [])
+            for record in records:
+                if record not in existing:
+                    existing.append(record)
+
+    # Union dependency_graph edges (deduplicate by from+to+op+selector)
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    merged_graph: list[dict] = []
+    for graph_list in [prev.get("dependency_graph", []), new.get("dependency_graph", [])]:
+        for edge in graph_list:
+            key = (edge["from"], edge["to"], edge["op"], edge.get("selector", ""))
+            if key in seen_edges:
+                # Merge provenance into existing edge
+                for existing_edge in merged_graph:
+                    existing_key = (
+                        existing_edge["from"],
+                        existing_edge["to"],
+                        existing_edge["op"],
+                        existing_edge.get("selector", ""),
+                    )
+                    if existing_key == key:
+                        for prov in edge.get("provenance", []):
+                            if prov not in existing_edge.get("provenance", []):
+                                existing_edge.setdefault("provenance", []).append(prov)
+                        break
+                continue
+            seen_edges.add(key)
+            merged_graph.append(dict(edge))
+
+    # Concatenate transactions_analyzed (deduplicate by tx_hash)
+    seen_tx_hashes: set[str] = set()
+    merged_txs: list[dict] = []
+    for tx_list in [prev.get("transactions_analyzed", []), new.get("transactions_analyzed", [])]:
+        for tx in tx_list:
+            tx_hash = tx.get("tx_hash", "")
+            if tx_hash not in seen_tx_hashes:
+                seen_tx_hashes.add(tx_hash)
+                merged_txs.append(tx)
+
+    # Union trace_methods
+    merged_methods = sorted(set(prev.get("trace_methods", [])) | set(new.get("trace_methods", [])))
+
+    # Concatenate trace_errors (deduplicate by tx_hash)
+    seen_error_hashes: set[str] = set()
+    merged_errors: list[dict] = []
+    for err_list in [prev.get("trace_errors", []), new.get("trace_errors", [])]:
+        for err in err_list:
+            err_hash = err.get("tx_hash", "")
+            if err_hash not in seen_error_hashes:
+                seen_error_hashes.add(err_hash)
+                merged_errors.append(err)
+
+    return {
+        "address": new.get("address") or prev.get("address"),
+        "rpc": new.get("rpc") or prev.get("rpc"),
+        "transactions_analyzed": merged_txs,
+        "trace_methods": merged_methods,
+        "dependencies": merged_deps,
+        "provenance": merged_provenance,
+        "dependency_graph": merged_graph,
+        "trace_errors": merged_errors,
+    }
+
+
+def _resolve_dynamic_deps(
+    session, job, address: str, dynamic_rpc: str | None, tx_limit: int,
+    tx_hashes: list[str] | None, proxy_addr: str | None,
+    code_cache: dict[str, str],
+) -> tuple[dict | None, str | None]:
+    """Load cached dynamic deps, discover new ones, merge, and persist.
+
+    Returns ``(dyn_output, error_string)``.  On success *error_string* is
+    ``None``.  When previous deps exist and no new transactions are found,
+    the previous output is returned as-is (not an error).
+    """
+    request = job.request if isinstance(job.request, dict) else {}
+
+    # --- Load previous dynamic deps for append-only merge ---
+    # The artifact is either on this job already (copied by copy_static_cache
+    # as a seed artifact, or stored by a previous attempt of this job).
+    prev_dyn: dict | None = None
+    if not tx_hashes:
+        prev_dyn = get_artifact(session, job.id, "dynamic_dependencies")
+        if prev_dyn is not None and not isinstance(prev_dyn, dict):
+            prev_dyn = None
+
+    # --- Compute start_block for incremental fetch ---
+    start_block: int | None = None
+    if prev_dyn:
+        prev_txs = prev_dyn.get("transactions_analyzed", [])
+        last_block = max((tx.get("block_number") or 0 for tx in prev_txs), default=0)
+        if last_block > 0:
+            start_block = last_block + 1
+
+    # --- Discover ---
+    try:
+        dyn_output = find_dynamic_dependencies(
+            address,
+            rpc_url=dynamic_rpc,
+            tx_limit=tx_limit,
+            tx_hashes=tx_hashes,
+            proxy_address=proxy_addr,
+            code_cache=code_cache,
+            start_block=start_block,
+        )
+        if prev_dyn and not tx_hashes:
+            dyn_output = _merge_dynamic_deps(prev_dyn, dyn_output)
+        store_artifact(session, job.id, "dynamic_dependencies", data=dyn_output)
+        return dyn_output, None
+    except NoNewTransactionsError:
+        if prev_dyn:
+            store_artifact(session, job.id, "dynamic_dependencies", data=prev_dyn)
+            return prev_dyn, None
+        return None, "No representative transactions found"
+    except Exception as exc:
+        return None, str(exc)
 
 
 # ---------------------------------------------------------------------------
@@ -650,36 +789,25 @@ class StaticWorker(BaseWorker):
                     exc,
                 )
 
-        dyn_output = None
-        try:
-            t0 = time.monotonic()
-            tx_limit = int(dynamic_tx_limit)
-            tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
-            proxy_addr = request.get("proxy_address")
-            dyn_output = find_dynamic_dependencies(
-                address,
-                rpc_url=dynamic_rpc,
-                tx_limit=tx_limit,
-                tx_hashes=tx_hashes,
-                proxy_address=proxy_addr,
-                code_cache=code_cache,
-            )
-            if DEBUG_TIMING:
-                n = len(dyn_output.get("dependencies", []))
-                logger.info("[TIMING] dynamic deps: %.1fs (%d deps)", time.monotonic() - t0, n)
-            logger.info(
-                "Static stage dynamic dependencies complete for job %s address=%s count=%d",
-                job.id,
-                address,
-                len(dyn_output.get("dependencies", [])),
-            )
-        except Exception as exc:
-            dependency_errors["dynamic"] = str(exc)
+        t0 = time.monotonic()
+        tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
+        dyn_output, dyn_error = _resolve_dynamic_deps(
+            session, job, address, dynamic_rpc, int(dynamic_tx_limit),
+            tx_hashes, request.get("proxy_address"), code_cache,
+        )
+        if DEBUG_TIMING and dyn_output:
+            logger.info("[TIMING] dynamic deps: %.1fs (%d deps)",
+                        time.monotonic() - t0, len(dyn_output.get("dependencies", [])))
+        if dyn_error:
+            dependency_errors["dynamic"] = dyn_error
             logger.warning(
                 "Static stage dynamic dependency discovery failed for job %s address=%s: %s",
-                job.id,
-                address,
-                exc,
+                job.id, address, dyn_error,
+            )
+        elif dyn_output:
+            logger.info(
+                "Static stage dynamic dependencies complete for job %s address=%s count=%d",
+                job.id, address, len(dyn_output.get("dependencies", [])),
             )
 
         resolved_rpc = None

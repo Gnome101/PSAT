@@ -1495,3 +1495,327 @@ def test_static_deps_artifact_copied_by_cache(db_session):
     art = get_artifact(db_session, target_job.id, "static_dependencies")
     assert art is not None
     assert art["dependencies"] == FAKE_STATIC_DEPS["dependencies"]
+
+
+# ---------------------------------------------------------------------------
+# 15. Dynamic dependency append-only caching
+# ---------------------------------------------------------------------------
+
+
+FAKE_DYN_DEPS_OLD = {
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "rpc": "https://rpc.example",
+    "transactions_analyzed": [
+        {"tx_hash": "0xaaa", "block_number": 100, "method_selector": "0x12345678"},
+        {"tx_hash": "0xbbb", "block_number": 200, "method_selector": "0xabcdef01"},
+    ],
+    "trace_methods": ["debug_traceTransaction"],
+    "dependencies": [
+        "0x0000000000000000000000000000000000000042",
+    ],
+    "provenance": {
+        "0x0000000000000000000000000000000000000042": [
+            {"tx_hash": "0xaaa", "block_number": 100, "from": "0xdac17f958d2ee523a2206206994597c13d831ec7", "op": "CALL"},
+        ],
+    },
+    "dependency_graph": [
+        {
+            "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "to": "0x0000000000000000000000000000000000000042",
+            "op": "CALL",
+            "provenance": [{"tx_hash": "0xaaa", "block_number": 100}],
+        },
+    ],
+    "trace_errors": [],
+}
+
+FAKE_DYN_DEPS_NEW = {
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "rpc": "https://rpc.example",
+    "transactions_analyzed": [
+        {"tx_hash": "0xccc", "block_number": 300, "method_selector": "0x99999999"},
+    ],
+    "trace_methods": ["debug_traceTransaction"],
+    "dependencies": [
+        "0x0000000000000000000000000000000000000042",
+        "0x0000000000000000000000000000000000000099",
+    ],
+    "provenance": {
+        "0x0000000000000000000000000000000000000042": [
+            {"tx_hash": "0xccc", "block_number": 300, "from": "0xdac17f958d2ee523a2206206994597c13d831ec7", "op": "STATICCALL"},
+        ],
+        "0x0000000000000000000000000000000000000099": [
+            {"tx_hash": "0xccc", "block_number": 300, "from": "0xdac17f958d2ee523a2206206994597c13d831ec7", "op": "CALL"},
+        ],
+    },
+    "dependency_graph": [
+        {
+            "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "to": "0x0000000000000000000000000000000000000042",
+            "op": "STATICCALL",
+            "provenance": [{"tx_hash": "0xccc", "block_number": 300}],
+        },
+        {
+            "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "to": "0x0000000000000000000000000000000000000099",
+            "op": "CALL",
+            "provenance": [{"tx_hash": "0xccc", "block_number": 300}],
+        },
+    ],
+    "trace_errors": [],
+}
+
+
+def test_merge_dynamic_deps():
+    """_merge_dynamic_deps produces the union of old and new data."""
+    from workers.static_worker import _merge_dynamic_deps
+
+    merged = _merge_dynamic_deps(FAKE_DYN_DEPS_OLD, FAKE_DYN_DEPS_NEW)
+
+    # Dependencies are a sorted union
+    assert "0x0000000000000000000000000000000000000042" in merged["dependencies"]
+    assert "0x0000000000000000000000000000000000000099" in merged["dependencies"]
+    assert len(merged["dependencies"]) == 2
+
+    # Transactions are concatenated (no duplicates)
+    tx_hashes = [tx["tx_hash"] for tx in merged["transactions_analyzed"]]
+    assert tx_hashes == ["0xaaa", "0xbbb", "0xccc"]
+
+    # Provenance is merged per-address
+    prov_42 = merged["provenance"]["0x0000000000000000000000000000000000000042"]
+    assert len(prov_42) == 2  # one from old, one from new
+    assert any(p["tx_hash"] == "0xaaa" for p in prov_42)
+    assert any(p["tx_hash"] == "0xccc" for p in prov_42)
+
+    # New dependency has provenance
+    prov_99 = merged["provenance"]["0x0000000000000000000000000000000000000099"]
+    assert len(prov_99) == 1
+
+    # Dependency graph: old CALL edge + new STATICCALL edge + new CALL edge = 3 distinct edges
+    assert len(merged["dependency_graph"]) == 3
+
+    # Trace methods union
+    assert "debug_traceTransaction" in merged["trace_methods"]
+
+
+def _make_dep_phase_job(session, address=ADDR_A, extra_request=None):
+    """Helper: create a job suitable for _run_dependency_phase testing."""
+    from db.models import Contract
+    from db.queue import create_job, store_source_files
+
+    req = {"address": address, "rpc_url": "https://rpc.example"}
+    if extra_request:
+        req.update(extra_request)
+    job = create_job(session, req)
+    contract = Contract(
+        job_id=job.id,
+        address=address,
+        contract_name="TestContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+    )
+    session.add(contract)
+    session.commit()
+    store_source_files(session, job.id, {"src/Test.sol": "contract Test {}"})
+    return job
+
+
+def _patch_dep_phase_helpers(monkeypatch, find_dyn_fn):
+    """Patch all helpers used by _run_dependency_phase except find_dynamic_dependencies."""
+    monkeypatch.setattr("workers.static_worker.find_dependencies", lambda *a, **kw: FAKE_STATIC_DEPS)
+    monkeypatch.setattr("workers.static_worker.find_dynamic_dependencies", find_dyn_fn)
+    monkeypatch.setattr("workers.static_worker.classify_contracts", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+
+
+def test_dynamic_deps_artifact_stored_on_first_run(db_session, monkeypatch):
+    """After find_dynamic_dependencies succeeds, the dynamic_dependencies artifact is stored."""
+    from db.queue import get_artifact
+    from workers.static_worker import StaticWorker
+
+    job = _make_dep_phase_job(db_session)
+
+    fake_dyn = dict(FAKE_DYN_DEPS_OLD)
+    _patch_dep_phase_helpers(monkeypatch, lambda *a, **kw: fake_dyn)
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    art = get_artifact(db_session, job.id, "dynamic_dependencies")
+    assert art is not None
+    assert art["dependencies"] == FAKE_DYN_DEPS_OLD["dependencies"]
+    assert len(art["transactions_analyzed"]) == 2
+
+
+def test_dynamic_deps_append_only_merge_on_rerun(db_session, monkeypatch):
+    """On re-run with previous dynamic deps, only new txs are traced and results merged."""
+    from db.queue import get_artifact, store_artifact
+    from workers.static_worker import StaticWorker
+
+    job = _make_dep_phase_job(db_session)
+
+    # Store previous dynamic deps on the job (simulating a previous attempt)
+    store_artifact(db_session, job.id, "dynamic_dependencies", data=FAKE_DYN_DEPS_OLD)
+
+    # Track the start_block passed to find_dynamic_dependencies
+    captured_kwargs = {}
+
+    def mock_find_dyn(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return FAKE_DYN_DEPS_NEW
+
+    _patch_dep_phase_helpers(monkeypatch, mock_find_dyn)
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # start_block should be last_block + 1 = 201
+    assert captured_kwargs.get("start_block") == 201
+
+    # The stored artifact should be the merged result
+    art = get_artifact(db_session, job.id, "dynamic_dependencies")
+    assert art is not None
+    # Union of old + new deps
+    assert "0x0000000000000000000000000000000000000042" in art["dependencies"]
+    assert "0x0000000000000000000000000000000000000099" in art["dependencies"]
+    # Union of old + new transactions
+    tx_hashes = {tx["tx_hash"] for tx in art["transactions_analyzed"]}
+    assert tx_hashes == {"0xaaa", "0xbbb", "0xccc"}
+
+
+def test_dynamic_deps_no_new_transactions_uses_previous(db_session, monkeypatch):
+    """When no new transactions exist, previous dynamic deps are used as-is."""
+    from db.queue import get_artifact, store_artifact
+    from workers.static_worker import StaticWorker
+
+    job = _make_dep_phase_job(db_session)
+    store_artifact(db_session, job.id, "dynamic_dependencies", data=FAKE_DYN_DEPS_OLD)
+
+    from services.discovery.dynamic_dependencies import NoNewTransactionsError
+
+    def mock_find_dyn(*args, **kwargs):
+        raise NoNewTransactionsError(f"No representative transactions found for {ADDR_A}")
+
+    _patch_dep_phase_helpers(monkeypatch, mock_find_dyn)
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # Should use previous output as-is (no error)
+    art = get_artifact(db_session, job.id, "dynamic_dependencies")
+    assert art is not None
+    assert art["dependencies"] == FAKE_DYN_DEPS_OLD["dependencies"]
+    assert len(art["transactions_analyzed"]) == 2
+
+
+def test_dynamic_deps_explicit_tx_hashes_skip_merge(db_session, monkeypatch):
+    """When explicit tx_hashes are provided, no merge logic runs."""
+    from db.queue import get_artifact, store_artifact
+    from workers.static_worker import StaticWorker
+
+    job = _make_dep_phase_job(db_session, extra_request={
+        "dynamic_tx_hashes": ["0xddd"],
+    })
+    # Store previous dynamic deps — should be ignored
+    store_artifact(db_session, job.id, "dynamic_dependencies", data=FAKE_DYN_DEPS_OLD)
+
+    captured_kwargs = {}
+
+    def mock_find_dyn(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return FAKE_DYN_DEPS_NEW
+
+    _patch_dep_phase_helpers(monkeypatch, mock_find_dyn)
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # start_block should be None (no incremental fetch)
+    assert captured_kwargs.get("start_block") is None
+    # tx_hashes should be passed through
+    assert captured_kwargs.get("tx_hashes") == ["0xddd"]
+
+    # The stored artifact should be the NEW output only (no merge with old)
+    art = get_artifact(db_session, job.id, "dynamic_dependencies")
+    assert art is not None
+    # Should have new deps only (no merge with old)
+    assert art["transactions_analyzed"] == FAKE_DYN_DEPS_NEW["transactions_analyzed"]
+
+
+def test_dynamic_deps_source_job_fallback(db_session, monkeypatch):
+    """When dynamic deps are copied from a source job (via copy_static_cache),
+    they serve as the baseline for append-only merge."""
+    from db.queue import get_artifact, store_artifact
+    from workers.static_worker import StaticWorker
+
+    # Create target job with dynamic deps already copied (as copy_static_cache would do)
+    job = _make_dep_phase_job(db_session, extra_request={
+        "static_cached": True,
+    })
+    store_artifact(db_session, job.id, "dynamic_dependencies", data=FAKE_DYN_DEPS_OLD)
+
+    captured_kwargs = {}
+
+    def mock_find_dyn(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return FAKE_DYN_DEPS_NEW
+
+    _patch_dep_phase_helpers(monkeypatch, mock_find_dyn)
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # start_block should be 201 (from source job's last block + 1)
+    assert captured_kwargs.get("start_block") == 201
+
+    # The stored artifact should be the merged result
+    art = get_artifact(db_session, job.id, "dynamic_dependencies")
+    assert art is not None
+    assert "0x0000000000000000000000000000000000000042" in art["dependencies"]
+    assert "0x0000000000000000000000000000000000000099" in art["dependencies"]
