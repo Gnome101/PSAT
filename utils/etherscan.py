@@ -50,12 +50,39 @@ def _get_api_key() -> str:
     return key
 
 
+# Response cache — keyed by (module, action, chain_id, sorted params).
+# Avoids duplicate Etherscan calls across pipeline stages for the same data.
+_CACHE_ENABLED = os.getenv("ETHERSCAN_CACHE", "1").lower() in ("1", "true", "yes")
+_cache: dict[tuple, dict] = {}
+_cache_lock = threading.Lock()
+
+
+def _cache_key(module: str, action: str, chain_id: int, params: dict) -> tuple:
+    return (module, action, chain_id, tuple(sorted(params.items())))
+
+
+def clear_cache() -> None:
+    """Clear the in-memory Etherscan response cache."""
+    with _cache_lock:
+        _cache.clear()
+
+
 def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
     """Make an Etherscan API call with automatic retry on rate-limit errors.
+
+    Results are cached in-memory so duplicate calls (same module/action/params)
+    within the same process return instantly. Disable with ETHERSCAN_CACHE=0.
 
     Automatically throttled to ``ETHERSCAN_RATE_LIMIT`` req/s — callers
     should not add their own sleeps.
     """
+    if _CACHE_ENABLED:
+        key = _cache_key(module, action, chain_id, params)
+        with _cache_lock:
+            if key in _cache:
+                logger.debug("Etherscan cache hit: %s/%s %s", module, action, params.get("address", ""))
+                return _cache[key]
+
     api_key = _get_api_key()
     backoff = _RATE_LIMIT_BACKOFF
 
@@ -76,6 +103,9 @@ def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
         data = resp.json()
 
         if data.get("status") == "1":
+            if _CACHE_ENABLED:
+                with _cache_lock:
+                    _cache[_cache_key(module, action, chain_id, params)] = data
             return data
 
         result_str = str(data.get("result", ""))
@@ -158,3 +188,77 @@ def get_source(address: str) -> dict:
         raise RuntimeError(f"No verified source code for {address}")
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Token balance queries
+# ---------------------------------------------------------------------------
+
+
+def get_eth_balance(address: str, chain_id: int = 1) -> int:
+    """Return the ETH balance of *address* in wei."""
+    data = get("account", "balance", chain_id=chain_id, address=address, tag="latest")
+    return int(data["result"])
+
+
+def get_eth_price(chain_id: int = 1) -> float:
+    """Return the current ETH price in USD via Etherscan's ethprice endpoint."""
+    data = get("stats", "ethprice", chain_id=chain_id)
+    return float(data["result"]["ethusd"])
+
+
+_token_balance_lock = threading.Lock()
+_token_balance_last_call = 0.0
+
+
+def get_token_balances(address: str, chain_id: int = 1) -> list[dict]:
+    """Return all ERC-20 token balances for *address* in a single call.
+
+    Uses Etherscan's ``addresstokenbalance`` endpoint. Hardcoded to 1 req/s
+    independent of the global rate limit since this endpoint is heavier.
+
+    Returns a list of dicts with ``token_address``, ``token_name``,
+    ``token_symbol``, ``decimals``, and ``balance``.
+    """
+    global _token_balance_last_call
+    # Hardcoded 1 req/s rate limit for this endpoint
+    with _token_balance_lock:
+        now = time.monotonic()
+        elapsed = now - _token_balance_last_call
+        if elapsed < 1.0:
+            time.sleep(1.0 - elapsed)
+        _token_balance_last_call = time.monotonic()
+
+    try:
+        data = get(
+            "account",
+            "addresstokenbalance",
+            chain_id=chain_id,
+            address=address,
+            page="1",
+            offset="100",
+        )
+    except RuntimeError:
+        return []
+
+    results = []
+    for entry in data.get("result", []):
+        raw_balance = int(entry.get("TokenQuantity", "0") or "0")
+        if raw_balance > 0:
+            decimals = int(entry.get("TokenDivisor", "18") or "18")
+            price_usd = float(entry.get("TokenPriceUSD", "0") or "0")
+            human_balance = raw_balance / (10**decimals)
+            usd_value = human_balance * price_usd if price_usd > 0 else None
+            results.append(
+                {
+                    "token_address": (entry.get("TokenAddress") or "").lower(),
+                    "token_name": entry.get("TokenName", ""),
+                    "token_symbol": entry.get("TokenSymbol", ""),
+                    "decimals": decimals,
+                    "balance": raw_balance,
+                    "price_usd": price_usd,
+                    "usd_value": usd_value,
+                }
+            )
+
+    return sorted(results, key=lambda t: t.get("usd_value") or 0, reverse=True)

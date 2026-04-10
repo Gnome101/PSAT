@@ -231,7 +231,8 @@ def _build_edges(
         source = deps[addr].get("source", [])
         if source == ["classification"]:
             continue
-        _add(f"addr:{target}", f"addr:{addr}", "STATIC_REF")
+        static_root = proxy_address if proxy_address else target
+        _add(f"addr:{static_root}", f"addr:{addr}", "STATIC_REF")
 
     # Proxy relationship edges
     for addr, info in deps.items():

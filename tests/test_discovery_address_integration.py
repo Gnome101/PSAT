@@ -100,27 +100,18 @@ def test_happy_path_stores_sources_and_artifacts(monkeypatch):
     # Flat source should produce src/TetherToken.sol
     assert "src/TetherToken.sol" in stored_sources
 
-    # Verify contract_meta artifact
-    meta_entries = [(name, data) for name, data in artifact_calls if name == "contract_meta"]
-    assert len(meta_entries) == 1
-    meta = meta_entries[0][1]
-    assert meta["address"] == job.address
-    assert meta["contract_name"] == "TetherToken"
-    assert meta["compiler_version"] == "v0.4.18+commit.9cf6e910"
-    assert meta["language"] == "solidity"
-    assert meta["optimization_used"] == "1"
-    assert meta["runs"] == "200"
-    assert meta["evm_version"] == "london"
-    assert meta["license"] == "MIT"
-    assert meta["source_file_count"] == 1
-
-    # Verify build_settings artifact
-    bs_entries = [(name, data) for name, data in artifact_calls if name == "build_settings"]
-    assert len(bs_entries) == 1
-    bs = bs_entries[0][1]
-    assert bs["evm_version"] == "london"
-    assert bs["optimization_used"] is True
-    assert bs["runs"] == 200
+    # Verify Contract written via session.merge
+    session.merge.assert_called_once()
+    contract = session.merge.call_args[0][0]
+    assert contract.address == job.address
+    assert contract.contract_name == "TetherToken"
+    assert contract.compiler_version == "v0.4.18+commit.9cf6e910"
+    assert contract.language == "solidity"
+    assert contract.optimization is True
+    assert contract.optimization_runs == 200
+    assert contract.evm_version == "london"
+    assert contract.license == "MIT"
+    assert contract.source_file_count == 1
 
     # job.name set correctly
     short = job.address[2:10]
@@ -163,8 +154,8 @@ def test_vyper_detected_from_compiler_version(monkeypatch):
 
     worker._process_address(session, job)
 
-    meta = next(data for name, data in artifact_calls if name == "contract_meta")
-    assert meta["language"] == "vyper"
+    contract = session.merge.call_args[0][0]
+    assert contract.language == "vyper"
 
 
 def test_vyper_detected_from_v0_prefix(monkeypatch):
@@ -183,11 +174,11 @@ def test_vyper_detected_from_v0_prefix(monkeypatch):
 
     worker._process_address(session, job)
 
-    meta = next(data for name, data in artifact_calls if name == "contract_meta")
+    contract = session.merge.call_args[0][0]
     # is_vyper_result checks for "vyper" in compiler string; "v0." alone does not
     # match unless source starts with "# @version". The source above does start
     # with that, so is_vyper_result returns True via the source-code fallback.
-    assert meta["language"] == "vyper"
+    assert contract.language == "vyper"
 
 
 def test_solidity_when_compiler_not_vyper(monkeypatch):
@@ -204,8 +195,8 @@ def test_solidity_when_compiler_not_vyper(monkeypatch):
 
     worker._process_address(session, job)
 
-    meta = next(data for name, data in artifact_calls if name == "contract_meta")
-    assert meta["language"] == "solidity"
+    contract = session.merge.call_args[0][0]
+    assert contract.language == "solidity"
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +215,8 @@ def test_evm_version_defaults_to_shanghai_when_empty(monkeypatch):
 
     worker._process_address(session, job)
 
-    bs = next(data for name, data in artifact_calls if name == "build_settings")
-    assert bs["evm_version"] == "shanghai"
+    contract = session.merge.call_args[0][0]
+    assert contract.evm_version == "shanghai"
 
 
 def test_evm_version_defaults_to_shanghai_when_default(monkeypatch):
@@ -239,8 +230,8 @@ def test_evm_version_defaults_to_shanghai_when_default(monkeypatch):
 
     worker._process_address(session, job)
 
-    bs = next(data for name, data in artifact_calls if name == "build_settings")
-    assert bs["evm_version"] == "shanghai"
+    contract = session.merge.call_args[0][0]
+    assert contract.evm_version == "shanghai"
 
 
 def test_evm_version_preserves_explicit_value(monkeypatch):
@@ -254,8 +245,8 @@ def test_evm_version_preserves_explicit_value(monkeypatch):
 
     worker._process_address(session, job)
 
-    bs = next(data for name, data in artifact_calls if name == "build_settings")
-    assert bs["evm_version"] == "cancun"
+    contract = session.merge.call_args[0][0]
+    assert contract.evm_version == "cancun"
 
 
 def test_evm_version_defaults_when_key_missing(monkeypatch):
@@ -271,8 +262,8 @@ def test_evm_version_defaults_when_key_missing(monkeypatch):
 
     worker._process_address(session, job)
 
-    bs = next(data for name, data in artifact_calls if name == "build_settings")
-    assert bs["evm_version"] == "shanghai"
+    contract = session.merge.call_args[0][0]
+    assert contract.evm_version == "shanghai"
 
 
 # ---------------------------------------------------------------------------
@@ -309,8 +300,8 @@ def test_source_format_standard_json(monkeypatch):
 
     worker._process_address(session, job)
 
-    meta = next(data for name, data in artifact_calls if name == "contract_meta")
-    assert meta["source_format"] == "standard_json"
+    contract = session.merge.call_args[0][0]
+    assert contract.source_format == "standard_json"
 
 
 def test_source_format_flat(monkeypatch):
@@ -328,8 +319,8 @@ def test_source_format_flat(monkeypatch):
 
     worker._process_address(session, job)
 
-    meta = next(data for name, data in artifact_calls if name == "contract_meta")
-    assert meta["source_format"] == "flat"
+    contract = session.merge.call_args[0][0]
+    assert contract.source_format == "flat"
 
 
 def test_standard_json_multiple_files_parsed_correctly(monkeypatch):
@@ -370,10 +361,10 @@ def test_standard_json_multiple_files_parsed_correctly(monkeypatch):
     assert "contracts/Token.sol" in stored_sources
     assert "contracts/Lib.sol" in stored_sources
 
-    meta = next(data for name, data in artifact_calls if name == "contract_meta")
-    assert meta["source_file_count"] == 3
+    contract = session.merge.call_args[0][0]
+    assert contract.source_file_count == 3
     # Remappings should be extracted from the settings block
-    assert "@openzeppelin/=node_modules/@openzeppelin/" in meta["remappings"]
+    assert "@openzeppelin/=node_modules/@openzeppelin/" in contract.remappings
 
 
 # ---------------------------------------------------------------------------
@@ -393,9 +384,9 @@ def test_optimization_disabled(monkeypatch):
 
     worker._process_address(session, job)
 
-    bs = next(data for name, data in artifact_calls if name == "build_settings")
-    assert bs["optimization_used"] is False
-    assert bs["runs"] == 200
+    contract = session.merge.call_args[0][0]
+    assert contract.optimization is False
+    assert contract.optimization_runs == 200
 
 
 def test_runs_custom_value(monkeypatch):
@@ -410,5 +401,5 @@ def test_runs_custom_value(monkeypatch):
 
     worker._process_address(session, job)
 
-    bs = next(data for name, data in artifact_calls if name == "build_settings")
-    assert bs["runs"] == 10000
+    contract = session.merge.call_args[0][0]
+    assert contract.optimization_runs == 10000

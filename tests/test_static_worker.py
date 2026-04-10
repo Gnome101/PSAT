@@ -95,6 +95,21 @@ def test_resolve_proxy_marks_regular_contract_without_proxy_flag(monkeypatch):
 def test_process_attempts_semantic_proxy_classification_for_non_obvious_names(monkeypatch, tmp_path):
     worker = StaticWorker()
     session = MagicMock()
+    # Provide a mock Contract row so the worker can read contract metadata
+    mock_contract = MagicMock()
+    mock_contract.contract_name = "OssifiableProxy"
+    mock_contract.address = "0x1111111111111111111111111111111111111111"
+    mock_contract.compiler_version = "v0.8.0"
+    mock_contract.language = "solidity"
+    mock_contract.evm_version = "shanghai"
+    mock_contract.source_format = "flat"
+    mock_contract.source_file_count = 1
+    mock_contract.remappings = []
+    mock_contract.optimization = False
+    mock_contract.optimization_runs = 200
+    mock_contract.is_proxy = False
+    session.execute.return_value.scalar_one_or_none.return_value = mock_contract
+
     job = _job(name="OssifiableProxy")
     called = []
 
@@ -102,11 +117,6 @@ def test_process_attempts_semantic_proxy_classification_for_non_obvious_names(mo
         "workers.static_worker.get_source_files",
         lambda _session, _job_id: {"contracts/OssifiableProxy.sol": "contract OssifiableProxy {}"},
     )
-    artifacts = {
-        "contract_meta": {"contract_name": "OssifiableProxy", "address": job.address, "remappings": []},
-        "build_settings": {},
-    }
-    monkeypatch.setattr("workers.static_worker.get_artifact", lambda _session, _job_id, name: artifacts.get(name))
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *_args: called.append("resolve"))
     monkeypatch.setattr(worker, "_scaffold_project", lambda *args, **kwargs: None)
     monkeypatch.setattr(worker, "_run_dependency_phase", lambda *args, **kwargs: None)

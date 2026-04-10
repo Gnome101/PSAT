@@ -12,6 +12,9 @@ import {
   wrapText,
 } from "./graph.js";
 import DependencyGraphTab from "./DependencyGraphTab.jsx";
+import ProtocolGraph from "./ProtocolGraph.jsx";
+import RiskSurface from "./RiskSurface.jsx";
+import ProtocolSurface from "./ProtocolSurface.jsx";
 
 const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "raw"];
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -61,6 +64,10 @@ function parseLocationPath(pathname) {
 
   if (segments[0] === "monitor") {
     return { mode: "monitor", value: null, tab: "summary" };
+  }
+
+  if (segments[0] === "company" && segments[1]) {
+    return { mode: "company", value: segments[1], tab: "summary" };
   }
 
   if (segments[0] === "proxies") {
@@ -1086,7 +1093,117 @@ function GraphTab({ detail }) {
   );
 }
 
-const PIPELINE_STAGES = ["discovery", "static", "resolution", "policy"];
+// ---------------------------------------------------------------------------
+// Company overview
+// ---------------------------------------------------------------------------
+
+function CompanyOverview({ companyName, onSelectContract }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api(`/api/company/${encodeURIComponent(companyName)}`)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setError(e.message); });
+    return () => { cancelled = true; };
+  }, [companyName]);
+
+  if (error) return <div className="page"><section className="panel"><p className="empty">Failed to load company overview: {error}</p></section></div>;
+  if (!data) return <div className="page"><section className="panel"><p className="empty">Loading...</p></section></div>;
+
+  const { contracts, ownership_hierarchy: hierarchy } = data;
+  const riskColor = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e", unknown: "#94a3b8" };
+
+  return (
+    <div className="page">
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Company Overview</p>
+            <h2>{companyName}</h2>
+          </div>
+          <div className="chips"><span className="chip alt">{contracts.length} contracts</span></div>
+        </div>
+      </section>
+
+      {/* Ownership hierarchy */}
+      <section className="panel">
+        <h3 style={{ marginBottom: 16 }}>Ownership Hierarchy</h3>
+        <div className="stack" style={{ gap: 20 }}>
+          {hierarchy.map((group, gi) => (
+            <div key={gi} className="card" style={{ borderLeft: `3px solid ${group.owner ? "#2563eb" : "#94a3b8"}` }}>
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>
+                  {group.owner_name || (group.owner ? "External address" : "No owner detected")}
+                </div>
+                {group.owner && (
+                  <div className="mono" style={{ fontSize: 11, opacity: 0.7 }}>
+                    {group.owner}
+                    {group.owner_is_contract && <span className="chip" style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px" }}>contract</span>}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {group.contracts.map((c) => {
+                  const full = contracts.find((x) => x.address === c.address);
+                  return (
+                    <button
+                      key={c.address}
+                      className="runs-table-row"
+                      style={{ padding: "6px 10px" }}
+                      onClick={() => onSelectContract(full?.job_id)}
+                    >
+                      <span className="runs-cell-name" style={{ flex: 2 }}>
+                        {c.name}
+                        {full?.is_proxy && <span className="proxy-badge" title={full.proxy_type}>{full.proxy_type || "proxy"}</span>}
+                      </span>
+                      <span className="mono runs-cell-addr" style={{ flex: 2 }}>{c.address}</span>
+                      <span style={{ flex: 1 }}>{full?.control_model || ""}</span>
+                      <span style={{ flex: 1 }}>
+                        {full?.risk_level && <span className="risk-dot" style={{ background: riskColor[full.risk_level] || "#94a3b8" }} />}
+                        {full?.risk_level || ""}
+                      </span>
+                      <span style={{ flex: 1 }}>{full?.upgrade_count != null ? `${full.upgrade_count} upgrades` : ""}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* All contracts detail table */}
+      <section className="panel">
+        <h3 style={{ marginBottom: 16 }}>Controller Details</h3>
+        <div className="stack" style={{ gap: 12 }}>
+          {contracts.filter((c) => Object.keys(c.controllers || {}).length > 0).map((c) => (
+            <div key={c.address} className="card">
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div>
+                  <strong>{c.name}</strong>
+                  {c.is_proxy && <span className="proxy-badge" style={{ marginLeft: 6 }}>{c.proxy_type || "proxy"}</span>}
+                </div>
+                <span className="mono" style={{ fontSize: 11, opacity: 0.7 }}>{c.address}</span>
+              </div>
+              <div className="kv-grid">
+                {Object.entries(c.controllers).map(([cid, val]) => (
+                  <div className="kv-row" key={cid}>
+                    <span className="key">{cid}</span>
+                    <span className="mono" style={{ fontSize: 11 }}>{val != null ? String(val) : "null"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy"];
 const ALL_STAGES = [...PIPELINE_STAGES, "done"];
 const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
 
@@ -1415,21 +1532,57 @@ function ProxyWatcherPage() {
 // Pipeline monitor
 // ---------------------------------------------------------------------------
 
+function shortFailReason(error) {
+  if (!error) return "Unknown";
+  if (error.includes("No verified source")) return "Not Verified";
+  if (error.includes("No such file or directory")) return "Crawler Missing";
+  if (error.includes("Read timed out")) return "RPC Timeout";
+  if (error.includes("name resolution") || error.includes("NameResolutionError")) return "DNS Failure";
+  if (error.includes("Max retries exceeded")) return "RPC Unreachable";
+  if (error.includes("value too long")) return "DB Column Overflow";
+  if (error.includes("StringDataRightTruncation")) return "DB Column Overflow";
+  if (error.includes("execution reverted")) return "Contract Reverted";
+  if (error.includes("rate limit") || error.includes("429")) return "Rate Limited";
+  if (error.includes("PendingRollbackError")) return "DB Session Error";
+  const last = error.split("\n").filter(Boolean).pop() || "";
+  const match = last.match(/^\w+Error:\s*(.{0,40})/);
+  return match ? match[1] : last.slice(0, 40) || "Unknown";
+}
+
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return `${m}m ${rem}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
 function PipelineDashboard() {
   const [allJobs, setAllJobs] = useState([]);
+  const [stats, setStats] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const [expandedError, setExpandedError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    async function fetchJobs() {
+    async function fetchAll() {
       try {
-        const jobs = await api("/api/jobs");
-        if (!cancelled) { setAllJobs(jobs); setLoaded(true); }
+        const [jobs, s] = await Promise.all([api("/api/jobs"), api("/api/stats")]);
+        if (!cancelled) { setAllJobs(jobs); setStats(s); setLoaded(true); }
       } catch {}
     }
-    fetchJobs();
-    const timer = setInterval(fetchJobs, 2500);
+    fetchAll();
+    const timer = setInterval(fetchAll, 2500);
     return () => { cancelled = true; clearInterval(timer); };
+  }, []);
+
+  // Tick every second so elapsed timers update live
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
   }, []);
 
   // Filter to only show meaningful analysis jobs:
@@ -1476,7 +1629,7 @@ function PipelineDashboard() {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
   }
 
-  const stageColors = { discovery: "#0f766e", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", done: "#16a34a" };
+  const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", done: "#16a34a" };
   const statusColors = { queued: "#94a3b8", processing: "#f59e0b", completed: "#22c55e", failed: "#ef4444" };
   const colW = 160, gapW = 80, headerH = 50, dotR = 6;
   const totalW = ALL_STAGES.length * colW + (ALL_STAGES.length - 1) * gapW;
@@ -1506,6 +1659,7 @@ function PipelineDashboard() {
         <div className="panel-header">
           <div><p className="eyebrow">Pipeline Status</p><h2>{totals.total} Jobs</h2></div>
           <div className="chips">
+            {stats && <span className="chip" style={{ background: "#e0e7ff", color: "#3730a3" }}>{stats.unique_addresses} addresses</span>}
             <span className="chip" style={{ background: "#dcfce7", color: "#166534" }}>{totals.completed} done</span>
             {totals.processing > 0 && <span className="chip" style={{ background: "#fef3c7", color: "#92400e" }}>{totals.processing} running</span>}
             {totals.queued > 0 && <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>{totals.queued} queued</span>}
@@ -1538,6 +1692,74 @@ function PipelineDashboard() {
           <span className="chip" style={{ background: "#fee2e2", color: "#991b1b", fontSize: 10 }}>Failed</span>
         </div>
       </section>
+
+      {/* Active / Recent jobs table */}
+      <section className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-header">
+          <div><p className="eyebrow">Recent Activity</p></div>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid rgba(148,163,184,0.15)", color: "#94a3b8", textAlign: "left" }}>
+              <th style={{ padding: "8px 12px" }}>Name</th>
+              <th style={{ padding: "8px 12px" }}>Address</th>
+              <th style={{ padding: "8px 12px" }}>Stage</th>
+              <th style={{ padding: "8px 12px" }}>Status</th>
+              <th style={{ padding: "8px 12px" }}>Time</th>
+              <th style={{ padding: "8px 12px" }}>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            {allJobs
+              .filter((j) => j.status === "processing" || j.status === "failed" || j.status === "queued")
+              .sort((a, b) => {
+                const order = { processing: 0, failed: 1, queued: 2 };
+                return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+              })
+              .slice(0, 30)
+              .map((j) => (
+                <React.Fragment key={j.job_id}>
+                  <tr
+                    style={{ borderBottom: "1px solid rgba(148,163,184,0.08)", cursor: j.status === "failed" ? "pointer" : "default" }}
+                    onClick={() => j.status === "failed" && setExpandedError(expandedError === j.job_id ? null : j.job_id)}
+                  >
+                    <td style={{ padding: "6px 12px", color: "#e2e8f0", fontWeight: 600 }}>{j.name || j.company || "—"}</td>
+                    <td style={{ padding: "6px 12px", color: "#64748b", fontFamily: "monospace", fontSize: 11 }}>{j.address ? j.address.slice(0, 10) + ".." : "—"}</td>
+                    <td style={{ padding: "6px 12px" }}>
+                      <span style={{ color: stageColors[j.stage] || "#94a3b8", fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{j.stage}</span>
+                    </td>
+                    <td style={{ padding: "6px 12px" }}>
+                      <span style={{ color: statusColors[j.status] || "#94a3b8", fontWeight: 600, fontSize: 11 }}>
+                        {j.status === "processing" ? "⚡ " : j.status === "failed" ? "✕ " : ""}{j.status}
+                      </span>
+                    </td>
+                    <td style={{ padding: "6px 12px", color: "#94a3b8", fontSize: 11, fontFamily: "monospace" }}>
+                      {(() => {
+                        const created = new Date(j.created_at).getTime();
+                        const end = (j.status === "completed" || j.status === "failed") ? new Date(j.updated_at).getTime() : now;
+                        return formatElapsed(end - created);
+                      })()}
+                    </td>
+                    <td style={{ padding: "6px 12px", color: "#64748b", fontSize: 11, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {j.status === "failed"
+                        ? <span style={{ color: "#fca5a5", fontWeight: 600 }}>{shortFailReason(j.error)}</span>
+                        : j.detail || ""}
+                    </td>
+                  </tr>
+                  {j.status === "failed" && expandedError === j.job_id && (
+                    <tr>
+                      <td colSpan={6} style={{ padding: 0 }}>
+                        <pre style={{ margin: 0, padding: "12px 16px", background: "rgba(239,68,68,0.06)", color: "#fca5a5", fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 300, overflow: "auto", borderBottom: "1px solid rgba(239,68,68,0.15)" }}>
+                          {j.error || "No error details available"}
+                        </pre>
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              ))}
+          </tbody>
+        </table>
+      </section>
     </div>
   );
 }
@@ -1546,7 +1768,35 @@ function PipelineDashboard() {
 // Runs list page
 // ---------------------------------------------------------------------------
 
-function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore }) {
+function ProtocolView({ companyName }) {
+  const [protoTab, setProtoTab] = useState("surface");
+  return (
+    <div className="page" style={{ height: "calc(100vh - 60px)", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="proto-tabs">
+        <button className={`proto-tab ${protoTab === "surface" ? "active" : ""}`} onClick={() => setProtoTab("surface")}>surface</button>
+        <button className={`proto-tab ${protoTab === "graph" ? "active" : ""}`} onClick={() => setProtoTab("graph")}>ownership</button>
+        <button className={`proto-tab ${protoTab === "risk" ? "active" : ""}`} onClick={() => setProtoTab("risk")}>risk matrix</button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        {protoTab === "surface" && (
+          <ProtocolSurface companyName={companyName} />
+        )}
+        {protoTab === "graph" && (
+          <div className="protocol-graph-wrapper" style={{ height: "100%" }}>
+            <ProtocolGraph companyName={companyName} />
+          </div>
+        )}
+        {protoTab === "risk" && (
+          <RiskSurface companyName={companyName} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectCompany }) {
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => {
@@ -1608,7 +1858,7 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore }) {
       {grouped.groups.map((group) => (
         <section key={group.company} className="panel runs-group-panel">
           <div className="runs-group-header">
-            <h3>{group.company}</h3>
+            <h3><button className="top-nav-link" style={{ fontSize: "inherit", fontWeight: "inherit" }} onClick={() => onSelectCompany && onSelectCompany(group.company)}>{group.company}</button></h3>
             <div className="chips" style={{ gap: 6 }}>
               <span className="chip alt">{group.items.length} contracts</span>
               <button className="discover-more" title={`Discover more`} onClick={() => onDiscoverMore(group.company)}>+</button>
@@ -1698,10 +1948,11 @@ export default function App() {
   const [selectedRun, setSelectedRun] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [viewMode, setViewMode] = useState(() => parseLocationPath(window.location.pathname).mode);
+  const [companyName, setCompanyName] = useState(() => { const r = parseLocationPath(window.location.pathname); return r.mode === "company" ? r.value : null; });
   const [activeTab, setActiveTab] = useState("summary");
   const [job, setJob] = useState(null);
   const [activeJobs, setActiveJobs] = useState([]);
-  const [form, setForm] = useState({ target: "", name: "", chain: "", discoverLimit: "25", analyzeLimit: "5" });
+  const [form, setForm] = useState({ target: "", name: "", chain: "", analyzeLimit: "5" });
   const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const analysesRef = useRef([]);
@@ -1712,8 +1963,16 @@ export default function App() {
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
   function navigate(path, mode) {
-    setViewMode(mode || parseLocationPath(path).mode);
+    const m = mode || parseLocationPath(path).mode;
+    setViewMode(m);
+    if (m !== "company") setCompanyName(null);
     window.history.pushState({}, "", path);
+  }
+
+  function openCompany(name) {
+    setCompanyName(name);
+    setViewMode("company");
+    window.history.pushState({}, "", `/company/${encodeURIComponent(name)}`);
   }
 
   async function loadAnalysis(runId, options = {}) {
@@ -1746,16 +2005,23 @@ export default function App() {
     function handlePopState() {
       const route = parseLocationPath(window.location.pathname);
       setViewMode(route.mode);
-      if (route.mode === "run" || route.mode === "address") {
+      if (route.mode === "company") {
+        setCompanyName(route.value);
+      } else if (route.mode === "run" || route.mode === "address") {
+        setCompanyName(null);
         const list = analysesRef.current;
         let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
         if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
+      } else {
+        setCompanyName(null);
       }
     }
 
     refreshAnalyses().then((list) => {
       const route = parseLocationPath(window.location.pathname);
-      if (route.mode === "run" || route.mode === "address") {
+      if (route.mode === "company") {
+        setCompanyName(route.value);
+      } else if (route.mode === "run" || route.mode === "address") {
         let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
         if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
       }
@@ -1810,8 +2076,7 @@ export default function App() {
         : {
             company: target,
             chain: form.chain.trim() || null,
-            discover_limit: Number.parseInt(form.discoverLimit, 10) || 25,
-            analyze_limit: form.analyzeAll ? Number.parseInt(form.discoverLimit, 10) || 25 : Number.parseInt(form.analyzeLimit, 10) || 5,
+            analyze_limit: Number.parseInt(form.analyzeLimit, 10) || 5,
           };
       const nextJob = await api("/api/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       setJob(nextJob);
@@ -1841,6 +2106,7 @@ export default function App() {
 
   const isDetail = viewMode === "run" || viewMode === "address";
   const isMonitor = viewMode === "monitor";
+  const isCompany = viewMode === "company";
   const isProxies = viewMode === "proxies";
 
   const detailContent = selectedDetail ? {
@@ -1877,16 +2143,7 @@ export default function App() {
             <label><span>Address or company</span><input value={form.target} onChange={(e) => setForm((c) => ({ ...c, target: e.target.value }))} placeholder="0x... or etherfi" required /></label>
             <label><span>Run name</span><input value={form.name} onChange={(e) => setForm((c) => ({ ...c, name: e.target.value }))} placeholder="Optional" /></label>
             <label><span>Chain</span><input value={form.chain} onChange={(e) => setForm((c) => ({ ...c, chain: e.target.value }))} placeholder="Optional" /></label>
-            <label><span>Discover</span><input type="number" min="1" max="200" value={form.discoverLimit} onChange={(e) => { const v = e.target.value; setForm((c) => ({ ...c, discoverLimit: v, analyzeLimit: c.analyzeAll ? v : c.analyzeLimit })); }} /></label>
-            <label>
-              <span>Analyze</span>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input type="number" min="1" max="200" value={form.analyzeAll ? form.discoverLimit : form.analyzeLimit} disabled={form.analyzeAll} onChange={(e) => setForm((c) => ({ ...c, analyzeLimit: e.target.value }))} style={{ flex: 1 }} />
-                <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>
-                  <input type="checkbox" checked={form.analyzeAll || false} onChange={(e) => setForm((c) => ({ ...c, analyzeAll: e.target.checked, analyzeLimit: e.target.checked ? c.discoverLimit : c.analyzeLimit }))} />All
-                </label>
-              </div>
-            </label>
+            <label><span>Analyze limit</span><input type="number" min="1" max="200" value={form.analyzeLimit} onChange={(e) => setForm((c) => ({ ...c, analyzeLimit: e.target.value }))} /></label>
             <button type="submit" disabled={loading}>{loading ? "Starting..." : "Run"}</button>
           </form>
         </div>
@@ -1930,12 +2187,17 @@ export default function App() {
         </div>
       )}
 
-      {!isDetail && !isMonitor && !isProxies && (
+      {isCompany && companyName && (
+        <ProtocolView companyName={companyName} />
+      )}
+
+      {!isDetail && !isMonitor && !isCompany && !isProxies && (
         <RunsPage
           analyses={analyses}
           activeJobs={activeJobs}
           onSelect={(runId) => loadAnalysis(runId, { history: "push" })}
           onDiscoverMore={discoverMore}
+          onSelectCompany={openCompany}
         />
       )}
     </ErrorBoundary>

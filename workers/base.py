@@ -9,14 +9,16 @@ import time
 import traceback
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStage, SessionLocal
+from db.models import Job, JobStage, JobStatus, SessionLocal
 from db.queue import advance_job, claim_job, fail_job, update_job_detail
 
 logger = logging.getLogger(__name__)
 
 DEBUG_TIMING = os.getenv("PSAT_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
+STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "180"))  # seconds
 
 
 class JobHandledDirectly(Exception):
@@ -46,11 +48,48 @@ class BaseWorker:
         """Subclasses implement this to run their pipeline stage."""
         raise NotImplementedError
 
+    def _recover_stale_jobs(self, session: Session) -> None:
+        """Requeue jobs stuck in 'processing' for longer than STALE_JOB_TIMEOUT."""
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=STALE_JOB_TIMEOUT)
+        stale = (
+            session.execute(
+                select(Job).where(
+                    Job.stage == self.stage,
+                    Job.status == JobStatus.processing,
+                    Job.updated_at < cutoff,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for job in stale:
+            logger.warning(
+                "Worker %s: requeuing stale job %s (%s) — stuck since %s",
+                self.worker_id,
+                job.id,
+                job.name or job.address,
+                job.updated_at.isoformat(),
+            )
+            job.status = JobStatus.queued
+            job.worker_id = None
+            job.detail = "Re-queued after stale processing timeout"
+        if stale:
+            session.commit()
+
     def run_loop(self) -> None:
         logger.info("Worker %s starting (stage=%s)", self.worker_id, self.stage.value)
+        recovery_counter = 0
         while self._running:
             session = SessionLocal()
             try:
+                # Check for stale jobs every ~30 poll cycles (~60s at 2s interval)
+                recovery_counter += 1
+                if recovery_counter >= 30:
+                    recovery_counter = 0
+                    self._recover_stale_jobs(session)
+
                 job = claim_job(session, self.stage, self.worker_id)
                 if job is None:
                     session.close()
@@ -99,7 +138,13 @@ class BaseWorker:
                         session.rollback()
                         fail_job(session, job.id, error)
                     except Exception:
-                        logger.exception("Failed to mark job %s as failed", job.id)
+                        logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
+                        try:
+                            fresh = SessionLocal()
+                            fail_job(fresh, job.id, error[-4000:])
+                            fresh.close()
+                        except Exception:
+                            logger.exception("Could not mark job %s as failed even with fresh session", job.id)
             except Exception:
                 logger.exception("Worker %s encountered error in main loop", self.worker_id)
             finally:

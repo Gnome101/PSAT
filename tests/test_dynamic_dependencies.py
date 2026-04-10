@@ -527,9 +527,9 @@ def test_proxy_address_fetches_txs_from_proxy_and_rewrites_edges(monkeypatch):
     assert proxy not in out["dependencies"]
     assert dep in out["dependencies"]
 
-    # Graph edges are rewritten to show impl as the source, not proxy
+    # Graph edges originate from the proxy (where transactions occur)
     for edge in out["dependency_graph"]:
-        assert edge["from"] == impl, f"Edge source should be impl {impl}, got {edge['from']}"
+        assert edge["from"] == proxy, f"Edge source should be proxy {proxy}, got {edge['from']}"
 
 
 # ---------------------------------------------------------------------------

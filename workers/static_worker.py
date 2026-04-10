@@ -14,8 +14,8 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from db.models import Job, JobStage
-from db.queue import create_job, get_artifact, get_source_files, store_artifact
+from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition, SlitherFinding
+from db.queue import create_job, get_source_files, store_artifact
 from services.discovery import (
     build_unified_dependencies,
     classify_contracts,
@@ -152,22 +152,40 @@ class StaticWorker(BaseWorker):
     next_stage = JobStage.resolution
 
     def process(self, session, job):
+        from sqlalchemy import select as sa_select
+
         sources = get_source_files(session, job.id)
         if not sources:
             raise RuntimeError("No source files found in DB for this job")
 
-        meta = get_artifact(session, job.id, "contract_meta")
-        if not isinstance(meta, dict):
-            raise RuntimeError("contract_meta artifact not found or invalid")
+        # Read from contracts table instead of artifacts
+        contract_row = session.execute(
+            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+        ).scalar_one_or_none()
+        if not contract_row:
+            raise RuntimeError("Contract row not found for this job")
 
-        build_settings = get_artifact(session, job.id, "build_settings")
-        if not isinstance(build_settings, dict):
-            build_settings = {}
-
-        contract_name = meta.get("contract_name", "Contract")
-        address = meta.get("address", job.address or "0x0")
-        remappings = meta.get("remappings", [])
+        contract_name = contract_row.contract_name or "Contract"
+        address = contract_row.address or job.address or "0x0"
         job_id_str = str(job.id)
+
+        # Build meta dict for downstream tools that still expect it
+        meta = {
+            "address": address,
+            "contract_name": contract_name,
+            "compiler_version": contract_row.compiler_version or "",
+            "language": contract_row.language or "solidity",
+            "evm_version": contract_row.evm_version or "shanghai",
+            "source_format": contract_row.source_format or "flat",
+            "source_file_count": contract_row.source_file_count or len(sources),
+            "remappings": list(contract_row.remappings or []),
+        }
+        build_settings = {
+            "evm_version": contract_row.evm_version or "shanghai",
+            "optimization_used": contract_row.optimization or False,
+            "runs": contract_row.optimization_runs or 200,
+        }
+        remappings = meta.get("remappings", [])
 
         # Attach the job's display name so downstream tools (e.g. graph builder)
         # can use it instead of the Etherscan contract name for proxy contracts.
@@ -187,11 +205,11 @@ class StaticWorker(BaseWorker):
         # in the dependency phase to avoid duplicate RPC calls.
         target_classification = self._resolve_proxy(session, job, address, contract_name)
 
-        # Check if proxy classification created an impl child job — if so,
+        # Check if proxy classification marked this as a proxy — if so,
         # skip Slither/analysis on the proxy source (it's just a thin wrapper).
         # Dependency discovery still runs because proxy-address deps are useful.
-        flags = get_artifact(session, job.id, "contract_flags")
-        is_proxy = isinstance(flags, dict) and flags.get("is_proxy")
+        session.refresh(contract_row)
+        is_proxy = contract_row.is_proxy
 
         # Create temp directory and write source files
         tmp_dir = tempfile.mkdtemp(prefix="psat_static_")
@@ -307,16 +325,35 @@ class StaticWorker(BaseWorker):
         admin = classification.get("admin")
         facets = classification.get("facets")
 
-        flags = {
-            "is_proxy": True,
-            "classification_type": classification_type,
-            "proxy_type": proxy_type,
-            "implementation": impl_address,
-            "beacon": beacon,
-            "admin": admin,
-            "facets": facets,
-        }
-        store_artifact(session, job.id, "contract_flags", data=flags)
+        # Update contracts table with proxy info
+        from sqlalchemy import select as sa_select
+
+        contract_row = session.execute(
+            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+        ).scalar_one_or_none()
+        if contract_row:
+            contract_row.is_proxy = True
+            contract_row.proxy_type = proxy_type
+            contract_row.implementation = impl_address
+            contract_row.beacon = beacon
+            contract_row.admin = admin
+            session.commit()
+
+        store_artifact(
+            session,
+            job.id,
+            "contract_flags",
+            data={
+                "is_proxy": True,
+                "classification_type": classification_type,
+                "proxy_type": proxy_type,
+                "implementation": impl_address,
+                "beacon": beacon,
+                "admin": admin,
+                "facets": facets,
+            },
+        )
+
         logger.info(
             "Job %s: proxy classified as %s, implementation=%s",
             job.id,
@@ -555,6 +592,40 @@ class StaticWorker(BaseWorker):
             if DEBUG_TIMING:
                 logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
 
+            # Write to contract_dependencies table
+            from sqlalchemy import select as sa_select
+
+            contract_row = session.execute(
+                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+            ).scalar_one_or_none()
+            if contract_row:
+                from db.models import ContractDependency
+
+                session.query(ContractDependency).filter(ContractDependency.contract_id == contract_row.id).delete()
+                for dep_addr, dep_info in unified.get("dependencies", {}).items():
+                    if not isinstance(dep_info, dict):
+                        continue
+                    impl = dep_info.get("implementation")
+                    if isinstance(impl, dict):
+                        impl_addr = impl.get("address")
+                    elif isinstance(impl, str):
+                        impl_addr = impl
+                    else:
+                        impl_addr = None
+                    session.add(
+                        ContractDependency(
+                            contract_id=contract_row.id,
+                            dependency_address=dep_addr.lower(),
+                            dependency_name=dep_info.get("contract_name"),
+                            relationship_type=dep_info.get("type", "regular"),
+                            source=dep_info.get("source"),
+                            proxy_type=dep_info.get("proxy_type"),
+                            implementation=impl_addr,
+                            admin=dep_info.get("admin"),
+                        )
+                    )
+                session.commit()
+
             dependencies_path = project_dir / "dependencies.json"
             dependencies_path.write_text(json.dumps(unified, indent=2) + "\n")
             store_artifact(session, job.id, "dependencies", data=unified)
@@ -637,7 +708,29 @@ class StaticWorker(BaseWorker):
 
         slither_path = project_dir / "slither_results.json"
         if slither_path.exists():
-            store_artifact(session, job.id, "slither_results", data=json.loads(slither_path.read_text()))
+            slither_data = json.loads(slither_path.read_text())
+
+            # Write to slither_findings table
+            from sqlalchemy import select as sa_select
+
+            contract_row = session.execute(
+                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+            ).scalar_one_or_none()
+            if contract_row:
+                session.query(SlitherFinding).filter(SlitherFinding.contract_id == contract_row.id).delete()
+                for finding in slither_data.get("results", {}).get("detectors", []):
+                    session.add(
+                        SlitherFinding(
+                            contract_id=contract_row.id,
+                            detector=finding.get("check"),
+                            severity=finding.get("impact"),
+                            description=finding.get("description"),
+                            elements=finding.get("elements"),
+                        )
+                    )
+                session.commit()
+
+            store_artifact(session, job.id, "slither_results", data=slither_data)
 
         report_path = project_dir / "analysis_report.txt"
         if report_path.exists():
@@ -662,7 +755,10 @@ class StaticWorker(BaseWorker):
             return False
 
         if contract_analysis_path.exists():
-            store_artifact(session, job.id, "contract_analysis", data=json.loads(contract_analysis_path.read_text()))
+            analysis_data = json.loads(contract_analysis_path.read_text())
+            # Keep as artifact — resolution/policy stages read it as JSON
+            store_artifact(session, job.id, "contract_analysis", data=analysis_data)
+            self._write_analysis_tables(session, job, analysis_data)
         logger.info(
             "Static stage contract analysis complete for job %s address=%s contract=%s",
             job.id,
@@ -670,6 +766,75 @@ class StaticWorker(BaseWorker):
             contract_name,
         )
         return True
+
+    def _write_analysis_tables(self, session, job: Job, analysis: dict) -> None:
+        """Extract structured data from contract_analysis JSON into relational tables."""
+        from sqlalchemy import select as sa_select
+
+        contract_row = session.execute(
+            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+        ).scalar_one_or_none()
+        if not contract_row:
+            return
+
+        summary = analysis.get("summary", {})
+        subject = analysis.get("subject", {})
+
+        # Update contract name from analysis if available
+        if subject.get("name"):
+            contract_row.contract_name = subject["name"]
+
+        # Write contract_summary
+        existing_summary = session.execute(
+            sa_select(ContractSummary).where(ContractSummary.contract_id == contract_row.id)
+        ).scalar_one_or_none()
+        if existing_summary:
+            session.delete(existing_summary)
+            session.flush()
+
+        session.add(
+            ContractSummary(
+                contract_id=contract_row.id,
+                control_model=summary.get("control_model"),
+                is_upgradeable=summary.get("is_upgradeable"),
+                is_pausable=summary.get("is_pausable"),
+                has_timelock=summary.get("has_timelock"),
+                risk_level=summary.get("static_risk_level"),
+                is_factory=summary.get("is_factory"),
+                is_nft=summary.get("is_nft"),
+                standards=summary.get("standards", []),
+                source_verified=subject.get("source_verified"),
+            )
+        )
+
+        # Write privileged_functions
+        session.query(PrivilegedFunction).filter(PrivilegedFunction.contract_id == contract_row.id).delete()
+        ac = analysis.get("access_control", {})
+        for pf in ac.get("privileged_functions", []):
+            session.add(
+                PrivilegedFunction(
+                    contract_id=contract_row.id,
+                    function_name=pf.get("function", ""),
+                    selector=pf.get("selector"),
+                    abi_signature=pf.get("abi_signature"),
+                    effect_labels=pf.get("effect_labels", []),
+                    action_summary=pf.get("action_summary"),
+                    authority_public=False,
+                )
+            )
+
+        # Write role_definitions
+        session.query(RoleDefinition).filter(RoleDefinition.contract_id == contract_row.id).delete()
+        for rd in ac.get("role_definitions", []):
+            session.add(
+                RoleDefinition(
+                    contract_id=contract_row.id,
+                    role_name=rd.get("role", ""),
+                    declared_in=rd.get("declared_in"),
+                )
+            )
+
+        session.commit()
 
     def _run_tracking_plan_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
         """Build control tracking plan. Non-fatal on failure."""

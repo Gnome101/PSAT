@@ -241,67 +241,410 @@ def _effect_targets(function, graph_entry: dict | None, effects: list[str]) -> l
     return [effect.split(":", 1)[1] for effect in effects if effect.startswith("writes:")]
 
 
+# ---------------------------------------------------------------------------
+# Structural detection helpers (name-independent, AST/IR-based)
+# ---------------------------------------------------------------------------
+
+# Known ERC20 function selectors (decimal form as Slither represents them)
+_KNOWN_SELECTORS: dict[int, str] = {
+    0xA9059CBB: "asset_send",  # transfer(address,uint256)
+    0x23B872DD: "asset_pull",  # transferFrom(address,address,uint256)
+    0x40C10F19: "mint",  # mint(address,uint256)
+    0x42966C68: "burn",  # burn(uint256)
+    0x9DC29FAC: "burn",  # burn(address,uint256)
+    0x79CC6790: "burn",  # burnFrom(address,uint256)
+}
+
+
+def _function_has_low_level_value_call(function) -> bool:
+    """Check if the function (or any internal function it calls) sends ETH via .call{value:}."""
+    visited: set[int] = set()
+
+    def _check(fn) -> bool:
+        fn_id = id(fn)
+        if fn_id in visited:
+            return False
+        visited.add(fn_id)
+        for node in fn.nodes:
+            for ir in node.irs:
+                ir_str = str(ir)
+                if "LOW_LEVEL_CALL" in ir_str and "value:" in ir_str:
+                    return True
+        for call in _call_or_value(fn, "all_internal_calls"):
+            callee = getattr(call, "function", call) if not callable(call) else call
+            if hasattr(callee, "nodes") and _check(callee):
+                return True
+        return False
+
+    return _check(function)
+
+
+def _writes_delegatecall_target(function) -> bool:
+    """Structural impl detection: does this function write a state var that
+    a fallback/receive reads before delegatecalling?  Works regardless of
+    variable name."""
+    contract = function.contract
+    written_vars = set(function.all_state_variables_written())
+    if not written_vars:
+        return False
+
+    for fn in contract.functions:
+        if not (fn.is_fallback or fn.is_receive):
+            continue
+        # Check if fallback has delegatecall in IR
+        has_dc = any("delegatecall" in str(ir).lower() for node in fn.nodes for ir in node.irs)
+        if not has_dc:
+            continue
+        # Check if fallback reads any var this function writes
+        fallback_reads = set(fn.all_state_variables_read())
+        if written_vars & fallback_reads:
+            return True
+    return False
+
+
+def _writes_assembly_delegatecall_slot(function) -> bool:
+    """Detect assembly sstore to a slot that the fallback sloads before delegatecalling."""
+    contract = function.contract
+
+    # Find sstore slots in this function
+    sstore_slots: set[str] = set()
+    for node in function.nodes:
+        for ir in node.irs:
+            ir_str = str(ir)
+            if "sstore" in ir_str.lower():
+                # Extract slot argument: sstore(slot, value)
+                # IR looks like: SOLIDITY_CALL sstore(uint256,uint256)(slot_var, val_var)
+                parts = ir_str.split("(")
+                if len(parts) >= 3:
+                    args = parts[-1].rstrip(")")
+                    slot_arg = args.split(",")[0].strip()
+                    sstore_slots.add(slot_arg)
+    if not sstore_slots:
+        return False
+
+    # Check if fallback sloads the same slot and delegatecalls the result
+    for fn in contract.functions:
+        if not (fn.is_fallback or fn.is_receive):
+            continue
+        sload_slots: set[str] = set()
+        has_dc = False
+        for node in fn.nodes:
+            for ir in node.irs:
+                ir_str = str(ir)
+                if "sload" in ir_str.lower():
+                    parts = ir_str.split("(")
+                    if len(parts) >= 3:
+                        args = parts[-1].rstrip(")")
+                        sload_slots.add(args.split(",")[0].strip())
+                if "delegatecall" in ir_str.lower():
+                    has_dc = True
+        if has_dc and sstore_slots & sload_slots:
+            return True
+    return False
+
+
+def _writes_pause_like_bool(function) -> bool:
+    """Structural pause detection: does this function write a bool state var
+    that a modifier reads, and that modifier gates other functions?"""
+    contract = function.contract
+    written_bools = {v for v in function.all_state_variables_written() if str(getattr(v, "type", "")) == "bool"}
+    if not written_bools:
+        return False
+    for modifier in contract.modifiers:
+        mod_bools = {v for v in modifier.all_state_variables_read() if str(getattr(v, "type", "")) == "bool"}
+        if not (written_bools & mod_bools):
+            continue
+        # This modifier reads a bool we write — check if it gates other functions
+        for fn in contract.functions:
+            if fn != function and modifier in fn.modifiers:
+                return True
+    return False
+
+
+def _writes_owner_like_address(function) -> bool:
+    """Structural ownership detection: does this function write an address state var
+    that a modifier compares against msg.sender?"""
+    contract = function.contract
+    written_addrs = {v for v in function.all_state_variables_written() if str(getattr(v, "type", "")) == "address"}
+    if not written_addrs:
+        return False
+    written_names = {getattr(v, "name", "").lower() for v in written_addrs}
+    for modifier in contract.modifiers:
+        for node in modifier.nodes:
+            for ir in node.irs:
+                ir_str = str(ir).lower()
+                # Look for: TMP = msg.sender == <var_name>
+                if "msg.sender" in ir_str:
+                    for name in written_names:
+                        if name and name in ir_str:
+                            return True
+    return False
+
+
+def _writes_authority_reference(function) -> bool:
+    """Structural authority detection: does this function write an address state var
+    that a modifier makes a high-level call to (i.e., calls it for auth checks)?"""
+    contract = function.contract
+    written_vars = set(function.all_state_variables_written())
+    if not written_vars:
+        return False
+    for modifier in contract.modifiers:
+        # Get all state vars that the modifier calls (not just reads/compares)
+        for callee_contract, call_ir in modifier.all_high_level_calls():
+            ir_str = str(call_ir)
+            # The IR contains "dest:VARNAME(Type)" — check if the dest is a var we write
+            for var in written_vars:
+                var_name = getattr(var, "name", "")
+                if var_name and f"dest:{var_name}" in ir_str:
+                    return True
+    return False
+
+
+def _writes_hook_reference(function) -> bool:
+    """Structural hook detection: does this function write an address state var
+    that another function calls AND that other function also writes to a mapping
+    (i.e., it's a transfer/state-changing function with a hook callback)?"""
+    contract = function.contract
+    written_vars = set(function.all_state_variables_written())
+    if not written_vars:
+        return False
+    for fn in contract.functions:
+        if fn == function or fn.is_constructor:
+            continue
+        # Does this function write to a mapping? (balance-changing function)
+        writes_mapping = any("mapping" in str(getattr(v, "type", "")) for v in fn.all_state_variables_written())
+        if not writes_mapping:
+            continue
+        # Does it call a state var that our function writes?
+        for callee_contract, call_ir in fn.all_high_level_calls():
+            ir_str = str(call_ir)
+            for var in written_vars:
+                var_name = getattr(var, "name", "")
+                if var_name and f"dest:{var_name}" in ir_str:
+                    return True
+    return False
+
+
+def _detect_encoded_selectors(function) -> set[str]:
+    """Scan IR for abi.encodeWithSelector calls with known ERC20 selectors."""
+    labels: set[str] = set()
+    visited: set[int] = set()
+
+    def _check(fn) -> None:
+        fn_id = id(fn)
+        if fn_id in visited:
+            return
+        visited.add(fn_id)
+        for node in fn.nodes:
+            for ir in node.irs:
+                ir_str = str(ir)
+                if "abi.encodeWithSelector" not in ir_str:
+                    continue
+                # Extract the selector value from IR
+                # IR: TMP = SOLIDITY_CALL abi.encodeWithSelector()(2835717307,to,amount)
+                paren_start = ir_str.rfind("(")
+                if paren_start < 0:
+                    continue
+                args = ir_str[paren_start + 1 :].rstrip(")")
+                first_arg = args.split(",")[0].strip()
+                try:
+                    selector_val = int(first_arg)
+                    label = _KNOWN_SELECTORS.get(selector_val)
+                    if label:
+                        labels.add(label)
+                except (ValueError, TypeError):
+                    pass
+        for call in _call_or_value(fn, "all_internal_calls"):
+            callee = getattr(call, "function", call) if not callable(call) else call
+            if hasattr(callee, "nodes"):
+                _check(callee)
+
+    _check(function)
+    return labels
+
+
+# ---------------------------------------------------------------------------
+# Main effect label function
+# ---------------------------------------------------------------------------
+
+
 def _effect_labels(function, effects: list[str], effect_targets: list[str], graph_entry: dict | None) -> list[str]:
-    labels = set()
+    labels: set[str] = set()
     targets_lower = {target.lower() for target in effect_targets}
-    internal_call_names = {name.lower() for name in _internal_call_names(function)}
     sink_kinds = set(graph_entry.get("sink_kinds", [])) if graph_entry else set()
 
+    # --- Layer 1: Slither's own effect classification ---
+    _EFFECT_MAP = {
+        "pause_state_change": "pause_toggle",
+        "upgrade_control": "implementation_update",
+        "ownership_change": "ownership_transfer",
+        "role_management": "role_management",
+        "mint_capability": "mint",
+        "burn_capability": "burn",
+        "timelock_control": "timelock_operation",
+        "factory_deployment": "contract_deployment",
+        "delegatecall_control": "delegatecall_execution",
+        "selfdestruct_capability": "selfdestruct_capability",
+        "privileged_external_call": "external_contract_call",
+    }
     for effect in effects:
-        if effect == "pause_state_change":
-            labels.add("pause_toggle")
-        elif effect == "upgrade_control":
-            labels.add("implementation_update")
-        elif effect == "ownership_change":
-            labels.add("ownership_transfer")
-        elif effect == "role_management":
-            labels.add("role_management")
-        elif effect == "mint_capability":
-            labels.add("mint")
-        elif effect == "burn_capability":
-            labels.add("burn")
-        elif effect == "timelock_control":
-            labels.add("timelock_operation")
-        elif effect == "factory_deployment":
-            labels.add("contract_deployment")
-        elif effect == "delegatecall_control":
-            labels.add("delegatecall_execution")
-        elif effect == "selfdestruct_capability":
-            labels.add("selfdestruct_capability")
-        elif effect == "privileged_external_call":
-            labels.add("external_contract_call")
+        mapped = _EFFECT_MAP.get(effect)
+        if mapped:
+            labels.add(mapped)
 
-    if any(target.endswith(".safetransferfrom") for target in targets_lower):
-        labels.add("asset_pull")
-    if any(target.endswith(".safetransfer") for target in targets_lower):
+    # --- Layer 2: Structural detection (name-independent) ---
+
+    # Pause: writes a bool that a modifier reads and gates other functions
+    if _writes_pause_like_bool(function):
+        labels.add("pause_toggle")
+
+    # Ownership: writes an address var that a modifier compares to msg.sender
+    if _writes_owner_like_address(function):
+        labels.add("ownership_transfer")
+
+    # Implementation update: writes a var the fallback reads before delegatecall
+    if _writes_delegatecall_target(function):
+        labels.add("implementation_update")
+
+    # Implementation update: assembly sstore to a slot the fallback sloads + delegatecalls
+    if _writes_assembly_delegatecall_slot(function):
+        labels.add("implementation_update")
+
+    # Asset send: low-level .call{value:} (ETH transfer)
+    if _function_has_low_level_value_call(function):
         labels.add("asset_send")
+
+    # Encoded selectors: abi.encodeWithSelector with known ERC20 selectors
+    labels.update(_detect_encoded_selectors(function))
+
+    # --- Layer 3: Structural authority/hook + arbitrary call detection ---
     if any(target.endswith(".functioncallwithvalue") for target in targets_lower):
         labels.discard("external_contract_call")
         labels.add("arbitrary_external_call")
-    if any(target == "authority" for target in targets_lower):
+
+    # Authority: writes an address var that a modifier calls for auth checks
+    if _writes_authority_reference(function):
         labels.add("authority_update")
-    if any(target == "owner" for target in targets_lower):
-        labels.add("ownership_transfer")
-    if any(target in {"hook", "beforetransferhook"} for target in targets_lower):
+
+    # Hook: writes an address var that a mapping-writing function calls
+    if _writes_hook_reference(function):
         labels.add("hook_update")
-    if any(target in {"paused", "_paused", "live", "_live"} for target in targets_lower):
-        labels.add("pause_toggle")
-    if any("implementation" in target or "beacon" in target for target in targets_lower):
-        labels.add("implementation_update")
+
+    # --- Layer 4: Sink kinds from permission graph ---
     if sink_kinds.intersection({"contract_creation"}):
         labels.add("contract_deployment")
     if sink_kinds.intersection({"delegatecall"}):
         labels.add("delegatecall_execution")
     if sink_kinds.intersection({"selfdestruct"}):
         labels.add("selfdestruct_capability")
+
+    # --- Layer 5: Internal + cross-contract call targets ---
+    # Internal calls to _mint/_burn (the contract's own functions, not external guessing)
+    internal_call_names = {name.lower() for name in _internal_call_names(function)}
     if any(name in internal_call_names for name in {"_mint", "mint"}):
         labels.add("mint")
     if any(name in internal_call_names for name in {"_burn", "burn"}):
         labels.add("burn")
-    if labels.intersection({"asset_pull", "asset_send", "arbitrary_external_call"}):
+    # Cross-contract: external calls to .mint()/.burn()/.transfer() etc.
+    if any(target.endswith(".mint") for target in targets_lower):
+        labels.add("mint")
+    if any(target.endswith(".burn") or target.endswith(".burnfrom") for target in targets_lower):
+        labels.add("burn")
+    if any(target.endswith(".transfer") or target.endswith(".safetransfer") for target in targets_lower):
+        labels.add("asset_send")
+    if any(target.endswith(".transferfrom") or target.endswith(".safetransferfrom") for target in targets_lower):
+        labels.add("asset_pull")
+
+    # Downgrade generic external_contract_call when a more specific label applies
+    if labels.intersection({"asset_pull", "asset_send", "arbitrary_external_call", "mint", "burn"}):
         labels.discard("external_contract_call")
 
     return _dedupe_strings(list(labels))
+
+
+_TRANSFER_METHODS = {
+    "transfer": "out",
+    "safetransfer": "out",
+    "transferfrom": "in",
+    "safetransferfrom": "in",
+    "mint": "mint",
+    "burn": "burn",
+}
+
+
+def _extract_value_flows(function) -> list[dict]:
+    """Extract detailed value flow info: which tokens move in/out via which calls.
+
+    Returns a list of dicts:
+        {"direction": "in"|"out"|"mint"|"burn"|"eth_out",
+         "token_var": "rewardsToken"|None,
+         "token_type": "IERC20"|"address"|None,
+         "method": "transfer"|"call{value}"|etc,
+         "is_parameter": True if the token is a function param (arbitrary token)}
+    """
+    flows: list[dict] = []
+    param_names = {p.name.lower() for p in function.parameters}
+
+    # High-level calls: token.transfer(), token.mint(), etc.
+    for _ct, call_ir in function.all_high_level_calls():
+        ir_str = str(call_ir)
+        if "dest:" not in ir_str:
+            continue
+
+        # Extract dest var name and function name
+        dest_part = ir_str.split("dest:")[1]
+        var_name = dest_part.split("(")[0].strip()
+        var_type = ""
+        if "(" in dest_part:
+            var_type = dest_part.split("(")[1].split(")")[0]
+
+        fn_part = ir_str.split("function:") if "function:" in ir_str else None
+        if not fn_part or len(fn_part) < 2:
+            continue
+        called_fn = fn_part[1].split(",")[0].strip()
+
+        direction = _TRANSFER_METHODS.get(called_fn.lower())
+        if direction:
+            flows.append(
+                {
+                    "direction": direction,
+                    "token_var": var_name,
+                    "token_type": var_type or None,
+                    "method": called_fn,
+                    "is_parameter": var_name.lower() in param_names,
+                }
+            )
+
+    # Low-level calls with value: ETH transfer
+    visited: set[int] = set()
+
+    def _check_low_level(fn) -> None:
+        fn_id = id(fn)
+        if fn_id in visited:
+            return
+        visited.add(fn_id)
+        for node in fn.nodes:
+            for ir in node.irs:
+                ir_str = str(ir)
+                if "LOW_LEVEL_CALL" in ir_str and "value:" in ir_str:
+                    flows.append(
+                        {
+                            "direction": "eth_out",
+                            "token_var": None,
+                            "token_type": "ETH",
+                            "method": "call{value}",
+                            "is_parameter": False,
+                        }
+                    )
+                    return
+        for call in _call_or_value(fn, "all_internal_calls"):
+            callee = getattr(call, "function", call) if not callable(call) else call
+            if hasattr(callee, "nodes"):
+                _check_low_level(callee)
+
+    _check_low_level(function)
+
+    return flows
 
 
 def _action_summary(effect_labels: list[str], effect_targets: list[str]) -> str:
@@ -465,6 +808,7 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
                 "effects": effects,
                 "effect_targets": effect_targets,
                 "effect_labels": effect_labels,
+                "value_flows": _extract_value_flows(function),
                 "action_summary": action_summary,
             }
         )

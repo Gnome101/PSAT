@@ -12,7 +12,7 @@ set -a
 source .env
 set +a
 
-WORKER_PATTERN='workers\.(discovery|static_worker|resolution_worker|policy_worker|proxy_monitor)'
+WORKER_PATTERN='workers\.(discovery|static_worker|resolution_worker|policy_worker|dapp_crawl_worker|defillama_worker)'
 API_PID=""
 WORKERS_PID=""
 PROXY_SCANNER_PID=""
@@ -73,8 +73,8 @@ cleanup_stale_workers() {
 # Run migrations
 cleanup_stale_workers
 
-echo "Running migrations..."
-uv run alembic upgrade head
+echo "Initializing database tables..."
+uv run python3 -c "from db.models import create_tables; create_tables(); print('Tables ready.')"
 
 # Trap to clean up background processes on exit
 cleanup() {
@@ -102,7 +102,7 @@ trap cleanup EXIT INT TERM
 
 # Start API
 echo "Starting API on http://127.0.0.1:8000 ..."
-uv run uvicorn api:app --host 127.0.0.1 --port 8000 &
+uv run uvicorn api:app --host 127.0.0.1 --port 8000 --reload &
 API_PID=$!
 sleep 2
 

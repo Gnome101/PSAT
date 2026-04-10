@@ -11,14 +11,18 @@ from sqlalchemy.orm import Session
 from .models import Artifact, Job, JobStage, JobStatus, SourceFile
 
 
-def create_job(session: Session, request_dict: dict[str, Any]) -> Job:
-    """Insert a new job with stage=discovery, status=queued."""
+def create_job(
+    session: Session,
+    request_dict: dict[str, Any],
+    initial_stage: JobStage = JobStage.discovery,
+) -> Job:
+    """Insert a new job at the given stage with status=queued."""
     job = Job(
         address=request_dict.get("address"),
         company=request_dict.get("company"),
         name=request_dict.get("name"),
         status=JobStatus.queued,
-        stage=JobStage.discovery,
+        stage=initial_stage,
         detail="Queued for analysis",
         request=request_dict,
     )
@@ -89,6 +93,22 @@ def fail_job(session: Session, job_id: Any, error: str) -> None:
     job.detail = "Failed"
     job.worker_id = None
     session.commit()
+
+
+def count_analysis_children(session: Session, root_job_id: str) -> int:
+    """Count analysis jobs (jobs with an address) linked to a root job."""
+    from sqlalchemy import func
+
+    count = (
+        session.execute(
+            select(func.count(Job.id)).where(
+                Job.address.isnot(None),
+                Job.request["root_job_id"].as_string() == root_job_id,
+            )
+        ).scalar()
+        or 0
+    )
+    return count
 
 
 def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, text_data: str | None = None) -> None:
