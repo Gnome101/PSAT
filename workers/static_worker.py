@@ -601,9 +601,7 @@ class StaticWorker(BaseWorker):
             if contract_row:
                 from db.models import ContractDependency
 
-                session.query(ContractDependency).filter(
-                    ContractDependency.contract_id == contract_row.id
-                ).delete()
+                session.query(ContractDependency).filter(ContractDependency.contract_id == contract_row.id).delete()
                 for dep_addr, dep_info in unified.get("dependencies", {}).items():
                     if not isinstance(dep_info, dict):
                         continue
