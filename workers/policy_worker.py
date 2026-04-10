@@ -116,8 +116,10 @@ class PolicyWorker(BaseWorker):
                             selector=fn.get("selector"),
                             abi_signature=fn.get("function") or fn.get("abi_signature"),
                             effect_labels=fn.get("effect_labels", []),
+                            effect_targets=fn.get("effect_targets", []),
                             action_summary=fn.get("action_summary"),
                             authority_public=fn.get("authority_public", False),
+                            authority_roles=fn.get("authority_roles"),
                         )
                         session.add(ef)
                         session.flush()
@@ -130,6 +132,7 @@ class PolicyWorker(BaseWorker):
                                     address=do["address"].lower(),
                                     resolved_type=do.get("resolved_type"),
                                     origin="direct owner",
+                                    principal_type="direct_owner",
                                     details=do.get("details"),
                                 )
                             )
@@ -142,6 +145,7 @@ class PolicyWorker(BaseWorker):
                                             address=p["address"].lower(),
                                             resolved_type=p.get("resolved_type"),
                                             origin=ctrl.get("label") or ctrl.get("controller_id", "controller"),
+                                            principal_type="controller",
                                             details=p.get("details"),
                                         )
                                     )
@@ -154,6 +158,7 @@ class PolicyWorker(BaseWorker):
                                             address=p["address"].lower(),
                                             resolved_type=p.get("resolved_type"),
                                             origin=f"role {role.get('role', '?')}",
+                                            principal_type="authority_role",
                                             details=p.get("details"),
                                         )
                                     )
@@ -209,8 +214,13 @@ class PolicyWorker(BaseWorker):
                                 PrincipalLabel(
                                     contract_id=contract_row.id,
                                     address=p["address"].lower(),
-                                    label=p.get("label"),
+                                    label=p.get("display_name"),
+                                    display_name=p.get("display_name"),
                                     resolved_type=p.get("resolved_type"),
+                                    labels=p.get("labels"),
+                                    confidence=p.get("confidence"),
+                                    details=p.get("details"),
+                                    graph_context=p.get("graph_context"),
                                 )
                             )
                     session.commit()

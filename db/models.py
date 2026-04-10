@@ -294,6 +294,10 @@ class Contract(Base):
     beacon: Mapped[str | None] = mapped_column(String(42), nullable=True)
     admin: Mapped[str | None] = mapped_column(String(42), nullable=True)
     remappings: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+    rank_score: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
+    discovery_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    chains: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     job: Mapped[Job] = relationship("Job")
@@ -408,6 +412,7 @@ class ControllerValue(Base):
     source: Mapped[str | None] = mapped_column(String(255), nullable=True)
     block_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     details: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    observed_via: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="controller_values")
 
@@ -424,6 +429,7 @@ class ControlGraphNode(Base):
     contract_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     depth: Mapped[int | None] = mapped_column(Integer, nullable=True)
     analyzed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    details: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="control_graph_nodes")
 
@@ -438,6 +444,7 @@ class ControlGraphEdge(Base):
     relation: Mapped[str | None] = mapped_column(String(100), nullable=True)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_controller_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    notes: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="control_graph_edges")
 
@@ -466,8 +473,10 @@ class EffectiveFunction(Base):
     selector: Mapped[str | None] = mapped_column(String(10), nullable=True)
     abi_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
     effect_labels: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
+    effect_targets: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
     action_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     authority_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    authority_roles: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="effective_functions")
     principals: Mapped[list["FunctionPrincipal"]] = relationship(
@@ -485,6 +494,7 @@ class FunctionPrincipal(Base):
     address: Mapped[str] = mapped_column(String(42), nullable=False)
     resolved_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     origin: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    principal_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     details: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
     function: Mapped[EffectiveFunction] = relationship("EffectiveFunction", back_populates="principals")
@@ -497,7 +507,12 @@ class PrincipalLabel(Base):
     contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
     address: Mapped[str] = mapped_column(String(42), nullable=False)
     label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     resolved_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    labels: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
+    confidence: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    details: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    graph_context: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="principal_labels")
 
@@ -510,6 +525,10 @@ class ContractDependency(Base):
     dependency_address: Mapped[str] = mapped_column(String(42), nullable=False)
     dependency_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     relationship_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    source: Mapped[list[str] | None] = mapped_column(ARRAY(String(50)), nullable=True)
+    proxy_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    implementation: Mapped[str | None] = mapped_column(String(42), nullable=True)
+    admin: Mapped[str | None] = mapped_column(String(42), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="dependencies")
 

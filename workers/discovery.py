@@ -85,6 +85,10 @@ class DiscoveryWorker(BaseWorker):
                 "rpc_url": request.get("rpc_url"),
                 "parent_job_id": root_job_id,
                 "root_job_id": root_job_id,
+                "rank_score": contract.get("rank_score"),
+                "confidence": contract.get("confidence"),
+                "discovery_source": contract.get("discovery_source"),
+                "chains": contract.get("chains"),
             }
             child_job = create_job(session, child_request)
             child_ids.append({"job_id": str(child_job.id), "address": addr, "name": child_name, "chain": child_chain})
@@ -218,6 +222,10 @@ class DiscoveryWorker(BaseWorker):
             source_file_count=len(sources),
             license=result.get("LicenseType", ""),
             remappings=remappings or [],
+            rank_score=request.get("rank_score"),
+            confidence=request.get("confidence"),
+            discovery_source=request.get("discovery_source"),
+            chains=request.get("chains"),
         )
         session.merge(contract)
         session.commit()

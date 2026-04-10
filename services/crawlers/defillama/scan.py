@@ -8,8 +8,10 @@ that the PSAT worker can call directly.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import time
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from services.crawlers.defillama.core_assets import build_address_to_chain_map, load_core_assets
@@ -48,6 +50,39 @@ def _discover_protocols(projects_dir: Path) -> list[Path]:
     return protocols
 
 
+_SIMILARITY_THRESHOLD = 0.9
+
+
+def _normalize_name(s: str) -> str:
+    """Strip punctuation, dots, dashes, and lowercase for comparison."""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _find_matching_protocol(protocol_name: str, protocol_dirs: list[Path]) -> list[Path]:
+    """Find the best matching protocol directory via normalized string similarity."""
+    name_norm = _normalize_name(protocol_name)
+    if not name_norm:
+        return []
+
+    best_score = 0.0
+    best_match: Path | None = None
+    for p in protocol_dirs:
+        score = max(
+            SequenceMatcher(None, name_norm, _normalize_name(p.name)).ratio(),
+            SequenceMatcher(None, name_norm, _normalize_name(p.stem)).ratio(),
+        )
+        if score > best_score:
+            best_score = score
+            best_match = p
+
+    if best_match and best_score >= _SIMILARITY_THRESHOLD:
+        if best_score < 1.0:
+            logger.info("Fuzzy matched '%s' → '%s' (score=%.2f)", protocol_name, best_match.name, best_score)
+        return [best_match]
+
+    return []
+
+
 def scan_protocol(
     protocol_name: str,
     repo_path: Path | None = None,
@@ -77,7 +112,7 @@ def scan_protocol(
 
     # Find the matching protocol directory
     protocol_dirs = _discover_protocols(projects_dir)
-    matching = [p for p in protocol_dirs if p.name == protocol_name or p.stem == protocol_name]
+    matching = _find_matching_protocol(protocol_name, protocol_dirs)
     if not matching:
         logger.warning("Protocol '%s' not found in DefiLlama-Adapters", protocol_name)
         return {

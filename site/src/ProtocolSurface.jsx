@@ -1107,7 +1107,7 @@ function buildGraphLayout(machines, fundFlows, principals) {
   });
 
   // Position principals near the contracts they control
-  const PRINCIPAL_OFFSET_Y = -100; // above their contracts
+  const PRINCIPAL_OFFSET_Y = -200; // above their contracts, with breathing room
   const usedPrincipalPositions = [];
   for (const p of principalList) {
     const controls = (p.controls || []).map((a) => a.toLowerCase());
@@ -1125,10 +1125,10 @@ function buildGraphLayout(machines, fundFlows, principals) {
       py = PRINCIPAL_OFFSET_Y;
     }
 
-    // Avoid overlapping other principals
+    // Avoid overlapping other principals and contracts
     for (const used of usedPrincipalPositions) {
-      if (Math.abs(px - used.x) < 140 && Math.abs(py - used.y) < 80) {
-        px += 150;
+      if (Math.abs(px - used.x) < 180 && Math.abs(py - used.y) < 100) {
+        px += 200;
       }
     }
     const pos = { x: Math.round(px), y: Math.round(py) };
@@ -1201,15 +1201,15 @@ async function elkLayout(machines, fundFlows, principals) {
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "DOWN",
-      "elk.spacing.nodeNode": "30",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "50",
+      "elk.spacing.nodeNode": "60",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "80",
       "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
       "elk.layered.nodePlacement.strategy": "BRANDES_KOEPF",
       "elk.layered.edgeRouting": "ORTHOGONAL",
-      "elk.spacing.edgeNode": "20",
+      "elk.spacing.edgeNode": "30",
       "elk.spacing.edgeEdge": "15",
       "elk.layered.spacing.edgeEdgeBetweenLayers": "15",
-      "elk.layered.spacing.edgeNodeBetweenLayers": "20",
+      "elk.layered.spacing.edgeNodeBetweenLayers": "30",
     },
     children: rawNodes.map((n) => ({
       id: n.id,

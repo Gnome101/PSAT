@@ -592,6 +592,37 @@ class StaticWorker(BaseWorker):
             if DEBUG_TIMING:
                 logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
 
+            # Write to contract_dependencies table
+            from sqlalchemy import select as sa_select
+
+            contract_row = session.execute(
+                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+            ).scalar_one_or_none()
+            if contract_row:
+                from db.models import ContractDependency
+
+                session.query(ContractDependency).filter(
+                    ContractDependency.contract_id == contract_row.id
+                ).delete()
+                for dep_addr, dep_info in unified.get("dependencies", {}).items():
+                    if not isinstance(dep_info, dict):
+                        continue
+                    impl = dep_info.get("implementation")
+                    impl_addr = impl.get("address") if isinstance(impl, dict) else (impl if isinstance(impl, str) else None)
+                    session.add(
+                        ContractDependency(
+                            contract_id=contract_row.id,
+                            dependency_address=dep_addr.lower(),
+                            dependency_name=dep_info.get("contract_name"),
+                            relationship_type=dep_info.get("type", "regular"),
+                            source=dep_info.get("source"),
+                            proxy_type=dep_info.get("proxy_type"),
+                            implementation=impl_addr,
+                            admin=dep_info.get("admin"),
+                        )
+                    )
+                session.commit()
+
             dependencies_path = project_dir / "dependencies.json"
             dependencies_path.write_text(json.dumps(unified, indent=2) + "\n")
             store_artifact(session, job.id, "dependencies", data=unified)

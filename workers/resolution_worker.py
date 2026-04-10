@@ -100,6 +100,7 @@ class ResolutionWorker(BaseWorker):
                         source=cv.get("source"),
                         block_number=snapshot.get("block_number"),
                         details=cv.get("details"),
+                        observed_via=cv.get("observed_via"),
                     )
                 )
             session.commit()
@@ -166,6 +167,7 @@ class ResolutionWorker(BaseWorker):
                                 contract_name=node.get("contract_name"),
                                 depth=node.get("depth"),
                                 analyzed=node.get("analyzed", False),
+                                details=node.get("details"),
                             )
                         )
                     for edge in resolved_graph.get("edges", []):
@@ -177,6 +179,7 @@ class ResolutionWorker(BaseWorker):
                                 relation=edge.get("relation"),
                                 label=edge.get("label"),
                                 source_controller_id=edge.get("source_controller_id"),
+                                notes=edge.get("notes"),
                             )
                         )
                     session.commit()

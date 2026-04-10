@@ -467,30 +467,34 @@ def analysis_detail(run_name: str) -> dict:
                 .scalars()
                 .all()
             ):
-                principals = []
+                direct_owner = None
+                controller_principals = []
                 for fp in (
                     session.execute(select(FunctionPrincipal).where(FunctionPrincipal.function_id == ef.id))
                     .scalars()
                     .all()
                 ):
-                    principals.append(
-                        {
-                            "address": fp.address,
-                            "resolved_type": fp.resolved_type,
-                            "source_controller_id": fp.origin,
-                            "details": fp.details or {},
-                        }
-                    )
+                    principal_dict = {
+                        "address": fp.address,
+                        "resolved_type": fp.resolved_type,
+                        "source_controller_id": fp.origin,
+                        "details": fp.details or {},
+                    }
+                    if fp.principal_type == "direct_owner" and direct_owner is None:
+                        direct_owner = principal_dict
+                    else:
+                        controller_principals.append(principal_dict)
                 ef_list.append(
                     {
                         "function": ef.abi_signature or ef.function_name,
                         "selector": ef.selector,
                         "effect_labels": list(ef.effect_labels or []),
+                        "effect_targets": list(ef.effect_targets or []),
                         "action_summary": ef.action_summary,
                         "authority_public": ef.authority_public,
-                        "controllers": [{"principals": principals}] if principals else [],
-                        "authority_roles": [],
-                        "direct_owner": None,
+                        "controllers": [{"principals": controller_principals}] if controller_principals else [],
+                        "authority_roles": ef.authority_roles or [],
+                        "direct_owner": direct_owner,
                     }
                 )
             if ef_list:
@@ -511,7 +515,17 @@ def analysis_detail(run_name: str) -> dict:
             if pl_rows:
                 payload["principal_labels"] = {
                     "principals": [
-                        {"address": p.address, "label": p.label, "resolved_type": p.resolved_type} for p in pl_rows
+                        {
+                            "address": p.address,
+                            "display_name": p.display_name,
+                            "label": p.label,
+                            "resolved_type": p.resolved_type,
+                            "labels": list(p.labels or []),
+                            "confidence": p.confidence,
+                            "details": p.details or {},
+                            "graph_context": list(p.graph_context or []),
+                        }
+                        for p in pl_rows
                     ],
                     "contract_name": contract_row.contract_name,
                     "contract_address": contract_row.address,
@@ -531,6 +545,8 @@ def analysis_detail(run_name: str) -> dict:
                                 "value": cv.value,
                                 "resolved_type": cv.resolved_type,
                                 "source": cv.source,
+                                "block_number": cv.block_number,
+                                "observed_via": cv.observed_via,
                                 "details": cv.details or {},
                             }
                             for cv in cv_rows
@@ -557,6 +573,7 @@ def analysis_detail(run_name: str) -> dict:
                                 "contract_name": n.contract_name,
                                 "depth": n.depth,
                                 "analyzed": n.analyzed,
+                                "details": n.details or {},
                             }
                             for n in cgn_rows
                         ],
@@ -566,6 +583,8 @@ def analysis_detail(run_name: str) -> dict:
                                 "to_id": e.to_node_id,
                                 "relation": e.relation,
                                 "label": e.label,
+                                "source_controller_id": e.source_controller_id,
+                                "notes": list(e.notes or []),
                             }
                             for e in cge_rows
                         ],
