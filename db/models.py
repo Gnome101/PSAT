@@ -293,6 +293,7 @@ class Contract(Base):
     implementation: Mapped[str | None] = mapped_column(String(42), nullable=True)
     beacon: Mapped[str | None] = mapped_column(String(42), nullable=True)
     admin: Mapped[str | None] = mapped_column(String(42), nullable=True)
+    deployer: Mapped[str | None] = mapped_column(String(42), nullable=True)
     remappings: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
     rank_score: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)

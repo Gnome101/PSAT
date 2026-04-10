@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage
 from db.queue import count_analysis_children, create_job, store_artifact, store_source_files
+from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import search_protocol_inventory
 from workers.base import BaseWorker, JobHandledDirectly
@@ -206,6 +207,14 @@ class DiscoveryWorker(BaseWorker):
         raw_evm = result.get("EVMVersion", "") or ""
         evm_version = raw_evm if raw_evm.lower() not in ("", "default") else "shanghai"
 
+        # Look up deployer wallet via Etherscan
+        deployer = None
+        try:
+            creators = _batch_get_creators([address])
+            deployer = creators.get(address.lower())
+        except Exception:
+            logger.debug("Could not fetch deployer for %s", address)
+
         # Write to contracts table (replaces contract_meta + build_settings artifacts)
         request = job.request if isinstance(job.request, dict) else {}
         contract = Contract(
@@ -221,6 +230,7 @@ class DiscoveryWorker(BaseWorker):
             source_format="standard_json" if "sources" in str(result.get("SourceCode", ""))[:10] else "flat",
             source_file_count=len(sources),
             license=result.get("LicenseType", ""),
+            deployer=deployer,
             remappings=remappings or [],
             rank_score=request.get("rank_score"),
             confidence=request.get("confidence"),

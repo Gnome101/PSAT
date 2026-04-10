@@ -444,6 +444,7 @@ def analysis_detail(run_name: str) -> dict:
             "run_name": job.name or str(job.id),
             "job_id": str(job.id),
             "address": job.address,
+            "deployer": contract_row.deployer if contract_row else None,
             "available_artifacts": sorted(all_artifacts.keys()),
         }
 
@@ -640,7 +641,8 @@ def analysis_detail(run_name: str) -> dict:
                         if impl_efs:
                             ef_list = []
                             for ef in impl_efs:
-                                principals = []
+                                direct_owner = None
+                                controller_principals = []
                                 for fp in (
                                     session.execute(
                                         select(FunctionPrincipal).where(FunctionPrincipal.function_id == ef.id)
@@ -648,24 +650,29 @@ def analysis_detail(run_name: str) -> dict:
                                     .scalars()
                                     .all()
                                 ):
-                                    principals.append(
-                                        {
-                                            "address": fp.address,
-                                            "resolved_type": fp.resolved_type,
-                                            "source_controller_id": fp.origin,
-                                            "details": fp.details or {},
-                                        }
-                                    )
+                                    principal_dict = {
+                                        "address": fp.address,
+                                        "resolved_type": fp.resolved_type,
+                                        "source_controller_id": fp.origin,
+                                        "details": fp.details or {},
+                                    }
+                                    if fp.principal_type == "direct_owner" and direct_owner is None:
+                                        direct_owner = principal_dict
+                                    else:
+                                        controller_principals.append(principal_dict)
                                 ef_list.append(
                                     {
                                         "function": ef.abi_signature or ef.function_name,
                                         "selector": ef.selector,
                                         "effect_labels": list(ef.effect_labels or []),
+                                        "effect_targets": list(ef.effect_targets or []),
                                         "action_summary": ef.action_summary,
                                         "authority_public": ef.authority_public,
-                                        "controllers": [{"principals": principals}] if principals else [],
-                                        "authority_roles": [],
-                                        "direct_owner": None,
+                                        "controllers": (
+                                            [{"principals": controller_principals}] if controller_principals else []
+                                        ),
+                                        "authority_roles": ef.authority_roles or [],
+                                        "direct_owner": direct_owner,
                                     }
                                 )
                             payload["effective_permissions"] = {
@@ -688,6 +695,8 @@ def analysis_detail(run_name: str) -> dict:
                                         "value": cv.value,
                                         "resolved_type": cv.resolved_type,
                                         "source": cv.source,
+                                        "block_number": cv.block_number,
+                                        "observed_via": cv.observed_via,
                                         "details": cv.details or {},
                                     }
                                     for cv in impl_cvs
@@ -714,6 +723,7 @@ def analysis_detail(run_name: str) -> dict:
                                         "contract_name": n.contract_name,
                                         "depth": n.depth,
                                         "analyzed": n.analyzed,
+                                        "details": n.details or {},
                                     }
                                     for n in impl_cgn
                                 ],
@@ -723,6 +733,8 @@ def analysis_detail(run_name: str) -> dict:
                                         "to_id": e.to_node_id,
                                         "relation": e.relation,
                                         "label": e.label,
+                                        "source_controller_id": e.source_controller_id,
+                                        "notes": list(e.notes or []),
                                     }
                                     for e in impl_cge
                                 ],
@@ -1031,6 +1043,7 @@ def company_overview(company_name: str) -> dict:
                 "is_proxy": is_proxy,
                 "proxy_type": proxy_type,
                 "implementation": impl_addr,
+                "deployer": contract_row.deployer if contract_row else None,
                 "owner": owner,
                 "controllers": controllers,
                 "control_model": control_model,

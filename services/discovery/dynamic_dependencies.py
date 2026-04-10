@@ -385,11 +385,6 @@ def find_dynamic_dependencies(
     exclude_to = {tx_source, target}
     direct_edges = [edge for edge in edges if edge["from"] == tx_source and edge["to"] not in exclude_to]
 
-    # Rewrite edge source so the graph is attributed to the implementation
-    if proxy_address:
-        for edge in direct_edges:
-            edge["from"] = target
-
     # Filter out precompiles and addresses with no deployed code (EOAs)
     dep_candidates = sorted({edge["to"] for edge in direct_edges})
     if code_cache is None:

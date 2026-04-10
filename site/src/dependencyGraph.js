@@ -122,7 +122,7 @@ function nodeVisual(node) {
 
 /** Meta text shown on a node — summarizes type + discovery source. */
 function nodeMeta(node) {
-  if (node.is_proxy_context) return node.proxy_type ? `PROXY ROOT · ${node.proxy_type.toUpperCase()}` : "PROXY ROOT";
+  if (node.is_proxy_context) return node.proxy_type ? `PROXY · ${node.proxy_type.toUpperCase()}` : "PROXY";
   if (node.is_target) return node.type === "implementation" ? "TARGET · IMPLEMENTATION" : "TARGET";
   const parts = [];
   const type = node.proxy_type || node.type || "regular";
