@@ -109,7 +109,7 @@ class PolicyWorker(BaseWorker):
                 contract_row = session.execute(
                     select(Contract).where(Contract.job_id == job.id).limit(1)
                 ).scalar_one_or_none()
-                if contract_row:
+                if contract_row and isinstance(ep_data, dict):
                     session.query(EffectiveFunction).filter(EffectiveFunction.contract_id == contract_row.id).delete()
                     for fn in ep_data.get("functions", []):
                         ef = EffectiveFunction(

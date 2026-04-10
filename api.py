@@ -1062,7 +1062,7 @@ def company_overview(company_name: str) -> dict:
                         .scalars()
                         .all()
                     )
-                    functions_list.append(_build_company_function_entry(ef, function_principals))
+                    functions_list.append(_build_company_function_entry(ef, list(function_principals)))
 
             # Fetch balances
             from db.models import ContractBalance
