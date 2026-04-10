@@ -211,6 +211,13 @@ class StaticWorker(BaseWorker):
         session.refresh(contract_row)
         is_proxy = contract_row.is_proxy
 
+        # Check if the discovery worker flagged this job as using cached static
+        # data.  When set, we skip the expensive Slither / contract-analysis /
+        # tracking-plan phases but still run the dependency phase (resolution
+        # needs it).
+        request = job.request if isinstance(job.request, dict) else {}
+        has_cached_static = bool(request.get("static_cached"))
+
         # Create temp directory and write source files
         tmp_dir = tempfile.mkdtemp(prefix="psat_static_")
         project_dir = Path(tmp_dir)
@@ -232,6 +239,14 @@ class StaticWorker(BaseWorker):
 
                 complete_job(session, job.id, f"Proxy {contract_name} — impl child job queued for full analysis")
                 raise JobHandledDirectly()
+            elif has_cached_static:
+                # Static artifacts already present from cache — skip analysis phases.
+                logger.info(
+                    "Static stage cache hit for job %s (%s) — skipping Slither/analysis/tracking plan",
+                    job_id_str,
+                    contract_name,
+                )
+                self.update_detail(session, job, "Static analysis complete (cached)")
             else:
                 # Phase 1: Slither
                 t0 = time.monotonic()

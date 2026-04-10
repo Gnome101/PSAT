@@ -11,7 +11,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage
-from db.queue import count_analysis_children, create_job, store_artifact, store_source_files
+from db.queue import copy_static_cache, count_analysis_children, create_job, find_completed_static_cache, store_artifact, store_source_files
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import search_protocol_inventory
@@ -192,6 +192,42 @@ class DiscoveryWorker(BaseWorker):
         address = job.address
         if address is None:
             raise ValueError("Address job missing address")
+
+        # Check for cached static data from a previously completed job
+        cached_job = find_completed_static_cache(session, address)
+        if cached_job is not None:
+            self.update_detail(session, job, f"Reusing cached static data for {address}")
+            new_contract_id = copy_static_cache(session, cached_job.id, job.id)
+            if new_contract_id is not None:
+                # Mark the job so downstream workers know static data was cached
+                req = job.request if isinstance(job.request, dict) else {}
+                job.request = {**req, "static_cached": True, "cache_source_job_id": str(cached_job.id)}
+                session.commit()
+
+                # Set job name from the cached contract if not already set
+                if not job.name:
+                    from sqlalchemy import select as sa_select
+
+                    contract_row = session.execute(
+                        sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+                    ).scalar_one_or_none()
+                    if contract_row and contract_row.contract_name:
+                        job.name = f"{contract_row.contract_name}_{address[2:10]}"
+                        session.commit()
+
+                logger.info(
+                    "Discovery cache hit for %s — reused data from job %s",
+                    address,
+                    cached_job.id,
+                )
+                self.update_detail(session, job, f"Discovery complete (cached): {address}")
+                return
+
+            logger.warning(
+                "Discovery cache copy failed for %s from job %s — falling back to fetch",
+                address,
+                cached_job.id,
+            )
 
         self.update_detail(session, job, f"Fetching verified source for {address}")
         result = fetch(address)

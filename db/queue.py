@@ -4,11 +4,23 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from .models import Artifact, Job, JobStage, JobStatus, SourceFile
+from .models import (
+    Artifact,
+    Base,
+    Contract,
+    ContractSummary,
+    Job,
+    JobStage,
+    JobStatus,
+    PrivilegedFunction,
+    RoleDefinition,
+    SlitherFinding,
+    SourceFile,
+)
 
 
 def create_job(
@@ -164,3 +176,182 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
     stmt = select(SourceFile).where(SourceFile.job_id == job_id)
     rows = session.execute(stmt).scalars().all()
     return {row.path: row.content for row in rows}
+
+
+# ---------------------------------------------------------------------------
+# Static data caching
+# ---------------------------------------------------------------------------
+
+# Artifact names that constitute cached static data.
+_STATIC_ARTIFACT_NAMES = frozenset(
+    {
+        "contract_analysis",
+        "slither_results",
+        "analysis_report",
+        "control_tracking_plan",
+    }
+)
+
+# Contract columns that are mutable (resolved live by _resolve_proxy) and
+# must NOT be carried over from a cached job.
+_MUTABLE_CONTRACT_FIELDS = frozenset(
+    {"is_proxy", "proxy_type", "implementation", "beacon", "admin"}
+)
+
+
+def copy_row(session: Session, source: Base, *, exclude: frozenset[str] = frozenset(), **overrides: Any) -> Base:
+    """Copy a SQLAlchemy row, returning a new detached instance.
+
+    - Primary keys are always skipped (auto-generated).
+    - Columns with a ``server_default`` (e.g. ``created_at``) are skipped
+      so the DB assigns fresh values, unless explicitly passed in *overrides*.
+    - *exclude* names additional columns to drop.
+    - *overrides* supply values that differ from the source (e.g. remapped
+      foreign keys, zeroed-out mutable fields).
+
+    Lists are shallow-copied so the new row doesn't share references with
+    the source.
+    """
+    from sqlalchemy import inspect as sa_inspect
+
+    mapper = sa_inspect(type(source))
+    kwargs: dict[str, Any] = {}
+    for attr in mapper.column_attrs:
+        key = attr.key
+        if key in exclude:
+            continue
+        col = attr.columns[0]
+        if col.primary_key:
+            continue
+        if key in overrides:
+            kwargs[key] = overrides[key]
+            continue
+        if col.server_default is not None:
+            continue
+        value = getattr(source, key)
+        if isinstance(value, list):
+            value = list(value)
+        kwargs[key] = value
+
+    new_row = type(source)(**kwargs)
+    session.add(new_row)
+    return new_row
+
+
+def find_completed_static_cache(session: Session, address: str) -> Job | None:
+    """Find a previously completed job for *address* that has all required static data.
+
+    Returns the cached :class:`Job` if one exists with:
+    - status = completed, stage = done
+    - a ``contracts`` row for this address
+    - at least one ``source_files`` row
+    - the ``contract_analysis`` artifact (key indicator that the static stage finished)
+    - a ``contract_summaries`` row linked to the contract
+
+    Returns ``None`` when no suitable cache exists.
+    """
+    stmt = (
+        select(Job)
+        .where(
+            func.lower(Job.address) == address.lower(),
+            Job.status == JobStatus.completed,
+            Job.stage == JobStage.done,
+        )
+        .order_by(Job.updated_at.desc())
+    )
+    candidates = session.execute(stmt).scalars().all()
+
+    for candidate in candidates:
+        contract_row = session.execute(
+            select(Contract).where(Contract.job_id == candidate.id).limit(1)
+        ).scalar_one_or_none()
+        if not contract_row:
+            continue
+
+        src_count = session.execute(
+            select(SourceFile).where(SourceFile.job_id == candidate.id).limit(1)
+        ).scalar_one_or_none()
+        if not src_count:
+            continue
+
+        analysis_art = session.execute(
+            select(Artifact).where(
+                Artifact.job_id == candidate.id, Artifact.name == "contract_analysis"
+            ).limit(1)
+        ).scalar_one_or_none()
+        if not analysis_art:
+            continue
+
+        summary = session.execute(
+            select(ContractSummary).where(ContractSummary.contract_id == contract_row.id).limit(1)
+        ).scalar_one_or_none()
+        if not summary:
+            continue
+
+        return candidate
+
+    return None
+
+
+def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) -> int | None:
+    """Copy all cached static data from *source_job_id* to *target_job_id*.
+
+    Copies:
+    - ``contracts`` row (immutable fields only; proxy fields left as defaults)
+    - ``source_files`` rows
+    - ``contract_summaries``, ``privileged_functions``, ``role_definitions``,
+      ``slither_findings`` rows (linked to the new contract row)
+    - Static artifacts (``contract_analysis``, ``slither_results``,
+      ``analysis_report``, ``control_tracking_plan``)
+
+    Returns the new ``Contract.id`` on success, or ``None`` on failure.
+    """
+    src_contract = session.execute(
+        select(Contract).where(Contract.job_id == source_job_id).limit(1)
+    ).scalar_one_or_none()
+    if not src_contract:
+        return None
+
+    # Guard: if the target already has a contract row, return early.
+    existing = session.execute(
+        select(Contract).where(Contract.job_id == target_job_id).limit(1)
+    ).scalar_one_or_none()
+    if existing:
+        return existing.id
+
+    # --- contract (exclude mutable proxy fields) ---
+    new_contract = copy_row(
+        session, src_contract,
+        exclude=_MUTABLE_CONTRACT_FIELDS,
+        job_id=target_job_id,
+        protocol_id=None,
+    )
+    session.flush()
+
+    # --- source files ---
+    src_files = session.execute(
+        select(SourceFile).where(SourceFile.job_id == source_job_id)
+    ).scalars().all()
+    for sf in src_files:
+        copy_row(session, sf, job_id=target_job_id)
+
+    # --- contract child tables ---
+    for Model in (ContractSummary, PrivilegedFunction, RoleDefinition, SlitherFinding):
+        src_rows = session.execute(
+            select(Model).where(Model.contract_id == src_contract.id)
+        ).scalars().all()
+        for row in src_rows:
+            copy_row(session, row, contract_id=new_contract.id)
+
+    # --- artifacts ---
+    src_artifacts = session.execute(
+        select(Artifact).where(
+            Artifact.job_id == source_job_id,
+            Artifact.name.in_(_STATIC_ARTIFACT_NAMES),
+        )
+    ).scalars().all()
+    for art in src_artifacts:
+        store_artifact(session, target_job_id, art.name, data=art.data, text_data=art.text_data)
+
+    session.commit()
+    return new_contract.id
