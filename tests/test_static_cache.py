@@ -1819,3 +1819,361 @@ def test_dynamic_deps_source_job_fallback(db_session, monkeypatch):
     assert art is not None
     assert "0x0000000000000000000000000000000000000042" in art["dependencies"]
     assert "0x0000000000000000000000000000000000000099" in art["dependencies"]
+
+
+# ---------------------------------------------------------------------------
+# 16. Classification caching
+# ---------------------------------------------------------------------------
+
+FAKE_CLS_OUTPUT = {
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "rpc": "https://rpc.example",
+    "classifications": {
+        "0x0000000000000000000000000000000000000042": {"type": "regular"},
+        "0x0000000000000000000000000000000000000043": {"type": "proxy", "proxy_type": "eip1967"},
+    },
+    "discovered_addresses": [],
+}
+
+
+def test_classifications_stored_on_first_run(db_session, monkeypatch):
+    """After classify_contracts runs, the classifications artifact is stored."""
+    from db.queue import get_artifact
+    from workers.static_worker import StaticWorker
+
+    job = _make_dep_phase_job(db_session)
+
+    captured_kwargs = {}
+
+    def mock_classify(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return FAKE_CLS_OUTPUT
+
+    monkeypatch.setattr("workers.static_worker.find_dependencies", lambda *a, **kw: FAKE_STATIC_DEPS)
+    monkeypatch.setattr(
+        "workers.static_worker.find_dynamic_dependencies",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr("workers.static_worker.classify_contracts", mock_classify)
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    art = get_artifact(db_session, job.id, "classifications")
+    assert art is not None
+    assert art["classifications"]["0x0000000000000000000000000000000000000042"]["type"] == "regular"
+    assert art["classifications"]["0x0000000000000000000000000000000000000043"]["type"] == "proxy"
+
+
+def test_classifications_reused_via_pre_classified(db_session, monkeypatch):
+    """On re-run with cached classifications, previous results are passed as
+    pre_classified so only new addresses trigger fresh RPC calls."""
+    from db.queue import get_artifact, store_artifact
+    from workers.static_worker import StaticWorker
+
+    job = _make_dep_phase_job(db_session)
+
+    # Store previous classifications on the job (simulating seed from copy_static_cache)
+    store_artifact(db_session, job.id, "classifications", data=FAKE_CLS_OUTPUT)
+
+    captured_kwargs = {}
+
+    def mock_classify(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        # Return extended output with a new address
+        extended = dict(FAKE_CLS_OUTPUT)
+        extended["classifications"] = dict(FAKE_CLS_OUTPUT["classifications"])
+        extended["classifications"]["0x0000000000000000000000000000000000000099"] = {"type": "library"}
+        return extended
+
+    monkeypatch.setattr("workers.static_worker.find_dependencies", lambda *a, **kw: FAKE_STATIC_DEPS)
+    monkeypatch.setattr(
+        "workers.static_worker.find_dynamic_dependencies",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr("workers.static_worker.classify_contracts", mock_classify)
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # Previous classifications should be in pre_classified
+    pre = captured_kwargs.get("pre_classified")
+    assert pre is not None
+    assert "0x0000000000000000000000000000000000000042" in pre
+    assert "0x0000000000000000000000000000000000000043" in pre
+
+    # Updated artifact should include the new address
+    art = get_artifact(db_session, job.id, "classifications")
+    assert art is not None
+    assert "0x0000000000000000000000000000000000000099" in art["classifications"]
+
+
+def test_classifications_artifact_copied_as_seed(db_session):
+    """classifications is included in _SEED_ARTIFACT_NAMES and gets
+    copied by copy_static_cache."""
+    from db.queue import copy_static_cache, create_job, get_artifact, store_artifact
+
+    source_job = _create_completed_job_with_static_data(db_session)
+    store_artifact(db_session, source_job.id, "classifications", data=FAKE_CLS_OUTPUT)
+
+    target_job = create_job(db_session, {"address": ADDR_A})
+    copy_static_cache(db_session, source_job.id, target_job.id)
+
+    art = get_artifact(db_session, target_job.id, "classifications")
+    assert art is not None
+    assert art["classifications"] == FAKE_CLS_OUTPUT["classifications"]
+
+
+# ---------------------------------------------------------------------------
+# 17. Upgrade history caching (append-only)
+# ---------------------------------------------------------------------------
+
+FAKE_UH_PREV = {
+    "schema_version": "0.1",
+    "target_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "proxies": {
+        "0xdac17f958d2ee523a2206206994597c13d831ec7": {
+            "proxy_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "proxy_type": "eip1967",
+            "current_implementation": "0x0000000000000000000000000000000000000042",
+            "upgrade_count": 1,
+            "first_upgrade_block": 50,
+            "last_upgrade_block": 50,
+            "implementations": [
+                {"address": "0x0000000000000000000000000000000000000042", "block_introduced": 50, "tx_hash": "0xaaa"},
+            ],
+            "events": [
+                {"event_type": "upgraded", "block_number": 50, "tx_hash": "0xaaa", "log_index": 0,
+                 "implementation": "0x0000000000000000000000000000000000000042"},
+            ],
+        },
+    },
+    "total_upgrades": 1,
+}
+
+FAKE_UH_NEW = {
+    "schema_version": "0.1",
+    "target_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "proxies": {
+        "0xdac17f958d2ee523a2206206994597c13d831ec7": {
+            "proxy_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "proxy_type": "eip1967",
+            "current_implementation": "0x0000000000000000000000000000000000000099",
+            "upgrade_count": 1,
+            "first_upgrade_block": 100,
+            "last_upgrade_block": 100,
+            "implementations": [
+                {"address": "0x0000000000000000000000000000000000000099", "block_introduced": 100, "tx_hash": "0xbbb"},
+            ],
+            "events": [
+                {"event_type": "upgraded", "block_number": 100, "tx_hash": "0xbbb", "log_index": 0,
+                 "implementation": "0x0000000000000000000000000000000000000099"},
+            ],
+        },
+    },
+    "total_upgrades": 1,
+}
+
+
+def test_merge_upgrade_history():
+    """_merge_upgrade_history produces the union of old and new events."""
+    from workers.static_worker import _merge_upgrade_history
+
+    merged = _merge_upgrade_history(FAKE_UH_PREV, FAKE_UH_NEW)
+
+    proxy_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7"
+    assert proxy_addr in merged["proxies"]
+    proxy = merged["proxies"][proxy_addr]
+
+    # Events are merged and deduplicated
+    assert len(proxy["events"]) == 2
+    tx_hashes = [e["tx_hash"] for e in proxy["events"]]
+    assert "0xaaa" in tx_hashes
+    assert "0xbbb" in tx_hashes
+
+    # Timeline rebuilt
+    assert len(proxy["implementations"]) == 2
+    assert proxy["upgrade_count"] == 2
+    assert proxy["first_upgrade_block"] == 50
+    assert proxy["last_upgrade_block"] == 100
+
+    assert merged["total_upgrades"] == 2
+
+
+def test_merge_upgrade_history_disjoint_proxies():
+    """_merge_upgrade_history handles proxies that appear in only one side."""
+    from workers.static_worker import _merge_upgrade_history
+
+    other_proxy = {
+        "schema_version": "0.1",
+        "target_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+        "proxies": {
+            "0x0000000000000000000000000000000000000077": {
+                "proxy_address": "0x0000000000000000000000000000000000000077",
+                "proxy_type": "eip1967",
+                "current_implementation": "0x0000000000000000000000000000000000000088",
+                "upgrade_count": 1,
+                "first_upgrade_block": 200,
+                "last_upgrade_block": 200,
+                "implementations": [
+                    {"address": "0x0000000000000000000000000000000000000088", "block_introduced": 200, "tx_hash": "0xccc"},
+                ],
+                "events": [
+                    {"event_type": "upgraded", "block_number": 200, "tx_hash": "0xccc", "log_index": 0,
+                     "implementation": "0x0000000000000000000000000000000000000088"},
+                ],
+            },
+        },
+        "total_upgrades": 1,
+    }
+
+    merged = _merge_upgrade_history(FAKE_UH_PREV, other_proxy)
+    # Both proxies present
+    assert "0xdac17f958d2ee523a2206206994597c13d831ec7" in merged["proxies"]
+    assert "0x0000000000000000000000000000000000000077" in merged["proxies"]
+    assert merged["total_upgrades"] == 2
+
+
+def test_upgrade_history_append_only_on_rerun(db_session, monkeypatch):
+    """Previous upgrade history exists; new fetch starts from max block + 1
+    and results are merged."""
+    from db.queue import get_artifact, store_artifact
+    from workers.static_worker import StaticWorker
+
+    job = _make_dep_phase_job(db_session)
+
+    # Store previous upgrade history on the job
+    store_artifact(db_session, job.id, "upgrade_history", data=FAKE_UH_PREV)
+
+    captured_kwargs = {}
+
+    def mock_build_uh(deps_path, *, enrich=True, from_block=0):
+        captured_kwargs["from_block"] = from_block
+        return FAKE_UH_NEW
+
+    monkeypatch.setattr("workers.static_worker.find_dependencies", lambda *a, **kw: FAKE_STATIC_DEPS)
+    monkeypatch.setattr("workers.static_worker.find_dynamic_dependencies", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.static_worker.classify_contracts", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "services.discovery.upgrade_history.build_upgrade_history",
+        mock_build_uh,
+    )
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # from_block should be max_block + 1 = 51
+    assert captured_kwargs["from_block"] == 51
+
+    # The stored artifact should be the merged result
+    art = get_artifact(db_session, job.id, "upgrade_history")
+    assert art is not None
+    proxy_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7"
+    assert len(art["proxies"][proxy_addr]["events"]) == 2
+    assert art["total_upgrades"] == 2
+
+
+def test_upgrade_history_no_new_events_uses_previous(db_session, monkeypatch):
+    """When build_upgrade_history returns empty proxies but previous has data,
+    use previous as-is."""
+    from db.queue import get_artifact, store_artifact
+    from workers.static_worker import StaticWorker
+
+    job = _make_dep_phase_job(db_session)
+    store_artifact(db_session, job.id, "upgrade_history", data=FAKE_UH_PREV)
+
+    def mock_build_uh(deps_path, *, enrich=True, from_block=0):
+        return {
+            "schema_version": "0.1",
+            "target_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "proxies": {},
+            "total_upgrades": 0,
+        }
+
+    monkeypatch.setattr("workers.static_worker.find_dependencies", lambda *a, **kw: FAKE_STATIC_DEPS)
+    monkeypatch.setattr("workers.static_worker.find_dynamic_dependencies", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.static_worker.classify_contracts", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "services.discovery.upgrade_history.build_upgrade_history",
+        mock_build_uh,
+    )
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # Previous data should be preserved
+    art = get_artifact(db_session, job.id, "upgrade_history")
+    assert art is not None
+    proxy_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7"
+    assert proxy_addr in art["proxies"]
+    assert art["total_upgrades"] == 1
+
+
+def test_upgrade_history_artifact_copied_as_seed(db_session):
+    """upgrade_history is included in _SEED_ARTIFACT_NAMES and gets
+    copied by copy_static_cache."""
+    from db.queue import copy_static_cache, create_job, get_artifact, store_artifact
+
+    source_job = _create_completed_job_with_static_data(db_session)
+    store_artifact(db_session, source_job.id, "upgrade_history", data=FAKE_UH_PREV)
+
+    target_job = create_job(db_session, {"address": ADDR_A})
+    copy_static_cache(db_session, source_job.id, target_job.id)
+
+    art = get_artifact(db_session, target_job.id, "upgrade_history")
+    assert art is not None
+    assert art["total_upgrades"] == FAKE_UH_PREV["total_upgrades"]
+    proxy_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7"
+    assert proxy_addr in art["proxies"]

@@ -197,6 +197,8 @@ _STATIC_ARTIFACT_NAMES = frozenset(
 _SEED_ARTIFACT_NAMES = frozenset(
     {
         "dynamic_dependencies",
+        "classifications",
+        "upgrade_history",
     }
 )
 

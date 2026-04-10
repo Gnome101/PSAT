@@ -200,6 +200,114 @@ def _resolve_dynamic_deps(
 
 
 # ---------------------------------------------------------------------------
+# Upgrade history merge helper
+# ---------------------------------------------------------------------------
+
+
+def _merge_upgrade_history(prev: dict, new: dict) -> dict:
+    """Merge previous and new upgrade history results (append-only).
+
+    For each proxy present in both, events are unioned (deduplicated by
+    block_number + tx_hash + event_type) and timelines rebuilt.  Proxies
+    appearing in only one side are kept as-is.
+    """
+    from services.discovery.upgrade_history import _build_implementation_timeline
+
+    merged_proxies: dict[str, dict] = {}
+
+    all_proxy_addrs = set(prev.get("proxies", {}).keys()) | set(new.get("proxies", {}).keys())
+
+    total_upgrades = 0
+    for addr in all_proxy_addrs:
+        prev_proxy = prev.get("proxies", {}).get(addr)
+        new_proxy = new.get("proxies", {}).get(addr)
+
+        if prev_proxy and not new_proxy:
+            merged_proxies[addr] = prev_proxy
+            total_upgrades += prev_proxy.get("upgrade_count", 0)
+            continue
+        if new_proxy and not prev_proxy:
+            merged_proxies[addr] = new_proxy
+            total_upgrades += new_proxy.get("upgrade_count", 0)
+            continue
+
+        # Both exist — merge events
+        prev_events = prev_proxy.get("events", [])
+        new_events = new_proxy.get("events", [])
+
+        # Deduplicate by (block_number, tx_hash, event_type)
+        seen: set[tuple[int, str, str]] = set()
+        merged_events: list[dict] = []
+        for event in prev_events + new_events:
+            key = (event.get("block_number", 0), event.get("tx_hash", ""), event.get("event_type", ""))
+            if key not in seen:
+                seen.add(key)
+                merged_events.append(event)
+
+        merged_events.sort(key=lambda e: (e.get("block_number", 0), e.get("log_index", 0)))
+
+        # Rebuild timeline from merged events
+        current_impl = new_proxy.get("current_implementation") or prev_proxy.get("current_implementation")
+        implementations = _build_implementation_timeline(merged_events, current_impl)
+        upgrade_events = [e for e in merged_events if e["event_type"] == "upgraded"]
+
+        merged_proxies[addr] = {
+            "proxy_address": addr,
+            "proxy_type": new_proxy.get("proxy_type") or prev_proxy.get("proxy_type"),
+            "current_implementation": current_impl,
+            "upgrade_count": len(upgrade_events),
+            "first_upgrade_block": upgrade_events[0]["block_number"] if upgrade_events else None,
+            "last_upgrade_block": upgrade_events[-1]["block_number"] if upgrade_events else None,
+            "implementations": implementations,
+            "events": merged_events,
+        }
+        total_upgrades += len(upgrade_events)
+
+    return {
+        "schema_version": new.get("schema_version") or prev.get("schema_version", "0.1"),
+        "target_address": new.get("target_address") or prev.get("target_address"),
+        "proxies": merged_proxies,
+        "total_upgrades": total_upgrades,
+    }
+
+
+def _resolve_upgrade_history(
+    session, job, dependencies_path, prev_uh: dict | None,
+) -> dict | None:
+    """Load cached upgrade history, fetch incrementally, merge, and persist.
+
+    Returns the (possibly merged) upgrade history dict, or None on failure.
+    """
+    from services.discovery.upgrade_history import build_upgrade_history
+
+    # Compute from_block for incremental fetch
+    from_block = 0
+    if prev_uh and isinstance(prev_uh, dict) and prev_uh.get("proxies"):
+        max_block = 0
+        for proxy_info in prev_uh["proxies"].values():
+            for event in proxy_info.get("events", []):
+                block = event.get("block_number", 0)
+                if block > max_block:
+                    max_block = block
+        if max_block > 0:
+            from_block = max_block + 1
+
+    uh = build_upgrade_history(dependencies_path, from_block=from_block)
+
+    if prev_uh and isinstance(prev_uh, dict) and prev_uh.get("proxies"):
+        if uh.get("proxies"):
+            uh = _merge_upgrade_history(prev_uh, uh)
+        else:
+            # No new events — use previous as-is
+            uh = prev_uh
+
+    if uh.get("proxies"):
+        store_artifact(session, job.id, "upgrade_history", data=uh)
+
+    return uh if uh.get("proxies") else None
+
+
+# ---------------------------------------------------------------------------
 # Source / project helpers
 # ---------------------------------------------------------------------------
 # Minimum solc version to avoid known compiler bugs (e.g. Natspec.cpp assertion in 0.8.21)
@@ -823,19 +931,29 @@ class StaticWorker(BaseWorker):
             )
             try:
                 t0 = time.monotonic()
-                pre_classified = None
-                if target_classification:
-                    from services.discovery.static_dependencies import normalize_address
+                from services.discovery.static_dependencies import normalize_address
 
-                    pre_classified = {normalize_address(address): target_classification}
+                pre_classified = {}
+                if target_classification:
+                    pre_classified[normalize_address(address)] = target_classification
+
+                # Load previous classifications to skip already-classified addresses
+                prev_cls = get_artifact(session, job.id, "classifications")
+                if isinstance(prev_cls, dict):
+                    for cls_addr, cls_info in prev_cls.get("classifications", {}).items():
+                        if cls_addr not in pre_classified:
+                            pre_classified[cls_addr] = cls_info
+
                 cls_output = classify_contracts(
                     address,
                     unique_deps,
                     resolved_rpc,
                     dynamic_edges=(dyn_output or {}).get("dependency_graph"),
                     code_cache=code_cache,
-                    pre_classified=pre_classified,
+                    pre_classified=pre_classified or None,
                 )
+                # Store classifications artifact for future cache hits
+                store_artifact(session, job.id, "classifications", data=cls_output)
                 if DEBUG_TIMING:
                     logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
                 logger.info(
@@ -927,13 +1045,13 @@ class StaticWorker(BaseWorker):
                     address,
                 )
 
-            # Upgrade history for proxy contracts
+            # Upgrade history for proxy contracts (incremental / append-only)
             try:
-                from services.discovery.upgrade_history import build_upgrade_history
-
-                uh = build_upgrade_history(dependencies_path)
-                if uh.get("proxies"):
-                    store_artifact(session, job.id, "upgrade_history", data=uh)
+                prev_uh = get_artifact(session, job.id, "upgrade_history")
+                if prev_uh is not None and not isinstance(prev_uh, dict):
+                    prev_uh = None
+                uh = _resolve_upgrade_history(session, job, dependencies_path, prev_uh)
+                if uh:
                     logger.info(
                         "Static stage upgrade history complete for job %s address=%s upgrades=%d",
                         job.id,
