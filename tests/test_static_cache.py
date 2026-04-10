@@ -777,3 +777,323 @@ def test_copy_returns_early_if_target_already_populated(db_session):
         )
     ).scalar()
     assert pf_count == 1, f"Expected 1 priv func after double copy, got {pf_count}"
+
+
+# ---------------------------------------------------------------------------
+# 10. Proxy cache optimization — _check_proxy_cache tests
+# ---------------------------------------------------------------------------
+
+IMPL_ADDR = "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f"
+IMPL_ADDR_NEW = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+
+def _create_source_job_with_proxy(session, address=ADDR_A, is_proxy=True, proxy_type="eip1967",
+                                   implementation=IMPL_ADDR, beacon=None, admin=None):
+    """Helper: create a completed source job with proxy fields set."""
+    from db.models import Contract, ContractSummary, JobStage, JobStatus
+    from db.queue import create_job, store_artifact, store_source_files
+
+    job = create_job(session, {"address": address, "name": "ProxyContract"})
+    job.status = JobStatus.completed
+    job.stage = JobStage.done
+    session.commit()
+
+    contract = Contract(
+        job_id=job.id,
+        address=address,
+        contract_name="ProxyContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+        is_proxy=is_proxy,
+        proxy_type=proxy_type if is_proxy else None,
+        implementation=implementation if is_proxy else None,
+        beacon=beacon,
+        admin=admin,
+    )
+    session.add(contract)
+    session.flush()
+
+    session.add(ContractSummary(contract_id=contract.id, control_model="proxy"))
+    session.commit()
+
+    store_source_files(session, job.id, {"src/Proxy.sol": "contract Proxy {}"})
+    store_artifact(session, job.id, "contract_analysis", data={"summary": {}})
+    store_artifact(session, job.id, "slither_results", data={"results": {"detectors": []}})
+    store_artifact(session, job.id, "analysis_report", text_data="proxy report")
+    store_artifact(session, job.id, "control_tracking_plan", data={"controllers": []})
+
+    return job
+
+
+def _create_target_job_with_contract(session, source_job_id, address=ADDR_A, rpc_url="https://rpc.example"):
+    """Helper: create a new job with static_cached flag and a contract row."""
+    from db.models import Contract
+    from db.queue import copy_static_cache, create_job, store_source_files
+
+    job = create_job(session, {
+        "address": address,
+        "rpc_url": rpc_url,
+        "static_cached": True,
+        "cache_source_job_id": str(source_job_id),
+    })
+
+    copy_static_cache(session, source_job_id, job.id)
+
+    store_source_files(session, job.id, {"src/Proxy.sol": "contract Proxy {}"})
+
+    return job
+
+
+@requires_postgres
+def test_proxy_cache_non_proxy_source(db_session, monkeypatch):
+    """Cache hit with non-proxy source: _resolve_proxy is NOT called, contract has is_proxy=False."""
+    from db.models import Contract
+    from db.queue import create_job, store_source_files
+    from sqlalchemy import select
+    from workers.static_worker import StaticWorker
+
+    source_job = _create_source_job_with_proxy(
+        db_session, is_proxy=False, proxy_type=None, implementation=None,
+    )
+    target_job = _create_target_job_with_contract(db_session, source_job.id)
+
+    phases_run = []
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, target_job)
+
+    assert "resolve_proxy" not in phases_run
+    assert "dependency" in phases_run
+
+    contract = db_session.execute(
+        select(Contract).where(Contract.job_id == target_job.id)
+    ).scalar_one()
+    assert contract.is_proxy is False
+    assert contract.implementation is None
+
+
+@requires_postgres
+def test_proxy_cache_proxy_unchanged(db_session, monkeypatch):
+    """Cache hit with unchanged proxy: _resolve_proxy is NOT called, proxy fields are copied."""
+    from db.models import Contract
+    from sqlalchemy import select
+    from workers.static_worker import StaticWorker
+
+    source_job = _create_source_job_with_proxy(
+        db_session, is_proxy=True, proxy_type="eip1967", implementation=IMPL_ADDR,
+        beacon="0xbeac000000000000000000000000000000000000",
+        admin="0xad1c000000000000000000000000000000000000",
+    )
+    target_job = _create_target_job_with_contract(db_session, source_job.id)
+
+    # resolve_current_implementation returns the SAME address → no upgrade
+    monkeypatch.setattr(
+        "workers.static_worker.resolve_current_implementation",
+        lambda addr, rpc, **kw: IMPL_ADDR,
+    )
+
+    phases_run = []
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, target_job)
+
+    assert "resolve_proxy" not in phases_run
+
+    contract = db_session.execute(
+        select(Contract).where(Contract.job_id == target_job.id)
+    ).scalar_one()
+    assert contract.is_proxy is True
+    assert contract.proxy_type == "eip1967"
+    assert contract.implementation.lower() == IMPL_ADDR.lower()
+    assert contract.beacon is not None
+    assert contract.admin is not None
+
+
+@requires_postgres
+def test_proxy_cache_proxy_upgraded(db_session, monkeypatch):
+    """Cache hit but proxy upgraded: _resolve_proxy IS called."""
+    from workers.static_worker import StaticWorker
+
+    source_job = _create_source_job_with_proxy(
+        db_session, is_proxy=True, proxy_type="eip1967", implementation=IMPL_ADDR,
+    )
+    target_job = _create_target_job_with_contract(db_session, source_job.id)
+
+    # resolve_current_implementation returns a DIFFERENT address → upgrade detected
+    monkeypatch.setattr(
+        "workers.static_worker.resolve_current_implementation",
+        lambda addr, rpc, **kw: IMPL_ADDR_NEW,
+    )
+
+    phases_run = []
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, target_job)
+
+    assert "resolve_proxy" in phases_run
+
+
+@requires_postgres
+def test_proxy_cache_rpc_fails(db_session, monkeypatch):
+    """Cache hit but RPC fails: falls back to full _resolve_proxy."""
+    from workers.static_worker import StaticWorker
+
+    source_job = _create_source_job_with_proxy(
+        db_session, is_proxy=True, proxy_type="eip1967", implementation=IMPL_ADDR,
+    )
+    target_job = _create_target_job_with_contract(db_session, source_job.id)
+
+    def mock_resolve(addr, rpc, **kw):
+        raise ConnectionError("RPC node down")
+
+    monkeypatch.setattr("workers.static_worker.resolve_current_implementation", mock_resolve)
+
+    phases_run = []
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, target_job)
+
+    assert "resolve_proxy" in phases_run
+
+
+@requires_postgres
+def test_proxy_cache_no_cache_flag(db_session, monkeypatch):
+    """Job without static_cached flag: _resolve_proxy IS called normally."""
+    from db.models import Contract
+    from db.queue import create_job, store_source_files
+    from workers.static_worker import StaticWorker
+
+    job = create_job(db_session, {"address": ADDR_A, "rpc_url": "https://rpc.example"})
+    contract = Contract(
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="TestContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+    )
+    db_session.add(contract)
+    db_session.commit()
+    store_source_files(db_session, job.id, {"src/Test.sol": "contract Test {}"})
+
+    phases_run = []
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    assert "resolve_proxy" in phases_run
+
+
+@requires_postgres
+def test_proxy_cache_immutable_eip1167(db_session, monkeypatch):
+    """Cache hit with eip1167 (immutable) proxy: reuse without any RPC call."""
+    from db.models import Contract
+    from sqlalchemy import select
+    from workers.static_worker import StaticWorker
+
+    source_job = _create_source_job_with_proxy(
+        db_session, is_proxy=True, proxy_type="eip1167", implementation=IMPL_ADDR,
+    )
+    target_job = _create_target_job_with_contract(db_session, source_job.id)
+
+    # resolve_current_implementation should NOT be called for immutable types
+    resolve_called = []
+
+    def mock_resolve(addr, rpc, **kw):
+        resolve_called.append(addr)
+        return IMPL_ADDR
+
+    monkeypatch.setattr("workers.static_worker.resolve_current_implementation", mock_resolve)
+
+    phases_run = []
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, target_job)
+
+    assert "resolve_proxy" not in phases_run
+    assert resolve_called == []  # No RPC for immutable proxy type
+
+    contract = db_session.execute(
+        select(Contract).where(Contract.job_id == target_job.id)
+    ).scalar_one()
+    assert contract.is_proxy is True
+    assert contract.proxy_type == "eip1167"
+    assert contract.implementation.lower() == IMPL_ADDR.lower()
+
+
+@requires_postgres
+def test_proxy_cache_diamond_proxy_falls_back(db_session, monkeypatch):
+    """Cache hit with diamond proxy (eip2535): falls back to full _resolve_proxy."""
+    from workers.static_worker import StaticWorker
+
+    source_job = _create_source_job_with_proxy(
+        db_session, is_proxy=True, proxy_type="eip2535", implementation=IMPL_ADDR,
+    )
+    target_job = _create_target_job_with_contract(db_session, source_job.id)
+
+    phases_run = []
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, target_job)
+
+    assert "resolve_proxy" in phases_run

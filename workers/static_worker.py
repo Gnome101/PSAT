@@ -16,6 +16,8 @@ from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition, SlitherFinding
 from db.queue import create_job, get_source_files, store_artifact
+from services.monitoring.proxy_watcher import resolve_current_implementation
+from utils.rpc import normalize_hex  # used for address comparison
 from services.discovery import (
     build_unified_dependencies,
     classify_contracts,
@@ -147,6 +149,97 @@ def _prune_remappings(remappings: list[str], source_paths: set[str]) -> list[str
     return kept
 
 
+# Proxy types where the implementation is baked into bytecode (immutable) —
+# safe to reuse from cache without an RPC slot check.
+_IMMUTABLE_PROXY_TYPES = frozenset({"eip1167"})
+
+# Proxy types with multiple facets that can't be verified with a single slot check.
+_MULTI_FACET_PROXY_TYPES = frozenset({"eip2535"})
+
+# The proxy fields that get copied between contract rows.  Kept in sync
+# with _MUTABLE_CONTRACT_FIELDS in db/queue.py (the cache-copy exclusion set).
+_PROXY_FIELDS = ("is_proxy", "proxy_type", "implementation", "beacon", "admin")
+
+
+def _apply_proxy_cache(session, src_contract, contract_row) -> dict:
+    """Copy proxy fields from *src_contract* to *contract_row* and return a
+    ``classify_single``-style dict for downstream consumers."""
+    for field in _PROXY_FIELDS:
+        setattr(contract_row, field, getattr(src_contract, field))
+    session.commit()
+
+    if not src_contract.is_proxy:
+        return {"type": "regular"}
+    return {
+        "type": "proxy",
+        **{f: getattr(src_contract, f) for f in _PROXY_FIELDS if f != "is_proxy"},
+    }
+
+
+def _check_proxy_cache(session, job, contract_row) -> dict | None:
+    """Check whether proxy classification can be reused from a cached source job.
+
+    Returns a ``classify_single``-style dict if the cached proxy state is still
+    valid, or ``None`` when full ``_resolve_proxy`` must run.
+    """
+    request = job.request if isinstance(job.request, dict) else {}
+    if not request.get("static_cached"):
+        return None
+
+    source_job_id = request.get("cache_source_job_id")
+    if not source_job_id:
+        return None
+
+    try:
+        src_contract = session.execute(
+            select(Contract).where(Contract.job_id == source_job_id).limit(1)
+        ).scalar_one_or_none()
+    except Exception:
+        return None
+
+    if src_contract is None:
+        return None
+
+    # Non-proxy source: non-proxies don't become proxies.
+    if not src_contract.is_proxy:
+        return _apply_proxy_cache(session, src_contract, contract_row)
+
+    proxy_type = src_contract.proxy_type
+
+    # Diamond proxies have multiple facets — can't verify with a single call.
+    if proxy_type in _MULTI_FACET_PROXY_TYPES:
+        return None
+
+    # Immutable proxy types (e.g. EIP-1167): impl is baked into bytecode.
+    if proxy_type in _IMMUTABLE_PROXY_TYPES:
+        return _apply_proxy_cache(session, src_contract, contract_row)
+
+    cached_impl = src_contract.implementation
+    if not cached_impl:
+        return None
+
+    rpc_url = request.get("rpc_url") or os.getenv("ETH_RPC")
+    if not rpc_url:
+        return None
+
+    # Single RPC call — resolve_current_implementation handles all proxy types
+    # (slot reads, getter calls, fallback discovery).
+    try:
+        current_impl = resolve_current_implementation(
+            contract_row.address, rpc_url, proxy_type=proxy_type
+        )
+        if not current_impl:
+            return None
+        current_impl = normalize_hex(current_impl)
+    except Exception:
+        return None
+
+    if current_impl != normalize_hex(cached_impl):
+        return None  # upgraded — need full re-classification
+
+    return _apply_proxy_cache(session, src_contract, contract_row)
+
+
 class StaticWorker(BaseWorker):
     stage = JobStage.static
     next_stage = JobStage.resolution
@@ -192,6 +285,8 @@ class StaticWorker(BaseWorker):
         if job.name:
             meta["display_name"] = job.name
 
+        request = job.request if isinstance(job.request, dict) else {}
+
         logger.info(
             "Static stage started for job %s address=%s contract=%s",
             job_id_str,
@@ -199,11 +294,31 @@ class StaticWorker(BaseWorker):
             contract_name,
         )
 
-        # Always attempt semantic proxy classification when RPC is available.
-        # Hidden proxies often won't match name-based heuristics so we run
-        # this unconditionally.  The result is reused by classify_contracts()
-        # in the dependency phase to avoid duplicate RPC calls.
-        target_classification = self._resolve_proxy(session, job, address, contract_name)
+        # Attempt to reuse proxy classification from a cached source job.
+        # This avoids 3-8 RPC calls when the proxy hasn't been upgraded.
+        cached_proxy = _check_proxy_cache(session, job, contract_row)
+        if cached_proxy is not None:
+            target_classification = cached_proxy
+            # Store contract_flags artifact to match what _resolve_proxy would produce
+            cached_type = cached_proxy.get("type", "regular")
+            flags = {
+                "is_proxy": cached_type == "proxy",
+                "classification_type": cached_type,
+                "cached_from_job": str(request.get("cache_source_job_id", "")),
+                **{f: cached_proxy.get(f) for f in _PROXY_FIELDS if f != "is_proxy"},
+            }
+            store_artifact(session, job.id, "contract_flags", data=flags)
+            logger.info(
+                "Job %s: proxy classification reused from cache (type=%s)",
+                job.id,
+                cached_type,
+            )
+        else:
+            # Always attempt semantic proxy classification when RPC is available.
+            # Hidden proxies often won't match name-based heuristics so we run
+            # this unconditionally.  The result is reused by classify_contracts()
+            # in the dependency phase to avoid duplicate RPC calls.
+            target_classification = self._resolve_proxy(session, job, address, contract_name)
 
         # Check if proxy classification marked this as a proxy — if so,
         # skip Slither/analysis on the proxy source (it's just a thin wrapper).
@@ -215,7 +330,6 @@ class StaticWorker(BaseWorker):
         # data.  When set, we skip the expensive Slither / contract-analysis /
         # tracking-plan phases but still run the dependency phase (resolution
         # needs it).
-        request = job.request if isinstance(job.request, dict) else {}
         has_cached_static = bool(request.get("static_cached"))
 
         # Create temp directory and write source files
