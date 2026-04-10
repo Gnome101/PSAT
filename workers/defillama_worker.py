@@ -86,9 +86,18 @@ class DefiLlamaWorker(BaseWorker):
         root_job_id = request.get("root_job_id", str(job.id))
         already_used = count_analysis_children(session, root_job_id)
         remaining = max(0, analyze_limit - already_used)
-        selected = addresses[:remaining]
         child_ids = []
-        for addr in selected:
+        seen_addresses: set[str] = set()
+        for addr in addresses:
+            if len(child_ids) >= remaining:
+                break
+
+            normalized = addr.lower()
+            if normalized in seen_addresses:
+                logger.info("Job %s: address %s already seen in scan results, skipping", job.id, addr)
+                continue
+            seen_addresses.add(normalized)
+
             existing = session.execute(select(Job).where(Job.address == addr).limit(1)).scalar_one_or_none()
             if existing:
                 logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)

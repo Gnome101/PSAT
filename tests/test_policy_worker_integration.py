@@ -357,3 +357,116 @@ class TestGraphRefreshAfterEffectivePermissions:
         assert effective_permissions_file_existed_during_refresh == [True], (
             "effective_permissions.json must exist on disk when write_resolved_control_graph is invoked"
         )
+
+
+class TestCrossContractEnrichmentArtifactSync:
+    """Cross-contract enrichment should rewrite the effective_permissions artifact."""
+
+    def test_enrichment_rewrites_effective_permissions_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        worker = PolicyWorker()
+        session = MagicMock()
+        job = _job()
+
+        contract_analysis = _minimal_contract_analysis()
+        control_snapshot = _minimal_snapshot({"state_variable:token": {"value": AUTH_ADDRESS}})
+        resolved_graph = _graph_with_nodes([])
+
+        def fake_get_artifact(_session: Any, _job_id: Any, name: str) -> Any:
+            return {
+                "contract_analysis": contract_analysis,
+                "control_snapshot": control_snapshot,
+                "resolved_control_graph": resolved_graph,
+            }.get(name)
+
+        store_calls: list[tuple[str, Any]] = []
+
+        def fake_store_artifact(
+            _session: Any,
+            _job_id: Any,
+            name: str,
+            data: Any = None,
+            text_data: Any = None,
+        ) -> None:
+            snapshot = json.loads(json.dumps(data)) if data is not None else text_data
+            store_calls.append((name, snapshot))
+
+        contract_row = MagicMock()
+        contract_row.id = 1
+        session.execute.return_value.scalar_one_or_none.return_value = contract_row
+
+        monkeypatch.setattr("workers.policy_worker.get_artifact", fake_get_artifact)
+        monkeypatch.setattr("workers.policy_worker.store_artifact", fake_store_artifact)
+
+        def fake_write_effective_permissions(
+            analysis_path: Path,
+            *,
+            target_snapshot_path: Any = None,
+            authority_snapshot_path: Any = None,
+            policy_state_path: Any = None,
+            output_path: Path,
+            principal_resolution: Any = None,
+        ) -> Path:
+            _write_json(
+                output_path,
+                {
+                    "schema_version": "1",
+                    "functions": [
+                        {
+                            "function": "mintRewards()",
+                            "effect_labels": ["role_management"],
+                            "controllers": [],
+                            "authority_roles": [],
+                            "direct_owner": None,
+                        }
+                    ],
+                },
+            )
+            return output_path
+
+        def fake_write_resolved_control_graph(
+            analysis_path: Path,
+            *,
+            rpc_url: str = "",
+            output_path: Path,
+            max_depth: int = 6,
+            workspace_prefix: str = "",
+            refresh_snapshots: bool = False,
+        ) -> Path:
+            _write_json(output_path, {"nodes": [], "edges": []})
+            return output_path
+
+        def fake_write_principal_labels(
+            effective_permissions_path: Path,
+            *,
+            resolved_control_graph_path: Any = None,
+            rpc_url: str = "",
+            output_path: Path,
+        ) -> Path:
+            _write_json(output_path, {"principals": []})
+            return output_path
+
+        monkeypatch.setattr(
+            "services.policy.write_effective_permissions_from_files",
+            fake_write_effective_permissions,
+        )
+        monkeypatch.setattr(
+            "services.resolution.recursive.write_resolved_control_graph",
+            fake_write_resolved_control_graph,
+        )
+        monkeypatch.setattr(
+            "services.policy.write_principal_labels_from_files",
+            fake_write_principal_labels,
+        )
+        monkeypatch.setattr(
+            PolicyWorker,
+            "_enrich_cross_contract",
+            lambda self, session, job, contract_analysis, control_snapshot: {"mintRewards()": ["mint"]},
+        )
+
+        worker.process(session, cast(Any, job))
+
+        effective_payloads = [data for name, data in store_calls if name == "effective_permissions"]
+        assert len(effective_payloads) == 2
+        assert effective_payloads[-1]["functions"][0]["effect_labels"] == ["mint", "role_management"]

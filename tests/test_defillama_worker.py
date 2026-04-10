@@ -305,6 +305,25 @@ class TestAnalyzeLimitCap:
         # remaining = max(0, 3 - 2) = 1, so only 1 child
         assert len(trackers["create_calls"]) == 1
 
+    def test_existing_jobs_do_not_consume_remaining_quota(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = DefiLlamaWorker()
+        session = MagicMock()
+        existing_job = SimpleNamespace(id=uuid.uuid4())
+        session.execute.return_value.scalar_one_or_none.side_effect = [existing_job, None, None]
+        job = _job(request={"defillama_protocol": PROTOCOL, "analyze_limit": 2})
+
+        trackers = _patch_worker_deps(monkeypatch)
+
+        monkeypatch.setattr(
+            "workers.defillama_worker.scan_protocol",
+            lambda **kwargs: _scan_result(addresses=[ADDR_1, ADDR_2, ADDR_3]),
+        )
+
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        assert [call["address"] for call in trackers["create_calls"]] == [ADDR_2, ADDR_3]
+
 
 class TestJobName:
     """Job name is set when missing, not overwritten when present."""

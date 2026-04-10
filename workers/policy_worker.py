@@ -54,6 +54,8 @@ class PolicyWorker(BaseWorker):
         tmp_dir = tempfile.mkdtemp(prefix="psat_policy_")
         project_dir = Path(tmp_dir)
         try:
+            contract_row = None
+            ep_data: dict | None = None
             analysis_path = project_dir / "contract_analysis.json"
             analysis_path.write_text(json.dumps(contract_analysis, indent=2) + "\n")
 
@@ -235,7 +237,11 @@ class PolicyWorker(BaseWorker):
                 )
 
             # Cross-contract effect enrichment: propagate labels across contract boundaries
-            self._enrich_cross_contract(session, job, contract_analysis, control_snapshot)
+            enriched = self._enrich_cross_contract(session, job, contract_analysis, control_snapshot)
+            if enriched and ep_data is not None:
+                self._apply_effect_label_updates(ep_data, enriched)
+                effective_permissions_path.write_text(json.dumps(ep_data, indent=2) + "\n")
+                store_artifact(session, job.id, "effective_permissions", data=ep_data)
 
             self.update_detail(session, job, "Policy analysis complete")
             logger.info(
@@ -248,7 +254,20 @@ class PolicyWorker(BaseWorker):
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def _enrich_cross_contract(self, session, job: Job, contract_analysis: dict, control_snapshot: dict) -> None:
+    def _apply_effect_label_updates(self, payload: dict, enriched: dict[str, list[str]]) -> None:
+        for fn in payload.get("functions", []):
+            fn_sig = fn.get("function") or fn.get("abi_signature")
+            if not fn_sig:
+                continue
+            new_labels = enriched.get(fn_sig)
+            if not new_labels:
+                continue
+            existing = set(fn.get("effect_labels") or [])
+            fn["effect_labels"] = sorted(existing | set(new_labels))
+
+    def _enrich_cross_contract(
+        self, session, job: Job, contract_analysis: dict, control_snapshot: dict
+    ) -> dict[str, list[str]]:
         """Propagate effect labels across contract boundaries.
 
         For each external call this contract makes, look up the callee's analysis
@@ -287,7 +306,7 @@ class PolicyWorker(BaseWorker):
                 sibling_analyses[sj.address.lower()] = sj_analysis
 
         if not sibling_analyses:
-            return
+            return {}
 
         callee_map = build_callee_effect_map(sibling_analyses)
         controller_values = control_snapshot.get("controller_values", {})
@@ -305,17 +324,25 @@ class PolicyWorker(BaseWorker):
             ).scalar_one_or_none()
             if contract_row:
                 for fn_sig, new_labels in enriched.items():
-                    fn_name = fn_sig.split("(")[0]
                     ef = session.execute(
                         select(EffectiveFunction).where(
                             EffectiveFunction.contract_id == contract_row.id,
-                            EffectiveFunction.function_name == fn_name,
+                            EffectiveFunction.abi_signature == fn_sig,
                         )
                     ).scalar_one_or_none()
+                    if ef is None:
+                        fn_name = fn_sig.split("(")[0]
+                        ef = session.execute(
+                            select(EffectiveFunction).where(
+                                EffectiveFunction.contract_id == contract_row.id,
+                                EffectiveFunction.function_name == fn_name,
+                            )
+                        ).scalar_one_or_none()
                     if ef:
                         existing = set(ef.effect_labels or [])
                         ef.effect_labels = sorted(existing | set(new_labels))
                 session.commit()
+        return enriched
 
     def _resolve_authority(
         self, project_dir: Path, resolved_graph_path: Path, snapshot_path: Path, contract_analysis: dict

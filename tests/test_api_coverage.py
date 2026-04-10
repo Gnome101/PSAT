@@ -1518,11 +1518,26 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
     ef.action_summary = "Sends tokens"
     ef.authority_public = True
 
-    fp = MagicMock()
-    fp.address = "0xowner"
-    fp.resolved_type = "eoa"
-    fp.origin = "owner"
-    fp.details = {}
+    fp_owner = MagicMock()
+    fp_owner.address = "0xowner"
+    fp_owner.resolved_type = "eoa"
+    fp_owner.origin = "direct owner"
+    fp_owner.principal_type = "direct_owner"
+    fp_owner.details = {}
+
+    fp_role = MagicMock()
+    fp_role.address = "0xrole"
+    fp_role.resolved_type = "safe"
+    fp_role.origin = "role 1"
+    fp_role.principal_type = "authority_role"
+    fp_role.details = {"threshold": 2}
+
+    fp_controller = MagicMock()
+    fp_controller.address = "0xcontroller"
+    fp_controller.resolved_type = "contract"
+    fp_controller.origin = "roleRegistry"
+    fp_controller.principal_type = "controller"
+    fp_controller.details = {"authority_kind": "access_control_like"}
 
     cv = MagicMock()
     cv.controller_id = "admin"
@@ -1575,7 +1590,7 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
         make_result(scalar=impl_job),  # 7: impl job lookup by address
         make_result(scalar=impl_contract),  # 8: impl Contract lookup
         make_result(scalars_all=[ef]),  # 9: EffectiveFunction for impl
-        make_result(scalars_all=[fp]),  # 10: FunctionPrincipal for impl ef
+        make_result(scalars_all=[fp_owner, fp_role, fp_controller]),  # 10: FunctionPrincipal for impl ef
         make_result(scalars_all=[cv]),  # 11: ControllerValue for impl
         make_result(scalars_all=[cgn]),  # 12: ControlGraphNode for impl
         make_result(scalars_all=[cge]),  # 13: ControlGraphEdge for impl
@@ -1697,11 +1712,26 @@ def test_company_overview_with_proxy_and_effects(mock_session_cls):
     ef.action_summary = "Pauses"
     ef.authority_public = False
 
-    fp = MagicMock()
-    fp.address = "0xowner"
-    fp.resolved_type = "eoa"
-    fp.origin = "owner"
-    fp.details = {}
+    fp_owner = MagicMock()
+    fp_owner.address = "0xowner"
+    fp_owner.resolved_type = "eoa"
+    fp_owner.origin = "direct owner"
+    fp_owner.principal_type = "direct_owner"
+    fp_owner.details = {}
+
+    fp_role = MagicMock()
+    fp_role.address = "0xrole"
+    fp_role.resolved_type = "safe"
+    fp_role.origin = "role 1"
+    fp_role.principal_type = "authority_role"
+    fp_role.details = {"threshold": 2}
+
+    fp_controller = MagicMock()
+    fp_controller.address = "0xcontroller"
+    fp_controller.resolved_type = "contract"
+    fp_controller.origin = "roleRegistry"
+    fp_controller.principal_type = "controller"
+    fp_controller.details = {"authority_kind": "access_control_like"}
 
     cv = MagicMock()
     cv.controller_id = "owner"
@@ -1740,9 +1770,9 @@ def test_company_overview_with_proxy_and_effects(mock_session_cls):
     # 9. UpgradeEvent all
     # 10. impl_contract for ef_contract_id
     # 11. EffectiveFunction for effects
-    # 12. EffectiveFunction for functions_list
-    # 13. FunctionPrincipal for functions_list
-    # 14. impl_contract for name
+    # 12. impl_contract for name
+    # 13. EffectiveFunction for functions_list
+    # 14. FunctionPrincipal for functions_list
     # 15. ContractBalance all
     # Then fund_flows and principal queries:
     # 16+. Contract lookups for ControlGraphNode
@@ -1758,9 +1788,9 @@ def test_company_overview_with_proxy_and_effects(mock_session_cls):
         make_result(scalars_all=[ue]),  # 9
         make_result(scalar=impl_contract),  # 10
         make_result(scalars_all=[ef]),  # 11
-        make_result(scalars_all=[ef]),  # 12
-        make_result(scalars_all=[fp]),  # 13
-        make_result(scalar=impl_contract),  # 14
+        make_result(scalar=impl_contract),  # 12
+        make_result(scalars_all=[ef]),  # 13
+        make_result(scalars_all=[fp_owner, fp_role, fp_controller]),  # 14
         make_result(scalars_all=[bal]),  # 15
     ]
     # Add many fallback empty results for fund_flows/principal queries
@@ -1783,6 +1813,37 @@ def test_company_overview_with_proxy_and_effects(mock_session_cls):
     assert "delegatecall" in c["capabilities"]
     assert c["upgrade_count"] == 1
     assert c["has_timelock"] is True
+    assert len(c["functions"]) == 1
+    fn = c["functions"][0]
+    assert fn["direct_owner"]["address"] == "0xowner"
+    assert fn["authority_roles"] == [
+        {
+            "role": 1,
+            "principals": [
+                {
+                    "address": "0xrole",
+                    "resolved_type": "safe",
+                    "source_controller_id": "role 1",
+                    "details": {"threshold": 2},
+                }
+            ],
+        }
+    ]
+    assert fn["controllers"] == [
+        {
+            "label": "roleRegistry",
+            "controller_id": "roleRegistry",
+            "source": "roleRegistry",
+            "principals": [
+                {
+                    "address": "0xcontroller",
+                    "resolved_type": "contract",
+                    "source_controller_id": "roleRegistry",
+                    "details": {"authority_kind": "access_control_like"},
+                }
+            ],
+        }
+    ]
 
     # Balances
     assert len(c["balances"]) >= 1
