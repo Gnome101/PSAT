@@ -118,15 +118,11 @@ def _patch_all(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> dict[str, A
         output_path.write_text(json.dumps(resolved_graph, indent=2) + "\n")
         return output_path
 
-    def fake_write_upgrade_history(deps_path: Path) -> Path | None:
-        return overrides.get("upgrade_history_path", None)
-
     monkeypatch.setattr("workers.resolution_worker.get_artifact", fake_get_artifact)
     monkeypatch.setattr("workers.resolution_worker.store_artifact", fake_store_artifact)
     monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
     monkeypatch.setattr("workers.resolution_worker.build_control_snapshot", fake_build_control_snapshot)
     monkeypatch.setattr("workers.resolution_worker.write_resolved_control_graph", fake_write_resolved_control_graph)
-    monkeypatch.setattr("workers.resolution_worker.write_upgrade_history", fake_write_upgrade_history)
     monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
     return {
@@ -605,29 +601,26 @@ class TestRunUpgradeHistoryNonFatal:
     def test_exception_is_caught_and_logged(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         worker = ResolutionWorker()
         session = MagicMock()
+        # Make the DB query raise after the artifact is loaded
+        session.execute.return_value.scalar_one_or_none.side_effect = RuntimeError("db error")
         job = _job()
 
+        uh_data = {
+            "proxies": {
+                "0xproxy": {
+                    "proxy_address": "0xproxy",
+                    "events": [{"event_type": "upgraded", "block_number": 100, "tx_hash": "0xtx", "implementation": "0xnew"}],
+                }
+            }
+        }
         monkeypatch.setattr(
             "workers.resolution_worker.get_artifact",
-            lambda _s, _j, name: {"proxies": []} if name == "dependencies" else None,
-        )
-        monkeypatch.setattr(
-            "workers.resolution_worker.write_upgrade_history",
-            MagicMock(side_effect=RuntimeError("etherscan down")),
-        )
-        store_calls: list[tuple[str, Any]] = []
-        monkeypatch.setattr(
-            "workers.resolution_worker.store_artifact",
-            lambda _s, _j, name, data=None, text_data=None: store_calls.append((name, data)),
+            lambda _s, _j, name: uh_data if name == "upgrade_history" else None,
         )
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
         # Should NOT raise
         worker._run_upgrade_history(session, cast(Any, job), tmp_path)
-
-        # Error artifact should be stored
-        error_artifacts = [n for n, _ in store_calls if n == "upgrade_history_error"]
-        assert len(error_artifacts) == 1
 
     def test_upgrade_history_writes_events(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         worker = ResolutionWorker()
@@ -636,29 +629,24 @@ class TestRunUpgradeHistoryNonFatal:
         session.execute.return_value.scalar_one_or_none.return_value = fake_contract
         job = _job()
 
-        deps = {"proxies": ["0xproxy"]}
+        uh_data = {
+            "proxies": {
+                "0xproxy": {
+                    "proxy_address": "0xproxy",
+                    "events": [
+                        {
+                            "event_type": "upgraded",
+                            "block_number": 100,
+                            "tx_hash": "0xtx",
+                            "implementation": "0xnew",
+                        }
+                    ],
+                }
+            }
+        }
         monkeypatch.setattr(
             "workers.resolution_worker.get_artifact",
-            lambda _s, _j, name: deps if name == "dependencies" else None,
-        )
-
-        uh_data = {
-            "upgrades": [
-                {
-                    "proxy": "0xproxy",
-                    "old_implementation": "0xold",
-                    "new_implementation": "0xnew",
-                    "block_number": 100,
-                    "tx_hash": "0xtx",
-                }
-            ]
-        }
-        uh_path = tmp_path / "upgrade_history.json"
-        uh_path.write_text(json.dumps(uh_data))
-
-        monkeypatch.setattr(
-            "workers.resolution_worker.write_upgrade_history",
-            lambda deps_path: uh_path,
+            lambda _s, _j, name: uh_data if name == "upgrade_history" else None,
         )
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
@@ -884,7 +872,7 @@ class TestResolvedGraphPathMissing:
 
 
 class TestRunUpgradeHistoryPathNone:
-    """write_upgrade_history returns None (no proxies found)."""
+    """No upgrade_history artifact — nothing to write."""
 
     def test_returns_none_gracefully(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         worker = ResolutionWorker()
@@ -893,11 +881,7 @@ class TestRunUpgradeHistoryPathNone:
 
         monkeypatch.setattr(
             "workers.resolution_worker.get_artifact",
-            lambda _s, _j, name: {"proxies": []} if name == "dependencies" else None,
-        )
-        monkeypatch.setattr(
-            "workers.resolution_worker.write_upgrade_history",
-            lambda deps_path: None,
+            lambda _s, _j, name: None,
         )
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
