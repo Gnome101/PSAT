@@ -608,7 +608,12 @@ class StaticWorker(BaseWorker):
                     if not isinstance(dep_info, dict):
                         continue
                     impl = dep_info.get("implementation")
-                    impl_addr = impl.get("address") if isinstance(impl, dict) else (impl if isinstance(impl, str) else None)
+                    if isinstance(impl, dict):
+                        impl_addr = impl.get("address")
+                    elif isinstance(impl, str):
+                        impl_addr = impl
+                    else:
+                        impl_addr = None
                     session.add(
                         ContractDependency(
                             contract_id=contract_row.id,
