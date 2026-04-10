@@ -189,6 +189,7 @@ _STATIC_ARTIFACT_NAMES = frozenset(
         "slither_results",
         "analysis_report",
         "control_tracking_plan",
+        "static_dependencies",
     }
 )
 

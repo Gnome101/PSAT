@@ -123,6 +123,7 @@ def _patch_dep_phase(monkeypatch, worker, static=None, dynamic=None, classify=No
         "workers.static_worker.store_artifact",
         lambda _s, _j, name, data=None, text_data=None: store.update({name: data or text_data}),
     )
+    monkeypatch.setattr("workers.static_worker.get_artifact", lambda _s, _j, _name: None)
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         "workers.static_worker.find_dependencies",

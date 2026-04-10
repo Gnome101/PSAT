@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition, SlitherFinding
-from db.queue import create_job, get_source_files, store_artifact
+from db.queue import create_job, get_artifact, get_source_files, store_artifact
 from services.monitoring.proxy_watcher import resolve_current_implementation
 from utils.rpc import normalize_hex  # used for address comparison
 from services.discovery import (
@@ -610,26 +610,45 @@ class StaticWorker(BaseWorker):
         )
 
         deps_output = None
-        try:
-            t0 = time.monotonic()
-            deps_output = find_dependencies(address, deps_rpc, code_cache=code_cache)
-            if DEBUG_TIMING:
-                n = len(deps_output.get("dependencies", []))
-                logger.info("[TIMING] static deps: %.1fs (%d deps)", time.monotonic() - t0, n)
+
+        # Check for cached static dependencies (bytecode is immutable, so these
+        # never change and can be reused permanently).  The artifact is
+        # self-describing — if it exists on this job it's valid, whether it
+        # was copied from a prior completed job or stored on a previous
+        # attempt of this same job that failed later in the pipeline.
+        cached_static_deps = get_artifact(session, job.id, "static_dependencies")
+
+        if cached_static_deps is not None:
+            deps_output = cached_static_deps
             logger.info(
-                "Static stage static dependencies complete for job %s address=%s count=%d",
+                "Static stage static dependencies loaded from cache for job %s address=%s count=%d",
                 job.id,
                 address,
                 len(deps_output.get("dependencies", [])),
             )
-        except Exception as exc:
-            dependency_errors["static"] = str(exc)
-            logger.warning(
-                "Static stage static dependency discovery failed for job %s address=%s: %s",
-                job.id,
-                address,
-                exc,
-            )
+        else:
+            try:
+                t0 = time.monotonic()
+                deps_output = find_dependencies(address, deps_rpc, code_cache=code_cache)
+                if DEBUG_TIMING:
+                    n = len(deps_output.get("dependencies", []))
+                    logger.info("[TIMING] static deps: %.1fs (%d deps)", time.monotonic() - t0, n)
+                logger.info(
+                    "Static stage static dependencies complete for job %s address=%s count=%d",
+                    job.id,
+                    address,
+                    len(deps_output.get("dependencies", [])),
+                )
+                # Persist for future cache hits
+                store_artifact(session, job.id, "static_dependencies", data=deps_output)
+            except Exception as exc:
+                dependency_errors["static"] = str(exc)
+                logger.warning(
+                    "Static stage static dependency discovery failed for job %s address=%s: %s",
+                    job.id,
+                    address,
+                    exc,
+                )
 
         dyn_output = None
         try:

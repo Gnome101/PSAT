@@ -1,15 +1,14 @@
 """Tests for static data caching — reuses immutable analysis across jobs.
 
-These tests are integration tests that require PostgreSQL. Run with:
-    docker compose up postgres -d
-    DATABASE_URL=postgresql://psat:psat@localhost:5432/psat uv run pytest tests/test_static_cache.py -v
-
-Tests are skipped if no PostgreSQL connection is available.
+Uses an in-memory SQLite database so tests run without PostgreSQL.  The
+fixture creates a separate metadata/model set with SQLite-compatible column
+types (JSON instead of JSONB, CHAR instead of UUID, TEXT instead of ARRAY)
+and patches ``store_artifact`` with a dialect-agnostic upsert.
 """
 
 from __future__ import annotations
 
-import os
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -17,71 +16,205 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy import String, Text, event, types
+from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-
-
-def _can_connect() -> bool:
-    if not DATABASE_URL:
-        return False
-    try:
-        from sqlalchemy import create_engine, text
-
-        engine = create_engine(DATABASE_URL)
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return True
-    except Exception:
-        return False
-
-
-requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 # Address constants
 ADDR_A = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
 ADDR_B = "0x0000000000000000000000000000000000000099"
 
 
+# ---------------------------------------------------------------------------
+# SQLite compatibility helpers
+# ---------------------------------------------------------------------------
+
+
+def _sqlite_compatible_store_artifact(session, job_id, name, data=None, text_data=None):
+    """SQLite-compatible replacement for the Postgres pg_insert upsert."""
+    from db.models import Artifact
+
+    existing = (
+        session.query(Artifact)
+        .filter(Artifact.job_id == job_id, Artifact.name == name)
+        .first()
+    )
+    if existing:
+        existing.data = data
+        existing.text_data = text_data
+    else:
+        session.add(Artifact(job_id=job_id, name=name, data=data, text_data=text_data))
+    session.commit()
+
+
+def _register_sqlite_type_compilers():
+    """Register SQLite compilation rules for Postgres-specific types.
+
+    Uses ``@compiles`` to teach the SQLite dialect how to render JSONB, UUID,
+    and ARRAY column DDL.  Also registers type-adaptation hooks so that UUID
+    and JSON values round-trip correctly through SQLite.
+
+    These registrations are idempotent and persist for the process lifetime,
+    which is fine because they are scoped to the ``sqlite`` dialect.
+    """
+    from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+    from sqlalchemy.ext.compiler import compiles
+
+    # DDL compilation hooks (only affect SQLite CREATE TABLE)
+    @compiles(JSONB, "sqlite")
+    def _compile_jsonb(element, compiler, **kw):
+        return "TEXT"
+
+    @compiles(UUID, "sqlite")
+    def _compile_uuid(element, compiler, **kw):
+        return "VARCHAR(36)"
+
+    @compiles(ARRAY, "sqlite")
+    def _compile_array(element, compiler, **kw):
+        return "TEXT"
+
+    # Value adaptation hooks — teach the PG types to handle SQLite bind/result
+    _orig_uuid_bind = UUID.bind_processor
+
+    def _uuid_bind_processor(self, dialect):
+        if dialect.name == "sqlite":
+            def process(value):
+                if value is not None:
+                    return str(value)
+                return value
+            return process
+        if _orig_uuid_bind:
+            return _orig_uuid_bind(self, dialect)
+        return None
+
+    UUID.bind_processor = _uuid_bind_processor
+
+    _orig_uuid_result = UUID.result_processor
+
+    def _uuid_result_processor(self, dialect, coltype):
+        if dialect.name == "sqlite":
+            def process(value):
+                if value is not None and not isinstance(value, uuid.UUID):
+                    return uuid.UUID(value)
+                return value
+            return process
+        if _orig_uuid_result:
+            return _orig_uuid_result(self, dialect, coltype)
+        return None
+
+    UUID.result_processor = _uuid_result_processor
+
+    _orig_jsonb_bind = JSONB.bind_processor
+
+    def _jsonb_bind_processor(self, dialect):
+        if dialect.name == "sqlite":
+            def process(value):
+                if value is not None:
+                    return json.dumps(value)
+                return value
+            return process
+        if _orig_jsonb_bind:
+            return _orig_jsonb_bind(self, dialect)
+        return None
+
+    JSONB.bind_processor = _jsonb_bind_processor
+
+    _orig_jsonb_result = JSONB.result_processor
+
+    def _jsonb_result_processor(self, dialect, coltype):
+        if dialect.name == "sqlite":
+            def process(value):
+                if value is not None and isinstance(value, str):
+                    return json.loads(value)
+                return value
+            return process
+        if _orig_jsonb_result:
+            return _orig_jsonb_result(self, dialect, coltype)
+        return None
+
+    JSONB.result_processor = _jsonb_result_processor
+
+    _orig_array_bind = ARRAY.bind_processor
+
+    def _array_bind_processor(self, dialect):
+        if dialect.name == "sqlite":
+            def process(value):
+                if value is not None:
+                    return json.dumps(value)
+                return value
+            return process
+        if _orig_array_bind:
+            return _orig_array_bind(self, dialect)
+        return None
+
+    ARRAY.bind_processor = _array_bind_processor
+
+    _orig_array_result = ARRAY.result_processor
+
+    def _array_result_processor(self, dialect, coltype):
+        if dialect.name == "sqlite":
+            def process(value):
+                if value is not None and isinstance(value, str):
+                    return json.loads(value)
+                return value
+            return process
+        if _orig_array_result:
+            return _orig_array_result(self, dialect, coltype)
+        return None
+
+    ARRAY.result_processor = _array_result_processor
+
+
+# Register once at import time — these are dialect-scoped and won't affect
+# Postgres connections.
+_register_sqlite_type_compilers()
+
+
 @pytest.fixture()
-def db_session():
-    """Create tables, yield a session, then clean up test data."""
+def db_session(monkeypatch):
+    """In-memory SQLite database with all PSAT tables.
+
+    Temporarily swaps Postgres-specific column types with SQLite equivalents,
+    creates all tables, and monkey-patches ``store_artifact`` so the
+    pg_insert-based upsert is replaced with a standard ORM upsert.
+    """
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
 
-    from db.models import (
-        Artifact,
-        Base,
-        Contract,
-        ContractSummary,
-        Job,
-        PrivilegedFunction,
-        RoleDefinition,
-        SlitherFinding,
-        SourceFile,
+    from db.models import Base
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
     )
 
-    engine = create_engine(DATABASE_URL)
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, _connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     Base.metadata.create_all(engine)
     session = Session(engine, expire_on_commit=False)
+
+    # Patch store_artifact everywhere it's imported so the SQLite-compatible
+    # upsert is used instead of the pg_insert-based original.
+    monkeypatch.setattr("db.queue.store_artifact", _sqlite_compatible_store_artifact)
+    # Workers bind store_artifact at import time via ``from db.queue import store_artifact``
+    for mod_path in [
+        "workers.discovery",
+        "workers.static_worker",
+    ]:
+        try:
+            monkeypatch.setattr(f"{mod_path}.store_artifact", _sqlite_compatible_store_artifact)
+        except AttributeError:
+            pass  # module not yet imported — safe to skip
+
     try:
         yield session
     finally:
-        session.rollback()
-        # Clean in dependency order
-        for model in [
-            SlitherFinding,
-            RoleDefinition,
-            PrivilegedFunction,
-            ContractSummary,
-            Contract,
-            SourceFile,
-            Artifact,
-            Job,
-        ]:
-            session.query(model).delete()
-        session.commit()
         session.close()
         engine.dispose()
 
@@ -192,7 +325,7 @@ def _create_completed_job_with_static_data(session, address=ADDR_A):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_find_completed_static_cache_hit(db_session):
     """Completed job with all static data is found."""
     from db.queue import find_completed_static_cache
@@ -203,7 +336,7 @@ def test_find_completed_static_cache_hit(db_session):
     assert found.id == completed.id
 
 
-@requires_postgres
+
 def test_find_completed_static_cache_case_insensitive(db_session):
     """Cache lookup matches regardless of address casing."""
     from db.queue import find_completed_static_cache
@@ -215,7 +348,7 @@ def test_find_completed_static_cache_case_insensitive(db_session):
     assert found.id == completed.id
 
 
-@requires_postgres
+
 def test_find_completed_static_cache_miss_no_job(db_session):
     """No prior jobs for this address returns None."""
     from db.queue import find_completed_static_cache
@@ -223,7 +356,7 @@ def test_find_completed_static_cache_miss_no_job(db_session):
     assert find_completed_static_cache(db_session, ADDR_B) is None
 
 
-@requires_postgres
+
 def test_find_completed_static_cache_miss_failed_job(db_session):
     """Failed job is not returned as cache."""
     from db.models import JobStatus
@@ -236,7 +369,7 @@ def test_find_completed_static_cache_miss_failed_job(db_session):
     assert find_completed_static_cache(db_session, ADDR_A) is None
 
 
-@requires_postgres
+
 def test_find_completed_static_cache_miss_no_analysis(db_session):
     """Completed job without contract_analysis artifact is not returned."""
     from db.models import Contract, ContractSummary, JobStage, JobStatus
@@ -258,7 +391,7 @@ def test_find_completed_static_cache_miss_no_analysis(db_session):
     assert find_completed_static_cache(db_session, ADDR_A) is None
 
 
-@requires_postgres
+
 def test_find_completed_static_cache_miss_no_summary(db_session):
     """Completed job without contract_summaries row is not returned."""
     from db.models import Contract, JobStage, JobStatus
@@ -283,7 +416,7 @@ def test_find_completed_static_cache_miss_no_summary(db_session):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_copy_static_cache(db_session):
     """copy_static_cache duplicates all static data into a new job."""
     from db.models import Contract, ContractSummary, PrivilegedFunction, RoleDefinition, SlitherFinding
@@ -358,7 +491,7 @@ def test_copy_static_cache(db_session):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_discovery_worker_cache_hit_skips_fetch(db_session, monkeypatch):
     """When cache exists, discovery skips fetch() and copies data instead."""
     from db.models import Contract
@@ -406,7 +539,7 @@ def test_discovery_worker_cache_hit_skips_fetch(db_session, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_discovery_worker_cache_miss_runs_fetch(db_session, monkeypatch):
     """New address with no cached job runs fetch() normally."""
     from db.queue import create_job
@@ -446,7 +579,7 @@ def test_discovery_worker_cache_miss_runs_fetch(db_session, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_static_worker_cache_hit_skips_analysis(db_session, monkeypatch):
     """Job flagged as static_cached skips Slither/analysis but runs deps."""
     from db.models import Contract
@@ -517,7 +650,7 @@ def test_static_worker_cache_hit_skips_analysis(db_session, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_static_worker_cache_miss_runs_analysis(db_session, monkeypatch):
     """Job without cached artifacts runs all analysis phases normally."""
     from db.models import Contract
@@ -585,7 +718,7 @@ def test_static_worker_cache_miss_runs_analysis(db_session, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_data_isolation_after_cache_copy(db_session):
     """Deleting the source job does not affect the copied data."""
     from db.models import Contract, ContractSummary, Job, PrivilegedFunction
@@ -636,7 +769,7 @@ def test_data_isolation_after_cache_copy(db_session):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_company_mode_unaffected(db_session, monkeypatch):
     """Company-mode jobs (no address) go through _process_company, not cache."""
     from db.queue import create_job
@@ -664,7 +797,7 @@ def test_company_mode_unaffected(db_session, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@requires_postgres
+
 def test_no_duplicate_rows_after_two_runs(db_session, monkeypatch):
     """Running discovery twice for the same address produces exactly one set of
     static rows per job — no duplicates within either job."""
@@ -739,7 +872,7 @@ def test_no_duplicate_rows_after_two_runs(db_session, monkeypatch):
         assert art is not None, f"Missing artifact {artifact_name}"
 
 
-@requires_postgres
+
 def test_copy_returns_early_if_target_already_populated(db_session):
     """Second call to copy_static_cache returns existing ID without duplicating."""
     from db.models import Contract, ContractSummary, PrivilegedFunction
@@ -850,7 +983,7 @@ def _create_target_job_with_contract(session, source_job_id, address=ADDR_A, rpc
     return job
 
 
-@requires_postgres
+
 def test_proxy_cache_non_proxy_source(db_session, monkeypatch):
     """Cache hit with non-proxy source: _resolve_proxy is NOT called, contract has is_proxy=False."""
     from db.models import Contract
@@ -885,7 +1018,7 @@ def test_proxy_cache_non_proxy_source(db_session, monkeypatch):
     assert contract.implementation is None
 
 
-@requires_postgres
+
 def test_proxy_cache_proxy_unchanged(db_session, monkeypatch):
     """Cache hit with unchanged proxy: _resolve_proxy is NOT called, proxy fields are copied."""
     from db.models import Contract
@@ -915,7 +1048,12 @@ def test_proxy_cache_proxy_unchanged(db_session, monkeypatch):
     monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
 
-    worker.process(db_session, target_job)
+    # Proxy contracts raise JobHandledDirectly because the proxy wrapper is
+    # completed directly and a child job handles the implementation analysis.
+    from workers.base import JobHandledDirectly
+
+    with pytest.raises(JobHandledDirectly):
+        worker.process(db_session, target_job)
 
     assert "resolve_proxy" not in phases_run
 
@@ -929,7 +1067,7 @@ def test_proxy_cache_proxy_unchanged(db_session, monkeypatch):
     assert contract.admin is not None
 
 
-@requires_postgres
+
 def test_proxy_cache_proxy_upgraded(db_session, monkeypatch):
     """Cache hit but proxy upgraded: _resolve_proxy IS called."""
     from workers.static_worker import StaticWorker
@@ -960,7 +1098,7 @@ def test_proxy_cache_proxy_upgraded(db_session, monkeypatch):
     assert "resolve_proxy" in phases_run
 
 
-@requires_postgres
+
 def test_proxy_cache_rpc_fails(db_session, monkeypatch):
     """Cache hit but RPC fails: falls back to full _resolve_proxy."""
     from workers.static_worker import StaticWorker
@@ -990,7 +1128,7 @@ def test_proxy_cache_rpc_fails(db_session, monkeypatch):
     assert "resolve_proxy" in phases_run
 
 
-@requires_postgres
+
 def test_proxy_cache_no_cache_flag(db_session, monkeypatch):
     """Job without static_cached flag: _resolve_proxy IS called normally."""
     from db.models import Contract
@@ -1030,7 +1168,7 @@ def test_proxy_cache_no_cache_flag(db_session, monkeypatch):
     assert "resolve_proxy" in phases_run
 
 
-@requires_postgres
+
 def test_proxy_cache_immutable_eip1167(db_session, monkeypatch):
     """Cache hit with eip1167 (immutable) proxy: reuse without any RPC call."""
     from db.models import Contract
@@ -1061,7 +1199,10 @@ def test_proxy_cache_immutable_eip1167(db_session, monkeypatch):
     monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
 
-    worker.process(db_session, target_job)
+    from workers.base import JobHandledDirectly
+
+    with pytest.raises(JobHandledDirectly):
+        worker.process(db_session, target_job)
 
     assert "resolve_proxy" not in phases_run
     assert resolve_called == []  # No RPC for immutable proxy type
@@ -1074,7 +1215,7 @@ def test_proxy_cache_immutable_eip1167(db_session, monkeypatch):
     assert contract.implementation.lower() == IMPL_ADDR.lower()
 
 
-@requires_postgres
+
 def test_proxy_cache_diamond_proxy_falls_back(db_session, monkeypatch):
     """Cache hit with diamond proxy (eip2535): falls back to full _resolve_proxy."""
     from workers.static_worker import StaticWorker
@@ -1097,3 +1238,260 @@ def test_proxy_cache_diamond_proxy_falls_back(db_session, monkeypatch):
     worker.process(db_session, target_job)
 
     assert "resolve_proxy" in phases_run
+
+
+# ---------------------------------------------------------------------------
+# 14. Static dependency caching
+# ---------------------------------------------------------------------------
+
+
+FAKE_STATIC_DEPS = {
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "dependencies": [
+        "0x0000000000000000000000000000000000000042",
+        "0x0000000000000000000000000000000000000043",
+    ],
+    "rpc": "https://rpc.example",
+}
+
+
+
+def test_static_deps_stored_on_first_run(db_session, monkeypatch):
+    """After a normal (non-cached) dependency phase, the static_dependencies
+    artifact is stored so future jobs can reuse it."""
+    from db.models import Contract
+    from db.queue import create_job, get_artifact, store_source_files
+    from workers.static_worker import StaticWorker
+
+    job = create_job(db_session, {"address": ADDR_A, "rpc_url": "https://rpc.example"})
+    contract = Contract(
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="TestContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+    )
+    db_session.add(contract)
+    db_session.commit()
+    store_source_files(db_session, job.id, {"src/Test.sol": "contract Test {}"})
+
+    # Mock find_dependencies to return known output
+    monkeypatch.setattr(
+        "workers.static_worker.find_dependencies",
+        lambda *a, **kw: FAKE_STATIC_DEPS,
+    )
+    # Mock the rest of the dependency phase helpers to no-op
+    monkeypatch.setattr(
+        "workers.static_worker.find_dynamic_dependencies",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.classify_contracts",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.enrich_dependency_metadata",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.write_dependency_visualization",
+        lambda *a, **kw: None,
+    )
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # Verify the static_dependencies artifact was stored
+    art = get_artifact(db_session, job.id, "static_dependencies")
+    assert art is not None
+    assert art["address"] == FAKE_STATIC_DEPS["address"]
+    assert art["dependencies"] == FAKE_STATIC_DEPS["dependencies"]
+
+
+
+def test_static_deps_reused_on_cache_hit(db_session, monkeypatch):
+    """On a cached job, find_dependencies() is NOT called and the cached
+    static deps are used instead."""
+    from db.models import Contract
+    from db.queue import create_job, store_artifact, store_source_files
+    from workers.static_worker import StaticWorker
+
+    # Create source job with static_dependencies artifact
+    source_job = _create_completed_job_with_static_data(db_session)
+    store_artifact(db_session, source_job.id, "static_dependencies", data=FAKE_STATIC_DEPS)
+
+    # Create target job flagged as cached
+    job = create_job(db_session, {
+        "address": ADDR_A,
+        "rpc_url": "https://rpc.example",
+        "static_cached": True,
+        "cache_source_job_id": str(source_job.id),
+    })
+    contract = Contract(
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="TestContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+    )
+    db_session.add(contract)
+    db_session.commit()
+    store_source_files(db_session, job.id, {"src/Test.sol": "contract Test {}"})
+    # Copy static artifacts (including static_dependencies)
+    store_artifact(db_session, job.id, "static_dependencies", data=FAKE_STATIC_DEPS)
+    store_artifact(db_session, job.id, "contract_analysis", data={"summary": {}})
+
+    # find_dependencies should NOT be called
+    find_deps_called = []
+
+    def mock_find_deps(*a, **kw):
+        find_deps_called.append(True)
+        return FAKE_STATIC_DEPS
+
+    monkeypatch.setattr("workers.static_worker.find_dependencies", mock_find_deps)
+    monkeypatch.setattr(
+        "workers.static_worker.find_dynamic_dependencies",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.classify_contracts",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.enrich_dependency_metadata",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.write_dependency_visualization",
+        lambda *a, **kw: None,
+    )
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # find_dependencies was NOT called
+    assert find_deps_called == []
+
+
+
+def test_dynamic_deps_still_run_on_cache_hit(db_session, monkeypatch):
+    """Even with cached static deps, find_dynamic_dependencies() still runs."""
+    from db.models import Contract
+    from db.queue import create_job, store_artifact, store_source_files
+    from workers.static_worker import StaticWorker
+
+    source_job = _create_completed_job_with_static_data(db_session)
+    store_artifact(db_session, source_job.id, "static_dependencies", data=FAKE_STATIC_DEPS)
+
+    job = create_job(db_session, {
+        "address": ADDR_A,
+        "rpc_url": "https://rpc.example",
+        "static_cached": True,
+        "cache_source_job_id": str(source_job.id),
+    })
+    contract = Contract(
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="TestContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+    )
+    db_session.add(contract)
+    db_session.commit()
+    store_source_files(db_session, job.id, {"src/Test.sol": "contract Test {}"})
+    store_artifact(db_session, job.id, "static_dependencies", data=FAKE_STATIC_DEPS)
+    store_artifact(db_session, job.id, "contract_analysis", data={"summary": {}})
+
+    dynamic_called = []
+
+    monkeypatch.setattr("workers.static_worker.find_dependencies", lambda *a, **kw: FAKE_STATIC_DEPS)
+    monkeypatch.setattr(
+        "workers.static_worker.find_dynamic_dependencies",
+        lambda *a, **kw: dynamic_called.append(True) or {"dependencies": [], "dependency_graph": []},
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.classify_contracts",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.enrich_dependency_metadata",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        "workers.static_worker.write_dependency_visualization",
+        lambda *a, **kw: None,
+    )
+
+    worker = StaticWorker()
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+
+    worker.process(db_session, job)
+
+    # Dynamic dependency discovery was called
+    assert dynamic_called == [True]
+
+
+
+def test_static_deps_artifact_copied_by_cache(db_session):
+    """static_dependencies is included in _STATIC_ARTIFACT_NAMES and gets
+    copied by copy_static_cache."""
+    from db.queue import copy_static_cache, create_job, get_artifact, store_artifact
+
+    source_job = _create_completed_job_with_static_data(db_session)
+    store_artifact(db_session, source_job.id, "static_dependencies", data=FAKE_STATIC_DEPS)
+
+    target_job = create_job(db_session, {"address": ADDR_A})
+    copy_static_cache(db_session, source_job.id, target_job.id)
+
+    art = get_artifact(db_session, target_job.id, "static_dependencies")
+    assert art is not None
+    assert art["dependencies"] == FAKE_STATIC_DEPS["dependencies"]
