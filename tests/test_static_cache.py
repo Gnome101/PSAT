@@ -2177,3 +2177,131 @@ def test_upgrade_history_artifact_copied_as_seed(db_session):
     assert art["total_upgrades"] == FAKE_UH_PREV["total_upgrades"]
     proxy_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7"
     assert proxy_addr in art["proxies"]
+
+
+# ---------------------------------------------------------------------------
+# Enrichment cache tests
+# ---------------------------------------------------------------------------
+
+
+def test_enrichment_cache_stored_on_first_run(db_session, monkeypatch):
+    """After enrich_dependency_metadata runs, the enrichment_cache artifact
+    is stored with the correct structure."""
+    from db.queue import create_job, get_artifact, store_artifact
+
+    job = create_job(db_session, {"address": ADDR_A})
+    db_session.commit()
+
+    addr_dep = "0x0000000000000000000000000000000000000aaa"
+    unified = {
+        "dependencies": {
+            addr_dep: {"type": "regular"},
+        },
+        "dependency_graph": {},
+    }
+
+    fake_info = ("SomeToken", {"0x12345678": "transfer"})
+    call_log = []
+
+    def mock_get_contract_info(addr):
+        call_log.append(addr)
+        return fake_info
+
+    monkeypatch.setattr(
+        "services.discovery.unified_dependencies.get_contract_info",
+        mock_get_contract_info,
+    )
+
+    from services.discovery.unified_dependencies import enrich_dependency_metadata
+
+    info_cache: dict = {}
+    enrich_dependency_metadata(unified, info_cache=info_cache)
+
+    # info_cache was mutated in place
+    assert addr_dep in info_cache
+    assert info_cache[addr_dep] == fake_info
+
+    # Serialize and store as an artifact
+    enrichment_data = {
+        addr: {"name": name, "selectors": selectors}
+        for addr, (name, selectors) in info_cache.items()
+    }
+    store_artifact(db_session, job.id, "enrichment_cache", data=enrichment_data)
+
+    art = get_artifact(db_session, job.id, "enrichment_cache")
+    assert art is not None
+    assert art[addr_dep]["name"] == "SomeToken"
+    assert art[addr_dep]["selectors"] == {"0x12345678": "transfer"}
+
+
+def test_enrichment_cache_skips_cached_addresses(db_session, monkeypatch):
+    """Pre-populated info_cache entries skip get_contract_info calls;
+    only new addresses trigger API calls."""
+    addr_a = "0x0000000000000000000000000000000000000aaa"
+    addr_b = "0x0000000000000000000000000000000000000bbb"
+    addr_c = "0x0000000000000000000000000000000000000ccc"
+
+    unified = {
+        "dependencies": {
+            addr_a: {"type": "regular"},
+            addr_b: {"type": "regular"},
+            addr_c: {"type": "regular"},
+        },
+        "dependency_graph": {},
+    }
+
+    # Pre-populate cache with A and B
+    info_cache: dict = {
+        addr_a: ("TokenA", {"0xaaaaaaaa": "funcA"}),
+        addr_b: ("TokenB", {}),
+    }
+
+    call_log = []
+
+    def mock_get_contract_info(addr):
+        call_log.append(addr)
+        return ("TokenC", {"0xcccccccc": "funcC"})
+
+    monkeypatch.setattr(
+        "services.discovery.unified_dependencies.get_contract_info",
+        mock_get_contract_info,
+    )
+
+    from services.discovery.unified_dependencies import enrich_dependency_metadata
+
+    enrich_dependency_metadata(unified, info_cache=info_cache)
+
+    # Only C was fetched
+    assert call_log == [addr_c]
+
+    # All three are now in cache
+    assert addr_a in info_cache
+    assert addr_b in info_cache
+    assert addr_c in info_cache
+    assert info_cache[addr_c] == ("TokenC", {"0xcccccccc": "funcC"})
+
+    # Contract names applied
+    assert unified["dependencies"][addr_a].get("contract_name") == "TokenA"
+    assert unified["dependencies"][addr_c].get("contract_name") == "TokenC"
+
+
+def test_enrichment_cache_copied_by_copy_static_cache(db_session):
+    """enrichment_cache is in _STATIC_ARTIFACT_NAMES and gets copied."""
+    from db.queue import copy_static_cache, create_job, get_artifact, store_artifact
+
+    source_job = _create_completed_job_with_static_data(db_session)
+    enrichment = {
+        "0x0000000000000000000000000000000000000aaa": {
+            "name": "SomeToken",
+            "selectors": {"0x12345678": "transfer"},
+        }
+    }
+    store_artifact(db_session, source_job.id, "enrichment_cache", data=enrichment)
+
+    target_job = create_job(db_session, {"address": ADDR_A})
+    copy_static_cache(db_session, source_job.id, target_job.id)
+
+    art = get_artifact(db_session, target_job.id, "enrichment_cache")
+    assert art is not None
+    assert art["0x0000000000000000000000000000000000000aaa"]["name"] == "SomeToken"
+    assert art["0x0000000000000000000000000000000000000aaa"]["selectors"] == {"0x12345678": "transfer"}

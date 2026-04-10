@@ -981,10 +981,25 @@ class StaticWorker(BaseWorker):
             unified = build_unified_dependencies(
                 address, deps_output, dyn_output, cls_output, target_classification=target_classification
             )
+            # Load cached enrichment data (contract names + selectors are immutable)
+            prev_enrichment = get_artifact(session, job.id, "enrichment_cache")
+            info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
+            if isinstance(prev_enrichment, dict):
+                for _addr, _data in prev_enrichment.items():
+                    if isinstance(_data, dict):
+                        info_cache[_addr] = (_data.get("name"), _data.get("selectors", {}))
+
             t0 = time.monotonic()
-            enrich_dependency_metadata(unified)
+            enrich_dependency_metadata(unified, info_cache=info_cache)
             if DEBUG_TIMING:
                 logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
+
+            # Store updated enrichment cache (includes any newly fetched entries)
+            enrichment_data = {
+                addr: {"name": name, "selectors": selectors}
+                for addr, (name, selectors) in info_cache.items()
+            }
+            store_artifact(session, job.id, "enrichment_cache", data=enrichment_data)
 
             # Write to contract_dependencies table
             from sqlalchemy import select as sa_select

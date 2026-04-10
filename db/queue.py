@@ -190,6 +190,7 @@ _STATIC_ARTIFACT_NAMES = frozenset(
         "analysis_report",
         "control_tracking_plan",
         "static_dependencies",
+        "enrichment_cache",
     }
 )
 
