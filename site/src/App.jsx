@@ -1918,15 +1918,16 @@ function PipelineDashboard() {
 function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectCompany }) {
   const [search, setSearch] = useState("");
 
-  const companies = useMemo(() => {
+  const { companies, standalone } = useMemo(() => {
     const map = new Map();
+    const solo = [];
     for (const a of analyses) {
       const co = a.company;
-      if (!co) continue;
+      if (!co) { solo.push(a); continue; }
       if (!map.has(co)) map.set(co, { company: co, contracts: 0 });
       map.get(co).contracts++;
     }
-    return [...map.values()].sort((a, b) => b.contracts - a.contracts);
+    return { companies: [...map.values()].sort((a, b) => b.contracts - a.contracts), standalone: solo };
   }, [analyses]);
 
   const filtered = useMemo(() => {
@@ -1987,6 +1988,24 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectComp
           <p className="empty">{search ? "No companies match your search." : "No analyses yet. Submit a company to get started."}</p>
         )}
       </section>
+
+      {standalone.length > 0 && (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <h3 style={{ marginBottom: 12 }}>Standalone Analyses</h3>
+          <div className="runs-table">
+            <div className="runs-table-header">
+              <span style={{ flex: 2 }}>Contract</span>
+              <span style={{ flex: 3 }}>Address</span>
+            </div>
+            {standalone.map((a) => (
+              <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
+                <span className="runs-cell-name" style={{ flex: 2 }}>{a.contract_name || a.run_name || "Unknown"}</span>
+                <span className="mono runs-cell-addr" style={{ flex: 3 }}>{a.address || ""}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

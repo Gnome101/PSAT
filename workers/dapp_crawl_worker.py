@@ -66,14 +66,16 @@ class DAppCrawlWorker(BaseWorker):
 
         # Write ALL discovered addresses to contracts table
         protocol_id = job.protocol_id
+        crawl_chain = request.get("chain")
         for addr in addresses:
             normalized = addr.lower()
             existing_contract = session.execute(
-                select(Contract).where(Contract.address == normalized)
+                select(Contract).where(Contract.address == normalized, Contract.chain == crawl_chain)
             ).scalar_one_or_none()
             if existing_contract is None:
                 session.add(Contract(
                     address=normalized,
+                    chain=crawl_chain,
                     protocol_id=protocol_id,
                     discovery_source="dapp_crawl",
                 ))

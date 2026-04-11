@@ -200,15 +200,14 @@ class DiscoveryWorker(BaseWorker):
             defillama_request = {
                 "defillama_protocol": slug,
                 "name": f"{company}_defillama_{slug}",
+                "company": company,
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "analyze_limit": request.get("analyze_limit", 5),
                 "rpc_url": request.get("rpc_url"),
+                "protocol_id": job.protocol_id,
             }
             dl_job = create_job(session, defillama_request, initial_stage=JobStage.defillama_scan)
-            dl_job.company = company
-            dl_job.protocol_id = job.protocol_id
-            session.commit()
             logger.info("Job %s: spawned DefiLlama scan job %s (slug=%s)", job.id, dl_job.id, slug)
 
         # Spawn DApp crawl
@@ -217,17 +216,16 @@ class DiscoveryWorker(BaseWorker):
             dapp_request = {
                 "dapp_urls": [dapp_url],
                 "name": f"{company}_dapp_crawl",
+                "company": company,
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "analyze_limit": request.get("analyze_limit", 5),
                 "chain_id": request.get("chain_id") or 1,
                 "wait": request.get("wait", 10),
                 "rpc_url": request.get("rpc_url"),
+                "protocol_id": job.protocol_id,
             }
             crawl_job = create_job(session, dapp_request, initial_stage=JobStage.dapp_crawl)
-            crawl_job.company = company
-            crawl_job.protocol_id = job.protocol_id
-            session.commit()
             logger.info("Job %s: spawned DApp crawl job %s (url=%s)", job.id, crawl_job.id, dapp_url)
 
     def _process_address(self, session: Session, job: Job) -> None:

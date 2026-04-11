@@ -257,12 +257,6 @@ class StaticWorker(BaseWorker):
                 if DEBUG_TIMING:
                     logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
 
-                # Phase 4: Echidna constraint discovery (optional, non-fatal)
-                t0 = time.monotonic()
-                self._run_echidna_phase(session, job, project_dir, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] echidna: %.1fs", time.monotonic() - t0)
-
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
 
@@ -820,60 +814,6 @@ class StaticWorker(BaseWorker):
             )
 
         session.commit()
-
-    def _run_echidna_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
-        """Run Echidna fuzzing + symbolic execution. Non-fatal on failure."""
-        from services.static.echidna import find_main_contract, is_available, run_echidna
-
-        if not is_available():
-            logger.info("Job %s: echidna not installed — skipping", job.id)
-            store_artifact(
-                session, job.id, "echidna_results",
-                data={"skipped": True, "reason": "echidna binary not found on PATH"},
-            )
-            return
-
-        self.update_detail(session, job, "Running Echidna analysis")
-        contract_path = find_main_contract(project_dir, contract_name)
-        if not contract_path:
-            logger.info("Job %s: could not locate %s.sol for Echidna", job.id, contract_name)
-            store_artifact(
-                session, job.id, "echidna_results",
-                data={"skipped": True, "reason": f"could not find source file for {contract_name}"},
-            )
-            return
-
-        request = job.request if isinstance(job.request, dict) else {}
-        rpc_url = request.get("rpc_url")
-
-        try:
-            result = run_echidna(project_dir, contract_path, contract_name=contract_name, rpc_url=rpc_url)
-        except Exception as exc:
-            _log_phase_error(str(job.id), address, contract_name, "echidna", str(exc))
-            store_artifact(session, job.id, "echidna_results", data={"skipped": False, "error": str(exc)})
-            return
-
-        store_artifact(
-            session, job.id, "echidna_results",
-            data={
-                "skipped": False,
-                "contract_name": contract_name,
-                "address": address,
-                "results": result["results"],
-                "exploration": result["exploration"],
-                "constraints": result["constraints"],
-                "coverage": result["coverage"],
-                "error": result.get("error"),
-            },
-        )
-
-        logger.info(
-            "Echidna complete for job %s: %d function results, %d explored, %s",
-            job.id,
-            len(result["results"]),
-            len(result["exploration"]),
-            result["coverage"],
-        )
 
     def _run_tracking_plan_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
         """Build control tracking plan. Non-fatal on failure."""
