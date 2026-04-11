@@ -340,7 +340,8 @@ class TestCompanyCaching:
                 TestCompanyCaching._inventory1 = inventory
 
     def test_second_company_run_deduplicates(self):
-        """Run 2: same company. Should merge inventory and skip known addresses."""
+        """Run 2: same company. Should merge inventory and skip known non-proxy
+        addresses.  Proxies are intentionally re-queued for upgrade checks."""
         parent1 = getattr(TestCompanyCaching, "_parent1", None)
         child_addrs1 = getattr(TestCompanyCaching, "_child_addresses1", None)
         if parent1 is None or child_addrs1 is None:
@@ -354,12 +355,20 @@ class TestCompanyCaching:
         child_addrs2 = {c["address"].lower() for c in children2 if c.get("address")}
         print(f"\n  Run 2 child addresses: {child_addrs2}")
 
-        # Key assertion: addresses from run 1 should NOT be re-spawned as
-        # child jobs in run 2 (dedup).  New addresses may appear if the
-        # inventory discovered more contracts.
-        duplicated = child_addrs1 & child_addrs2
-        print(f"  Addresses in both runs (should be empty): {duplicated}")
-        assert len(duplicated) == 0, f"Run 2 re-spawned child jobs for already-analyzed addresses: {duplicated}"
+        # Proxies are intentionally re-queued for upgrade checks, so filter
+        # them out before asserting deduplication of non-proxy contracts.
+        all_jobs = requests.get(f"{API_BASE}/api/jobs", timeout=15).json()
+        proxy_addrs = {
+            (j.get("address") or "").lower()
+            for j in all_jobs
+            if j.get("is_proxy")
+        }
+        non_proxy_dup = (child_addrs1 & child_addrs2) - proxy_addrs
+        print(f"  Proxy addresses (re-queued OK): {child_addrs1 & child_addrs2 & proxy_addrs}")
+        print(f"  Non-proxy duplicates (should be empty): {non_proxy_dup}")
+        assert len(non_proxy_dup) == 0, (
+            f"Run 2 re-spawned child jobs for already-analyzed non-proxy addresses: {non_proxy_dup}"
+        )
 
     def test_second_company_run_inventory_merged(self):
         """Run 2 inventory should contain contracts from both runs."""

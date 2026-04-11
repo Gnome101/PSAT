@@ -181,7 +181,12 @@ def test_proxy_cache_proxy_unchanged(db_session, monkeypatch):
 
 
 def test_proxy_cache_proxy_upgraded(db_session, monkeypatch):
-    """Cache hit but proxy upgraded: _resolve_proxy IS called."""
+    """Cache hit but proxy upgraded: _resolve_proxy IS called.
+
+    After _resolve_proxy runs (mocked), the contract is still a proxy so
+    the static worker correctly skips Slither and raises JobHandledDirectly.
+    """
+    from workers.base import JobHandledDirectly
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
@@ -201,13 +206,19 @@ def test_proxy_cache_proxy_upgraded(db_session, monkeypatch):
     worker = StaticWorker()
     phases_run = _patch_static_worker_phases(monkeypatch, worker)
 
-    worker.process(db_session, target_job)
+    with pytest.raises(JobHandledDirectly):
+        worker.process(db_session, target_job)
 
     assert "resolve_proxy" in phases_run
 
 
 def test_proxy_cache_rpc_fails(db_session, monkeypatch):
-    """Cache hit but RPC fails: falls back to full _resolve_proxy."""
+    """Cache hit but RPC fails: falls back to full _resolve_proxy.
+
+    After _resolve_proxy runs (mocked), the contract is still a proxy so
+    the static worker correctly skips Slither and raises JobHandledDirectly.
+    """
+    from workers.base import JobHandledDirectly
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
@@ -226,7 +237,8 @@ def test_proxy_cache_rpc_fails(db_session, monkeypatch):
     worker = StaticWorker()
     phases_run = _patch_static_worker_phases(monkeypatch, worker)
 
-    worker.process(db_session, target_job)
+    with pytest.raises(JobHandledDirectly):
+        worker.process(db_session, target_job)
 
     assert "resolve_proxy" in phases_run
 
@@ -305,7 +317,12 @@ def test_proxy_cache_immutable_eip1167(db_session, monkeypatch):
 
 
 def test_proxy_cache_diamond_proxy_falls_back(db_session, monkeypatch):
-    """Cache hit with diamond proxy (eip2535): falls back to full _resolve_proxy."""
+    """Cache hit with diamond proxy (eip2535): falls back to full _resolve_proxy.
+
+    After _resolve_proxy runs (mocked), the contract is still a proxy so
+    the static worker correctly skips Slither and raises JobHandledDirectly.
+    """
+    from workers.base import JobHandledDirectly
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
@@ -319,7 +336,8 @@ def test_proxy_cache_diamond_proxy_falls_back(db_session, monkeypatch):
     worker = StaticWorker()
     phases_run = _patch_static_worker_phases(monkeypatch, worker)
 
-    worker.process(db_session, target_job)
+    with pytest.raises(JobHandledDirectly):
+        worker.process(db_session, target_job)
 
     assert "resolve_proxy" in phases_run
 

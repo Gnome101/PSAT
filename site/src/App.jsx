@@ -1676,8 +1676,10 @@ function PipelineDashboard() {
   [allJobs]);
   const visiblePipelineJobs = useMemo(() =>
     allJobs.filter((j) => {
-      if (j.is_proxy) return false;
-      if (!j.is_proxy && j.address && implProxyAddresses.has(j.address.toLowerCase())) return false;
+      // Always show jobs that are still actively running
+      const isActive = j.status === "queued" || j.status === "processing";
+      if (j.is_proxy && !isActive) return false;
+      if (!j.is_proxy && j.address && implProxyAddresses.has(j.address.toLowerCase()) && !isActive) return false;
       if (j.company && hasChildJobs && j.status === "completed") return false;
       return true;
     }),
@@ -2174,11 +2176,28 @@ export default function App() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Job polling
+  // Job polling — scoped to the current submission's job tree
   useEffect(() => {
     if (!job?.job_id) return undefined;
     let stopped = false;
     let timer;
+
+    // Collect all job IDs belonging to this submission's tree
+    function getJobTree(allJobs, rootId) {
+      const ids = new Set([rootId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const j of allJobs) {
+          if (ids.has(j.job_id)) continue;
+          if (ids.has(j.request?.parent_job_id) || ids.has(j.request?.root_job_id)) {
+            ids.add(j.job_id);
+            changed = true;
+          }
+        }
+      }
+      return ids;
+    }
 
     async function poll() {
       if (stopped) return;
@@ -2186,14 +2205,16 @@ export default function App() {
         const allJobs = await api("/api/jobs");
         if (stopped) return;
         const now = new Date();
-        const visible = allJobs.filter((j) =>
+        const treeIds = getJobTree(allJobs, job.job_id);
+        const treeJobs = allJobs.filter((j) => treeIds.has(j.job_id));
+        const visible = treeJobs.filter((j) =>
           j.status === "queued" || j.status === "processing" ||
           ((j.status === "completed" || j.status === "failed") && j.updated_at && now - new Date(j.updated_at) < 30000)
         );
         setActiveJobs(visible);
         const parent = allJobs.find((j) => j.job_id === job.job_id);
         if (parent) setJob(parent);
-        const stillRunning = allJobs.some((j) => j.status === "queued" || j.status === "processing");
+        const stillRunning = treeJobs.some((j) => j.status === "queued" || j.status === "processing");
         if (!stillRunning && !doneTimerRef.current) {
           doneTimerRef.current = setTimeout(async () => {
             stopped = true; clearInterval(timer); setActiveJobs([]); doneTimerRef.current = null;

@@ -430,8 +430,11 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     # only Contract for this address/chain.  Reassign it to the target job.
     src_contract.job_id = target_job_id
 
-    # Save the source proxy state before resetting, so _check_proxy_cache
-    # can read it from an artifact to decide if re-resolution is needed.
+    # Save the current proxy state so _check_proxy_cache can compare it
+    # against the live on-chain implementation to decide whether
+    # re-classification is needed.  The Contract row keeps its proxy
+    # fields intact — zeroing them would corrupt data for the old
+    # completed job that also references this row via address lookup.
     _cached_proxy_state = {
         "is_proxy": src_contract.is_proxy,
         "proxy_type": src_contract.proxy_type,
@@ -441,12 +444,6 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     }
     store_artifact(session, target_job_id, "cached_proxy_state", data=_cached_proxy_state)
 
-    # Reset mutable proxy fields to defaults (will be re-resolved)
-    src_contract.is_proxy = False
-    src_contract.proxy_type = None
-    src_contract.implementation = None
-    src_contract.beacon = None
-    src_contract.admin = None
     session.flush()
     new_contract = src_contract
 
