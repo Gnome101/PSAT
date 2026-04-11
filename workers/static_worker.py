@@ -472,9 +472,7 @@ def _validate_cached_dep_classifications(
                 )
                 continue  # upgraded — drop from cache
         except Exception as exc:
-            logger.debug(
-                "Cached dep %s proxy check failed: %s — will re-classify", addr, exc
-            )
+            logger.debug("Cached dep %s proxy check failed: %s — will re-classify", addr, exc)
             continue
 
         valid[addr] = cls_info
