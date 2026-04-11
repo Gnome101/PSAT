@@ -474,6 +474,88 @@ def search_protocol_inventory(
     }
 
 
+# ---------------------------------------------------------------------------
+# Inventory merge (append-only with confidence decay)
+# ---------------------------------------------------------------------------
+
+# Confidence decay factor applied to contracts not rediscovered on re-run.
+CONFIDENCE_DECAY = 0.8
+
+# Confidence floor — entries below this are dropped entirely.
+CONFIDENCE_FLOOR = 0.1
+
+
+def merge_inventory(prev: dict, new: dict) -> dict:
+    """Merge a previous inventory with a new one (append-only with confidence decay).
+
+    Contracts present in both use the new entry but keep the higher confidence.
+    Contracts only in the previous inventory are retained with decayed confidence
+    (multiplied by :data:`CONFIDENCE_DECAY` each time they are not rediscovered).
+    Contracts that decay below :data:`CONFIDENCE_FLOOR` are dropped.
+    """
+    prev_contracts = {c["address"].lower(): c for c in prev.get("contracts", []) if c.get("address")}
+    new_contracts = {c["address"].lower(): c for c in new.get("contracts", []) if c.get("address")}
+
+    merged: dict[str, dict] = {}
+
+    # Addresses in new (possibly also in prev)
+    for addr, entry in new_contracts.items():
+        if addr not in prev_contracts:
+            merged[addr] = entry
+        else:
+            # In both — use new entry, keep higher confidence
+            prev_conf = prev_contracts[addr].get("confidence", 0) or 0
+            new_conf = entry.get("confidence", 0) or 0
+            merged_entry = dict(entry)
+            merged_entry["confidence"] = max(prev_conf, new_conf)
+            merged[addr] = merged_entry
+
+    # Addresses only in prev — decay confidence
+    for addr, entry in prev_contracts.items():
+        if addr not in new_contracts:
+            decayed_entry = dict(entry)
+            prev_conf = entry.get("confidence", 0) or 0
+            decayed_conf = prev_conf * CONFIDENCE_DECAY
+            if decayed_conf < CONFIDENCE_FLOOR:
+                continue
+            decayed_entry["confidence"] = decayed_conf
+            merged[addr] = decayed_entry
+
+    sorted_contracts = sorted(merged.values(), key=lambda c: c.get("confidence", 0) or 0, reverse=True)
+
+    result: dict = {
+        "contracts": sorted_contracts,
+        "company": new.get("company", prev.get("company")),
+        "chain": new.get("chain", prev.get("chain")),
+        "official_domain": new.get("official_domain") or prev.get("official_domain"),
+        "errors": new.get("errors"),
+        "notes": new.get("notes"),
+    }
+
+    # Union pages by URL
+    for key in ("pages_considered", "pages_selected"):
+        prev_pages = prev.get(key, []) or []
+        new_pages = new.get(key, []) or []
+        seen_urls: set[str] = set()
+        deduped: list = []
+        for page in new_pages + prev_pages:
+            url = page.get("url", "") if isinstance(page, dict) else str(page)
+            if url not in seen_urls:
+                seen_urls.add(url)
+                deduped.append(page)
+        result[key] = deduped
+
+    # Merge sources dicts
+    prev_sources = prev.get("sources") or {}
+    new_sources = new.get("sources") or {}
+    if isinstance(prev_sources, dict) and isinstance(new_sources, dict):
+        result["sources"] = {**prev_sources, **new_sources}
+    else:
+        result["sources"] = new_sources or prev_sources
+
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Discover protocol contract inventories")
     parser.add_argument("company", help="Company, protocol name, or official domain")

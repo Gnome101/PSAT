@@ -76,6 +76,12 @@ cleanup_stale_workers
 echo "Initializing database tables..."
 uv run python3 -c "from db.models import create_tables; create_tables(); print('Tables ready.')"
 
+# Ensure Playwright browsers are installed (needed by dapp_crawl_worker)
+if ! [ -d "$HOME/.cache/ms-playwright/chromium_headless_shell-1208" ]; then
+  echo "Installing Playwright browsers..."
+  uv run playwright install chromium
+fi
+
 # Trap to clean up background processes on exit
 cleanup() {
   echo ""

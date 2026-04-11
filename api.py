@@ -513,8 +513,13 @@ def analysis_detail(run_name: str) -> dict:
         # Load artifacts (for those still stored as artifacts)
         all_artifacts = get_all_artifacts(session, job.id)
 
-        # Load from relational tables
+        # Load from relational tables — fall back to address lookup when
+        # copy_static_cache has reassigned the Contract row to a newer job.
         contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+        if contract_row is None and job.address:
+            contract_row = session.execute(
+                select(Contract).where(Contract.address == job.address.lower()).limit(1)
+            ).scalar_one_or_none()
 
         payload: dict[str, Any] = {
             "run_name": job.name or str(job.id),
@@ -917,10 +922,19 @@ def company_overview(company_name: str) -> dict:
             if is_impl:
                 continue
 
-            # Read from contracts table
+            # Read from contracts table — fall back to address lookup when
+            # copy_static_cache has reassigned the Contract row to a newer job.
             contract_row = session.execute(
                 select(Contract).where(Contract.job_id == job.id).limit(1)
             ).scalar_one_or_none()
+            if contract_row is None and job.address:
+                chain = request.get("chain")
+                addr_stmt = select(Contract).where(
+                    Contract.address == job.address.lower(),
+                )
+                if chain:
+                    addr_stmt = addr_stmt.where(Contract.chain == chain)
+                contract_row = session.execute(addr_stmt.limit(1)).scalar_one_or_none()
 
             is_proxy = contract_row.is_proxy if contract_row else False
             proxy_type = contract_row.proxy_type if contract_row else None

@@ -238,7 +238,7 @@ class TestBuildUpgradeHistory:
                 proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": impl},
             },
         )
-        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t: [])
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t, from_block=0: [])
         _mock_no_enrichment(monkeypatch)
 
         result = uh.build_upgrade_history(deps_path)
@@ -272,7 +272,7 @@ class TestBuildUpgradeHistory:
             },
         )
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 != uh.UPGRADED_TOPIC0:
                 return []
             return [
@@ -335,7 +335,7 @@ class TestBuildUpgradeHistory:
             },
         )
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 != uh.UPGRADED_TOPIC0:
                 return []
             if address == proxy_a:
@@ -370,7 +370,7 @@ class TestBuildUpgradeHistory:
             },
         )
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [_make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(ADDR(10)), block="0x64", tx="0xa")]
             if topic0 == uh.ADMIN_CHANGED_TOPIC0:
@@ -414,7 +414,7 @@ class TestBuildUpgradeHistory:
             },
         )
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [_make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(impl), block="0x64", tx="0xa")]
             return []
@@ -450,7 +450,7 @@ class TestBuildUpgradeHistory:
             },
         )
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [
                     _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(old_impl), block="0x64", tx="0xa"),
@@ -482,7 +482,7 @@ class TestBuildUpgradeHistory:
             },
         )
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [_make_log(address, uh.UPGRADED_TOPIC0, _topic_for(shared_impl), block="0x64")]
             return []
@@ -522,7 +522,7 @@ class TestBuildUpgradeHistory:
             },
         )
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [
                     _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(old_impl), block="0x64", tx="0xa"),
@@ -566,7 +566,7 @@ class TestBuildUpgradeHistory:
         p = tmp_path / "dependencies.json"
         p.write_text(json.dumps(deps))
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if address == target and topic0 == uh.UPGRADED_TOPIC0:
                 return [_make_log(target, uh.UPGRADED_TOPIC0, _topic_for(target_impl), block="0x64")]
             return []
@@ -601,7 +601,7 @@ class TestBuildUpgradeHistory:
                 proxy_c: {"type": "proxy", "proxy_type": "uups", "implementation": impl_c},
             },
         )
-        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t: [])
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t, from_block=0: [])
         _mock_no_enrichment(monkeypatch)
 
         result = uh.build_upgrade_history(deps_path)
@@ -641,7 +641,7 @@ class TestBuildUpgradeHistory:
         def data_for(addr):
             return "0x" + "0" * 24 + addr[2:]
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 != uh.UPGRADED_TOPIC0:
                 return []
             # Return logs with NO topic1 — implementation in data only
@@ -697,7 +697,7 @@ class TestWriteUpgradeHistory:
             },
         )
 
-        def mock_fetch(address, topic0):
+        def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [_make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(ADDR(10)), block="0x64")]
             return []
@@ -724,7 +724,7 @@ class TestWriteUpgradeHistory:
                 proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
             },
         )
-        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t: [])
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t, from_block=0: [])
         _mock_no_enrichment(monkeypatch)
 
         custom = tmp_path / "subdir" / "history.json"

@@ -1,0 +1,629 @@
+"""Shared fixtures, helpers, and constants for static cache tests.
+
+Provides an in-memory SQLite database that mirrors the full PSAT schema,
+with compatibility shims for Postgres-specific column types (JSONB, UUID,
+ARRAY).  Test modules import the ``db_session`` fixture and helper functions
+from this module.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import uuid
+from pathlib import Path
+
+import pytest
+from sqlalchemy import event
+from sqlalchemy.pool import StaticPool
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+# ---------------------------------------------------------------------------
+# Address / data constants
+# ---------------------------------------------------------------------------
+
+ADDR_A = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+ADDR_B = "0x0000000000000000000000000000000000000099"
+
+IMPL_ADDR = "0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f"
+IMPL_ADDR_NEW = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+FAKE_STATIC_DEPS = {
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "dependencies": [
+        "0x0000000000000000000000000000000000000042",
+        "0x0000000000000000000000000000000000000043",
+    ],
+    "rpc": "https://rpc.example",
+}
+
+FAKE_DYN_DEPS_OLD = {
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "rpc": "https://rpc.example",
+    "transactions_analyzed": [
+        {"tx_hash": "0xaaa", "block_number": 100, "method_selector": "0x12345678"},
+        {"tx_hash": "0xbbb", "block_number": 200, "method_selector": "0xabcdef01"},
+    ],
+    "trace_methods": ["debug_traceTransaction"],
+    "dependencies": [
+        "0x0000000000000000000000000000000000000042",
+    ],
+    "provenance": {
+        "0x0000000000000000000000000000000000000042": [
+            {
+                "tx_hash": "0xaaa",
+                "block_number": 100,
+                "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "op": "CALL",
+            },
+        ],
+    },
+    "dependency_graph": [
+        {
+            "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "to": "0x0000000000000000000000000000000000000042",
+            "op": "CALL",
+            "provenance": [{"tx_hash": "0xaaa", "block_number": 100}],
+        },
+    ],
+    "trace_errors": [],
+}
+
+FAKE_DYN_DEPS_NEW = {
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "rpc": "https://rpc.example",
+    "transactions_analyzed": [
+        {"tx_hash": "0xccc", "block_number": 300, "method_selector": "0x99999999"},
+    ],
+    "trace_methods": ["debug_traceTransaction"],
+    "dependencies": [
+        "0x0000000000000000000000000000000000000042",
+        "0x0000000000000000000000000000000000000099",
+    ],
+    "provenance": {
+        "0x0000000000000000000000000000000000000042": [
+            {
+                "tx_hash": "0xccc",
+                "block_number": 300,
+                "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "op": "STATICCALL",
+            },
+        ],
+        "0x0000000000000000000000000000000000000099": [
+            {
+                "tx_hash": "0xccc",
+                "block_number": 300,
+                "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "op": "CALL",
+            },
+        ],
+    },
+    "dependency_graph": [
+        {
+            "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "to": "0x0000000000000000000000000000000000000042",
+            "op": "STATICCALL",
+            "provenance": [{"tx_hash": "0xccc", "block_number": 300}],
+        },
+        {
+            "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "to": "0x0000000000000000000000000000000000000099",
+            "op": "CALL",
+            "provenance": [{"tx_hash": "0xccc", "block_number": 300}],
+        },
+    ],
+    "trace_errors": [],
+}
+
+FAKE_CLS_OUTPUT = {
+    "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "rpc": "https://rpc.example",
+    "classifications": {
+        "0x0000000000000000000000000000000000000042": {"type": "regular"},
+        "0x0000000000000000000000000000000000000043": {"type": "proxy", "proxy_type": "eip1967"},
+    },
+    "discovered_addresses": [],
+}
+
+FAKE_UH_PREV = {
+    "schema_version": "0.1",
+    "target_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "proxies": {
+        "0xdac17f958d2ee523a2206206994597c13d831ec7": {
+            "proxy_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "proxy_type": "eip1967",
+            "current_implementation": "0x0000000000000000000000000000000000000042",
+            "upgrade_count": 1,
+            "first_upgrade_block": 50,
+            "last_upgrade_block": 50,
+            "implementations": [
+                {"address": "0x0000000000000000000000000000000000000042", "block_introduced": 50, "tx_hash": "0xaaa"},
+            ],
+            "events": [
+                {
+                    "event_type": "upgraded",
+                    "block_number": 50,
+                    "tx_hash": "0xaaa",
+                    "log_index": 0,
+                    "implementation": "0x0000000000000000000000000000000000000042",
+                },
+            ],
+        },
+    },
+    "total_upgrades": 1,
+}
+
+FAKE_UH_NEW = {
+    "schema_version": "0.1",
+    "target_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+    "proxies": {
+        "0xdac17f958d2ee523a2206206994597c13d831ec7": {
+            "proxy_address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "proxy_type": "eip1967",
+            "current_implementation": "0x0000000000000000000000000000000000000099",
+            "upgrade_count": 1,
+            "first_upgrade_block": 100,
+            "last_upgrade_block": 100,
+            "implementations": [
+                {"address": "0x0000000000000000000000000000000000000099", "block_introduced": 100, "tx_hash": "0xbbb"},
+            ],
+            "events": [
+                {
+                    "event_type": "upgraded",
+                    "block_number": 100,
+                    "tx_hash": "0xbbb",
+                    "log_index": 0,
+                    "implementation": "0x0000000000000000000000000000000000000099",
+                },
+            ],
+        },
+    },
+    "total_upgrades": 1,
+}
+
+
+# ---------------------------------------------------------------------------
+# SQLite compatibility helpers
+# ---------------------------------------------------------------------------
+
+
+def _sqlite_compatible_store_artifact(session, job_id, name, data=None, text_data=None):
+    """SQLite-compatible replacement for the Postgres pg_insert upsert."""
+    from db.models import Artifact
+
+    existing = session.query(Artifact).filter(Artifact.job_id == job_id, Artifact.name == name).first()
+    if existing:
+        existing.data = data
+        existing.text_data = text_data
+    else:
+        session.add(Artifact(job_id=job_id, name=name, data=data, text_data=text_data))
+    session.commit()
+
+
+def _register_sqlite_type_compilers():
+    """Register SQLite compilation rules for Postgres-specific types.
+
+    Uses ``@compiles`` to teach the SQLite dialect how to render JSONB, UUID,
+    and ARRAY column DDL.  Also registers type-adaptation hooks so that UUID
+    and JSON values round-trip correctly through SQLite.
+
+    These registrations are idempotent and persist for the process lifetime,
+    which is fine because they are scoped to the ``sqlite`` dialect.
+    """
+    from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
+    from sqlalchemy.ext.compiler import compiles
+
+    # DDL compilation hooks (only affect SQLite CREATE TABLE)
+    @compiles(JSONB, "sqlite")
+    def _compile_jsonb(element, compiler, **kw):
+        return "TEXT"
+
+    @compiles(UUID, "sqlite")
+    def _compile_uuid(element, compiler, **kw):
+        return "VARCHAR(36)"
+
+    @compiles(ARRAY, "sqlite")
+    def _compile_array(element, compiler, **kw):
+        return "TEXT"
+
+    # Value adaptation hooks -- teach the PG types to handle SQLite bind/result
+    _orig_uuid_bind = UUID.bind_processor
+
+    def _uuid_bind_processor(self, dialect):
+        if dialect.name == "sqlite":
+
+            def process(value):
+                if value is not None:
+                    return str(value)
+                return value
+
+            return process
+        if _orig_uuid_bind:
+            return _orig_uuid_bind(self, dialect)
+        return None
+
+    UUID.bind_processor = _uuid_bind_processor
+
+    _orig_uuid_result = UUID.result_processor
+
+    def _uuid_result_processor(self, dialect, coltype):
+        if dialect.name == "sqlite":
+
+            def process(value):
+                if value is not None and not isinstance(value, uuid.UUID):
+                    return uuid.UUID(value)
+                return value
+
+            return process
+        if _orig_uuid_result:
+            return _orig_uuid_result(self, dialect, coltype)
+        return None
+
+    UUID.result_processor = _uuid_result_processor
+
+    _orig_jsonb_bind = JSONB.bind_processor
+
+    def _jsonb_bind_processor(self, dialect):
+        if dialect.name == "sqlite":
+
+            def process(value):
+                if value is not None:
+                    return json.dumps(value)
+                return value
+
+            return process
+        if _orig_jsonb_bind:
+            return _orig_jsonb_bind(self, dialect)
+        return None
+
+    JSONB.bind_processor = _jsonb_bind_processor  # type: ignore[assignment]
+
+    _orig_jsonb_result = JSONB.result_processor
+
+    def _jsonb_result_processor(self, dialect, coltype):
+        if dialect.name == "sqlite":
+
+            def process(value):
+                if value is not None and isinstance(value, str):
+                    return json.loads(value)
+                return value
+
+            return process
+        if _orig_jsonb_result:
+            return _orig_jsonb_result(self, dialect, coltype)
+        return None
+
+    JSONB.result_processor = _jsonb_result_processor  # type: ignore[assignment]
+
+    _orig_array_bind = ARRAY.bind_processor
+
+    def _array_bind_processor(self, dialect):
+        if dialect.name == "sqlite":
+
+            def process(value):
+                if value is not None:
+                    return json.dumps(value)
+                return value
+
+            return process
+        if _orig_array_bind:
+            return _orig_array_bind(self, dialect)
+        return None
+
+    ARRAY.bind_processor = _array_bind_processor
+
+    _orig_array_result = ARRAY.result_processor
+
+    def _array_result_processor(self, dialect, coltype):
+        if dialect.name == "sqlite":
+
+            def process(value):
+                if value is not None and isinstance(value, str):
+                    return json.loads(value)
+                return value
+
+            return process
+        if _orig_array_result:
+            return _orig_array_result(self, dialect, coltype)
+        return None
+
+    ARRAY.result_processor = _array_result_processor  # type: ignore[assignment]
+
+
+# Register once at import time
+_register_sqlite_type_compilers()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def db_session(monkeypatch):
+    """In-memory SQLite database with all PSAT tables.
+
+    Temporarily swaps Postgres-specific column types with SQLite equivalents,
+    creates all tables, and monkey-patches ``store_artifact`` so the
+    pg_insert-based upsert is replaced with a standard ORM upsert.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    from db.models import Base
+
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_conn, _connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    Base.metadata.create_all(engine)
+    session = Session(engine, expire_on_commit=False)
+
+    # Patch store_artifact everywhere it's imported so the SQLite-compatible
+    # upsert is used instead of the pg_insert-based original.
+    monkeypatch.setattr("db.queue.store_artifact", _sqlite_compatible_store_artifact)
+    # Workers bind store_artifact at import time via ``from db.queue import store_artifact``
+    for mod_path in [
+        "workers.discovery",
+        "workers.static_worker",
+    ]:
+        try:
+            monkeypatch.setattr(f"{mod_path}.store_artifact", _sqlite_compatible_store_artifact)
+        except AttributeError:
+            pass  # module not yet imported -- safe to skip
+
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+
+def _create_completed_job_with_static_data(session, address=ADDR_A):
+    """Helper: create a completed job with all static data populated."""
+    from db.models import (
+        Contract,
+        ContractSummary,
+        JobStage,
+        JobStatus,
+        PrivilegedFunction,
+        RoleDefinition,
+    )
+    from db.queue import create_job, store_artifact, store_source_files
+
+    job = create_job(session, {"address": address, "name": "TestContract"})
+    job.status = JobStatus.completed
+    job.stage = JobStage.done
+    session.commit()
+
+    # Contract row
+    contract = Contract(
+        job_id=job.id,
+        address=address,
+        contract_name="TestContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=2,
+        license="MIT",
+        deployer="0x0000000000000000000000000000000000000001",
+        remappings=[],
+    )
+    session.add(contract)
+    session.flush()
+
+    # Contract summary
+    session.add(
+        ContractSummary(
+            contract_id=contract.id,
+            control_model="ownable",
+            is_upgradeable=False,
+            is_pausable=True,
+            has_timelock=False,
+            risk_level="medium",
+        )
+    )
+
+    # Privileged functions
+    session.add(
+        PrivilegedFunction(
+            contract_id=contract.id,
+            function_name="pause",
+            selector="0x8456cb59",
+            effect_labels=["pause"],
+            authority_public=False,
+        )
+    )
+
+    # Role definitions
+    session.add(
+        RoleDefinition(
+            contract_id=contract.id,
+            role_name="ADMIN_ROLE",
+            declared_in="TestContract.sol",
+        )
+    )
+
+    session.commit()
+
+    # Source files
+    store_source_files(
+        session,
+        job.id,
+        {
+            "src/TestContract.sol": "pragma solidity ^0.8.24;\ncontract TestContract {}",
+            "src/Utils.sol": "pragma solidity ^0.8.24;\nlibrary Utils {}",
+        },
+    )
+
+    # Artifacts
+    store_artifact(session, job.id, "contract_analysis", data={"summary": {"control_model": "ownable"}})
+    store_artifact(session, job.id, "slither_results", data={"results": {"detectors": []}})
+    store_artifact(session, job.id, "analysis_report", text_data="Test analysis report")
+    store_artifact(session, job.id, "control_tracking_plan", data={"controllers": []})
+    store_artifact(session, job.id, "contract_flags", data={"is_proxy": False})
+
+    return job
+
+
+def _create_source_job_with_proxy(
+    session,
+    address=ADDR_A,
+    is_proxy=True,
+    proxy_type: str | None = "eip1967",
+    implementation: str | None = IMPL_ADDR,
+    beacon=None,
+    admin=None,
+):
+    """Helper: create a completed source job with proxy fields set."""
+    from db.models import Contract, ContractSummary, JobStage, JobStatus
+    from db.queue import create_job, store_artifact, store_source_files
+
+    job = create_job(session, {"address": address, "name": "ProxyContract"})
+    job.status = JobStatus.completed
+    job.stage = JobStage.done
+    session.commit()
+
+    contract = Contract(
+        job_id=job.id,
+        address=address,
+        contract_name="ProxyContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+        is_proxy=is_proxy,
+        proxy_type=proxy_type if is_proxy else None,
+        implementation=implementation if is_proxy else None,
+        beacon=beacon,
+        admin=admin,
+    )
+    session.add(contract)
+    session.flush()
+
+    session.add(ContractSummary(contract_id=contract.id, control_model="proxy"))
+    session.commit()
+
+    store_source_files(session, job.id, {"src/Proxy.sol": "contract Proxy {}"})
+    store_artifact(session, job.id, "contract_analysis", data={"summary": {}})
+    store_artifact(session, job.id, "slither_results", data={"results": {"detectors": []}})
+    store_artifact(session, job.id, "analysis_report", text_data="proxy report")
+    store_artifact(session, job.id, "control_tracking_plan", data={"controllers": []})
+
+    return job
+
+
+def _create_target_job_with_contract(session, source_job_id, address=ADDR_A, rpc_url="https://rpc.example"):
+    """Helper: create a new job with static_cached flag and a contract row."""
+    from db.queue import copy_static_cache, create_job, store_source_files
+
+    job = create_job(
+        session,
+        {
+            "address": address,
+            "rpc_url": rpc_url,
+            "static_cached": True,
+            "cache_source_job_id": str(source_job_id),
+        },
+    )
+
+    copy_static_cache(session, source_job_id, job.id)
+
+    store_source_files(session, job.id, {"src/Proxy.sol": "contract Proxy {}"})
+
+    return job
+
+
+def _make_dep_phase_job(session, address=ADDR_A, extra_request=None):
+    """Helper: create a job suitable for _run_dependency_phase testing."""
+    from db.models import Contract
+    from db.queue import create_job, store_source_files
+
+    req = {"address": address, "rpc_url": "https://rpc.example"}
+    if extra_request:
+        req.update(extra_request)
+    job = create_job(session, req)
+    contract = Contract(
+        job_id=job.id,
+        address=address,
+        contract_name="TestContract",
+        compiler_version="v0.8.24",
+        language="solidity",
+        evm_version="shanghai",
+        optimization=True,
+        optimization_runs=200,
+        source_format="flat",
+        source_file_count=1,
+        remappings=[],
+    )
+    session.add(contract)
+    session.commit()
+    store_source_files(session, job.id, {"src/Test.sol": "contract Test {}"})
+    return job
+
+
+def _patch_dep_phase_helpers(monkeypatch, find_dyn_fn):
+    """Patch all helpers used by _run_dependency_phase except find_dynamic_dependencies."""
+    monkeypatch.setattr("workers.static_worker.find_dependencies", lambda *a, **kw: FAKE_STATIC_DEPS)
+    monkeypatch.setattr("workers.static_worker.find_dynamic_dependencies", find_dyn_fn)
+    monkeypatch.setattr("workers.static_worker.classify_contracts", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_unified_dependencies",
+        lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
+    )
+    monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+
+
+def _patch_static_worker_phases(monkeypatch, worker):
+    """Apply common monkeypatches for StaticWorker phase methods.
+
+    Returns a ``phases_run`` list that accumulates the names of phases
+    that were invoked during ``worker.process()``.
+    """
+    phases_run = []
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+    return phases_run
+
+
+def _patch_static_worker_non_dep_phases(monkeypatch, worker):
+    """Patch StaticWorker phases that are NOT the dependency phase.
+
+    Returns a ``phases_run`` list.  Use this when you want to exercise
+    ``_run_dependency_phase`` for real but need the other phases mocked.
+    """
+    phases_run = []
+    monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
+    monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
+    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
+    monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
+    monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+    return phases_run

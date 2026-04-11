@@ -12,13 +12,27 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage, Protocol
-from db.queue import count_analysis_children, create_job, store_artifact, store_source_files
+from db.queue import (
+    copy_static_cache,
+    count_analysis_children,
+    create_job,
+    find_completed_static_cache,
+    find_existing_job_for_address,
+    find_previous_company_inventory,
+    get_artifact,
+    is_known_proxy,
+    store_artifact,
+    store_source_files,
+)
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
-from services.discovery.inventory import search_protocol_inventory
+from services.discovery.inventory import merge_inventory, search_protocol_inventory
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.discovery")
+
+# Minimum confidence threshold for creating child analysis jobs.
+_MIN_CONFIDENCE_THRESHOLD = 0.3
 
 
 class DiscoveryWorker(BaseWorker):
@@ -43,8 +57,20 @@ class DiscoveryWorker(BaseWorker):
         analyze_limit = request.get("analyze_limit", 5)
         root_job_id = str(job.id)
 
+        # Load previous inventory from a prior completed company job (same chain)
+        prev_inventory: dict | None = None
+        prev_job = find_previous_company_inventory(session, company, exclude_job_id=job.id, chain=chain)
+        if prev_job:
+            _raw = get_artifact(session, prev_job.id, "contract_inventory")
+            if isinstance(_raw, dict):
+                prev_inventory = _raw
+
         self.update_detail(session, job, f"Discovering contracts for {company}")
         inventory = search_protocol_inventory(company, chain=chain)
+
+        # Merge with previous inventory if available
+        if prev_inventory and isinstance(prev_inventory, dict):
+            inventory = merge_inventory(prev_inventory, inventory)
 
         store_artifact(session, job.id, "contract_inventory", data=inventory)
 
@@ -93,7 +119,30 @@ class DiscoveryWorker(BaseWorker):
 
         already_used = count_analysis_children(session, root_job_id)
         remaining = max(0, analyze_limit - already_used)
-        selected = discovered[:remaining]
+        # Filter by minimum confidence threshold
+        eligible = [e for e in discovered if (e.get("confidence") or 0) >= _MIN_CONFIDENCE_THRESHOLD]
+
+        # Select entries, deduplicating as we go so skipped entries don't
+        # consume slots — the limit is filled from further down the list.
+        selected = []
+        for entry in eligible:
+            if len(selected) >= remaining:
+                break
+            addr = str(entry["address"])
+            entry_chains = entry.get("chains")
+            entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
+            existing = find_existing_job_for_address(session, addr, chain=entry_chain)
+            if existing:
+                if not is_known_proxy(session, addr, chain=entry_chain):
+                    logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
+                    continue
+                logger.info(
+                    "Job %s: proxy %s has existing job %s but re-queuing for upgrade check",
+                    job.id,
+                    addr,
+                    existing.id,
+                )
+            selected.append(entry)
 
         if not selected:
             self.update_detail(session, job, "No contracts found to analyze")
@@ -233,6 +282,43 @@ class DiscoveryWorker(BaseWorker):
         address = job.address
         if address is None:
             raise ValueError("Address job missing address")
+
+        # Check for cached static data from a previously completed job (same chain)
+        request = job.request if isinstance(job.request, dict) else {}
+        cached_job = find_completed_static_cache(session, address, chain=request.get("chain"))
+        if cached_job is not None:
+            self.update_detail(session, job, f"Reusing cached static data for {address}")
+            new_contract_id = copy_static_cache(session, cached_job.id, job.id)
+            if new_contract_id is not None:
+                # Mark the job so downstream workers know static data was cached
+                req = job.request if isinstance(job.request, dict) else {}
+                job.request = {**req, "static_cached": True, "cache_source_job_id": str(cached_job.id)}
+                session.commit()
+
+                # Set job name from the cached contract if not already set
+                if not job.name:
+                    from sqlalchemy import select as sa_select
+
+                    contract_row = session.execute(
+                        sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+                    ).scalar_one_or_none()
+                    if contract_row and contract_row.contract_name:
+                        job.name = f"{contract_row.contract_name}_{address[2:10]}"
+                        session.commit()
+
+                logger.info(
+                    "Discovery cache hit for %s — reused data from job %s",
+                    address,
+                    cached_job.id,
+                )
+                self.update_detail(session, job, f"Discovery complete (cached): {address}")
+                return
+
+            logger.warning(
+                "Discovery cache copy failed for %s from job %s — falling back to fetch",
+                address,
+                cached_job.id,
+            )
 
         self.update_detail(session, job, f"Fetching verified source for {address}")
         result = fetch(address)

@@ -15,3 +15,4 @@ repo/
 !tests/fixtures/contracts/
 !tests/fixtures/contracts/**
 .coverage
+.db_snapshots/
