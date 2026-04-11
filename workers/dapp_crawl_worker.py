@@ -31,6 +31,16 @@ class DAppCrawlWorker(BaseWorker):
             raise ValueError("dapp_crawl job missing dapp_urls in request")
 
         chain_id = request.get("chain_id") or 1
+        chain_id_to_name = {
+            1: "ethereum",
+            10: "optimism",
+            56: "bsc",
+            137: "polygon",
+            8453: "base",
+            42161: "arbitrum",
+            43114: "avalanche",
+            534352: "scroll",
+        }
         wait = request.get("wait") or 10
         analyze_limit = request.get("analyze_limit", 25)
 
@@ -66,7 +76,7 @@ class DAppCrawlWorker(BaseWorker):
 
         # Write ALL discovered addresses to contracts table
         protocol_id = job.protocol_id
-        crawl_chain = request.get("chain")
+        crawl_chain = request.get("chain") or chain_id_to_name.get(chain_id)
         # Build URL lookup from address_details
         url_by_addr: dict[str, str] = {}
         for detail in result.get("address_details", []):
