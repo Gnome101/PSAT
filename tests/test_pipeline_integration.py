@@ -1074,11 +1074,11 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
     # Mock cache lookup and dedup functions (no previous inventory, no existing jobs)
     monkeypatch.setattr(
         "workers.discovery.find_previous_company_inventory",
-        lambda _s, _company, exclude_job_id=None: None,
+        lambda _s, _company, exclude_job_id=None, chain=None: None,
     )
     monkeypatch.setattr(
         "workers.discovery.find_existing_job_for_address",
-        lambda _s, _addr: None,
+        lambda _s, _addr, chain=None: None,
     )
 
     # Mock inventory search to return 2 contracts

@@ -57,9 +57,9 @@ class DiscoveryWorker(BaseWorker):
         analyze_limit = request.get("analyze_limit", 5)
         root_job_id = str(job.id)
 
-        # Load previous inventory from a prior completed company job
+        # Load previous inventory from a prior completed company job (same chain)
         prev_inventory: dict | None = None
-        prev_job = find_previous_company_inventory(session, company, exclude_job_id=job.id)
+        prev_job = find_previous_company_inventory(session, company, exclude_job_id=job.id, chain=chain)
         if prev_job:
             _raw = get_artifact(session, prev_job.id, "contract_inventory")
             if isinstance(_raw, dict):
@@ -121,7 +121,28 @@ class DiscoveryWorker(BaseWorker):
         remaining = max(0, analyze_limit - already_used)
         # Filter by minimum confidence threshold
         eligible = [e for e in discovered if (e.get("confidence") or 0) >= _MIN_CONFIDENCE_THRESHOLD]
-        selected = eligible[:remaining]
+
+        # Select entries, deduplicating as we go so skipped entries don't
+        # consume slots — the limit is filled from further down the list.
+        selected = []
+        for entry in eligible:
+            if len(selected) >= remaining:
+                break
+            addr = str(entry["address"])
+            entry_chains = entry.get("chains")
+            entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
+            existing = find_existing_job_for_address(session, addr, chain=entry_chain)
+            if existing:
+                if not is_known_proxy(session, addr, chain=entry_chain):
+                    logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
+                    continue
+                logger.info(
+                    "Job %s: proxy %s has existing job %s but re-queuing for upgrade check",
+                    job.id,
+                    addr,
+                    existing.id,
+                )
+            selected.append(entry)
 
         if not selected:
             self.update_detail(session, job, "No contracts found to analyze")
@@ -144,23 +165,6 @@ class DiscoveryWorker(BaseWorker):
         child_ids = []
         for contract in selected:
             addr = str(contract["address"])
-
-            # Dedup: skip if a non-failed job already exists for this address
-            existing = find_existing_job_for_address(session, addr)
-            if existing:
-                # Always re-analyze proxies — the static worker will efficiently
-                # check if the implementation changed (1 RPC call) and skip
-                # expensive analysis if unchanged.
-                if not is_known_proxy(session, addr):
-                    logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
-                    continue
-                logger.info(
-                    "Job %s: proxy %s has existing job %s but re-queuing for upgrade check",
-                    job.id,
-                    addr,
-                    existing.id,
-                )
-
             child_name = str(contract.get("name") or f"{company}_{addr[2:10]}")
             child_chains = contract.get("chains")
             child_chain = child_chains[0] if isinstance(child_chains, list) and child_chains else contract.get("chain")
@@ -279,8 +283,9 @@ class DiscoveryWorker(BaseWorker):
         if address is None:
             raise ValueError("Address job missing address")
 
-        # Check for cached static data from a previously completed job
-        cached_job = find_completed_static_cache(session, address)
+        # Check for cached static data from a previously completed job (same chain)
+        request = job.request if isinstance(job.request, dict) else {}
+        cached_job = find_completed_static_cache(session, address, chain=request.get("chain"))
         if cached_job is not None:
             self.update_detail(session, job, f"Reusing cached static data for {address}")
             new_contract_id = copy_static_cache(session, cached_job.id, job.id)
