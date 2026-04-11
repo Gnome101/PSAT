@@ -14,7 +14,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition, SlitherFinding
+from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition
 from db.queue import create_job, get_artifact, get_source_files, store_artifact
 from services.monitoring.proxy_watcher import resolve_current_implementation
 from utils.rpc import normalize_hex  # used for address comparison
@@ -408,18 +408,29 @@ _MULTI_FACET_PROXY_TYPES = frozenset({"eip2535"})
 _PROXY_FIELDS = ("is_proxy", "proxy_type", "implementation", "beacon", "admin")
 
 
-def _apply_proxy_cache(session, src_contract, contract_row) -> dict:
-    """Copy proxy fields from *src_contract* to *contract_row* and return a
-    ``classify_single``-style dict for downstream consumers."""
+def _apply_proxy_cache(session, src_contract, contract_row, proxy_state: dict | None = None) -> dict:
+    """Copy proxy fields from *src_contract* (or *proxy_state* dict) to
+    *contract_row* and return a ``classify_single``-style dict for downstream
+    consumers.
+
+    When *proxy_state* is provided (e.g. from a ``cached_proxy_state``
+    artifact), its values take precedence over the ``src_contract`` attributes
+    — this handles the case where the unique-constraint reuse in
+    ``copy_static_cache`` reset the proxy fields on the shared Contract row.
+    """
     for field in _PROXY_FIELDS:
-        setattr(contract_row, field, getattr(src_contract, field))
+        if proxy_state is not None:
+            setattr(contract_row, field, proxy_state.get(field))
+        else:
+            setattr(contract_row, field, getattr(src_contract, field))
     session.commit()
 
-    if not src_contract.is_proxy:
+    is_proxy = proxy_state["is_proxy"] if proxy_state else src_contract.is_proxy
+    if not is_proxy:
         return {"type": "regular"}
     return {
         "type": "proxy",
-        **{f: getattr(src_contract, f) for f in _PROXY_FIELDS if f != "is_proxy"},
+        **{f: (proxy_state.get(f) if proxy_state else getattr(src_contract, f)) for f in _PROXY_FIELDS if f != "is_proxy"},
     }
 
 
@@ -442,16 +453,29 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
             select(Contract).where(Contract.job_id == source_job_id).limit(1)
         ).scalar_one_or_none()
     except Exception:
-        return None
+        src_contract = None
 
+    # With the (address, chain) unique constraint, copy_static_cache may have
+    # reused the same Contract row (updating its job_id to the target and
+    # resetting proxy fields).  Read the saved proxy state from artifact.
+    cached_proxy_state = None
     if src_contract is None:
-        return None
+        cached_proxy_state = get_artifact(session, job.id, "cached_proxy_state")
+        if cached_proxy_state is None:
+            return None
+        # Use contract_row as the base but check proxy state from artifact
+        src_contract = contract_row
+
+    # Determine proxy state: prefer artifact (accurate pre-reset snapshot)
+    src_is_proxy = cached_proxy_state["is_proxy"] if cached_proxy_state else src_contract.is_proxy
+    src_proxy_type = cached_proxy_state.get("proxy_type") if cached_proxy_state else src_contract.proxy_type
+    src_implementation = cached_proxy_state.get("implementation") if cached_proxy_state else src_contract.implementation
 
     # Non-proxy source: non-proxies don't become proxies.
-    if not src_contract.is_proxy:
-        return _apply_proxy_cache(session, src_contract, contract_row)
+    if not src_is_proxy:
+        return _apply_proxy_cache(session, src_contract, contract_row, proxy_state=cached_proxy_state)
 
-    proxy_type = src_contract.proxy_type
+    proxy_type = src_proxy_type
 
     # Diamond proxies have multiple facets — can't verify with a single call.
     if proxy_type in _MULTI_FACET_PROXY_TYPES:
@@ -459,9 +483,9 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
 
     # Immutable proxy types (e.g. EIP-1167): impl is baked into bytecode.
     if proxy_type in _IMMUTABLE_PROXY_TYPES:
-        return _apply_proxy_cache(session, src_contract, contract_row)
+        return _apply_proxy_cache(session, src_contract, contract_row, proxy_state=cached_proxy_state)
 
-    cached_impl = src_contract.implementation
+    cached_impl = src_implementation
     if not cached_impl:
         return None
 
@@ -484,7 +508,7 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
     if current_impl != normalize_hex(cached_impl):
         return None  # upgraded — need full re-classification
 
-    return _apply_proxy_cache(session, src_contract, contract_row)
+    return _apply_proxy_cache(session, src_contract, contract_row, proxy_state=cached_proxy_state)
 
 
 class StaticWorker(BaseWorker):
@@ -1118,27 +1142,6 @@ class StaticWorker(BaseWorker):
         slither_path = project_dir / "slither_results.json"
         if slither_path.exists():
             slither_data = json.loads(slither_path.read_text())
-
-            # Write to slither_findings table
-            from sqlalchemy import select as sa_select
-
-            contract_row = session.execute(
-                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
-            if contract_row:
-                session.query(SlitherFinding).filter(SlitherFinding.contract_id == contract_row.id).delete()
-                for finding in slither_data.get("results", {}).get("detectors", []):
-                    session.add(
-                        SlitherFinding(
-                            contract_id=contract_row.id,
-                            detector=finding.get("check"),
-                            severity=finding.get("impact"),
-                            description=finding.get("description"),
-                            elements=finding.get("elements"),
-                        )
-                    )
-                session.commit()
-
             store_artifact(session, job.id, "slither_results", data=slither_data)
 
         report_path = project_dir / "analysis_report.txt"

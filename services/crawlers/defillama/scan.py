@@ -13,6 +13,7 @@ import subprocess
 import time
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Callable
 
 from services.crawlers.defillama.core_assets import build_address_to_chain_map, load_core_assets
 from services.crawlers.defillama.extract import extract_addresses_from_file, extract_protocol
@@ -20,18 +21,26 @@ from services.crawlers.defillama.extract import extract_addresses_from_file, ext
 logger = logging.getLogger(__name__)
 
 DEFAULT_REPO_PATH = Path(__file__).resolve().parents[4] / "repo" / "DefiLlama-Adapters"
+ProgressCallback = Callable[[str], None]
 
 
-def clone_or_update_repo(repo_path: Path) -> None:
+def _emit_progress(progress: ProgressCallback | None, detail: str) -> None:
+    if progress:
+        progress(detail)
+
+
+def clone_or_update_repo(repo_path: Path, progress: ProgressCallback | None = None) -> None:
     """Clone the DefiLlama-Adapters repo, or pull latest if it exists."""
     if (repo_path / ".git").exists():
         logger.info("Updating existing repo at %s", repo_path)
+        _emit_progress(progress, "Refreshing DefiLlama adapters repo")
         subprocess.run(
             ["git", "-C", str(repo_path), "pull", "--ff-only"],
             capture_output=True,
         )
     else:
         logger.info("Cloning DefiLlama-Adapters (shallow)...")
+        _emit_progress(progress, "Cloning DefiLlama adapters repo")
         repo_path.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(
             ["git", "clone", "--depth", "1", "https://github.com/DefiLlama/DefiLlama-Adapters.git", str(repo_path)],
@@ -87,6 +96,7 @@ def scan_protocol(
     protocol_name: str,
     repo_path: Path | None = None,
     no_clone: bool = False,
+    progress: ProgressCallback | None = None,
 ) -> dict:
     """Scan a single protocol's adapters and return discovered addresses with chain context.
 
@@ -101,12 +111,13 @@ def scan_protocol(
     repo_path = repo_path or DEFAULT_REPO_PATH
 
     if not no_clone:
-        clone_or_update_repo(repo_path)
+        clone_or_update_repo(repo_path, progress=progress)
 
     projects_dir = repo_path / "projects"
     if not projects_dir.exists():
         raise FileNotFoundError(f"Projects directory not found: {projects_dir}")
 
+    _emit_progress(progress, "Loading DefiLlama core assets")
     core_assets = load_core_assets(repo_path)
     addr_to_chain = build_address_to_chain_map(core_assets)
 
@@ -115,6 +126,7 @@ def scan_protocol(
     matching = _find_matching_protocol(protocol_name, protocol_dirs)
     if not matching:
         logger.warning("Protocol '%s' not found in DefiLlama-Adapters", protocol_name)
+        _emit_progress(progress, f"No adapter match found for {protocol_name}")
         return {
             "protocol": protocol_name,
             "addresses": [],
@@ -124,8 +136,10 @@ def scan_protocol(
 
     start = time.time()
     proto_path = matching[0]
+    _emit_progress(progress, f"Matched adapter {proto_path.stem}")
 
     if proto_path.is_file():
+        _emit_progress(progress, f"Scanning adapter file {proto_path.name}")
         addrs = extract_addresses_from_file(proto_path)
         result = {
             "protocol": proto_path.stem,
@@ -133,6 +147,7 @@ def scan_protocol(
             "addresses": [{"address": a, "chain": None, "source": proto_path.name} for a in addrs],
         }
     else:
+        _emit_progress(progress, f"Scanning {proto_path.name} adapter files")
         result = extract_protocol(proto_path)
 
     # Enrich chain info from core assets

@@ -26,6 +26,7 @@ from db.models import (
     Job,
     JobStage,
     JobStatus,
+    Protocol,
     ProxySubscription,
     ProxyUpgradeEvent,
     SessionLocal,
@@ -861,37 +862,50 @@ def analysis_detail(run_name: str) -> dict:
 def company_overview(company_name: str) -> dict:
     """Aggregated governance overview for all contracts in a company."""
     with SessionLocal() as session:
-        # Find the company discovery job
-        company_job = session.execute(
-            select(Job).where(Job.company == company_name).order_by(Job.updated_at.desc()).limit(1)
-        ).scalar_one_or_none()
-        if company_job is None:
-            raise HTTPException(status_code=404, detail="Company not found")
+        # Look up protocol — try by protocol table first, fall back to job.company
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
 
-        company_job_id = str(company_job.id)
+        if protocol_row:
+            # Get all jobs that belong to this protocol
+            company_jobs = (
+                session.execute(
+                    select(Job).where(
+                        Job.protocol_id == protocol_row.id,
+                        Job.status == JobStatus.completed,
+                        Job.address.isnot(None),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        else:
+            # Fallback: find by company string (legacy data)
+            company_job = session.execute(
+                select(Job).where(Job.company == company_name).order_by(Job.updated_at.desc()).limit(1)
+            ).scalar_one_or_none()
+            if company_job is None:
+                raise HTTPException(status_code=404, detail="Company not found")
 
-        # Find all completed jobs belonging to this company (children + grandchildren)
-        # Load ALL completed jobs (including those without addresses) for parent chain walking
-        all_completed = session.execute(select(Job).where(Job.status == JobStatus.completed)).scalars().all()
-        all_jobs = [j for j in all_completed if j.address]
+            company_job_id = str(company_job.id)
+            all_completed = session.execute(select(Job).where(Job.status == JobStatus.completed)).scalars().all()
 
-        def belongs_to_company(job: Job) -> bool:
-            seen: set[str] = set()
-            current: Job | None = job
-            jobs_by_id = {str(j.id): j for j in all_completed}
-            jobs_by_id[company_job_id] = company_job
-            while current is not None:
-                if current.company == company_name:
-                    return True
-                request = current.request if isinstance(current.request, dict) else {}
-                parent_id = request.get("parent_job_id")
-                if not isinstance(parent_id, str) or parent_id in seen:
-                    return False
-                seen.add(parent_id)
-                current = jobs_by_id.get(parent_id)
-            return False
+            def belongs_to_company(job: Job) -> bool:
+                seen: set[str] = set()
+                current: Job | None = job
+                jobs_by_id = {str(j.id): j for j in all_completed}
+                jobs_by_id[company_job_id] = company_job
+                while current is not None:
+                    if current.company == company_name:
+                        return True
+                    request = current.request if isinstance(current.request, dict) else {}
+                    parent_id = request.get("parent_job_id")
+                    if not isinstance(parent_id, str) or parent_id in seen:
+                        return False
+                    seen.add(parent_id)
+                    current = jobs_by_id.get(parent_id)
+                return False
 
-        company_jobs = [j for j in all_jobs if belongs_to_company(j)]
+            company_jobs = [j for j in all_completed if j.address and belongs_to_company(j)]
 
         # Build contract entries from relational tables
         contracts = []
@@ -1104,6 +1118,7 @@ def company_overview(company_name: str) -> dict:
                 "controllers": controllers,
                 "control_model": control_model,
                 "risk_level": summary_row.risk_level if summary_row else None,
+                "source_verified": summary_row.source_verified if summary_row else None,
                 "upgrade_count": upgrade_count,
                 "role": role,
                 "standards": standards,
@@ -1322,6 +1337,35 @@ def company_overview(company_name: str) -> dict:
 
         principals = list(principal_map.values())
 
+        # Build all_addresses from contracts table (includes discovered + analyzed)
+        if protocol_row:
+            all_contract_rows = (
+                session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
+            )
+        else:
+            # Fallback: collect from company_jobs
+            all_contract_rows = []
+            for j in company_jobs:
+                cr = session.execute(select(Contract).where(Contract.job_id == j.id).limit(1)).scalar_one_or_none()
+                if cr:
+                    all_contract_rows.append(cr)
+
+        all_addresses = sorted(
+            [
+                {
+                    "address": cr.address,
+                    "name": cr.contract_name,
+                    "source_verified": cr.source_verified,
+                    "is_proxy": cr.is_proxy,
+                    "analyzed": cr.job_id is not None,
+                    "discovery_source": cr.discovery_source,
+                    "chain": cr.chain,
+                }
+                for cr in all_contract_rows
+            ],
+            key=lambda x: (not x["analyzed"], x["name"] or "zzz"),
+        )
+
         return {
             "company": company_name,
             "contract_count": len(contracts),
@@ -1329,6 +1373,7 @@ def company_overview(company_name: str) -> dict:
             "principals": principals,
             "ownership_hierarchy": hierarchy,
             "fund_flows": fund_flows,
+            "all_addresses": all_addresses,
         }
 
 

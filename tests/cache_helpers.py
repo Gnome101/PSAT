@@ -371,7 +371,6 @@ def _create_completed_job_with_static_data(session, address=ADDR_A):
         JobStatus,
         PrivilegedFunction,
         RoleDefinition,
-        SlitherFinding,
     )
     from db.queue import create_job, store_artifact, store_source_files
 
@@ -428,16 +427,6 @@ def _create_completed_job_with_static_data(session, address=ADDR_A):
             contract_id=contract.id,
             role_name="ADMIN_ROLE",
             declared_in="TestContract.sol",
-        )
-    )
-
-    # Slither findings
-    session.add(
-        SlitherFinding(
-            contract_id=contract.id,
-            detector="reentrancy-eth",
-            severity="High",
-            description="Reentrancy in TestContract.withdraw()",
         )
     )
 

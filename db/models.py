@@ -62,6 +62,9 @@ class Job(Base):
     request: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    protocol_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -176,7 +179,7 @@ class ProxyUpgradeEvent(Base):
 
 
 # ---------------------------------------------------------------------------
-# feat/database schema: protocol, sources, findings, claims, evidence
+# Protocol / company entity
 # ---------------------------------------------------------------------------
 
 
@@ -189,77 +192,9 @@ class Protocol(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     contracts: Mapped[list["Contract"]] = relationship("Contract", back_populates="protocol")
-    sources: Mapped[list["Source"]] = relationship("Source", back_populates="protocol", cascade="all, delete-orphan")
-    findings: Mapped[list["Finding"]] = relationship("Finding", back_populates="protocol", cascade="all, delete-orphan")
+    official_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-
-class Source(Base):
-    __tablename__ = "sources"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
-    type: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    authority_score: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    protocol: Mapped[Protocol] = relationship("Protocol", back_populates="sources")
-    documents: Mapped[list["Document"]] = relationship(
-        "Document",
-        back_populates="source",
-        cascade="all, delete-orphan",
-    )
-
-
-class Document(Base):
-    __tablename__ = "documents"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    source_id: Mapped[int] = mapped_column(Integer, ForeignKey("sources.id", ondelete="CASCADE"), nullable=False)
-    format: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    content_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    source: Mapped[Source] = relationship("Source", back_populates="documents")
-    claims: Mapped[list["Claim"]] = relationship("Claim", back_populates="document", cascade="all, delete-orphan")
-
-
-class Finding(Base):
-    __tablename__ = "findings"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
-    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    severity: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="open")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    protocol: Mapped[Protocol] = relationship("Protocol", back_populates="findings")
-
-
-class Claim(Base):
-    __tablename__ = "claims"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    document_id: Mapped[int] = mapped_column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
-    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    value: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-    document: Mapped[Document] = relationship("Document", back_populates="claims")
-
-
-class Evidence(Base):
-    __tablename__ = "evidence"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    reference: Mapped[str | None] = mapped_column(Text, nullable=True)
-    type: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    checksum: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    __table_args__ = (UniqueConstraint("name", name="uq_protocol_name"),)
 
 
 # ---------------------------------------------------------------------------
@@ -271,13 +206,14 @@ class Contract(Base):
     __tablename__ = "contracts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    job_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
     )
     protocol_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
     )
     address: Mapped[str] = mapped_column(String(42), nullable=False)
+    source_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     chain: Mapped[str | None] = mapped_column(String(100), nullable=True)
     contract_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     compiler_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -312,9 +248,6 @@ class Contract(Base):
     role_definitions: Mapped[list["RoleDefinition"]] = relationship(
         "RoleDefinition", back_populates="contract", cascade="all, delete-orphan"
     )
-    slither_findings: Mapped[list["SlitherFinding"]] = relationship(
-        "SlitherFinding", back_populates="contract", cascade="all, delete-orphan"
-    )
     controller_values: Mapped[list["ControllerValue"]] = relationship(
         "ControllerValue", back_populates="contract", cascade="all, delete-orphan"
     )
@@ -340,7 +273,11 @@ class Contract(Base):
         "ContractBalance", back_populates="contract", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("ix_contracts_job_id", "job_id"),)
+    __table_args__ = (
+        Index("ix_contracts_job_id", "job_id"),
+        Index("ix_contracts_protocol_id", "protocol_id"),
+        UniqueConstraint("address", "chain", name="uq_contract_address_chain"),
+    )
 
 
 class ContractSummary(Base):
@@ -387,19 +324,6 @@ class RoleDefinition(Base):
     declared_in: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="role_definitions")
-
-
-class SlitherFinding(Base):
-    __tablename__ = "slither_findings"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
-    detector: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    severity: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    elements: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
-
-    contract: Mapped[Contract] = relationship("Contract", back_populates="slither_findings")
 
 
 class ControllerValue(Base):
@@ -551,27 +475,6 @@ class ContractBalance(Base):
     contract: Mapped[Contract] = relationship("Contract", back_populates="balances")
 
     __table_args__ = (Index("ix_contract_balances_contract_id", "contract_id"),)
-
-
-# ---------------------------------------------------------------------------
-# Junction tables for findings/claims ↔ evidence
-# ---------------------------------------------------------------------------
-
-from sqlalchemy import Column, Table  # noqa: E402
-
-finding_evidence = Table(
-    "finding_evidence",
-    Base.metadata,
-    Column("finding_id", Integer, ForeignKey("findings.id", ondelete="CASCADE"), primary_key=True),
-    Column("evidence_id", Integer, ForeignKey("evidence.id", ondelete="CASCADE"), primary_key=True),
-)
-
-claim_evidence = Table(
-    "claim_evidence",
-    Base.metadata,
-    Column("claim_id", Integer, ForeignKey("claims.id", ondelete="CASCADE"), primary_key=True),
-    Column("evidence_id", Integer, ForeignKey("evidence.id", ondelete="CASCADE"), primary_key=True),
-)
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")

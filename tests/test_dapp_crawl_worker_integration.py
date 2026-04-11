@@ -148,7 +148,13 @@ def test_process_runs_against_real_queue_and_fake_dapp(
 ) -> None:
     captured: dict[str, int] = {}
 
-    def fake_crawl(urls: list[str], *, chain_id: int = 1, wait: int = 10) -> dict[str, object]:
+    def fake_crawl(
+        urls: list[str],
+        *,
+        chain_id: int = 1,
+        wait: int = 10,
+        progress=None,
+    ) -> dict[str, object]:
         captured["chain_id"] = chain_id
         captured["wait"] = wait
         addresses: list[str] = []

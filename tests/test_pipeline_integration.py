@@ -54,6 +54,7 @@ def _job(**overrides) -> Any:
         "name": "TestContract",
         "request": {"rpc_url": "https://rpc.example"},
         "company": None,
+        "protocol_id": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -1018,10 +1019,17 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
         address=None,
         company="TestProtocol",
         name=None,
+        protocol_id=None,
         request={"company": "TestProtocol", "chain": "ethereum", "rpc_url": "https://rpc.example", "analyze_limit": 2},
     )
-    # Mock session.commit to avoid DB calls
+    # Mock session.commit and session.flush to avoid DB calls
     session.commit = MagicMock()
+    session.flush = MagicMock()
+    session.add = MagicMock()
+    # Mock session.execute to return None for Protocol lookup and Contract lookups
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    session.execute = MagicMock(return_value=mock_result)
 
     stored_artifacts: dict[str, Any] = {}
     created_jobs: list[dict] = []
@@ -1033,7 +1041,7 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
     monkeypatch.setattr(
         "workers.discovery.create_job",
         lambda _s, req, initial_stage=None: (
-            created_jobs.append(req) or SimpleNamespace(id=f"child-{len(created_jobs)}", company=None)
+            created_jobs.append(req) or SimpleNamespace(id=f"child-{len(created_jobs)}", company=None, protocol_id=None)
         ),
     )
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)

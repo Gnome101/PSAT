@@ -18,7 +18,6 @@ from .models import (
     JobStatus,
     PrivilegedFunction,
     RoleDefinition,
-    SlitherFinding,
     SourceFile,
 )
 
@@ -37,6 +36,7 @@ def create_job(
         stage=initial_stage,
         detail="Queued for analysis",
         request=request_dict,
+        protocol_id=request_dict.get("protocol_id"),
     )
     session.add(job)
     session.commit()
@@ -352,12 +352,6 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
 
     Returns the new ``Contract.id`` on success, or ``None`` on failure.
     """
-    src_contract = session.execute(
-        select(Contract).where(Contract.job_id == source_job_id).limit(1)
-    ).scalar_one_or_none()
-    if not src_contract:
-        return None
-
     # Guard: if the target already has a contract row, return early.
     existing = session.execute(
         select(Contract).where(Contract.job_id == target_job_id).limit(1)
@@ -365,14 +359,68 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     if existing:
         return existing.id
 
-    # --- contract (exclude mutable proxy fields) ---
-    new_contract = copy_row(
-        session, src_contract,
-        exclude=_MUTABLE_CONTRACT_FIELDS,
-        job_id=target_job_id,
-        protocol_id=None,
-    )
-    session.flush()
+    src_contract = session.execute(
+        select(Contract).where(Contract.job_id == source_job_id).limit(1)
+    ).scalar_one_or_none()
+    if not src_contract:
+        return None
+
+    # Check if a Contract with the same (address, chain) already exists
+    # (unique constraint from main). If so, update it instead of inserting.
+    existing_by_addr = session.execute(
+        select(Contract).where(
+            Contract.address == src_contract.address,
+            Contract.chain == src_contract.chain,
+        ).limit(1)
+    ).scalar_one_or_none()
+
+    reused_existing = False
+    if existing_by_addr:
+        # Update the existing row to point to the new job
+        existing_by_addr.job_id = target_job_id
+        # Save the source proxy state before resetting, so _check_proxy_cache
+        # can read it from an artifact to decide if re-resolution is needed.
+        _cached_proxy_state = {
+            "is_proxy": existing_by_addr.is_proxy,
+            "proxy_type": existing_by_addr.proxy_type,
+            "implementation": existing_by_addr.implementation,
+            "beacon": existing_by_addr.beacon,
+            "admin": existing_by_addr.admin,
+        }
+        store_artifact(session, target_job_id, "cached_proxy_state", data=_cached_proxy_state)
+        # Reset mutable proxy fields to defaults (will be re-resolved)
+        existing_by_addr.is_proxy = False
+        existing_by_addr.proxy_type = None
+        existing_by_addr.implementation = None
+        existing_by_addr.beacon = None
+        existing_by_addr.admin = None
+        # Copy over immutable fields from source (skip mutable proxy fields)
+        from sqlalchemy import inspect as sa_inspect
+        mapper = sa_inspect(Contract)
+        for attr in mapper.column_attrs:
+            key = attr.key
+            col = attr.columns[0]
+            if col.primary_key or key in _MUTABLE_CONTRACT_FIELDS:
+                continue
+            if key in ("job_id", "address", "chain", "protocol_id"):
+                continue
+            if col.server_default is not None:
+                continue
+            val = getattr(src_contract, key)
+            if val is not None:
+                setattr(existing_by_addr, key, val)
+        session.flush()
+        new_contract = existing_by_addr
+        reused_existing = True
+    else:
+        # --- contract (exclude mutable proxy fields) ---
+        new_contract = copy_row(
+            session, src_contract,
+            exclude=_MUTABLE_CONTRACT_FIELDS,
+            job_id=target_job_id,
+            protocol_id=None,
+        )
+        session.flush()
 
     # --- source files ---
     src_files = session.execute(
@@ -381,13 +429,15 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     for sf in src_files:
         copy_row(session, sf, job_id=target_job_id)
 
-    # --- contract child tables ---
-    for Model in (ContractSummary, PrivilegedFunction, RoleDefinition, SlitherFinding):
-        src_rows = session.execute(
-            select(Model).where(Model.contract_id == src_contract.id)
-        ).scalars().all()
-        for row in src_rows:
-            copy_row(session, row, contract_id=new_contract.id)
+    # --- contract child tables (skip if we reused an existing contract that
+    # already owns the child rows, e.g. when source == existing_by_addr) ---
+    if not reused_existing or new_contract.id != src_contract.id:
+        for Model in (ContractSummary, PrivilegedFunction, RoleDefinition):
+            src_rows = session.execute(
+                select(Model).where(Model.contract_id == src_contract.id)
+            ).scalars().all()
+            for row in src_rows:
+                copy_row(session, row, contract_id=new_contract.id)
 
     # --- artifacts (static + seed) ---
     src_artifacts = session.execute(
