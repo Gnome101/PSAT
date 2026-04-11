@@ -1395,6 +1395,7 @@ def company_overview(company_name: str) -> dict:
                     "is_proxy": cr.is_proxy,
                     "analyzed": cr.job_id is not None,
                     "discovery_source": cr.discovery_source,
+                    "discovery_url": cr.discovery_url,
                     "chain": cr.chain,
                 }
                 for cr in all_contract_rows

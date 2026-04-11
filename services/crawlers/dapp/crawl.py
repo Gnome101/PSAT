@@ -85,6 +85,7 @@ def crawl_dapp(
 
     return {
         "addresses": addresses,
+        "address_details": interaction_log.get_address_details(),
         "interaction_count": len(interaction_log.interactions),
         "session_start": interaction_log.session_start,
     }

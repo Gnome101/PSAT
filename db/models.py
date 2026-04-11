@@ -234,6 +234,7 @@ class Contract(Base):
     rank_score: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
     discovery_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    discovery_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     chains: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

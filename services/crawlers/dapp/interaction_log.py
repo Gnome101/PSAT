@@ -58,6 +58,17 @@ class InteractionLog:
                 addresses.add(i.to.lower())
         return sorted(addresses)
 
+    def get_address_details(self) -> list[dict]:
+        """Extract unique contract addresses with the URLs where they were found."""
+        by_addr: dict[str, set[str]] = {}
+        for i in self.interactions:
+            if i.to:
+                addr = i.to.lower()
+                by_addr.setdefault(addr, set())
+                if i.url:
+                    by_addr[addr].add(i.url)
+        return [{"address": addr, "source_urls": sorted(urls)} for addr, urls in sorted(by_addr.items())]
+
     def get_permits(self) -> list[CapturedInteraction]:
         """Get all permit signature requests."""
         return [i for i in self.interactions if i.is_permit]

@@ -67,6 +67,14 @@ class DAppCrawlWorker(BaseWorker):
         # Write ALL discovered addresses to contracts table
         protocol_id = job.protocol_id
         crawl_chain = request.get("chain")
+        # Build URL lookup from address_details
+        url_by_addr: dict[str, str] = {}
+        for detail in result.get("address_details", []):
+            addr = detail.get("address", "").lower()
+            source_urls = detail.get("source_urls", [])
+            if addr and source_urls:
+                url_by_addr[addr] = source_urls[0]
+
         for addr in addresses:
             normalized = addr.lower()
             existing_contract = session.execute(
@@ -79,6 +87,7 @@ class DAppCrawlWorker(BaseWorker):
                         chain=crawl_chain,
                         protocol_id=protocol_id,
                         discovery_source="dapp_crawl",
+                        discovery_url=url_by_addr.get(normalized),
                     )
                 )
             elif existing_contract.protocol_id is None and protocol_id:
