@@ -12,21 +12,19 @@ These tests are designed to FAIL on the buggy code and PASS after fixes.
 from __future__ import annotations
 
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cache_helpers import (
+from cache_helpers import (  # noqa: E402
     ADDR_A,
     IMPL_ADDR,
     _create_source_job_with_proxy,
     _sqlite_compatible_store_artifact,
     db_session,  # noqa: F401
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. copy_static_cache must NOT zero proxy fields
@@ -55,9 +53,13 @@ def test_copy_static_cache_preserves_proxy_fields(db_session):
     copy_static_cache(db_session, source_job.id, target_job.id)
 
     # The Contract row (unique per address) should still have proxy fields set
-    contract = db_session.query(Contract).filter(
-        Contract.address == ADDR_A,
-    ).first()
+    contract = (
+        db_session.query(Contract)
+        .filter(
+            Contract.address == ADDR_A,
+        )
+        .first()
+    )
     assert contract is not None, "Contract row should exist"
     assert contract.is_proxy is True, "is_proxy should be preserved, not zeroed"
     assert contract.proxy_type == "eip1967", "proxy_type should be preserved"
@@ -82,9 +84,13 @@ def test_copy_static_cache_preserves_non_proxy_contract(db_session):
 
     copy_static_cache(db_session, source_job.id, target_job.id)
 
-    contract = db_session.query(Contract).filter(
-        Contract.address == ADDR_A,
-    ).first()
+    contract = (
+        db_session.query(Contract)
+        .filter(
+            Contract.address == ADDR_A,
+        )
+        .first()
+    )
     assert contract is not None
     assert contract.is_proxy is False
     assert contract.proxy_type is None
@@ -112,35 +118,42 @@ def test_old_job_contract_accessible_by_address_after_copy(db_session):
     )
 
     # Verify the source job owns the Contract row before copy
-    contract_before = db_session.query(Contract).filter(
-        Contract.job_id == source_job.id,
-    ).first()
+    contract_before = (
+        db_session.query(Contract)
+        .filter(
+            Contract.job_id == source_job.id,
+        )
+        .first()
+    )
     assert contract_before is not None
     assert contract_before.is_proxy is True
 
     target_job = create_job(db_session, {"address": ADDR_A})
     copy_static_cache(db_session, source_job.id, target_job.id)
 
-    # After copy, job_id lookup for old job fails (row was reassigned)
-    old_by_job_id = db_session.query(Contract).filter(
-        Contract.job_id == source_job.id,
-    ).first()
-    # This is expected: the Contract row's job_id now points to target_job
-    # But an address-based lookup MUST still work
-    contract_by_addr = db_session.query(Contract).filter(
-        Contract.address == ADDR_A,
-    ).first()
+    # After copy, job_id lookup for old job fails (row was reassigned).
+    # This is expected: the Contract row's job_id now points to target_job.
+    # But an address-based lookup MUST still work.
+    contract_by_addr = (
+        db_session.query(Contract)
+        .filter(
+            Contract.address == ADDR_A,
+        )
+        .first()
+    )
     assert contract_by_addr is not None, "Contract must be findable by address"
     # And it should have proxy fields preserved
-    assert contract_by_addr.is_proxy is True, (
-        "Contract found by address should retain is_proxy"
-    )
+    assert contract_by_addr.is_proxy is True, "Contract found by address should retain is_proxy"
     assert contract_by_addr.proxy_type == "eip1967"
 
     # The summary should still be linked to this contract
-    summary = db_session.query(ContractSummary).filter(
-        ContractSummary.contract_id == contract_by_addr.id,
-    ).first()
+    summary = (
+        db_session.query(ContractSummary)
+        .filter(
+            ContractSummary.contract_id == contract_by_addr.id,
+        )
+        .first()
+    )
     assert summary is not None, "ContractSummary should still be linked"
 
 
@@ -152,9 +165,6 @@ def test_old_job_contract_accessible_by_address_after_copy(db_session):
 @pytest.fixture()
 def api_client(db_session, monkeypatch):
     """Create a FastAPI TestClient backed by the test db_session."""
-    from unittest.mock import patch
-
-    from db.models import SessionLocal
 
     # Make SessionLocal return our test session
     class _FakeSessionCtx:
@@ -197,12 +207,15 @@ def _setup_company_with_proxy(db_session, monkeypatch):
     db_session.flush()
 
     # Create a completed old job for a proxy contract
-    old_job = create_job(db_session, {
-        "address": ADDR_A,
-        "name": "OldProxy",
-        "chain": "ethereum",
-        "company": "TestProtocol",
-    })
+    old_job = create_job(
+        db_session,
+        {
+            "address": ADDR_A,
+            "name": "OldProxy",
+            "chain": "ethereum",
+            "company": "TestProtocol",
+        },
+    )
     old_job.status = JobStatus.completed
     old_job.stage = JobStage.done
     old_job.protocol_id = protocol.id
@@ -230,47 +243,68 @@ def _setup_company_with_proxy(db_session, monkeypatch):
     db_session.add(contract)
     db_session.flush()
 
-    db_session.add(ContractSummary(
-        contract_id=contract.id,
-        control_model="proxy",
-        risk_level="medium",
-        is_upgradeable=True,
-    ))
+    db_session.add(
+        ContractSummary(
+            contract_id=contract.id,
+            control_model="proxy",
+            risk_level="medium",
+            is_upgradeable=True,
+        )
+    )
 
-    db_session.add(ControllerValue(
-        contract_id=contract.id,
-        controller_id="owner",
-        value="0x0000000000000000000000000000000000000001",
-        resolved_type="eoa",
-    ))
+    db_session.add(
+        ControllerValue(
+            contract_id=contract.id,
+            controller_id="owner",
+            value="0x0000000000000000000000000000000000000001",
+            resolved_type="eoa",
+        )
+    )
     db_session.commit()
 
     from db.queue import store_source_files
 
-    store_source_files(db_session, old_job.id, {
-        "src/Proxy.sol": "contract Proxy {}",
-    })
-    store(db_session, old_job.id, "contract_analysis", data={
-        "subject": {"name": "ProxyContract", "address": ADDR_A},
-        "summary": {"control_model": "proxy"},
-    })
+    store_source_files(
+        db_session,
+        old_job.id,
+        {
+            "src/Proxy.sol": "contract Proxy {}",
+        },
+    )
+    store(
+        db_session,
+        old_job.id,
+        "contract_analysis",
+        data={
+            "subject": {"name": "ProxyContract", "address": ADDR_A},
+            "summary": {"control_model": "proxy"},
+        },
+    )
     store(db_session, old_job.id, "slither_results", data={"results": {}})
     store(db_session, old_job.id, "analysis_report", text_data="report")
     store(db_session, old_job.id, "control_tracking_plan", data={"controllers": []})
-    store(db_session, old_job.id, "contract_flags", data={
-        "is_proxy": True,
-        "proxy_type": "eip1967",
-        "implementation": IMPL_ADDR,
-    })
+    store(
+        db_session,
+        old_job.id,
+        "contract_flags",
+        data={
+            "is_proxy": True,
+            "proxy_type": "eip1967",
+            "implementation": IMPL_ADDR,
+        },
+    )
 
     # Now simulate a re-analysis: create a new job and run copy_static_cache
-    new_job = create_job(db_session, {
-        "address": ADDR_A,
-        "name": "NewProxy",
-        "chain": "ethereum",
-        "static_cached": True,
-        "cache_source_job_id": str(old_job.id),
-    })
+    new_job = create_job(
+        db_session,
+        {
+            "address": ADDR_A,
+            "name": "NewProxy",
+            "chain": "ethereum",
+            "static_cached": True,
+            "cache_source_job_id": str(old_job.id),
+        },
+    )
     new_job.protocol_id = protocol.id
     db_session.commit()
 
@@ -305,15 +339,10 @@ def test_api_company_returns_data_for_old_proxy_job(db_session, api_client, monk
     )
     # If the contract row was orphaned, proxy_contract will have all-null fields
     assert proxy_contract is not None, (
-        f"Expected contract {ADDR_A} in company response, got addresses: "
-        f"{[c.get('address') for c in contracts]}"
+        f"Expected contract {ADDR_A} in company response, got addresses: {[c.get('address') for c in contracts]}"
     )
-    assert proxy_contract.get("control_model") is not None, (
-        "control_model should not be None — Contract data was lost"
-    )
-    assert proxy_contract.get("risk_level") is not None, (
-        "risk_level should not be None — ContractSummary data was lost"
-    )
+    assert proxy_contract.get("control_model") is not None, "control_model should not be None — Contract data was lost"
+    assert proxy_contract.get("risk_level") is not None, "risk_level should not be None — ContractSummary data was lost"
 
 
 def test_api_analysis_detail_returns_data_for_old_job(db_session, api_client, monkeypatch):
@@ -360,9 +389,13 @@ def test_repeated_copy_static_cache_preserves_proxy_fields(db_session):
     target2 = create_job(db_session, {"address": ADDR_A})
     copy_static_cache(db_session, target1.id, target2.id)
 
-    contract = db_session.query(Contract).filter(
-        Contract.address == ADDR_A,
-    ).first()
+    contract = (
+        db_session.query(Contract)
+        .filter(
+            Contract.address == ADDR_A,
+        )
+        .first()
+    )
     assert contract is not None
     assert contract.is_proxy is True, "is_proxy lost after second copy"
     assert contract.proxy_type == "eip1967", "proxy_type lost after second copy"
