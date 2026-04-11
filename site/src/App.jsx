@@ -1104,6 +1104,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
   const [error, setError] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeResult, setAnalyzeResult] = useState(null);
+  const [newAddress, setNewAddress] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -1245,11 +1246,46 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
               </button>
             )}
           </div>
+          {/* Add custom address */}
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!newAddress.trim()) return;
+              setAnalyzing(true);
+              setAnalyzeResult(null);
+              try {
+                const res = await api("/api/analyze", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ address: newAddress.trim(), company: companyName }),
+                });
+                setAnalyzeResult({ queued: 1, jobs: [{ job_id: res.job_id, address: newAddress.trim() }] });
+                setNewAddress("");
+              } catch (err) {
+                setAnalyzeResult({ error: err.message });
+              } finally {
+                setAnalyzing(false);
+              }
+            }}
+            style={{ display: "flex", gap: 8, marginBottom: 12 }}
+          >
+            <input
+              value={newAddress}
+              onChange={(e) => setNewAddress(e.target.value)}
+              placeholder="Add address to analyze (0x...)"
+              style={{ flex: 1, padding: "7px 12px", borderRadius: 8, fontSize: 13, fontFamily: "monospace" }}
+            />
+            <button type="submit" disabled={analyzing || !newAddress.trim()} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+              Analyze
+            </button>
+          </form>
+
           {analyzeResult && (
-            <div style={{ marginBottom: 12, fontSize: 12, color: analyzeResult.error ? "#ef4444" : "#22c55e" }}>
-              {analyzeResult.error ? `Error: ${analyzeResult.error}` : `Queued ${analyzeResult.queued} contracts for analysis`}
+            <div style={{ marginBottom: 12, fontSize: 12, padding: "8px 12px", borderRadius: 6, background: analyzeResult.error ? "rgba(239,68,68,0.08)" : "rgba(34,197,94,0.08)", color: analyzeResult.error ? "#ef4444" : "#22c55e" }}>
+              {analyzeResult.error ? `Error: ${analyzeResult.error}` : `Queued ${analyzeResult.queued} contract${analyzeResult.queued !== 1 ? "s" : ""} for analysis`}
             </div>
           )}
+
           <div className="runs-table">
             <div className="runs-table-header">
               <span style={{ flex: 2 }}>Name</span>

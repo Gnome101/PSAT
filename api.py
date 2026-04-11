@@ -69,8 +69,11 @@ class AnalyzeRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_target(self) -> "AnalyzeRequest":
-        targets = [self.address, self.company, self.dapp_urls, self.defillama_protocol]
-        if sum(bool(t) for t in targets) != 1:
+        # address + company is allowed (address is target, company is context)
+        primary = [self.address, self.dapp_urls, self.defillama_protocol]
+        company_only = self.company and not any(primary)
+        has_primary = sum(bool(t) for t in primary) == 1
+        if not has_primary and not company_only:
             raise ValueError("Provide exactly one of: address, company, dapp_urls, defillama_protocol")
         return self
 
