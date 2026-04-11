@@ -76,28 +76,30 @@ class DAppCrawlWorker(BaseWorker):
 
         # Write ALL discovered addresses to contracts table
         protocol_id = job.protocol_id
-        crawl_chain = request.get("chain") or chain_id_to_name.get(chain_id)
-        # Build URL lookup from address_details
-        url_by_addr: dict[str, str] = {}
+        default_chain = request.get("chain") or chain_id_to_name.get(chain_id)
+        # Build per-address context from address_details
+        detail_by_addr: dict[str, dict] = {}
         for detail in result.get("address_details", []):
             addr = detail.get("address", "").lower()
-            source_urls = detail.get("source_urls", [])
-            if addr and source_urls:
-                url_by_addr[addr] = source_urls[0]
+            if addr:
+                detail_by_addr[addr] = detail
 
         for addr in addresses:
             normalized = addr.lower()
+            info = detail_by_addr.get(normalized, {})
+            addr_chain = info.get("chain") or default_chain
+            source_urls = info.get("source_urls", [])
             existing_contract = session.execute(
-                select(Contract).where(Contract.address == normalized, Contract.chain == crawl_chain)
+                select(Contract).where(Contract.address == normalized, Contract.chain == addr_chain)
             ).scalar_one_or_none()
             if existing_contract is None:
                 session.add(
                     Contract(
                         address=normalized,
-                        chain=crawl_chain,
+                        chain=addr_chain,
                         protocol_id=protocol_id,
                         discovery_source="dapp_crawl",
-                        discovery_url=url_by_addr.get(normalized),
+                        discovery_url=source_urls[0] if source_urls else None,
                     )
                 )
             elif existing_contract.protocol_id is None and protocol_id:

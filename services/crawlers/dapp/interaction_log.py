@@ -59,15 +59,49 @@ class InteractionLog:
         return sorted(addresses)
 
     def get_address_details(self) -> list[dict]:
-        """Extract unique contract addresses with the URLs where they were found."""
-        by_addr: dict[str, set[str]] = {}
+        """Extract unique contract addresses with source context.
+
+        Each entry includes the page URLs where the address was found,
+        the discovery method (page-text, js-runtime, explorer link, etc.),
+        and inferred chain from block explorer links.
+        """
+        EXPLORER_CHAINS = {
+            "etherscan": "ethereum",
+            "arbiscan": "arbitrum",
+            "basescan": "base",
+            "polygonscan": "polygon",
+            "bscscan": "bsc",
+            "scrollscan": "scroll",
+            "optimistic.etherscan": "optimism",
+            "snowtrace": "avalanche",
+        }
+
+        by_addr: dict[str, dict] = {}
         for i in self.interactions:
-            if i.to:
-                addr = i.to.lower()
-                by_addr.setdefault(addr, set())
-                if i.url:
-                    by_addr[addr].add(i.url)
-        return [{"address": addr, "source_urls": sorted(urls)} for addr, urls in sorted(by_addr.items())]
+            if not i.to:
+                continue
+            addr = i.to.lower()
+            if addr not in by_addr:
+                by_addr[addr] = {"source_urls": set(), "sources": set(), "chains": set()}
+            entry = by_addr[addr]
+            if i.url:
+                entry["source_urls"].add(i.url)
+            source = i.data or ""
+            if source:
+                entry["sources"].add(source)
+                for explorer, chain in EXPLORER_CHAINS.items():
+                    if explorer in source:
+                        entry["chains"].add(chain)
+
+        return [
+            {
+                "address": addr,
+                "source_urls": sorted(info["source_urls"]),
+                "sources": sorted(info["sources"]),
+                "chain": sorted(info["chains"])[0] if info["chains"] else None,
+            }
+            for addr, info in sorted(by_addr.items())
+        ]
 
     def get_permits(self) -> list[CapturedInteraction]:
         """Get all permit signature requests."""
