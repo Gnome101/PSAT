@@ -14,7 +14,7 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition, SlitherFinding
+from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition
 from db.queue import create_job, get_source_files, store_artifact
 from services.discovery import (
     build_unified_dependencies,
@@ -709,27 +709,6 @@ class StaticWorker(BaseWorker):
         slither_path = project_dir / "slither_results.json"
         if slither_path.exists():
             slither_data = json.loads(slither_path.read_text())
-
-            # Write to slither_findings table
-            from sqlalchemy import select as sa_select
-
-            contract_row = session.execute(
-                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
-            if contract_row:
-                session.query(SlitherFinding).filter(SlitherFinding.contract_id == contract_row.id).delete()
-                for finding in slither_data.get("results", {}).get("detectors", []):
-                    session.add(
-                        SlitherFinding(
-                            contract_id=contract_row.id,
-                            detector=finding.get("check"),
-                            severity=finding.get("impact"),
-                            description=finding.get("description"),
-                            elements=finding.get("elements"),
-                        )
-                    )
-                session.commit()
-
             store_artifact(session, job.id, "slither_results", data=slither_data)
 
         report_path = project_dir / "analysis_report.txt"

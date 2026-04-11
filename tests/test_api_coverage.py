@@ -1084,27 +1084,30 @@ def test_company_overview_basic(mock_session_cls):
         call_count["n"] += 1
         result = MagicMock()
         if call_count["n"] == 1:
-            # Company job lookup
-            result.scalar_one_or_none.return_value = company_job
+            # Protocol lookup (returns None → legacy fallback)
+            result.scalar_one_or_none.return_value = None
         elif call_count["n"] == 2:
+            # Company job lookup (legacy fallback)
+            result.scalar_one_or_none.return_value = company_job
+        elif call_count["n"] == 3:
             # All completed jobs
             result.scalars.return_value.all.return_value = [company_job, child_job]
-        elif call_count["n"] == 3:
+        elif call_count["n"] == 4:
             # Contract lookup for child_job
             result.scalar_one_or_none.return_value = contract_row
-        elif call_count["n"] == 4:
+        elif call_count["n"] == 5:
             # ControllerValue: empty
             result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 5:
+        elif call_count["n"] == 6:
             # UpgradeEvent: empty
             result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 6:
+        elif call_count["n"] == 7:
             # EffectiveFunction: empty
             result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 7:
+        elif call_count["n"] == 8:
             # EffectiveFunction again for functions_list: empty
             result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 8:
+        elif call_count["n"] == 9:
             # ContractBalance: empty
             result.scalars.return_value.all.return_value = []
         else:

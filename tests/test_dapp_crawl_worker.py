@@ -64,6 +64,7 @@ def _job(**overrides: Any) -> SimpleNamespace:
     payload: dict[str, Any] = {
         "id": uuid.uuid4(),
         "name": None,
+        "protocol_id": None,
         "request": {
             "dapp_urls": ["https://example.com"],
         },
@@ -90,7 +91,7 @@ def _patch_worker_deps(
     create_calls: list[dict] = []
     complete_calls: list[tuple] = []
 
-    monkeypatch.setattr(worker_module, "crawl_dapp", lambda urls, chain_id=1, wait=10: crawl_result)
+    monkeypatch.setattr(worker_module, "crawl_dapp", lambda urls, chain_id=1, wait=10, progress=None: crawl_result)
     # BaseWorker.update_detail calls update_job_detail; patch it on the class
     monkeypatch.setattr(
         worker_module.DAppCrawlWorker,
@@ -135,8 +136,10 @@ def _session_with_dedup(existing_addresses: set[str]) -> MagicMock:
 
     def fake_execute(stmt):
         result = MagicMock()
+        # Determine which table is being queried
+        stmt_str = str(stmt)
         addr = _extract_address_from_stmt(stmt)
-        if addr and addr in existing_addresses:
+        if "jobs" in stmt_str and addr and addr in existing_addresses:
             result.scalar_one_or_none.return_value = SimpleNamespace(id=uuid.uuid4())
         else:
             result.scalar_one_or_none.return_value = None
@@ -401,7 +404,7 @@ class TestCrawlParameters:
     def test_custom_chain_id_and_wait(self, monkeypatch, dapp_worker_module):
         captured = {}
 
-        def fake_crawl(urls, chain_id=1, wait=10):
+        def fake_crawl(urls, chain_id=1, wait=10, progress=None):
             captured["chain_id"] = chain_id
             captured["wait"] = wait
             return {"addresses": [], "interaction_count": 0}
@@ -424,7 +427,7 @@ class TestCrawlParameters:
     def test_missing_wait_uses_default(self, monkeypatch, dapp_worker_module):
         captured = {}
 
-        def fake_crawl(urls, chain_id=1, wait=10):
+        def fake_crawl(urls, chain_id=1, wait=10, progress=None):
             captured["wait"] = wait
             return {"addresses": [], "interaction_count": 0}
 
@@ -491,7 +494,10 @@ class TestDuplicateAddressesFromCrawler:
             worker.process(session, cast(Any, job))
 
         assert len(spies["create_calls"]) == 1
-        assert execute_addrs == [ADDR_A]
+        # Contract lookup for each raw address + Job dedup check (only unique)
+        addr_calls = [a for a in execute_addrs if a is not None]
+        # ADDR_A appears twice in crawl results → 2 Contract lookups + 1 Job lookup
+        assert addr_calls == [ADDR_A, ADDR_A, ADDR_A]
 
 
 class TestChildRequestPropagation:

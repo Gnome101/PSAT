@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStage
+from db.models import Contract, Job, JobStage
 from db.queue import complete_job, count_analysis_children, create_job, store_artifact
 from services.crawlers.defillama.scan import scan_protocol
 from workers.base import BaseWorker, JobHandledDirectly
@@ -37,14 +37,18 @@ class DefiLlamaWorker(BaseWorker):
         analyze_limit = request.get("analyze_limit", 5)
         no_clone = os.getenv("DEFILLAMA_NO_CLONE", "").lower() in ("1", "true", "yes")
 
-        self.update_detail(session, job, f"Scanning DefiLlama adapters for {protocol}")
+        self.update_detail(session, job, f"Preparing DefiLlama scan for {protocol}")
         logger.info("DefiLlama scan started for job %s: protocol=%s", job.id, protocol)
+
+        def report(detail: str) -> None:
+            self.update_detail(session, job, detail)
 
         # Call crawler directly — no subprocess
         result = scan_protocol(
             protocol_name=protocol,
             repo_path=REPO_PATH,
             no_clone=no_clone,
+            progress=report,
         )
 
         addresses = result["addresses"]
@@ -82,6 +86,27 @@ class DefiLlamaWorker(BaseWorker):
             if addr and chain:
                 chain_by_address[addr] = chain
 
+        # Write ALL discovered addresses to contracts table
+        protocol_id = job.protocol_id
+        for addr in addresses:
+            normalized = addr.lower()
+            chain = chain_by_address.get(normalized)
+            existing_contract = session.execute(
+                select(Contract).where(Contract.address == normalized, Contract.chain == chain)
+            ).scalar_one_or_none()
+            if existing_contract is None:
+                session.add(
+                    Contract(
+                        address=normalized,
+                        chain=chain,
+                        protocol_id=protocol_id,
+                        discovery_source="defillama",
+                    )
+                )
+            elif existing_contract.protocol_id is None and protocol_id:
+                existing_contract.protocol_id = protocol_id
+        session.commit()
+
         # Deduplicate against existing jobs and create children (shared global cap)
         root_job_id = request.get("root_job_id", str(job.id))
         already_used = count_analysis_children(session, root_job_id)
@@ -109,6 +134,8 @@ class DefiLlamaWorker(BaseWorker):
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "rpc_url": request.get("rpc_url"),
+                "discovery_source": "defillama",
+                "protocol_id": protocol_id,
             }
             chain = chain_by_address.get(addr.lower()) or request.get("chain")
             if chain:
