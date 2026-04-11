@@ -321,7 +321,9 @@ class ResolutionWorker(BaseWorker):
             child_job = create_job(session, child_request, initial_stage=JobStage.discovery)
             if parent_company:
                 child_job.company = parent_company
-                session.commit()
+            if job.protocol_id:
+                child_job.protocol_id = job.protocol_id
+            session.commit()
 
             queued_count += 1
             logger.info(

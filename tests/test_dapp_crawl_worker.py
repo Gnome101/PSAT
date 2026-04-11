@@ -90,7 +90,7 @@ def _patch_worker_deps(
     create_calls: list[dict] = []
     complete_calls: list[tuple] = []
 
-    monkeypatch.setattr(worker_module, "crawl_dapp", lambda urls, chain_id=1, wait=10: crawl_result)
+    monkeypatch.setattr(worker_module, "crawl_dapp", lambda urls, chain_id=1, wait=10, progress=None: crawl_result)
     # BaseWorker.update_detail calls update_job_detail; patch it on the class
     monkeypatch.setattr(
         worker_module.DAppCrawlWorker,
@@ -401,7 +401,7 @@ class TestCrawlParameters:
     def test_custom_chain_id_and_wait(self, monkeypatch, dapp_worker_module):
         captured = {}
 
-        def fake_crawl(urls, chain_id=1, wait=10):
+        def fake_crawl(urls, chain_id=1, wait=10, progress=None):
             captured["chain_id"] = chain_id
             captured["wait"] = wait
             return {"addresses": [], "interaction_count": 0}
@@ -424,7 +424,7 @@ class TestCrawlParameters:
     def test_missing_wait_uses_default(self, monkeypatch, dapp_worker_module):
         captured = {}
 
-        def fake_crawl(urls, chain_id=1, wait=10):
+        def fake_crawl(urls, chain_id=1, wait=10, progress=None):
             captured["wait"] = wait
             return {"addresses": [], "interaction_count": 0}
 

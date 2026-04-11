@@ -220,12 +220,19 @@ function lanePriority(fn) {
   return 9;
 }
 
+function isRoleIdAddress(address) {
+  const hex = address.slice(2);
+  const leadingZeros = hex.match(/^0*/)[0].length;
+  return leadingZeros >= 24;
+}
+
 function collectPrincipals(fn) {
   const byAddress = new Map();
 
   function pushPrincipal(principal, origin) {
     const address = String(principal?.address || "").toLowerCase();
     if (!address.startsWith("0x")) return;
+    if (isRoleIdAddress(address)) return;
     const existing = byAddress.get(address);
     if (existing) {
       existing.origins.push(origin);
@@ -1659,6 +1666,7 @@ export default function ProtocolSurface({ companyName }) {
   // Multi-principal tour state: { principals: [...], index: 0, sourceContract: "0x...", sourceFunction: "fn" }
   const [principalTour, setPrincipalTour] = useState(null);
   const [error, setError] = useState(null);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [enabledRoles, setEnabledRoles] = useState(() => {
     const initial = new Set();
     for (const [role, meta] of Object.entries(ROLE_META)) {
@@ -1739,6 +1747,7 @@ export default function ProtocolSurface({ companyName }) {
   const visiblePrincipals = useMemo(() => {
     const visibleAddrs = new Set(machines.map((m) => m.address?.toLowerCase()));
     return (companyData?.principals || []).filter((p) =>
+      !isRoleIdAddress(p.address || "") &&
       (p.controls || []).some((a) => visibleAddrs.has(a.toLowerCase()))
     );
   }, [machines, companyData]);
@@ -1826,42 +1835,85 @@ export default function ProtocolSurface({ companyName }) {
   if (!companyData) return <p className="empty">Loading surface...</p>;
 
   return (
-    <div className="ps-surface">
-      <div className="ps-surface-header">
-        <div>
-          <div className="ps-surface-eyebrow">Protocol Surface</div>
-          <h2 className="ps-surface-title">{companyName}</h2>
-          <p className="ps-surface-copy">
-            Each contract shows control paths, operations, inflows, and outflows. Click any guard badge to inspect access control.
-          </p>
-        </div>
-        <div className="ps-surface-stats">
-          <div className="ps-surface-stat">
-            <span>{totals.contracts}</span>
-            <label>contracts</label>
-          </div>
-          <div className="ps-surface-stat">
-            <span>{totals.functions}</span>
-            <label>functions</label>
-          </div>
-          {totals.withBalance > 0 && (
-            <div className="ps-surface-stat">
-              <span style={{ color: "#f59e0b" }}>{totals.withBalance}</span>
-              <label>with funds</label>
+    <div className="ps-surface ps-surface-fullscreen">
+      {/* Floating header overlay */}
+      <div className={`ps-surface-overlay ${headerCollapsed ? "ps-surface-overlay-collapsed" : ""}`}>
+        <button
+          className="ps-surface-overlay-toggle"
+          onClick={() => setHeaderCollapsed(!headerCollapsed)}
+          title={headerCollapsed ? "Expand" : "Minimize"}
+        >
+          {headerCollapsed ? "\u25BC" : "\u25B2"}
+        </button>
+        {!headerCollapsed && (
+          <div className="ps-surface-header">
+            <div>
+              <div className="ps-surface-eyebrow">Protocol Surface</div>
+              <h2 className="ps-surface-title">{companyName}</h2>
+              <p className="ps-surface-copy">
+                Each contract shows control paths, operations, inflows, and outflows. Click any guard badge to inspect access control.
+              </p>
             </div>
-          )}
-          {totals.totalUsd > 0 && (
-            <div className="ps-surface-stat">
-              <span style={{ color: "#f59e0b" }}>{formatUsd(totals.totalUsd)}</span>
-              <label>total value</label>
+            <div className="ps-surface-stats">
+              <div className="ps-surface-stat">
+                <span>{totals.contracts}</span>
+                <label>contracts</label>
+              </div>
+              <div className="ps-surface-stat">
+                <span>{totals.functions}</span>
+                <label>functions</label>
+              </div>
+              {totals.withBalance > 0 && (
+                <div className="ps-surface-stat">
+                  <span style={{ color: "#f59e0b" }}>{totals.withBalance}</span>
+                  <label>with funds</label>
+                </div>
+              )}
+              {totals.totalUsd > 0 && (
+                <div className="ps-surface-stat">
+                  <span style={{ color: "#f59e0b" }}>{formatUsd(totals.totalUsd)}</span>
+                  <label>total value</label>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+        {headerCollapsed && (
+          <div className="ps-surface-header-mini">
+            <span className="ps-surface-eyebrow" style={{ margin: 0 }}>{companyName}</span>
+            <div className="ps-surface-stats">
+              <div className="ps-surface-stat">
+                <span>{totals.contracts}</span>
+                <label>contracts</label>
+              </div>
+              <div className="ps-surface-stat">
+                <span>{totals.functions}</span>
+                <label>functions</label>
+              </div>
+              {totals.withBalance > 0 && (
+                <div className="ps-surface-stat">
+                  <span style={{ color: "#f59e0b" }}>{totals.withBalance}</span>
+                  <label>with funds</label>
+                </div>
+              )}
+              {totals.totalUsd > 0 && (
+                <div className="ps-surface-stat">
+                  <span style={{ color: "#f59e0b" }}>{formatUsd(totals.totalUsd)}</span>
+                  <label>total value</label>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
-      <RoleFilterBar machines={allMachines} enabledRoles={enabledRoles} onToggle={handleToggleRole} />
+      {/* Floating toolbar overlays */}
+      <div className="ps-surface-toolbar-overlay">
+        <RoleFilterBar machines={allMachines} enabledRoles={enabledRoles} onToggle={handleToggleRole} />
+      </div>
 
-      <SearchNavigator
+      <div className="ps-surface-search-overlay">
+        <SearchNavigator
         machines={machines}
         principals={visiblePrincipals}
         onFocus={(item) => {
@@ -1888,6 +1940,7 @@ export default function ProtocolSurface({ companyName }) {
           }
         }}
       />
+      </div>
 
       <div className="ps-layout">
         <ReactFlowProvider>

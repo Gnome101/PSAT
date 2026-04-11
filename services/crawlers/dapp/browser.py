@@ -9,6 +9,8 @@ import asyncio
 import json
 import logging
 import time
+from typing import Callable
+from urllib.parse import urlparse
 
 from playwright.async_api import BrowserContext, Page, async_playwright  # pyright: ignore[reportMissingImports]
 
@@ -784,7 +786,7 @@ class DAppCrawler:
             finally:
                 await child_page.close()
 
-    async def crawl(self, urls: list[str], wait_seconds: int = 10):
+    async def crawl(self, urls: list[str], wait_seconds: int = 10, progress: Callable[[str], None] | None = None):
         """
         Visit URLs, connect wallet, then deeply explore each site for
         contract interactions.
@@ -801,19 +803,28 @@ class DAppCrawler:
             )
 
             for url in urls:
+                site_label = urlparse(url).netloc or url
                 page = await context.new_page()
                 await self._setup_page(page)
 
                 logger.info("Visiting %s", url)
                 try:
+                    if progress:
+                        progress(f"Opening {site_label}")
                     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                     await page.wait_for_timeout(3000)
 
+                    if progress:
+                        progress(f"Connecting wallet on {site_label}")
                     await self._try_connect_wallet(page)
                     await page.wait_for_timeout(2000)
 
+                    if progress:
+                        progress(f"Exploring {site_label} for contract interactions")
                     await self._explore_page(page, context, depth=0, max_depth=1)
 
+                    if progress:
+                        progress(f"Watching {site_label} for {wait_seconds}s")
                     await page.wait_for_timeout(wait_seconds * 1000)
                 except Exception as e:
                     logger.warning("Error visiting %s: %s", url, e)

@@ -25,6 +25,7 @@ def create_job(
         stage=initial_stage,
         detail="Queued for analysis",
         request=request_dict,
+        protocol_id=request_dict.get("protocol_id"),
     )
     session.add(job)
     session.commit()
