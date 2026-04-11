@@ -1102,6 +1102,8 @@ function GraphTab({ detail }) {
 function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, onNavigateToGraph, onNavigateToRisk }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeResult, setAnalyzeResult] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -1220,7 +1222,34 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
       {/* All discovered addresses */}
       {allAddresses && allAddresses.length > 0 && (
         <section className="panel">
-          <h3 style={{ marginBottom: 16 }}>All Addresses ({allAddresses.length})</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <h3>All Addresses ({allAddresses.length})</h3>
+            {allAddresses.some((a) => !a.analyzed) && (
+              <button
+                disabled={analyzing}
+                onClick={async () => {
+                  setAnalyzing(true);
+                  setAnalyzeResult(null);
+                  try {
+                    const res = await api(`/api/company/${encodeURIComponent(companyName)}/analyze-remaining`, { method: "POST" });
+                    setAnalyzeResult(res);
+                  } catch (err) {
+                    setAnalyzeResult({ error: err.message });
+                  } finally {
+                    setAnalyzing(false);
+                  }
+                }}
+                style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}
+              >
+                {analyzing ? "Queuing..." : `Analyze ${allAddresses.filter((a) => !a.analyzed).length} remaining`}
+              </button>
+            )}
+          </div>
+          {analyzeResult && (
+            <div style={{ marginBottom: 12, fontSize: 12, color: analyzeResult.error ? "#ef4444" : "#22c55e" }}>
+              {analyzeResult.error ? `Error: ${analyzeResult.error}` : `Queued ${analyzeResult.queued} contracts for analysis`}
+            </div>
+          )}
           <div className="runs-table">
             <div className="runs-table-header">
               <span style={{ flex: 2 }}>Name</span>

@@ -341,6 +341,42 @@ def analyze_address(request: AnalyzeRequest) -> dict[str, Any]:
         return job.to_dict()
 
 
+@app.post("/api/company/{company_name}/analyze-remaining")
+def analyze_remaining(company_name: str) -> dict[str, Any]:
+    """Queue analysis jobs for all discovered-but-not-analyzed contracts in a company."""
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        unanalyzed = (
+            session.execute(
+                select(Contract).where(
+                    Contract.protocol_id == protocol_row.id,
+                    Contract.job_id.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        queued = []
+        for contract in unanalyzed:
+            req_dict = {
+                "address": contract.address,
+                "name": contract.contract_name or f"{company_name}_{contract.address[2:10]}",
+                "chain": contract.chain,
+                "protocol_id": protocol_row.id,
+                "company": company_name,
+            }
+            job = create_job(session, req_dict)
+            contract.job_id = job.id
+            session.commit()
+            queued.append({"job_id": str(job.id), "address": contract.address})
+
+        return {"queued": len(queued), "jobs": queued}
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str) -> dict[str, Any]:
     with SessionLocal() as session:
