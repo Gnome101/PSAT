@@ -412,6 +412,76 @@ _MULTI_FACET_PROXY_TYPES = frozenset({"eip2535"})
 _PROXY_FIELDS = _MUTABLE_CONTRACT_FIELDS
 
 
+def _validate_cached_dep_classifications(
+    prev_cls: dict,
+    rpc_url: str,
+) -> dict[str, dict]:
+    """Validate cached dependency proxy classifications against live on-chain state.
+
+    For each cached proxy classification that has a known implementation
+    address, makes a single RPC call to verify the implementation hasn't
+    changed.  Returns a dict of ``{address: classification}`` entries that
+    are still valid.
+
+    Stale entries (where the on-chain implementation differs) are dropped
+    so ``classify_contracts`` will re-classify them from scratch.
+
+    Non-proxy entries and immutable proxy types (e.g. EIP-1167) are kept
+    unconditionally.
+    """
+    valid: dict[str, dict] = {}
+
+    for addr, cls_info in prev_cls.get("classifications", {}).items():
+        if not isinstance(cls_info, dict):
+            continue
+
+        # Non-proxy classifications are immutable — keep as-is
+        if cls_info.get("type") != "proxy":
+            valid[addr] = cls_info
+            continue
+
+        proxy_type = cls_info.get("proxy_type")
+        cached_impl = cls_info.get("implementation")
+
+        # Immutable proxy types: implementation baked into bytecode
+        if proxy_type in _IMMUTABLE_PROXY_TYPES:
+            valid[addr] = cls_info
+            continue
+
+        # Diamond proxies: can't verify with a single call
+        if proxy_type in _MULTI_FACET_PROXY_TYPES:
+            continue
+
+        # No cached implementation to compare — keep as-is (e.g. beacon
+        # proxies that only have a beacon address, or partial classifications).
+        if not cached_impl:
+            valid[addr] = cls_info
+            continue
+
+        # Single RPC call to check current implementation
+        try:
+            current_impl = resolve_current_implementation(addr, rpc_url, proxy_type=proxy_type)
+            if not current_impl:
+                continue  # can't verify — re-classify to be safe
+            if normalize_hex(current_impl) != normalize_hex(cached_impl):
+                logger.info(
+                    "Cached dep %s proxy upgraded: cached=%s current=%s — will re-classify",
+                    addr,
+                    cached_impl,
+                    current_impl,
+                )
+                continue  # upgraded — drop from cache
+        except Exception as exc:
+            logger.debug(
+                "Cached dep %s proxy check failed: %s — will re-classify", addr, exc
+            )
+            continue
+
+        valid[addr] = cls_info
+
+    return valid
+
+
 def _apply_proxy_cache(session, src_contract, contract_row, proxy_state: dict | None = None) -> dict:
     """Copy proxy fields from *src_contract* (or *proxy_state* dict) to
     *contract_row* and return a ``classify_single``-style dict for downstream
@@ -982,10 +1052,13 @@ class StaticWorker(BaseWorker):
                 if target_classification:
                     pre_classified[normalize_address(address)] = target_classification
 
-                # Load previous classifications to skip already-classified addresses
+                # Load previous classifications to skip already-classified addresses.
+                # Validate cached proxy classifications against live on-chain
+                # state so upgraded dependencies get re-classified.
                 prev_cls = get_artifact(session, job.id, "classifications")
                 if isinstance(prev_cls, dict):
-                    for cls_addr, cls_info in prev_cls.get("classifications", {}).items():
+                    validated_cls = _validate_cached_dep_classifications(prev_cls, resolved_rpc)
+                    for cls_addr, cls_info in validated_cls.items():
                         if cls_addr not in pre_classified:
                             pre_classified[cls_addr] = cls_info
 

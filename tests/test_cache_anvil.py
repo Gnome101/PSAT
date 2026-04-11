@@ -365,3 +365,103 @@ class TestAnvilProxyCache:
         db_session.refresh(target_contract)
         assert target_contract.implementation is not None
         assert target_contract.implementation.lower() == _ANVIL_IMPL_A.lower()
+
+    def test_dependency_proxy_cache_detects_upgrade_via_anvil(
+        self, db_session, anvil_rpc, monkeypatch, tmp_path
+    ):
+        """After a proxy dependency is upgraded on-chain, re-running the
+        dependency phase should detect the stale cached classification and
+        re-classify the dependency with the current implementation address."""
+        from db.models import Contract
+        from db.queue import create_job, get_artifact, store_artifact
+
+        # Deploy a target contract and a proxy dependency on Anvil
+        target_addr = _deploy_minimal_contract(anvil_rpc).lower()
+        dep_addr = _deploy_minimal_contract(anvil_rpc).lower()
+
+        # Set the dependency's EIP-1967 implementation slot to IMPL_A
+        _set_storage(anvil_rpc, dep_addr, _EIP1967_IMPL_SLOT, _ANVIL_IMPL_A)
+
+        # Create a job with RPC pointing to Anvil
+        job = create_job(db_session, {"address": target_addr, "rpc_url": anvil_rpc})
+        contract = Contract(
+            job_id=job.id,
+            address=target_addr,
+            contract_name="Target",
+            compiler_version="v0.8.24",
+            language="solidity",
+            evm_version="shanghai",
+            optimization=True,
+            optimization_runs=200,
+            source_format="flat",
+            source_file_count=1,
+            remappings=[],
+        )
+        db_session.add(contract)
+        db_session.commit()
+
+        # Store cached static dependencies containing the proxy dep
+        store_artifact(db_session, job.id, "static_dependencies", data={
+            "address": target_addr,
+            "dependencies": [dep_addr],
+            "rpc": anvil_rpc,
+        })
+
+        # Store cached classifications from "previous run" with impl = IMPL_A
+        store_artifact(db_session, job.id, "classifications", data={
+            "address": target_addr,
+            "rpc": anvil_rpc,
+            "classifications": {
+                target_addr: {"address": target_addr, "type": "regular"},
+                dep_addr: {
+                    "address": dep_addr,
+                    "type": "proxy",
+                    "proxy_type": "eip1967",
+                    "implementation": _ANVIL_IMPL_A,
+                },
+            },
+            "discovered_addresses": [],
+        })
+
+        # --- Upgrade the dependency proxy to IMPL_B ---
+        _set_storage(anvil_rpc, dep_addr, _EIP1967_IMPL_SLOT, _ANVIL_IMPL_B)
+
+        # Mock non-classification parts of _run_dependency_phase
+        monkeypatch.setattr(
+            "workers.static_worker._resolve_dynamic_deps",
+            lambda *a, **kw: (None, "mocked"),
+        )
+        monkeypatch.setattr(
+            "workers.static_worker.build_unified_dependencies",
+            lambda *a, **kw: {"target_address": target_addr, "dependencies": {}},
+        )
+        monkeypatch.setattr(
+            "workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            "workers.static_worker.write_dependency_visualization", lambda *a, **kw: None
+        )
+        monkeypatch.setattr(
+            "workers.static_worker._resolve_upgrade_history", lambda *a, **kw: None
+        )
+
+        # Run the dependency phase
+        from workers.static_worker import StaticWorker
+
+        worker = StaticWorker()
+        worker._run_dependency_phase(
+            db_session, job, tmp_path, "Target", target_addr,
+        )
+
+        # The stored classifications should reflect the upgrade
+        cls_result = get_artifact(db_session, job.id, "classifications")
+        assert isinstance(cls_result, dict)
+        dep_cls = cls_result["classifications"].get(dep_addr, {})
+
+        assert dep_cls.get("type") == "proxy", (
+            f"Expected proxy type, got {dep_cls.get('type')}"
+        )
+        assert dep_cls.get("implementation", "").lower() == _ANVIL_IMPL_B.lower(), (
+            f"Expected implementation {_ANVIL_IMPL_B} (current on-chain), "
+            f"but got {dep_cls.get('implementation')} (stale cache)"
+        )
