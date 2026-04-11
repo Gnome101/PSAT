@@ -355,8 +355,8 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     Copies:
     - ``contracts`` row (immutable fields only; proxy fields left as defaults)
     - ``source_files`` rows
-    - ``contract_summaries``, ``privileged_functions``, ``role_definitions``,
-      ``slither_findings`` rows (linked to the new contract row)
+    - ``contract_summaries``, ``privileged_functions``, ``role_definitions``
+      rows (linked to the new contract row)
     - Static artifacts (``contract_analysis``, ``slither_results``,
       ``analysis_report``, ``control_tracking_plan``)
 

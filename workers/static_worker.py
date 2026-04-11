@@ -156,8 +156,6 @@ def _resolve_dynamic_deps(
     ``None``.  When previous deps exist and no new transactions are found,
     the previous output is returned as-is (not an error).
     """
-    request = job.request if isinstance(job.request, dict) else {}
-
     # --- Load previous dynamic deps for append-only merge ---
     # The artifact is either on this job already (copied by copy_static_cache
     # as a seed artifact, or stored by a previous attempt of this job).
@@ -403,9 +401,8 @@ _IMMUTABLE_PROXY_TYPES = frozenset({"eip1167"})
 # Proxy types with multiple facets that can't be verified with a single slot check.
 _MULTI_FACET_PROXY_TYPES = frozenset({"eip2535"})
 
-# The proxy fields that get copied between contract rows.  Kept in sync
-# with _MUTABLE_CONTRACT_FIELDS in db/queue.py (the cache-copy exclusion set).
-_PROXY_FIELDS = ("is_proxy", "proxy_type", "implementation", "beacon", "admin")
+# Single source of truth for mutable proxy fields lives in db/queue.py.
+from db.queue import _MUTABLE_CONTRACT_FIELDS as _PROXY_FIELDS
 
 
 def _apply_proxy_cache(session, src_contract, contract_row, proxy_state: dict | None = None) -> dict:
@@ -452,7 +449,8 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
         src_contract = session.execute(
             select(Contract).where(Contract.job_id == source_job_id).limit(1)
         ).scalar_one_or_none()
-    except Exception:
+    except Exception as exc:
+        logger.debug("Cache source contract lookup failed for job %s: %s", job.id, exc)
         src_contract = None
 
     # With the (address, chain) unique constraint, copy_static_cache may have
@@ -502,7 +500,8 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
         if not current_impl:
             return None
         current_impl = normalize_hex(current_impl)
-    except Exception:
+    except Exception as exc:
+        logger.debug("Proxy implementation check failed for job %s: %s", job.id, exc)
         return None
 
     if current_impl != normalize_hex(cached_impl):
