@@ -1044,13 +1044,29 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
         lambda _s, _root_id: 0,
     )
 
+    # Mock get_artifact (no previous inventory)
+    monkeypatch.setattr(
+        "workers.discovery.get_artifact",
+        lambda _s, _j, _name: None,
+    )
+
+    # Mock cache lookup and dedup functions (no previous inventory, no existing jobs)
+    monkeypatch.setattr(
+        "workers.discovery.find_previous_company_inventory",
+        lambda _s, _company, exclude_job_id=None: None,
+    )
+    monkeypatch.setattr(
+        "workers.discovery.find_existing_job_for_address",
+        lambda _s, _addr: None,
+    )
+
     # Mock inventory search to return 2 contracts
     monkeypatch.setattr(
         "workers.discovery.search_protocol_inventory",
         lambda company, chain=None, limit=25: {
             "contracts": [
-                {"address": "0xaaaa" + "a" * 36, "name": "TokenA", "chains": ["ethereum"]},
-                {"address": "0xbbbb" + "b" * 36, "name": "TokenB", "chains": ["ethereum"]},
+                {"address": "0xaaaa" + "a" * 36, "name": "TokenA", "chains": ["ethereum"], "confidence": 0.9},
+                {"address": "0xbbbb" + "b" * 36, "name": "TokenB", "chains": ["ethereum"], "confidence": 0.8},
             ],
             "official_domain": "testprotocol.io",
         },

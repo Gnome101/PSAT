@@ -304,6 +304,41 @@ def find_completed_static_cache(session: Session, address: str) -> Job | None:
     return None
 
 
+def find_previous_company_inventory(session: Session, company: str, exclude_job_id: Any = None) -> Job | None:
+    """Find the most recent completed company job with a contract_inventory artifact."""
+    stmt = (
+        select(Job)
+        .where(
+            func.lower(Job.company) == company.lower(),
+            Job.status == JobStatus.completed,
+            Job.stage == JobStage.done,
+        )
+        .order_by(Job.updated_at.desc())
+    )
+    candidates = session.execute(stmt).scalars().all()
+    for candidate in candidates:
+        if exclude_job_id and candidate.id == exclude_job_id:
+            continue
+        art = session.execute(
+            select(Artifact).where(
+                Artifact.job_id == candidate.id, Artifact.name == "contract_inventory"
+            ).limit(1)
+        ).scalar_one_or_none()
+        if art:
+            return candidate
+    return None
+
+
+def find_existing_job_for_address(session: Session, address: str) -> Job | None:
+    """Find a non-failed job for *address* (case-insensitive)."""
+    return session.execute(
+        select(Job).where(
+            func.lower(Job.address) == address.lower(),
+            Job.status != JobStatus.failed,
+        ).limit(1)
+    ).scalar_one_or_none()
+
+
 def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) -> int | None:
     """Copy all cached static data from *source_job_id* to *target_job_id*.
 
