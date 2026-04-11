@@ -26,6 +26,7 @@ class NoNewTransactionsError(RuntimeError):
 
     pass
 
+
 # EVM precompile addresses (ecrecover, sha256, ripemd160, identity, etc.)
 _MAX_PRECOMPILE_ADDR = 9
 

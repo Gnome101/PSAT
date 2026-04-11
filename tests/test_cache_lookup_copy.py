@@ -5,15 +5,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from cache_helpers import (
     ADDR_A,
     ADDR_B,
     _create_completed_job_with_static_data,
-    db_session,
+    db_session,  # noqa: F401
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. Cache lookup tests
@@ -103,9 +100,10 @@ def test_find_completed_static_cache_picks_most_recent(db_session):
     recently updated one is returned."""
     from datetime import datetime, timedelta, timezone
 
+    from sqlalchemy import update
+
     from db.models import Contract, ContractSummary, Job, JobStage, JobStatus
     from db.queue import create_job, find_completed_static_cache, store_artifact, store_source_files
-    from sqlalchemy import update
 
     _create_completed_job_with_static_data(db_session, address=ADDR_A)
 
@@ -138,9 +136,10 @@ def test_find_completed_static_cache_picks_most_recent(db_session):
 
 def test_copy_static_cache(db_session):
     """copy_static_cache duplicates all static data into a new job."""
+    from sqlalchemy import select
+
     from db.models import Contract, ContractSummary, PrivilegedFunction, RoleDefinition
     from db.queue import copy_static_cache, create_job, get_artifact, get_source_files
-    from sqlalchemy import select
 
     source_job = _create_completed_job_with_static_data(db_session)
     target_job = create_job(db_session, {"address": ADDR_A})
@@ -148,9 +147,7 @@ def test_copy_static_cache(db_session):
     new_contract_id = copy_static_cache(db_session, source_job.id, target_job.id)
     assert new_contract_id is not None
 
-    target_contract = db_session.execute(
-        select(Contract).where(Contract.job_id == target_job.id)
-    ).scalar_one_or_none()
+    target_contract = db_session.execute(select(Contract).where(Contract.job_id == target_job.id)).scalar_one_or_none()
     assert target_contract is not None
     assert target_contract.contract_name == "TestContract"
     assert target_contract.compiler_version == "v0.8.24"
@@ -168,15 +165,17 @@ def test_copy_static_cache(db_session):
     assert summary is not None
     assert summary.control_model == "ownable"
 
-    pfs = db_session.execute(
-        select(PrivilegedFunction).where(PrivilegedFunction.contract_id == new_contract_id)
-    ).scalars().all()
+    pfs = (
+        db_session.execute(select(PrivilegedFunction).where(PrivilegedFunction.contract_id == new_contract_id))
+        .scalars()
+        .all()
+    )
     assert len(pfs) == 1
     assert pfs[0].function_name == "pause"
 
-    rds = db_session.execute(
-        select(RoleDefinition).where(RoleDefinition.contract_id == new_contract_id)
-    ).scalars().all()
+    rds = (
+        db_session.execute(select(RoleDefinition).where(RoleDefinition.contract_id == new_contract_id)).scalars().all()
+    )
     assert len(rds) == 1
     assert rds[0].role_name == "ADMIN_ROLE"
 
@@ -194,9 +193,10 @@ def test_copy_static_cache(db_session):
 
 def test_data_isolation_after_cache_copy(db_session):
     """Deleting the source job does not affect the copied data."""
+    from sqlalchemy import select
+
     from db.models import Contract, ContractSummary, Job, PrivilegedFunction
     from db.queue import copy_static_cache, create_job, get_artifact, get_source_files
-    from sqlalchemy import select
 
     source_job = _create_completed_job_with_static_data(db_session)
     target_job = create_job(db_session, {"address": ADDR_A})
@@ -207,9 +207,7 @@ def test_data_isolation_after_cache_copy(db_session):
     db_session.delete(db_session.get(Job, source_job.id))
     db_session.commit()
 
-    target_contract = db_session.execute(
-        select(Contract).where(Contract.job_id == target_job.id)
-    ).scalar_one_or_none()
+    target_contract = db_session.execute(select(Contract).where(Contract.job_id == target_job.id)).scalar_one_or_none()
     assert target_contract is not None
     assert target_contract.contract_name == "TestContract"
 
@@ -221,9 +219,11 @@ def test_data_isolation_after_cache_copy(db_session):
     ).scalar_one_or_none()
     assert summary is not None
 
-    pfs = db_session.execute(
-        select(PrivilegedFunction).where(PrivilegedFunction.contract_id == new_contract_id)
-    ).scalars().all()
+    pfs = (
+        db_session.execute(select(PrivilegedFunction).where(PrivilegedFunction.contract_id == new_contract_id))
+        .scalars()
+        .all()
+    )
     assert len(pfs) == 1
 
     assert get_artifact(db_session, target_job.id, "contract_analysis") is not None
@@ -237,9 +237,10 @@ def test_data_isolation_after_cache_copy(db_session):
 
 def test_copy_returns_early_if_target_already_populated(db_session):
     """Second call to copy_static_cache returns existing ID without duplicating."""
+    from sqlalchemy import func, select
+
     from db.models import Contract, ContractSummary, PrivilegedFunction
     from db.queue import copy_static_cache, create_job
-    from sqlalchemy import func, select
 
     source_job = _create_completed_job_with_static_data(db_session)
     target_job = create_job(db_session, {"address": ADDR_A})
@@ -274,12 +275,13 @@ def test_copy_returns_early_if_target_already_populated(db_session):
 def test_no_duplicate_rows_after_two_runs(db_session, monkeypatch):
     """Running discovery twice for the same address produces exactly one set of
     static rows per job -- no duplicates within either job."""
+    from sqlalchemy import func, select
+
     from db.models import Contract, ContractSummary, PrivilegedFunction, RoleDefinition, SourceFile
     from db.queue import create_job, get_artifact
-    from sqlalchemy import func, select
     from workers.discovery import DiscoveryWorker
 
-    source_job = _create_completed_job_with_static_data(db_session)
+    _create_completed_job_with_static_data(db_session)
 
     new_job = create_job(db_session, {"address": ADDR_A})
     monkeypatch.setattr(
@@ -291,9 +293,7 @@ def test_no_duplicate_rows_after_two_runs(db_session, monkeypatch):
     worker.update_detail = MagicMock()
     worker._process_address(db_session, new_job)
 
-    new_contract = db_session.execute(
-        select(Contract).where(Contract.job_id == new_job.id)
-    ).scalar_one()
+    new_contract = db_session.execute(select(Contract).where(Contract.job_id == new_job.id)).scalar_one()
 
     summary_count = db_session.execute(
         select(func.count()).select_from(ContractSummary).where(ContractSummary.contract_id == new_contract.id)
@@ -317,7 +317,7 @@ def test_no_duplicate_rows_after_two_runs(db_session, monkeypatch):
 
     for artifact_name in ["contract_analysis", "slither_results", "control_tracking_plan"]:
         art = get_artifact(db_session, new_job.id, artifact_name)
-        assert art is not None, f"Missing artifact {artifact_name}"
+        assert isinstance(art, dict), f"Missing artifact {artifact_name}"
 
 
 # ---------------------------------------------------------------------------
@@ -332,13 +332,18 @@ def test_copy_row_skips_primary_key(db_session):
 
     job = create_job(db_session, {"address": ADDR_A})
     original = Contract(
-        job_id=job.id, address=ADDR_A, chain="ethereum", contract_name="Original",
-        compiler_version="v0.8.24", language="solidity",
+        job_id=job.id,
+        address=ADDR_A,
+        chain="ethereum",
+        contract_name="Original",
+        compiler_version="v0.8.24",
+        language="solidity",
     )
     db_session.add(original)
     db_session.flush()
 
     cloned = copy_row(db_session, original, job_id=job.id, address=ADDR_A, chain="base")
+    assert isinstance(cloned, Contract)
     db_session.flush()
 
     assert cloned.id != original.id
@@ -352,12 +357,16 @@ def test_copy_row_skips_server_defaults(db_session):
 
     job = create_job(db_session, {"address": ADDR_A})
     original = Contract(
-        job_id=job.id, address=ADDR_A, chain="ethereum", contract_name="Original",
+        job_id=job.id,
+        address=ADDR_A,
+        chain="ethereum",
+        contract_name="Original",
     )
     db_session.add(original)
     db_session.flush()
 
     cloned = copy_row(db_session, original, job_id=job.id, address=ADDR_A, chain="base")
+    assert isinstance(cloned, Contract)
     db_session.flush()
 
     assert cloned.is_proxy is not None
@@ -371,12 +380,16 @@ def test_copy_row_applies_overrides(db_session):
     job1 = create_job(db_session, {"address": ADDR_A})
     job2 = create_job(db_session, {"address": ADDR_A})
     original = Contract(
-        job_id=job1.id, address=ADDR_A, chain="ethereum", contract_name="Original",
+        job_id=job1.id,
+        address=ADDR_A,
+        chain="ethereum",
+        contract_name="Original",
     )
     db_session.add(original)
     db_session.flush()
 
     cloned = copy_row(db_session, original, job_id=job2.id, contract_name="Cloned", address=ADDR_A, chain="base")
+    assert isinstance(cloned, Contract)
     db_session.flush()
 
     assert cloned.job_id == job2.id
@@ -390,18 +403,25 @@ def test_copy_row_respects_exclude(db_session):
 
     job = create_job(db_session, {"address": ADDR_A})
     original = Contract(
-        job_id=job.id, address=ADDR_A, chain="ethereum", contract_name="Original",
-        compiler_version="v0.8.24", language="solidity",
+        job_id=job.id,
+        address=ADDR_A,
+        chain="ethereum",
+        contract_name="Original",
+        compiler_version="v0.8.24",
+        language="solidity",
     )
     db_session.add(original)
     db_session.flush()
 
     cloned = copy_row(
-        db_session, original,
+        db_session,
+        original,
         job_id=job.id,
-        address=ADDR_A, chain="base",
+        address=ADDR_A,
+        chain="base",
         exclude=frozenset({"compiler_version", "language"}),
     )
+    assert isinstance(cloned, Contract)
     db_session.flush()
 
     assert cloned.compiler_version is None
@@ -416,15 +436,20 @@ def test_copy_row_shallow_copies_lists(db_session):
 
     job = create_job(db_session, {"address": ADDR_A})
     original = Contract(
-        job_id=job.id, address=ADDR_A, chain="ethereum", contract_name="Original",
+        job_id=job.id,
+        address=ADDR_A,
+        chain="ethereum",
+        contract_name="Original",
         remappings=["a=b", "c=d"],
     )
     db_session.add(original)
     db_session.flush()
 
     cloned = copy_row(db_session, original, job_id=job.id, address=ADDR_A, chain="base")
+    assert isinstance(cloned, Contract)
     db_session.flush()
 
+    assert cloned.remappings is not None
     assert cloned.remappings == ["a=b", "c=d"]
     cloned.remappings.append("e=f")
     assert original.remappings == ["a=b", "c=d"]

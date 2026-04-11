@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
 from cache_helpers import (
     ADDR_A,
     IMPL_ADDR,
@@ -14,9 +13,8 @@ from cache_helpers import (
     _create_source_job_with_proxy,
     _create_target_job_with_contract,
     _patch_static_worker_phases,
-    db_session,
+    db_session,  # noqa: F401
 )
-
 
 # ---------------------------------------------------------------------------
 # Static worker cache hit
@@ -113,12 +111,16 @@ def test_static_worker_cache_miss_runs_analysis(db_session, monkeypatch):
 
 def test_proxy_cache_non_proxy_source(db_session, monkeypatch):
     """Cache hit with non-proxy source: _resolve_proxy is NOT called, contract has is_proxy=False."""
-    from db.models import Contract
     from sqlalchemy import select
+
+    from db.models import Contract
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
-        db_session, is_proxy=False, proxy_type=None, implementation=None,
+        db_session,
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
     )
     target_job = _create_target_job_with_contract(db_session, source_job.id)
 
@@ -130,21 +132,23 @@ def test_proxy_cache_non_proxy_source(db_session, monkeypatch):
     assert "resolve_proxy" not in phases_run
     assert "dependency" in phases_run
 
-    contract = db_session.execute(
-        select(Contract).where(Contract.job_id == target_job.id)
-    ).scalar_one()
+    contract = db_session.execute(select(Contract).where(Contract.job_id == target_job.id)).scalar_one()
     assert contract.is_proxy is False
     assert contract.implementation is None
 
 
 def test_proxy_cache_proxy_unchanged(db_session, monkeypatch):
     """Cache hit with unchanged proxy: _resolve_proxy is NOT called, proxy fields are copied."""
-    from db.models import Contract
     from sqlalchemy import select
+
+    from db.models import Contract
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
-        db_session, is_proxy=True, proxy_type="eip1967", implementation=IMPL_ADDR,
+        db_session,
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation=IMPL_ADDR,
         beacon="0xbeac000000000000000000000000000000000000",
         admin="0xad1c000000000000000000000000000000000000",
     )
@@ -168,9 +172,7 @@ def test_proxy_cache_proxy_unchanged(db_session, monkeypatch):
 
     assert "resolve_proxy" not in phases_run
 
-    contract = db_session.execute(
-        select(Contract).where(Contract.job_id == target_job.id)
-    ).scalar_one()
+    contract = db_session.execute(select(Contract).where(Contract.job_id == target_job.id)).scalar_one()
     assert contract.is_proxy is True
     assert contract.proxy_type == "eip1967"
     assert contract.implementation.lower() == IMPL_ADDR.lower()
@@ -183,7 +185,10 @@ def test_proxy_cache_proxy_upgraded(db_session, monkeypatch):
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
-        db_session, is_proxy=True, proxy_type="eip1967", implementation=IMPL_ADDR,
+        db_session,
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation=IMPL_ADDR,
     )
     target_job = _create_target_job_with_contract(db_session, source_job.id)
 
@@ -206,7 +211,10 @@ def test_proxy_cache_rpc_fails(db_session, monkeypatch):
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
-        db_session, is_proxy=True, proxy_type="eip1967", implementation=IMPL_ADDR,
+        db_session,
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation=IMPL_ADDR,
     )
     target_job = _create_target_job_with_contract(db_session, source_job.id)
 
@@ -257,12 +265,16 @@ def test_proxy_cache_no_cache_flag(db_session, monkeypatch):
 
 def test_proxy_cache_immutable_eip1167(db_session, monkeypatch):
     """Cache hit with eip1167 (immutable) proxy: reuse without any RPC call."""
-    from db.models import Contract
     from sqlalchemy import select
+
+    from db.models import Contract
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
-        db_session, is_proxy=True, proxy_type="eip1167", implementation=IMPL_ADDR,
+        db_session,
+        is_proxy=True,
+        proxy_type="eip1167",
+        implementation=IMPL_ADDR,
     )
     target_job = _create_target_job_with_contract(db_session, source_job.id)
 
@@ -286,9 +298,7 @@ def test_proxy_cache_immutable_eip1167(db_session, monkeypatch):
     assert "resolve_proxy" not in phases_run
     assert resolve_called == []  # No RPC for immutable proxy type
 
-    contract = db_session.execute(
-        select(Contract).where(Contract.job_id == target_job.id)
-    ).scalar_one()
+    contract = db_session.execute(select(Contract).where(Contract.job_id == target_job.id)).scalar_one()
     assert contract.is_proxy is True
     assert contract.proxy_type == "eip1167"
     assert contract.implementation.lower() == IMPL_ADDR.lower()
@@ -299,7 +309,10 @@ def test_proxy_cache_diamond_proxy_falls_back(db_session, monkeypatch):
     from workers.static_worker import StaticWorker
 
     source_job = _create_source_job_with_proxy(
-        db_session, is_proxy=True, proxy_type="eip2535", implementation=IMPL_ADDR,
+        db_session,
+        is_proxy=True,
+        proxy_type="eip2535",
+        implementation=IMPL_ADDR,
     )
     target_job = _create_target_job_with_contract(db_session, source_job.id)
 
@@ -324,14 +337,22 @@ def test_apply_proxy_cache_non_proxy(db_session):
 
     job = create_job(db_session, {"address": ADDR_A})
     src = Contract(
-        job_id=job.id, address=ADDR_A, contract_name="Src",
-        is_proxy=False, proxy_type=None, implementation=None, beacon=None, admin=None,
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="Src",
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
+        beacon=None,
+        admin=None,
     )
     db_session.add(src)
     db_session.flush()
 
     target = Contract(
-        job_id=job.id, address=ADDR_A, contract_name="Target",
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="Target",
     )
     db_session.add(target)
     db_session.flush()
@@ -349,15 +370,22 @@ def test_apply_proxy_cache_proxy(db_session):
 
     job = create_job(db_session, {"address": ADDR_A})
     src = Contract(
-        job_id=job.id, address=ADDR_A, contract_name="Src",
-        is_proxy=True, proxy_type="eip1967",
-        implementation=IMPL_ADDR, beacon="0xbeac", admin="0xadmn",
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="Src",
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation=IMPL_ADDR,
+        beacon="0xbeac",
+        admin="0xadmn",
     )
     db_session.add(src)
     db_session.flush()
 
     target = Contract(
-        job_id=job.id, address=ADDR_A, contract_name="Target",
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="Target",
     )
     db_session.add(target)
     db_session.flush()
@@ -382,12 +410,15 @@ def test_check_proxy_cache_no_source_job_id(db_session):
     from db.queue import create_job
     from workers.static_worker import _check_proxy_cache
 
-    job = create_job(db_session, {
-        "address": ADDR_A,
-        "rpc_url": "https://rpc.example",
-        "static_cached": True,
-        # cache_source_job_id intentionally omitted
-    })
+    job = create_job(
+        db_session,
+        {
+            "address": ADDR_A,
+            "rpc_url": "https://rpc.example",
+            "static_cached": True,
+            # cache_source_job_id intentionally omitted
+        },
+    )
     contract = Contract(job_id=job.id, address=ADDR_A, contract_name="T")
     db_session.add(contract)
     db_session.flush()
@@ -398,19 +429,22 @@ def test_check_proxy_cache_no_source_job_id(db_session):
 
 def test_check_proxy_cache_source_contract_missing(db_session):
     """_check_proxy_cache returns None when source job has no contract row."""
-    from db.queue import create_job
     from db.models import Contract
+    from db.queue import create_job
     from workers.static_worker import _check_proxy_cache
 
     source_job = create_job(db_session, {"address": ADDR_A})
     # No contract row added for source_job
 
-    job = create_job(db_session, {
-        "address": ADDR_A,
-        "rpc_url": "https://rpc.example",
-        "static_cached": True,
-        "cache_source_job_id": str(source_job.id),
-    })
+    job = create_job(
+        db_session,
+        {
+            "address": ADDR_A,
+            "rpc_url": "https://rpc.example",
+            "static_cached": True,
+            "cache_source_job_id": str(source_job.id),
+        },
+    )
     contract = Contract(job_id=job.id, address=ADDR_A, contract_name="T")
     db_session.add(contract)
     db_session.flush()
@@ -427,18 +461,25 @@ def test_check_proxy_cache_proxy_no_cached_impl(db_session):
 
     source_job = create_job(db_session, {"address": ADDR_A})
     src_contract = Contract(
-        job_id=source_job.id, address=ADDR_A, contract_name="Proxy",
-        is_proxy=True, proxy_type="eip1967", implementation=None,
+        job_id=source_job.id,
+        address=ADDR_A,
+        contract_name="Proxy",
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation=None,
     )
     db_session.add(src_contract)
     db_session.flush()
 
-    job = create_job(db_session, {
-        "address": ADDR_A,
-        "rpc_url": "https://rpc.example",
-        "static_cached": True,
-        "cache_source_job_id": str(source_job.id),
-    })
+    job = create_job(
+        db_session,
+        {
+            "address": ADDR_A,
+            "rpc_url": "https://rpc.example",
+            "static_cached": True,
+            "cache_source_job_id": str(source_job.id),
+        },
+    )
     contract = Contract(job_id=job.id, address=ADDR_A, contract_name="Proxy")
     db_session.add(contract)
     db_session.flush()
@@ -455,24 +496,32 @@ def test_check_proxy_cache_no_rpc_url(db_session):
 
     source_job = create_job(db_session, {"address": ADDR_A})
     src_contract = Contract(
-        job_id=source_job.id, address=ADDR_A, contract_name="Proxy",
-        is_proxy=True, proxy_type="eip1967", implementation=IMPL_ADDR,
+        job_id=source_job.id,
+        address=ADDR_A,
+        contract_name="Proxy",
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation=IMPL_ADDR,
     )
     db_session.add(src_contract)
     db_session.flush()
 
-    job = create_job(db_session, {
-        "address": ADDR_A,
-        # No rpc_url
-        "static_cached": True,
-        "cache_source_job_id": str(source_job.id),
-    })
+    job = create_job(
+        db_session,
+        {
+            "address": ADDR_A,
+            # No rpc_url
+            "static_cached": True,
+            "cache_source_job_id": str(source_job.id),
+        },
+    )
     contract = Contract(job_id=job.id, address=ADDR_A, contract_name="Proxy")
     db_session.add(contract)
     db_session.flush()
 
     # Clear ETH_RPC env var to ensure no fallback
     import os
+
     old_rpc = os.environ.pop("ETH_RPC", None)
     try:
         result = _check_proxy_cache(db_session, job, contract)
@@ -490,9 +539,8 @@ def test_check_proxy_cache_no_rpc_url(db_session):
 def test_e2e_discovery_then_static_with_cache(db_session, monkeypatch):
     """End-to-end test: run discovery (cache hit), then static (cached)
     and verify the complete flow works with the static_cached flag."""
-    from db.models import Contract
+
     from db.queue import create_job, get_artifact, get_source_files
-    from sqlalchemy import select
     from workers.discovery import DiscoveryWorker
     from workers.static_worker import StaticWorker
 
@@ -513,6 +561,7 @@ def test_e2e_discovery_then_static_with_cache(db_session, monkeypatch):
 
     # Verify cache flags set
     db_session.refresh(new_job)
+    assert isinstance(new_job.request, dict)
     assert new_job.request.get("static_cached") is True
 
     # Phase 2: Static -- should skip analysis phases
@@ -568,7 +617,14 @@ def test_resolve_dynamic_deps_non_dict_request(db_session, monkeypatch):
     )
 
     result, error = _resolve_dynamic_deps(
-        db_session, job, ADDR_A, "https://rpc", 10, None, None, {},
+        db_session,
+        job,
+        ADDR_A,
+        "https://rpc",
+        10,
+        None,
+        None,
+        {},
     )
 
     assert error is None

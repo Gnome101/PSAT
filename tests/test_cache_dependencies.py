@@ -4,10 +4,6 @@ _resolve_*/_merge_* helper functions."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
-import pytest
-
 from cache_helpers import (
     ADDR_A,
     FAKE_CLS_OUTPUT,
@@ -19,10 +15,8 @@ from cache_helpers import (
     _create_completed_job_with_static_data,
     _make_dep_phase_job,
     _patch_dep_phase_helpers,
-    _patch_static_worker_non_dep_phases,
-    db_session,
+    db_session,  # noqa: F401
 )
-
 
 # ---------------------------------------------------------------------------
 # Static dependency caching
@@ -93,7 +87,7 @@ def test_static_deps_stored_on_first_run(db_session, monkeypatch):
 
     # Verify the static_dependencies artifact was stored
     art = get_artifact(db_session, job.id, "static_dependencies")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art["address"] == FAKE_STATIC_DEPS["address"]
     assert art["dependencies"] == FAKE_STATIC_DEPS["dependencies"]
 
@@ -110,12 +104,15 @@ def test_static_deps_reused_on_cache_hit(db_session, monkeypatch):
     store_artifact(db_session, source_job.id, "static_dependencies", data=FAKE_STATIC_DEPS)
 
     # Create target job flagged as cached
-    job = create_job(db_session, {
-        "address": ADDR_A,
-        "rpc_url": "https://rpc.example",
-        "static_cached": True,
-        "cache_source_job_id": str(source_job.id),
-    })
+    job = create_job(
+        db_session,
+        {
+            "address": ADDR_A,
+            "rpc_url": "https://rpc.example",
+            "static_cached": True,
+            "cache_source_job_id": str(source_job.id),
+        },
+    )
     contract = Contract(
         job_id=job.id,
         address=ADDR_A,
@@ -188,12 +185,15 @@ def test_dynamic_deps_still_run_on_cache_hit(db_session, monkeypatch):
     source_job = _create_completed_job_with_static_data(db_session)
     store_artifact(db_session, source_job.id, "static_dependencies", data=FAKE_STATIC_DEPS)
 
-    job = create_job(db_session, {
-        "address": ADDR_A,
-        "rpc_url": "https://rpc.example",
-        "static_cached": True,
-        "cache_source_job_id": str(source_job.id),
-    })
+    job = create_job(
+        db_session,
+        {
+            "address": ADDR_A,
+            "rpc_url": "https://rpc.example",
+            "static_cached": True,
+            "cache_source_job_id": str(source_job.id),
+        },
+    )
     contract = Contract(
         job_id=job.id,
         address=ADDR_A,
@@ -263,7 +263,7 @@ def test_static_deps_artifact_copied_by_cache(db_session):
     copy_static_cache(db_session, source_job.id, target_job.id)
 
     art = get_artifact(db_session, target_job.id, "static_dependencies")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art["dependencies"] == FAKE_STATIC_DEPS["dependencies"]
 
 
@@ -325,7 +325,7 @@ def test_dynamic_deps_artifact_stored_on_first_run(db_session, monkeypatch):
     worker.process(db_session, job)
 
     art = get_artifact(db_session, job.id, "dynamic_dependencies")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art["dependencies"] == FAKE_DYN_DEPS_OLD["dependencies"]
     assert len(art["transactions_analyzed"]) == 2
 
@@ -364,7 +364,7 @@ def test_dynamic_deps_append_only_merge_on_rerun(db_session, monkeypatch):
 
     # The stored artifact should be the merged result
     art = get_artifact(db_session, job.id, "dynamic_dependencies")
-    assert art is not None
+    assert isinstance(art, dict)
     # Union of old + new deps
     assert "0x0000000000000000000000000000000000000042" in art["dependencies"]
     assert "0x0000000000000000000000000000000000000099" in art["dependencies"]
@@ -400,7 +400,7 @@ def test_dynamic_deps_no_new_transactions_uses_previous(db_session, monkeypatch)
 
     # Should use previous output as-is (no error)
     art = get_artifact(db_session, job.id, "dynamic_dependencies")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art["dependencies"] == FAKE_DYN_DEPS_OLD["dependencies"]
     assert len(art["transactions_analyzed"]) == 2
 
@@ -410,9 +410,12 @@ def test_dynamic_deps_explicit_tx_hashes_skip_merge(db_session, monkeypatch):
     from db.queue import get_artifact, store_artifact
     from workers.static_worker import StaticWorker
 
-    job = _make_dep_phase_job(db_session, extra_request={
-        "dynamic_tx_hashes": ["0xddd"],
-    })
+    job = _make_dep_phase_job(
+        db_session,
+        extra_request={
+            "dynamic_tx_hashes": ["0xddd"],
+        },
+    )
     # Store previous dynamic deps -- should be ignored
     store_artifact(db_session, job.id, "dynamic_dependencies", data=FAKE_DYN_DEPS_OLD)
 
@@ -441,7 +444,7 @@ def test_dynamic_deps_explicit_tx_hashes_skip_merge(db_session, monkeypatch):
 
     # The stored artifact should be the NEW output only (no merge with old)
     art = get_artifact(db_session, job.id, "dynamic_dependencies")
-    assert art is not None
+    assert isinstance(art, dict)
     # Should have new deps only (no merge with old)
     assert art["transactions_analyzed"] == FAKE_DYN_DEPS_NEW["transactions_analyzed"]
 
@@ -453,9 +456,12 @@ def test_dynamic_deps_source_job_fallback(db_session, monkeypatch):
     from workers.static_worker import StaticWorker
 
     # Create target job with dynamic deps already copied (as copy_static_cache would do)
-    job = _make_dep_phase_job(db_session, extra_request={
-        "static_cached": True,
-    })
+    job = _make_dep_phase_job(
+        db_session,
+        extra_request={
+            "static_cached": True,
+        },
+    )
     store_artifact(db_session, job.id, "dynamic_dependencies", data=FAKE_DYN_DEPS_OLD)
 
     captured_kwargs = {}
@@ -481,7 +487,7 @@ def test_dynamic_deps_source_job_fallback(db_session, monkeypatch):
 
     # The stored artifact should be the merged result
     art = get_artifact(db_session, job.id, "dynamic_dependencies")
-    assert art is not None
+    assert isinstance(art, dict)
     assert "0x0000000000000000000000000000000000000042" in art["dependencies"]
     assert "0x0000000000000000000000000000000000000099" in art["dependencies"]
 
@@ -528,7 +534,7 @@ def test_classifications_stored_on_first_run(db_session, monkeypatch):
     worker.process(db_session, job)
 
     art = get_artifact(db_session, job.id, "classifications")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art["classifications"]["0x0000000000000000000000000000000000000042"]["type"] == "regular"
     assert art["classifications"]["0x0000000000000000000000000000000000000043"]["type"] == "proxy"
 
@@ -585,7 +591,7 @@ def test_classifications_reused_via_pre_classified(db_session, monkeypatch):
 
     # Updated artifact should include the new address
     art = get_artifact(db_session, job.id, "classifications")
-    assert art is not None
+    assert isinstance(art, dict)
     assert "0x0000000000000000000000000000000000000099" in art["classifications"]
 
 
@@ -601,7 +607,7 @@ def test_classifications_artifact_copied_as_seed(db_session):
     copy_static_cache(db_session, source_job.id, target_job.id)
 
     art = get_artifact(db_session, target_job.id, "classifications")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art["classifications"] == FAKE_CLS_OUTPUT["classifications"]
 
 
@@ -651,11 +657,20 @@ def test_merge_upgrade_history_disjoint_proxies():
                 "first_upgrade_block": 200,
                 "last_upgrade_block": 200,
                 "implementations": [
-                    {"address": "0x0000000000000000000000000000000000000088", "block_introduced": 200, "tx_hash": "0xccc"},
+                    {
+                        "address": "0x0000000000000000000000000000000000000088",
+                        "block_introduced": 200,
+                        "tx_hash": "0xccc",
+                    },
                 ],
                 "events": [
-                    {"event_type": "upgraded", "block_number": 200, "tx_hash": "0xccc", "log_index": 0,
-                     "implementation": "0x0000000000000000000000000000000000000088"},
+                    {
+                        "event_type": "upgraded",
+                        "block_number": 200,
+                        "tx_hash": "0xccc",
+                        "log_index": 0,
+                        "implementation": "0x0000000000000000000000000000000000000088",
+                    },
                 ],
             },
         },
@@ -715,7 +730,7 @@ def test_upgrade_history_append_only_on_rerun(db_session, monkeypatch):
 
     # The stored artifact should be the merged result
     art = get_artifact(db_session, job.id, "upgrade_history")
-    assert art is not None
+    assert isinstance(art, dict)
     proxy_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7"
     assert len(art["proxies"][proxy_addr]["events"]) == 2
     assert art["total_upgrades"] == 2
@@ -764,7 +779,7 @@ def test_upgrade_history_no_new_events_uses_previous(db_session, monkeypatch):
 
     # Previous data should be preserved
     art = get_artifact(db_session, job.id, "upgrade_history")
-    assert art is not None
+    assert isinstance(art, dict)
     proxy_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7"
     assert proxy_addr in art["proxies"]
     assert art["total_upgrades"] == 1
@@ -782,7 +797,7 @@ def test_upgrade_history_artifact_copied_as_seed(db_session):
     copy_static_cache(db_session, source_job.id, target_job.id)
 
     art = get_artifact(db_session, target_job.id, "upgrade_history")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art["total_upgrades"] == FAKE_UH_PREV["total_upgrades"]
     proxy_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7"
     assert proxy_addr in art["proxies"]
@@ -831,14 +846,11 @@ def test_enrichment_cache_stored_on_first_run(db_session, monkeypatch):
     assert info_cache[addr_dep] == fake_info
 
     # Serialize and store as an artifact
-    enrichment_data = {
-        addr: {"name": name, "selectors": selectors}
-        for addr, (name, selectors) in info_cache.items()
-    }
+    enrichment_data = {addr: {"name": name, "selectors": selectors} for addr, (name, selectors) in info_cache.items()}
     store_artifact(db_session, job.id, "enrichment_cache", data=enrichment_data)
 
     art = get_artifact(db_session, job.id, "enrichment_cache")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art[addr_dep]["name"] == "SomeToken"
     assert art[addr_dep]["selectors"] == {"0x12345678": "transfer"}
 
@@ -911,7 +923,7 @@ def test_enrichment_cache_copied_by_copy_static_cache(db_session):
     copy_static_cache(db_session, source_job.id, target_job.id)
 
     art = get_artifact(db_session, target_job.id, "enrichment_cache")
-    assert art is not None
+    assert isinstance(art, dict)
     assert art["0x0000000000000000000000000000000000000aaa"]["name"] == "SomeToken"
     assert art["0x0000000000000000000000000000000000000aaa"]["selectors"] == {"0x12345678": "transfer"}
 
@@ -935,7 +947,9 @@ def test_merge_dynamic_deps_duplicate_edge_provenance():
         "provenance": {"0xbbb": [{"tx_hash": "0x111"}]},
         "dependency_graph": [
             {
-                "from": "0xaaa", "to": "0xbbb", "op": "CALL",
+                "from": "0xaaa",
+                "to": "0xbbb",
+                "op": "CALL",
                 "provenance": [{"tx_hash": "0x111", "block_number": 10}],
             },
         ],
@@ -950,7 +964,9 @@ def test_merge_dynamic_deps_duplicate_edge_provenance():
         "provenance": {"0xbbb": [{"tx_hash": "0x222"}]},
         "dependency_graph": [
             {
-                "from": "0xaaa", "to": "0xbbb", "op": "CALL",
+                "from": "0xaaa",
+                "to": "0xbbb",
+                "op": "CALL",
                 "provenance": [{"tx_hash": "0x222", "block_number": 20}],
             },
         ],
@@ -1021,7 +1037,14 @@ def test_resolve_dynamic_deps_no_previous(db_session, monkeypatch):
     )
 
     result, error = _resolve_dynamic_deps(
-        db_session, job, ADDR_A, "https://rpc", 10, None, None, {},
+        db_session,
+        job,
+        ADDR_A,
+        "https://rpc",
+        10,
+        None,
+        None,
+        {},
     )
 
     assert error is None
@@ -1029,12 +1052,12 @@ def test_resolve_dynamic_deps_no_previous(db_session, monkeypatch):
     assert result["dependencies"] == FAKE_DYN_DEPS_NEW["dependencies"]
 
     art = get_artifact(db_session, job.id, "dynamic_dependencies")
-    assert art is not None
+    assert isinstance(art, dict)
 
 
 def test_resolve_dynamic_deps_with_previous_merges(db_session, monkeypatch):
     """Re-run with previous deps -- merges and uses correct start_block."""
-    from db.queue import create_job, get_artifact, store_artifact
+    from db.queue import create_job, store_artifact
     from workers.static_worker import _resolve_dynamic_deps
 
     job = create_job(db_session, {"address": ADDR_A, "rpc_url": "https://rpc"})
@@ -1049,10 +1072,18 @@ def test_resolve_dynamic_deps_with_previous_merges(db_session, monkeypatch):
     monkeypatch.setattr("workers.static_worker.find_dynamic_dependencies", mock_find_dyn)
 
     result, error = _resolve_dynamic_deps(
-        db_session, job, ADDR_A, "https://rpc", 10, None, None, {},
+        db_session,
+        job,
+        ADDR_A,
+        "https://rpc",
+        10,
+        None,
+        None,
+        {},
     )
 
     assert error is None
+    assert result is not None
     assert captured_kwargs.get("start_block") == 201
     # Result should be merged
     assert "0x0000000000000000000000000000000000000042" in result["dependencies"]
@@ -1074,7 +1105,14 @@ def test_resolve_dynamic_deps_no_new_tx_with_previous(db_session, monkeypatch):
     )
 
     result, error = _resolve_dynamic_deps(
-        db_session, job, ADDR_A, "https://rpc", 10, None, None, {},
+        db_session,
+        job,
+        ADDR_A,
+        "https://rpc",
+        10,
+        None,
+        None,
+        {},
     )
 
     assert error is None
@@ -1095,7 +1133,14 @@ def test_resolve_dynamic_deps_no_new_tx_without_previous(db_session, monkeypatch
     )
 
     result, error = _resolve_dynamic_deps(
-        db_session, job, ADDR_A, "https://rpc", 10, None, None, {},
+        db_session,
+        job,
+        ADDR_A,
+        "https://rpc",
+        10,
+        None,
+        None,
+        {},
     )
 
     assert result is None
@@ -1119,7 +1164,14 @@ def test_resolve_dynamic_deps_explicit_tx_hashes_bypass_cache(db_session, monkey
     monkeypatch.setattr("workers.static_worker.find_dynamic_dependencies", mock_find_dyn)
 
     result, error = _resolve_dynamic_deps(
-        db_session, job, ADDR_A, "https://rpc", 10, ["0xddd"], None, {},
+        db_session,
+        job,
+        ADDR_A,
+        "https://rpc",
+        10,
+        ["0xddd"],
+        None,
+        {},
     )
 
     assert error is None
@@ -1142,7 +1194,14 @@ def test_resolve_dynamic_deps_generic_exception(db_session, monkeypatch):
     )
 
     result, error = _resolve_dynamic_deps(
-        db_session, job, ADDR_A, "https://rpc", 10, None, None, {},
+        db_session,
+        job,
+        ADDR_A,
+        "https://rpc",
+        10,
+        None,
+        None,
+        {},
     )
 
     assert result is None

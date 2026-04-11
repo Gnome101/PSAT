@@ -12,11 +12,9 @@ import json
 import sys
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import String, Text, event, types
+from sqlalchemy import event
 from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,7 +51,12 @@ FAKE_DYN_DEPS_OLD = {
     ],
     "provenance": {
         "0x0000000000000000000000000000000000000042": [
-            {"tx_hash": "0xaaa", "block_number": 100, "from": "0xdac17f958d2ee523a2206206994597c13d831ec7", "op": "CALL"},
+            {
+                "tx_hash": "0xaaa",
+                "block_number": 100,
+                "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "op": "CALL",
+            },
         ],
     },
     "dependency_graph": [
@@ -80,10 +83,20 @@ FAKE_DYN_DEPS_NEW = {
     ],
     "provenance": {
         "0x0000000000000000000000000000000000000042": [
-            {"tx_hash": "0xccc", "block_number": 300, "from": "0xdac17f958d2ee523a2206206994597c13d831ec7", "op": "STATICCALL"},
+            {
+                "tx_hash": "0xccc",
+                "block_number": 300,
+                "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "op": "STATICCALL",
+            },
         ],
         "0x0000000000000000000000000000000000000099": [
-            {"tx_hash": "0xccc", "block_number": 300, "from": "0xdac17f958d2ee523a2206206994597c13d831ec7", "op": "CALL"},
+            {
+                "tx_hash": "0xccc",
+                "block_number": 300,
+                "from": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+                "op": "CALL",
+            },
         ],
     },
     "dependency_graph": [
@@ -128,8 +141,13 @@ FAKE_UH_PREV = {
                 {"address": "0x0000000000000000000000000000000000000042", "block_introduced": 50, "tx_hash": "0xaaa"},
             ],
             "events": [
-                {"event_type": "upgraded", "block_number": 50, "tx_hash": "0xaaa", "log_index": 0,
-                 "implementation": "0x0000000000000000000000000000000000000042"},
+                {
+                    "event_type": "upgraded",
+                    "block_number": 50,
+                    "tx_hash": "0xaaa",
+                    "log_index": 0,
+                    "implementation": "0x0000000000000000000000000000000000000042",
+                },
             ],
         },
     },
@@ -151,8 +169,13 @@ FAKE_UH_NEW = {
                 {"address": "0x0000000000000000000000000000000000000099", "block_introduced": 100, "tx_hash": "0xbbb"},
             ],
             "events": [
-                {"event_type": "upgraded", "block_number": 100, "tx_hash": "0xbbb", "log_index": 0,
-                 "implementation": "0x0000000000000000000000000000000000000099"},
+                {
+                    "event_type": "upgraded",
+                    "block_number": 100,
+                    "tx_hash": "0xbbb",
+                    "log_index": 0,
+                    "implementation": "0x0000000000000000000000000000000000000099",
+                },
             ],
         },
     },
@@ -169,11 +192,7 @@ def _sqlite_compatible_store_artifact(session, job_id, name, data=None, text_dat
     """SQLite-compatible replacement for the Postgres pg_insert upsert."""
     from db.models import Artifact
 
-    existing = (
-        session.query(Artifact)
-        .filter(Artifact.job_id == job_id, Artifact.name == name)
-        .first()
-    )
+    existing = session.query(Artifact).filter(Artifact.job_id == job_id, Artifact.name == name).first()
     if existing:
         existing.data = data
         existing.text_data = text_data
@@ -213,10 +232,12 @@ def _register_sqlite_type_compilers():
 
     def _uuid_bind_processor(self, dialect):
         if dialect.name == "sqlite":
+
             def process(value):
                 if value is not None:
                     return str(value)
                 return value
+
             return process
         if _orig_uuid_bind:
             return _orig_uuid_bind(self, dialect)
@@ -228,10 +249,12 @@ def _register_sqlite_type_compilers():
 
     def _uuid_result_processor(self, dialect, coltype):
         if dialect.name == "sqlite":
+
             def process(value):
                 if value is not None and not isinstance(value, uuid.UUID):
                     return uuid.UUID(value)
                 return value
+
             return process
         if _orig_uuid_result:
             return _orig_uuid_result(self, dialect, coltype)
@@ -243,40 +266,46 @@ def _register_sqlite_type_compilers():
 
     def _jsonb_bind_processor(self, dialect):
         if dialect.name == "sqlite":
+
             def process(value):
                 if value is not None:
                     return json.dumps(value)
                 return value
+
             return process
         if _orig_jsonb_bind:
             return _orig_jsonb_bind(self, dialect)
         return None
 
-    JSONB.bind_processor = _jsonb_bind_processor
+    JSONB.bind_processor = _jsonb_bind_processor  # type: ignore[assignment]
 
     _orig_jsonb_result = JSONB.result_processor
 
     def _jsonb_result_processor(self, dialect, coltype):
         if dialect.name == "sqlite":
+
             def process(value):
                 if value is not None and isinstance(value, str):
                     return json.loads(value)
                 return value
+
             return process
         if _orig_jsonb_result:
             return _orig_jsonb_result(self, dialect, coltype)
         return None
 
-    JSONB.result_processor = _jsonb_result_processor
+    JSONB.result_processor = _jsonb_result_processor  # type: ignore[assignment]
 
     _orig_array_bind = ARRAY.bind_processor
 
     def _array_bind_processor(self, dialect):
         if dialect.name == "sqlite":
+
             def process(value):
                 if value is not None:
                     return json.dumps(value)
                 return value
+
             return process
         if _orig_array_bind:
             return _orig_array_bind(self, dialect)
@@ -288,16 +317,18 @@ def _register_sqlite_type_compilers():
 
     def _array_result_processor(self, dialect, coltype):
         if dialect.name == "sqlite":
+
             def process(value):
                 if value is not None and isinstance(value, str):
                     return json.loads(value)
                 return value
+
             return process
         if _orig_array_result:
             return _orig_array_result(self, dialect, coltype)
         return None
 
-    ARRAY.result_processor = _array_result_processor
+    ARRAY.result_processor = _array_result_processor  # type: ignore[assignment]
 
 
 # Register once at import time
@@ -452,8 +483,15 @@ def _create_completed_job_with_static_data(session, address=ADDR_A):
     return job
 
 
-def _create_source_job_with_proxy(session, address=ADDR_A, is_proxy=True, proxy_type="eip1967",
-                                   implementation=IMPL_ADDR, beacon=None, admin=None):
+def _create_source_job_with_proxy(
+    session,
+    address=ADDR_A,
+    is_proxy=True,
+    proxy_type: str | None = "eip1967",
+    implementation: str | None = IMPL_ADDR,
+    beacon=None,
+    admin=None,
+):
     """Helper: create a completed source job with proxy fields set."""
     from db.models import Contract, ContractSummary, JobStage, JobStatus
     from db.queue import create_job, store_artifact, store_source_files
@@ -498,15 +536,17 @@ def _create_source_job_with_proxy(session, address=ADDR_A, is_proxy=True, proxy_
 
 def _create_target_job_with_contract(session, source_job_id, address=ADDR_A, rpc_url="https://rpc.example"):
     """Helper: create a new job with static_cached flag and a contract row."""
-    from db.models import Contract
     from db.queue import copy_static_cache, create_job, store_source_files
 
-    job = create_job(session, {
-        "address": address,
-        "rpc_url": rpc_url,
-        "static_cached": True,
-        "cache_source_job_id": str(source_job_id),
-    })
+    job = create_job(
+        session,
+        {
+            "address": address,
+            "rpc_url": rpc_url,
+            "static_cached": True,
+            "cache_source_job_id": str(source_job_id),
+        },
+    )
 
     copy_static_cache(session, source_job_id, job.id)
 

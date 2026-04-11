@@ -205,9 +205,7 @@ _SEED_ARTIFACT_NAMES = frozenset(
 
 # Contract columns that are mutable (resolved live by _resolve_proxy) and
 # must NOT be carried over from a cached job.
-_MUTABLE_CONTRACT_FIELDS = frozenset(
-    {"is_proxy", "proxy_type", "implementation", "beacon", "admin"}
-)
+_MUTABLE_CONTRACT_FIELDS = frozenset({"is_proxy", "proxy_type", "implementation", "beacon", "admin"})
 
 
 def copy_row(session: Session, source: Base, *, exclude: frozenset[str] = frozenset(), **overrides: Any) -> Base:
@@ -286,9 +284,7 @@ def find_completed_static_cache(session: Session, address: str) -> Job | None:
             continue
 
         analysis_art = session.execute(
-            select(Artifact).where(
-                Artifact.job_id == candidate.id, Artifact.name == "contract_analysis"
-            ).limit(1)
+            select(Artifact).where(Artifact.job_id == candidate.id, Artifact.name == "contract_analysis").limit(1)
         ).scalar_one_or_none()
         if not analysis_art:
             continue
@@ -320,9 +316,7 @@ def find_previous_company_inventory(session: Session, company: str, exclude_job_
         if exclude_job_id and candidate.id == exclude_job_id:
             continue
         art = session.execute(
-            select(Artifact).where(
-                Artifact.job_id == candidate.id, Artifact.name == "contract_inventory"
-            ).limit(1)
+            select(Artifact).where(Artifact.job_id == candidate.id, Artifact.name == "contract_inventory").limit(1)
         ).scalar_one_or_none()
         if art:
             return candidate
@@ -332,21 +326,28 @@ def find_previous_company_inventory(session: Session, company: str, exclude_job_
 def find_existing_job_for_address(session: Session, address: str) -> Job | None:
     """Find a non-failed job for *address* (case-insensitive)."""
     return session.execute(
-        select(Job).where(
+        select(Job)
+        .where(
             func.lower(Job.address) == address.lower(),
             Job.status != JobStatus.failed,
-        ).limit(1)
+        )
+        .limit(1)
     ).scalar_one_or_none()
 
 
 def is_known_proxy(session: Session, address: str) -> bool:
     """Return True if *address* has been classified as a proxy in any prior analysis."""
-    return session.execute(
-        select(Contract).where(
-            func.lower(Contract.address) == address.lower(),
-            Contract.is_proxy.is_(True),
-        ).limit(1)
-    ).scalar_one_or_none() is not None
+    return (
+        session.execute(
+            select(Contract)
+            .where(
+                func.lower(Contract.address) == address.lower(),
+                Contract.is_proxy.is_(True),
+            )
+            .limit(1)
+        ).scalar_one_or_none()
+        is not None
+    )
 
 
 def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) -> int | None:
@@ -363,9 +364,7 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     Returns the new ``Contract.id`` on success, or ``None`` on failure.
     """
     # Guard: if the target already has a contract row, return early.
-    existing = session.execute(
-        select(Contract).where(Contract.job_id == target_job_id).limit(1)
-    ).scalar_one_or_none()
+    existing = session.execute(select(Contract).where(Contract.job_id == target_job_id).limit(1)).scalar_one_or_none()
     if existing:
         return existing.id
 
@@ -378,10 +377,12 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     # Check if a Contract with the same (address, chain) already exists
     # (unique constraint from main). If so, update it instead of inserting.
     existing_by_addr = session.execute(
-        select(Contract).where(
+        select(Contract)
+        .where(
             Contract.address == src_contract.address,
             Contract.chain == src_contract.chain,
-        ).limit(1)
+        )
+        .limit(1)
     ).scalar_one_or_none()
 
     reused_existing = False
@@ -406,6 +407,7 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
         existing_by_addr.admin = None
         # Copy over immutable fields from source (skip mutable proxy fields)
         from sqlalchemy import inspect as sa_inspect
+
         mapper = sa_inspect(Contract)
         for attr in mapper.column_attrs:
             key = attr.key
@@ -425,7 +427,8 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     else:
         # --- contract (exclude mutable proxy fields) ---
         new_contract = copy_row(
-            session, src_contract,
+            session,
+            src_contract,
             exclude=_MUTABLE_CONTRACT_FIELDS,
             job_id=target_job_id,
             protocol_id=None,
@@ -433,31 +436,31 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
         session.flush()
 
     # --- source files ---
-    src_files = session.execute(
-        select(SourceFile).where(SourceFile.job_id == source_job_id)
-    ).scalars().all()
+    src_files = session.execute(select(SourceFile).where(SourceFile.job_id == source_job_id)).scalars().all()
     for sf in src_files:
         copy_row(session, sf, job_id=target_job_id)
 
     # --- contract child tables (skip if we reused an existing contract that
     # already owns the child rows, e.g. when source == existing_by_addr) ---
-    if not reused_existing or new_contract.id != src_contract.id:
+    if not reused_existing or new_contract.id != src_contract.id:  # type: ignore[attr-defined]
         for Model in (ContractSummary, PrivilegedFunction, RoleDefinition):
-            src_rows = session.execute(
-                select(Model).where(Model.contract_id == src_contract.id)
-            ).scalars().all()
+            src_rows = session.execute(select(Model).where(Model.contract_id == src_contract.id)).scalars().all()
             for row in src_rows:
-                copy_row(session, row, contract_id=new_contract.id)
+                copy_row(session, row, contract_id=new_contract.id)  # type: ignore[attr-defined]
 
     # --- artifacts (static + seed) ---
-    src_artifacts = session.execute(
-        select(Artifact).where(
-            Artifact.job_id == source_job_id,
-            Artifact.name.in_(_STATIC_ARTIFACT_NAMES | _SEED_ARTIFACT_NAMES),
+    src_artifacts = (
+        session.execute(
+            select(Artifact).where(
+                Artifact.job_id == source_job_id,
+                Artifact.name.in_(_STATIC_ARTIFACT_NAMES | _SEED_ARTIFACT_NAMES),
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for art in src_artifacts:
         store_artifact(session, target_job_id, art.name, data=art.data, text_data=art.text_data)
 
     session.commit()
-    return new_contract.id
+    return new_contract.id  # type: ignore[attr-defined]

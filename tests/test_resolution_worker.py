@@ -610,7 +610,14 @@ class TestRunUpgradeHistoryNonFatal:
             "proxies": {
                 "0xproxy": {
                     "proxy_address": "0xproxy",
-                    "events": [{"event_type": "upgraded", "block_number": 100, "tx_hash": "0xtx", "implementation": "0xnew"}],
+                    "events": [
+                        {
+                            "event_type": "upgraded",
+                            "block_number": 100,
+                            "tx_hash": "0xtx",
+                            "implementation": "0xnew",
+                        }
+                    ],
                 }
             }
         }

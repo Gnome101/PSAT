@@ -5,12 +5,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-
 from cache_helpers import (
     ADDR_A,
     ADDR_B,
     _create_completed_job_with_static_data,
-    db_session,
+    db_session,  # noqa: F401
 )
 
 # Extra addresses used in inventory merge / dedup tests
@@ -24,9 +23,10 @@ ADDR_C = "0x1111111111111111111111111111111111111111"
 
 def test_discovery_worker_cache_hit_skips_fetch(db_session, monkeypatch):
     """When cache exists, discovery skips fetch() and copies data instead."""
+    from sqlalchemy import select
+
     from db.models import Contract
     from db.queue import create_job, get_source_files
-    from sqlalchemy import select
     from workers.discovery import DiscoveryWorker
 
     # Create completed job as cache source
@@ -49,14 +49,13 @@ def test_discovery_worker_cache_hit_skips_fetch(db_session, monkeypatch):
     assert fetch_called == []
 
     # Data was copied
-    contract = db_session.execute(
-        select(Contract).where(Contract.job_id == new_job.id)
-    ).scalar_one_or_none()
+    contract = db_session.execute(select(Contract).where(Contract.job_id == new_job.id)).scalar_one_or_none()
     assert contract is not None
     assert contract.contract_name == "TestContract"
 
     # Explicit cache flag was set on the job request
     db_session.refresh(new_job)
+    assert isinstance(new_job.request, dict)
     assert new_job.request.get("static_cached") is True
     assert new_job.request.get("cache_source_job_id") is not None
 
@@ -191,7 +190,7 @@ def test_merge_inventory_new_and_previous():
 
 def test_merge_inventory_confidence_decay_removes_stale():
     """After enough misses, a contract drops below the floor and is removed."""
-    from services.discovery.inventory import CONFIDENCE_DECAY as _CONFIDENCE_DECAY, CONFIDENCE_FLOOR as _CONFIDENCE_FLOOR, merge_inventory as _merge_inventory
+    from services.discovery.inventory import merge_inventory as _merge_inventory
 
     # Start with confidence 0.5, decay 5 times
     confidence = 0.5
@@ -208,7 +207,8 @@ def test_merge_inventory_confidence_decay_removes_stale():
 
 def test_merge_inventory_confidence_decay_gradual():
     """Each missed run decays confidence by the decay factor."""
-    from services.discovery.inventory import CONFIDENCE_DECAY as _CONFIDENCE_DECAY, merge_inventory as _merge_inventory
+    from services.discovery.inventory import CONFIDENCE_DECAY as _CONFIDENCE_DECAY
+    from services.discovery.inventory import merge_inventory as _merge_inventory
 
     prev = {
         "contracts": [{"address": ADDR_A, "name": "A", "confidence": 1.0}],
@@ -221,7 +221,7 @@ def test_merge_inventory_confidence_decay_gradual():
     # Second miss
     merged2 = _merge_inventory(merged, {"contracts": []})
     a2 = [c for c in merged2["contracts"] if c["address"].lower() == ADDR_A.lower()][0]
-    assert abs(a2["confidence"] - _CONFIDENCE_DECAY ** 2) < 0.001
+    assert abs(a2["confidence"] - _CONFIDENCE_DECAY**2) < 0.001
 
 
 def test_merge_inventory_rediscovered_keeps_higher_confidence():
@@ -278,18 +278,21 @@ def _mock_inventory(contracts, **extra):
 def test_child_job_dedup(db_session, monkeypatch):
     """When a job already exists for address A, only address B gets a child job."""
     from sqlalchemy import select
+
     from db.models import Job
     from db.queue import create_job
-    from workers.discovery import DiscoveryWorker
     from workers.base import JobHandledDirectly
+    from workers.discovery import DiscoveryWorker
 
     # Pre-existing job for ADDR_A
     create_job(db_session, {"address": ADDR_A, "name": "existing"})
 
-    inventory = _mock_inventory([
-        {"address": ADDR_A, "name": "A", "confidence": 0.9},
-        {"address": ADDR_B, "name": "B", "confidence": 0.8},
-    ])
+    inventory = _mock_inventory(
+        [
+            {"address": ADDR_A, "name": "A", "confidence": 0.9},
+            {"address": ADDR_B, "name": "B", "confidence": 0.8},
+        ]
+    )
     monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
 
     job = _make_company_job(db_session)
@@ -313,12 +316,14 @@ def test_child_job_dedup(db_session, monkeypatch):
 def test_first_run_no_previous_inventory(db_session, monkeypatch):
     """First run with no prior company job stores inventory normally."""
     from db.queue import get_artifact
-    from workers.discovery import DiscoveryWorker
     from workers.base import JobHandledDirectly
+    from workers.discovery import DiscoveryWorker
 
-    inventory = _mock_inventory([
-        {"address": ADDR_A, "name": "A", "confidence": 0.9},
-    ])
+    inventory = _mock_inventory(
+        [
+            {"address": ADDR_A, "name": "A", "confidence": 0.9},
+        ]
+    )
     monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
 
     job = _make_company_job(db_session)
@@ -331,7 +336,7 @@ def test_first_run_no_previous_inventory(db_session, monkeypatch):
         worker._process_company(db_session, job)
 
     stored = get_artifact(db_session, job.id, "contract_inventory")
-    assert stored is not None
+    assert isinstance(stored, dict)
     assert len(stored["contracts"]) == 1
     assert stored["contracts"][0]["address"] == ADDR_A
 
@@ -340,8 +345,8 @@ def test_rerun_merges_with_previous_inventory(db_session, monkeypatch):
     """Re-run merges previous inventory (decays old, keeps rediscovered)."""
     from db.models import JobStage, JobStatus
     from db.queue import create_job, get_artifact, store_artifact
-    from workers.discovery import DiscoveryWorker
     from workers.base import JobHandledDirectly
+    from workers.discovery import DiscoveryWorker
 
     # Create a completed previous company job with inventory
     prev_job = create_job(db_session, {"company": "TestProtocol"})
@@ -350,17 +355,21 @@ def test_rerun_merges_with_previous_inventory(db_session, monkeypatch):
     prev_job.stage = JobStage.done
     db_session.commit()
 
-    prev_inventory = _mock_inventory([
-        {"address": ADDR_A, "name": "A", "confidence": 0.9},
-        {"address": ADDR_B, "name": "B", "confidence": 0.7},
-    ])
+    prev_inventory = _mock_inventory(
+        [
+            {"address": ADDR_A, "name": "A", "confidence": 0.9},
+            {"address": ADDR_B, "name": "B", "confidence": 0.7},
+        ]
+    )
     store_artifact(db_session, prev_job.id, "contract_inventory", data=prev_inventory)
 
     # New search only finds B and C
-    new_inventory = _mock_inventory([
-        {"address": ADDR_B, "name": "B_v2", "confidence": 0.6},
-        {"address": ADDR_C, "name": "C", "confidence": 0.85},
-    ])
+    new_inventory = _mock_inventory(
+        [
+            {"address": ADDR_B, "name": "B_v2", "confidence": 0.6},
+            {"address": ADDR_C, "name": "C", "confidence": 0.85},
+        ]
+    )
     monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: new_inventory)
 
     job = _make_company_job(db_session)
@@ -373,6 +382,7 @@ def test_rerun_merges_with_previous_inventory(db_session, monkeypatch):
         worker._process_company(db_session, job)
 
     stored = get_artifact(db_session, job.id, "contract_inventory")
+    assert isinstance(stored, dict)
     contracts_by_addr = {c["address"].lower(): c for c in stored["contracts"]}
 
     # A: decayed from 0.9 → 0.72
@@ -391,14 +401,17 @@ def test_rerun_merges_with_previous_inventory(db_session, monkeypatch):
 def test_low_confidence_contracts_not_analyzed(db_session, monkeypatch):
     """Contracts below the confidence threshold do not get child jobs."""
     from sqlalchemy import select
-    from db.models import Job
-    from workers.discovery import DiscoveryWorker, _MIN_CONFIDENCE_THRESHOLD
-    from workers.base import JobHandledDirectly
 
-    inventory = _mock_inventory([
-        {"address": ADDR_A, "name": "A", "confidence": 0.9},
-        {"address": ADDR_B, "name": "B", "confidence": 0.1},  # below threshold
-    ])
+    from db.models import Job
+    from workers.base import JobHandledDirectly
+    from workers.discovery import DiscoveryWorker
+
+    inventory = _mock_inventory(
+        [
+            {"address": ADDR_A, "name": "A", "confidence": 0.9},
+            {"address": ADDR_B, "name": "B", "confidence": 0.1},  # below threshold
+        ]
+    )
     monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
 
     job = _make_company_job(db_session)
@@ -428,12 +441,23 @@ def test_is_known_proxy_true(db_session):
     from db.queue import create_job, is_known_proxy
 
     job = create_job(db_session, {"address": ADDR_A})
-    db_session.add(Contract(
-        job_id=job.id, address=ADDR_A, contract_name="Proxy",
-        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
-        optimization=True, optimization_runs=200, source_format="flat",
-        source_file_count=1, remappings=[], is_proxy=True, proxy_type="eip1967",
-    ))
+    db_session.add(
+        Contract(
+            job_id=job.id,
+            address=ADDR_A,
+            contract_name="Proxy",
+            compiler_version="v0.8.24",
+            language="solidity",
+            evm_version="shanghai",
+            optimization=True,
+            optimization_runs=200,
+            source_format="flat",
+            source_file_count=1,
+            remappings=[],
+            is_proxy=True,
+            proxy_type="eip1967",
+        )
+    )
     db_session.commit()
 
     assert is_known_proxy(db_session, ADDR_A) is True
@@ -449,12 +473,22 @@ def test_is_known_proxy_false(db_session):
 
     # Contract with is_proxy=False
     job = create_job(db_session, {"address": ADDR_A})
-    db_session.add(Contract(
-        job_id=job.id, address=ADDR_A, contract_name="Regular",
-        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
-        optimization=True, optimization_runs=200, source_format="flat",
-        source_file_count=1, remappings=[], is_proxy=False,
-    ))
+    db_session.add(
+        Contract(
+            job_id=job.id,
+            address=ADDR_A,
+            contract_name="Regular",
+            compiler_version="v0.8.24",
+            language="solidity",
+            evm_version="shanghai",
+            optimization=True,
+            optimization_runs=200,
+            source_format="flat",
+            source_file_count=1,
+            remappings=[],
+            is_proxy=False,
+        )
+    )
     db_session.commit()
 
     assert is_known_proxy(db_session, ADDR_A) is False
@@ -466,12 +500,23 @@ def test_is_known_proxy_case_insensitive(db_session):
     from db.queue import create_job, is_known_proxy
 
     job = create_job(db_session, {"address": ADDR_A})
-    db_session.add(Contract(
-        job_id=job.id, address=ADDR_A, contract_name="Proxy",
-        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
-        optimization=True, optimization_runs=200, source_format="flat",
-        source_file_count=1, remappings=[], is_proxy=True, proxy_type="eip1967",
-    ))
+    db_session.add(
+        Contract(
+            job_id=job.id,
+            address=ADDR_A,
+            contract_name="Proxy",
+            compiler_version="v0.8.24",
+            language="solidity",
+            evm_version="shanghai",
+            optimization=True,
+            optimization_runs=200,
+            source_format="flat",
+            source_file_count=1,
+            remappings=[],
+            is_proxy=True,
+            proxy_type="eip1967",
+        )
+    )
     db_session.commit()
 
     # Query with lowercase version of checksummed address
@@ -488,24 +533,37 @@ def test_is_known_proxy_case_insensitive(db_session):
 def test_company_dedup_skips_regular_contracts(db_session, monkeypatch):
     """Existing completed job for a regular (non-proxy) contract: child job NOT created."""
     from sqlalchemy import select
+
     from db.models import Contract, Job
     from db.queue import create_job
-    from workers.discovery import DiscoveryWorker
     from workers.base import JobHandledDirectly
+    from workers.discovery import DiscoveryWorker
 
     # Pre-existing job for ADDR_A with a non-proxy contract
     existing_job = create_job(db_session, {"address": ADDR_A, "name": "existing"})
-    db_session.add(Contract(
-        job_id=existing_job.id, address=ADDR_A, contract_name="Regular",
-        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
-        optimization=True, optimization_runs=200, source_format="flat",
-        source_file_count=1, remappings=[], is_proxy=False,
-    ))
+    db_session.add(
+        Contract(
+            job_id=existing_job.id,
+            address=ADDR_A,
+            contract_name="Regular",
+            compiler_version="v0.8.24",
+            language="solidity",
+            evm_version="shanghai",
+            optimization=True,
+            optimization_runs=200,
+            source_format="flat",
+            source_file_count=1,
+            remappings=[],
+            is_proxy=False,
+        )
+    )
     db_session.commit()
 
-    inventory = _mock_inventory([
-        {"address": ADDR_A, "name": "A", "confidence": 0.9},
-    ])
+    inventory = _mock_inventory(
+        [
+            {"address": ADDR_A, "name": "A", "confidence": 0.9},
+        ]
+    )
     monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
 
     job = _make_company_job(db_session)
@@ -526,24 +584,38 @@ def test_company_dedup_skips_regular_contracts(db_session, monkeypatch):
 def test_company_dedup_requeues_proxy_contracts(db_session, monkeypatch):
     """Existing completed job for a proxy contract: child job IS created (re-queued)."""
     from sqlalchemy import select
+
     from db.models import Contract, Job
     from db.queue import create_job
-    from workers.discovery import DiscoveryWorker
     from workers.base import JobHandledDirectly
+    from workers.discovery import DiscoveryWorker
 
     # Pre-existing job for ADDR_A with a proxy contract
     existing_job = create_job(db_session, {"address": ADDR_A, "name": "existing"})
-    db_session.add(Contract(
-        job_id=existing_job.id, address=ADDR_A, contract_name="ProxyContract",
-        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
-        optimization=True, optimization_runs=200, source_format="flat",
-        source_file_count=1, remappings=[], is_proxy=True, proxy_type="eip1967",
-    ))
+    db_session.add(
+        Contract(
+            job_id=existing_job.id,
+            address=ADDR_A,
+            contract_name="ProxyContract",
+            compiler_version="v0.8.24",
+            language="solidity",
+            evm_version="shanghai",
+            optimization=True,
+            optimization_runs=200,
+            source_format="flat",
+            source_file_count=1,
+            remappings=[],
+            is_proxy=True,
+            proxy_type="eip1967",
+        )
+    )
     db_session.commit()
 
-    inventory = _mock_inventory([
-        {"address": ADDR_A, "name": "A", "confidence": 0.9},
-    ])
+    inventory = _mock_inventory(
+        [
+            {"address": ADDR_A, "name": "A", "confidence": 0.9},
+        ]
+    )
     monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
 
     job = _make_company_job(db_session)

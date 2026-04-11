@@ -15,9 +15,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition
-from db.queue import create_job, get_artifact, get_source_files, store_artifact
-from services.monitoring.proxy_watcher import resolve_current_implementation
-from utils.rpc import normalize_hex  # used for address comparison
+from db.queue import _MUTABLE_CONTRACT_FIELDS, create_job, get_artifact, get_source_files, store_artifact
 from services.discovery import (
     build_unified_dependencies,
     classify_contracts,
@@ -27,9 +25,11 @@ from services.discovery import (
     write_dependency_visualization,
 )
 from services.discovery.dynamic_dependencies import NoNewTransactionsError
+from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
 from services.static.vyper_analysis import is_vyper_project
+from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
@@ -146,8 +146,13 @@ def _merge_dynamic_deps(prev: dict, new: dict) -> dict:
 
 
 def _resolve_dynamic_deps(
-    session, job, address: str, dynamic_rpc: str | None, tx_limit: int,
-    tx_hashes: list[str] | None, proxy_addr: str | None,
+    session,
+    job,
+    address: str,
+    dynamic_rpc: str | None,
+    tx_limit: int,
+    tx_hashes: list[str] | None,
+    proxy_addr: str | None,
     code_cache: dict[str, str],
 ) -> tuple[dict | None, str | None]:
     """Load cached dynamic deps, discover new ones, merge, and persist.
@@ -161,9 +166,9 @@ def _resolve_dynamic_deps(
     # as a seed artifact, or stored by a previous attempt of this job).
     prev_dyn: dict | None = None
     if not tx_hashes:
-        prev_dyn = get_artifact(session, job.id, "dynamic_dependencies")
-        if prev_dyn is not None and not isinstance(prev_dyn, dict):
-            prev_dyn = None
+        _raw_dyn = get_artifact(session, job.id, "dynamic_dependencies")
+        if isinstance(_raw_dyn, dict):
+            prev_dyn = _raw_dyn
 
     # --- Compute start_block for incremental fetch ---
     start_block: int | None = None
@@ -270,7 +275,10 @@ def _merge_upgrade_history(prev: dict, new: dict) -> dict:
 
 
 def _resolve_upgrade_history(
-    session, job, dependencies_path, prev_uh: dict | None,
+    session,
+    job,
+    dependencies_path,
+    prev_uh: dict | None,
 ) -> dict | None:
     """Load cached upgrade history, fetch incrementally, merge, and persist.
 
@@ -401,8 +409,7 @@ _IMMUTABLE_PROXY_TYPES = frozenset({"eip1167"})
 # Proxy types with multiple facets that can't be verified with a single slot check.
 _MULTI_FACET_PROXY_TYPES = frozenset({"eip2535"})
 
-# Single source of truth for mutable proxy fields lives in db/queue.py.
-from db.queue import _MUTABLE_CONTRACT_FIELDS as _PROXY_FIELDS
+_PROXY_FIELDS = _MUTABLE_CONTRACT_FIELDS
 
 
 def _apply_proxy_cache(session, src_contract, contract_row, proxy_state: dict | None = None) -> dict:
@@ -427,7 +434,11 @@ def _apply_proxy_cache(session, src_contract, contract_row, proxy_state: dict | 
         return {"type": "regular"}
     return {
         "type": "proxy",
-        **{f: (proxy_state.get(f) if proxy_state else getattr(src_contract, f)) for f in _PROXY_FIELDS if f != "is_proxy"},
+        **{
+            f: (proxy_state.get(f) if proxy_state else getattr(src_contract, f))
+            for f in _PROXY_FIELDS
+            if f != "is_proxy"
+        },
     }
 
 
@@ -456,11 +467,12 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
     # With the (address, chain) unique constraint, copy_static_cache may have
     # reused the same Contract row (updating its job_id to the target and
     # resetting proxy fields).  Read the saved proxy state from artifact.
-    cached_proxy_state = None
+    cached_proxy_state: dict | None = None
     if src_contract is None:
-        cached_proxy_state = get_artifact(session, job.id, "cached_proxy_state")
-        if cached_proxy_state is None:
+        _raw_proxy = get_artifact(session, job.id, "cached_proxy_state")
+        if not isinstance(_raw_proxy, dict):
             return None
+        cached_proxy_state = _raw_proxy
         # Use contract_row as the base but check proxy state from artifact
         src_contract = contract_row
 
@@ -494,9 +506,7 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
     # Single RPC call — resolve_current_implementation handles all proxy types
     # (slot reads, getter calls, fallback discovery).
     try:
-        current_impl = resolve_current_implementation(
-            contract_row.address, rpc_url, proxy_type=proxy_type
-        )
+        current_impl = resolve_current_implementation(contract_row.address, rpc_url, proxy_type=proxy_type)
         if not current_impl:
             return None
         current_impl = normalize_hex(current_impl)
@@ -886,7 +896,8 @@ class StaticWorker(BaseWorker):
         # self-describing — if it exists on this job it's valid, whether it
         # was copied from a prior completed job or stored on a previous
         # attempt of this same job that failed later in the pipeline.
-        cached_static_deps = get_artifact(session, job.id, "static_dependencies")
+        _raw_static_deps = get_artifact(session, job.id, "static_dependencies")
+        cached_static_deps = _raw_static_deps if isinstance(_raw_static_deps, dict) else None
 
         if cached_static_deps is not None:
             deps_output = cached_static_deps
@@ -923,22 +934,33 @@ class StaticWorker(BaseWorker):
         t0 = time.monotonic()
         tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
         dyn_output, dyn_error = _resolve_dynamic_deps(
-            session, job, address, dynamic_rpc, int(dynamic_tx_limit),
-            tx_hashes, request.get("proxy_address"), code_cache,
+            session,
+            job,
+            address,
+            dynamic_rpc,
+            int(dynamic_tx_limit),
+            tx_hashes,
+            request.get("proxy_address"),
+            code_cache,
         )
         if DEBUG_TIMING and dyn_output:
-            logger.info("[TIMING] dynamic deps: %.1fs (%d deps)",
-                        time.monotonic() - t0, len(dyn_output.get("dependencies", [])))
+            logger.info(
+                "[TIMING] dynamic deps: %.1fs (%d deps)", time.monotonic() - t0, len(dyn_output.get("dependencies", []))
+            )
         if dyn_error:
             dependency_errors["dynamic"] = dyn_error
             logger.warning(
                 "Static stage dynamic dependency discovery failed for job %s address=%s: %s",
-                job.id, address, dyn_error,
+                job.id,
+                address,
+                dyn_error,
             )
         elif dyn_output:
             logger.info(
                 "Static stage dynamic dependencies complete for job %s address=%s count=%d",
-                job.id, address, len(dyn_output.get("dependencies", [])),
+                job.id,
+                address,
+                len(dyn_output.get("dependencies", [])),
             )
 
         resolved_rpc = None
@@ -1019,8 +1041,7 @@ class StaticWorker(BaseWorker):
 
             # Store updated enrichment cache (includes any newly fetched entries)
             enrichment_data = {
-                addr: {"name": name, "selectors": selectors}
-                for addr, (name, selectors) in info_cache.items()
+                addr: {"name": name, "selectors": selectors} for addr, (name, selectors) in info_cache.items()
             }
             store_artifact(session, job.id, "enrichment_cache", data=enrichment_data)
 

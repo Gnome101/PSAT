@@ -18,9 +18,9 @@ from db.queue import (
     create_job,
     find_completed_static_cache,
     find_existing_job_for_address,
-    is_known_proxy,
     find_previous_company_inventory,
     get_artifact,
+    is_known_proxy,
     store_artifact,
     store_source_files,
 )
@@ -61,7 +61,9 @@ class DiscoveryWorker(BaseWorker):
         prev_inventory: dict | None = None
         prev_job = find_previous_company_inventory(session, company, exclude_job_id=job.id)
         if prev_job:
-            prev_inventory = get_artifact(session, prev_job.id, "contract_inventory")
+            _raw = get_artifact(session, prev_job.id, "contract_inventory")
+            if isinstance(_raw, dict):
+                prev_inventory = _raw
 
         self.update_detail(session, job, f"Discovering contracts for {company}")
         inventory = search_protocol_inventory(company, chain=chain)
@@ -118,10 +120,7 @@ class DiscoveryWorker(BaseWorker):
         already_used = count_analysis_children(session, root_job_id)
         remaining = max(0, analyze_limit - already_used)
         # Filter by minimum confidence threshold
-        eligible = [
-            e for e in discovered
-            if (e.get("confidence") or 0) >= _MIN_CONFIDENCE_THRESHOLD
-        ]
+        eligible = [e for e in discovered if (e.get("confidence") or 0) >= _MIN_CONFIDENCE_THRESHOLD]
         selected = eligible[:remaining]
 
         if not selected:
@@ -155,7 +154,12 @@ class DiscoveryWorker(BaseWorker):
                 if not is_known_proxy(session, addr):
                     logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
                     continue
-                logger.info("Job %s: proxy %s has existing job %s but re-queuing for upgrade check", job.id, addr, existing.id)
+                logger.info(
+                    "Job %s: proxy %s has existing job %s but re-queuing for upgrade check",
+                    job.id,
+                    addr,
+                    existing.id,
+                )
 
             child_name = str(contract.get("name") or f"{company}_{addr[2:10]}")
             child_chains = contract.get("chains")

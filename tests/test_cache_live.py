@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -153,7 +153,6 @@ def get_artifact(run_name: str, artifact_name: str) -> dict | str | None:
 
 def parse_duration_seconds(job: dict) -> float:
     """Compute wall-clock seconds between created_at and updated_at."""
-    fmt_variants = ["%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z"]
     for key in ("created_at", "updated_at"):
         val = job[key]
         # Already a datetime? Shouldn't happen from JSON, but be safe.
@@ -217,7 +216,7 @@ class TestSingleContractCaching:
 
         # Verify key artifacts exist
         analysis = get_artifact(run_name, "contract_analysis")
-        assert analysis is not None, "contract_analysis artifact missing"
+        assert isinstance(analysis, dict), "contract_analysis artifact missing"
         assert isinstance(analysis, dict)
         assert "subject" in analysis or "summary" in analysis
 
@@ -237,15 +236,11 @@ class TestSingleContractCaching:
 
         # --- Cache flag assertions ---
         req2 = job2.get("request") or {}
-        assert req2.get("static_cached") is True, (
-            "Second run should have static_cached=True in its request"
-        )
+        assert req2.get("static_cached") is True, "Second run should have static_cached=True in its request"
         assert req2.get("cache_source_job_id") is not None, (
             "Second run should reference the source job via cache_source_job_id"
         )
-        assert req2["cache_source_job_id"] == job1["job_id"], (
-            "cache_source_job_id should point to the first job"
-        )
+        assert req2["cache_source_job_id"] == job1["job_id"], "cache_source_job_id should point to the first job"
 
         # --- Timing assertion (informational) ---
         # We don't hard-assert speedup since timing is noisy, but log it.
@@ -261,8 +256,8 @@ class TestSingleContractCaching:
         analysis1 = get_artifact(run1_name, "contract_analysis")
         analysis2 = get_artifact(run2_name, "contract_analysis")
 
-        assert analysis1 is not None, "Run 1 contract_analysis missing"
-        assert analysis2 is not None, "Run 2 contract_analysis missing"
+        assert isinstance(analysis1, dict), "Run 1 contract_analysis missing"
+        assert isinstance(analysis2, dict), "Run 2 contract_analysis missing"
 
         # The cached analysis should be identical (copied from run 1)
         # Compare subject/summary sections which should be deterministic
@@ -290,9 +285,7 @@ class TestSingleContractCaching:
         # If first run was under 30s, caching overhead might make this flaky,
         # so only assert when the first run took a meaningful amount of time.
         if t1 > 30:
-            assert t2 < t1, (
-                f"Expected second run ({t2:.1f}s) to be faster than first ({t1:.1f}s)"
-            )
+            assert t2 < t1, f"Expected second run ({t2:.1f}s) to be faster than first ({t1:.1f}s)"
 
 
 # ---------------------------------------------------------------------------
@@ -322,14 +315,11 @@ class TestCompanyCaching:
         # All children should have completed (or at least attempted)
         completed = [c for c in children if c["status"] == "completed"]
         assert len(completed) > 0, (
-            f"Expected at least one completed child job, got statuses: "
-            f"{[c['status'] for c in children]}"
+            f"Expected at least one completed child job, got statuses: {[c['status'] for c in children]}"
         )
 
         TestCompanyCaching._children1 = children
-        TestCompanyCaching._child_addresses1 = {
-            c["address"].lower() for c in children if c.get("address")
-        }
+        TestCompanyCaching._child_addresses1 = {c["address"].lower() for c in children if c.get("address")}
         print(f"\n  Run 1 child addresses: {TestCompanyCaching._child_addresses1}")
 
     def test_first_company_run_has_inventory(self):
@@ -369,9 +359,7 @@ class TestCompanyCaching:
         # inventory discovered more contracts.
         duplicated = child_addrs1 & child_addrs2
         print(f"  Addresses in both runs (should be empty): {duplicated}")
-        assert len(duplicated) == 0, (
-            f"Run 2 re-spawned child jobs for already-analyzed addresses: {duplicated}"
-        )
+        assert len(duplicated) == 0, f"Run 2 re-spawned child jobs for already-analyzed addresses: {duplicated}"
 
     def test_second_company_run_inventory_merged(self):
         """Run 2 inventory should contain contracts from both runs."""
@@ -385,7 +373,7 @@ class TestCompanyCaching:
             pytest.skip("Second company job has no run name")
 
         inventory2 = get_artifact(run_name2, "contract_inventory")
-        if inventory2 is None:
+        if not isinstance(inventory2, dict):
             # Inventory might be on the parent job -- try fetching via job_id
             pytest.skip("Could not fetch inventory artifact for run 2")
 
@@ -403,6 +391,4 @@ class TestCompanyCaching:
             if missing:
                 print(f"  WARNING: Run 2 lost {len(missing)} addresses from run 1: {missing}")
             # Merged inventory should have at least as many contracts
-            assert len(addrs2) >= len(addrs1), (
-                f"Expected run 2 inventory ({len(addrs2)}) >= run 1 ({len(addrs1)})"
-            )
+            assert len(addrs2) >= len(addrs1), f"Expected run 2 inventory ({len(addrs2)}) >= run 1 ({len(addrs1)})"

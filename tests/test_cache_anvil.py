@@ -14,8 +14,7 @@ import subprocess
 import time as _time
 
 import pytest
-
-from cache_helpers import db_session
+from cache_helpers import db_session  # noqa: F401
 
 _HAS_ANVIL = shutil.which("anvil") is not None
 
@@ -49,6 +48,7 @@ def anvil_rpc():
 
     # Wait for Anvil to be ready (up to 5 seconds)
     import requests
+
     for _ in range(50):
         try:
             resp = requests.post(
@@ -165,10 +165,12 @@ class TestAnvilProxyCache:
 
         _set_storage(anvil_rpc, proxy_addr, _EIP1967_IMPL_SLOT, _ANVIL_IMPL_A)
         result_a = resolve_current_implementation(proxy_addr, anvil_rpc, proxy_type="eip1967")
+        assert result_a is not None
         assert result_a.lower() == _ANVIL_IMPL_A.lower()
 
         _set_storage(anvil_rpc, proxy_addr, _EIP1967_IMPL_SLOT, _ANVIL_IMPL_B)
         result_b = resolve_current_implementation(proxy_addr, anvil_rpc, proxy_type="eip1967")
+        assert result_b is not None
         assert result_b.lower() == _ANVIL_IMPL_B.lower()
 
     def test_resolve_current_implementation_empty_slot(self, anvil_rpc):
@@ -183,9 +185,9 @@ class TestAnvilProxyCache:
     def test_check_proxy_cache_unchanged_impl_via_anvil(self, db_session, anvil_rpc):
         """_check_proxy_cache returns cached classification when the on-chain
         implementation matches the cached one -- exercising real RPC."""
+
         from db.models import Contract
         from db.queue import create_job
-        from sqlalchemy import select
         from workers.static_worker import _check_proxy_cache
 
         # Deploy a contract and set it as a proxy pointing to IMPL_A
@@ -195,21 +197,30 @@ class TestAnvilProxyCache:
         # Create source job with proxy info matching the on-chain state
         source_job = create_job(db_session, {"address": proxy_addr})
         src_contract = Contract(
-            job_id=source_job.id, address=proxy_addr, contract_name="Proxy",
-            is_proxy=True, proxy_type="eip1967", implementation=_ANVIL_IMPL_A,
+            job_id=source_job.id,
+            address=proxy_addr,
+            contract_name="Proxy",
+            is_proxy=True,
+            proxy_type="eip1967",
+            implementation=_ANVIL_IMPL_A,
         )
         db_session.add(src_contract)
         db_session.flush()
 
         # Create target job flagged as cached
-        target_job = create_job(db_session, {
-            "address": proxy_addr,
-            "rpc_url": anvil_rpc,
-            "static_cached": True,
-            "cache_source_job_id": str(source_job.id),
-        })
+        target_job = create_job(
+            db_session,
+            {
+                "address": proxy_addr,
+                "rpc_url": anvil_rpc,
+                "static_cached": True,
+                "cache_source_job_id": str(source_job.id),
+            },
+        )
         target_contract = Contract(
-            job_id=target_job.id, address=proxy_addr, contract_name="Proxy",
+            job_id=target_job.id,
+            address=proxy_addr,
+            contract_name="Proxy",
         )
         db_session.add(target_contract)
         db_session.flush()
@@ -223,6 +234,7 @@ class TestAnvilProxyCache:
         # Verify target contract was updated with proxy fields
         db_session.refresh(target_contract)
         assert target_contract.is_proxy is True
+        assert target_contract.implementation is not None
         assert target_contract.implementation.lower() == _ANVIL_IMPL_A.lower()
 
     def test_check_proxy_cache_detects_upgrade_via_anvil(self, db_session, anvil_rpc):
@@ -239,20 +251,29 @@ class TestAnvilProxyCache:
         # Source job says impl was A (stale cache)
         source_job = create_job(db_session, {"address": proxy_addr})
         src_contract = Contract(
-            job_id=source_job.id, address=proxy_addr, contract_name="Proxy",
-            is_proxy=True, proxy_type="eip1967", implementation=_ANVIL_IMPL_A,
+            job_id=source_job.id,
+            address=proxy_addr,
+            contract_name="Proxy",
+            is_proxy=True,
+            proxy_type="eip1967",
+            implementation=_ANVIL_IMPL_A,
         )
         db_session.add(src_contract)
         db_session.flush()
 
-        target_job = create_job(db_session, {
-            "address": proxy_addr,
-            "rpc_url": anvil_rpc,
-            "static_cached": True,
-            "cache_source_job_id": str(source_job.id),
-        })
+        target_job = create_job(
+            db_session,
+            {
+                "address": proxy_addr,
+                "rpc_url": anvil_rpc,
+                "static_cached": True,
+                "cache_source_job_id": str(source_job.id),
+            },
+        )
         target_contract = Contract(
-            job_id=target_job.id, address=proxy_addr, contract_name="Proxy",
+            job_id=target_job.id,
+            address=proxy_addr,
+            contract_name="Proxy",
         )
         db_session.add(target_contract)
         db_session.flush()
@@ -271,20 +292,27 @@ class TestAnvilProxyCache:
 
         source_job = create_job(db_session, {"address": proxy_addr})
         src_contract = Contract(
-            job_id=source_job.id, address=proxy_addr, contract_name="NonProxy",
+            job_id=source_job.id,
+            address=proxy_addr,
+            contract_name="NonProxy",
             is_proxy=False,
         )
         db_session.add(src_contract)
         db_session.flush()
 
-        target_job = create_job(db_session, {
-            "address": proxy_addr,
-            "rpc_url": anvil_rpc,
-            "static_cached": True,
-            "cache_source_job_id": str(source_job.id),
-        })
+        target_job = create_job(
+            db_session,
+            {
+                "address": proxy_addr,
+                "rpc_url": anvil_rpc,
+                "static_cached": True,
+                "cache_source_job_id": str(source_job.id),
+            },
+        )
         target_contract = Contract(
-            job_id=target_job.id, address=proxy_addr, contract_name="NonProxy",
+            job_id=target_job.id,
+            address=proxy_addr,
+            contract_name="NonProxy",
         )
         db_session.add(target_contract)
         db_session.flush()
@@ -303,20 +331,29 @@ class TestAnvilProxyCache:
 
         source_job = create_job(db_session, {"address": proxy_addr})
         src_contract = Contract(
-            job_id=source_job.id, address=proxy_addr, contract_name="Clone",
-            is_proxy=True, proxy_type="eip1167", implementation=_ANVIL_IMPL_A,
+            job_id=source_job.id,
+            address=proxy_addr,
+            contract_name="Clone",
+            is_proxy=True,
+            proxy_type="eip1167",
+            implementation=_ANVIL_IMPL_A,
         )
         db_session.add(src_contract)
         db_session.flush()
 
-        target_job = create_job(db_session, {
-            "address": proxy_addr,
-            "rpc_url": anvil_rpc,
-            "static_cached": True,
-            "cache_source_job_id": str(source_job.id),
-        })
+        target_job = create_job(
+            db_session,
+            {
+                "address": proxy_addr,
+                "rpc_url": anvil_rpc,
+                "static_cached": True,
+                "cache_source_job_id": str(source_job.id),
+            },
+        )
         target_contract = Contract(
-            job_id=target_job.id, address=proxy_addr, contract_name="Clone",
+            job_id=target_job.id,
+            address=proxy_addr,
+            contract_name="Clone",
         )
         db_session.add(target_contract)
         db_session.flush()
@@ -326,4 +363,5 @@ class TestAnvilProxyCache:
         assert result["type"] == "proxy"
         assert result["proxy_type"] == "eip1167"
         db_session.refresh(target_contract)
+        assert target_contract.implementation is not None
         assert target_contract.implementation.lower() == _ANVIL_IMPL_A.lower()

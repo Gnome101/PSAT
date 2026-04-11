@@ -493,12 +493,8 @@ def merge_inventory(prev: dict, new: dict) -> dict:
     (multiplied by :data:`CONFIDENCE_DECAY` each time they are not rediscovered).
     Contracts that decay below :data:`CONFIDENCE_FLOOR` are dropped.
     """
-    prev_contracts = {
-        c["address"].lower(): c for c in prev.get("contracts", []) if c.get("address")
-    }
-    new_contracts = {
-        c["address"].lower(): c for c in new.get("contracts", []) if c.get("address")
-    }
+    prev_contracts = {c["address"].lower(): c for c in prev.get("contracts", []) if c.get("address")}
+    new_contracts = {c["address"].lower(): c for c in new.get("contracts", []) if c.get("address")}
 
     merged: dict[str, dict] = {}
 

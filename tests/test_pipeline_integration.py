@@ -134,8 +134,8 @@ def _patch_dep_phase(monkeypatch, worker, static=None, dynamic=None, classify=No
         "workers.static_worker.find_dynamic_dependencies",
         dynamic
         or (
-            lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None, **kw: _dynamic_deps(
-                addr
+            lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None, **kw: (
+                _dynamic_deps(addr)
             )
         ),
     )
@@ -174,7 +174,12 @@ def test_dep_phase_passes_proxy_address(monkeypatch, tmp_path):
     # Mock upgrade history to avoid Etherscan calls
     monkeypatch.setattr(
         "services.discovery.upgrade_history.build_upgrade_history",
-        lambda _p, enrich=True, from_block=0: {"schema_version": "0.1", "target_address": IMPL, "proxies": {}, "total_upgrades": 0},
+        lambda _p, enrich=True, from_block=0: {
+            "schema_version": "0.1",
+            "target_address": IMPL,
+            "proxies": {},
+            "total_upgrades": 0,
+        },
     )
 
     project_dir = tmp_path / "p"
@@ -202,8 +207,16 @@ def test_dep_phase_stores_upgrade_history(monkeypatch, tmp_path):
         static=_static_deps(TARGET, [DEP_A]),
         dynamic=lambda addr, **_kw: _dynamic_deps(addr, [DEP_A]),
     )
-    fake_uh = {"schema_version": "0.1", "target_address": TARGET, "proxies": {DEP_A: {}}, "total_upgrades": 2}
-    monkeypatch.setattr("services.discovery.upgrade_history.build_upgrade_history", lambda _p, enrich=True, from_block=0: fake_uh)
+    fake_uh = {
+        "schema_version": "0.1",
+        "target_address": TARGET,
+        "proxies": {DEP_A: {}},
+        "total_upgrades": 2,
+    }
+    monkeypatch.setattr(
+        "services.discovery.upgrade_history.build_upgrade_history",
+        lambda _p, enrich=True, from_block=0: fake_uh,
+    )
 
     project_dir = tmp_path / "p"
     project_dir.mkdir()

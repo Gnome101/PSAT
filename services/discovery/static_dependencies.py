@@ -10,9 +10,11 @@ from typing import Any
 from dotenv import load_dotenv
 
 from utils.rpc import JSON_RPC_TIMEOUT_SECONDS as RPC_TIMEOUT_SECONDS  # noqa: F401 — re-export
-from utils.rpc import get_code  # noqa: F401 — re-export for backward compat
-from utils.rpc import normalize_address  # noqa: F401 — re-export for backward compat
-from utils.rpc import rpc_request
+from utils.rpc import (
+    get_code,  # noqa: F401 — re-export for backward compat
+    normalize_address,  # noqa: F401 — re-export for backward compat
+    rpc_request,
+)
 
 EMPTY_CODE_VALUES = {"0x", "0x0"}
 
