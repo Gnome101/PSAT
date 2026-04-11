@@ -32,6 +32,7 @@ def _job(**overrides: Any) -> SimpleNamespace:
         "address": None,
         "name": None,
         "company": None,
+        "protocol_id": None,
         "request": {"defillama_protocol": PROTOCOL},
     }
     payload.update(overrides)
@@ -235,11 +236,13 @@ class TestDeduplication:
         worker = DefiLlamaWorker()
         session = MagicMock()
 
-        # First call returns an existing job, second returns None
+        # Contract lookups return None (no existing contracts), then Job dedup checks
         existing_job = SimpleNamespace(id=uuid.uuid4())
         session.execute.return_value.scalar_one_or_none.side_effect = [
-            existing_job,  # ADDR_1 already exists
-            None,  # ADDR_2 is new
+            None,  # Contract lookup: ADDR_1
+            None,  # Contract lookup: ADDR_2
+            existing_job,  # Job dedup: ADDR_1 already exists
+            None,  # Job dedup: ADDR_2 is new
         ]
         job = _job()
 
@@ -309,7 +312,10 @@ class TestAnalyzeLimitCap:
         worker = DefiLlamaWorker()
         session = MagicMock()
         existing_job = SimpleNamespace(id=uuid.uuid4())
-        session.execute.return_value.scalar_one_or_none.side_effect = [existing_job, None, None]
+        session.execute.return_value.scalar_one_or_none.side_effect = [
+            None, None, None,  # Contract lookups for 3 addresses
+            existing_job, None, None,  # Job dedup checks
+        ]
         job = _job(request={"defillama_protocol": PROTOCOL, "analyze_limit": 2})
 
         trackers = _patch_worker_deps(monkeypatch)

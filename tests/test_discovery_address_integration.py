@@ -28,6 +28,7 @@ def _job(**overrides) -> Any:
         "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
         "name": None,
         "company": None,
+        "protocol_id": None,
         "request": {},
     }
     defaults.update(overrides)
@@ -87,6 +88,8 @@ def test_happy_path_stores_sources_and_artifacts(monkeypatch):
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
 
     session = MagicMock()
+    # No existing contract row for this address
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
@@ -100,10 +103,10 @@ def test_happy_path_stores_sources_and_artifacts(monkeypatch):
     # Flat source should produce src/TetherToken.sol
     assert "src/TetherToken.sol" in stored_sources
 
-    # Verify Contract written via session.merge
-    session.merge.assert_called_once()
-    contract = session.merge.call_args[0][0]
-    assert contract.address == job.address
+    # Verify Contract written via session.add
+    session.add.assert_called_once()
+    contract = session.add.call_args[0][0]
+    assert contract.address == job.address.lower()
     assert contract.contract_name == "TetherToken"
     assert contract.compiler_version == "v0.4.18+commit.9cf6e910"
     assert contract.language == "solidity"
@@ -150,11 +153,12 @@ def test_vyper_detected_from_compiler_version(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.language == "vyper"
 
 
@@ -170,11 +174,12 @@ def test_vyper_detected_from_v0_prefix(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     # is_vyper_result checks for "vyper" in compiler string; "v0." alone does not
     # match unless source starts with "# @version". The source above does start
     # with that, so is_vyper_result returns True via the source-code fallback.
@@ -191,11 +196,12 @@ def test_solidity_when_compiler_not_vyper(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.language == "solidity"
 
 
@@ -211,11 +217,12 @@ def test_evm_version_defaults_to_shanghai_when_empty(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.evm_version == "shanghai"
 
 
@@ -226,11 +233,12 @@ def test_evm_version_defaults_to_shanghai_when_default(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.evm_version == "shanghai"
 
 
@@ -241,11 +249,12 @@ def test_evm_version_preserves_explicit_value(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.evm_version == "cancun"
 
 
@@ -258,11 +267,12 @@ def test_evm_version_defaults_when_key_missing(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.evm_version == "shanghai"
 
 
@@ -296,11 +306,12 @@ def test_source_format_standard_json(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.source_format == "standard_json"
 
 
@@ -315,11 +326,12 @@ def test_source_format_flat(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.source_format == "flat"
 
 
@@ -351,6 +363,7 @@ def test_standard_json_multiple_files_parsed_correctly(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
@@ -361,7 +374,7 @@ def test_standard_json_multiple_files_parsed_correctly(monkeypatch):
     assert "contracts/Token.sol" in stored_sources
     assert "contracts/Lib.sol" in stored_sources
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.source_file_count == 3
     # Remappings should be extracted from the settings block
     assert "@openzeppelin/=node_modules/@openzeppelin/" in contract.remappings
@@ -380,11 +393,12 @@ def test_optimization_disabled(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.optimization is False
     assert contract.optimization_runs == 200
 
@@ -397,9 +411,10 @@ def test_runs_custom_value(monkeypatch):
     worker = DiscoveryWorker()
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
     session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
     job = _job()
 
     worker._process_address(session, job)
 
-    contract = session.merge.call_args[0][0]
+    contract = session.add.call_args[0][0]
     assert contract.optimization_runs == 10000

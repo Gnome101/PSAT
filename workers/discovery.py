@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import logging
 
-from sqlalchemy.orm import Session
-
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage, Protocol
 from db.queue import count_analysis_children, create_job, store_artifact, store_source_files
