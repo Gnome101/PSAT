@@ -415,3 +415,147 @@ def test_low_confidence_contracts_not_analyzed(db_session, monkeypatch):
 
     assert ADDR_A in child_addrs
     assert ADDR_B not in child_addrs
+
+
+# ---------------------------------------------------------------------------
+# is_known_proxy unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_is_known_proxy_true(db_session):
+    """Contract with is_proxy=True returns True."""
+    from db.models import Contract
+    from db.queue import create_job, is_known_proxy
+
+    job = create_job(db_session, {"address": ADDR_A})
+    db_session.add(Contract(
+        job_id=job.id, address=ADDR_A, contract_name="Proxy",
+        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
+        optimization=True, optimization_runs=200, source_format="flat",
+        source_file_count=1, remappings=[], is_proxy=True, proxy_type="eip1967",
+    ))
+    db_session.commit()
+
+    assert is_known_proxy(db_session, ADDR_A) is True
+
+
+def test_is_known_proxy_false(db_session):
+    """Contract with is_proxy=False returns False. No contract at all returns False."""
+    from db.models import Contract
+    from db.queue import create_job, is_known_proxy
+
+    # No contract at all
+    assert is_known_proxy(db_session, ADDR_A) is False
+
+    # Contract with is_proxy=False
+    job = create_job(db_session, {"address": ADDR_A})
+    db_session.add(Contract(
+        job_id=job.id, address=ADDR_A, contract_name="Regular",
+        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
+        optimization=True, optimization_runs=200, source_format="flat",
+        source_file_count=1, remappings=[], is_proxy=False,
+    ))
+    db_session.commit()
+
+    assert is_known_proxy(db_session, ADDR_A) is False
+
+
+def test_is_known_proxy_case_insensitive(db_session):
+    """Checksummed vs lowercase match."""
+    from db.models import Contract
+    from db.queue import create_job, is_known_proxy
+
+    job = create_job(db_session, {"address": ADDR_A})
+    db_session.add(Contract(
+        job_id=job.id, address=ADDR_A, contract_name="Proxy",
+        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
+        optimization=True, optimization_runs=200, source_format="flat",
+        source_file_count=1, remappings=[], is_proxy=True, proxy_type="eip1967",
+    ))
+    db_session.commit()
+
+    # Query with lowercase version of checksummed address
+    assert is_known_proxy(db_session, ADDR_A.lower()) is True
+    # Query with uppercase
+    assert is_known_proxy(db_session, ADDR_A.upper()) is True
+
+
+# ---------------------------------------------------------------------------
+# Company-mode proxy dedup tests
+# ---------------------------------------------------------------------------
+
+
+def test_company_dedup_skips_regular_contracts(db_session, monkeypatch):
+    """Existing completed job for a regular (non-proxy) contract: child job NOT created."""
+    from sqlalchemy import select
+    from db.models import Contract, Job
+    from db.queue import create_job
+    from workers.discovery import DiscoveryWorker
+    from workers.base import JobHandledDirectly
+
+    # Pre-existing job for ADDR_A with a non-proxy contract
+    existing_job = create_job(db_session, {"address": ADDR_A, "name": "existing"})
+    db_session.add(Contract(
+        job_id=existing_job.id, address=ADDR_A, contract_name="Regular",
+        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
+        optimization=True, optimization_runs=200, source_format="flat",
+        source_file_count=1, remappings=[], is_proxy=False,
+    ))
+    db_session.commit()
+
+    inventory = _mock_inventory([
+        {"address": ADDR_A, "name": "A", "confidence": 0.9},
+    ])
+    monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
+
+    job = _make_company_job(db_session)
+
+    worker = DiscoveryWorker()
+    worker.update_detail = MagicMock()
+    monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *a, **kw: None)
+
+    with pytest.raises(JobHandledDirectly):
+        worker._process_company(db_session, job)
+
+    all_jobs = db_session.execute(select(Job).where(Job.address.isnot(None))).scalars().all()
+    child_addrs = [j.address for j in all_jobs if (j.request or {}).get("root_job_id") == str(job.id)]
+
+    assert ADDR_A not in child_addrs
+
+
+def test_company_dedup_requeues_proxy_contracts(db_session, monkeypatch):
+    """Existing completed job for a proxy contract: child job IS created (re-queued)."""
+    from sqlalchemy import select
+    from db.models import Contract, Job
+    from db.queue import create_job
+    from workers.discovery import DiscoveryWorker
+    from workers.base import JobHandledDirectly
+
+    # Pre-existing job for ADDR_A with a proxy contract
+    existing_job = create_job(db_session, {"address": ADDR_A, "name": "existing"})
+    db_session.add(Contract(
+        job_id=existing_job.id, address=ADDR_A, contract_name="ProxyContract",
+        compiler_version="v0.8.24", language="solidity", evm_version="shanghai",
+        optimization=True, optimization_runs=200, source_format="flat",
+        source_file_count=1, remappings=[], is_proxy=True, proxy_type="eip1967",
+    ))
+    db_session.commit()
+
+    inventory = _mock_inventory([
+        {"address": ADDR_A, "name": "A", "confidence": 0.9},
+    ])
+    monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
+
+    job = _make_company_job(db_session)
+
+    worker = DiscoveryWorker()
+    worker.update_detail = MagicMock()
+    monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *a, **kw: None)
+
+    with pytest.raises(JobHandledDirectly):
+        worker._process_company(db_session, job)
+
+    all_jobs = db_session.execute(select(Job).where(Job.address.isnot(None))).scalars().all()
+    child_addrs = [j.address for j in all_jobs if (j.request or {}).get("root_job_id") == str(job.id)]
+
+    assert ADDR_A in child_addrs

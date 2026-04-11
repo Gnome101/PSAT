@@ -339,6 +339,16 @@ def find_existing_job_for_address(session: Session, address: str) -> Job | None:
     ).scalar_one_or_none()
 
 
+def is_known_proxy(session: Session, address: str) -> bool:
+    """Return True if *address* has been classified as a proxy in any prior analysis."""
+    return session.execute(
+        select(Contract).where(
+            func.lower(Contract.address) == address.lower(),
+            Contract.is_proxy.is_(True),
+        ).limit(1)
+    ).scalar_one_or_none() is not None
+
+
 def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) -> int | None:
     """Copy all cached static data from *source_job_id* to *target_job_id*.
 

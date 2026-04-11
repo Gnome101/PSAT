@@ -41,6 +41,9 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live: tests that require a running API server and workers (deselected by default)",
+]
 
 [tool.ruff]
 target-version = "py310"

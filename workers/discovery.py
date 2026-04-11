@@ -18,6 +18,7 @@ from db.queue import (
     create_job,
     find_completed_static_cache,
     find_existing_job_for_address,
+    is_known_proxy,
     find_previous_company_inventory,
     get_artifact,
     store_artifact,
@@ -148,8 +149,13 @@ class DiscoveryWorker(BaseWorker):
             # Dedup: skip if a non-failed job already exists for this address
             existing = find_existing_job_for_address(session, addr)
             if existing:
-                logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
-                continue
+                # Always re-analyze proxies — the static worker will efficiently
+                # check if the implementation changed (1 RPC call) and skip
+                # expensive analysis if unchanged.
+                if not is_known_proxy(session, addr):
+                    logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
+                    continue
+                logger.info("Job %s: proxy %s has existing job %s but re-queuing for upgrade check", job.id, addr, existing.id)
 
             child_name = str(contract.get("name") or f"{company}_{addr[2:10]}")
             child_chains = contract.get("chains")
