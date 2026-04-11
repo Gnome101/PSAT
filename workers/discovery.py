@@ -49,9 +49,7 @@ class DiscoveryWorker(BaseWorker):
         store_artifact(session, job.id, "contract_inventory", data=inventory)
 
         # Create or look up Protocol row
-        protocol_row = session.execute(
-            select(Protocol).where(Protocol.name == company)
-        ).scalar_one_or_none()
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company)).scalar_one_or_none()
         if protocol_row is None:
             protocol_row = Protocol(
                 name=company,
@@ -77,16 +75,18 @@ class DiscoveryWorker(BaseWorker):
                 select(Contract).where(Contract.address == addr, Contract.chain == entry_chain)
             ).scalar_one_or_none()
             if existing is None:
-                session.add(Contract(
-                    address=addr,
-                    chain=entry_chain,
-                    protocol_id=protocol_row.id,
-                    contract_name=entry.get("name"),
-                    rank_score=entry.get("rank_score"),
-                    confidence=entry.get("confidence"),
-                    discovery_source=entry.get("discovery_source") or "inventory",
-                    chains=entry.get("chains"),
-                ))
+                session.add(
+                    Contract(
+                        address=addr,
+                        chain=entry_chain,
+                        protocol_id=protocol_row.id,
+                        contract_name=entry.get("name"),
+                        rank_score=entry.get("rank_score"),
+                        confidence=entry.get("confidence"),
+                        discovery_source=entry.get("discovery_source") or "inventory",
+                        chains=entry.get("chains"),
+                    )
+                )
             elif existing.protocol_id is None:
                 existing.protocol_id = protocol_row.id
         session.commit()

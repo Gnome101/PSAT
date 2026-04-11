@@ -73,12 +73,14 @@ class DAppCrawlWorker(BaseWorker):
                 select(Contract).where(Contract.address == normalized, Contract.chain == crawl_chain)
             ).scalar_one_or_none()
             if existing_contract is None:
-                session.add(Contract(
-                    address=normalized,
-                    chain=crawl_chain,
-                    protocol_id=protocol_id,
-                    discovery_source="dapp_crawl",
-                ))
+                session.add(
+                    Contract(
+                        address=normalized,
+                        chain=crawl_chain,
+                        protocol_id=protocol_id,
+                        discovery_source="dapp_crawl",
+                    )
+                )
             elif existing_contract.protocol_id is None and protocol_id:
                 existing_contract.protocol_id = protocol_id
         session.commit()

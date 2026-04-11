@@ -95,12 +95,14 @@ class DefiLlamaWorker(BaseWorker):
                 select(Contract).where(Contract.address == normalized, Contract.chain == chain)
             ).scalar_one_or_none()
             if existing_contract is None:
-                session.add(Contract(
-                    address=normalized,
-                    chain=chain,
-                    protocol_id=protocol_id,
-                    discovery_source="defillama",
-                ))
+                session.add(
+                    Contract(
+                        address=normalized,
+                        chain=chain,
+                        protocol_id=protocol_id,
+                        discovery_source="defillama",
+                    )
+                )
             elif existing_contract.protocol_id is None and protocol_id:
                 existing_contract.protocol_id = protocol_id
         session.commit()

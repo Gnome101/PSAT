@@ -863,19 +863,21 @@ def company_overview(company_name: str) -> dict:
     """Aggregated governance overview for all contracts in a company."""
     with SessionLocal() as session:
         # Look up protocol — try by protocol table first, fall back to job.company
-        protocol_row = session.execute(
-            select(Protocol).where(Protocol.name == company_name)
-        ).scalar_one_or_none()
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
 
         if protocol_row:
             # Get all jobs that belong to this protocol
-            company_jobs = session.execute(
-                select(Job).where(
-                    Job.protocol_id == protocol_row.id,
-                    Job.status == JobStatus.completed,
-                    Job.address.isnot(None),
+            company_jobs = (
+                session.execute(
+                    select(Job).where(
+                        Job.protocol_id == protocol_row.id,
+                        Job.status == JobStatus.completed,
+                        Job.address.isnot(None),
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         else:
             # Fallback: find by company string (legacy data)
             company_job = session.execute(
@@ -1337,16 +1339,14 @@ def company_overview(company_name: str) -> dict:
 
         # Build all_addresses from contracts table (includes discovered + analyzed)
         if protocol_row:
-            all_contract_rows = session.execute(
-                select(Contract).where(Contract.protocol_id == protocol_row.id)
-            ).scalars().all()
+            all_contract_rows = (
+                session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
+            )
         else:
             # Fallback: collect from company_jobs
             all_contract_rows = []
             for j in company_jobs:
-                cr = session.execute(
-                    select(Contract).where(Contract.job_id == j.id).limit(1)
-                ).scalar_one_or_none()
+                cr = session.execute(select(Contract).where(Contract.job_id == j.id).limit(1)).scalar_one_or_none()
                 if cr:
                     all_contract_rows.append(cr)
 

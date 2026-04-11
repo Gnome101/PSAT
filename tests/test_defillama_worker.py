@@ -313,8 +313,12 @@ class TestAnalyzeLimitCap:
         session = MagicMock()
         existing_job = SimpleNamespace(id=uuid.uuid4())
         session.execute.return_value.scalar_one_or_none.side_effect = [
-            None, None, None,  # Contract lookups for 3 addresses
-            existing_job, None, None,  # Job dedup checks
+            None,
+            None,
+            None,  # Contract lookups for 3 addresses
+            existing_job,
+            None,
+            None,  # Job dedup checks
         ]
         job = _job(request={"defillama_protocol": PROTOCOL, "analyze_limit": 2})
 
