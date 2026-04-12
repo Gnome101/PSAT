@@ -13,10 +13,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import (
+    Contract,
+    ControllerValue,
     MonitoredContract,
     MonitoredEvent,
     ProxyUpgradeEvent,
     SessionLocal,
+    UpgradeEvent,
     WatchedProxy,
 )
 from services.monitoring.event_topics import (
@@ -194,6 +197,9 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
             # Update last_known_state
             _update_state_from_event(mc, parsed)
 
+            # Propagate to relational tables (Contract, ControllerValue, UpgradeEvent)
+            _sync_relational_tables(session, mc, parsed)
+
         last_successful_block = to_block
         cursor = to_block + 1
 
@@ -288,10 +294,119 @@ def _update_state_from_event(mc: MonitoredContract, parsed: dict) -> None:
         impl = parsed.get("implementation")
         if impl:
             state["implementation"] = impl
+    elif event_type == "admin_changed" and parsed.get("new_admin"):
+        state["admin"] = parsed["new_admin"]
+    elif event_type == "beacon_upgraded" and parsed.get("beacon"):
+        state["beacon"] = parsed["beacon"]
     elif event_type == "delay_changed" and parsed.get("new_delay") is not None:
         state["min_delay"] = parsed["new_delay"]
 
     mc.last_known_state = state
+
+
+def _sync_relational_tables(
+    session: Session,
+    mc: MonitoredContract,
+    parsed: dict,
+) -> None:
+    """Propagate a detected event to the relational Contract / ControllerValue /
+    UpgradeEvent tables so the API serves up-to-date data.
+
+    Only updates rows when the MonitoredContract has a linked contract_id.
+    """
+    if not mc.contract_id:
+        return
+
+    event_type = parsed["event_type"]
+
+    # --- Proxy upgrade events → Contract.implementation + UpgradeEvent row ---
+    if event_type in (
+        "upgraded", "new_implementation", "changed_master_copy", "target_updated",
+    ):
+        new_impl = parsed.get("implementation")
+        if not new_impl:
+            return
+        contract = session.get(Contract, mc.contract_id)
+        if not contract:
+            return
+
+        old_impl = contract.implementation
+        contract.implementation = new_impl
+
+        session.add(UpgradeEvent(
+            contract_id=contract.id,
+            proxy_address=mc.address,
+            old_impl=old_impl,
+            new_impl=new_impl,
+            block_number=parsed.get("block_number"),
+            tx_hash=parsed.get("tx_hash"),
+        ))
+
+    # --- AdminChanged → Contract.admin ---
+    elif event_type == "admin_changed":
+        new_admin = parsed.get("new_admin")
+        if not new_admin:
+            return
+        contract = session.get(Contract, mc.contract_id)
+        if contract:
+            contract.admin = new_admin
+
+    # --- OwnershipTransferred → ControllerValue where controller_id contains 'owner' ---
+    elif event_type == "ownership_transferred":
+        new_owner = parsed.get("new_owner")
+        if not new_owner:
+            return
+        cv_rows = (
+            session.execute(
+                select(ControllerValue).where(
+                    ControllerValue.contract_id == mc.contract_id,
+                    ControllerValue.controller_id.ilike("%owner%"),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for cv in cv_rows:
+            cv.value = new_owner
+
+
+def _sync_relational_from_poll(
+    session: Session,
+    mc: MonitoredContract,
+    field_name: str,
+    new_value: object,
+    old_value: object,
+) -> None:
+    """Propagate a polling-detected state change to relational tables."""
+    if not mc.contract_id:
+        return
+
+    if field_name == "implementation":
+        contract = session.get(Contract, mc.contract_id)
+        if contract:
+            contract.implementation = str(new_value)
+            session.add(UpgradeEvent(
+                contract_id=contract.id,
+                proxy_address=mc.address,
+                old_impl=str(old_value) if old_value else None,
+                new_impl=str(new_value),
+                block_number=0,
+                tx_hash="",
+            ))
+
+    elif field_name == "owner":
+        cv_rows = (
+            session.execute(
+                select(ControllerValue).where(
+                    ControllerValue.contract_id == mc.contract_id,
+                    ControllerValue.controller_id.ilike("%owner%"),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for cv in cv_rows:
+            cv.value = str(new_value)
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +553,9 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
                     )
                     session.add(upgrade_event)
                     wp.last_known_implementation = str(new_value)
+
+            # Propagate to relational tables
+            _sync_relational_from_poll(session, mc, field_name, new_value, old_value)
 
     session.commit()
     return new_events

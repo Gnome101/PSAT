@@ -270,7 +270,7 @@ class TestEnrollmentWithProxyContracts:
         enrolled = maybe_enroll_protocol(mock_session, 1, "http://rpc", "ethereum")
 
         assert enrolled is True
-        mock_enroll.assert_called_once_with(mock_session, 1, "http://rpc", "ethereum")
+        mock_enroll.assert_called_once_with(mock_session, 1, "http://rpc", "ethereum", None)
 
     @patch("services.monitoring.enrollment.enroll_protocol_contracts")
     def test_exclude_job_id_prevents_self_block(self, mock_enroll):
