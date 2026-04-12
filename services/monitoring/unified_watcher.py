@@ -240,6 +240,7 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
                     updated = dict(monitored_event.data or {})
                     updated["reanalysis_job_id"] = str(reanalysis_job.id)
                     monitored_event.data = updated
+                    flag_modified(monitored_event, "data")
             except Exception:
                 logger.exception("Failed to queue re-analysis for %s", mc.address)
 
