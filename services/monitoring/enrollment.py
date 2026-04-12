@@ -30,19 +30,25 @@ def maybe_enroll_protocol(
     protocol_id: int,
     rpc_url: str,
     chain: str = "ethereum",
+    exclude_job_id: Any = None,
 ) -> bool:
     """Enroll a protocol's contracts if all jobs are complete.
 
     Called at the end of PolicyWorker.process(). Returns True if enrollment
     was performed, False if skipped (in-flight jobs or no completed jobs).
+
+    *exclude_job_id* should be the current job's id — it's still in
+    ``processing`` status when this is called from inside ``process()``,
+    so it must be excluded from the in-flight check.
     """
-    # Check for in-flight jobs for this protocol
-    in_flight = session.execute(
-        select(Job).where(
-            Job.protocol_id == protocol_id,
-            Job.status.in_([JobStatus.queued, JobStatus.processing]),
-        )
-    ).scalars().first()
+    # Check for in-flight jobs for this protocol (excluding the calling job)
+    stmt = select(Job).where(
+        Job.protocol_id == protocol_id,
+        Job.status.in_([JobStatus.queued, JobStatus.processing]),
+    )
+    if exclude_job_id is not None:
+        stmt = stmt.where(Job.id != exclude_job_id)
+    in_flight = session.execute(stmt).scalars().first()
 
     if in_flight:
         logger.debug("Protocol %s has in-flight jobs, skipping enrollment", protocol_id)

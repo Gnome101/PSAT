@@ -257,7 +257,8 @@ class PolicyWorker(BaseWorker):
                     from services.monitoring.enrollment import maybe_enroll_protocol
 
                     enrolled = maybe_enroll_protocol(
-                        session, job.protocol_id, rpc_url, chain="ethereum"
+                        session, job.protocol_id, rpc_url, chain="ethereum",
+                        exclude_job_id=job.id,
                     )
                     if enrolled:
                         logger.info(

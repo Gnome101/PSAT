@@ -804,6 +804,8 @@ class StaticWorker(BaseWorker):
             }
             if request.get("chain") is not None:
                 child_request["chain"] = request.get("chain")
+            if getattr(job, "protocol_id", None):
+                child_request["protocol_id"] = job.protocol_id
             child_job = create_job(session, child_request)
             logger.info(
                 "Job %s: created %s job %s for %s (%s)",
