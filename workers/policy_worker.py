@@ -251,6 +251,24 @@ class PolicyWorker(BaseWorker):
                 job.name or "Contract",
             )
 
+            # Auto-enroll protocol contracts into unified monitoring
+            if job.protocol_id:
+                try:
+                    from services.monitoring.enrollment import maybe_enroll_protocol
+
+                    enrolled = maybe_enroll_protocol(
+                        session, job.protocol_id, rpc_url, chain="ethereum"
+                    )
+                    if enrolled:
+                        logger.info(
+                            "Auto-enrolled protocol %s contracts into monitoring",
+                            job.protocol_id,
+                        )
+                except Exception:
+                    logger.exception(
+                        "Auto-enrollment failed for protocol %s", job.protocol_id
+                    )
+
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 

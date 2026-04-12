@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import ProxySubscription, ProxyUpgradeEvent, WatchedProxy
+from db.models import MonitoredContract, MonitoredEvent, ProxySubscription, ProxyUpgradeEvent, WatchedProxy
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -75,15 +75,11 @@ def db_session():
         poolclass=StaticPool,
     )
 
-    @event.listens_for(engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
     WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
     ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
     ProxySubscription.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    MonitoredContract.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    MonitoredEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
 
     session = Session(engine, expire_on_commit=False)
     try:

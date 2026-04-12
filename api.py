@@ -26,7 +26,10 @@ from db.models import (
     Job,
     JobStage,
     JobStatus,
+    MonitoredContract,
+    MonitoredEvent,
     Protocol,
+    ProtocolSubscription,
     ProxySubscription,
     ProxyUpgradeEvent,
     SessionLocal,
@@ -89,6 +92,12 @@ class WatchProxyRequest(BaseModel):
 class SubscribeRequest(BaseModel):
     discord_webhook_url: str = Field(min_length=1, description="Discord webhook URL for upgrade notifications.")
     label: str | None = None
+
+
+class ProtocolSubscribeRequest(BaseModel):
+    discord_webhook_url: str = Field(min_length=1, description="Discord webhook URL for protocol event notifications.")
+    label: str | None = None
+    event_filter: dict | None = Field(default=None, description="Optional filter: {\"event_types\": [\"upgraded\", ...]}")
 
 
 @asynccontextmanager
@@ -1494,6 +1503,28 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
             )
             session.add(subscription)
 
+        # Also create a MonitoredContract for unified monitoring
+        existing_mc = session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.address == address,
+                MonitoredContract.chain == request.chain,
+            )
+        ).scalar_one_or_none()
+        if not existing_mc:
+            mc = MonitoredContract(
+                address=address,
+                chain=request.chain,
+                contract_type="proxy",
+                watched_proxy_id=proxy.id,
+                monitoring_config={"watch_upgrades": True, "watch_ownership": True},
+                last_known_state={"implementation": current_impl} if current_impl else {},
+                last_scanned_block=from_block,
+                needs_polling=needs_polling,
+                is_active=True,
+                enrollment_source="proxy_watch",
+            )
+            session.add(mc)
+
         session.commit()
         session.refresh(proxy)
         result = _watched_proxy_to_dict(proxy)
@@ -1602,6 +1633,148 @@ def remove_subscription(subscription_id: str) -> dict[str, str]:
         session.delete(sub)
         session.commit()
         return {"status": "removed"}
+
+
+# ---------------------------------------------------------------------------
+# Unified protocol monitoring endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/protocols/{protocol_id}/monitoring")
+def list_protocol_monitoring(protocol_id: int) -> list[dict[str, Any]]:
+    """List all MonitoredContract rows for a protocol."""
+    with SessionLocal() as session:
+        stmt = select(MonitoredContract).where(MonitoredContract.protocol_id == protocol_id)
+        contracts = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(c.id),
+                "address": c.address,
+                "chain": c.chain,
+                "contract_type": c.contract_type,
+                "monitoring_config": c.monitoring_config,
+                "last_known_state": c.last_known_state,
+                "last_scanned_block": c.last_scanned_block,
+                "needs_polling": c.needs_polling,
+                "is_active": c.is_active,
+                "enrollment_source": c.enrollment_source,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in contracts
+        ]
+
+
+@app.post("/api/protocols/{protocol_id}/subscribe")
+def subscribe_to_protocol(protocol_id: int, request: ProtocolSubscribeRequest) -> dict[str, Any]:
+    """Create a ProtocolSubscription for governance event notifications."""
+    with SessionLocal() as session:
+        protocol = session.get(Protocol, protocol_id)
+        if protocol is None:
+            raise HTTPException(status_code=404, detail="Protocol not found")
+
+        sub = ProtocolSubscription(
+            protocol_id=protocol_id,
+            discord_webhook_url=request.discord_webhook_url,
+            label=request.label,
+            event_filter=request.event_filter,
+        )
+        session.add(sub)
+        session.commit()
+        session.refresh(sub)
+        return {
+            "id": str(sub.id),
+            "protocol_id": sub.protocol_id,
+            "discord_webhook_url": sub.discord_webhook_url,
+            "label": sub.label,
+            "event_filter": sub.event_filter,
+            "created_at": sub.created_at.isoformat() if sub.created_at else None,
+        }
+
+
+@app.get("/api/protocols/{protocol_id}/events")
+def list_protocol_events(protocol_id: int, limit: int = 50) -> list[dict[str, Any]]:
+    """List MonitoredEvents for all contracts in a protocol."""
+    with SessionLocal() as session:
+        stmt = (
+            select(MonitoredEvent)
+            .join(MonitoredContract, MonitoredEvent.monitored_contract_id == MonitoredContract.id)
+            .where(MonitoredContract.protocol_id == protocol_id)
+            .order_by(MonitoredEvent.detected_at.desc())
+            .limit(limit)
+        )
+        events = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(e.id),
+                "monitored_contract_id": str(e.monitored_contract_id),
+                "event_type": e.event_type,
+                "block_number": e.block_number,
+                "tx_hash": e.tx_hash,
+                "data": e.data,
+                "detected_at": e.detected_at.isoformat() if e.detected_at else None,
+            }
+            for e in events
+        ]
+
+
+@app.get("/api/monitored-contracts")
+def list_monitored_contracts(
+    protocol_id: int | None = None,
+    chain: str | None = None,
+) -> list[dict[str, Any]]:
+    """List all MonitoredContract rows, optionally filtered."""
+    with SessionLocal() as session:
+        stmt = select(MonitoredContract).order_by(MonitoredContract.created_at.desc())
+        if protocol_id is not None:
+            stmt = stmt.where(MonitoredContract.protocol_id == protocol_id)
+        if chain is not None:
+            stmt = stmt.where(MonitoredContract.chain == chain)
+        contracts = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(c.id),
+                "address": c.address,
+                "chain": c.chain,
+                "protocol_id": c.protocol_id,
+                "contract_type": c.contract_type,
+                "monitoring_config": c.monitoring_config,
+                "last_known_state": c.last_known_state,
+                "last_scanned_block": c.last_scanned_block,
+                "needs_polling": c.needs_polling,
+                "is_active": c.is_active,
+                "enrollment_source": c.enrollment_source,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in contracts
+        ]
+
+
+@app.get("/api/monitored-events")
+def list_monitored_events(
+    contract_id: str | None = None,
+    event_type: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """List all MonitoredEvent rows, optionally filtered."""
+    with SessionLocal() as session:
+        stmt = select(MonitoredEvent).order_by(MonitoredEvent.detected_at.desc()).limit(limit)
+        if contract_id is not None:
+            stmt = stmt.where(MonitoredEvent.monitored_contract_id == contract_id)
+        if event_type is not None:
+            stmt = stmt.where(MonitoredEvent.event_type == event_type)
+        events = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(e.id),
+                "monitored_contract_id": str(e.monitored_contract_id),
+                "event_type": e.event_type,
+                "block_number": e.block_number,
+                "tx_hash": e.tx_hash,
+                "data": e.data,
+                "detected_at": e.detected_at.isoformat() if e.detected_at else None,
+            }
+            for e in events
+        ]
 
 
 @app.get("/{full_path:path}")
