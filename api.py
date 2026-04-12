@@ -1080,7 +1080,7 @@ def company_overview(company_name: str) -> dict:
                 elif impl_job.name:
                     contract_name = impl_job.name
             if not contract_name:
-                contract_name = job.name or (contract_row.contract_name if contract_row else None) or ""
+                contract_name = (contract_row.contract_name if contract_row else None) or job.name or ""
             standards = list(summary_row.standards or []) if summary_row else []
             is_factory = summary_row.is_factory if summary_row else False
             has_timelock = summary_row.has_timelock if summary_row else False
