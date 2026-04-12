@@ -1169,6 +1169,33 @@ def company_overview(company_name: str) -> dict:
                 "balances": balances_list,
                 "total_usd": round(total_usd, 2) if total_usd > 0 else None,
             }
+
+            # Add control graph for principal resolution
+            graph_contract = lookup_contract or contract_row
+            if graph_contract:
+                from db.models import ControlGraphEdge as CGE2, ControlGraphNode as CGN2
+
+                cg_nodes = session.execute(select(CGN2).where(CGN2.contract_id == graph_contract.id)).scalars().all()
+                cg_edges = session.execute(select(CGE2).where(CGE2.contract_id == graph_contract.id)).scalars().all()
+                entry["control_graph"] = {
+                    "nodes": [
+                        {
+                            "address": n.address,
+                            "type": n.resolved_type,
+                            "label": n.contract_name or n.label,
+                            "details": n.details or {},
+                        }
+                        for n in cg_nodes
+                    ],
+                    "edges": [
+                        {
+                            "from": e.from_node_id.replace("address:", ""),
+                            "to": e.to_node_id.replace("address:", ""),
+                            "relation": e.relation,
+                        }
+                        for e in cg_edges
+                    ],
+                }
             contracts.append(entry)
 
             if owner:

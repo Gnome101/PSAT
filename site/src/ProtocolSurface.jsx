@@ -229,38 +229,50 @@ function isRoleIdAddress(address) {
 function collectPrincipals(fn, companyData) {
   const byAddress = new Map();
 
-  // Build lookup for resolving contract principals through the control graph
+  // Build a graph of who controls whom from per-contract control graphs
+  // controllerOf: address → [{address, type, label, details}]
   const controllerOf = new Map();
+  const nodeInfo = new Map();
+
   if (companyData) {
-    for (const p of companyData.principals || []) {
-      for (const controlled of p.controls || []) {
-        const key = controlled.toLowerCase();
-        if (!controllerOf.has(key)) controllerOf.set(key, []);
-        controllerOf.get(key).push(p);
+    for (const contract of companyData.contracts || []) {
+      const cg = contract.control_graph;
+      if (!cg) continue;
+      for (const node of cg.nodes || []) {
+        const addr = (node.address || "").toLowerCase();
+        if (addr) nodeInfo.set(addr, node);
       }
-    }
-    // Also use fund_flows for contract→contract control edges
-    const contractAddrs = new Set((companyData.contracts || []).map((c) => (c.address || "").toLowerCase()));
-    for (const flow of companyData.fund_flows || []) {
-      if (flow.type === "principal" || flow.type === "controls" || flow.type === "controls_value") {
-        const from = (flow.from || "").toLowerCase();
-        const to = (flow.to || "").toLowerCase();
-        if (from && to && contractAddrs.has(from)) {
-          if (!controllerOf.has(to)) controllerOf.set(to, []);
-          // Check if this controller is already tracked as a principal
-          const existing = controllerOf.get(to);
-          if (!existing.some((p) => p.address?.toLowerCase() === from)) {
-            const fromContract = (companyData.contracts || []).find((c) => (c.address || "").toLowerCase() === from);
-            controllerOf.get(to).push({
-              address: from,
-              type: "contract",
-              label: fromContract?.name || from,
-              controls: [to],
-            });
-          }
+      for (const edge of cg.edges || []) {
+        if (edge.relation === "safe_owner") continue; // owners are nested inside their Safe
+        const from = (edge.from || "").toLowerCase();
+        const to = (edge.to || "").toLowerCase();
+        if (!from || !to || from === to) continue;
+        if (!controllerOf.has(from)) controllerOf.set(from, []);
+        const existing = controllerOf.get(from);
+        if (!existing.some((e) => e.to === to)) {
+          existing.push({ to, relation: edge.relation });
         }
       }
     }
+  }
+
+  // Walk the control graph to find the first non-contract controller
+  function resolveController(address, visited) {
+    if (!visited) visited = new Set();
+    if (visited.has(address)) return null;
+    visited.add(address);
+    const node = nodeInfo.get(address);
+    if (!node) return null;
+    // If this node is not a contract, it's the real controller
+    if (node.type !== "contract") return node;
+    // Walk outgoing edges to find who this contract delegates to
+    const edges = controllerOf.get(address);
+    if (!edges || edges.length === 0) return null;
+    for (const edge of edges) {
+      const resolved = resolveController(edge.to, visited);
+      if (resolved) return resolved;
+    }
+    return null;
   }
 
   function pushPrincipal(principal, origin) {
@@ -268,26 +280,27 @@ function collectPrincipals(fn, companyData) {
     if (!address.startsWith("0x")) return;
     if (isRoleIdAddress(address)) return;
 
-    // Resolve contract principals: find who controls this contract
-    if (principal.resolved_type === "contract" && controllerOf.has(address)) {
-      const controllers = controllerOf.get(address);
-      for (const controller of controllers) {
-        const ctrlAddr = (controller.address || "").toLowerCase();
-        if (isRoleIdAddress(ctrlAddr)) continue;
-        if (byAddress.has(ctrlAddr)) {
-          byAddress.get(ctrlAddr).origins.push(origin);
-          continue;
+    // Resolve contract principals through the control graph
+    if (principal.resolved_type === "contract") {
+      const resolved = resolveController(address);
+      if (resolved) {
+        const rAddr = (resolved.address || "").toLowerCase();
+        if (rAddr && !isRoleIdAddress(rAddr)) {
+          if (byAddress.has(rAddr)) {
+            byAddress.get(rAddr).origins.push(origin);
+          } else {
+            byAddress.set(rAddr, {
+              address: rAddr,
+              resolvedType: String(resolved.type || "unknown"),
+              details: resolved.details && typeof resolved.details === "object" ? { ...resolved.details } : {},
+              sourceContract: address,
+              sourceControllerId: principal.source_controller_id || null,
+              origins: [origin],
+            });
+          }
+          return;
         }
-        byAddress.set(ctrlAddr, {
-          address: ctrlAddr,
-          resolvedType: String(controller.type || controller.resolved_type || "unknown"),
-          details: controller.details && typeof controller.details === "object" ? { ...controller.details } : {},
-          sourceContract: address,
-          sourceControllerId: principal.source_controller_id || null,
-          origins: [origin],
-        });
       }
-      return;
     }
 
     const existing = byAddress.get(address);
