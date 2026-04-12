@@ -861,3 +861,53 @@ class TestEnrollmentIntegration:
             )
         ).scalar()
         assert count == 1
+
+    def test_controller_rows_survive_stale_detection(self, pg_session):
+        """Controller addresses enrolled by _enroll_controller_addresses must
+        not be immediately deactivated by the stale-detection query in
+        enroll_protocol_contracts. Regression test for flush-ordering bug.
+        """
+        from db.models import Contract, ControlGraphNode, Job, JobStage, JobStatus, Protocol
+        from services.monitoring.enrollment import enroll_protocol_contracts
+
+        proto = Protocol(name=PROTO_NAME)
+        pg_session.add(proto)
+        pg_session.flush()
+
+        contract = Contract(
+            address="0x" + "c1" * 20,
+            chain="ethereum",
+            protocol_id=proto.id,
+            is_proxy=False,
+        )
+        pg_session.add(contract)
+        pg_session.flush()
+
+        _create_completed_job(pg_session, "0x" + "c1" * 20, proto.id)
+
+        # Add a controller node (safe) that should be auto-enrolled
+        safe_addr = "0x" + "55" * 20
+        node = ControlGraphNode(
+            contract_id=contract.id,
+            address=safe_addr,
+            node_type="controller",
+            resolved_type="safe",
+        )
+        pg_session.add(node)
+        pg_session.commit()
+
+        with patch("services.monitoring.enrollment.rpc_request", return_value=hex(1000)):
+            enroll_protocol_contracts(pg_session, proto.id, "http://rpc")
+
+        safe_mc = pg_session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.address == safe_addr,
+            )
+        ).scalar_one_or_none()
+
+        assert safe_mc is not None, "Controller address was not enrolled"
+        assert safe_mc.is_active is True, (
+            "Controller MonitoredContract was deactivated by stale-detection "
+            "— flush ordering bug"
+        )
+        assert safe_mc.contract_type == "safe"

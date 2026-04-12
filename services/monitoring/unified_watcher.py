@@ -12,6 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from db.models import (
     Contract,
@@ -41,8 +42,8 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 logger = logging.getLogger(__name__)
 
 MAX_BLOCK_RANGE = 2000
-DEFAULT_SCAN_INTERVAL = int(os.getenv("PROTOCOL_SCAN_INTERVAL", "15"))
-DEFAULT_POLL_INTERVAL = int(os.getenv("PROTOCOL_POLL_INTERVAL", "60"))
+DEFAULT_SCAN_INTERVAL = int(os.getenv("PROTOCOL_SCAN_INTERVAL", "120"))
+DEFAULT_POLL_INTERVAL = int(os.getenv("PROTOCOL_POLL_INTERVAL", "300"))
 
 # Storage slots for proxy resolution
 _EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
@@ -52,6 +53,11 @@ _OWNER_SEL = "0x8da5cb5b"  # owner()
 _PAUSED_SEL = "0x5c975abb"  # paused()
 _GET_THRESHOLD_SEL = "0xe75235b8"  # getThreshold()
 _GET_MIN_DELAY_SEL = "0xf27a0c92"  # getMinDelay()
+
+# Controller IDs that represent the contract owner. Used by relational sync
+# to update only the real owner row, not unrelated controller values that
+# happen to contain "owner" in their name (e.g. token_owner_registry).
+_OWNER_CONTROLLER_IDS = ("owner", "state_variable:owner")
 
 # Mapping from poll field names to scanner event types that detect the same
 # underlying state change.  Used by the poller to suppress duplicate events
@@ -137,10 +143,23 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
     while cursor <= latest_block:
         to_block = min(cursor + MAX_BLOCK_RANGE - 1, latest_block)
 
+        # Only include addresses that still need blocks in this chunk.
+        # A contract with last_scanned_block >= to_block has already
+        # processed all blocks in this range — no need to re-scan for it.
+        chunk_addresses = [
+            addr
+            for addr, mc in contract_by_address.items()
+            if mc.last_scanned_block < to_block
+        ]
+        if not chunk_addresses:
+            cursor = to_block + 1
+            last_successful_block = to_block
+            continue
+
         filter_params = {
             "fromBlock": hex(cursor),
             "toBlock": hex(to_block),
-            "address": addresses,
+            "address": chunk_addresses,
             "topics": topics,
         }
 
@@ -328,6 +347,7 @@ def _update_state_from_event(mc: MonitoredContract, parsed: dict) -> None:
         state["min_delay"] = parsed["new_delay"]
 
     mc.last_known_state = state
+    flag_modified(mc, "last_known_state")
 
 
 def _sync_relational_tables(
@@ -377,7 +397,7 @@ def _sync_relational_tables(
         if contract:
             contract.admin = new_admin
 
-    # --- OwnershipTransferred → ControllerValue where controller_id contains 'owner' ---
+    # --- OwnershipTransferred → ControllerValue where controller_id is 'owner' ---
     elif event_type == "ownership_transferred":
         new_owner = parsed.get("new_owner")
         if not new_owner:
@@ -386,7 +406,9 @@ def _sync_relational_tables(
             session.execute(
                 select(ControllerValue).where(
                     ControllerValue.contract_id == mc.contract_id,
-                    ControllerValue.controller_id.ilike("%owner%"),
+                    ControllerValue.controller_id.in_(
+                        _OWNER_CONTROLLER_IDS
+                    ),
                 )
             )
             .scalars()
@@ -425,7 +447,9 @@ def _sync_relational_from_poll(
             session.execute(
                 select(ControllerValue).where(
                     ControllerValue.contract_id == mc.contract_id,
-                    ControllerValue.controller_id.ilike("%owner%"),
+                    ControllerValue.controller_id.in_(
+                        _OWNER_CONTROLLER_IDS
+                    ),
                 )
             )
             .scalars()
@@ -530,6 +554,7 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
             # Always record the new value in last_known_state
             state[field_name] = new_value
             mc.last_known_state = state
+            flag_modified(mc, "last_known_state")
 
             # Skip emitting an event when old_value is None — that's the
             # first observation after enrollment, not an actual state change.

@@ -318,8 +318,6 @@ def notify_reanalysis_complete(session: Session, job: "Job") -> None:
     The embed references the original reanalysis Job ID so recipients can
     correlate it with the initial event notification.
     """
-    from db.models import Job as _Job  # noqa: F811 — deferred to avoid circular import
-
     request = job.request if isinstance(job.request, dict) else {}
     trigger = request.get("reanalysis_trigger", "unknown")
     protocol_id = job.protocol_id

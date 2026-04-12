@@ -91,8 +91,15 @@ def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[
 
 
 def parse_address_result(raw: Any) -> str | None:
-    """Extract a valid address from a raw ``eth_getStorageAt`` / ``eth_call`` result."""
-    if not raw or raw == "0x" + "0" * 64:
+    """Extract a valid address from a raw ``eth_getStorageAt`` / ``eth_call`` result.
+
+    Returns None for empty, zero-address, too-short, or revert-like responses.
+    A valid ABI-encoded address is at least 66 chars (``0x`` + 64 hex digits).
+    Shorter responses are reverts, error selectors, or empty returns.
+    """
+    if not raw or not isinstance(raw, str) or len(raw) < 42:
+        return None
+    if raw == "0x" + "0" * 64:
         return None
     addr = "0x" + raw[-40:]
     if addr == "0x" + "0" * 40:

@@ -204,6 +204,9 @@ def enroll_protocol_contracts(
     # Discover controller addresses from the control graph
     _enroll_controller_addresses(session, contracts, protocol_id, chain, current_block)
 
+    # Flush so controller rows are visible to the stale-detection query below.
+    session.flush()
+
     # Deactivate stale MonitoredContract rows for this protocol that are no
     # longer in the enrolled set (e.g. inventory addresses that were never
     # analyzed).  We keep them (is_active=False) rather than deleting so
