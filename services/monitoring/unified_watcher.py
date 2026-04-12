@@ -203,7 +203,11 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
 
             # Queue a re-analysis job if the event warrants it
             try:
-                maybe_queue_reanalysis(session, mc, event_type, event_data)
+                reanalysis_job = maybe_queue_reanalysis(session, mc, event_type, event_data)
+                if reanalysis_job:
+                    updated = dict(monitored_event.data or {})
+                    updated["reanalysis_job_id"] = str(reanalysis_job.id)
+                    monitored_event.data = updated
             except Exception:
                 logger.exception("Failed to queue re-analysis for %s", mc.address)
 
@@ -571,7 +575,13 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
                     "old_value": str(old_value),
                     "new_value": str(new_value),
                 }
-                maybe_queue_reanalysis(session, mc, "state_changed_poll", poll_data)
+                reanalysis_job = maybe_queue_reanalysis(
+                    session, mc, "state_changed_poll", poll_data,
+                )
+                if reanalysis_job:
+                    updated = dict(event.data or {})
+                    updated["reanalysis_job_id"] = str(reanalysis_job.id)
+                    event.data = updated
             except Exception:
                 logger.exception("Failed to queue re-analysis for %s", mc.address)
 

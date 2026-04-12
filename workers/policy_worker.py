@@ -270,6 +270,19 @@ class PolicyWorker(BaseWorker):
                         "Auto-enrollment failed for protocol %s", job.protocol_id
                     )
 
+            # Send completion webhook for re-analysis jobs
+            request = job.request if isinstance(job.request, dict) else {}
+            if request.get("reanalysis_trigger"):
+                try:
+                    from services.monitoring.notifier import notify_reanalysis_complete
+
+                    notify_reanalysis_complete(session, job)
+                except Exception:
+                    logger.exception(
+                        "Reanalysis completion notification failed for job %s",
+                        job.id,
+                    )
+
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 

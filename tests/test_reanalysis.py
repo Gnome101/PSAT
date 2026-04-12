@@ -866,3 +866,473 @@ contract ImplV3 { uint256 public version = 3; }
             select(Job).where(func.lower(Job.address) == pausable_addr.lower())
         ).scalars().all()
         assert len(pausable_jobs) == 0
+
+
+# ---------------------------------------------------------------------------
+# Webhook embed tests: event annotation + completion notification
+# ---------------------------------------------------------------------------
+
+
+class TestEventEmbedAnnotation:
+    """Verify that the event webhook embed shows a reanalysis note."""
+
+    def test_event_data_contains_reanalysis_job_id(self, anvil_env, db_session):
+        """After scan, the MonitoredEvent.data has reanalysis_job_id."""
+        rpc_url, tmp_path = anvil_env
+        from services.monitoring.unified_watcher import scan_for_events
+
+        addr = _compile_and_deploy(OWNABLE_SOURCE, "TestOwnable", [], rpc_url, PRIVATE_KEY, tmp_path)
+        current_block = int(_cast(["block-number"], rpc_url))
+        _make_monitored_contract(db_session, addr, "regular", current_block)
+
+        new_owner = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+        _cast_send(addr, "transferOwnership(address)", [new_owner], rpc_url, PRIVATE_KEY)
+
+        events = scan_for_events(db_session, rpc_url)
+        ownership_events = [e for e in events if e.event_type == "ownership_transferred"]
+        assert len(ownership_events) == 1
+
+        evt = ownership_events[0]
+        assert evt.data is not None
+        assert "reanalysis_job_id" in evt.data
+        # The job ID should match an actual queued job
+        job_id = evt.data["reanalysis_job_id"]
+        job = db_session.get(Job, uuid.UUID(job_id))
+        assert job is not None
+        assert job.status == JobStatus.queued
+
+    def test_non_triggering_event_has_no_job_id(self, anvil_env, db_session):
+        """Pause events do NOT get annotated with reanalysis_job_id."""
+        rpc_url, tmp_path = anvil_env
+        from services.monitoring.unified_watcher import scan_for_events
+
+        addr = _compile_and_deploy(PAUSABLE_SOURCE, "TestPausable", [], rpc_url, PRIVATE_KEY, tmp_path)
+        current_block = int(_cast(["block-number"], rpc_url))
+        _make_monitored_contract(db_session, addr, "pausable", current_block)
+
+        _cast_send(addr, "pause()", [], rpc_url, PRIVATE_KEY)
+
+        events = scan_for_events(db_session, rpc_url)
+        for evt in events:
+            data = evt.data or {}
+            assert "reanalysis_job_id" not in data
+
+    @pytest.mark.usefixtures("anvil_env")
+    def test_embed_includes_reanalysis_field(self, db_session):
+        """_format_governance_embed adds a Re-analysis field when job ID is present."""
+        from services.monitoring.notifier import _format_governance_embed
+
+        mc = _make_monitored_contract(db_session, "0x" + "a1" * 20)
+        evt = MonitoredEvent(
+            id=uuid.uuid4(),
+            monitored_contract_id=mc.id,
+            event_type="upgraded",
+            block_number=100,
+            tx_hash="0x" + "ab" * 32,
+            data={"implementation": "0x" + "b2" * 20, "reanalysis_job_id": "abcd1234-0000-0000-0000-000000000000"},
+        )
+        db_session.add(evt)
+        db_session.commit()
+        db_session.refresh(evt)
+
+        embed = _format_governance_embed(evt, db_session)
+        field_map = {f["name"]: f["value"] for f in embed["fields"]}
+        assert "Re-analysis" in field_map
+        assert "abcd1234" in field_map["Re-analysis"]
+
+    @pytest.mark.usefixtures("anvil_env")
+    def test_embed_without_reanalysis_has_no_field(self, db_session):
+        """Normal event embed does NOT have a Re-analysis field."""
+        from services.monitoring.notifier import _format_governance_embed
+
+        mc = _make_monitored_contract(db_session, "0x" + "c3" * 20, "pausable")
+        evt = MonitoredEvent(
+            id=uuid.uuid4(),
+            monitored_contract_id=mc.id,
+            event_type="paused",
+            block_number=200,
+            tx_hash="0x" + "cd" * 32,
+            data={"account": "0x" + "d4" * 20},
+        )
+        db_session.add(evt)
+        db_session.commit()
+        db_session.refresh(evt)
+
+        embed = _format_governance_embed(evt, db_session)
+        field_names = [f["name"] for f in embed["fields"]]
+        assert "Re-analysis" not in field_names
+
+
+class TestSnapshotAndDiff:
+    """Test the snapshot capture and diff logic."""
+
+    def test_snapshot_captures_contract_state(self, db_session):
+        from services.monitoring.reanalysis import _build_snapshot
+
+        addr = "0x" + "a1" * 20
+        proto = _make_protocol(db_session, "SnapTest")
+        contract = Contract(
+            address=addr.lower(),
+            chain="ethereum",
+            protocol_id=proto.id,
+            contract_name="SnapContract",
+            implementation="0x" + "b2" * 20,
+            admin="0x" + "c3" * 20,
+        )
+        db_session.add(contract)
+        db_session.commit()
+        db_session.refresh(contract)
+
+        summary = ContractSummary(
+            contract_id=contract.id,
+            risk_level="medium",
+            control_model="owner",
+            is_pausable=True,
+        )
+        db_session.add(summary)
+        db_session.commit()
+
+        mc = _make_monitored_contract(db_session, addr, "proxy", protocol_id=proto.id)
+        mc.contract_id = contract.id
+        db_session.commit()
+
+        snap = _build_snapshot(db_session, mc)
+        assert snap["implementation"] == "0x" + "b2" * 20
+        assert snap["admin"] == "0x" + "c3" * 20
+        assert snap["risk_level"] == "medium"
+        assert snap["control_model"] == "owner"
+        assert snap["is_pausable"] is True
+
+    def test_snapshot_stored_in_job_request(self, db_session):
+        addr = "0x" + "d4" * 20
+        proto = _make_protocol(db_session, "ReqSnapTest")
+        contract = Contract(
+            address=addr.lower(),
+            chain="ethereum",
+            protocol_id=proto.id,
+            implementation="0x" + "e5" * 20,
+        )
+        db_session.add(contract)
+        db_session.commit()
+        db_session.refresh(contract)
+
+        summary = ContractSummary(contract_id=contract.id, control_model="owner")
+        db_session.add(summary)
+        db_session.commit()
+
+        mc = _make_monitored_contract(db_session, addr, "proxy", protocol_id=proto.id)
+        mc.contract_id = contract.id
+        db_session.commit()
+
+        job = maybe_queue_reanalysis(db_session, mc, "upgraded")
+        assert job is not None
+        snap = job.request.get("reanalysis_snapshot", {})
+        assert snap.get("implementation") == "0x" + "e5" * 20
+
+    def test_diff_detects_implementation_change(self, db_session):
+        from services.monitoring.reanalysis import build_reanalysis_diff
+
+        addr = "0x" + "f6" * 20
+        contract = Contract(
+            address=addr.lower(),
+            chain="ethereum",
+            implementation="0x" + "11" * 20,  # NEW impl
+        )
+        db_session.add(contract)
+        db_session.commit()
+
+        job = Job(
+            address=addr.lower(),
+            status=JobStatus.completed,
+            stage=JobStage.done,
+            request={
+                "address": addr.lower(),
+                "chain": "ethereum",
+                "reanalysis_trigger": "upgraded",
+                "reanalysis_snapshot": {
+                    "implementation": "0x" + "00" * 20,  # OLD impl
+                },
+            },
+        )
+        db_session.add(job)
+        db_session.commit()
+
+        changes = build_reanalysis_diff(db_session, job)
+        assert any("Implementation" in c for c in changes)
+
+    def test_diff_detects_function_changes(self, db_session):
+        from services.monitoring.reanalysis import build_reanalysis_diff
+
+        addr = "0x" + "a7" * 20
+        contract = Contract(address=addr.lower(), chain="ethereum")
+        db_session.add(contract)
+        db_session.commit()
+        db_session.refresh(contract)
+
+        # Add new functions
+        from db.models import EffectiveFunction
+        for name in ["transfer", "approve", "newFunction"]:
+            db_session.add(EffectiveFunction(
+                contract_id=contract.id, function_name=name,
+            ))
+        db_session.commit()
+
+        job = Job(
+            address=addr.lower(),
+            status=JobStatus.completed,
+            stage=JobStage.done,
+            request={
+                "address": addr.lower(),
+                "chain": "ethereum",
+                "reanalysis_trigger": "upgraded",
+                "reanalysis_snapshot": {
+                    "privileged_functions": ["transfer", "approve"],
+                },
+            },
+        )
+        db_session.add(job)
+        db_session.commit()
+
+        changes = build_reanalysis_diff(db_session, job)
+        assert any("newFunction" in c for c in changes)
+
+    def test_diff_empty_when_nothing_changed(self, db_session):
+        from services.monitoring.reanalysis import build_reanalysis_diff
+
+        addr = "0x" + "b8" * 20
+        contract = Contract(
+            address=addr.lower(),
+            chain="ethereum",
+            implementation="0x" + "cc" * 20,
+        )
+        db_session.add(contract)
+        db_session.commit()
+
+        job = Job(
+            address=addr.lower(),
+            status=JobStatus.completed,
+            stage=JobStage.done,
+            request={
+                "address": addr.lower(),
+                "chain": "ethereum",
+                "reanalysis_trigger": "upgraded",
+                "reanalysis_snapshot": {
+                    "implementation": "0x" + "cc" * 20,  # same
+                },
+            },
+        )
+        db_session.add(job)
+        db_session.commit()
+
+        changes = build_reanalysis_diff(db_session, job)
+        assert changes == []
+
+
+class TestCompletionWebhook:
+    """Test the reanalysis completion Discord notification."""
+
+    @pytest.fixture()
+    def _protocol_with_sub(self, db_session):
+        """Create a protocol with a Discord subscription."""
+        from db.models import ProtocolSubscription
+        proto = _make_protocol(db_session, "WebhookTest")
+        sub = ProtocolSubscription(
+            protocol_id=proto.id,
+            discord_webhook_url="https://discord.com/api/webhooks/test/reanalysis",
+            label="test-sub",
+        )
+        db_session.add(sub)
+        db_session.commit()
+        return proto
+
+    def test_completion_sends_webhook(self, db_session, _protocol_with_sub):
+        from unittest.mock import MagicMock, patch
+        from services.monitoring.notifier import notify_reanalysis_complete
+
+        proto = _protocol_with_sub
+        addr = "0x" + "d9" * 20
+
+        contract = Contract(
+            address=addr.lower(), chain="ethereum",
+            implementation="0x" + "11" * 20, contract_name="TestVault",
+            protocol_id=proto.id,
+        )
+        db_session.add(contract)
+        db_session.commit()
+
+        job = Job(
+            address=addr.lower(),
+            status=JobStatus.completed,
+            stage=JobStage.done,
+            protocol_id=proto.id,
+            request={
+                "address": addr.lower(),
+                "chain": "ethereum",
+                "reanalysis_trigger": "upgraded",
+                "reanalysis_snapshot": {"implementation": "0x" + "00" * 20},
+            },
+        )
+        db_session.add(job)
+        db_session.commit()
+        db_session.refresh(job)
+
+        with patch("services.monitoring.notifier.requests.post") as mock_post:
+            mock_post.return_value = MagicMock(ok=True)
+            notify_reanalysis_complete(db_session, job)
+
+            mock_post.assert_called_once()
+            payload = mock_post.call_args[1]["json"]
+            embed = payload["embeds"][0]
+
+            assert "Re-analysis complete" in embed["title"]
+            assert "TestVault" in embed["title"]
+            assert embed["color"] == 0x2ECC71  # green
+
+            field_map = {f["name"]: f["value"] for f in embed["fields"]}
+            assert "upgraded" in field_map["Trigger"]
+            assert str(job.id)[:8] in field_map["Job"]
+            assert "Implementation" in field_map["Changes detected"]
+
+    def test_completion_no_webhook_without_protocol(self, db_session):
+        """Job without protocol_id → no webhook sent."""
+        from unittest.mock import patch
+        from services.monitoring.notifier import notify_reanalysis_complete
+
+        job = Job(
+            address="0x" + "e0" * 20,
+            status=JobStatus.completed,
+            stage=JobStage.done,
+            protocol_id=None,
+            request={"reanalysis_trigger": "upgraded", "address": "0x" + "e0" * 20, "chain": "ethereum"},
+        )
+        db_session.add(job)
+        db_session.commit()
+        db_session.refresh(job)
+
+        with patch("services.monitoring.notifier.requests.post") as mock_post:
+            notify_reanalysis_complete(db_session, job)
+            mock_post.assert_not_called()
+
+    def test_completion_no_webhook_without_subscriptions(self, db_session):
+        """Protocol with no subscriptions → no webhook sent."""
+        from unittest.mock import patch
+        from services.monitoring.notifier import notify_reanalysis_complete
+
+        proto = _make_protocol(db_session, "NoSubTest")
+        job = Job(
+            address="0x" + "f1" * 20,
+            status=JobStatus.completed,
+            stage=JobStage.done,
+            protocol_id=proto.id,
+            request={"reanalysis_trigger": "upgraded", "address": "0x" + "f1" * 20, "chain": "ethereum"},
+        )
+        db_session.add(job)
+        db_session.commit()
+        db_session.refresh(job)
+
+        with patch("services.monitoring.notifier.requests.post") as mock_post:
+            notify_reanalysis_complete(db_session, job)
+            mock_post.assert_not_called()
+
+    def test_completion_shows_no_changes_when_identical(self, db_session, _protocol_with_sub):
+        from unittest.mock import MagicMock, patch
+        from services.monitoring.notifier import notify_reanalysis_complete
+
+        proto = _protocol_with_sub
+        addr = "0x" + "a2" * 20
+
+        contract = Contract(
+            address=addr.lower(), chain="ethereum",
+            implementation="0x" + "bb" * 20,
+            protocol_id=proto.id,
+        )
+        db_session.add(contract)
+        db_session.commit()
+
+        job = Job(
+            address=addr.lower(),
+            status=JobStatus.completed,
+            stage=JobStage.done,
+            protocol_id=proto.id,
+            request={
+                "address": addr.lower(),
+                "chain": "ethereum",
+                "reanalysis_trigger": "upgraded",
+                "reanalysis_snapshot": {"implementation": "0x" + "bb" * 20},  # same
+            },
+        )
+        db_session.add(job)
+        db_session.commit()
+        db_session.refresh(job)
+
+        with patch("services.monitoring.notifier.requests.post") as mock_post:
+            mock_post.return_value = MagicMock(ok=True)
+            notify_reanalysis_complete(db_session, job)
+
+            embed = mock_post.call_args[1]["json"]["embeds"][0]
+            field_map = {f["name"]: f["value"] for f in embed["fields"]}
+            assert "No significant differences" in field_map["Changes detected"]
+
+    def test_completion_embed_references_job_id(self, db_session, _protocol_with_sub):
+        """Both event and completion embeds reference the same Job ID."""
+        from unittest.mock import MagicMock, patch
+        from services.monitoring.notifier import _format_governance_embed, notify_reanalysis_complete
+
+        proto = _protocol_with_sub
+        addr = "0x" + "b3" * 20
+
+        contract = Contract(
+            address=addr.lower(), chain="ethereum",
+            protocol_id=proto.id,
+        )
+        db_session.add(contract)
+        db_session.commit()
+
+        mc = _make_monitored_contract(db_session, addr, "proxy", protocol_id=proto.id)
+        mc.contract_id = contract.id
+        db_session.commit()
+
+        # Simulate: event with reanalysis_job_id
+        job = Job(
+            address=addr.lower(),
+            status=JobStatus.completed,
+            stage=JobStage.done,
+            protocol_id=proto.id,
+            request={
+                "address": addr.lower(),
+                "chain": "ethereum",
+                "reanalysis_trigger": "upgraded",
+                "reanalysis_snapshot": {},
+            },
+        )
+        db_session.add(job)
+        db_session.commit()
+        db_session.refresh(job)
+
+        short_id = str(job.id)[:8]
+
+        # Event embed
+        evt = MonitoredEvent(
+            id=uuid.uuid4(),
+            monitored_contract_id=mc.id,
+            event_type="upgraded",
+            block_number=500,
+            tx_hash="0x" + "ff" * 32,
+            data={"implementation": "0x" + "22" * 20, "reanalysis_job_id": str(job.id)},
+        )
+        db_session.add(evt)
+        db_session.commit()
+        db_session.refresh(evt)
+
+        event_embed = _format_governance_embed(evt, db_session)
+        event_fields = {f["name"]: f["value"] for f in event_embed["fields"]}
+        assert short_id in event_fields["Re-analysis"]
+
+        # Completion embed
+        with patch("services.monitoring.notifier.requests.post") as mock_post:
+            mock_post.return_value = MagicMock(ok=True)
+            notify_reanalysis_complete(db_session, job)
+
+            completion_embed = mock_post.call_args[1]["json"]["embeds"][0]
+            completion_fields = {f["name"]: f["value"] for f in completion_embed["fields"]}
+            assert short_id in completion_fields["Job"]

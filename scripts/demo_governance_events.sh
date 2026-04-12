@@ -13,6 +13,12 @@
 #   Add Discord webhook at http://localhost:5173/company/demo/monitoring
 #   bash scripts/demo_governance_events.sh fire             # fire all event types
 #
+# Webhook flow for reanalysis events (upgrade, ownership transfer, admin change):
+#   1. Event detected → Discord embed with "Re-analysis: Running new analysis... (Job XXXX)"
+#   2. Re-analysis job queued at discovery stage (visible in /api/jobs)
+#   3. Job completes → second Discord embed: "Re-analysis complete" with diff summary
+#   Tip: use https://webhook.site for a free test webhook URL.
+#
 # This deploys:
 #   - EIP-1967 proxy + two implementations (for upgrade events)
 #   - Ownable contract (for ownership transfer)
@@ -20,6 +26,9 @@
 #   - Gnosis Safe mock (for signer add/remove, threshold change)
 #   - Timelock mock (for schedule/execute, delay change)
 #   - AccessControl mock (for role grant/revoke)
+#
+# The watch command seeds analysis data (ContractSummary, EffectiveFunction,
+# ControllerValue) so the reanalysis snapshot/diff has real data to compare.
 #
 # Requires: anvil running on port 8546, forge + cast on PATH
 
@@ -250,27 +259,93 @@ ENVEOF
 
         uv run python3 -c "
 import uuid
-from db.models import SessionLocal, MonitoredContract, WatchedProxy, Protocol, Contract, Job, JobStage, JobStatus
+from sqlalchemy import select
+from db.models import (
+    SessionLocal, MonitoredContract, MonitoredEvent, WatchedProxy,
+    Protocol, ProtocolSubscription, Contract,
+    ContractSummary, ControllerValue, EffectiveFunction,
+    ProxyUpgradeEvent, ProxySubscription,
+    Job, JobStage, JobStatus,
+)
 from utils.rpc import rpc_request
 
 s = SessionLocal()
 block = int(rpc_request('$RPC', 'eth_blockNumber', []), 16)
+
+# Clean up any previous demo data (FK-safe order)
+old_proto = s.execute(select(Protocol).where(Protocol.name == 'demo')).scalar_one_or_none()
+if old_proto:
+    print('Cleaning up previous demo data...')
+    old_mcs = s.execute(select(MonitoredContract).where(MonitoredContract.protocol_id == old_proto.id)).scalars().all()
+    for mc in old_mcs:
+        s.execute(MonitoredEvent.__table__.delete().where(MonitoredEvent.monitored_contract_id == mc.id))
+    s.execute(MonitoredContract.__table__.delete().where(MonitoredContract.protocol_id == old_proto.id))
+    s.execute(ProtocolSubscription.__table__.delete().where(ProtocolSubscription.protocol_id == old_proto.id))
+    old_contracts = s.execute(select(Contract).where(Contract.protocol_id == old_proto.id)).scalars().all()
+    for ct in old_contracts:
+        s.execute(EffectiveFunction.__table__.delete().where(EffectiveFunction.contract_id == ct.id))
+        s.execute(ControllerValue.__table__.delete().where(ControllerValue.contract_id == ct.id))
+        s.execute(ContractSummary.__table__.delete().where(ContractSummary.contract_id == ct.id))
+    old_jobs = s.execute(select(Job).where(Job.protocol_id == old_proto.id)).scalars().all()
+    for j in old_jobs:
+        s.execute(Job.__table__.delete().where(Job.id == j.id))
+    s.execute(Contract.__table__.delete().where(Contract.protocol_id == old_proto.id))
+    # Clean up WatchedProxy rows that were linked to old demo MonitoredContracts
+    s.execute(ProxyUpgradeEvent.__table__.delete().where(
+        ProxyUpgradeEvent.watched_proxy_id.in_(
+            select(WatchedProxy.id).where(WatchedProxy.chain == 'anvil')
+        )
+    ))
+    s.execute(ProxySubscription.__table__.delete().where(
+        ProxySubscription.watched_proxy_id.in_(
+            select(WatchedProxy.id).where(WatchedProxy.chain == 'anvil')
+        )
+    ))
+    s.execute(WatchedProxy.__table__.delete().where(WatchedProxy.chain == 'anvil'))
+    s.execute(Protocol.__table__.delete().where(Protocol.id == old_proto.id))
+    s.commit()
+    print('  Done.')
 
 # 1. Create a Protocol row so the GUI can find these contracts
 proto = Protocol(name='demo')
 s.add(proto)
 s.flush()  # assigns proto.id
 
+# (addr, ctype, name, is_proxy, proxy_type, impl, config, risk, model, pausable, functions, owner)
 contracts = [
-    ('$PROXY',    'proxy',    'TestProxy',         True,  'eip1967', {'watch_upgrades': True, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': False, 'watch_safe_signers': False, 'watch_timelock': False}),
-    ('$OWNABLE',  'regular',  'TestOwnable',       False, None,      {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': False, 'watch_safe_signers': False, 'watch_timelock': False}),
-    ('$PAUSABLE', 'pausable', 'TestPausable',      False, None,      {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': True, 'watch_roles': False, 'watch_safe_signers': False, 'watch_timelock': False}),
-    ('$SAFE',     'safe',     'TestSafe',          False, None,      {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': False, 'watch_safe_signers': True, 'watch_timelock': False}),
-    ('$TIMELOCK', 'timelock', 'TestTimelock',      False, None,      {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': False, 'watch_safe_signers': False, 'watch_timelock': True}),
-    ('$ACCESS',   'regular',  'TestAccessControl', False, None,      {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': True, 'watch_safe_signers': False, 'watch_timelock': False}),
+    ('$PROXY',    'proxy',    'TestProxy',         True,  'eip1967', '$IMPL_V1',
+     {'watch_upgrades': True, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': False, 'watch_safe_signers': False, 'watch_timelock': False},
+     'medium', 'proxy', False,
+     ['upgradeTo'],
+     None),
+    ('$OWNABLE',  'regular',  'TestOwnable',       False, None, None,
+     {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': False, 'watch_safe_signers': False, 'watch_timelock': False},
+     'low', 'owner', False,
+     ['transferOwnership'],
+     '$ACCOUNT0'),
+    ('$PAUSABLE', 'pausable', 'TestPausable',      False, None, None,
+     {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': True, 'watch_roles': False, 'watch_safe_signers': False, 'watch_timelock': False},
+     'low', 'owner', True,
+     ['pause', 'unpause'],
+     '$ACCOUNT0'),
+    ('$SAFE',     'safe',     'TestSafe',          False, None, None,
+     {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': False, 'watch_safe_signers': True, 'watch_timelock': False},
+     'medium', 'multisig', False,
+     ['addOwner', 'removeOwner', 'changeThreshold'],
+     None),
+    ('$TIMELOCK', 'timelock', 'TestTimelock',      False, None, None,
+     {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': False, 'watch_safe_signers': False, 'watch_timelock': True},
+     'low', 'timelock', False,
+     ['schedule', 'execute', 'updateDelay'],
+     None),
+    ('$ACCESS',   'regular',  'TestAccessControl', False, None, None,
+     {'watch_upgrades': False, 'watch_ownership': True, 'watch_pause': False, 'watch_roles': True, 'watch_safe_signers': False, 'watch_timelock': False},
+     'low', 'role_based', False,
+     ['grantRole', 'revokeRole'],
+     None),
 ]
 
-for addr, ctype, name, is_proxy, proxy_type, config in contracts:
+for addr, ctype, name, is_proxy, proxy_type, impl, config, risk, model, pausable, functions, owner in contracts:
     # 2. Create a Contract row linked to the protocol
     ct = Contract(
         address=addr.lower(),
@@ -279,11 +354,34 @@ for addr, ctype, name, is_proxy, proxy_type, config in contracts:
         protocol_id=proto.id,
         is_proxy=is_proxy,
         proxy_type=proxy_type,
+        implementation=impl.lower() if impl else None,
     )
     s.add(ct)
-    s.flush()  # assigns ct.id
+    s.flush()
 
-    # 3. Create a completed Job so enrollment filters see this contract
+    # 3. Create ContractSummary (so snapshot captures risk/model)
+    cs = ContractSummary(
+        contract_id=ct.id,
+        risk_level=risk,
+        control_model=model,
+        is_pausable=pausable,
+        is_upgradeable=is_proxy,
+    )
+    s.add(cs)
+
+    # 4. Create EffectiveFunction rows (so diff shows function changes)
+    for fn in functions:
+        s.add(EffectiveFunction(contract_id=ct.id, function_name=fn))
+
+    # 5. Create ControllerValue for owner if known
+    if owner:
+        s.add(ControllerValue(
+            contract_id=ct.id,
+            controller_id='owner',
+            value=owner.lower(),
+        ))
+
+    # 6. Create a completed Job so enrollment filters see this contract
     job = Job(
         address=addr.lower(),
         name=name,
@@ -292,12 +390,10 @@ for addr, ctype, name, is_proxy, proxy_type, config in contracts:
         protocol_id=proto.id,
     )
     s.add(job)
-    s.flush()  # assigns job.id
-
-    # Link Contract to its Job
+    s.flush()
     ct.job_id = job.id
 
-    # 4-5. Create MonitoredContract linked to protocol and contract
+    # 7. Create MonitoredContract linked to protocol and contract
     mc = MonitoredContract(
         id=uuid.uuid4(),
         address=addr.lower(),
@@ -337,6 +433,7 @@ proxy_mc.watched_proxy_id = wp.id
 s.commit()
 print()
 print(f'All 6 contracts registered at block {block} (protocol_id={proto.id}).')
+print(f'Analysis data seeded: ContractSummary + EffectiveFunction + ControllerValue rows.')
 s.close()
 "
         echo ""
@@ -420,6 +517,12 @@ s.close()
 
         echo ""
         echo "All 10 events fired. Check the monitoring tab — they should appear within ~15s."
+        echo ""
+        echo "Reanalysis webhook flow:"
+        echo "  - Proxy upgrade + ownership transfer + role grant/revoke will trigger re-analysis jobs"
+        echo "  - First webhook: event detected + 'Re-analysis: Running new analysis (Job XXXX)'"
+        echo "  - Second webhook (after job completes): 'Re-analysis complete' with diff summary"
+        echo "  - Pause/unpause, signer changes, timelock ops do NOT trigger re-analysis"
         ;;
 
     *)

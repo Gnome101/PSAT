@@ -213,6 +213,16 @@ def _format_governance_embed(event: MonitoredEvent, session: Session) -> dict:
     if event.tx_hash:
         fields.append({"name": "Tx", "value": f"`{event.tx_hash}`", "inline": False})
 
+    # If a re-analysis job was queued for this event, note it.
+    reanalysis_job_id = data.get("reanalysis_job_id")
+    if reanalysis_job_id:
+        short_id = str(reanalysis_job_id)[:8]
+        fields.append({
+            "name": "Re-analysis",
+            "value": f"Running new analysis to evaluate changes (Job `{short_id}`)",
+            "inline": False,
+        })
+
     color = _EVENT_COLORS.get(event.event_type, 0x95A5A6)
 
     return {
@@ -290,4 +300,116 @@ def notify_protocol_events(session: Session, events: list[MonitoredEvent]) -> No
             "Sent %d protocol notification(s) for %d event(s)",
             sent,
             len(events),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Re-analysis completion notification
+# ---------------------------------------------------------------------------
+
+
+def notify_reanalysis_complete(session: Session, job: "Job") -> None:
+    """Send a Discord notification when a re-analysis job finishes.
+
+    Builds a diff summary comparing the pre-reanalysis snapshot (stored in
+    ``job.request["reanalysis_snapshot"]``) with the current DB state, then
+    dispatches the embed to all protocol subscriptions for this job's protocol.
+
+    The embed references the original reanalysis Job ID so recipients can
+    correlate it with the initial event notification.
+    """
+    from db.models import Job as _Job  # noqa: F811 — deferred to avoid circular import
+
+    request = job.request if isinstance(job.request, dict) else {}
+    trigger = request.get("reanalysis_trigger", "unknown")
+    protocol_id = job.protocol_id
+    if not protocol_id:
+        return
+
+    # Load subscriptions
+    subs = (
+        session.execute(
+            select(ProtocolSubscription).where(
+                ProtocolSubscription.protocol_id == protocol_id,
+                ProtocolSubscription.discord_webhook_url.isnot(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not subs:
+        return
+
+    # Build diff
+    from services.monitoring.reanalysis import build_reanalysis_diff
+
+    changes = build_reanalysis_diff(session, job)
+
+    # Resolve names
+    protocol_name = None
+    proto = session.get(Protocol, protocol_id)
+    if proto:
+        protocol_name = proto.name
+
+    contract_name = None
+    if job.address:
+        contract_row = session.execute(
+            select(Contract).where(
+                Contract.address == job.address.lower(),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if contract_row:
+            contract_name = contract_row.contract_name
+
+    # Build title
+    label = contract_name or f"{(job.address or '?')[:10]}...{(job.address or '?')[-4:]}"
+    if protocol_name:
+        title = f"{protocol_name}: Re-analysis complete — {label}"
+    else:
+        title = f"Re-analysis complete — {label}"
+
+    short_id = str(job.id)[:8]
+
+    fields: list[dict] = [
+        {"name": "Trigger", "value": trigger.replace("_", " "), "inline": True},
+        {"name": "Job", "value": f"`{short_id}`", "inline": True},
+    ]
+    if job.address:
+        fields.append({"name": "Contract", "value": f"`{job.address}`", "inline": False})
+
+    if changes:
+        fields.append({
+            "name": "Changes detected",
+            "value": "\n".join(f"• {c}" for c in changes),
+            "inline": False,
+        })
+    else:
+        fields.append({
+            "name": "Changes detected",
+            "value": "No significant differences from previous analysis.",
+            "inline": False,
+        })
+
+    embed = {
+        "title": title,
+        "color": 0x2ECC71,  # green
+        "fields": fields,
+    }
+
+    sent = 0
+    for sub in subs:
+        try:
+            _send_discord(sub.discord_webhook_url, embed)  # type: ignore[arg-type]
+            sent += 1
+        except Exception:
+            logger.exception(
+                "Reanalysis completion notification failed for subscription %s",
+                sub.id,
+            )
+
+    if sent:
+        logger.info(
+            "Sent %d reanalysis-complete notification(s) for job %s",
+            sent,
+            job.id,
         )

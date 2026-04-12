@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStatus, MonitoredContract
+from db.models import (
+    Contract,
+    ContractSummary,
+    ControllerValue,
+    EffectiveFunction,
+    Job,
+    JobStatus,
+    MonitoredContract,
+)
 from db.queue import create_job
 
 logger = logging.getLogger(__name__)
@@ -106,6 +115,11 @@ def maybe_queue_reanalysis(
     if mc.protocol_id:
         request_dict["protocol_id"] = mc.protocol_id
 
+    # Snapshot current analysis state so the completion webhook can show a diff.
+    snapshot = _build_snapshot(session, mc)
+    if snapshot:
+        request_dict["reanalysis_snapshot"] = snapshot
+
     job = create_job(session, request_dict)
 
     logger.info(
@@ -115,3 +129,142 @@ def maybe_queue_reanalysis(
         trigger,
     )
     return job
+
+
+# ---------------------------------------------------------------------------
+# Snapshot & diff helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_snapshot(session: Session, mc: MonitoredContract) -> dict[str, Any]:
+    """Capture the current analysis state for later comparison."""
+    snap: dict[str, Any] = {}
+    if not mc.contract_id:
+        return snap
+
+    contract = session.get(Contract, mc.contract_id)
+    if not contract:
+        return snap
+
+    snap["implementation"] = contract.implementation
+    snap["admin"] = contract.admin
+
+    summary = session.execute(
+        select(ContractSummary).where(ContractSummary.contract_id == contract.id)
+    ).scalar_one_or_none()
+    if summary:
+        snap["risk_level"] = summary.risk_level
+        snap["control_model"] = summary.control_model
+        snap["is_pausable"] = summary.is_pausable
+
+    # Privileged function names
+    fns = (
+        session.execute(
+            select(EffectiveFunction.function_name).where(
+                EffectiveFunction.contract_id == contract.id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    snap["privileged_functions"] = sorted(fns)
+
+    # Owner value
+    owner_cv = session.execute(
+        select(ControllerValue).where(
+            ControllerValue.contract_id == contract.id,
+            ControllerValue.controller_id.ilike("%owner%"),
+        )
+    ).scalars().first()
+    if owner_cv:
+        snap["owner"] = owner_cv.value
+
+    return snap
+
+
+def build_reanalysis_diff(session: Session, job: Job) -> list[str]:
+    """Compare the pre-reanalysis snapshot with the current DB state.
+
+    Returns a list of human-readable change descriptions (may be empty).
+    """
+    request = job.request if isinstance(job.request, dict) else {}
+    snapshot: dict[str, Any] = request.get("reanalysis_snapshot", {})
+    if not snapshot:
+        return []
+
+    address = (job.address or "").lower()
+    chain = request.get("chain", "ethereum")
+
+    contract = session.execute(
+        select(Contract).where(
+            func.lower(Contract.address) == address,
+            Contract.chain == chain,
+        )
+    ).scalars().first()
+    if not contract:
+        return []
+
+    changes: list[str] = []
+
+    # Implementation
+    old_impl = snapshot.get("implementation")
+    new_impl = contract.implementation
+    if old_impl and new_impl and old_impl.lower() != new_impl.lower():
+        changes.append(f"Implementation: `{old_impl}` → `{new_impl}`")
+    elif not old_impl and new_impl:
+        changes.append(f"Implementation: (none) → `{new_impl}`")
+
+    # Admin
+    old_admin = snapshot.get("admin")
+    new_admin = contract.admin
+    if old_admin and new_admin and old_admin.lower() != new_admin.lower():
+        changes.append(f"Admin: `{old_admin}` → `{new_admin}`")
+
+    # Summary fields
+    summary = session.execute(
+        select(ContractSummary).where(ContractSummary.contract_id == contract.id)
+    ).scalar_one_or_none()
+    if summary:
+        old_risk = snapshot.get("risk_level")
+        if old_risk and summary.risk_level and old_risk != summary.risk_level:
+            changes.append(f"Risk level: {old_risk} → {summary.risk_level}")
+
+        old_model = snapshot.get("control_model")
+        if old_model and summary.control_model and old_model != summary.control_model:
+            changes.append(f"Control model: {old_model} → {summary.control_model}")
+
+    # Privileged functions diff
+    old_fns = set(snapshot.get("privileged_functions", []))
+    new_fns_rows = (
+        session.execute(
+            select(EffectiveFunction.function_name).where(
+                EffectiveFunction.contract_id == contract.id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    new_fns = set(new_fns_rows)
+    added = sorted(new_fns - old_fns)
+    removed = sorted(old_fns - new_fns)
+    if added or removed:
+        parts = [f"Functions: {len(old_fns)} → {len(new_fns)}"]
+        if added:
+            parts.append(f"+{', '.join(added)}")
+        if removed:
+            parts.append(f"-{', '.join(removed)}")
+        changes.append(" | ".join(parts))
+
+    # Owner
+    old_owner = snapshot.get("owner")
+    owner_cv = session.execute(
+        select(ControllerValue).where(
+            ControllerValue.contract_id == contract.id,
+            ControllerValue.controller_id.ilike("%owner%"),
+        )
+    ).scalars().first()
+    new_owner = owner_cv.value if owner_cv else None
+    if old_owner and new_owner and old_owner.lower() != new_owner.lower():
+        changes.append(f"Owner: `{old_owner}` → `{new_owner}`")
+
+    return changes
