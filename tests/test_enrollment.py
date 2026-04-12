@@ -45,9 +45,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 pytestmark = requires_postgres
 
@@ -75,8 +73,15 @@ def db_session():
 # ---------------------------------------------------------------------------
 
 
-def _mock_contract(address="0x" + "a" * 40, chain="ethereum", name="TestContract",
-                   is_proxy=False, proxy_type=None, implementation=None, protocol_id=1):
+def _mock_contract(
+    address="0x" + "a" * 40,
+    chain="ethereum",
+    name="TestContract",
+    is_proxy=False,
+    proxy_type=None,
+    implementation=None,
+    protocol_id=1,
+):
     c = MagicMock()
     c.id = 1
     c.address = address
@@ -89,8 +94,7 @@ def _mock_contract(address="0x" + "a" * 40, chain="ethereum", name="TestContract
     return c
 
 
-def _mock_summary(is_upgradeable=False, is_pausable=False, has_timelock=False,
-                  control_model=None):
+def _mock_summary(is_upgradeable=False, is_pausable=False, has_timelock=False, control_model=None):
     s = MagicMock()
     s.is_upgradeable = is_upgradeable
     s.is_pausable = is_pausable
@@ -101,8 +105,7 @@ def _mock_summary(is_upgradeable=False, is_pausable=False, has_timelock=False,
     return s
 
 
-def _mock_controller_value(controller_id="owner", value="0x" + "b" * 40,
-                           resolved_type=None):
+def _mock_controller_value(controller_id="owner", value="0x" + "b" * 40, resolved_type=None):
     cv = MagicMock()
     cv.controller_id = controller_id
     cv.value = value
@@ -401,9 +404,7 @@ class TestEnrollProtocolContracts:
         # Still only one row
         from sqlalchemy import func
 
-        count = db_session.execute(
-            select(func.count()).select_from(MonitoredContract)
-        ).scalar()
+        count = db_session.execute(select(func.count()).select_from(MonitoredContract)).scalar()
         assert count == 1
 
     def test_enroll_bridges_to_watched_proxy(self, db_session):
@@ -479,9 +480,6 @@ def pg_session():
     from db.models import (
         Base,
         Contract,
-        ContractSummary,
-        ControlGraphNode,
-        ControllerValue,
         Job,
         Protocol,
     )
@@ -493,21 +491,13 @@ def pg_session():
         yield session
     finally:
         session.rollback()
-        proto = session.execute(
-            select(Protocol).where(Protocol.name == PROTO_NAME)
-        ).scalar_one_or_none()
+        proto = session.execute(select(Protocol).where(Protocol.name == PROTO_NAME)).scalar_one_or_none()
         if proto:
             # Cascade deletes Contract → ContractSummary, ControllerValue,
             # ControlGraphNode; and Job cleanup via protocol_id
-            session.execute(
-                select(MonitoredContract).where(
-                    MonitoredContract.protocol_id == proto.id
-                )
-            )
+            session.execute(select(MonitoredContract).where(MonitoredContract.protocol_id == proto.id))
             for mc in session.execute(
-                select(MonitoredContract).where(
-                    MonitoredContract.protocol_id == proto.id
-                )
+                select(MonitoredContract).where(MonitoredContract.protocol_id == proto.id)
             ).scalars():
                 if mc.watched_proxy_id:
                     wp = session.get(WatchedProxy, mc.watched_proxy_id)
@@ -521,14 +511,10 @@ def pg_session():
                 )
             ).scalars():
                 session.delete(mc)
-            for j in session.execute(
-                select(Job).where(Job.protocol_id == proto.id)
-            ).scalars():
+            for j in session.execute(select(Job).where(Job.protocol_id == proto.id)).scalars():
                 session.delete(j)
             # Contracts cascade-delete summaries, controller_values, graph nodes
-            for c in session.execute(
-                select(Contract).where(Contract.protocol_id == proto.id)
-            ).scalars():
+            for c in session.execute(select(Contract).where(Contract.protocol_id == proto.id)).scalars():
                 session.delete(c)
             session.delete(proto)
         session.commit()
@@ -539,6 +525,7 @@ def pg_session():
 def _create_completed_job(session, address, protocol_id):
     """Create a completed Job for a contract address so enrollment picks it up."""
     from db.models import Job, JobStage, JobStatus
+
     job = Job(
         address=address,
         protocol_id=protocol_id,
@@ -577,18 +564,22 @@ class TestEnrollmentIntegration:
         pg_session.add(proxy_contract)
         pg_session.flush()
 
-        pg_session.add(ContractSummary(
-            contract_id=proxy_contract.id,
-            is_upgradeable=True,
-            is_pausable=True,
-            control_model="governance",
-        ))
-        pg_session.add(ControllerValue(
-            contract_id=proxy_contract.id,
-            controller_id="owner",
-            value="0x" + "b1" * 20,
-            resolved_type="safe",
-        ))
+        pg_session.add(
+            ContractSummary(
+                contract_id=proxy_contract.id,
+                is_upgradeable=True,
+                is_pausable=True,
+                control_model="governance",
+            )
+        )
+        pg_session.add(
+            ControllerValue(
+                contract_id=proxy_contract.id,
+                controller_id="owner",
+                value="0x" + "b1" * 20,
+                resolved_type="safe",
+            )
+        )
         _create_completed_job(pg_session, "0x" + "a1" * 20, proto.id)
 
         # Plain pausable contract
@@ -601,27 +592,25 @@ class TestEnrollmentIntegration:
         pg_session.add(pausable_contract)
         pg_session.flush()
 
-        pg_session.add(ContractSummary(
-            contract_id=pausable_contract.id,
-            is_upgradeable=False,
-            is_pausable=True,
-            control_model="role-based",
-        ))
+        pg_session.add(
+            ContractSummary(
+                contract_id=pausable_contract.id,
+                is_upgradeable=False,
+                is_pausable=True,
+                control_model="role-based",
+            )
+        )
         _create_completed_job(pg_session, "0x" + "c1" * 20, proto.id)
         pg_session.commit()
 
         with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
-            enrolled = enroll_protocol_contracts(
-                pg_session, proto.id, "http://rpc", "ethereum"
-            )
+            enrolled = enroll_protocol_contracts(pg_session, proto.id, "http://rpc", "ethereum")
 
         assert len(enrolled) == 2
 
         # Verify proxy contract enrollment
         proxy_mc = pg_session.execute(
-            select(MonitoredContract).where(
-                MonitoredContract.address == ("0x" + "a1" * 20)
-            )
+            select(MonitoredContract).where(MonitoredContract.address == ("0x" + "a1" * 20))
         ).scalar_one()
         assert proxy_mc.contract_type == "proxy"
         assert proxy_mc.monitoring_config["watch_upgrades"] is True
@@ -635,9 +624,7 @@ class TestEnrollmentIntegration:
 
         # Verify pausable contract enrollment
         pausable_mc = pg_session.execute(
-            select(MonitoredContract).where(
-                MonitoredContract.address == ("0x" + "c1" * 20)
-            )
+            select(MonitoredContract).where(MonitoredContract.address == ("0x" + "c1" * 20))
         ).scalar_one()
         assert pausable_mc.contract_type == "pausable"
         assert pausable_mc.monitoring_config["watch_pause"] is True
@@ -674,26 +661,24 @@ class TestEnrollmentIntegration:
 
         # No ContractSummary — this is the bug scenario.
         # But there IS a controller value (owner) from the resolution stage.
-        pg_session.add(ControllerValue(
-            contract_id=proxy_contract.id,
-            controller_id="owner",
-            value="0x" + "cc" * 20,
-            resolved_type="safe",
-        ))
+        pg_session.add(
+            ControllerValue(
+                contract_id=proxy_contract.id,
+                controller_id="owner",
+                value="0x" + "cc" * 20,
+                resolved_type="safe",
+            )
+        )
         _create_completed_job(pg_session, "0x" + "a1" * 20, proto.id)
         pg_session.commit()
 
         with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
-            enrolled = enroll_protocol_contracts(
-                pg_session, proto.id, "http://rpc", "ethereum"
-            )
+            enrolled = enroll_protocol_contracts(pg_session, proto.id, "http://rpc", "ethereum")
 
         assert len(enrolled) == 1
 
         mc = pg_session.execute(
-            select(MonitoredContract).where(
-                MonitoredContract.address == ("0x" + "a1" * 20)
-            )
+            select(MonitoredContract).where(MonitoredContract.address == ("0x" + "a1" * 20))
         ).scalar_one()
 
         # Must be proxy, not regular
@@ -736,26 +721,24 @@ class TestEnrollmentIntegration:
         pg_session.add(impl_contract)
         pg_session.flush()
 
-        pg_session.add(ControllerValue(
-            contract_id=impl_contract.id,
-            controller_id="admin",
-            value="0x" + "ee" * 20,
-            resolved_type="proxy_admin",
-        ))
+        pg_session.add(
+            ControllerValue(
+                contract_id=impl_contract.id,
+                controller_id="admin",
+                value="0x" + "ee" * 20,
+                resolved_type="proxy_admin",
+            )
+        )
         _create_completed_job(pg_session, "0x" + "d1" * 20, proto.id)
         pg_session.commit()
 
         with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
-            enrolled = enroll_protocol_contracts(
-                pg_session, proto.id, "http://rpc", "ethereum"
-            )
+            enrolled = enroll_protocol_contracts(pg_session, proto.id, "http://rpc", "ethereum")
 
         assert len(enrolled) == 1
 
         mc = pg_session.execute(
-            select(MonitoredContract).where(
-                MonitoredContract.address == ("0x" + "d1" * 20)
-            )
+            select(MonitoredContract).where(MonitoredContract.address == ("0x" + "d1" * 20))
         ).scalar_one()
 
         # Must be regular, NOT proxy
@@ -789,20 +772,31 @@ class TestEnrollmentIntegration:
         timelock_addr = "0x" + "e2" * 20
         eoa_addr = "0x" + "e3" * 20
 
-        pg_session.add_all([
-            ControlGraphNode(
-                contract_id=contract.id, address=safe_addr,
-                node_type="safe", resolved_type="safe", label="Multi-sig",
-            ),
-            ControlGraphNode(
-                contract_id=contract.id, address=timelock_addr,
-                node_type="timelock", resolved_type="timelock", label="Timelock",
-            ),
-            ControlGraphNode(
-                contract_id=contract.id, address=eoa_addr,
-                node_type="eoa", resolved_type="eoa", label="Deployer",
-            ),
-        ])
+        pg_session.add_all(
+            [
+                ControlGraphNode(
+                    contract_id=contract.id,
+                    address=safe_addr,
+                    node_type="safe",
+                    resolved_type="safe",
+                    label="Multi-sig",
+                ),
+                ControlGraphNode(
+                    contract_id=contract.id,
+                    address=timelock_addr,
+                    node_type="timelock",
+                    resolved_type="timelock",
+                    label="Timelock",
+                ),
+                ControlGraphNode(
+                    contract_id=contract.id,
+                    address=eoa_addr,
+                    node_type="eoa",
+                    resolved_type="eoa",
+                    label="Deployer",
+                ),
+            ]
+        )
         pg_session.commit()
 
         with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
@@ -831,20 +825,23 @@ class TestEnrollmentIntegration:
 
     def test_enroll_is_idempotent(self, pg_session):
         """Calling enroll_protocol_contracts twice doesn't duplicate rows."""
-        from db.models import Contract, Protocol
         from sqlalchemy import func
+
+        from db.models import Contract, Protocol
         from services.monitoring.enrollment import enroll_protocol_contracts
 
         proto = Protocol(name=PROTO_NAME)
         pg_session.add(proto)
         pg_session.flush()
 
-        pg_session.add(Contract(
-            address="0x" + "f1" * 20,
-            chain="ethereum",
-            protocol_id=proto.id,
-            contract_name="Token",
-        ))
+        pg_session.add(
+            Contract(
+                address="0x" + "f1" * 20,
+                chain="ethereum",
+                protocol_id=proto.id,
+                contract_name="Token",
+            )
+        )
         _create_completed_job(pg_session, "0x" + "f1" * 20, proto.id)
         pg_session.commit()
 
@@ -856,9 +853,7 @@ class TestEnrollmentIntegration:
         assert len(second) == 1
 
         count = pg_session.execute(
-            select(func.count()).select_from(MonitoredContract).where(
-                MonitoredContract.address == ("0x" + "f1" * 20)
-            )
+            select(func.count()).select_from(MonitoredContract).where(MonitoredContract.address == ("0x" + "f1" * 20))
         ).scalar()
         assert count == 1
 
@@ -867,7 +862,7 @@ class TestEnrollmentIntegration:
         not be immediately deactivated by the stale-detection query in
         enroll_protocol_contracts. Regression test for flush-ordering bug.
         """
-        from db.models import Contract, ControlGraphNode, Job, JobStage, JobStatus, Protocol
+        from db.models import Contract, ControlGraphNode, Protocol
         from services.monitoring.enrollment import enroll_protocol_contracts
 
         proto = Protocol(name=PROTO_NAME)
@@ -907,7 +902,6 @@ class TestEnrollmentIntegration:
 
         assert safe_mc is not None, "Controller address was not enrolled"
         assert safe_mc.is_active is True, (
-            "Controller MonitoredContract was deactivated by stale-detection "
-            "— flush ordering bug"
+            "Controller MonitoredContract was deactivated by stale-detection — flush ordering bug"
         )
         assert safe_mc.contract_type == "safe"

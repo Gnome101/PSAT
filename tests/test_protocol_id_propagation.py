@@ -48,9 +48,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +56,7 @@ requires_postgres = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 
 
-def _make_job(protocol_id=1, address="0x" + "aa" * 20, name="eETH"):
+def _make_job(protocol_id: int | None = 1, address="0x" + "aa" * 20, name="eETH"):
     """Build a mock Job object with the fields _resolve_proxy reads."""
     job = MagicMock()
     job.id = uuid.uuid4()
@@ -198,9 +196,7 @@ class TestStaticWorkerProtocolIdPropagation:
 
         for call in mock_create_job.call_args_list:
             child_request = call[0][1]
-            assert child_request.get("protocol_id") == 5, (
-                f"Facet child_request missing protocol_id: {child_request}"
-            )
+            assert child_request.get("protocol_id") == 5, f"Facet child_request missing protocol_id: {child_request}"
 
 
 # ---------------------------------------------------------------------------
@@ -225,9 +221,7 @@ class TestEnrollmentWithProxyContracts:
         if job.protocol_id:
             enrollment_attempted = True
 
-        assert not enrollment_attempted, (
-            "Enrollment should NOT fire when protocol_id is NULL (current broken behavior)"
-        )
+        assert not enrollment_attempted, "Enrollment should NOT fire when protocol_id is NULL (current broken behavior)"
 
     def test_enrollment_fires_when_protocol_id_set(self):
         """When protocol_id is properly propagated, enrollment is attempted."""
@@ -238,9 +232,7 @@ class TestEnrollmentWithProxyContracts:
         if job.protocol_id:
             enrollment_attempted = True
 
-        assert enrollment_attempted, (
-            "Enrollment must fire when protocol_id is set"
-        )
+        assert enrollment_attempted, "Enrollment must fire when protocol_id is set"
 
     @patch("services.monitoring.enrollment.enroll_protocol_contracts")
     def test_maybe_enroll_called_with_correct_protocol(self, mock_enroll):
@@ -301,7 +293,10 @@ class TestEnrollmentWithProxyContracts:
 
         # With exclude_job_id — enrollment should fire
         enrolled = maybe_enroll_protocol(
-            mock_session, 1, "http://rpc", "ethereum",
+            mock_session,
+            1,
+            "http://rpc",
+            "ethereum",
             exclude_job_id=calling_job_id,
         )
         assert enrolled is True
@@ -356,12 +351,11 @@ def pg_session():
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
 
-    from db.models import Artifact, Base, Contract, Job, Protocol, SourceFile
+    from db.models import Base, Job, Protocol
 
     engine = create_engine(DATABASE_URL)
     Base.metadata.create_all(engine)
     session = Session(engine, expire_on_commit=False)
-    created_job_ids: list[uuid.UUID] = []
     original_protocol_ids: set[int] = set()
 
     # Track existing protocols so we only clean up test ones
@@ -379,24 +373,32 @@ def pg_session():
 
         if test_proto:
             # Delete jobs (and cascaded artifacts/source_files) for test protocol
-            test_jobs = session.execute(
-                select(Job).where(Job.protocol_id == test_proto.id)
-            ).scalars().all()
+            test_jobs = session.execute(select(Job).where(Job.protocol_id == test_proto.id)).scalars().all()
             for j in test_jobs:
                 session.delete(j)
             # Also delete jobs with NULL protocol_id that have test addresses
-            null_jobs = session.execute(
-                select(Job).where(
-                    Job.protocol_id.is_(None),
-                    Job.address.in_([
-                        "0x" + "11" * 20, "0x" + "22" * 20,
-                        "0x" + "33" * 20, "0x" + "44" * 20,
-                        "0x" + "55" * 20, "0x" + "66" * 20,
-                        "0x" + "77" * 20, "0x" + "88" * 20,
-                        "0x" + "99" * 20,
-                    ]),
+            null_jobs = (
+                session.execute(
+                    select(Job).where(
+                        Job.protocol_id.is_(None),
+                        Job.address.in_(
+                            [
+                                "0x" + "11" * 20,
+                                "0x" + "22" * 20,
+                                "0x" + "33" * 20,
+                                "0x" + "44" * 20,
+                                "0x" + "55" * 20,
+                                "0x" + "66" * 20,
+                                "0x" + "77" * 20,
+                                "0x" + "88" * 20,
+                                "0x" + "99" * 20,
+                            ]
+                        ),
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             for j in null_jobs:
                 session.delete(j)
             session.flush()
@@ -426,12 +428,15 @@ class TestProtocolIdPropagationIntegration:
         pg_session.add(protocol)
         pg_session.commit()
 
-        parent_job = create_job(pg_session, {
-            "address": "0x" + "11" * 20,
-            "name": "TestProxy",
-            "rpc_url": "http://localhost:8545",
-            "protocol_id": protocol.id,
-        })
+        parent_job = create_job(
+            pg_session,
+            {
+                "address": "0x" + "11" * 20,
+                "name": "TestProxy",
+                "rpc_url": "http://localhost:8545",
+                "protocol_id": protocol.id,
+            },
+        )
         assert parent_job.protocol_id == protocol.id
 
         impl_addr = "0x" + "22" * 20
@@ -440,17 +445,16 @@ class TestProtocolIdPropagationIntegration:
         worker = StaticWorker()
 
         with patch("services.discovery.classifier.classify_single", return_value=classify_result):
+            assert parent_job.address is not None
             worker._resolve_proxy(pg_session, parent_job, parent_job.address, "TestProxy")
 
         # Query the child job directly from the DB
         from sqlalchemy import select
-        child = pg_session.execute(
-            select(Job).where(Job.address == impl_addr)
-        ).scalar_one()
+
+        child = pg_session.execute(select(Job).where(Job.address == impl_addr)).scalar_one()
 
         assert child.protocol_id == protocol.id, (
-            f"Child impl job must have protocol_id={protocol.id}, "
-            f"got {child.protocol_id}"
+            f"Child impl job must have protocol_id={protocol.id}, got {child.protocol_id}"
         )
         # Also verify it's stored in the request JSONB
         assert child.request.get("protocol_id") == protocol.id
@@ -471,47 +475,60 @@ class TestProtocolIdPropagationIntegration:
         pg_session.commit()
 
         # First job: already completed
-        first = create_job(pg_session, {
-            "address": "0x" + "88" * 20,
-            "name": "FirstContract",
-            "protocol_id": protocol.id,
-        })
+        first = create_job(
+            pg_session,
+            {
+                "address": "0x" + "88" * 20,
+                "name": "FirstContract",
+                "protocol_id": protocol.id,
+            },
+        )
         first.status = JobStatus.completed
         first.stage = JobStage.done
         pg_session.commit()
 
         # Second job: still processing (the caller)
-        caller = create_job(pg_session, {
-            "address": "0x" + "99" * 20,
-            "name": "SecondContract",
-            "protocol_id": protocol.id,
-        })
+        caller = create_job(
+            pg_session,
+            {
+                "address": "0x" + "99" * 20,
+                "name": "SecondContract",
+                "protocol_id": protocol.id,
+            },
+        )
         caller.status = JobStatus.processing
         caller.stage = JobStage.policy
         pg_session.commit()
 
         # Without exclude: caller is in-flight → blocked
         with patch("services.monitoring.enrollment.enroll_protocol_contracts"):
-            assert maybe_enroll_protocol(
-                pg_session, protocol.id, "http://localhost:8545", "ethereum",
-            ) is False, "Should be blocked — the calling job sees itself as in-flight"
+            assert (
+                maybe_enroll_protocol(
+                    pg_session,
+                    protocol.id,
+                    "http://localhost:8545",
+                    "ethereum",
+                )
+                is False
+            ), "Should be blocked — the calling job sees itself as in-flight"
 
         # With exclude: caller excluded, only completed job remains → enrolls
         with patch("services.monitoring.enrollment.enroll_protocol_contracts") as mock_enroll:
             mock_enroll.return_value = []
             result = maybe_enroll_protocol(
-                pg_session, protocol.id, "http://localhost:8545", "ethereum",
+                pg_session,
+                protocol.id,
+                "http://localhost:8545",
+                "ethereum",
                 exclude_job_id=caller.id,
             )
-            assert result is True, (
-                "With exclude_job_id, the calling job should not block enrollment"
-            )
+            assert result is True, "With exclude_job_id, the calling job should not block enrollment"
             mock_enroll.assert_called_once()
 
     def test_enrollment_in_flight_check_sees_impl_jobs(self, pg_session):
         """Impl jobs with protocol_id are visible to maybe_enroll_protocol's
         in-flight check, preventing premature enrollment."""
-        from db.models import Job, JobStage, JobStatus, Protocol
+        from db.models import JobStage, JobStatus, Protocol
         from db.queue import create_job
         from services.monitoring.enrollment import maybe_enroll_protocol
 
@@ -520,28 +537,32 @@ class TestProtocolIdPropagationIntegration:
         pg_session.commit()
 
         # Parent job: completed
-        parent = create_job(pg_session, {
-            "address": "0x" + "33" * 20,
-            "name": "ProxyContract",
-            "protocol_id": protocol.id,
-        })
+        parent = create_job(
+            pg_session,
+            {
+                "address": "0x" + "33" * 20,
+                "name": "ProxyContract",
+                "protocol_id": protocol.id,
+            },
+        )
         parent.status = JobStatus.completed
         parent.stage = JobStage.done
         pg_session.commit()
 
         # Impl child job: still processing (simulates the fix working)
-        impl_job = create_job(pg_session, {
-            "address": "0x" + "44" * 20,
-            "name": "ProxyContract: (impl)",
-            "protocol_id": protocol.id,  # propagated thanks to the fix
-        })
+        impl_job = create_job(
+            pg_session,
+            {
+                "address": "0x" + "44" * 20,
+                "name": "ProxyContract: (impl)",
+                "protocol_id": protocol.id,  # propagated thanks to the fix
+            },
+        )
         impl_job.status = JobStatus.processing
         pg_session.commit()
 
         # Enrollment should be blocked — the impl job is still in-flight
-        result = maybe_enroll_protocol(
-            pg_session, protocol.id, "http://localhost:8545", "ethereum"
-        )
+        result = maybe_enroll_protocol(pg_session, protocol.id, "http://localhost:8545", "ethereum")
         assert result is False, (
             "Enrollment must wait for impl jobs to finish. "
             "If this passes prematurely, impl jobs are invisible to the check."
@@ -558,35 +579,40 @@ class TestProtocolIdPropagationIntegration:
         pg_session.commit()
 
         # Root proxy job
-        root = create_job(pg_session, {
-            "address": "0x" + "55" * 20,
-            "name": "RootProxy",
-            "rpc_url": "http://localhost:8545",
-            "protocol_id": protocol.id,
-        })
+        root = create_job(
+            pg_session,
+            {
+                "address": "0x" + "55" * 20,
+                "name": "RootProxy",
+                "rpc_url": "http://localhost:8545",
+                "protocol_id": protocol.id,
+            },
+        )
 
         # Static worker creates impl child
         impl_addr = "0x" + "66" * 20
         worker = StaticWorker()
-        with patch("services.discovery.classifier.classify_single",
-                    return_value=_proxy_classification(impl_addr)):
+        with patch("services.discovery.classifier.classify_single", return_value=_proxy_classification(impl_addr)):
+            assert root.address is not None
             worker._resolve_proxy(pg_session, root, root.address, "RootProxy")
 
         from sqlalchemy import select
-        impl_job = pg_session.execute(
-            select(Job).where(Job.address == impl_addr)
-        ).scalar_one()
+
+        impl_job = pg_session.execute(select(Job).where(Job.address == impl_addr)).scalar_one()
         assert impl_job.protocol_id == protocol.id
 
         # Resolution worker would then propagate from impl_job.
         # Simulate: create a grandchild using resolution worker's pattern.
         grandchild_addr = "0x" + "77" * 20
-        grandchild = create_job(pg_session, {
-            "address": grandchild_addr,
-            "name": "DiscoveredContract",
-            "rpc_url": "http://localhost:8545",
-            "discovered_by": "resolution",
-        })
+        grandchild = create_job(
+            pg_session,
+            {
+                "address": grandchild_addr,
+                "name": "DiscoveredContract",
+                "rpc_url": "http://localhost:8545",
+                "discovered_by": "resolution",
+            },
+        )
         # Resolution worker pattern (resolution_worker.py:323-325)
         if impl_job.protocol_id:
             grandchild.protocol_id = impl_job.protocol_id

@@ -108,11 +108,7 @@ def _cast(args: list[str], rpc_url: str) -> str:
 
 
 def _cast_send(to: str, sig: str, args: list[str], rpc_url: str, private_key: str) -> str:
-    cmd = (
-        ["cast", "send", to, sig]
-        + args
-        + ["--rpc-url", rpc_url, "--private-key", private_key]
-    )
+    cmd = ["cast", "send", to, sig] + args + ["--rpc-url", rpc_url, "--private-key", private_key]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(f"cast send failed: {result.stderr}")
@@ -120,17 +116,26 @@ def _cast_send(to: str, sig: str, args: list[str], rpc_url: str, private_key: st
 
 
 def _compile_and_deploy(
-    source: str, contract_name: str, constructor_args: list[str],
-    rpc_url: str, private_key: str, tmp_path: Path,
+    source: str,
+    contract_name: str,
+    constructor_args: list[str],
+    rpc_url: str,
+    private_key: str,
+    tmp_path: Path,
 ) -> str:
     src_file = tmp_path / f"{contract_name}.sol"
     src_file.write_text(source)
 
     cmd = [
-        "forge", "create", f"{src_file}:{contract_name}",
-        "--rpc-url", rpc_url,
-        "--private-key", private_key,
-        "--broadcast", "--no-cache",
+        "forge",
+        "create",
+        f"{src_file}:{contract_name}",
+        "--rpc-url",
+        rpc_url,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--no-cache",
     ]
     if constructor_args:
         cmd += ["--constructor-args"] + constructor_args
@@ -246,15 +251,18 @@ TIMELOCK_SOURCE = """
 pragma solidity ^0.8.20;
 contract TestTimelock {
     uint256 public minDelay;
-    event CallScheduled(bytes32 indexed id, uint256 indexed index, address target, uint256 value, bytes data, bytes32 predecessor, uint256 delay);
-    event CallExecuted(bytes32 indexed id, uint256 indexed index, address target, uint256 value, bytes data);
+    event CallScheduled(bytes32 indexed id, uint256 indexed index,
+        address target, uint256 value, bytes data, bytes32 predecessor, uint256 delay);
+    event CallExecuted(bytes32 indexed id, uint256 indexed index,
+        address target, uint256 value, bytes data);
     event MinDelayChange(uint256 oldDuration, uint256 newDuration);
 
     constructor(uint256 _minDelay) {
         minDelay = _minDelay;
     }
 
-    function schedule(bytes32 id, uint256 index, address target, uint256 value, bytes calldata data, bytes32 predecessor, uint256 delay) external {
+    function schedule(bytes32 id, uint256 index, address target,
+        uint256 value, bytes calldata data, bytes32 predecessor, uint256 delay) external {
         emit CallScheduled(id, index, target, value, data, predecessor, delay);
     }
 
@@ -379,7 +387,15 @@ def test_db():
     finally:
         session.rollback()
         from db.models import Protocol, ProtocolSubscription
-        for model in [MonitoredEvent, MonitoredContract, ProxyUpgradeEvent, WatchedProxy, ProtocolSubscription, Protocol]:
+
+        for model in [
+            MonitoredEvent,
+            MonitoredContract,
+            ProxyUpgradeEvent,
+            WatchedProxy,
+            ProtocolSubscription,
+            Protocol,
+        ]:
             try:
                 session.query(model).delete()
             except Exception:
@@ -506,9 +522,7 @@ def test_timelock_operations_detected(anvil_env, test_db):
     rpc_url, tmp_path = anvil_env
     from services.monitoring.unified_watcher import scan_for_events
 
-    addr = _compile_and_deploy(
-        TIMELOCK_SOURCE, "TestTimelock", ["3600"], rpc_url, PRIVATE_KEY, tmp_path
-    )
+    addr = _compile_and_deploy(TIMELOCK_SOURCE, "TestTimelock", ["3600"], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
 
     _register_contract(test_db, addr, "timelock", current_block)
@@ -549,13 +563,12 @@ def test_role_changes_detected(anvil_env, test_db):
     rpc_url, tmp_path = anvil_env
     from services.monitoring.unified_watcher import scan_for_events
 
-    addr = _compile_and_deploy(
-        ACCESS_CONTROL_SOURCE, "TestAccessControl", [], rpc_url, PRIVATE_KEY, tmp_path
-    )
+    addr = _compile_and_deploy(ACCESS_CONTROL_SOURCE, "TestAccessControl", [], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
 
-    _register_contract(test_db, addr, "access_control", current_block,
-                       monitoring_config={"watch_roles": True, "watch_ownership": True})
+    _register_contract(
+        test_db, addr, "access_control", current_block, monitoring_config={"watch_roles": True, "watch_ownership": True}
+    )
 
     role = "0x" + "00" * 32  # DEFAULT_ADMIN_ROLE
     account = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
@@ -576,9 +589,7 @@ def test_proxy_upgrade_backward_compat(anvil_env, test_db):
 
     impl_v1 = _compile_and_deploy(IMPL_V1_SOURCE, "ImplV1", [], rpc_url, PRIVATE_KEY, tmp_path)
     impl_v2 = _compile_and_deploy(IMPL_V2_SOURCE, "ImplV2", [], rpc_url, PRIVATE_KEY, tmp_path)
-    proxy_addr = _compile_and_deploy(
-        PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path
-    )
+    proxy_addr = _compile_and_deploy(PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path)
 
     current_block = int(_cast(["block-number"], rpc_url))
 
@@ -596,7 +607,10 @@ def test_proxy_upgrade_backward_compat(anvil_env, test_db):
 
     # Create MonitoredContract linked to WatchedProxy
     _register_contract(
-        test_db, proxy_addr, "proxy", current_block,
+        test_db,
+        proxy_addr,
+        "proxy",
+        current_block,
         monitoring_config={"watch_upgrades": True, "watch_ownership": True},
         watched_proxy_id=wp.id,
     )
@@ -612,14 +626,15 @@ def test_proxy_upgrade_backward_compat(anvil_env, test_db):
     assert len(upgrade_events) == 1
 
     # Should ALSO have created a ProxyUpgradeEvent (backward compat)
-    proxy_events = test_db.execute(
-        select(ProxyUpgradeEvent).where(ProxyUpgradeEvent.watched_proxy_id == wp.id)
-    ).scalars().all()
+    proxy_events = (
+        test_db.execute(select(ProxyUpgradeEvent).where(ProxyUpgradeEvent.watched_proxy_id == wp.id)).scalars().all()
+    )
     assert len(proxy_events) == 1
     assert proxy_events[0].new_implementation.lower() == impl_v2.lower()
 
     # WatchedProxy should be updated
     test_db.refresh(wp)
+    assert wp.last_known_implementation is not None
     assert wp.last_known_implementation.lower() == impl_v2.lower()
 
 
@@ -663,7 +678,10 @@ def test_poll_detects_ownership_change(anvil_env, test_db):
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(
-        test_db, addr, "regular", current_block,
+        test_db,
+        addr,
+        "regular",
+        current_block,
         monitoring_config={"watch_ownership": True},
     )
     mc.needs_polling = True
@@ -679,6 +697,7 @@ def test_poll_detects_ownership_change(anvil_env, test_db):
     assert len(events) >= 1
     owner_changes = [e for e in events if e.data and e.data.get("field") == "owner"]
     assert len(owner_changes) == 1
+    assert owner_changes[0].data is not None
     assert owner_changes[0].data["new_value"].lower() == new_owner.lower()
 
 
@@ -698,12 +717,18 @@ def test_should_watch_filters_disabled_events(anvil_env, test_db):
 
     # Register pausable with watch_pause=False — should be filtered out
     _register_contract(
-        test_db, pausable_addr, "pausable", current_block,
+        test_db,
+        pausable_addr,
+        "pausable",
+        current_block,
         monitoring_config={"watch_pause": False, "watch_ownership": False},
     )
     # Register ownable with watch_ownership=True — should be detected
     _register_contract(
-        test_db, ownable_addr, "regular", current_block,
+        test_db,
+        ownable_addr,
+        "regular",
+        current_block,
         monitoring_config={"watch_ownership": True, "watch_pause": False},
     )
 
@@ -738,8 +763,9 @@ def test_state_updated_after_ownership_transfer(anvil_env, test_db):
     scan_for_events(test_db, rpc_url)
 
     test_db.refresh(mc)
-    assert mc.last_known_state is not None
-    assert mc.last_known_state.get("owner", "").lower() == new_owner.lower()
+    state = mc.last_known_state
+    assert state is not None
+    assert state.get("owner", "").lower() == new_owner.lower()
 
 
 def test_state_updated_after_pause(anvil_env, test_db):
@@ -758,13 +784,17 @@ def test_state_updated_after_pause(anvil_env, test_db):
     _cast_send(addr, "pause()", [], rpc_url, PRIVATE_KEY)
     scan_for_events(test_db, rpc_url)
     test_db.refresh(mc)
-    assert mc.last_known_state.get("paused") is True
+    state = mc.last_known_state
+    assert state is not None
+    assert state.get("paused") is True
 
     # Unpause
     _cast_send(addr, "unpause()", [], rpc_url, PRIVATE_KEY)
     scan_for_events(test_db, rpc_url)
     test_db.refresh(mc)
-    assert mc.last_known_state.get("paused") is False
+    state = mc.last_known_state
+    assert state is not None
+    assert state.get("paused") is False
 
 
 def test_state_updated_after_proxy_upgrade(anvil_env, test_db):
@@ -778,7 +808,10 @@ def test_state_updated_after_proxy_upgrade(anvil_env, test_db):
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(
-        test_db, proxy_addr, "proxy", current_block,
+        test_db,
+        proxy_addr,
+        "proxy",
+        current_block,
         monitoring_config={"watch_upgrades": True, "watch_ownership": True},
     )
     mc.last_known_state = {"implementation": impl_v1.lower()}
@@ -788,7 +821,9 @@ def test_state_updated_after_proxy_upgrade(anvil_env, test_db):
     scan_for_events(test_db, rpc_url)
 
     test_db.refresh(mc)
-    assert mc.last_known_state.get("implementation", "").lower() == impl_v2.lower()
+    state = mc.last_known_state
+    assert state is not None
+    assert state.get("implementation", "").lower() == impl_v2.lower()
 
 
 def test_dedup_multi_contract_overlap(anvil_env, test_db):
@@ -823,7 +858,7 @@ def test_dedup_multi_contract_overlap(anvil_env, test_db):
     # Now add a THIRD contract at an earlier block — this forces the
     # scanner to re-scan the range where addr1 and addr2 events live
     addr3 = _compile_and_deploy(OWNABLE_SOURCE, "TestOwnable", [], rpc_url, PRIVATE_KEY, tmp_path)
-    mc3 = _register_contract(test_db, addr3, "regular", block_after_deploy)
+    _register_contract(test_db, addr3, "regular", block_after_deploy)
 
     # Second scan: re-scans the overlap range but should NOT re-create
     # the ownership_transferred and paused events for addr1/addr2
@@ -840,14 +875,10 @@ def test_dedup_multi_contract_overlap(anvil_env, test_db):
 
     # Total events in DB for mc1 and mc2 should still be exactly 1 each
     mc1_events = test_db.execute(
-        select(func.count()).select_from(MonitoredEvent).where(
-            MonitoredEvent.monitored_contract_id == mc1.id
-        )
+        select(func.count()).select_from(MonitoredEvent).where(MonitoredEvent.monitored_contract_id == mc1.id)
     ).scalar()
     mc2_events = test_db.execute(
-        select(func.count()).select_from(MonitoredEvent).where(
-            MonitoredEvent.monitored_contract_id == mc2.id
-        )
+        select(func.count()).select_from(MonitoredEvent).where(MonitoredEvent.monitored_contract_id == mc2.id)
     ).scalar()
     assert mc1_events == 1
     assert mc2_events == 1
@@ -894,7 +925,9 @@ def test_state_updated_after_threshold_change(anvil_env, test_db):
     scan_for_events(test_db, rpc_url)
 
     test_db.refresh(mc)
-    assert mc.last_known_state.get("threshold") == 3
+    state = mc.last_known_state
+    assert state is not None
+    assert state.get("threshold") == 3
 
 
 def test_state_updated_after_delay_change(anvil_env, test_db):
@@ -902,9 +935,7 @@ def test_state_updated_after_delay_change(anvil_env, test_db):
     rpc_url, tmp_path = anvil_env
     from services.monitoring.unified_watcher import scan_for_events
 
-    addr = _compile_and_deploy(
-        TIMELOCK_SOURCE, "TestTimelock", ["3600"], rpc_url, PRIVATE_KEY, tmp_path
-    )
+    addr = _compile_and_deploy(TIMELOCK_SOURCE, "TestTimelock", ["3600"], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(test_db, addr, "timelock", current_block)
@@ -915,17 +946,20 @@ def test_state_updated_after_delay_change(anvil_env, test_db):
     scan_for_events(test_db, rpc_url)
 
     test_db.refresh(mc)
-    assert mc.last_known_state.get("min_delay") == 7200
+    state = mc.last_known_state
+    assert state is not None
+    assert state.get("min_delay") == 7200
 
 
 def test_enrollment_config_produces_correct_detection(anvil_env, test_db):
     """Contracts registered with enrollment-style configs detect matching events only."""
     rpc_url, tmp_path = anvil_env
+    # Simulate enrollment output for a pausable contract
+    from unittest.mock import MagicMock
+
     from services.monitoring.enrollment import _build_monitoring_config, _determine_contract_type
     from services.monitoring.unified_watcher import scan_for_events
 
-    # Simulate enrollment output for a pausable contract
-    from unittest.mock import MagicMock
     contract = MagicMock()
     contract.is_proxy = False
     contract.proxy_type = None
@@ -962,13 +996,10 @@ def test_notify_protocol_events_sends_discord(anvil_env, test_db):
     rpc_url, tmp_path = anvil_env
     from unittest.mock import patch
 
-    from db.models import ProtocolSubscription
+    # ProtocolSubscription table already exists via Base.metadata.create_all
+    from db.models import Protocol, ProtocolSubscription
     from services.monitoring.notifier import notify_protocol_events
     from services.monitoring.unified_watcher import scan_for_events
-
-    # ProtocolSubscription table already exists via Base.metadata.create_all
-
-    from db.models import Protocol
 
     addr = _compile_and_deploy(OWNABLE_SOURCE, "TestOwnable", [], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
@@ -1073,7 +1104,10 @@ def test_poll_detects_pause_state_change(anvil_env, test_db):
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(
-        test_db, addr, "pausable", current_block,
+        test_db,
+        addr,
+        "pausable",
+        current_block,
         monitoring_config={"watch_pause": True},
     )
     mc.needs_polling = True
@@ -1086,6 +1120,7 @@ def test_poll_detects_pause_state_change(anvil_env, test_db):
 
     pause_changes = [e for e in events if e.data and e.data.get("field") == "paused"]
     assert len(pause_changes) == 1
+    assert pause_changes[0].data is not None
     assert pause_changes[0].data["new_value"] == "True"
 
 
@@ -1098,7 +1133,10 @@ def test_poll_detects_threshold_change(anvil_env, test_db):
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(
-        test_db, addr, "safe", current_block,
+        test_db,
+        addr,
+        "safe",
+        current_block,
         monitoring_config={"watch_safe_signers": True},
     )
     mc.needs_polling = True
@@ -1111,6 +1149,7 @@ def test_poll_detects_threshold_change(anvil_env, test_db):
 
     threshold_changes = [e for e in events if e.data and e.data.get("field") == "threshold"]
     assert len(threshold_changes) == 1
+    assert threshold_changes[0].data is not None
     assert threshold_changes[0].data["new_value"] == "5"
 
 
@@ -1123,7 +1162,10 @@ def test_poll_no_change_no_events(anvil_env, test_db):
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(
-        test_db, addr, "regular", current_block,
+        test_db,
+        addr,
+        "regular",
+        current_block,
         monitoring_config={"watch_ownership": True},
     )
     mc.needs_polling = True
@@ -1152,13 +1194,14 @@ def test_poll_suppressed_when_scan_already_detected_upgrade(anvil_env, test_db):
 
     impl_v1 = _compile_and_deploy(IMPL_V1_SOURCE, "ImplV1", [], rpc_url, PRIVATE_KEY, tmp_path)
     impl_v2 = _compile_and_deploy(IMPL_V2_SOURCE, "ImplV2", [], rpc_url, PRIVATE_KEY, tmp_path)
-    proxy_addr = _compile_and_deploy(
-        PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path
-    )
+    proxy_addr = _compile_and_deploy(PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(
-        test_db, proxy_addr, "proxy", current_block,
+        test_db,
+        proxy_addr,
+        "proxy",
+        current_block,
         monitoring_config={"watch_upgrades": True, "watch_ownership": True},
     )
     mc.needs_polling = True
@@ -1185,9 +1228,7 @@ def test_poll_suppressed_when_scan_already_detected_upgrade(anvil_env, test_db):
     # With fix: suppressed because scanner already detected "upgraded"
     poll_events = poll_for_state_changes(test_db, rpc_url)
     impl_changes = [e for e in poll_events if e.data and e.data.get("field") == "implementation"]
-    assert len(impl_changes) == 0, (
-        "Poller should not create duplicate event when scanner already detected upgrade"
-    )
+    assert len(impl_changes) == 0, "Poller should not create duplicate event when scanner already detected upgrade"
 
 
 def test_poll_suppressed_when_scan_already_detected_ownership(anvil_env, test_db):
@@ -1200,7 +1241,10 @@ def test_poll_suppressed_when_scan_already_detected_ownership(anvil_env, test_db
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(
-        test_db, addr, "regular", current_block,
+        test_db,
+        addr,
+        "regular",
+        current_block,
         monitoring_config={"watch_ownership": True},
     )
     mc.needs_polling = True
@@ -1237,13 +1281,14 @@ def test_poll_still_creates_event_when_no_scanner_event(anvil_env, test_db):
 
     impl_v1 = _compile_and_deploy(IMPL_V1_SOURCE, "ImplV1", [], rpc_url, PRIVATE_KEY, tmp_path)
     impl_v2 = _compile_and_deploy(IMPL_V2_SOURCE, "ImplV2", [], rpc_url, PRIVATE_KEY, tmp_path)
-    proxy_addr = _compile_and_deploy(
-        PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path
-    )
+    proxy_addr = _compile_and_deploy(PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
 
     mc = _register_contract(
-        test_db, proxy_addr, "proxy", current_block,
+        test_db,
+        proxy_addr,
+        "proxy",
+        current_block,
         monitoring_config={"watch_upgrades": True, "watch_ownership": True},
     )
     mc.needs_polling = True
@@ -1255,6 +1300,4 @@ def test_poll_still_creates_event_when_no_scanner_event(anvil_env, test_db):
 
     poll_events = poll_for_state_changes(test_db, rpc_url)
     impl_changes = [e for e in poll_events if e.data and e.data.get("field") == "implementation"]
-    assert len(impl_changes) == 1, (
-        "Poller should create event when no scanner event exists"
-    )
+    assert len(impl_changes) == 1, "Poller should create event when no scanner event exists"

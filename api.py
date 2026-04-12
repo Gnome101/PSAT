@@ -97,7 +97,7 @@ class SubscribeRequest(BaseModel):
 class ProtocolSubscribeRequest(BaseModel):
     discord_webhook_url: str = Field(min_length=1, description="Discord webhook URL for protocol event notifications.")
     label: str | None = None
-    event_filter: dict | None = Field(default=None, description="Optional filter: {\"event_types\": [\"upgraded\", ...]}")
+    event_filter: dict | None = Field(default=None, description='Optional filter: {"event_types": ["upgraded", ...]}')
 
     @field_validator("event_filter")
     @classmethod
@@ -106,28 +106,19 @@ class ProtocolSubscribeRequest(BaseModel):
             return v
         if "event_types" not in v:
             raise ValueError(
-                "event_filter must contain an 'event_types' key, "
-                'e.g. {"event_types": ["upgraded", "paused"]}'
+                'event_filter must contain an \'event_types\' key, e.g. {"event_types": ["upgraded", "paused"]}'
             )
         event_types = v["event_types"]
         if not isinstance(event_types, list):
-            raise ValueError(
-                "event_filter.event_types must be a list of strings, "
-                f"got {type(event_types).__name__}"
-            )
+            raise ValueError(f"event_filter.event_types must be a list of strings, got {type(event_types).__name__}")
         from services.monitoring.event_topics import ALL_EVENT_TOPICS
 
         valid_types = set(ALL_EVENT_TOPICS.values()) | {"state_changed_poll"}
         for et in event_types:
             if not isinstance(et, str):
-                raise ValueError(
-                    f"event_filter.event_types entries must be strings, got {type(et).__name__}"
-                )
+                raise ValueError(f"event_filter.event_types entries must be strings, got {type(et).__name__}")
             if et not in valid_types:
-                raise ValueError(
-                    f"Unknown event type: '{et}'. "
-                    f"Valid types: {sorted(valid_types)}"
-                )
+                raise ValueError(f"Unknown event type: '{et}'. Valid types: {sorted(valid_types)}")
         return v
 
 
@@ -1856,9 +1847,7 @@ class UpdateMonitoredContractRequest(BaseModel):
 
 
 @app.patch("/api/monitored-contracts/{contract_id}")
-def update_monitored_contract(
-    contract_id: str, request: UpdateMonitoredContractRequest
-) -> dict[str, Any]:
+def update_monitored_contract(contract_id: str, request: UpdateMonitoredContractRequest) -> dict[str, Any]:
     """Update monitoring_config, is_active, or needs_polling on a MonitoredContract."""
     with SessionLocal() as session:
         mc = session.get(MonitoredContract, uuid.UUID(contract_id))

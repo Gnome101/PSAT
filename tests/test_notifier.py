@@ -15,14 +15,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from conftest import ADDR, _add_proxy, _add_subscription, _make_log, _topic_for, requires_postgres
-
-pytestmark = requires_postgres
 from sqlalchemy import select
 
 from db.models import ProxySubscription, ProxyUpgradeEvent, WatchedProxy
 from services.discovery.upgrade_history import UPGRADED_TOPIC0
 from services.monitoring.notifier import notify_upgrades
 from services.monitoring.proxy_watcher import poll_for_upgrades, scan_for_upgrades
+
+pytestmark = requires_postgres
 
 # ---------------------------------------------------------------------------
 # Helper: mock RPC that returns a single log
@@ -543,7 +543,9 @@ def test_re_enroll_calls_enrollment(mock_enroll, api_client, db_session):
     proto = _create_protocol(db_session, name="__test_reenroll__")
 
     mc = _create_monitored_contract(
-        db_session, address="0x" + "d4" * 20, protocol_id=proto.id,
+        db_session,
+        address="0x" + "d4" * 20,
+        protocol_id=proto.id,
     )
     mock_enroll.return_value = [mc]
 

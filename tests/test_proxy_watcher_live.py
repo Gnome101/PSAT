@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import sys
 import uuid
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,7 +47,7 @@ pytestmark = pytest.mark.live
 
 
 @pytest.fixture()
-def live_db():
+def live_db() -> Generator[SASession, None, None]:
     """PostgreSQL session for live proxy watcher tests."""
     engine = create_engine(DATABASE_URL)
     Base.metadata.create_all(engine)
@@ -60,6 +61,7 @@ def live_db():
         session.commit()
         session.close()
         engine.dispose()
+
 
 # ---------------------------------------------------------------------------
 # Known mainnet proxy data
@@ -107,7 +109,7 @@ def test_resolve_current_implementation_mainnet():
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
 @pytest.mark.skipif(not _pg_can_connect(), reason="PostgreSQL not available")
-def test_scan_detects_known_aave_upgrade(live_db):
+def test_scan_detects_known_aave_upgrade(live_db: SASession):
     """scan_for_upgrades detects a known Aave V3 Pool upgrade at block 17214196.
 
     Sets last_scanned_block just before the upgrade and caps get_latest_block
@@ -153,9 +155,8 @@ def test_scan_detects_known_aave_upgrade(live_db):
     assert proxy.last_known_implementation.lower() == KNOWN_NEW_IMPL.lower()
 
 
-
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_no_events_in_quiet_range():
+def test_scan_no_events_in_quiet_range(live_db: SASession):
     """Scanning a block range with no upgrades returns empty."""
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
@@ -189,7 +190,6 @@ def test_scan_no_events_in_quiet_range():
     assert proxy.last_scanned_block == quiet_to
 
 
-
 # ---------------------------------------------------------------------------
 # USDC FiatTokenProxy — OZ legacy proxy with Upgraded(address) in data
 # ---------------------------------------------------------------------------
@@ -208,7 +208,7 @@ USDC_SCAN_TO = USDC_UPGRADE_BLOCK + 5
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_usdc_upgrade():
+def test_scan_detects_usdc_upgrade(live_db: SASession):
     """Detect a known USDC FiatTokenProxy upgrade at block 10743414.
 
     USDC uses an OZ legacy proxy pattern that emits Upgraded(address)
@@ -256,7 +256,6 @@ def test_scan_detects_usdc_upgrade():
     assert proxy.last_known_implementation is not None
 
 
-
 # ---------------------------------------------------------------------------
 # Beacon proxy — BeaconUpgraded(address indexed beacon) at block 17001069
 # ---------------------------------------------------------------------------
@@ -274,7 +273,7 @@ BEACON_SCAN_TO = BEACON_UPGRADE_BLOCK + 5
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_beacon_upgrade():
+def test_scan_detects_beacon_upgrade(live_db: SASession):
     """Detect a known BeaconUpgraded event at block 17001069.
 
     Contract 0xe662bb403214a62294351514ece015efd191f632 emitted a
@@ -321,7 +320,6 @@ def test_scan_detects_beacon_upgrade():
     assert proxy.last_known_implementation.lower() == BEACON_NEW_BEACON.lower()
 
 
-
 # ---------------------------------------------------------------------------
 # AdminChanged — standard EIP-1967 event at block 17000262
 # ---------------------------------------------------------------------------
@@ -340,7 +338,7 @@ ADMIN_SCAN_TO = ADMIN_CHANGE_BLOCK + 5
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_admin_changed():
+def test_scan_detects_admin_changed(live_db: SASession):
     """Detect a known AdminChanged event at block 17000262.
 
     Contract 0xb4370cfed6a13874a84935aed81d19618b89145f emitted an
@@ -388,7 +386,6 @@ def test_scan_detects_admin_changed():
     assert proxy.last_known_implementation.lower() == ADMIN_NEW_ADMIN.lower()
 
 
-
 # ===========================================================================
 # Non-EIP-1967 proxy types — live mainnet tests for protocol-specific events
 #
@@ -414,7 +411,7 @@ DIAMOND_SCAN_TO = DIAMOND_CUT_BLOCK + 5
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_diamond_cut():
+def test_scan_detects_diamond_cut(live_db: SASession):
     """Detect a known EIP-2535 DiamondCut event at block 14004881.
 
     Contract 0x3caca7b48d0573d793d3b0279b5f0029180e83b6 emitted a DiamondCut
@@ -451,7 +448,6 @@ def test_scan_detects_diamond_cut():
     assert diamond_event.block_number == DIAMOND_CUT_BLOCK
 
 
-
 # ---------------------------------------------------------------------------
 # GnosisSafe — ChangedMasterCopy event at block 9304839
 # ---------------------------------------------------------------------------
@@ -471,7 +467,7 @@ GNOSIS_SCAN_TO = GNOSIS_CHANGE_BLOCK + 5
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_gnosis_master_copy_change():
+def test_scan_detects_gnosis_master_copy_change(live_db: SASession):
     """Detect a known GnosisSafe ChangedMasterCopy event at block 9304839.
 
     GnosisSafe proxy 0x78ecc4ad66c9ea16821df5ef762fe021cac3fd4c emitted
@@ -509,7 +505,6 @@ def test_scan_detects_gnosis_master_copy_change():
     assert gnosis_event.new_implementation.lower() == GNOSIS_NEW_MASTER.lower()
 
 
-
 # ---------------------------------------------------------------------------
 # Compound — NewImplementation event at block 7710677
 # ---------------------------------------------------------------------------
@@ -529,7 +524,7 @@ COMPOUND_SCAN_TO = COMPOUND_UPGRADE_BLOCK + 5
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_compound_new_implementation():
+def test_scan_detects_compound_new_implementation(live_db: SASession):
     """Detect a known Compound NewImplementation event at block 7710677.
 
     Compound Unitroller 0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b emitted
@@ -567,7 +562,6 @@ def test_scan_detects_compound_new_implementation():
     assert compound_event.new_implementation.lower() == COMPOUND_NEW_IMPL.lower()
 
 
-
 # ---------------------------------------------------------------------------
 # Synthetix — TargetUpdated(address) event at block 10203309
 # ---------------------------------------------------------------------------
@@ -587,7 +581,7 @@ SYNTHETIX_SCAN_TO = SYNTHETIX_UPGRADE_BLOCK + 5
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_synthetix_target_updated():
+def test_scan_detects_synthetix_target_updated(live_db: SASession):
     """Detect a known Synthetix TargetUpdated event at block 10203309.
 
     SNX token proxy 0xc011a73ee8576fb46f5e1c5751ca3b9fe0af2a6f emitted
@@ -625,7 +619,6 @@ def test_scan_detects_synthetix_target_updated():
     assert synthetix_event.new_implementation.lower() == SYNTHETIX_NEW_TARGET.lower()
 
 
-
 # ---------------------------------------------------------------------------
 # Compound — NewPendingImplementation(address,address) at block 7710675
 # ---------------------------------------------------------------------------
@@ -643,7 +636,7 @@ COMPOUND_PENDING_SCAN_TO = COMPOUND_PENDING_BLOCK + 5
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_compound_pending_implementation():
+def test_scan_detects_compound_pending_implementation(live_db: SASession):
     """Detect a known Compound NewPendingImplementation event at block 7710675.
 
     Compound Unitroller 0x3d9819210a31b4961b30ef54be2aed79b9c9cd3b emitted
@@ -679,7 +672,6 @@ def test_scan_detects_compound_pending_implementation():
     pending_event = next((e for e in events if e.event_type == "new_pending_implementation"), None)
     assert pending_event is not None, "Expected a 'new_pending_implementation' event"
     assert pending_event.block_number == COMPOUND_PENDING_BLOCK
-
 
 
 # ===========================================================================

@@ -58,9 +58,7 @@ def _can_connect() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+pytestmark = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 # ---------------------------------------------------------------------------
 # Helpers

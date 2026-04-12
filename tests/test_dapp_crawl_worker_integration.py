@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import Artifact, Base, Job, JobStage, JobStatus, SourceFile
+from db.models import Base, Job, JobStage, JobStatus
 from db.queue import create_job, get_artifact
 from workers.base import JobHandledDirectly
 
@@ -92,14 +92,10 @@ def db_session():
         session.rollback()
         # Only delete jobs with test addresses (cascades to artifacts/source_files)
         test_addrs = [ADDR_A, ADDR_B, ADDR_C]
-        for j in session.execute(
-            select(Job).where(Job.address.in_(test_addrs))
-        ).scalars():
+        for j in session.execute(select(Job).where(Job.address.in_(test_addrs))).scalars():
             session.delete(j)
         # Delete the crawl job itself (no address, identified by dapp_urls in request)
-        for j in session.execute(
-            select(Job).where(Job.address.is_(None), Job.name.like("DApp crawl%"))
-        ).scalars():
+        for j in session.execute(select(Job).where(Job.address.is_(None), Job.name.like("DApp crawl%"))).scalars():
             session.delete(j)
         session.commit()
         session.close()

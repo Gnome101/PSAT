@@ -32,15 +32,12 @@ from sqlalchemy.orm import Session
 from db.models import (
     Base,
     Contract,
-    ContractSummary,
     ControllerValue,
     Job,
     JobStage,
     JobStatus,
     MonitoredContract,
-    MonitoredEvent,
     Protocol,
-    ProxyUpgradeEvent,
     UpgradeEvent,
     WatchedProxy,
 )
@@ -107,7 +104,9 @@ def _wait_for_port(port: int, timeout: float = 10.0) -> bool:
 def _cast(args: list[str], rpc_url: str) -> str:
     result = subprocess.run(
         ["cast"] + args + ["--rpc-url", rpc_url],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         raise RuntimeError(f"cast failed: {result.stderr}")
@@ -115,11 +114,7 @@ def _cast(args: list[str], rpc_url: str) -> str:
 
 
 def _cast_send(to: str, sig: str, args: list[str], rpc_url: str, private_key: str) -> str:
-    cmd = (
-        ["cast", "send", to, sig]
-        + args
-        + ["--rpc-url", rpc_url, "--private-key", private_key]
-    )
+    cmd = ["cast", "send", to, sig] + args + ["--rpc-url", rpc_url, "--private-key", private_key]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(f"cast send failed: {result.stderr}")
@@ -127,15 +122,25 @@ def _cast_send(to: str, sig: str, args: list[str], rpc_url: str, private_key: st
 
 
 def _compile_and_deploy(
-    source: str, contract_name: str, constructor_args: list[str],
-    rpc_url: str, private_key: str, tmp_path: Path,
+    source: str,
+    contract_name: str,
+    constructor_args: list[str],
+    rpc_url: str,
+    private_key: str,
+    tmp_path: Path,
 ) -> str:
     src_file = tmp_path / f"{contract_name}.sol"
     src_file.write_text(source)
     cmd = [
-        "forge", "create", f"{src_file}:{contract_name}",
-        "--rpc-url", rpc_url, "--private-key", private_key,
-        "--broadcast", "--no-cache",
+        "forge",
+        "create",
+        f"{src_file}:{contract_name}",
+        "--rpc-url",
+        rpc_url,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--no-cache",
     ]
     if constructor_args:
         cmd += ["--constructor-args"] + constructor_args
@@ -239,7 +244,8 @@ def anvil_env(tmp_path):
     rpc_url = f"http://127.0.0.1:{port}"
     anvil_proc = subprocess.Popen(
         ["anvil", "--port", str(port), "--silent"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     try:
         if not _wait_for_port(port, timeout=15):
@@ -266,27 +272,19 @@ def pg_session():
         yield session
     finally:
         session.rollback()
-        proto = session.execute(
-            select(Protocol).where(Protocol.name == PROTO_NAME)
-        ).scalar_one_or_none()
+        proto = session.execute(select(Protocol).where(Protocol.name == PROTO_NAME)).scalar_one_or_none()
         if proto:
             for mc in session.execute(
-                select(MonitoredContract).where(
-                    MonitoredContract.protocol_id == proto.id
-                )
+                select(MonitoredContract).where(MonitoredContract.protocol_id == proto.id)
             ).scalars():
                 if mc.watched_proxy_id:
                     wp = session.get(WatchedProxy, mc.watched_proxy_id)
                     if wp:
                         session.delete(wp)
                 session.delete(mc)
-            for j in session.execute(
-                select(Job).where(Job.protocol_id == proto.id)
-            ).scalars():
+            for j in session.execute(select(Job).where(Job.protocol_id == proto.id)).scalars():
                 session.delete(j)
-            for c in session.execute(
-                select(Contract).where(Contract.protocol_id == proto.id)
-            ).scalars():
+            for c in session.execute(select(Contract).where(Contract.protocol_id == proto.id)).scalars():
                 session.delete(c)
             session.delete(proto)
         session.commit()
@@ -397,20 +395,32 @@ class TestUpgradeUpdatesContractTable:
 
         proto = _setup_protocol(pg_session)
         contract = _setup_contract(
-            pg_session, proxy_addr, proto,
-            is_proxy=True, proxy_type="eip1967", implementation=impl_v1,
+            pg_session,
+            proxy_addr,
+            proto,
+            is_proxy=True,
+            proxy_type="eip1967",
+            implementation=impl_v1,
         )
 
         wp = WatchedProxy(
-            id=uuid.uuid4(), proxy_address=proxy_addr, chain="ethereum",
-            label="test-proxy", proxy_type="eip1967",
-            last_known_implementation=impl_v1, last_scanned_block=current_block,
+            id=uuid.uuid4(),
+            proxy_address=proxy_addr,
+            chain="ethereum",
+            label="test-proxy",
+            proxy_type="eip1967",
+            last_known_implementation=impl_v1,
+            last_scanned_block=current_block,
         )
         pg_session.add(wp)
         pg_session.flush()
 
         _setup_monitored(
-            pg_session, contract, "proxy", current_block, proto,
+            pg_session,
+            contract,
+            "proxy",
+            current_block,
+            proto,
             watched_proxy_id=wp.id,
             initial_state={"implementation": impl_v1},
         )
@@ -426,8 +436,7 @@ class TestUpgradeUpdatesContractTable:
         pg_session.refresh(contract)
         assert contract.implementation is not None
         assert contract.implementation.lower() == impl_v2.lower(), (
-            f"Contract.implementation was not updated: "
-            f"expected {impl_v2.lower()}, got {contract.implementation}"
+            f"Contract.implementation was not updated: expected {impl_v2.lower()}, got {contract.implementation}"
         )
 
     def test_upgrade_creates_upgrade_event_row(self, anvil_env, pg_session):
@@ -443,11 +452,19 @@ class TestUpgradeUpdatesContractTable:
 
         proto = _setup_protocol(pg_session)
         contract = _setup_contract(
-            pg_session, proxy_addr, proto,
-            is_proxy=True, proxy_type="eip1967", implementation=impl_v1,
+            pg_session,
+            proxy_addr,
+            proto,
+            is_proxy=True,
+            proxy_type="eip1967",
+            implementation=impl_v1,
         )
         _setup_monitored(
-            pg_session, contract, "proxy", current_block, proto,
+            pg_session,
+            contract,
+            "proxy",
+            current_block,
+            proto,
             initial_state={"implementation": impl_v1},
         )
         pg_session.commit()
@@ -456,9 +473,9 @@ class TestUpgradeUpdatesContractTable:
         scan_for_events(pg_session, rpc_url)
 
         # --- The critical assertion: UpgradeEvent row must exist ---
-        ue_rows = pg_session.execute(
-            select(UpgradeEvent).where(UpgradeEvent.contract_id == contract.id)
-        ).scalars().all()
+        ue_rows = (
+            pg_session.execute(select(UpgradeEvent).where(UpgradeEvent.contract_id == contract.id)).scalars().all()
+        )
         assert len(ue_rows) >= 1, "No UpgradeEvent row was created for the detected upgrade"
         latest = ue_rows[-1]
         assert latest.new_impl.lower() == impl_v2.lower()
@@ -483,12 +500,20 @@ class TestAdminChangedPropagation:
 
         proto = _setup_protocol(pg_session)
         contract = _setup_contract(
-            pg_session, proxy_addr, proto,
-            is_proxy=True, proxy_type="eip1967",
-            implementation=impl_v1, admin=ACCOUNT0,
+            pg_session,
+            proxy_addr,
+            proto,
+            is_proxy=True,
+            proxy_type="eip1967",
+            implementation=impl_v1,
+            admin=ACCOUNT0,
         )
         mc = _setup_monitored(
-            pg_session, contract, "proxy", current_block, proto,
+            pg_session,
+            contract,
+            "proxy",
+            current_block,
+            proto,
             initial_state={"implementation": impl_v1, "admin": ACCOUNT0.lower()},
         )
         pg_session.commit()
@@ -508,6 +533,7 @@ class TestAdminChangedPropagation:
 
         # --- Critical assertion: last_known_state must track admin ---
         pg_session.refresh(mc)
+        assert mc.last_known_state is not None
         assert mc.last_known_state.get("admin", "").lower() == new_admin.lower(), (
             "MonitoredContract.last_known_state['admin'] not updated"
         )
@@ -541,7 +567,11 @@ class TestOwnershipUpdatesControllerValue:
         pg_session.flush()
 
         _setup_monitored(
-            pg_session, contract, "regular", current_block, proto,
+            pg_session,
+            contract,
+            "regular",
+            current_block,
+            proto,
             initial_state={"owner": ACCOUNT0.lower()},
         )
         pg_session.commit()
@@ -554,9 +584,9 @@ class TestOwnershipUpdatesControllerValue:
 
         # --- Critical assertion: ControllerValue must be updated ---
         pg_session.refresh(cv)
+        assert cv.value is not None
         assert cv.value.lower() == new_owner.lower(), (
-            f"ControllerValue 'owner' not updated: "
-            f"expected {new_owner.lower()}, got {cv.value}"
+            f"ControllerValue 'owner' not updated: expected {new_owner.lower()}, got {cv.value}"
         )
 
 
@@ -577,11 +607,19 @@ class TestUpgradePollingUpdatesRelational:
 
         proto = _setup_protocol(pg_session)
         contract = _setup_contract(
-            pg_session, proxy_addr, proto,
-            is_proxy=True, proxy_type="custom", implementation=impl_v1,
+            pg_session,
+            proxy_addr,
+            proto,
+            is_proxy=True,
+            proxy_type="custom",
+            implementation=impl_v1,
         )
         mc = _setup_monitored(
-            pg_session, contract, "proxy", current_block, proto,
+            pg_session,
+            contract,
+            "proxy",
+            current_block,
+            proto,
             initial_state={"implementation": impl_v1},
         )
         mc.needs_polling = True
@@ -597,8 +635,7 @@ class TestUpgradePollingUpdatesRelational:
         pg_session.refresh(contract)
         assert contract.implementation is not None
         assert contract.implementation.lower() == impl_v2.lower(), (
-            f"Contract.implementation not updated by poll: "
-            f"expected {impl_v2.lower()}, got {contract.implementation}"
+            f"Contract.implementation not updated by poll: expected {impl_v2.lower()}, got {contract.implementation}"
         )
 
 
@@ -629,7 +666,11 @@ class TestPollOwnershipUpdatesControllerValue:
         pg_session.flush()
 
         mc = _setup_monitored(
-            pg_session, contract, "regular", current_block, proto,
+            pg_session,
+            contract,
+            "regular",
+            current_block,
+            proto,
             initial_state={"owner": ACCOUNT0.lower()},
         )
         mc.needs_polling = True
@@ -642,7 +683,7 @@ class TestPollOwnershipUpdatesControllerValue:
 
         # --- Critical assertion ---
         pg_session.refresh(cv)
+        assert cv.value is not None
         assert cv.value.lower() == new_owner.lower(), (
-            f"ControllerValue 'owner' not updated by poll: "
-            f"expected {new_owner.lower()}, got {cv.value}"
+            f"ControllerValue 'owner' not updated by poll: expected {new_owner.lower()}, got {cv.value}"
         )

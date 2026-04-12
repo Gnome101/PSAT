@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import os
 import sys
-import uuid
 from pathlib import Path
 
 import pytest
@@ -36,9 +35,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)")
 
 
 # ---------------------------------------------------------------------------
@@ -267,15 +264,29 @@ def db_session():
         session.rollback()
         # Delete in FK-safe order
         for model in [
-            FunctionPrincipal, EffectiveFunction, PrincipalLabel,
-            ControlGraphEdge, ControlGraphNode, ControllerValue,
-            UpgradeEvent, ContractDependency, ContractBalance,
-            PrivilegedFunction, RoleDefinition, ContractSummary,
-            MonitoredEvent, MonitoredContract,
-            ProxyUpgradeEvent, ProxySubscription, WatchedProxy,
+            FunctionPrincipal,
+            EffectiveFunction,
+            PrincipalLabel,
+            ControlGraphEdge,
+            ControlGraphNode,
+            ControllerValue,
+            UpgradeEvent,
+            ContractDependency,
+            ContractBalance,
+            PrivilegedFunction,
+            RoleDefinition,
+            ContractSummary,
+            MonitoredEvent,
+            MonitoredContract,
+            ProxyUpgradeEvent,
+            ProxySubscription,
+            WatchedProxy,
             ProtocolSubscription,
-            SourceFile, Artifact,
-            Contract, Job, Protocol,
+            SourceFile,
+            Artifact,
+            Contract,
+            Job,
+            Protocol,
         ]:
             try:
                 session.query(model).delete()
@@ -385,8 +396,8 @@ def _create_source_job_with_proxy(
     session,
     address=ADDR_A,
     is_proxy=True,
-    proxy_type="eip1967",
-    implementation=IMPL_ADDR,
+    proxy_type: str | None = "eip1967",
+    implementation: str | None = IMPL_ADDR,
     beacon=None,
     admin=None,
 ):

@@ -55,12 +55,16 @@ def maybe_enroll_protocol(
         return False
 
     # Check that at least 1 completed job exists
-    completed = session.execute(
-        select(Job).where(
-            Job.protocol_id == protocol_id,
-            Job.status == JobStatus.completed,
+    completed = (
+        session.execute(
+            select(Job).where(
+                Job.protocol_id == protocol_id,
+                Job.status == JobStatus.completed,
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
 
     if not completed:
         logger.debug("Protocol %s has no completed jobs, skipping enrollment", protocol_id)
@@ -108,11 +112,7 @@ def enroll_protocol_contracts(
 
     contracts = [
         c
-        for c in session.execute(
-            select(Contract).where(Contract.protocol_id == protocol_id)
-        )
-        .scalars()
-        .all()
+        for c in session.execute(select(Contract).where(Contract.protocol_id == protocol_id)).scalars().all()
         if c.address.lower() in {a.lower() for a in analyzed_addrs if a}
     ]
 
@@ -140,11 +140,7 @@ def enroll_protocol_contracts(
 
         # Load controller values
         cv_rows = (
-            session.execute(
-                select(ControllerValue).where(ControllerValue.contract_id == contract.id)
-            )
-            .scalars()
-            .all()
+            session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract.id)).scalars().all()
         )
 
         # Determine contract type
@@ -221,7 +217,9 @@ def enroll_protocol_contracts(
                 MonitoredContract.enrollment_source == "auto",
                 MonitoredContract.contract_type.in_(("safe", "timelock")),
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
     stale = (
         session.execute(
@@ -392,13 +390,7 @@ def _enroll_controller_addresses(
 
     for contract in contracts:
         nodes = (
-            session.execute(
-                select(ControlGraphNode).where(
-                    ControlGraphNode.contract_id == contract.id
-                )
-            )
-            .scalars()
-            .all()
+            session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == contract.id)).scalars().all()
         )
 
         for node in nodes:

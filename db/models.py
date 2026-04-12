@@ -521,9 +521,7 @@ class MonitoredEvent(Base):
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
     block_number: Mapped[int] = mapped_column(Integer, nullable=False)
     tx_hash: Mapped[str] = mapped_column(String(66), nullable=False)
-    data: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON().with_variant(JSONB(), "postgresql"), nullable=True
-    )
+    data: Mapped[dict[str, Any] | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
     detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     monitored_contract: Mapped[MonitoredContract] = relationship("MonitoredContract", back_populates="events")
@@ -539,9 +537,7 @@ class ProtocolSubscription(Base):
     __tablename__ = "protocol_subscriptions"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    protocol_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False
-    )
+    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
     discord_webhook_url: Mapped[str | None] = mapped_column(String, nullable=True)
     label: Mapped[str | None] = mapped_column(String, nullable=True)
     event_filter: Mapped[dict[str, Any] | None] = mapped_column(

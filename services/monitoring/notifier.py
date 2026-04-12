@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from db.models import (
     Contract,
-    MonitoredContract,
+    Job,
     MonitoredEvent,
     Protocol,
     ProtocolSubscription,
@@ -217,11 +217,13 @@ def _format_governance_embed(event: MonitoredEvent, session: Session) -> dict:
     reanalysis_job_id = data.get("reanalysis_job_id")
     if reanalysis_job_id:
         short_id = str(reanalysis_job_id)[:8]
-        fields.append({
-            "name": "Re-analysis",
-            "value": f"Running new analysis to evaluate changes (Job `{short_id}`)",
-            "inline": False,
-        })
+        fields.append(
+            {
+                "name": "Re-analysis",
+                "value": f"Running new analysis to evaluate changes (Job `{short_id}`)",
+                "inline": False,
+            }
+        )
 
     color = _EVENT_COLORS.get(event.event_type, 0x95A5A6)
 
@@ -352,9 +354,11 @@ def notify_reanalysis_complete(session: Session, job: "Job") -> None:
     contract_name = None
     if job.address:
         contract_row = session.execute(
-            select(Contract).where(
+            select(Contract)
+            .where(
                 Contract.address == job.address.lower(),
-            ).limit(1)
+            )
+            .limit(1)
         ).scalar_one_or_none()
         if contract_row:
             contract_name = contract_row.contract_name
@@ -376,17 +380,21 @@ def notify_reanalysis_complete(session: Session, job: "Job") -> None:
         fields.append({"name": "Contract", "value": f"`{job.address}`", "inline": False})
 
     if changes:
-        fields.append({
-            "name": "Changes detected",
-            "value": "\n".join(f"• {c}" for c in changes),
-            "inline": False,
-        })
+        fields.append(
+            {
+                "name": "Changes detected",
+                "value": "\n".join(f"• {c}" for c in changes),
+                "inline": False,
+            }
+        )
     else:
-        fields.append({
-            "name": "Changes detected",
-            "value": "No significant differences from previous analysis.",
-            "inline": False,
-        })
+        fields.append(
+            {
+                "name": "Changes detected",
+                "value": "No significant differences from previous analysis.",
+                "inline": False,
+            }
+        )
 
     embed = {
         "title": title,

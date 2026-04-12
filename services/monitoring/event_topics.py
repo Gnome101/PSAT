@@ -6,6 +6,8 @@ from eth_utils.crypto import keccak
 
 from services.discovery.upgrade_history import (
     EVENT_TOPICS as PROXY_EVENT_TOPICS,
+)
+from services.discovery.upgrade_history import (
     _data_to_addresses,
     _hex_to_int,
     _topic_to_address,
@@ -17,9 +19,7 @@ from services.discovery.upgrade_history import (
 # ---------------------------------------------------------------------------
 
 # OwnershipTransferred(address indexed previousOwner, address indexed newOwner)
-OWNERSHIP_TRANSFERRED_TOPIC0 = (
-    "0x" + keccak(text="OwnershipTransferred(address,address)").hex()
-)
+OWNERSHIP_TRANSFERRED_TOPIC0 = "0x" + keccak(text="OwnershipTransferred(address,address)").hex()
 
 # Paused(address account)
 PAUSED_TOPIC0 = "0x" + keccak(text="Paused(address)").hex()
@@ -43,25 +43,13 @@ REMOVED_OWNER_TOPIC0 = "0x" + keccak(text="RemovedOwner(address)").hex()
 CHANGED_THRESHOLD_TOPIC0 = "0x" + keccak(text="ChangedThreshold(uint256)").hex()
 
 # OZ TimelockController CallScheduled — exact v5 signature (7 params)
-CALL_SCHEDULED_TOPIC0 = (
-    "0x"
-    + keccak(
-        text="CallScheduled(bytes32,uint256,address,uint256,bytes,bytes32,uint256)"
-    ).hex()
-)
+CALL_SCHEDULED_TOPIC0 = "0x" + keccak(text="CallScheduled(bytes32,uint256,address,uint256,bytes,bytes32,uint256)").hex()
 
 # OZ TimelockController CallExecuted — exact v5 signature (5 params)
-CALL_EXECUTED_TOPIC0 = (
-    "0x"
-    + keccak(
-        text="CallExecuted(bytes32,uint256,address,uint256,bytes)"
-    ).hex()
-)
+CALL_EXECUTED_TOPIC0 = "0x" + keccak(text="CallExecuted(bytes32,uint256,address,uint256,bytes)").hex()
 
 # MinDelayChange(uint256 oldDuration, uint256 newDuration)
-MIN_DELAY_CHANGE_TOPIC0 = (
-    "0x" + keccak(text="MinDelayChange(uint256,uint256)").hex()
-)
+MIN_DELAY_CHANGE_TOPIC0 = "0x" + keccak(text="MinDelayChange(uint256,uint256)").hex()
 
 # ---------------------------------------------------------------------------
 # Topic -> event_type mapping

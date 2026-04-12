@@ -79,9 +79,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 requires_anvil = pytest.mark.skipif(
     not (_has_anvil and _has_cast and _has_forge),
@@ -130,11 +128,7 @@ def _cast(args: list[str], rpc_url: str) -> str:
 
 
 def _cast_send(to: str, sig: str, args: list[str], rpc_url: str, private_key: str) -> str:
-    cmd = (
-        ["cast", "send", to, sig]
-        + args
-        + ["--rpc-url", rpc_url, "--private-key", private_key]
-    )
+    cmd = ["cast", "send", to, sig] + args + ["--rpc-url", rpc_url, "--private-key", private_key]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(f"cast send failed: {result.stderr}")
@@ -142,17 +136,26 @@ def _cast_send(to: str, sig: str, args: list[str], rpc_url: str, private_key: st
 
 
 def _compile_and_deploy(
-    source: str, contract_name: str, constructor_args: list[str],
-    rpc_url: str, private_key: str, tmp_path: Path,
+    source: str,
+    contract_name: str,
+    constructor_args: list[str],
+    rpc_url: str,
+    private_key: str,
+    tmp_path: Path,
 ) -> str:
     src_file = tmp_path / f"{contract_name}.sol"
     src_file.write_text(source)
 
     cmd = [
-        "forge", "create", f"{src_file}:{contract_name}",
-        "--rpc-url", rpc_url,
-        "--private-key", private_key,
-        "--broadcast", "--no-cache",
+        "forge",
+        "create",
+        f"{src_file}:{contract_name}",
+        "--rpc-url",
+        rpc_url,
+        "--private-key",
+        private_key,
+        "--broadcast",
+        "--no-cache",
     ]
     if constructor_args:
         cmd += ["--constructor-args"] + constructor_args
@@ -302,8 +305,11 @@ def db_session():
         session.rollback()
         # Clean up in FK-safe order
         for model in [
-            MonitoredEvent, MonitoredContract, ProxyUpgradeEvent,
-            WatchedProxy, ProtocolSubscription,
+            MonitoredEvent,
+            MonitoredContract,
+            ProxyUpgradeEvent,
+            WatchedProxy,
+            ProtocolSubscription,
         ]:
             try:
                 session.query(model).delete()
@@ -458,18 +464,21 @@ class TestMaybeQueueReanalysis:
         job = maybe_queue_reanalysis(db_session, mc, "ownership_transferred")
         assert job is not None
         assert job.address == mc.address
+        assert job.request is not None
         assert job.request.get("reanalysis_trigger") == "ownership_transferred"
 
     def test_admin_changed_queues_job(self, db_session):
         mc = _make_monitored_contract(db_session, "0x" + "cc" * 20, "proxy")
         job = maybe_queue_reanalysis(db_session, mc, "admin_changed")
         assert job is not None
+        assert job.request is not None
         assert job.request.get("reanalysis_trigger") == "admin_changed"
 
     def test_beacon_upgraded_queues_job(self, db_session):
         mc = _make_monitored_contract(db_session, "0x" + "dd" * 20, "proxy")
         job = maybe_queue_reanalysis(db_session, mc, "beacon_upgraded")
         assert job is not None
+        assert job.request is not None
         assert job.request.get("reanalysis_trigger") == "beacon_upgraded"
 
     def test_non_triggering_event_returns_none(self, db_session):
@@ -478,9 +487,7 @@ class TestMaybeQueueReanalysis:
             assert maybe_queue_reanalysis(db_session, mc, event_type) is None
 
         # Verify no jobs were created
-        jobs = db_session.execute(
-            select(Job).where(func.lower(Job.address) == mc.address.lower())
-        ).scalars().all()
+        jobs = db_session.execute(select(Job).where(func.lower(Job.address) == mc.address.lower())).scalars().all()
         assert len(jobs) == 0
 
     def test_dedup_skips_when_job_in_flight(self, db_session):
@@ -496,9 +503,7 @@ class TestMaybeQueueReanalysis:
         assert job2 is None
 
         # Only one job exists
-        jobs = db_session.execute(
-            select(Job).where(func.lower(Job.address) == addr.lower())
-        ).scalars().all()
+        jobs = db_session.execute(select(Job).where(func.lower(Job.address) == addr.lower())).scalars().all()
         assert len(jobs) == 1
 
     def test_dedup_allows_after_completion(self, db_session):
@@ -536,11 +541,15 @@ class TestMaybeQueueReanalysis:
     def test_protocol_id_propagates(self, db_session):
         proto = _make_protocol(db_session, "Aave")
         mc = _make_monitored_contract(
-            db_session, "0x" + "11" * 20, "proxy", protocol_id=proto.id,
+            db_session,
+            "0x" + "11" * 20,
+            "proxy",
+            protocol_id=proto.id,
         )
         job = maybe_queue_reanalysis(db_session, mc, "upgraded")
         assert job is not None
         assert job.protocol_id == proto.id
+        assert job.request is not None
         assert job.request.get("protocol_id") == proto.id
 
     def test_poll_implementation_triggers_job(self, db_session):
@@ -548,6 +557,7 @@ class TestMaybeQueueReanalysis:
         data = {"field": "implementation", "old_value": "0xold", "new_value": "0xnew"}
         job = maybe_queue_reanalysis(db_session, mc, "state_changed_poll", data)
         assert job is not None
+        assert job.request is not None
         assert job.request.get("reanalysis_trigger") == "poll:implementation"
 
     def test_poll_owner_triggers_job(self, db_session):
@@ -555,6 +565,7 @@ class TestMaybeQueueReanalysis:
         data = {"field": "owner", "old_value": "0xold", "new_value": "0xnew"}
         job = maybe_queue_reanalysis(db_session, mc, "state_changed_poll", data)
         assert job is not None
+        assert job.request is not None
         assert job.request.get("reanalysis_trigger") == "poll:owner"
 
     def test_poll_paused_does_not_trigger(self, db_session):
@@ -646,14 +657,22 @@ class TestReanalysisAnvilIntegration:
         impl_v1 = _compile_and_deploy(IMPL_V1_SOURCE, "ImplV1", [], rpc_url, PRIVATE_KEY, tmp_path)
         impl_v2 = _compile_and_deploy(IMPL_V2_SOURCE, "ImplV2", [], rpc_url, PRIVATE_KEY, tmp_path)
         proxy_addr = _compile_and_deploy(
-            PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path,
+            PROXY_SOURCE,
+            "TestProxy",
+            [impl_v1],
+            rpc_url,
+            PRIVATE_KEY,
+            tmp_path,
         )
 
         current_block = int(_cast(["block-number"], rpc_url))
 
         proto = _make_protocol(db_session, "ProxyTest")
-        mc = _make_monitored_contract(
-            db_session, proxy_addr, "proxy", current_block,
+        _make_monitored_contract(
+            db_session,
+            proxy_addr,
+            "proxy",
+            current_block,
             protocol_id=proto.id,
         )
 
@@ -664,12 +683,16 @@ class TestReanalysisAnvilIntegration:
         assert any(e.event_type == "upgraded" for e in events)
 
         # Verify re-analysis job was created
-        jobs = db_session.execute(
-            select(Job).where(
-                func.lower(Job.address) == proxy_addr.lower(),
-                Job.status == JobStatus.queued,
+        jobs = (
+            db_session.execute(
+                select(Job).where(
+                    func.lower(Job.address) == proxy_addr.lower(),
+                    Job.status == JobStatus.queued,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(jobs) == 1
         job = jobs[0]
         assert job.protocol_id == proto.id
@@ -686,7 +709,10 @@ class TestReanalysisAnvilIntegration:
 
         proto = _make_protocol(db_session, "OwnableTest")
         _make_monitored_contract(
-            db_session, addr, "regular", current_block,
+            db_session,
+            addr,
+            "regular",
+            current_block,
             protocol_id=proto.id,
         )
 
@@ -696,12 +722,16 @@ class TestReanalysisAnvilIntegration:
         events = scan_for_events(db_session, rpc_url)
         assert any(e.event_type == "ownership_transferred" for e in events)
 
-        jobs = db_session.execute(
-            select(Job).where(
-                func.lower(Job.address) == addr.lower(),
-                Job.status == JobStatus.queued,
+        jobs = (
+            db_session.execute(
+                select(Job).where(
+                    func.lower(Job.address) == addr.lower(),
+                    Job.status == JobStatus.queued,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(jobs) == 1
         assert jobs[0].request.get("reanalysis_trigger") == "ownership_transferred"
 
@@ -711,13 +741,21 @@ class TestReanalysisAnvilIntegration:
         from services.monitoring.unified_watcher import scan_for_events
 
         addr = _compile_and_deploy(
-            ADMIN_PROXY_SOURCE, "TestAdminProxy", [], rpc_url, PRIVATE_KEY, tmp_path,
+            ADMIN_PROXY_SOURCE,
+            "TestAdminProxy",
+            [],
+            rpc_url,
+            PRIVATE_KEY,
+            tmp_path,
         )
         current_block = int(_cast(["block-number"], rpc_url))
 
         proto = _make_protocol(db_session, "AdminTest")
         _make_monitored_contract(
-            db_session, addr, "proxy", current_block,
+            db_session,
+            addr,
+            "proxy",
+            current_block,
             protocol_id=proto.id,
         )
 
@@ -727,12 +765,16 @@ class TestReanalysisAnvilIntegration:
         events = scan_for_events(db_session, rpc_url)
         assert any(e.event_type == "admin_changed" for e in events)
 
-        jobs = db_session.execute(
-            select(Job).where(
-                func.lower(Job.address) == addr.lower(),
-                Job.status == JobStatus.queued,
+        jobs = (
+            db_session.execute(
+                select(Job).where(
+                    func.lower(Job.address) == addr.lower(),
+                    Job.status == JobStatus.queued,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(jobs) == 1
         assert jobs[0].request.get("reanalysis_trigger") == "admin_changed"
 
@@ -752,9 +794,7 @@ class TestReanalysisAnvilIntegration:
         assert any(e.event_type == "paused" for e in events)
 
         # No reanalysis job should exist
-        jobs = db_session.execute(
-            select(Job).where(func.lower(Job.address) == addr.lower())
-        ).scalars().all()
+        jobs = db_session.execute(select(Job).where(func.lower(Job.address) == addr.lower())).scalars().all()
         assert len(jobs) == 0
 
     def test_multiple_upgrades_single_scan_creates_one_job(self, anvil_env, db_session):
@@ -773,7 +813,12 @@ contract ImplV3 { uint256 public version = 3; }
         impl_v3 = _compile_and_deploy(impl_v3_source, "ImplV3", [], rpc_url, PRIVATE_KEY, tmp_path)
 
         proxy_addr = _compile_and_deploy(
-            PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path,
+            PROXY_SOURCE,
+            "TestProxy",
+            [impl_v1],
+            rpc_url,
+            PRIVATE_KEY,
+            tmp_path,
         )
 
         current_block = int(_cast(["block-number"], rpc_url))
@@ -788,12 +833,16 @@ contract ImplV3 { uint256 public version = 3; }
         assert len(upgrade_events) == 2  # Two upgrade events detected
 
         # But only ONE reanalysis job (second upgrade deduped against first)
-        jobs = db_session.execute(
-            select(Job).where(
-                func.lower(Job.address) == proxy_addr.lower(),
-                Job.status == JobStatus.queued,
+        jobs = (
+            db_session.execute(
+                select(Job).where(
+                    func.lower(Job.address) == proxy_addr.lower(),
+                    Job.status == JobStatus.queued,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(jobs) == 1
 
     def test_poll_implementation_change_triggers_reanalysis(self, anvil_env, db_session):
@@ -804,12 +853,21 @@ contract ImplV3 { uint256 public version = 3; }
         impl_v1 = _compile_and_deploy(IMPL_V1_SOURCE, "ImplV1", [], rpc_url, PRIVATE_KEY, tmp_path)
         impl_v2 = _compile_and_deploy(IMPL_V2_SOURCE, "ImplV2", [], rpc_url, PRIVATE_KEY, tmp_path)
         proxy_addr = _compile_and_deploy(
-            PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path,
+            PROXY_SOURCE,
+            "TestProxy",
+            [impl_v1],
+            rpc_url,
+            PRIVATE_KEY,
+            tmp_path,
         )
 
         current_block = int(_cast(["block-number"], rpc_url))
         mc = _make_monitored_contract(
-            db_session, proxy_addr, "proxy", current_block, needs_polling=True,
+            db_session,
+            proxy_addr,
+            "proxy",
+            current_block,
+            needs_polling=True,
         )
         mc.last_known_state = {"implementation": impl_v1.lower()}
         db_session.commit()
@@ -818,19 +876,20 @@ contract ImplV3 { uint256 public version = 3; }
         _cast_send(proxy_addr, "upgradeTo(address)", [impl_v2], rpc_url, PRIVATE_KEY)
 
         events = poll_for_state_changes(db_session, rpc_url)
-        impl_changes = [
-            e for e in events
-            if e.data and e.data.get("field") == "implementation"
-        ]
+        impl_changes = [e for e in events if e.data and e.data.get("field") == "implementation"]
         assert len(impl_changes) == 1
 
         # Reanalysis job should be queued
-        jobs = db_session.execute(
-            select(Job).where(
-                func.lower(Job.address) == proxy_addr.lower(),
-                Job.status == JobStatus.queued,
+        jobs = (
+            db_session.execute(
+                select(Job).where(
+                    func.lower(Job.address) == proxy_addr.lower(),
+                    Job.status == JobStatus.queued,
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(jobs) == 1
         assert jobs[0].request.get("reanalysis_trigger") == "poll:implementation"
 
@@ -857,14 +916,14 @@ contract ImplV3 { uint256 public version = 3; }
         assert len(events) >= 2
 
         # Only the ownable contract should have a reanalysis job
-        ownable_jobs = db_session.execute(
-            select(Job).where(func.lower(Job.address) == ownable_addr.lower())
-        ).scalars().all()
+        ownable_jobs = (
+            db_session.execute(select(Job).where(func.lower(Job.address) == ownable_addr.lower())).scalars().all()
+        )
         assert len(ownable_jobs) == 1
 
-        pausable_jobs = db_session.execute(
-            select(Job).where(func.lower(Job.address) == pausable_addr.lower())
-        ).scalars().all()
+        pausable_jobs = (
+            db_session.execute(select(Job).where(func.lower(Job.address) == pausable_addr.lower())).scalars().all()
+        )
         assert len(pausable_jobs) == 0
 
 
@@ -1026,6 +1085,7 @@ class TestSnapshotAndDiff:
 
         job = maybe_queue_reanalysis(db_session, mc, "upgraded")
         assert job is not None
+        assert job.request is not None
         snap = job.request.get("reanalysis_snapshot", {})
         assert snap.get("implementation") == "0x" + "e5" * 20
 
@@ -1071,10 +1131,14 @@ class TestSnapshotAndDiff:
 
         # Add new functions
         from db.models import EffectiveFunction
+
         for name in ["transfer", "approve", "newFunction"]:
-            db_session.add(EffectiveFunction(
-                contract_id=contract.id, function_name=name,
-            ))
+            db_session.add(
+                EffectiveFunction(
+                    contract_id=contract.id,
+                    function_name=name,
+                )
+            )
         db_session.commit()
 
         job = Job(
@@ -1135,6 +1199,7 @@ class TestCompletionWebhook:
     def _protocol_with_sub(self, db_session):
         """Create a protocol with a Discord subscription."""
         from db.models import ProtocolSubscription
+
         proto = _make_protocol(db_session, "WebhookTest")
         sub = ProtocolSubscription(
             protocol_id=proto.id,
@@ -1147,14 +1212,17 @@ class TestCompletionWebhook:
 
     def test_completion_sends_webhook(self, db_session, _protocol_with_sub):
         from unittest.mock import MagicMock, patch
+
         from services.monitoring.notifier import notify_reanalysis_complete
 
         proto = _protocol_with_sub
         addr = "0x" + "d9" * 20
 
         contract = Contract(
-            address=addr.lower(), chain="ethereum",
-            implementation="0x" + "11" * 20, contract_name="TestVault",
+            address=addr.lower(),
+            chain="ethereum",
+            implementation="0x" + "11" * 20,
+            contract_name="TestVault",
             protocol_id=proto.id,
         )
         db_session.add(contract)
@@ -1196,6 +1264,7 @@ class TestCompletionWebhook:
     def test_completion_no_webhook_without_protocol(self, db_session):
         """Job without protocol_id → no webhook sent."""
         from unittest.mock import patch
+
         from services.monitoring.notifier import notify_reanalysis_complete
 
         job = Job(
@@ -1216,6 +1285,7 @@ class TestCompletionWebhook:
     def test_completion_no_webhook_without_subscriptions(self, db_session):
         """Protocol with no subscriptions → no webhook sent."""
         from unittest.mock import patch
+
         from services.monitoring.notifier import notify_reanalysis_complete
 
         proto = _make_protocol(db_session, "NoSubTest")
@@ -1236,13 +1306,15 @@ class TestCompletionWebhook:
 
     def test_completion_shows_no_changes_when_identical(self, db_session, _protocol_with_sub):
         from unittest.mock import MagicMock, patch
+
         from services.monitoring.notifier import notify_reanalysis_complete
 
         proto = _protocol_with_sub
         addr = "0x" + "a2" * 20
 
         contract = Contract(
-            address=addr.lower(), chain="ethereum",
+            address=addr.lower(),
+            chain="ethereum",
             implementation="0x" + "bb" * 20,
             protocol_id=proto.id,
         )
@@ -1276,13 +1348,15 @@ class TestCompletionWebhook:
     def test_completion_embed_references_job_id(self, db_session, _protocol_with_sub):
         """Both event and completion embeds reference the same Job ID."""
         from unittest.mock import MagicMock, patch
+
         from services.monitoring.notifier import _format_governance_embed, notify_reanalysis_complete
 
         proto = _protocol_with_sub
         addr = "0x" + "b3" * 20
 
         contract = Contract(
-            address=addr.lower(), chain="ethereum",
+            address=addr.lower(),
+            chain="ethereum",
             protocol_id=proto.id,
         )
         db_session.add(contract)

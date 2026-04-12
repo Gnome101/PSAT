@@ -63,10 +63,15 @@ _OWNER_CONTROLLER_IDS = ("owner", "state_variable:owner")
 # underlying state change.  Used by the poller to suppress duplicate events
 # when the event scanner has already recorded the change via an on-chain log.
 _POLL_FIELD_TO_SCAN_EVENTS: dict[str, frozenset[str]] = {
-    "implementation": frozenset({
-        "upgraded", "new_implementation", "changed_master_copy",
-        "target_updated", "beacon_upgraded",
-    }),
+    "implementation": frozenset(
+        {
+            "upgraded",
+            "new_implementation",
+            "changed_master_copy",
+            "target_updated",
+            "beacon_upgraded",
+        }
+    ),
     "owner": frozenset({"ownership_transferred"}),
     "paused": frozenset({"paused", "unpaused"}),
     "threshold": frozenset({"threshold_changed"}),
@@ -96,10 +101,7 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
     if not contracts:
         return []
 
-    contract_by_address: dict[str, MonitoredContract] = {
-        c.address.lower(): c for c in contracts
-    }
-    addresses = list(contract_by_address.keys())
+    contract_by_address: dict[str, MonitoredContract] = {c.address.lower(): c for c in contracts}
 
     from_block = min(c.last_scanned_block for c in contracts)
     latest_block = get_latest_block(rpc_url)
@@ -146,11 +148,7 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
         # Only include addresses that still need blocks in this chunk.
         # A contract with last_scanned_block >= to_block has already
         # processed all blocks in this range — no need to re-scan for it.
-        chunk_addresses = [
-            addr
-            for addr, mc in contract_by_address.items()
-            if mc.last_scanned_block < to_block
-        ]
+        chunk_addresses = [addr for addr, mc in contract_by_address.items() if mc.last_scanned_block < to_block]
         if not chunk_addresses:
             cursor = to_block + 1
             last_successful_block = to_block
@@ -296,11 +294,7 @@ def _write_through_proxy_event(
     parsed: dict,
 ) -> None:
     """Write a ProxyUpgradeEvent for backward compatibility."""
-    new_impl = (
-        parsed.get("implementation")
-        or parsed.get("beacon")
-        or parsed.get("new_admin")
-    )
+    new_impl = parsed.get("implementation") or parsed.get("beacon") or parsed.get("new_admin")
     if not new_impl:
         return
 
@@ -367,7 +361,10 @@ def _sync_relational_tables(
 
     # --- Proxy upgrade events → Contract.implementation + UpgradeEvent row ---
     if event_type in (
-        "upgraded", "new_implementation", "changed_master_copy", "target_updated",
+        "upgraded",
+        "new_implementation",
+        "changed_master_copy",
+        "target_updated",
     ):
         new_impl = parsed.get("implementation")
         if not new_impl:
@@ -379,14 +376,16 @@ def _sync_relational_tables(
         old_impl = contract.implementation
         contract.implementation = new_impl
 
-        session.add(UpgradeEvent(
-            contract_id=contract.id,
-            proxy_address=mc.address,
-            old_impl=old_impl,
-            new_impl=new_impl,
-            block_number=parsed.get("block_number"),
-            tx_hash=parsed.get("tx_hash"),
-        ))
+        session.add(
+            UpgradeEvent(
+                contract_id=contract.id,
+                proxy_address=mc.address,
+                old_impl=old_impl,
+                new_impl=new_impl,
+                block_number=parsed.get("block_number"),
+                tx_hash=parsed.get("tx_hash"),
+            )
+        )
 
     # --- AdminChanged → Contract.admin ---
     elif event_type == "admin_changed":
@@ -406,9 +405,7 @@ def _sync_relational_tables(
             session.execute(
                 select(ControllerValue).where(
                     ControllerValue.contract_id == mc.contract_id,
-                    ControllerValue.controller_id.in_(
-                        _OWNER_CONTROLLER_IDS
-                    ),
+                    ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
                 )
             )
             .scalars()
@@ -433,23 +430,23 @@ def _sync_relational_from_poll(
         contract = session.get(Contract, mc.contract_id)
         if contract:
             contract.implementation = str(new_value)
-            session.add(UpgradeEvent(
-                contract_id=contract.id,
-                proxy_address=mc.address,
-                old_impl=str(old_value) if old_value else None,
-                new_impl=str(new_value),
-                block_number=0,
-                tx_hash="",
-            ))
+            session.add(
+                UpgradeEvent(
+                    contract_id=contract.id,
+                    proxy_address=mc.address,
+                    old_impl=str(old_value) if old_value else None,
+                    new_impl=str(new_value),
+                    block_number=0,
+                    tx_hash="",
+                )
+            )
 
     elif field_name == "owner":
         cv_rows = (
             session.execute(
                 select(ControllerValue).where(
                     ControllerValue.contract_id == mc.contract_id,
-                    ControllerValue.controller_id.in_(
-                        _OWNER_CONTROLLER_IDS
-                    ),
+                    ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
                 )
             )
             .scalars()
@@ -580,11 +577,13 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
                     seconds=DEFAULT_POLL_INTERVAL * 2,
                 )
                 already = session.execute(
-                    select(MonitoredEvent.id).where(
+                    select(MonitoredEvent.id)
+                    .where(
                         MonitoredEvent.monitored_contract_id == mc.id,
                         MonitoredEvent.event_type.in_(scan_types),
                         MonitoredEvent.detected_at >= suppression_cutoff,
-                    ).limit(1)
+                    )
+                    .limit(1)
                 ).scalar_one_or_none()
                 if already is not None:
                     logger.debug(
@@ -643,7 +642,10 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
                     "new_value": str(new_value),
                 }
                 reanalysis_job = maybe_queue_reanalysis(
-                    session, mc, "state_changed_poll", poll_data,
+                    session,
+                    mc,
+                    "state_changed_poll",
+                    poll_data,
                 )
                 if reanalysis_job:
                     updated = dict(event.data or {})

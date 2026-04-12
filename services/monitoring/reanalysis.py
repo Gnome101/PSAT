@@ -18,32 +18,37 @@ from db.models import (
     JobStatus,
     MonitoredContract,
 )
+from db.queue import create_job
+
 # Must match _OWNER_CONTROLLER_IDS in unified_watcher.py.
 _OWNER_CONTROLLER_IDS = ("owner", "state_variable:owner")
-from db.queue import create_job
 
 logger = logging.getLogger(__name__)
 
 # Event types that should trigger a full re-analysis job.
-REANALYSIS_EVENT_TYPES = frozenset({
-    # Proxy upgrades — implementation code changed, entire analysis is stale
-    "upgraded",
-    "new_implementation",
-    "changed_master_copy",
-    "target_updated",
-    # Beacon upgrade — all proxies pointing at this beacon delegate to new code
-    "beacon_upgraded",
-    # Admin changed — control graph and effective permissions are stale
-    "admin_changed",
-    # Ownership transferred — control graph needs re-resolution
-    "ownership_transferred",
-})
+REANALYSIS_EVENT_TYPES = frozenset(
+    {
+        # Proxy upgrades — implementation code changed, entire analysis is stale
+        "upgraded",
+        "new_implementation",
+        "changed_master_copy",
+        "target_updated",
+        # Beacon upgrade — all proxies pointing at this beacon delegate to new code
+        "beacon_upgraded",
+        # Admin changed — control graph and effective permissions are stale
+        "admin_changed",
+        # Ownership transferred — control graph needs re-resolution
+        "ownership_transferred",
+    }
+)
 
 # State-poll field names that map to the same triggers above.
-REANALYSIS_POLL_FIELDS = frozenset({
-    "implementation",  # equivalent to proxy upgrade
-    "owner",           # equivalent to ownership_transferred
-})
+REANALYSIS_POLL_FIELDS = frozenset(
+    {
+        "implementation",  # equivalent to proxy upgrade
+        "owner",  # equivalent to ownership_transferred
+    }
+)
 
 
 def should_trigger_reanalysis(event_type: str, data: dict | None = None) -> bool:
@@ -161,23 +166,23 @@ def _build_snapshot(session: Session, mc: MonitoredContract) -> dict[str, Any]:
 
     # Privileged function names
     fns = (
-        session.execute(
-            select(EffectiveFunction.function_name).where(
-                EffectiveFunction.contract_id == contract.id
-            )
-        )
+        session.execute(select(EffectiveFunction.function_name).where(EffectiveFunction.contract_id == contract.id))
         .scalars()
         .all()
     )
     snap["privileged_functions"] = sorted(fns)
 
     # Owner value
-    owner_cv = session.execute(
-        select(ControllerValue).where(
-            ControllerValue.contract_id == contract.id,
-            ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
+    owner_cv = (
+        session.execute(
+            select(ControllerValue).where(
+                ControllerValue.contract_id == contract.id,
+                ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if owner_cv:
         snap["owner"] = owner_cv.value
 
@@ -197,12 +202,16 @@ def build_reanalysis_diff(session: Session, job: Job) -> list[str]:
     address = (job.address or "").lower()
     chain = request.get("chain", "ethereum")
 
-    contract = session.execute(
-        select(Contract).where(
-            func.lower(Contract.address) == address,
-            Contract.chain == chain,
+    contract = (
+        session.execute(
+            select(Contract).where(
+                func.lower(Contract.address) == address,
+                Contract.chain == chain,
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if not contract:
         return []
 
@@ -238,11 +247,7 @@ def build_reanalysis_diff(session: Session, job: Job) -> list[str]:
     # Privileged functions diff
     old_fns = set(snapshot.get("privileged_functions", []))
     new_fns_rows = (
-        session.execute(
-            select(EffectiveFunction.function_name).where(
-                EffectiveFunction.contract_id == contract.id
-            )
-        )
+        session.execute(select(EffectiveFunction.function_name).where(EffectiveFunction.contract_id == contract.id))
         .scalars()
         .all()
     )
@@ -259,12 +264,16 @@ def build_reanalysis_diff(session: Session, job: Job) -> list[str]:
 
     # Owner
     old_owner = snapshot.get("owner")
-    owner_cv = session.execute(
-        select(ControllerValue).where(
-            ControllerValue.contract_id == contract.id,
-            ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
+    owner_cv = (
+        session.execute(
+            select(ControllerValue).where(
+                ControllerValue.contract_id == contract.id,
+                ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
+            )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     new_owner = owner_cv.value if owner_cv else None
     if old_owner and new_owner and old_owner.lower() != new_owner.lower():
         changes.append(f"Owner: `{old_owner}` → `{new_owner}`")

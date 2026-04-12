@@ -257,7 +257,10 @@ class PolicyWorker(BaseWorker):
                     from services.monitoring.enrollment import maybe_enroll_protocol
 
                     enrolled = maybe_enroll_protocol(
-                        session, job.protocol_id, rpc_url, chain="ethereum",
+                        session,
+                        job.protocol_id,
+                        rpc_url,
+                        chain="ethereum",
                         exclude_job_id=job.id,
                     )
                     if enrolled:
@@ -266,9 +269,7 @@ class PolicyWorker(BaseWorker):
                             job.protocol_id,
                         )
                 except Exception:
-                    logger.exception(
-                        "Auto-enrollment failed for protocol %s", job.protocol_id
-                    )
+                    logger.exception("Auto-enrollment failed for protocol %s", job.protocol_id)
 
             # Send completion webhook for re-analysis jobs
             request = job.request if isinstance(job.request, dict) else {}

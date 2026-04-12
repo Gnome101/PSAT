@@ -16,10 +16,7 @@ from __future__ import annotations
 
 from unittest.mock import call, patch
 
-import pytest
 from conftest import ADDR, _add_proxy, _admin_data, _make_log, _topic_for, requires_postgres
-
-pytestmark = requires_postgres
 
 from db.models import ProxyUpgradeEvent
 from services.discovery.upgrade_history import (
@@ -33,6 +30,8 @@ from services.monitoring.proxy_watcher import (
     resolve_current_implementation,
     scan_for_upgrades,
 )
+
+pytestmark = requires_postgres
 
 EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 

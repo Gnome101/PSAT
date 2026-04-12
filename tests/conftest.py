@@ -13,7 +13,16 @@ from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import Base, MonitoredContract, MonitoredEvent, Protocol, ProtocolSubscription, ProxySubscription, ProxyUpgradeEvent, WatchedProxy
+from db.models import (
+    Base,
+    MonitoredContract,
+    MonitoredEvent,
+    Protocol,
+    ProtocolSubscription,
+    ProxySubscription,
+    ProxyUpgradeEvent,
+    WatchedProxy,
+)
 
 # ---------------------------------------------------------------------------
 # PostgreSQL connection
@@ -35,9 +44,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)")
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +111,13 @@ def db_session():
         session.rollback()
         # Clean monitoring tables (order respects FK constraints)
         for model in [
-            MonitoredEvent, MonitoredContract, ProtocolSubscription,
-            ProxyUpgradeEvent, ProxySubscription, WatchedProxy, Protocol,
+            MonitoredEvent,
+            MonitoredContract,
+            ProtocolSubscription,
+            ProxyUpgradeEvent,
+            ProxySubscription,
+            WatchedProxy,
+            Protocol,
         ]:
             session.query(model).delete()
         session.commit()

@@ -23,7 +23,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session as SASession
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -54,9 +54,7 @@ def _can_connect() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)"
-)
+pytestmark = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)")
 
 
 def ADDR(n: int) -> str:
@@ -73,8 +71,12 @@ def db_session():
     finally:
         session.rollback()
         for model in [
-            MonitoredEvent, MonitoredContract, ControllerValue,
-            Contract, Protocol, WatchedProxy,
+            MonitoredEvent,
+            MonitoredContract,
+            ControllerValue,
+            Contract,
+            Protocol,
+            WatchedProxy,
         ]:
             try:
                 session.query(model).delete()
@@ -125,9 +127,9 @@ class TestJsonbDirtyTracking:
         db_session.expire_all()
         reloaded = db_session.get(MonitoredContract, mc_id)
         assert reloaded is not None
+        assert reloaded.last_known_state is not None
         assert reloaded.last_known_state.get("owner") == ADDR(42), (
-            "last_known_state change was lost after commit — "
-            "flag_modified() is likely missing"
+            "last_known_state change was lost after commit — flag_modified() is likely missing"
         )
 
     def test_poll_state_update_persists(self, db_session: SASession):
@@ -156,6 +158,7 @@ class TestJsonbDirtyTracking:
         db_session.expire_all()
         reloaded = db_session.get(MonitoredContract, mc_id)
         assert reloaded is not None
+        assert reloaded.last_known_state is not None
         assert reloaded.last_known_state.get("paused") is True
 
 
@@ -216,25 +219,18 @@ class TestPerContractScanBlock:
 
         # Chunks whose entire range is already scanned by mc_ahead
         # (toBlock <= 5000) should only include ADDR(1).
-        early_chunks = [
-            c for c in log_calls
-            if int(c[1][0]["toBlock"], 16) <= 5000
-        ]
+        early_chunks = [c for c in log_calls if int(c[1][0]["toBlock"], 16) <= 5000]
         assert len(early_chunks) > 0, "Expected at least one early chunk"
         for call in early_chunks:
             addrs = call[1][0]["address"]
             assert ADDR(2) not in addrs, (
-                f"Already-scanned address {ADDR(2)} was included in chunk "
-                f"ending at {call[1][0]['toBlock']}"
+                f"Already-scanned address {ADDR(2)} was included in chunk ending at {call[1][0]['toBlock']}"
             )
             assert ADDR(1) in addrs
 
         # Chunks that extend past mc_ahead's last_scanned_block (toBlock > 5000)
         # should include both addresses.
-        late_chunks = [
-            c for c in log_calls
-            if int(c[1][0]["toBlock"], 16) > 5000
-        ]
+        late_chunks = [c for c in log_calls if int(c[1][0]["toBlock"], 16) > 5000]
         assert len(late_chunks) > 0
         for call in late_chunks:
             addrs = call[1][0]["address"]
@@ -310,9 +306,7 @@ class TestRevertedEthCallPolling:
         )
         result = parse_address_result(revert_data)
         if result is not None:
-            assert result == "0x" + "0" * 40 or result is None, (
-                f"Revert data was parsed as address: {result}"
-            )
+            assert result == "0x" + "0" * 40 or result is None, f"Revert data was parsed as address: {result}"
 
     def test_short_revert_returns_none(self):
         """Short revert responses (< 66 chars) must return None."""
@@ -344,7 +338,7 @@ class TestRevertedEthCallPolling:
         db_session.commit()
 
         def mock_batch(url, calls):
-            results = [None] * len(calls)
+            results: list[str | None] = [None] * len(calls)
             if len(calls) > 1:
                 results[1] = "0x08c379a0"  # short revert selector
             return results
@@ -423,10 +417,11 @@ class TestOwnerControllerMatching:
         cv_owner_reloaded = db_session.get(ControllerValue, cv_owner.id)
         cv_fake_reloaded = db_session.get(ControllerValue, cv_fake.id)
 
+        assert cv_owner_reloaded is not None
+        assert cv_fake_reloaded is not None
         assert cv_owner_reloaded.value == ADDR(50), "Real owner should be updated"
         assert cv_fake_reloaded.value == ADDR(20), (
-            f"token_owner_registry was incorrectly updated to {cv_fake_reloaded.value} "
-            f"— ilike('%owner%') is too broad"
+            f"token_owner_registry was incorrectly updated to {cv_fake_reloaded.value} — ilike('%owner%') is too broad"
         )
 
     def test_poll_sync_only_updates_exact_owner(self, db_session: SASession):
@@ -476,7 +471,9 @@ class TestOwnerControllerMatching:
         db_session.commit()
 
         db_session.expire_all()
-        assert db_session.get(ControllerValue, cv_owner.id).value == ADDR(50)
-        assert db_session.get(ControllerValue, cv_previous.id).value == ADDR(20), (
-            "previous_owner_map was incorrectly updated"
-        )
+        cv_owner_reloaded = db_session.get(ControllerValue, cv_owner.id)
+        cv_previous_reloaded = db_session.get(ControllerValue, cv_previous.id)
+        assert cv_owner_reloaded is not None
+        assert cv_previous_reloaded is not None
+        assert cv_owner_reloaded.value == ADDR(50)
+        assert cv_previous_reloaded.value == ADDR(20), "previous_owner_map was incorrectly updated"

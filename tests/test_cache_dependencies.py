@@ -16,7 +16,6 @@ from cache_helpers import (
     _make_dep_phase_job,
     _patch_dep_phase_helpers,
     db_session,  # noqa: F401
-    requires_postgres,
 )
 
 # ---------------------------------------------------------------------------
