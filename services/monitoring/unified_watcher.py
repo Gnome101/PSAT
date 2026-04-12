@@ -27,6 +27,7 @@ from services.monitoring.event_topics import (
     PROXY_EVENT_TOPICS,
     parse_any_log,
 )
+from services.monitoring.reanalysis import maybe_queue_reanalysis
 from utils.rpc import (
     normalize_hex,
     parse_address_result,
@@ -199,6 +200,12 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
 
             # Propagate to relational tables (Contract, ControllerValue, UpgradeEvent)
             _sync_relational_tables(session, mc, parsed)
+
+            # Queue a re-analysis job if the event warrants it
+            try:
+                maybe_queue_reanalysis(session, mc, event_type, event_data)
+            except Exception:
+                logger.exception("Failed to queue re-analysis for %s", mc.address)
 
         last_successful_block = to_block
         cursor = to_block + 1
@@ -556,6 +563,17 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
 
             # Propagate to relational tables
             _sync_relational_from_poll(session, mc, field_name, new_value, old_value)
+
+            # Queue a re-analysis job if the state change warrants it
+            try:
+                poll_data = {
+                    "field": field_name,
+                    "old_value": str(old_value),
+                    "new_value": str(new_value),
+                }
+                maybe_queue_reanalysis(session, mc, "state_changed_poll", poll_data)
+            except Exception:
+                logger.exception("Failed to queue re-analysis for %s", mc.address)
 
     session.commit()
     return new_events
