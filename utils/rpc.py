@@ -97,7 +97,7 @@ def parse_address_result(raw: Any) -> str | None:
     A valid ABI-encoded address is at least 66 chars (``0x`` + 64 hex digits).
     Shorter responses are reverts, error selectors, or empty returns.
     """
-    if not raw or not isinstance(raw, str) or len(raw) < 42:
+    if not raw or not isinstance(raw, str) or len(raw) < 66:
         return None
     if raw == "0x" + "0" * 64:
         return None

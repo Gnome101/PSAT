@@ -315,7 +315,7 @@ class TestRevertedEthCallPolling:
             )
 
     def test_short_revert_returns_none(self):
-        """Short revert responses (< 42 chars) must return None."""
+        """Short revert responses (< 66 chars) must return None."""
         from utils.rpc import parse_address_result
 
         assert parse_address_result("0x") is None

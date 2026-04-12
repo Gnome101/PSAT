@@ -532,7 +532,9 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
         elif field_name == "owner":
             new_value = parse_address_result(raw)
         elif field_name == "paused":
-            if raw and raw != "0x" + "0" * 64:
+            if not raw:
+                new_value = None
+            elif raw != "0x" + "0" * 64:
                 new_value = True
             else:
                 new_value = False

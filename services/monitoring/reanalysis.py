@@ -18,6 +18,8 @@ from db.models import (
     JobStatus,
     MonitoredContract,
 )
+# Must match _OWNER_CONTROLLER_IDS in unified_watcher.py.
+_OWNER_CONTROLLER_IDS = ("owner", "state_variable:owner")
 from db.queue import create_job
 
 logger = logging.getLogger(__name__)
@@ -173,7 +175,7 @@ def _build_snapshot(session: Session, mc: MonitoredContract) -> dict[str, Any]:
     owner_cv = session.execute(
         select(ControllerValue).where(
             ControllerValue.contract_id == contract.id,
-            ControllerValue.controller_id.ilike("%owner%"),
+            ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
         )
     ).scalars().first()
     if owner_cv:
@@ -260,7 +262,7 @@ def build_reanalysis_diff(session: Session, job: Job) -> list[str]:
     owner_cv = session.execute(
         select(ControllerValue).where(
             ControllerValue.contract_id == contract.id,
-            ControllerValue.controller_id.ilike("%owner%"),
+            ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
         )
     ).scalars().first()
     new_owner = owner_cv.value if owner_cv else None
