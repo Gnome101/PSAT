@@ -903,13 +903,16 @@ def test_enrollment_config_produces_correct_detection(anvil_env, test_db):
 
     # Simulate enrollment output for a pausable contract
     from unittest.mock import MagicMock
+    contract = MagicMock()
+    contract.is_proxy = False
+    contract.proxy_type = None
     summary = MagicMock()
     summary.is_upgradeable = False
     summary.is_pausable = True
     summary.has_timelock = False
     summary.control_model = None
 
-    ct = _determine_contract_type(summary, [])
+    ct = _determine_contract_type(contract, summary, [])
     config = _build_monitoring_config(summary, [], ct)
 
     # Deploy a pausable contract

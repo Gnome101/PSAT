@@ -30,7 +30,7 @@ from db.models import Artifact, Base, Job, JobStage, JobStatus, SourceFile
 from db.queue import create_job, get_artifact
 from workers.base import JobHandledDirectly
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 ADDR_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ADDR_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

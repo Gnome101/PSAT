@@ -4,7 +4,7 @@ Unit tests (always run): Use SQLite in-memory with mock Contract objects.
 Integration tests (require PostgreSQL): Use real tables, test full enrollment flow.
 
 Run integration tests:
-    DATABASE_URL=postgresql://psat:psat@localhost:5432/psat \
+    TEST_DATABASE_URL=postgresql://psat:psat@localhost:5433/psat_test \
         uv run pytest tests/test_enrollment.py -v
 """
 
@@ -30,7 +30,7 @@ from db.models import (
 # Postgres skip condition
 # ---------------------------------------------------------------------------
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 
 def _can_connect() -> bool:
@@ -132,38 +132,80 @@ def _mock_graph_node(address="0x" + "c" * 40, resolved_type="safe"):
 
 
 class TestDetermineContractType:
-    def test_proxy_from_summary(self):
+    def test_proxy_from_contract_fields(self):
         from services.monitoring.enrollment import _determine_contract_type
 
-        summary = _mock_summary(is_upgradeable=True)
-        result = _determine_contract_type(summary, [])
+        contract = _mock_contract(is_proxy=True, proxy_type="eip1967")
+        result = _determine_contract_type(contract, None, [])
         assert result == "proxy"
+
+    def test_proxy_from_contract_fields_no_summary(self):
+        """Proxy contracts without a ContractSummary must still be detected."""
+        from services.monitoring.enrollment import _determine_contract_type
+
+        contract = _mock_contract(is_proxy=True, proxy_type="eip1967")
+        result = _determine_contract_type(contract, None, [])
+        assert result == "proxy"
+
+    def test_proxy_from_proxy_type_only(self):
+        """proxy_type set but is_proxy=False (edge case) still detects proxy."""
+        from services.monitoring.enrollment import _determine_contract_type
+
+        contract = _mock_contract(is_proxy=False, proxy_type="custom")
+        result = _determine_contract_type(contract, None, [])
+        assert result == "proxy"
+
+    def test_proxy_from_summary_and_contract(self):
+        """is_upgradeable only produces 'proxy' when the contract is a proxy shell."""
+        from services.monitoring.enrollment import _determine_contract_type
+
+        contract = _mock_contract(is_proxy=True, proxy_type="eip1967")
+        summary = _mock_summary(is_upgradeable=True)
+        result = _determine_contract_type(contract, summary, [])
+        assert result == "proxy"
+
+    def test_upgradeable_implementation_is_not_proxy(self):
+        """UUPS implementations have is_upgradeable=True but are not proxy shells."""
+        from services.monitoring.enrollment import _determine_contract_type
+
+        contract = _mock_contract(is_proxy=False, proxy_type=None)
+        summary = _mock_summary(is_upgradeable=True)
+        result = _determine_contract_type(contract, summary, [])
+        assert result != "proxy"
 
     def test_timelock_from_summary(self):
         from services.monitoring.enrollment import _determine_contract_type
 
+        contract = _mock_contract()
         summary = _mock_summary(has_timelock=True)
-        result = _determine_contract_type(summary, [])
+        result = _determine_contract_type(contract, summary, [])
         assert result == "timelock"
 
     def test_pausable_from_summary(self):
         from services.monitoring.enrollment import _determine_contract_type
 
+        contract = _mock_contract()
         summary = _mock_summary(is_pausable=True)
-        result = _determine_contract_type(summary, [])
+        result = _determine_contract_type(contract, summary, [])
         assert result == "pausable"
 
-    def test_safe_from_controller_value(self):
+    def test_controller_type_does_not_propagate(self):
+        """A contract's type is determined by its own properties, not by
+        the resolved_type of its controllers.  Having a safe/timelock owner
+        doesn't make the contract itself a safe or timelock."""
         from services.monitoring.enrollment import _determine_contract_type
 
-        cv = _mock_controller_value(resolved_type="safe")
-        result = _determine_contract_type(None, [cv])
-        assert result == "safe"
+        contract = _mock_contract(is_proxy=False)
+        for resolved in ("safe", "timelock", "proxy_admin"):
+            cv = _mock_controller_value(resolved_type=resolved)
+            result = _determine_contract_type(contract, None, [cv])
+            assert result == "regular", f"resolved_type={resolved} should not propagate"
 
     def test_regular_default(self):
         from services.monitoring.enrollment import _determine_contract_type
 
-        result = _determine_contract_type(None, [])
+        contract = _mock_contract()
+        result = _determine_contract_type(contract, None, [])
         assert result == "regular"
 
 
@@ -292,8 +334,9 @@ class TestEnrollProtocolContracts:
 
         # Since the full Contract model uses ARRAY/JSONB columns that are
         # incompatible with SQLite, we test the building blocks directly
+        contract = _mock_contract(is_proxy=True, proxy_type="eip1967")
         summary = _mock_summary(is_upgradeable=True, is_pausable=True)
-        ct = _determine_contract_type(summary, [])
+        ct = _determine_contract_type(contract, summary, [])
         assert ct == "proxy"
 
         config = _build_monitoring_config(summary, [], ct)
@@ -499,6 +542,20 @@ def pg_session():
         engine.dispose()
 
 
+def _create_completed_job(session, address, protocol_id):
+    """Create a completed Job for a contract address so enrollment picks it up."""
+    from db.models import Job, JobStage, JobStatus
+    job = Job(
+        address=address,
+        protocol_id=protocol_id,
+        status=JobStatus.completed,
+        stage=JobStage.done,
+    )
+    session.add(job)
+    session.flush()
+    return job
+
+
 @requires_postgres
 class TestEnrollmentIntegration:
     """End-to-end enrollment with real Contract, ContractSummary, and
@@ -538,6 +595,7 @@ class TestEnrollmentIntegration:
             value="0x" + "b1" * 20,
             resolved_type="safe",
         ))
+        _create_completed_job(pg_session, "0x" + "a1" * 20, proto.id)
 
         # Plain pausable contract
         pausable_contract = Contract(
@@ -555,6 +613,7 @@ class TestEnrollmentIntegration:
             is_pausable=True,
             control_model="role-based",
         ))
+        _create_completed_job(pg_session, "0x" + "c1" * 20, proto.id)
         pg_session.commit()
 
         with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
@@ -575,7 +634,8 @@ class TestEnrollmentIntegration:
         assert proxy_mc.monitoring_config["watch_pause"] is True
         assert proxy_mc.last_known_state["implementation"] == "0x" + "a2" * 20
         assert proxy_mc.last_known_state["owner"] == "0x" + "b1" * 20
-        assert proxy_mc.needs_polling is True
+        # EIP-1967 proxies emit events — no polling needed
+        assert proxy_mc.needs_polling is False
         # Proxy should also have a WatchedProxy row linked
         assert proxy_mc.watched_proxy_id is not None
 
@@ -589,6 +649,127 @@ class TestEnrollmentIntegration:
         assert pausable_mc.monitoring_config["watch_pause"] is True
         assert pausable_mc.monitoring_config["watch_roles"] is True
         assert pausable_mc.monitoring_config["watch_upgrades"] is False
+
+    def test_enroll_proxy_without_summary_uses_contract_fields(self, pg_session):
+        """Proxy contracts with is_proxy=True but NO ContractSummary must still
+        be enrolled as type='proxy' with correct monitoring config, WatchedProxy
+        row, and initial state containing the implementation address.
+
+        This is the common case for EIP-1967 proxies whose Slither analysis
+        runs on the implementation contract, not the proxy shell.
+        """
+        from db.models import Contract, ControllerValue, Protocol
+        from services.monitoring.enrollment import enroll_protocol_contracts
+
+        proto = Protocol(name=PROTO_NAME)
+        pg_session.add(proto)
+        pg_session.flush()
+
+        impl_addr = "0x" + "b2" * 20
+        proxy_contract = Contract(
+            address="0x" + "a1" * 20,
+            chain="ethereum",
+            protocol_id=proto.id,
+            contract_name="LiquidityPoolProxy",
+            is_proxy=True,
+            proxy_type="eip1967",
+            implementation=impl_addr,
+        )
+        pg_session.add(proxy_contract)
+        pg_session.flush()
+
+        # No ContractSummary — this is the bug scenario.
+        # But there IS a controller value (owner) from the resolution stage.
+        pg_session.add(ControllerValue(
+            contract_id=proxy_contract.id,
+            controller_id="owner",
+            value="0x" + "cc" * 20,
+            resolved_type="safe",
+        ))
+        _create_completed_job(pg_session, "0x" + "a1" * 20, proto.id)
+        pg_session.commit()
+
+        with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
+            enrolled = enroll_protocol_contracts(
+                pg_session, proto.id, "http://rpc", "ethereum"
+            )
+
+        assert len(enrolled) == 1
+
+        mc = pg_session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.address == ("0x" + "a1" * 20)
+            )
+        ).scalar_one()
+
+        # Must be proxy, not regular
+        assert mc.contract_type == "proxy"
+        # EIP-1967 proxies emit events — no polling needed
+        assert mc.needs_polling is False
+        assert mc.monitoring_config["watch_upgrades"] is True
+        assert mc.monitoring_config["watch_ownership"] is True
+
+        # Initial state must include the implementation address
+        assert mc.last_known_state.get("implementation") == impl_addr
+        assert mc.last_known_state.get("owner") == "0x" + "cc" * 20
+
+        # WatchedProxy row must be created and linked
+        assert mc.watched_proxy_id is not None
+        wp = pg_session.get(WatchedProxy, mc.watched_proxy_id)
+        assert wp is not None
+        assert wp.proxy_type == "eip1967"
+        assert wp.last_known_implementation == impl_addr
+
+    def test_enroll_implementation_with_proxy_admin_stays_regular(self, pg_session):
+        """An implementation contract whose controller has resolved_type=proxy_admin
+        should NOT be classified as a proxy — it's the target of a proxy, not a
+        proxy itself."""
+        from db.models import Contract, ControllerValue, Protocol
+        from services.monitoring.enrollment import enroll_protocol_contracts
+
+        proto = Protocol(name=PROTO_NAME)
+        pg_session.add(proto)
+        pg_session.flush()
+
+        impl_contract = Contract(
+            address="0x" + "d1" * 20,
+            chain="ethereum",
+            protocol_id=proto.id,
+            contract_name="LiquidityPoolImpl",
+            is_proxy=False,
+            proxy_type=None,
+        )
+        pg_session.add(impl_contract)
+        pg_session.flush()
+
+        pg_session.add(ControllerValue(
+            contract_id=impl_contract.id,
+            controller_id="admin",
+            value="0x" + "ee" * 20,
+            resolved_type="proxy_admin",
+        ))
+        _create_completed_job(pg_session, "0x" + "d1" * 20, proto.id)
+        pg_session.commit()
+
+        with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
+            enrolled = enroll_protocol_contracts(
+                pg_session, proto.id, "http://rpc", "ethereum"
+            )
+
+        assert len(enrolled) == 1
+
+        mc = pg_session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.address == ("0x" + "d1" * 20)
+            )
+        ).scalar_one()
+
+        # Must be regular, NOT proxy
+        assert mc.contract_type == "regular"
+        assert mc.needs_polling is False
+        assert mc.monitoring_config["watch_upgrades"] is False
+        # No WatchedProxy should be created
+        assert mc.watched_proxy_id is None
 
     def test_enroll_discovers_controllers_from_graph(self, pg_session):
         """ControlGraphNode rows with safe/timelock types get their own
@@ -608,6 +789,7 @@ class TestEnrollmentIntegration:
         )
         pg_session.add(contract)
         pg_session.flush()
+        _create_completed_job(pg_session, "0x" + "d1" * 20, proto.id)
 
         safe_addr = "0x" + "e1" * 20
         timelock_addr = "0x" + "e2" * 20
@@ -669,6 +851,7 @@ class TestEnrollmentIntegration:
             protocol_id=proto.id,
             contract_name="Token",
         ))
+        _create_completed_job(pg_session, "0x" + "f1" * 20, proto.id)
         pg_session.commit()
 
         with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):

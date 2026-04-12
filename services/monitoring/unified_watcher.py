@@ -386,6 +386,21 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
             continue
 
         if new_value != old_value:
+            # Always record the new value in last_known_state
+            state[field_name] = new_value
+            mc.last_known_state = state
+
+            # Skip emitting an event when old_value is None — that's the
+            # first observation after enrollment, not an actual state change.
+            if old_value is None:
+                logger.debug(
+                    "Initial %s observation on %s: %s (no event emitted)",
+                    field_name,
+                    mc.address,
+                    new_value,
+                )
+                continue
+
             event = MonitoredEvent(
                 id=uuid.uuid4(),
                 monitored_contract_id=mc.id,
@@ -394,7 +409,7 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
                 tx_hash="",
                 data={
                     "field": field_name,
-                    "old_value": str(old_value) if old_value is not None else None,
+                    "old_value": str(old_value),
                     "new_value": str(new_value),
                 },
             )
@@ -408,9 +423,6 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
                 old_value,
                 new_value,
             )
-
-            state[field_name] = new_value
-            mc.last_known_state = state
 
             # Write-through for proxy implementation changes
             if field_name == "implementation" and mc.watched_proxy_id:

@@ -66,7 +66,7 @@ def maybe_enroll_protocol(
         logger.debug("Protocol %s has no completed jobs, skipping enrollment", protocol_id)
         return False
 
-    enroll_protocol_contracts(session, protocol_id, rpc_url, chain)
+    enroll_protocol_contracts(session, protocol_id, rpc_url, chain, exclude_job_id)
     return True
 
 
@@ -75,6 +75,7 @@ def enroll_protocol_contracts(
     protocol_id: int,
     rpc_url: str,
     chain: str = "ethereum",
+    calling_job_id: Any = None,
 ) -> list[MonitoredContract]:
     """Create MonitoredContract rows for all contracts in a protocol.
 
@@ -82,16 +83,41 @@ def enroll_protocol_contracts(
     idempotent. Also creates WatchedProxy rows for proxy contracts and
     discovers controller addresses (safes, timelocks) from the control graph.
 
+    *calling_job_id* is the job that triggered enrollment — it's still in
+    ``processing`` status, so we include it alongside completed jobs.
+
     Returns list of created/updated MonitoredContract rows.
     """
-    contracts = (
-        session.execute(select(Contract).where(Contract.protocol_id == protocol_id))
+    # Only enroll contracts that have a completed job — not the entire
+    # inventory which may include hundreds of unanalyzed addresses.
+    analyzed_addrs = set(
+        addr
+        for (addr,) in session.execute(
+            select(Job.address).where(
+                Job.protocol_id == protocol_id,
+                Job.status == JobStatus.completed,
+                Job.address.isnot(None),
+            )
+        ).all()
+    )
+    # The calling job is still processing — include its address too.
+    if calling_job_id is not None:
+        calling_job = session.get(Job, calling_job_id)
+        if calling_job and calling_job.address:
+            analyzed_addrs.add(calling_job.address)
+
+    contracts = [
+        c
+        for c in session.execute(
+            select(Contract).where(Contract.protocol_id == protocol_id)
+        )
         .scalars()
         .all()
-    )
+        if c.address.lower() in {a.lower() for a in analyzed_addrs if a}
+    ]
 
     if not contracts:
-        logger.info("Protocol %s has no contracts, nothing to enroll", protocol_id)
+        logger.info("Protocol %s has no analyzed contracts, nothing to enroll", protocol_id)
         return []
 
     # Get current block number for last_scanned_block
@@ -122,11 +148,12 @@ def enroll_protocol_contracts(
         )
 
         # Determine contract type
-        contract_type = _determine_contract_type(summary, cv_rows)
+        contract_type = _determine_contract_type(contract, summary, cv_rows)
 
         # Build monitoring config and initial state
         monitoring_config = _build_monitoring_config(summary, cv_rows, contract_type)
         initial_state = _build_initial_state(contract, cv_rows)
+        needs_poll = _needs_polling(contract_type, contract)
 
         # Check for existing MonitoredContract
         existing = session.execute(
@@ -142,7 +169,12 @@ def enroll_protocol_contracts(
             existing.contract_type = contract_type
             existing.monitoring_config = monitoring_config
             existing.last_known_state = initial_state
+            existing.needs_polling = needs_poll
             existing.is_active = True
+            # Clear stale watched_proxy link when contract isn't an actual proxy shell
+            is_proxy_shell = contract.is_proxy or bool(contract.proxy_type)
+            if not is_proxy_shell:
+                existing.watched_proxy_id = None
             mc = existing
         else:
             mc = MonitoredContract(
@@ -155,21 +187,55 @@ def enroll_protocol_contracts(
                 monitoring_config=monitoring_config,
                 last_known_state=initial_state,
                 last_scanned_block=current_block,
-                needs_polling=contract_type in ("proxy", "safe", "timelock"),
+                needs_polling=needs_poll,
                 is_active=True,
                 enrollment_source="auto",
             )
             session.add(mc)
             session.flush()
 
-        # For proxy contracts, also create/link WatchedProxy
-        if contract_type == "proxy":
+        # Create WatchedProxy only for actual proxy shells (is_proxy / proxy_type),
+        # not UUPS implementations that are merely "upgradeable" per summary.
+        if contract_type == "proxy" and (contract.is_proxy or contract.proxy_type):
             _bridge_to_watched_proxy(session, mc, contract, current_block)
 
         enrolled.append(mc)
 
     # Discover controller addresses from the control graph
     _enroll_controller_addresses(session, contracts, protocol_id, chain, current_block)
+
+    # Deactivate stale MonitoredContract rows for this protocol that are no
+    # longer in the enrolled set (e.g. inventory addresses that were never
+    # analyzed).  We keep them (is_active=False) rather than deleting so
+    # historical events are preserved.
+    enrolled_addrs = {mc.address for mc in enrolled}
+    # Also include controller-discovered addresses
+    enrolled_addrs |= {
+        mc.address
+        for mc in session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.protocol_id == protocol_id,
+                MonitoredContract.enrollment_source == "auto",
+                MonitoredContract.contract_type.in_(("safe", "timelock")),
+            )
+        ).scalars().all()
+    }
+    stale = (
+        session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.protocol_id == protocol_id,
+                MonitoredContract.enrollment_source == "auto",
+                MonitoredContract.address.notin_(enrolled_addrs),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for mc in stale:
+        mc.is_active = False
+
+    if stale:
+        logger.info("Deactivated %d stale monitored contracts for protocol %s", len(stale), protocol_id)
 
     session.commit()
     logger.info(
@@ -181,28 +247,50 @@ def enroll_protocol_contracts(
 
 
 def _determine_contract_type(
+    contract: Contract,
     summary: ContractSummary | None,
     controller_values: Sequence[ControllerValue],
 ) -> str:
-    """Determine the contract_type based on analysis results."""
+    """Determine the contract_type based on analysis results.
+
+    Checks Contract.is_proxy / proxy_type first — these are populated by the
+    static worker even when no ContractSummary exists (e.g. proxy shells that
+    are not analyzed by Slither).
+    """
+    # Contract-level proxy detection (most reliable for EIP-1967 etc.)
+    if contract.is_proxy or contract.proxy_type:
+        return "proxy"
+
     if summary:
-        if summary.is_upgradeable:
+        # Only trust is_upgradeable when the contract is actually a proxy shell.
+        # UUPS implementations report is_upgradeable=True because they contain
+        # _authorizeUpgrade, but they are not proxies themselves.
+        if summary.is_upgradeable and (contract.is_proxy or contract.proxy_type):
             return "proxy"
         if summary.has_timelock:
             return "timelock"
         if summary.is_pausable:
             return "pausable"
 
-    # Check controller values for resolved types
-    for cv in controller_values:
-        if cv.resolved_type == "safe":
-            return "safe"
-        if cv.resolved_type == "timelock":
-            return "timelock"
-        if cv.resolved_type == "proxy_admin":
-            return "proxy"
-
     return "regular"
+
+
+# Standard proxy types that emit events the scanner already handles.
+_EVENT_BASED_PROXY_TYPES = {"eip1967", "eip1167", "eip1822"}
+
+
+def _needs_polling(contract_type: str, contract: Contract) -> bool:
+    """Decide whether a contract needs the state-polling loop.
+
+    EIP-1967 (and other standard) proxies emit Upgraded / AdminChanged events
+    that the event scanner picks up — no polling required.  Only safes,
+    timelocks, and non-standard (custom) proxies need polling.
+    """
+    if contract_type in ("safe", "timelock"):
+        return True
+    if contract_type == "proxy":
+        return (contract.proxy_type or "").lower() not in _EVENT_BASED_PROXY_TYPES
+    return False
 
 
 def _build_monitoring_config(
@@ -263,7 +351,14 @@ def _bridge_to_watched_proxy(
         )
     ).scalar_one_or_none()
 
+    poll = (contract.proxy_type or "").lower() not in _EVENT_BASED_PROXY_TYPES
+
     if existing_wp:
+        existing_wp.proxy_type = contract.proxy_type
+        existing_wp.last_known_implementation = contract.implementation
+        existing_wp.needs_polling = poll
+        if not existing_wp.label:
+            existing_wp.label = contract.contract_name
         mc.watched_proxy_id = existing_wp.id
     else:
         wp = WatchedProxy(
@@ -274,7 +369,7 @@ def _bridge_to_watched_proxy(
             proxy_type=contract.proxy_type,
             last_known_implementation=contract.implementation,
             last_scanned_block=current_block,
-            needs_polling=True,
+            needs_polling=poll,
         )
         session.add(wp)
         session.flush()

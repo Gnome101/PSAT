@@ -1645,7 +1645,10 @@ def remove_subscription(subscription_id: str) -> dict[str, str]:
 def list_protocol_monitoring(protocol_id: int) -> list[dict[str, Any]]:
     """List all MonitoredContract rows for a protocol."""
     with SessionLocal() as session:
-        stmt = select(MonitoredContract).where(MonitoredContract.protocol_id == protocol_id)
+        stmt = select(MonitoredContract).where(
+            MonitoredContract.protocol_id == protocol_id,
+            MonitoredContract.is_active == True,
+        )
         contracts = session.execute(stmt).scalars().all()
         return [
             {
@@ -1728,13 +1731,13 @@ def list_protocol_events(protocol_id: int, limit: int = 50) -> list[dict[str, An
     """List MonitoredEvents for all contracts in a protocol."""
     with SessionLocal() as session:
         stmt = (
-            select(MonitoredEvent)
+            select(MonitoredEvent, MonitoredContract)
             .join(MonitoredContract, MonitoredEvent.monitored_contract_id == MonitoredContract.id)
             .where(MonitoredContract.protocol_id == protocol_id)
             .order_by(MonitoredEvent.detected_at.desc())
             .limit(limit)
         )
-        events = session.execute(stmt).scalars().all()
+        rows = session.execute(stmt).all()
         return [
             {
                 "id": str(e.id),
@@ -1742,10 +1745,10 @@ def list_protocol_events(protocol_id: int, limit: int = 50) -> list[dict[str, An
                 "event_type": e.event_type,
                 "block_number": e.block_number,
                 "tx_hash": e.tx_hash,
-                "data": e.data,
+                "data": {**(e.data or {}), "contract_address": mc.address},
                 "detected_at": e.detected_at.isoformat() if e.detected_at else None,
             }
-            for e in events
+            for e, mc in rows
         ]
 
 

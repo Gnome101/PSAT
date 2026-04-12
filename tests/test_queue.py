@@ -2,7 +2,7 @@
 
 These tests are integration tests. Run with:
     docker compose up postgres -d
-    DATABASE_URL=postgresql://psat:psat@localhost:5432/psat uv run pytest tests/test_queue.py -v
+    TEST_DATABASE_URL=postgresql://psat:psat@localhost:5433/psat_test uv run pytest tests/test_queue.py -v
 
 Tests are skipped if no PostgreSQL connection is available.
 """
@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 
 def _can_connect() -> bool:

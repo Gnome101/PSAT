@@ -11,7 +11,7 @@ Run with:
     uv run pytest tests/test_protocol_id_propagation.py -v
 
 Integration tests (requires PostgreSQL):
-    DATABASE_URL=postgresql://psat:psat@localhost:5432/psat \
+    TEST_DATABASE_URL=postgresql://psat:psat@localhost:5433/psat_test \
         uv run pytest tests/test_protocol_id_propagation.py -v
 """
 
@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # Postgres skip condition (shared with test_queue.py)
 # ---------------------------------------------------------------------------
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 
 def _can_connect() -> bool:
