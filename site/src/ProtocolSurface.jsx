@@ -226,13 +226,70 @@ function isRoleIdAddress(address) {
   return leadingZeros >= 24;
 }
 
-function collectPrincipals(fn) {
+function collectPrincipals(fn, companyData) {
   const byAddress = new Map();
+
+  // Build lookup for resolving contract principals through the control graph
+  const controllerOf = new Map();
+  if (companyData) {
+    for (const p of companyData.principals || []) {
+      for (const controlled of p.controls || []) {
+        const key = controlled.toLowerCase();
+        if (!controllerOf.has(key)) controllerOf.set(key, []);
+        controllerOf.get(key).push(p);
+      }
+    }
+    // Also use fund_flows for contract→contract control edges
+    const contractAddrs = new Set((companyData.contracts || []).map((c) => (c.address || "").toLowerCase()));
+    for (const flow of companyData.fund_flows || []) {
+      if (flow.type === "principal" || flow.type === "controls" || flow.type === "controls_value") {
+        const from = (flow.from || "").toLowerCase();
+        const to = (flow.to || "").toLowerCase();
+        if (from && to && contractAddrs.has(from)) {
+          if (!controllerOf.has(to)) controllerOf.set(to, []);
+          // Check if this controller is already tracked as a principal
+          const existing = controllerOf.get(to);
+          if (!existing.some((p) => p.address?.toLowerCase() === from)) {
+            const fromContract = (companyData.contracts || []).find((c) => (c.address || "").toLowerCase() === from);
+            controllerOf.get(to).push({
+              address: from,
+              type: "contract",
+              label: fromContract?.name || from,
+              controls: [to],
+            });
+          }
+        }
+      }
+    }
+  }
 
   function pushPrincipal(principal, origin) {
     const address = String(principal?.address || "").toLowerCase();
     if (!address.startsWith("0x")) return;
     if (isRoleIdAddress(address)) return;
+
+    // Resolve contract principals: find who controls this contract
+    if (principal.resolved_type === "contract" && controllerOf.has(address)) {
+      const controllers = controllerOf.get(address);
+      for (const controller of controllers) {
+        const ctrlAddr = (controller.address || "").toLowerCase();
+        if (isRoleIdAddress(ctrlAddr)) continue;
+        if (byAddress.has(ctrlAddr)) {
+          byAddress.get(ctrlAddr).origins.push(origin);
+          continue;
+        }
+        byAddress.set(ctrlAddr, {
+          address: ctrlAddr,
+          resolvedType: String(controller.type || controller.resolved_type || "unknown"),
+          details: controller.details && typeof controller.details === "object" ? { ...controller.details } : {},
+          sourceContract: address,
+          sourceControllerId: principal.source_controller_id || null,
+          origins: [origin],
+        });
+      }
+      return;
+    }
+
     const existing = byAddress.get(address);
     if (existing) {
       existing.origins.push(origin);
@@ -268,8 +325,8 @@ function collectPrincipals(fn) {
   return [...byAddress.values()].sort((left, right) => left.address.localeCompare(right.address));
 }
 
-function guardSummary(fn) {
-  const principals = collectPrincipals(fn);
+function guardSummary(fn, companyData) {
+  const principals = collectPrincipals(fn, companyData);
 
   if (!principals.length) {
     const meta = TYPE_META[fn.authority_public ? "open" : "unknown"];
@@ -333,8 +390,8 @@ function buildMachines(companyData, functionData) {
           tone: toneForFunction(fn, lane),
           action: compactActionSummary(fn),
           effectLabels: fn.effect_labels || [],
-          guard: guardSummary(fn),
-          principals: collectPrincipals(fn),
+          guard: guardSummary(fn, companyData),
+          principals: collectPrincipals(fn, companyData),
           authorityPublic: Boolean(fn.authority_public),
         });
       }
