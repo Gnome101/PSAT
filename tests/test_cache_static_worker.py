@@ -14,7 +14,10 @@ from cache_helpers import (
     _create_target_job_with_contract,
     _patch_static_worker_phases,
     db_session,  # noqa: F401
+    requires_postgres,
 )
+
+pytestmark = requires_postgres
 
 # ---------------------------------------------------------------------------
 # Static worker cache hit

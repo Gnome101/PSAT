@@ -19,10 +19,47 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session as SASession
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from db.models import Base, ProxyUpgradeEvent, WatchedProxy
+
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+
+
+def _pg_can_connect() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
 pytestmark = pytest.mark.live
+
+
+@pytest.fixture()
+def live_db():
+    """PostgreSQL session for live proxy watcher tests."""
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)
+    session = SASession(engine, expire_on_commit=False)
+    try:
+        yield session
+    finally:
+        session.rollback()
+        session.query(ProxyUpgradeEvent).delete()
+        session.query(WatchedProxy).delete()
+        session.commit()
+        session.close()
+        engine.dispose()
 
 # ---------------------------------------------------------------------------
 # Known mainnet proxy data
@@ -69,109 +106,88 @@ def test_resolve_current_implementation_mainnet():
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
-def test_scan_detects_known_aave_upgrade():
+@pytest.mark.skipif(not _pg_can_connect(), reason="PostgreSQL not available")
+def test_scan_detects_known_aave_upgrade(live_db):
     """scan_for_upgrades detects a known Aave V3 Pool upgrade at block 17214196.
 
     Sets last_scanned_block just before the upgrade and caps get_latest_block
     to just after, so we scan only ~10 blocks via a real eth_getLogs call.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=AAVE_V3_POOL,
+        chain="ethereum",
+        label="Aave V3 Pool",
+        last_known_implementation=None,
+        last_scanned_block=SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=AAVE_V3_POOL,
-            chain="ethereum",
-            label="Aave V3 Pool",
-            last_known_implementation=None,
-            last_scanned_block=SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected at least 1 upgrade event, got {len(events)}"
 
-        assert len(events) >= 1, f"Expected at least 1 upgrade event, got {len(events)}"
+    upgrade = next(
+        (e for e in events if e.event_type == "upgraded"),
+        None,
+    )
+    assert upgrade is not None, "Expected an 'upgraded' event"
+    assert upgrade.block_number == KNOWN_UPGRADE_BLOCK
+    assert upgrade.new_implementation.lower() == KNOWN_NEW_IMPL.lower()
 
-        upgrade = next(
-            (e for e in events if e.event_type == "upgraded"),
-            None,
-        )
-        assert upgrade is not None, "Expected an 'upgraded' event"
-        assert upgrade.block_number == KNOWN_UPGRADE_BLOCK
-        assert upgrade.new_implementation.lower() == KNOWN_NEW_IMPL.lower()
+    # Verify DB state was updated
+    session.refresh(proxy)
+    assert proxy.last_scanned_block == SCAN_TO
+    assert proxy.last_known_implementation is not None
+    assert proxy.last_known_implementation.lower() == KNOWN_NEW_IMPL.lower()
 
-        # Verify DB state was updated
-        session.refresh(proxy)
-        assert proxy.last_scanned_block == SCAN_TO
-        assert proxy.last_known_implementation is not None
-        assert proxy.last_known_implementation.lower() == KNOWN_NEW_IMPL.lower()
-    finally:
-        session.close()
-        engine.dispose()
 
 
 @pytest.mark.skipif(not _has_rpc, reason="ETH_RPC not set")
 def test_scan_no_events_in_quiet_range():
     """Scanning a block range with no upgrades returns empty."""
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    quiet_from = KNOWN_UPGRADE_BLOCK - 1010
+    quiet_to = KNOWN_UPGRADE_BLOCK - 1000
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        quiet_from = KNOWN_UPGRADE_BLOCK - 1010
-        quiet_to = KNOWN_UPGRADE_BLOCK - 1000
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=AAVE_V3_POOL,
+        chain="ethereum",
+        label="Aave V3 Pool",
+        last_known_implementation=None,
+        last_scanned_block=quiet_from,
+    )
+    session.add(proxy)
+    session.commit()
 
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=AAVE_V3_POOL,
-            chain="ethereum",
-            label="Aave V3 Pool",
-            last_known_implementation=None,
-            last_scanned_block=quiet_from,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=quiet_to,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=quiet_to,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert events == []
 
-        assert events == []
+    session.refresh(proxy)
+    assert proxy.last_scanned_block == quiet_to
 
-        session.refresh(proxy)
-        assert proxy.last_scanned_block == quiet_to
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -202,54 +218,43 @@ def test_scan_detects_usdc_upgrade():
     Sets last_scanned_block just before the upgrade and caps get_latest_block
     to just after, so we scan only ~10 blocks via a real eth_getLogs call.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=USDC_PROXY,
+        chain="ethereum",
+        label="USDC FiatTokenProxy",
+        last_known_implementation=None,
+        last_scanned_block=USDC_SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=USDC_PROXY,
-            chain="ethereum",
-            label="USDC FiatTokenProxy",
-            last_known_implementation=None,
-            last_scanned_block=USDC_SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=USDC_SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=USDC_SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected at least 1 upgrade event for USDC, got {len(events)}"
 
-        assert len(events) >= 1, f"Expected at least 1 upgrade event for USDC, got {len(events)}"
+    upgrade = next(
+        (e for e in events if e.event_type == "upgraded"),
+        None,
+    )
+    assert upgrade is not None, "Expected an 'upgraded' event for USDC"
+    assert upgrade.block_number == USDC_UPGRADE_BLOCK
+    assert upgrade.new_implementation.lower() == USDC_NEW_IMPL.lower()
 
-        upgrade = next(
-            (e for e in events if e.event_type == "upgraded"),
-            None,
-        )
-        assert upgrade is not None, "Expected an 'upgraded' event for USDC"
-        assert upgrade.block_number == USDC_UPGRADE_BLOCK
-        assert upgrade.new_implementation.lower() == USDC_NEW_IMPL.lower()
+    session.refresh(proxy)
+    assert proxy.last_scanned_block == USDC_SCAN_TO
+    assert proxy.last_known_implementation is not None
 
-        session.refresh(proxy)
-        assert proxy.last_scanned_block == USDC_SCAN_TO
-        assert proxy.last_known_implementation is not None
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -277,55 +282,44 @@ def test_scan_detects_beacon_upgrade():
     in topics[1]. The scanner should detect this as a 'beacon_upgraded'
     event and record the beacon address as new_implementation.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=BEACON_PROXY,
+        chain="ethereum",
+        label="Beacon proxy test",
+        last_known_implementation=None,
+        last_scanned_block=BEACON_SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=BEACON_PROXY,
-            chain="ethereum",
-            label="Beacon proxy test",
-            last_known_implementation=None,
-            last_scanned_block=BEACON_SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=BEACON_SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=BEACON_SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected at least 1 beacon_upgraded event, got {len(events)}"
 
-        assert len(events) >= 1, f"Expected at least 1 beacon_upgraded event, got {len(events)}"
+    beacon_event = next(
+        (e for e in events if e.event_type == "beacon_upgraded"),
+        None,
+    )
+    assert beacon_event is not None, "Expected a 'beacon_upgraded' event"
+    assert beacon_event.block_number == BEACON_UPGRADE_BLOCK
+    assert beacon_event.new_implementation.lower() == BEACON_NEW_BEACON.lower()
 
-        beacon_event = next(
-            (e for e in events if e.event_type == "beacon_upgraded"),
-            None,
-        )
-        assert beacon_event is not None, "Expected a 'beacon_upgraded' event"
-        assert beacon_event.block_number == BEACON_UPGRADE_BLOCK
-        assert beacon_event.new_implementation.lower() == BEACON_NEW_BEACON.lower()
+    session.refresh(proxy)
+    assert proxy.last_scanned_block == BEACON_SCAN_TO
+    assert proxy.last_known_implementation is not None
+    assert proxy.last_known_implementation.lower() == BEACON_NEW_BEACON.lower()
 
-        session.refresh(proxy)
-        assert proxy.last_scanned_block == BEACON_SCAN_TO
-        assert proxy.last_known_implementation is not None
-        assert proxy.last_known_implementation.lower() == BEACON_NEW_BEACON.lower()
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -355,55 +349,44 @@ def test_scan_detects_admin_changed():
     should detect this as an 'admin_changed' event and record the new admin
     address as new_implementation.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=ADMIN_PROXY,
+        chain="ethereum",
+        label="AdminChanged proxy test",
+        last_known_implementation=None,
+        last_scanned_block=ADMIN_SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=ADMIN_PROXY,
-            chain="ethereum",
-            label="AdminChanged proxy test",
-            last_known_implementation=None,
-            last_scanned_block=ADMIN_SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=ADMIN_SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=ADMIN_SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected at least 1 admin_changed event, got {len(events)}"
 
-        assert len(events) >= 1, f"Expected at least 1 admin_changed event, got {len(events)}"
+    admin_event = next(
+        (e for e in events if e.event_type == "admin_changed"),
+        None,
+    )
+    assert admin_event is not None, "Expected an 'admin_changed' event"
+    assert admin_event.block_number == ADMIN_CHANGE_BLOCK
+    assert admin_event.new_implementation.lower() == ADMIN_NEW_ADMIN.lower()
 
-        admin_event = next(
-            (e for e in events if e.event_type == "admin_changed"),
-            None,
-        )
-        assert admin_event is not None, "Expected an 'admin_changed' event"
-        assert admin_event.block_number == ADMIN_CHANGE_BLOCK
-        assert admin_event.new_implementation.lower() == ADMIN_NEW_ADMIN.lower()
+    session.refresh(proxy)
+    assert proxy.last_scanned_block == ADMIN_SCAN_TO
+    assert proxy.last_known_implementation is not None
+    assert proxy.last_known_implementation.lower() == ADMIN_NEW_ADMIN.lower()
 
-        session.refresh(proxy)
-        assert proxy.last_scanned_block == ADMIN_SCAN_TO
-        assert proxy.last_known_implementation is not None
-        assert proxy.last_known_implementation.lower() == ADMIN_NEW_ADMIN.lower()
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ===========================================================================
@@ -438,46 +421,35 @@ def test_scan_detects_diamond_cut():
     event encoding facet add/replace/remove operations. The scanner parses
     the ABI-encoded FacetCut[] struct array and extracts facet addresses.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=DIAMOND_PROXY,
+        chain="ethereum",
+        label="Diamond proxy (EIP-2535)",
+        last_known_implementation=None,
+        last_scanned_block=DIAMOND_SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=DIAMOND_PROXY,
-            chain="ethereum",
-            label="Diamond proxy (EIP-2535)",
-            last_known_implementation=None,
-            last_scanned_block=DIAMOND_SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=DIAMOND_SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=DIAMOND_SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected DiamondCut event at block {DIAMOND_CUT_BLOCK}"
 
-        assert len(events) >= 1, f"Expected DiamondCut event at block {DIAMOND_CUT_BLOCK}"
+    diamond_event = next((e for e in events if e.event_type == "diamond_cut"), None)
+    assert diamond_event is not None, "Expected a 'diamond_cut' event"
+    assert diamond_event.block_number == DIAMOND_CUT_BLOCK
 
-        diamond_event = next((e for e in events if e.event_type == "diamond_cut"), None)
-        assert diamond_event is not None, "Expected a 'diamond_cut' event"
-        assert diamond_event.block_number == DIAMOND_CUT_BLOCK
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -506,47 +478,36 @@ def test_scan_detects_gnosis_master_copy_change():
     ChangedMasterCopy(address) when switching its singleton implementation.
     Legacy event from GnosisSafe v1.0-1.1 that predates EIP-1967.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=GNOSIS_PROXY,
+        chain="ethereum",
+        label="GnosisSafe proxy",
+        last_known_implementation=None,
+        last_scanned_block=GNOSIS_SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=GNOSIS_PROXY,
-            chain="ethereum",
-            label="GnosisSafe proxy",
-            last_known_implementation=None,
-            last_scanned_block=GNOSIS_SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=GNOSIS_SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=GNOSIS_SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected ChangedMasterCopy event at block {GNOSIS_CHANGE_BLOCK}"
 
-        assert len(events) >= 1, f"Expected ChangedMasterCopy event at block {GNOSIS_CHANGE_BLOCK}"
+    gnosis_event = next((e for e in events if e.event_type == "changed_master_copy"), None)
+    assert gnosis_event is not None, "Expected a 'changed_master_copy' event"
+    assert gnosis_event.block_number == GNOSIS_CHANGE_BLOCK
+    assert gnosis_event.new_implementation.lower() == GNOSIS_NEW_MASTER.lower()
 
-        gnosis_event = next((e for e in events if e.event_type == "changed_master_copy"), None)
-        assert gnosis_event is not None, "Expected a 'changed_master_copy' event"
-        assert gnosis_event.block_number == GNOSIS_CHANGE_BLOCK
-        assert gnosis_event.new_implementation.lower() == GNOSIS_NEW_MASTER.lower()
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -575,47 +536,36 @@ def test_scan_detects_compound_new_implementation():
     NewImplementation(address oldImpl, address newImpl) when upgrading its
     comptroller logic. Compound's proprietary event predating EIP-1967.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=COMPOUND_PROXY,
+        chain="ethereum",
+        label="Compound Unitroller",
+        last_known_implementation=None,
+        last_scanned_block=COMPOUND_SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=COMPOUND_PROXY,
-            chain="ethereum",
-            label="Compound Unitroller",
-            last_known_implementation=None,
-            last_scanned_block=COMPOUND_SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=COMPOUND_SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=COMPOUND_SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected NewImplementation event at block {COMPOUND_UPGRADE_BLOCK}"
 
-        assert len(events) >= 1, f"Expected NewImplementation event at block {COMPOUND_UPGRADE_BLOCK}"
+    compound_event = next((e for e in events if e.event_type == "new_implementation"), None)
+    assert compound_event is not None, "Expected a 'new_implementation' event"
+    assert compound_event.block_number == COMPOUND_UPGRADE_BLOCK
+    assert compound_event.new_implementation.lower() == COMPOUND_NEW_IMPL.lower()
 
-        compound_event = next((e for e in events if e.event_type == "new_implementation"), None)
-        assert compound_event is not None, "Expected a 'new_implementation' event"
-        assert compound_event.block_number == COMPOUND_UPGRADE_BLOCK
-        assert compound_event.new_implementation.lower() == COMPOUND_NEW_IMPL.lower()
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -644,47 +594,36 @@ def test_scan_detects_synthetix_target_updated():
     TargetUpdated(address) when switching its target implementation.
     Synthetix uses a custom proxy-target pattern across its ecosystem.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=SYNTHETIX_PROXY,
+        chain="ethereum",
+        label="SNX Token Proxy",
+        last_known_implementation=None,
+        last_scanned_block=SYNTHETIX_SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=SYNTHETIX_PROXY,
-            chain="ethereum",
-            label="SNX Token Proxy",
-            last_known_implementation=None,
-            last_scanned_block=SYNTHETIX_SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=SYNTHETIX_SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=SYNTHETIX_SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected TargetUpdated event at block {SYNTHETIX_UPGRADE_BLOCK}"
 
-        assert len(events) >= 1, f"Expected TargetUpdated event at block {SYNTHETIX_UPGRADE_BLOCK}"
+    synthetix_event = next((e for e in events if e.event_type == "target_updated"), None)
+    assert synthetix_event is not None, "Expected a 'target_updated' event"
+    assert synthetix_event.block_number == SYNTHETIX_UPGRADE_BLOCK
+    assert synthetix_event.new_implementation.lower() == SYNTHETIX_NEW_TARGET.lower()
 
-        synthetix_event = next((e for e in events if e.event_type == "target_updated"), None)
-        assert synthetix_event is not None, "Expected a 'target_updated' event"
-        assert synthetix_event.block_number == SYNTHETIX_UPGRADE_BLOCK
-        assert synthetix_event.new_implementation.lower() == SYNTHETIX_NEW_TARGET.lower()
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ---------------------------------------------------------------------------
@@ -712,46 +651,35 @@ def test_scan_detects_compound_pending_implementation():
     first step of its two-step upgrade process. Two blocks later,
     NewImplementation is emitted to finalize the upgrade.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session as SASession
-
-    from db.models import ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import scan_for_upgrades
 
     rpc_url = _get_rpc_url()
     assert rpc_url is not None
 
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    session = live_db
+    proxy = WatchedProxy(
+        id=uuid.uuid4(),
+        proxy_address=COMPOUND_PROXY,
+        chain="ethereum",
+        label="Compound Unitroller",
+        last_known_implementation=None,
+        last_scanned_block=COMPOUND_PENDING_SCAN_FROM,
+    )
+    session.add(proxy)
+    session.commit()
 
-    session = SASession(engine, expire_on_commit=False)
-    try:
-        proxy = WatchedProxy(
-            id=uuid.uuid4(),
-            proxy_address=COMPOUND_PROXY,
-            chain="ethereum",
-            label="Compound Unitroller",
-            last_known_implementation=None,
-            last_scanned_block=COMPOUND_PENDING_SCAN_FROM,
-        )
-        session.add(proxy)
-        session.commit()
+    with patch(
+        "services.monitoring.proxy_watcher.get_latest_block",
+        return_value=COMPOUND_PENDING_SCAN_TO,
+    ):
+        events = scan_for_upgrades(session, rpc_url)
 
-        with patch(
-            "services.monitoring.proxy_watcher.get_latest_block",
-            return_value=COMPOUND_PENDING_SCAN_TO,
-        ):
-            events = scan_for_upgrades(session, rpc_url)
+    assert len(events) >= 1, f"Expected NewPendingImplementation event at block {COMPOUND_PENDING_BLOCK}"
 
-        assert len(events) >= 1, f"Expected NewPendingImplementation event at block {COMPOUND_PENDING_BLOCK}"
+    pending_event = next((e for e in events if e.event_type == "new_pending_implementation"), None)
+    assert pending_event is not None, "Expected a 'new_pending_implementation' event"
+    assert pending_event.block_number == COMPOUND_PENDING_BLOCK
 
-        pending_event = next((e for e in events if e.event_type == "new_pending_implementation"), None)
-        assert pending_event is not None, "Expected a 'new_pending_implementation' event"
-        assert pending_event.block_number == COMPOUND_PENDING_BLOCK
-    finally:
-        session.close()
-        engine.dispose()
 
 
 # ===========================================================================

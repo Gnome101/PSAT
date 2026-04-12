@@ -13,7 +13,10 @@ from cache_helpers import (
     ADDR_B,
     _sqlite_compatible_store_artifact,
     db_session,  # noqa: F401
+    requires_postgres,
 )
+
+pytestmark = requires_postgres
 
 # ---------------------------------------------------------------------------
 # Helpers

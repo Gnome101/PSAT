@@ -9,8 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import (
+    Contract,
     MonitoredContract,
     MonitoredEvent,
+    Protocol,
     ProtocolSubscription,
     ProxySubscription,
     ProxyUpgradeEvent,
@@ -125,17 +127,40 @@ _EVENT_COLORS = {
 }
 
 
-def _format_governance_embed(event: MonitoredEvent) -> dict:
+def _format_governance_embed(event: MonitoredEvent, session: Session) -> dict:
     """Build a Discord embed for a governance/monitoring event."""
     mc = event.monitored_contract
-    label = mc.address
     data = event.data or {}
+
+    # Resolve protocol and contract names from DB if linked
+    protocol_name = None
+    contract_name = None
+    if mc.protocol_id:
+        proto = session.get(Protocol, mc.protocol_id)
+        if proto and proto.name:
+            protocol_name = proto.name
+    if mc.contract_id:
+        contract = session.get(Contract, mc.contract_id)
+        if contract and contract.contract_name:
+            contract_name = contract.contract_name
+
+    # Build title with names when available
+    if contract_name:
+        title_label = contract_name
+    else:
+        title_label = f"{mc.address[:10]}...{mc.address[-4:]}"
+    if protocol_name:
+        title = f"{protocol_name}: {event.event_type} on {title_label}"
+    else:
+        title = f"Protocol Event: {event.event_type} on {title_label}"
 
     fields = [
         {"name": "Contract", "value": f"`{mc.address}`", "inline": True},
         {"name": "Chain", "value": mc.chain, "inline": True},
         {"name": "Event", "value": event.event_type, "inline": True},
     ]
+    if contract_name:
+        fields.insert(0, {"name": "Name", "value": contract_name, "inline": True})
 
     # Add event-specific fields
     if event.event_type == "ownership_transferred":
@@ -143,9 +168,27 @@ def _format_governance_embed(event: MonitoredEvent) -> dict:
             fields.append({"name": "Old Owner", "value": f"`{data['old_owner']}`", "inline": False})
         if data.get("new_owner"):
             fields.append({"name": "New Owner", "value": f"`{data['new_owner']}`", "inline": False})
+    elif event.event_type in ("upgraded", "new_implementation", "changed_master_copy", "target_updated"):
+        if data.get("implementation"):
+            fields.append({"name": "New Implementation", "value": f"`{data['implementation']}`", "inline": False})
+    elif event.event_type == "admin_changed":
+        if data.get("previous_admin"):
+            fields.append({"name": "Old Admin", "value": f"`{data['previous_admin']}`", "inline": False})
+        if data.get("new_admin"):
+            fields.append({"name": "New Admin", "value": f"`{data['new_admin']}`", "inline": False})
+    elif event.event_type == "beacon_upgraded":
+        if data.get("beacon"):
+            fields.append({"name": "Beacon", "value": f"`{data['beacon']}`", "inline": False})
     elif event.event_type in ("paused", "unpaused"):
         if data.get("account"):
             fields.append({"name": "Account", "value": f"`{data['account']}`", "inline": False})
+    elif event.event_type in ("role_granted", "role_revoked"):
+        if data.get("role"):
+            fields.append({"name": "Role", "value": f"`{data['role']}`", "inline": False})
+        if data.get("account"):
+            fields.append({"name": "Account", "value": f"`{data['account']}`", "inline": True})
+        if data.get("sender"):
+            fields.append({"name": "Sender", "value": f"`{data['sender']}`", "inline": True})
     elif event.event_type in ("signer_added", "signer_removed"):
         if data.get("owner"):
             fields.append({"name": "Signer", "value": f"`{data['owner']}`", "inline": False})
@@ -173,7 +216,7 @@ def _format_governance_embed(event: MonitoredEvent) -> dict:
     color = _EVENT_COLORS.get(event.event_type, 0x95A5A6)
 
     return {
-        "title": f"Protocol Event: {event.event_type} on {label[:10]}...{label[-4:]}",
+        "title": title,
         "color": color,
         "fields": fields,
     }
@@ -225,7 +268,7 @@ def notify_protocol_events(session: Session, events: list[MonitoredEvent]) -> No
             continue
 
         for event in proto_events:
-            embed = _format_governance_embed(event)
+            embed = _format_governance_embed(event, session)
             for sub in proto_subs:
                 # Check event filter
                 if sub.event_filter and isinstance(sub.event_filter, dict):

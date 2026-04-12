@@ -1,23 +1,45 @@
 """Shared fixtures, helpers, and constants for static cache tests.
 
-Provides an in-memory SQLite database that mirrors the full PSAT schema,
-with compatibility shims for Postgres-specific column types (JSONB, UUID,
-ARRAY).  Test modules import the ``db_session`` fixture and helper functions
+Provides a PostgreSQL database session with the full PSAT schema.
+Test modules import the ``db_session`` fixture and helper functions
 from this module.
+
+Requires TEST_DATABASE_URL env var pointing to a PostgreSQL test database.
 """
 
 from __future__ import annotations
 
-import json
+import os
 import sys
 import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy import event
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+
+
+def _can_connect() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
+requires_postgres = pytest.mark.skipif(
+    not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)"
+)
+
 
 # ---------------------------------------------------------------------------
 # Address / data constants
@@ -183,13 +205,9 @@ FAKE_UH_NEW = {
 }
 
 
-# ---------------------------------------------------------------------------
-# SQLite compatibility helpers
-# ---------------------------------------------------------------------------
-
-
+# Keep this export for test files that still import it
 def _sqlite_compatible_store_artifact(session, job_id, name, data=None, text_data=None):
-    """SQLite-compatible replacement for the Postgres pg_insert upsert."""
+    """ORM-based store_artifact (works with both SQLite and PostgreSQL)."""
     from db.models import Artifact
 
     existing = session.query(Artifact).filter(Artifact.job_id == job_id, Artifact.name == name).first()
@@ -201,189 +219,69 @@ def _sqlite_compatible_store_artifact(session, job_id, name, data=None, text_dat
     session.commit()
 
 
-def _register_sqlite_type_compilers():
-    """Register SQLite compilation rules for Postgres-specific types.
-
-    Uses ``@compiles`` to teach the SQLite dialect how to render JSONB, UUID,
-    and ARRAY column DDL.  Also registers type-adaptation hooks so that UUID
-    and JSON values round-trip correctly through SQLite.
-
-    These registrations are idempotent and persist for the process lifetime,
-    which is fine because they are scoped to the ``sqlite`` dialect.
-    """
-    from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
-    from sqlalchemy.ext.compiler import compiles
-
-    # DDL compilation hooks (only affect SQLite CREATE TABLE)
-    @compiles(JSONB, "sqlite")
-    def _compile_jsonb(element, compiler, **kw):
-        return "TEXT"
-
-    @compiles(UUID, "sqlite")
-    def _compile_uuid(element, compiler, **kw):
-        return "VARCHAR(36)"
-
-    @compiles(ARRAY, "sqlite")
-    def _compile_array(element, compiler, **kw):
-        return "TEXT"
-
-    # Value adaptation hooks -- teach the PG types to handle SQLite bind/result
-    _orig_uuid_bind = UUID.bind_processor
-
-    def _uuid_bind_processor(self, dialect):
-        if dialect.name == "sqlite":
-
-            def process(value):
-                if value is not None:
-                    return str(value)
-                return value
-
-            return process
-        if _orig_uuid_bind:
-            return _orig_uuid_bind(self, dialect)
-        return None
-
-    UUID.bind_processor = _uuid_bind_processor
-
-    _orig_uuid_result = UUID.result_processor
-
-    def _uuid_result_processor(self, dialect, coltype):
-        if dialect.name == "sqlite":
-
-            def process(value):
-                if value is not None and not isinstance(value, uuid.UUID):
-                    return uuid.UUID(value)
-                return value
-
-            return process
-        if _orig_uuid_result:
-            return _orig_uuid_result(self, dialect, coltype)
-        return None
-
-    UUID.result_processor = _uuid_result_processor
-
-    _orig_jsonb_bind = JSONB.bind_processor
-
-    def _jsonb_bind_processor(self, dialect):
-        if dialect.name == "sqlite":
-
-            def process(value):
-                if value is not None:
-                    return json.dumps(value)
-                return value
-
-            return process
-        if _orig_jsonb_bind:
-            return _orig_jsonb_bind(self, dialect)
-        return None
-
-    JSONB.bind_processor = _jsonb_bind_processor  # type: ignore[assignment]
-
-    _orig_jsonb_result = JSONB.result_processor
-
-    def _jsonb_result_processor(self, dialect, coltype):
-        if dialect.name == "sqlite":
-
-            def process(value):
-                if value is not None and isinstance(value, str):
-                    return json.loads(value)
-                return value
-
-            return process
-        if _orig_jsonb_result:
-            return _orig_jsonb_result(self, dialect, coltype)
-        return None
-
-    JSONB.result_processor = _jsonb_result_processor  # type: ignore[assignment]
-
-    _orig_array_bind = ARRAY.bind_processor
-
-    def _array_bind_processor(self, dialect):
-        if dialect.name == "sqlite":
-
-            def process(value):
-                if value is not None:
-                    return json.dumps(value)
-                return value
-
-            return process
-        if _orig_array_bind:
-            return _orig_array_bind(self, dialect)
-        return None
-
-    ARRAY.bind_processor = _array_bind_processor
-
-    _orig_array_result = ARRAY.result_processor
-
-    def _array_result_processor(self, dialect, coltype):
-        if dialect.name == "sqlite":
-
-            def process(value):
-                if value is not None and isinstance(value, str):
-                    return json.loads(value)
-                return value
-
-            return process
-        if _orig_array_result:
-            return _orig_array_result(self, dialect, coltype)
-        return None
-
-    ARRAY.result_processor = _array_result_processor  # type: ignore[assignment]
-
-
-# Register once at import time
-_register_sqlite_type_compilers()
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
-def db_session(monkeypatch):
-    """In-memory SQLite database with all PSAT tables.
+def db_session():
+    """PostgreSQL database session with full PSAT schema.
 
-    Temporarily swaps Postgres-specific column types with SQLite equivalents,
-    creates all tables, and monkey-patches ``store_artifact`` so the
-    pg_insert-based upsert is replaced with a standard ORM upsert.
+    Creates all tables, yields a session, cleans up test data on teardown.
     """
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-
-    from db.models import Base
-
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+    from db.models import (
+        Artifact,
+        Base,
+        Contract,
+        ContractBalance,
+        ContractDependency,
+        ContractSummary,
+        ControlGraphEdge,
+        ControlGraphNode,
+        ControllerValue,
+        EffectiveFunction,
+        FunctionPrincipal,
+        Job,
+        MonitoredContract,
+        MonitoredEvent,
+        PrincipalLabel,
+        PrivilegedFunction,
+        Protocol,
+        ProtocolSubscription,
+        ProxySubscription,
+        ProxyUpgradeEvent,
+        RoleDefinition,
+        SourceFile,
+        UpgradeEvent,
+        WatchedProxy,
     )
 
-    @event.listens_for(engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
+    engine = create_engine(DATABASE_URL)
     Base.metadata.create_all(engine)
     session = Session(engine, expire_on_commit=False)
-
-    # Patch store_artifact everywhere it's imported so the SQLite-compatible
-    # upsert is used instead of the pg_insert-based original.
-    monkeypatch.setattr("db.queue.store_artifact", _sqlite_compatible_store_artifact)
-    # Workers bind store_artifact at import time via ``from db.queue import store_artifact``
-    for mod_path in [
-        "workers.discovery",
-        "workers.static_worker",
-    ]:
-        try:
-            monkeypatch.setattr(f"{mod_path}.store_artifact", _sqlite_compatible_store_artifact)
-        except AttributeError:
-            pass  # module not yet imported -- safe to skip
 
     try:
         yield session
     finally:
+        session.rollback()
+        # Delete in FK-safe order
+        for model in [
+            FunctionPrincipal, EffectiveFunction, PrincipalLabel,
+            ControlGraphEdge, ControlGraphNode, ControllerValue,
+            UpgradeEvent, ContractDependency, ContractBalance,
+            PrivilegedFunction, RoleDefinition, ContractSummary,
+            MonitoredEvent, MonitoredContract,
+            ProxyUpgradeEvent, ProxySubscription, WatchedProxy,
+            ProtocolSubscription,
+            SourceFile, Artifact,
+            Contract, Job, Protocol,
+        ]:
+            try:
+                session.query(model).delete()
+            except Exception:
+                session.rollback()
+        session.commit()
         session.close()
         engine.dispose()
 
@@ -487,8 +385,8 @@ def _create_source_job_with_proxy(
     session,
     address=ADDR_A,
     is_proxy=True,
-    proxy_type: str | None = "eip1967",
-    implementation: str | None = IMPL_ADDR,
+    proxy_type="eip1967",
+    implementation=IMPL_ADDR,
     beacon=None,
     admin=None,
 ):
@@ -597,11 +495,7 @@ def _patch_dep_phase_helpers(monkeypatch, find_dyn_fn):
 
 
 def _patch_static_worker_phases(monkeypatch, worker):
-    """Apply common monkeypatches for StaticWorker phase methods.
-
-    Returns a ``phases_run`` list that accumulates the names of phases
-    that were invoked during ``worker.process()``.
-    """
+    """Apply common monkeypatches for StaticWorker phase methods."""
     phases_run = []
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
     monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
@@ -614,11 +508,7 @@ def _patch_static_worker_phases(monkeypatch, worker):
 
 
 def _patch_static_worker_non_dep_phases(monkeypatch, worker):
-    """Patch StaticWorker phases that are NOT the dependency phase.
-
-    Returns a ``phases_run`` list.  Use this when you want to exercise
-    ``_run_dependency_phase`` for real but need the other phases mocked.
-    """
+    """Patch StaticWorker phases that are NOT the dependency phase."""
     phases_run = []
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
     monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)

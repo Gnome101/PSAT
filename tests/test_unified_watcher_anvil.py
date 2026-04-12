@@ -13,6 +13,7 @@ Run with:
 
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
@@ -23,12 +24,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import Session as SASession
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from db.models import (
+    Base,
     MonitoredContract,
     MonitoredEvent,
     ProxyUpgradeEvent,
@@ -43,10 +45,27 @@ _has_anvil = shutil.which("anvil") is not None
 _has_cast = shutil.which("cast") is not None
 _has_forge = shutil.which("forge") is not None
 
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+
+
+def _can_connect() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
 pytestmark = [
     pytest.mark.skipif(not _has_anvil, reason="anvil not found on PATH"),
     pytest.mark.skipif(not _has_cast, reason="cast not found on PATH"),
     pytest.mark.skipif(not _has_forge, reason="forge not found on PATH"),
+    pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available"),
 ]
 
 # Anvil default account 0 private key
@@ -349,19 +368,23 @@ def anvil_env(tmp_path):
 
 
 @pytest.fixture()
-def test_db(tmp_path):
-    """Create an in-memory SQLite DB with monitoring tables."""
-    db_path = tmp_path / "test.db"
-    engine = create_engine(f"sqlite:///{db_path}")
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
-    MonitoredContract.__table__.create(engine, checkfirst=True)
-    MonitoredEvent.__table__.create(engine, checkfirst=True)
+def test_db():
+    """PostgreSQL database session with monitoring tables."""
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)
 
     session = SASession(engine, expire_on_commit=False)
     try:
         yield session
     finally:
+        session.rollback()
+        from db.models import Protocol, ProtocolSubscription
+        for model in [MonitoredEvent, MonitoredContract, ProxyUpgradeEvent, WatchedProxy, ProtocolSubscription, Protocol]:
+            try:
+                session.query(model).delete()
+            except Exception:
+                session.rollback()
+        session.commit()
         session.close()
         engine.dispose()
 
@@ -943,21 +966,25 @@ def test_notify_protocol_events_sends_discord(anvil_env, test_db):
     from services.monitoring.notifier import notify_protocol_events
     from services.monitoring.unified_watcher import scan_for_events
 
-    # Create the ProtocolSubscription table (FK enforcement is off in SQLite)
-    ProtocolSubscription.__table__.create(test_db.get_bind(), checkfirst=True)
+    # ProtocolSubscription table already exists via Base.metadata.create_all
+
+    from db.models import Protocol
 
     addr = _compile_and_deploy(OWNABLE_SOURCE, "TestOwnable", [], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
 
-    protocol_id = 42
+    proto = Protocol(name="__test_notify__")
+    test_db.add(proto)
+    test_db.flush()
+
     mc = _register_contract(test_db, addr, "regular", current_block)
-    mc.protocol_id = protocol_id
+    mc.protocol_id = proto.id
     test_db.commit()
 
     # Create a protocol subscription
     sub = ProtocolSubscription(
         id=uuid.uuid4(),
-        protocol_id=protocol_id,
+        protocol_id=proto.id,
         discord_webhook_url="https://discord.com/api/webhooks/test/fake",
         label="test-sub",
     )
@@ -989,27 +1016,30 @@ def test_notify_event_filter_restricts_types(anvil_env, test_db):
     rpc_url, tmp_path = anvil_env
     from unittest.mock import MagicMock, patch
 
-    from db.models import ProtocolSubscription
+    from db.models import Protocol, ProtocolSubscription
     from services.monitoring.notifier import notify_protocol_events
     from services.monitoring.unified_watcher import scan_for_events
 
-    ProtocolSubscription.__table__.create(test_db.get_bind(), checkfirst=True)
+    # ProtocolSubscription table already exists via Base.metadata.create_all
 
     pausable_addr = _compile_and_deploy(PAUSABLE_SOURCE, "TestPausable", [], rpc_url, PRIVATE_KEY, tmp_path)
     ownable_addr = _compile_and_deploy(OWNABLE_SOURCE, "TestOwnable", [], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
 
-    protocol_id = 99
+    proto = Protocol(name="__test_filter__")
+    test_db.add(proto)
+    test_db.flush()
+
     mc1 = _register_contract(test_db, pausable_addr, "pausable", current_block)
-    mc1.protocol_id = protocol_id
+    mc1.protocol_id = proto.id
     mc2 = _register_contract(test_db, ownable_addr, "regular", current_block)
-    mc2.protocol_id = protocol_id
+    mc2.protocol_id = proto.id
     test_db.commit()
 
     # Subscription only wants "paused" events
     sub = ProtocolSubscription(
         id=uuid.uuid4(),
-        protocol_id=protocol_id,
+        protocol_id=proto.id,
         discord_webhook_url="https://discord.com/api/webhooks/test/fake",
         event_filter={"event_types": ["paused"]},
     )

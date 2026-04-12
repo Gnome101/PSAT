@@ -1,9 +1,8 @@
 """Unit and integration tests for protocol monitoring enrollment.
 
-Unit tests (always run): Use SQLite in-memory with mock Contract objects.
-Integration tests (require PostgreSQL): Use real tables, test full enrollment flow.
+All tests require PostgreSQL (TEST_DATABASE_URL env var).
 
-Run integration tests:
+Run:
     TEST_DATABASE_URL=postgresql://psat:psat@localhost:5433/psat_test \
         uv run pytest tests/test_enrollment.py -v
 """
@@ -17,9 +16,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 from db.models import (
+    Base,
     MonitoredContract,
     MonitoredEvent,
     ProxyUpgradeEvent,
@@ -50,28 +49,23 @@ requires_postgres = pytest.mark.skipif(
     not _can_connect(), reason="PostgreSQL not available"
 )
 
+pytestmark = requires_postgres
+
 
 @pytest.fixture()
 def db_session():
-    """In-memory SQLite database for enrollment tests.
-
-    Does NOT enable foreign_keys pragma so MonitoredContract can be created
-    without the protocols/contracts tables existing (those use PG-specific types).
-    """
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    WatchedProxy.__table__.create(engine, checkfirst=True)
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)
-    MonitoredContract.__table__.create(engine, checkfirst=True)
-    MonitoredEvent.__table__.create(engine, checkfirst=True)
+    """PostgreSQL database session with full schema for enrollment tests."""
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)
 
     session = Session(engine, expire_on_commit=False)
     try:
         yield session
     finally:
+        session.rollback()
+        for model in [MonitoredEvent, MonitoredContract, ProxyUpgradeEvent, WatchedProxy]:
+            session.query(model).delete()
+        session.commit()
         session.close()
         engine.dispose()
 

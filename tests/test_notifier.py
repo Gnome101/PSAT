@@ -3,7 +3,7 @@
 Tests the full chain: scan/poll detects upgrade → notifier queries subscriptions
 → Discord webhook POST. Also tests subscription CRUD via the API endpoints.
 
-All tests run without live services — in-memory SQLite for DB, mocked RPC
+All tests run without live services — PostgreSQL for DB, mocked RPC
 and mocked requests.post for Discord.
 """
 
@@ -14,7 +14,9 @@ from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
-from conftest import ADDR, _add_proxy, _add_subscription, _make_log, _topic_for
+from conftest import ADDR, _add_proxy, _add_subscription, _make_log, _topic_for, requires_postgres
+
+pytestmark = requires_postgres
 from sqlalchemy import select
 
 from db.models import ProxySubscription, ProxyUpgradeEvent, WatchedProxy
