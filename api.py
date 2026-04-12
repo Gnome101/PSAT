@@ -1391,6 +1391,7 @@ def company_overview(company_name: str) -> dict:
 
         return {
             "company": company_name,
+            "protocol_id": protocol_row.id if protocol_row else None,
             "contract_count": len(contracts),
             "contracts": contracts,
             "principals": principals,
@@ -1689,6 +1690,37 @@ def subscribe_to_protocol(protocol_id: int, request: ProtocolSubscribeRequest) -
             "event_filter": sub.event_filter,
             "created_at": sub.created_at.isoformat() if sub.created_at else None,
         }
+
+
+@app.get("/api/protocols/{protocol_id}/subscriptions")
+def list_protocol_subscriptions(protocol_id: int) -> list[dict[str, Any]]:
+    """List all ProtocolSubscription rows for a protocol."""
+    with SessionLocal() as session:
+        stmt = select(ProtocolSubscription).where(ProtocolSubscription.protocol_id == protocol_id)
+        subs = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(s.id),
+                "protocol_id": s.protocol_id,
+                "discord_webhook_url": s.discord_webhook_url,
+                "label": s.label,
+                "event_filter": s.event_filter,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in subs
+        ]
+
+
+@app.delete("/api/protocol-subscriptions/{sub_id}")
+def delete_protocol_subscription(sub_id: str) -> dict[str, str]:
+    """Delete a ProtocolSubscription by id."""
+    with SessionLocal() as session:
+        sub = session.get(ProtocolSubscription, uuid.UUID(sub_id))
+        if sub is None:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        session.delete(sub)
+        session.commit()
+        return {"status": "removed"}
 
 
 @app.get("/api/protocols/{protocol_id}/events")
