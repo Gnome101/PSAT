@@ -1133,3 +1133,128 @@ def test_poll_no_change_no_events(anvil_env, test_db):
     # Don't change anything — poll should return empty
     events = poll_for_state_changes(test_db, rpc_url)
     assert len(events) == 0
+
+
+# ---------------------------------------------------------------------------
+# Scan+poll dedup tests
+# ---------------------------------------------------------------------------
+
+
+def test_poll_suppressed_when_scan_already_detected_upgrade(anvil_env, test_db):
+    """When the scanner already detected an Upgraded event, the poller should
+    NOT create a duplicate state_changed_poll for the same implementation change.
+
+    Simulates the race condition where the scanner committed a MonitoredEvent
+    but the poller still has stale last_known_state (read before scanner commit).
+    """
+    rpc_url, tmp_path = anvil_env
+    from services.monitoring.unified_watcher import poll_for_state_changes
+
+    impl_v1 = _compile_and_deploy(IMPL_V1_SOURCE, "ImplV1", [], rpc_url, PRIVATE_KEY, tmp_path)
+    impl_v2 = _compile_and_deploy(IMPL_V2_SOURCE, "ImplV2", [], rpc_url, PRIVATE_KEY, tmp_path)
+    proxy_addr = _compile_and_deploy(
+        PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path
+    )
+    current_block = int(_cast(["block-number"], rpc_url))
+
+    mc = _register_contract(
+        test_db, proxy_addr, "proxy", current_block,
+        monitoring_config={"watch_upgrades": True, "watch_ownership": True},
+    )
+    mc.needs_polling = True
+    mc.last_known_state = {"implementation": impl_v1.lower()}
+    test_db.commit()
+
+    # Upgrade the proxy
+    _cast_send(proxy_addr, "upgradeTo(address)", [impl_v2], rpc_url, PRIVATE_KEY)
+
+    # Simulate: scanner already detected the upgrade (but poller has stale state)
+    scanner_event = MonitoredEvent(
+        id=uuid.uuid4(),
+        monitored_contract_id=mc.id,
+        event_type="upgraded",
+        block_number=current_block + 1,
+        tx_hash="0x" + "ab" * 32,
+        data={"implementation": impl_v2.lower()},
+    )
+    test_db.add(scanner_event)
+    test_db.commit()
+
+    # Poller runs — storage shows impl_v2 but last_known_state still has impl_v1
+    # Without fix: creates a duplicate state_changed_poll event
+    # With fix: suppressed because scanner already detected "upgraded"
+    poll_events = poll_for_state_changes(test_db, rpc_url)
+    impl_changes = [e for e in poll_events if e.data and e.data.get("field") == "implementation"]
+    assert len(impl_changes) == 0, (
+        "Poller should not create duplicate event when scanner already detected upgrade"
+    )
+
+
+def test_poll_suppressed_when_scan_already_detected_ownership(anvil_env, test_db):
+    """Scanner already detected OwnershipTransferred — poller should NOT
+    create a duplicate state_changed_poll for the owner field."""
+    rpc_url, tmp_path = anvil_env
+    from services.monitoring.unified_watcher import poll_for_state_changes
+
+    addr = _compile_and_deploy(OWNABLE_SOURCE, "TestOwnable", [], rpc_url, PRIVATE_KEY, tmp_path)
+    current_block = int(_cast(["block-number"], rpc_url))
+
+    mc = _register_contract(
+        test_db, addr, "regular", current_block,
+        monitoring_config={"watch_ownership": True},
+    )
+    mc.needs_polling = True
+    mc.last_known_state = {"owner": ACCOUNT0.lower()}
+    test_db.commit()
+
+    new_owner = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+    _cast_send(addr, "transferOwnership(address)", [new_owner], rpc_url, PRIVATE_KEY)
+
+    # Simulate scanner already detected it
+    scanner_event = MonitoredEvent(
+        id=uuid.uuid4(),
+        monitored_contract_id=mc.id,
+        event_type="ownership_transferred",
+        block_number=current_block + 1,
+        tx_hash="0x" + "cd" * 32,
+        data={"old_owner": ACCOUNT0.lower(), "new_owner": new_owner.lower()},
+    )
+    test_db.add(scanner_event)
+    test_db.commit()
+
+    poll_events = poll_for_state_changes(test_db, rpc_url)
+    owner_changes = [e for e in poll_events if e.data and e.data.get("field") == "owner"]
+    assert len(owner_changes) == 0, (
+        "Poller should not create duplicate event when scanner already detected ownership change"
+    )
+
+
+def test_poll_still_creates_event_when_no_scanner_event(anvil_env, test_db):
+    """When there is NO scanner event, the poller should still create its event.
+    This confirms the suppression only fires when a scanner event exists."""
+    rpc_url, tmp_path = anvil_env
+    from services.monitoring.unified_watcher import poll_for_state_changes
+
+    impl_v1 = _compile_and_deploy(IMPL_V1_SOURCE, "ImplV1", [], rpc_url, PRIVATE_KEY, tmp_path)
+    impl_v2 = _compile_and_deploy(IMPL_V2_SOURCE, "ImplV2", [], rpc_url, PRIVATE_KEY, tmp_path)
+    proxy_addr = _compile_and_deploy(
+        PROXY_SOURCE, "TestProxy", [impl_v1], rpc_url, PRIVATE_KEY, tmp_path
+    )
+    current_block = int(_cast(["block-number"], rpc_url))
+
+    mc = _register_contract(
+        test_db, proxy_addr, "proxy", current_block,
+        monitoring_config={"watch_upgrades": True, "watch_ownership": True},
+    )
+    mc.needs_polling = True
+    mc.last_known_state = {"implementation": impl_v1.lower()}
+    test_db.commit()
+
+    # Upgrade but do NOT run scanner — no scanner events exist
+    _cast_send(proxy_addr, "upgradeTo(address)", [impl_v2], rpc_url, PRIVATE_KEY)
+
+    poll_events = poll_for_state_changes(test_db, rpc_url)
+    impl_changes = [e for e in poll_events if e.data and e.data.get("field") == "implementation"]
+    assert len(impl_changes) == 1, (
+        "Poller should create event when no scanner event exists"
+    )

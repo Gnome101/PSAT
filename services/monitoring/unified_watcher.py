@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -51,6 +52,20 @@ _OWNER_SEL = "0x8da5cb5b"  # owner()
 _PAUSED_SEL = "0x5c975abb"  # paused()
 _GET_THRESHOLD_SEL = "0xe75235b8"  # getThreshold()
 _GET_MIN_DELAY_SEL = "0xf27a0c92"  # getMinDelay()
+
+# Mapping from poll field names to scanner event types that detect the same
+# underlying state change.  Used by the poller to suppress duplicate events
+# when the event scanner has already recorded the change via an on-chain log.
+_POLL_FIELD_TO_SCAN_EVENTS: dict[str, frozenset[str]] = {
+    "implementation": frozenset({
+        "upgraded", "new_implementation", "changed_master_copy",
+        "target_updated", "beacon_upgraded",
+    }),
+    "owner": frozenset({"ownership_transferred"}),
+    "paused": frozenset({"paused", "unpaused"}),
+    "threshold": frozenset({"threshold_changed"}),
+    "min_delay": frozenset({"delay_changed"}),
+}
 
 
 def get_latest_block(rpc_url: str) -> int:
@@ -526,6 +541,31 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
                     new_value,
                 )
                 continue
+
+            # Suppress if the event scanner already recorded this change.
+            # This handles the race condition where the scanner and poller
+            # processes both detect the same underlying change (e.g., a proxy
+            # upgrade is visible as both an Upgraded log and a storage-slot
+            # change).
+            scan_types = _POLL_FIELD_TO_SCAN_EVENTS.get(field_name)
+            if scan_types:
+                suppression_cutoff = datetime.now(timezone.utc) - timedelta(
+                    seconds=DEFAULT_POLL_INTERVAL * 2,
+                )
+                already = session.execute(
+                    select(MonitoredEvent.id).where(
+                        MonitoredEvent.monitored_contract_id == mc.id,
+                        MonitoredEvent.event_type.in_(scan_types),
+                        MonitoredEvent.detected_at >= suppression_cutoff,
+                    ).limit(1)
+                ).scalar_one_or_none()
+                if already is not None:
+                    logger.debug(
+                        "Suppressing poll event for %s/%s — scanner already detected it",
+                        mc.address,
+                        field_name,
+                    )
+                    continue
 
             event = MonitoredEvent(
                 id=uuid.uuid4(),

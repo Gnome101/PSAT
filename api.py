@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 
 from db.models import (
@@ -98,6 +98,37 @@ class ProtocolSubscribeRequest(BaseModel):
     discord_webhook_url: str = Field(min_length=1, description="Discord webhook URL for protocol event notifications.")
     label: str | None = None
     event_filter: dict | None = Field(default=None, description="Optional filter: {\"event_types\": [\"upgraded\", ...]}")
+
+    @field_validator("event_filter")
+    @classmethod
+    def validate_event_filter(cls, v: dict | None) -> dict | None:
+        if v is None:
+            return v
+        if "event_types" not in v:
+            raise ValueError(
+                "event_filter must contain an 'event_types' key, "
+                'e.g. {"event_types": ["upgraded", "paused"]}'
+            )
+        event_types = v["event_types"]
+        if not isinstance(event_types, list):
+            raise ValueError(
+                "event_filter.event_types must be a list of strings, "
+                f"got {type(event_types).__name__}"
+            )
+        from services.monitoring.event_topics import ALL_EVENT_TOPICS
+
+        valid_types = set(ALL_EVENT_TOPICS.values()) | {"state_changed_poll"}
+        for et in event_types:
+            if not isinstance(et, str):
+                raise ValueError(
+                    f"event_filter.event_types entries must be strings, got {type(et).__name__}"
+                )
+            if et not in valid_types:
+                raise ValueError(
+                    f"Unknown event type: '{et}'. "
+                    f"Valid types: {sorted(valid_types)}"
+                )
+        return v
 
 
 @asynccontextmanager
@@ -1643,11 +1674,10 @@ def remove_subscription(subscription_id: str) -> dict[str, str]:
 
 @app.get("/api/protocols/{protocol_id}/monitoring")
 def list_protocol_monitoring(protocol_id: int) -> list[dict[str, Any]]:
-    """List all MonitoredContract rows for a protocol."""
+    """List all MonitoredContract rows for a protocol (including inactive)."""
     with SessionLocal() as session:
         stmt = select(MonitoredContract).where(
             MonitoredContract.protocol_id == protocol_id,
-            MonitoredContract.is_active == True,
         )
         contracts = session.execute(stmt).scalars().all()
         return [
@@ -1666,6 +1696,41 @@ def list_protocol_monitoring(protocol_id: int) -> list[dict[str, Any]]:
             }
             for c in contracts
         ]
+
+
+@app.post("/api/protocols/{protocol_id}/re-enroll")
+def re_enroll_protocol(protocol_id: int, chain: str = "ethereum") -> dict[str, Any]:
+    """Manually trigger monitoring enrollment for a protocol.
+
+    Calls enroll_protocol_contracts directly, bypassing the automatic
+    in-flight job checks. Useful when enrollment produced wrong results
+    or after manual DB changes.
+    """
+    rpc_url = DEFAULT_RPC_URL
+    with SessionLocal() as session:
+        protocol = session.get(Protocol, protocol_id)
+        if protocol is None:
+            raise HTTPException(status_code=404, detail="Protocol not found")
+
+        from services.monitoring.enrollment import enroll_protocol_contracts
+
+        enrolled = enroll_protocol_contracts(session, protocol_id, rpc_url, chain)
+        return {
+            "status": "enrolled",
+            "protocol_id": protocol_id,
+            "contracts_enrolled": len(enrolled),
+            "contracts": [
+                {
+                    "id": str(mc.id),
+                    "address": mc.address,
+                    "contract_type": mc.contract_type,
+                    "monitoring_config": mc.monitoring_config,
+                    "needs_polling": mc.needs_polling,
+                    "is_active": mc.is_active,
+                }
+                for mc in enrolled
+            ],
+        }
 
 
 @app.post("/api/protocols/{protocol_id}/subscribe")
@@ -1782,6 +1847,47 @@ def list_monitored_contracts(
             }
             for c in contracts
         ]
+
+
+class UpdateMonitoredContractRequest(BaseModel):
+    monitoring_config: dict | None = Field(default=None, description="Updated monitoring config flags")
+    is_active: bool | None = Field(default=None, description="Toggle monitoring on/off")
+    needs_polling: bool | None = Field(default=None, description="Toggle storage-slot polling")
+
+
+@app.patch("/api/monitored-contracts/{contract_id}")
+def update_monitored_contract(
+    contract_id: str, request: UpdateMonitoredContractRequest
+) -> dict[str, Any]:
+    """Update monitoring_config, is_active, or needs_polling on a MonitoredContract."""
+    with SessionLocal() as session:
+        mc = session.get(MonitoredContract, uuid.UUID(contract_id))
+        if mc is None:
+            raise HTTPException(status_code=404, detail="MonitoredContract not found")
+
+        if request.monitoring_config is not None:
+            mc.monitoring_config = request.monitoring_config
+        if request.is_active is not None:
+            mc.is_active = request.is_active
+        if request.needs_polling is not None:
+            mc.needs_polling = request.needs_polling
+
+        session.commit()
+        session.refresh(mc)
+        return {
+            "id": str(mc.id),
+            "address": mc.address,
+            "chain": mc.chain,
+            "protocol_id": mc.protocol_id,
+            "contract_type": mc.contract_type,
+            "monitoring_config": mc.monitoring_config,
+            "last_known_state": mc.last_known_state,
+            "last_scanned_block": mc.last_scanned_block,
+            "needs_polling": mc.needs_polling,
+            "is_active": mc.is_active,
+            "enrollment_source": mc.enrollment_source,
+            "created_at": mc.created_at.isoformat() if mc.created_at else None,
+        }
 
 
 @app.get("/api/monitored-events")

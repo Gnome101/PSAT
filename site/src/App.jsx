@@ -1320,6 +1320,14 @@ const CONTRACT_TYPE_COLORS = {
 
 const CONTRACT_TYPE_ORDER = ["proxy", "safe", "timelock", "pausable", "access_control", "regular"];
 
+const ALL_EVENT_TYPES = [
+  "upgraded", "admin_changed", "beacon_upgraded", "ownership_transferred",
+  "paused", "unpaused", "role_granted", "role_revoked",
+  "signer_added", "signer_removed", "threshold_changed",
+  "timelock_scheduled", "timelock_executed", "delay_changed",
+  "state_changed_poll",
+];
+
 const EVENT_TYPE_COLORS = {
   ownership_transferred: "#ef4444",
   paused: "#ef4444",
@@ -1347,8 +1355,11 @@ function ProtocolMonitoringPage({ companyName }) {
   const [events, setEvents] = useState([]);
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookLabel, setWebhookLabel] = useState("");
+  const [webhookEventTypes, setWebhookEventTypes] = useState([]);
+  const [showEventPicker, setShowEventPicker] = useState(false);
   const [addingWebhook, setAddingWebhook] = useState(false);
   const [error, setError] = useState(null);
+  const [reEnrolling, setReEnrolling] = useState(false);
 
   // Fetch protocol_id from company overview
   useEffect(() => {
@@ -1403,21 +1414,54 @@ function ProtocolMonitoringPage({ companyName }) {
     setAddingWebhook(true);
     setError(null);
     try {
+      const body = {
+        discord_webhook_url: webhookUrl.trim(),
+        label: webhookLabel.trim() || null,
+      };
+      if (webhookEventTypes.length > 0) {
+        body.event_filter = { event_types: webhookEventTypes };
+      }
       await api(`/api/protocols/${protocolId}/subscribe`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          discord_webhook_url: webhookUrl.trim(),
-          label: webhookLabel.trim() || null,
-        }),
+        body: JSON.stringify(body),
       });
       setWebhookUrl("");
       setWebhookLabel("");
+      setWebhookEventTypes([]);
+      setShowEventPicker(false);
       if (refresh) refresh();
     } catch (err) {
       setError(String(err.message || err));
     } finally {
       setAddingWebhook(false);
+    }
+  }
+
+  async function reEnroll() {
+    if (!protocolId) return;
+    setReEnrolling(true);
+    setError(null);
+    try {
+      await api(`/api/protocols/${protocolId}/re-enroll`, { method: "POST" });
+      if (refresh) refresh();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setReEnrolling(false);
+    }
+  }
+
+  async function toggleContractActive(contractId, currentActive) {
+    try {
+      await api(`/api/monitored-contracts/${contractId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: !currentActive }),
+      });
+      if (refresh) refresh();
+    } catch (err) {
+      console.error("Failed to toggle contract:", err);
     }
   }
 
@@ -1504,23 +1548,66 @@ function ProtocolMonitoringPage({ companyName }) {
           </div>
         </div>
 
-        <form onSubmit={addWebhook} style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          <input
-            value={webhookUrl}
-            onChange={(e) => setWebhookUrl(e.target.value)}
-            placeholder="Discord webhook URL"
-            required
-            style={{ flex: "1 1 300px", fontFamily: "monospace", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
-          />
-          <input
-            value={webhookLabel}
-            onChange={(e) => setWebhookLabel(e.target.value)}
-            placeholder="Label (optional)"
-            style={{ flex: "0 1 200px", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
-          />
-          <button type="submit" disabled={addingWebhook} style={{ padding: "8px 16px", borderRadius: 6, background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
-            {addingWebhook ? "Adding..." : "Add Webhook"}
-          </button>
+        <form onSubmit={addWebhook} style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+              placeholder="Discord webhook URL"
+              required
+              style={{ flex: "1 1 300px", fontFamily: "monospace", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+            />
+            <input
+              value={webhookLabel}
+              onChange={(e) => setWebhookLabel(e.target.value)}
+              placeholder="Label (optional)"
+              style={{ flex: "0 1 200px", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+            />
+            <button type="submit" disabled={addingWebhook} style={{ padding: "8px 16px", borderRadius: 6, background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+              {addingWebhook ? "Adding..." : "Add Webhook"}
+            </button>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => setShowEventPicker(!showEventPicker)}
+              style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12, padding: 0 }}
+            >
+              {showEventPicker ? "- Hide event filter" : "+ Filter by event type"}
+              {webhookEventTypes.length > 0 && ` (${webhookEventTypes.length} selected)`}
+            </button>
+            {showEventPicker && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8, padding: 8, borderRadius: 6, border: "1px solid #334155", background: "#0f172a" }}>
+                {ALL_EVENT_TYPES.map((et) => {
+                  const selected = webhookEventTypes.includes(et);
+                  const evtColor = EVENT_TYPE_COLORS[et] || "#94a3b8";
+                  return (
+                    <button
+                      key={et}
+                      type="button"
+                      onClick={() => {
+                        setWebhookEventTypes((prev) =>
+                          selected ? prev.filter((t) => t !== et) : [...prev, et]
+                        );
+                      }}
+                      style={{
+                        padding: "3px 8px",
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        border: selected ? `1px solid ${evtColor}` : "1px solid #334155",
+                        background: selected ? evtColor + "22" : "transparent",
+                        color: selected ? evtColor : "#64748b",
+                      }}
+                    >
+                      {et.replace(/_/g, " ")}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </form>
         {error && <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 12 }}>{error}</p>}
 
@@ -1548,10 +1635,10 @@ function ProtocolMonitoringPage({ companyName }) {
                       </span>
                     </td>
                     <td style={{ padding: "8px 12px" }}>
-                      {s.event_filter ? (
-                        Array.isArray(s.event_filter) ? s.event_filter.map((f) => (
-                          <span key={f} className="chip" style={{ fontSize: 11, marginRight: 4 }}>{f}</span>
-                        )) : <span className="chip" style={{ fontSize: 11 }}>{String(s.event_filter)}</span>
+                      {s.event_filter && Array.isArray(s.event_filter.event_types) && s.event_filter.event_types.length > 0 ? (
+                        s.event_filter.event_types.map((f) => (
+                          <span key={f} className="chip" style={{ fontSize: 11, marginRight: 4 }}>{f.replace(/_/g, " ")}</span>
+                        ))
                       ) : <span style={{ color: "#475569" }}>all events</span>}
                     </td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: "#94a3b8", fontSize: 12 }}>
@@ -1570,11 +1657,18 @@ function ProtocolMonitoringPage({ companyName }) {
 
       {/* Section 2: Monitored Contracts */}
       <section className="panel" style={{ marginTop: 16 }}>
-        <div className="panel-header">
+        <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
             <p className="eyebrow">Monitored Contracts</p>
             <h2>Contracts ({sortedContracts.length})</h2>
           </div>
+          <button
+            onClick={reEnroll}
+            disabled={reEnrolling}
+            style={{ padding: "6px 14px", borderRadius: 6, background: "#1e293b", color: "#94a3b8", border: "1px solid #334155", cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}
+          >
+            {reEnrolling ? "Re-enrolling..." : "Re-enroll Contracts"}
+          </button>
         </div>
         {sortedContracts.length === 0 ? (
           <p className="empty">No contracts being monitored for this protocol.</p>
@@ -1588,13 +1682,14 @@ function ProtocolMonitoringPage({ companyName }) {
                   <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Watching</th>
                   <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Polling</th>
                   <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Last Block</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Active</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedContracts.map((c) => {
                   const typeColor = CONTRACT_TYPE_COLORS[c.contract_type] || CONTRACT_TYPE_COLORS.regular;
                   return (
-                    <tr key={c.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                    <tr key={c.id} style={{ borderBottom: "1px solid #1e293b", opacity: c.is_active ? 1 : 0.5 }}>
                       <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(c.address)}</span></td>
                       <td style={{ padding: "8px 12px" }}>
                         <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: typeColor + "22", color: typeColor }}>
@@ -1604,6 +1699,19 @@ function ProtocolMonitoringPage({ companyName }) {
                       <td style={{ padding: "8px 12px" }}>{monitoringChips(c.monitoring_config)}</td>
                       <td style={{ padding: "8px 12px" }}>{c.needs_polling ? <span className="chip warn">polling</span> : <span className="chip">events</span>}</td>
                       <td style={{ padding: "8px 12px" }}>{c.last_scanned_block ? c.last_scanned_block.toLocaleString() : "-"}</td>
+                      <td style={{ padding: "8px 12px" }}>
+                        <button
+                          onClick={() => toggleContractActive(c.id, c.is_active)}
+                          style={{
+                            padding: "2px 10px", borderRadius: 4, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                            border: "1px solid " + (c.is_active ? "#22c55e" : "#475569"),
+                            background: c.is_active ? "#22c55e22" : "transparent",
+                            color: c.is_active ? "#22c55e" : "#475569",
+                          }}
+                        >
+                          {c.is_active ? "on" : "off"}
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}

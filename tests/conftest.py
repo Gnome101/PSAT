@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import Base, MonitoredContract, MonitoredEvent, ProxySubscription, ProxyUpgradeEvent, WatchedProxy
+from db.models import Base, MonitoredContract, MonitoredEvent, Protocol, ProtocolSubscription, ProxySubscription, ProxyUpgradeEvent, WatchedProxy
 
 # ---------------------------------------------------------------------------
 # PostgreSQL connection
@@ -104,8 +104,8 @@ def db_session():
         session.rollback()
         # Clean monitoring tables (order respects FK constraints)
         for model in [
-            MonitoredEvent, MonitoredContract, ProxyUpgradeEvent,
-            ProxySubscription, WatchedProxy,
+            MonitoredEvent, MonitoredContract, ProtocolSubscription,
+            ProxyUpgradeEvent, ProxySubscription, WatchedProxy, Protocol,
         ]:
             session.query(model).delete()
         session.commit()
