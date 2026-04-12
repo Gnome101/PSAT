@@ -1,12 +1,21 @@
-"""Unit tests for protocol monitoring enrollment."""
+"""Unit and integration tests for protocol monitoring enrollment.
+
+Unit tests (always run): Use SQLite in-memory with mock Contract objects.
+Integration tests (require PostgreSQL): Use real tables, test full enrollment flow.
+
+Run integration tests:
+    DATABASE_URL=postgresql://psat:psat@localhost:5432/psat \
+        uv run pytest tests/test_enrollment.py -v
+"""
 
 from __future__ import annotations
 
+import os
 import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -15,6 +24,30 @@ from db.models import (
     MonitoredEvent,
     ProxyUpgradeEvent,
     WatchedProxy,
+)
+
+# ---------------------------------------------------------------------------
+# Postgres skip condition
+# ---------------------------------------------------------------------------
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+
+def _can_connect() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
+requires_postgres = pytest.mark.skipif(
+    not _can_connect(), reason="PostgreSQL not available"
 )
 
 
@@ -394,3 +427,260 @@ class TestEnrollProtocolContracts:
         ).scalar_one()
         assert result.contract_type == "safe"
         assert result.needs_polling is True
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — real PostgreSQL with full ORM models
+# ---------------------------------------------------------------------------
+
+PROTO_NAME = "__test_enrollment__"
+
+
+@pytest.fixture()
+def pg_session():
+    """Full-schema PostgreSQL session. Cleans up only test-created rows."""
+    from db.models import (
+        Base,
+        Contract,
+        ContractSummary,
+        ControlGraphNode,
+        ControllerValue,
+        Job,
+        Protocol,
+    )
+
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)
+    session = Session(engine, expire_on_commit=False)
+    try:
+        yield session
+    finally:
+        session.rollback()
+        proto = session.execute(
+            select(Protocol).where(Protocol.name == PROTO_NAME)
+        ).scalar_one_or_none()
+        if proto:
+            # Cascade deletes Contract → ContractSummary, ControllerValue,
+            # ControlGraphNode; and Job cleanup via protocol_id
+            session.execute(
+                select(MonitoredContract).where(
+                    MonitoredContract.protocol_id == proto.id
+                )
+            )
+            for mc in session.execute(
+                select(MonitoredContract).where(
+                    MonitoredContract.protocol_id == proto.id
+                )
+            ).scalars():
+                if mc.watched_proxy_id:
+                    wp = session.get(WatchedProxy, mc.watched_proxy_id)
+                    if wp:
+                        session.delete(wp)
+                session.delete(mc)
+            for mc in session.execute(
+                select(MonitoredContract).where(
+                    MonitoredContract.enrollment_source == "auto",
+                    MonitoredContract.protocol_id == proto.id,
+                )
+            ).scalars():
+                session.delete(mc)
+            for j in session.execute(
+                select(Job).where(Job.protocol_id == proto.id)
+            ).scalars():
+                session.delete(j)
+            # Contracts cascade-delete summaries, controller_values, graph nodes
+            for c in session.execute(
+                select(Contract).where(Contract.protocol_id == proto.id)
+            ).scalars():
+                session.delete(c)
+            session.delete(proto)
+        session.commit()
+        session.close()
+        engine.dispose()
+
+
+@requires_postgres
+class TestEnrollmentIntegration:
+    """End-to-end enrollment with real Contract, ContractSummary, and
+    ControlGraphNode rows in PostgreSQL."""
+
+    def test_enroll_creates_monitored_contracts_from_real_data(self, pg_session):
+        """Full enroll_protocol_contracts with real Contract + ContractSummary."""
+        from db.models import Contract, ContractSummary, ControllerValue, Protocol
+        from services.monitoring.enrollment import enroll_protocol_contracts
+
+        proto = Protocol(name=PROTO_NAME)
+        pg_session.add(proto)
+        pg_session.flush()
+
+        # Upgradeable proxy contract
+        proxy_contract = Contract(
+            address="0x" + "a1" * 20,
+            chain="ethereum",
+            protocol_id=proto.id,
+            contract_name="LiquidityPool",
+            is_proxy=True,
+            proxy_type="eip1967",
+            implementation="0x" + "a2" * 20,
+        )
+        pg_session.add(proxy_contract)
+        pg_session.flush()
+
+        pg_session.add(ContractSummary(
+            contract_id=proxy_contract.id,
+            is_upgradeable=True,
+            is_pausable=True,
+            control_model="governance",
+        ))
+        pg_session.add(ControllerValue(
+            contract_id=proxy_contract.id,
+            controller_id="owner",
+            value="0x" + "b1" * 20,
+            resolved_type="safe",
+        ))
+
+        # Plain pausable contract
+        pausable_contract = Contract(
+            address="0x" + "c1" * 20,
+            chain="ethereum",
+            protocol_id=proto.id,
+            contract_name="StakingManager",
+        )
+        pg_session.add(pausable_contract)
+        pg_session.flush()
+
+        pg_session.add(ContractSummary(
+            contract_id=pausable_contract.id,
+            is_upgradeable=False,
+            is_pausable=True,
+            control_model="role-based",
+        ))
+        pg_session.commit()
+
+        with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
+            enrolled = enroll_protocol_contracts(
+                pg_session, proto.id, "http://rpc", "ethereum"
+            )
+
+        assert len(enrolled) == 2
+
+        # Verify proxy contract enrollment
+        proxy_mc = pg_session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.address == ("0x" + "a1" * 20)
+            )
+        ).scalar_one()
+        assert proxy_mc.contract_type == "proxy"
+        assert proxy_mc.monitoring_config["watch_upgrades"] is True
+        assert proxy_mc.monitoring_config["watch_pause"] is True
+        assert proxy_mc.last_known_state["implementation"] == "0x" + "a2" * 20
+        assert proxy_mc.last_known_state["owner"] == "0x" + "b1" * 20
+        assert proxy_mc.needs_polling is True
+        # Proxy should also have a WatchedProxy row linked
+        assert proxy_mc.watched_proxy_id is not None
+
+        # Verify pausable contract enrollment
+        pausable_mc = pg_session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.address == ("0x" + "c1" * 20)
+            )
+        ).scalar_one()
+        assert pausable_mc.contract_type == "pausable"
+        assert pausable_mc.monitoring_config["watch_pause"] is True
+        assert pausable_mc.monitoring_config["watch_roles"] is True
+        assert pausable_mc.monitoring_config["watch_upgrades"] is False
+
+    def test_enroll_discovers_controllers_from_graph(self, pg_session):
+        """ControlGraphNode rows with safe/timelock types get their own
+        MonitoredContract rows automatically."""
+        from db.models import Contract, ControlGraphNode, Protocol
+        from services.monitoring.enrollment import enroll_protocol_contracts
+
+        proto = Protocol(name=PROTO_NAME)
+        pg_session.add(proto)
+        pg_session.flush()
+
+        contract = Contract(
+            address="0x" + "d1" * 20,
+            chain="ethereum",
+            protocol_id=proto.id,
+            contract_name="TestContract",
+        )
+        pg_session.add(contract)
+        pg_session.flush()
+
+        safe_addr = "0x" + "e1" * 20
+        timelock_addr = "0x" + "e2" * 20
+        eoa_addr = "0x" + "e3" * 20
+
+        pg_session.add_all([
+            ControlGraphNode(
+                contract_id=contract.id, address=safe_addr,
+                node_type="safe", resolved_type="safe", label="Multi-sig",
+            ),
+            ControlGraphNode(
+                contract_id=contract.id, address=timelock_addr,
+                node_type="timelock", resolved_type="timelock", label="Timelock",
+            ),
+            ControlGraphNode(
+                contract_id=contract.id, address=eoa_addr,
+                node_type="eoa", resolved_type="eoa", label="Deployer",
+            ),
+        ])
+        pg_session.commit()
+
+        with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
+            enroll_protocol_contracts(pg_session, proto.id, "http://rpc", "ethereum")
+
+        # Safe controller should be enrolled
+        safe_mc = pg_session.execute(
+            select(MonitoredContract).where(MonitoredContract.address == safe_addr)
+        ).scalar_one()
+        assert safe_mc.contract_type == "safe"
+        assert safe_mc.monitoring_config["watch_safe_signers"] is True
+        assert safe_mc.needs_polling is True
+
+        # Timelock controller should be enrolled
+        tl_mc = pg_session.execute(
+            select(MonitoredContract).where(MonitoredContract.address == timelock_addr)
+        ).scalar_one()
+        assert tl_mc.contract_type == "timelock"
+        assert tl_mc.monitoring_config["watch_timelock"] is True
+
+        # EOA should NOT be enrolled (regular type, skipped)
+        eoa_mc = pg_session.execute(
+            select(MonitoredContract).where(MonitoredContract.address == eoa_addr)
+        ).scalar_one_or_none()
+        assert eoa_mc is None
+
+    def test_enroll_is_idempotent(self, pg_session):
+        """Calling enroll_protocol_contracts twice doesn't duplicate rows."""
+        from db.models import Contract, Protocol
+        from sqlalchemy import func
+        from services.monitoring.enrollment import enroll_protocol_contracts
+
+        proto = Protocol(name=PROTO_NAME)
+        pg_session.add(proto)
+        pg_session.flush()
+
+        pg_session.add(Contract(
+            address="0x" + "f1" * 20,
+            chain="ethereum",
+            protocol_id=proto.id,
+            contract_name="Token",
+        ))
+        pg_session.commit()
+
+        with patch("services.monitoring.enrollment.rpc_request", return_value="0x100"):
+            first = enroll_protocol_contracts(pg_session, proto.id, "http://rpc")
+            second = enroll_protocol_contracts(pg_session, proto.id, "http://rpc")
+
+        assert len(first) == 1
+        assert len(second) == 1
+
+        count = pg_session.execute(
+            select(func.count()).select_from(MonitoredContract).where(
+                MonitoredContract.address == ("0x" + "f1" * 20)
+            )
+        ).scalar()
+        assert count == 1
