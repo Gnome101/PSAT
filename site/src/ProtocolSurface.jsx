@@ -1445,6 +1445,7 @@ function DraggableSidebar({ children }) {
 
 function formatUsd(value) {
   if (!value || value < 0.01) return null;
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(1)}B`;
   if (value >= 1e6) return `$${(value / 1e6).toFixed(1)}M`;
   if (value >= 1e3) return `$${(value / 1e3).toFixed(1)}K`;
   return `$${value.toFixed(2)}`;
@@ -1872,7 +1873,13 @@ export default function ProtocolSurface({ companyName }) {
               {totals.totalUsd > 0 && (
                 <div className="ps-surface-stat">
                   <span style={{ color: "#f59e0b" }}>{formatUsd(totals.totalUsd)}</span>
-                  <label>total value</label>
+                  <label>tracked value</label>
+                </div>
+              )}
+              {companyData?.tvl?.defillama_tvl && (
+                <div className="ps-surface-stat">
+                  <span style={{ color: "#8b5cf6" }}>{formatUsd(companyData.tvl.defillama_tvl)}</span>
+                  <label>protocol TVL</label>
                 </div>
               )}
             </div>
@@ -1899,7 +1906,13 @@ export default function ProtocolSurface({ companyName }) {
               {totals.totalUsd > 0 && (
                 <div className="ps-surface-stat">
                   <span style={{ color: "#f59e0b" }}>{formatUsd(totals.totalUsd)}</span>
-                  <label>total value</label>
+                  <label>tracked value</label>
+                </div>
+              )}
+              {companyData?.tvl?.defillama_tvl && (
+                <div className="ps-surface-stat">
+                  <span style={{ color: "#8b5cf6" }}>{formatUsd(companyData.tvl.defillama_tvl)}</span>
+                  <label>protocol TVL</label>
                 </div>
               )}
             </div>

@@ -17,6 +17,7 @@ API_PID=""
 WORKERS_PID=""
 PROXY_SCANNER_PID=""
 PROXY_POLLER_PID=""
+TVL_TRACKER_PID=""
 
 # Check required env vars
 missing=()
@@ -102,6 +103,10 @@ cleanup() {
     kill "$PROXY_POLLER_PID" 2>/dev/null || true
     wait "$PROXY_POLLER_PID" 2>/dev/null || true
   fi
+  if [ -n "$TVL_TRACKER_PID" ]; then
+    kill "$TVL_TRACKER_PID" 2>/dev/null || true
+    wait "$TVL_TRACKER_PID" 2>/dev/null || true
+  fi
   echo "Done."
 }
 trap cleanup EXIT INT TERM
@@ -123,6 +128,8 @@ uv run python -m workers.protocol_monitor &
 PROXY_SCANNER_PID=$!
 uv run python -m workers.protocol_monitor --poll &
 PROXY_POLLER_PID=$!
+uv run python -m workers.protocol_monitor --tvl &
+TVL_TRACKER_PID=$!
 
 echo ""
 echo "=== PSAT running ==="

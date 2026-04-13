@@ -21,6 +21,7 @@ from db.models import (
     ProtocolSubscription,
     ProxySubscription,
     ProxyUpgradeEvent,
+    TvlSnapshot,
     WatchedProxy,
 )
 
@@ -114,6 +115,7 @@ def db_session():
             MonitoredEvent,
             MonitoredContract,
             ProtocolSubscription,
+            TvlSnapshot,
             ProxyUpgradeEvent,
             ProxySubscription,
             WatchedProxy,
