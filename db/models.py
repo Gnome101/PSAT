@@ -571,9 +571,7 @@ class TvlSnapshot(Base):
     __tablename__ = "tvl_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    protocol_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False
-    )
+    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     total_usd: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
     defillama_tvl: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
@@ -585,9 +583,7 @@ class TvlSnapshot(Base):
     )
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="on_chain")
 
-    __table_args__ = (
-        Index("ix_tvl_snapshots_protocol_timestamp", "protocol_id", "timestamp"),
-    )
+    __table_args__ = (Index("ix_tvl_snapshots_protocol_timestamp", "protocol_id", "timestamp"),)
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")

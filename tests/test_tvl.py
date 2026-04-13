@@ -105,12 +105,16 @@ class TestGetProtocolAddresses:
         impl_addr = _addr("get_addrs", "b2")
         regular_addr = _addr("get_addrs", "c3")
 
-        proxy = Contract(address=proxy_addr, chain="ethereum", protocol_id=protocol.id,
-                         contract_name="Proxy", is_proxy=True, implementation=impl_addr)
-        impl = Contract(address=impl_addr, chain="ethereum", protocol_id=protocol.id,
-                        contract_name="Impl")
-        regular = Contract(address=regular_addr, chain="ethereum", protocol_id=protocol.id,
-                           contract_name="Regular")
+        proxy = Contract(
+            address=proxy_addr,
+            chain="ethereum",
+            protocol_id=protocol.id,
+            contract_name="Proxy",
+            is_proxy=True,
+            implementation=impl_addr,
+        )
+        impl = Contract(address=impl_addr, chain="ethereum", protocol_id=protocol.id, contract_name="Impl")
+        regular = Contract(address=regular_addr, chain="ethereum", protocol_id=protocol.id, contract_name="Regular")
         db_session.add_all([proxy, impl, regular])
         db_session.commit()
 
@@ -130,24 +134,26 @@ class TestRefreshContractBalances:
         db_session.flush()
 
         addr = _addr("refresh", "a1")
-        contract = Contract(address=addr, chain="ethereum", protocol_id=protocol.id,
-                            contract_name="Vault")
+        contract = Contract(address=addr, chain="ethereum", protocol_id=protocol.id, contract_name="Vault")
         db_session.add(contract)
         db_session.commit()
 
         monkeypatch.setattr("utils.etherscan.get_eth_balance", lambda address, chain_id=1: 2_000_000_000_000_000_000)
         monkeypatch.setattr("utils.etherscan.get_eth_price", lambda chain_id=1: 2000.0)
-        monkeypatch.setattr("utils.etherscan.get_token_balances", lambda address, chain_id=1: [
-            {
-                "token_address": "0x" + "dd" * 20,
-                "token_name": "USDC",
-                "token_symbol": "USDC",
-                "decimals": 6,
-                "balance": 500_000_000,
-                "price_usd": 1.0,
-                "usd_value": 500.0,
-            }
-        ])
+        monkeypatch.setattr(
+            "utils.etherscan.get_token_balances",
+            lambda address, chain_id=1: [
+                {
+                    "token_address": "0x" + "dd" * 20,
+                    "token_name": "USDC",
+                    "token_symbol": "USDC",
+                    "decimals": 6,
+                    "balance": 500_000_000,
+                    "price_usd": 1.0,
+                    "usd_value": 500.0,
+                }
+            ],
+        )
 
         breakdown = refresh_contract_balances(db_session, protocol.id)
 
@@ -155,9 +161,7 @@ class TestRefreshContractBalances:
         assert breakdown[addr.lower()]["total_usd"] == 4500.0
         assert breakdown[addr.lower()]["name"] == "Vault"
 
-        balances = db_session.query(ContractBalance).filter(
-            ContractBalance.contract_id == contract.id
-        ).all()
+        balances = db_session.query(ContractBalance).filter(ContractBalance.contract_id == contract.id).all()
         assert len(balances) == 2
         assert {b.token_symbol for b in balances} == {"ETH", "USDC"}
 
@@ -167,8 +171,7 @@ class TestRefreshContractBalances:
         db_session.flush()
 
         addr = _addr("failure", "a1")
-        contract = Contract(address=addr, chain="ethereum", protocol_id=protocol.id,
-                            contract_name="Vault")
+        contract = Contract(address=addr, chain="ethereum", protocol_id=protocol.id, contract_name="Vault")
         db_session.add(contract)
         db_session.commit()
 
@@ -193,8 +196,7 @@ class TestTakeTvlSnapshot:
         db_session.flush()
 
         addr = _addr("snap_both", "a1")
-        contract = Contract(address=addr, chain="ethereum", protocol_id=protocol.id,
-                            contract_name="Pool")
+        contract = Contract(address=addr, chain="ethereum", protocol_id=protocol.id, contract_name="Pool")
         db_session.add(contract)
         db_session.commit()
 
@@ -210,8 +212,8 @@ class TestTakeTvlSnapshot:
 
         assert snapshot is not None
         assert snapshot.source == "both"
-        assert float(snapshot.total_usd) == 3000.0
-        assert float(snapshot.defillama_tvl) == 10_000_000.0
+        assert snapshot.total_usd is not None and float(snapshot.total_usd) == 3000.0
+        assert snapshot.defillama_tvl is not None and float(snapshot.defillama_tvl) == 10_000_000.0
         assert snapshot.chain_breakdown == {"Ethereum": 10_000_000.0}
         assert snapshot.contract_breakdown is not None
 
@@ -221,8 +223,7 @@ class TestTakeTvlSnapshot:
         db_session.flush()
 
         addr = _addr("snap_onchain", "a1")
-        contract = Contract(address=addr, chain="ethereum", protocol_id=protocol.id,
-                            contract_name="Vault")
+        contract = Contract(address=addr, chain="ethereum", protocol_id=protocol.id, contract_name="Vault")
         db_session.add(contract)
         db_session.commit()
 

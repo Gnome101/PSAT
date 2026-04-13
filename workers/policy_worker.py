@@ -273,18 +273,20 @@ class PolicyWorker(BaseWorker):
                         # from the resolution stage — the hourly loop will create
                         # a full snapshot combining both.
                         try:
+                            from db.models import Protocol, TvlSnapshot
                             from services.monitoring.tvl import fetch_defillama_tvl
 
-                            from db.models import Protocol, TvlSnapshot
                             proto = session.get(Protocol, job.protocol_id)
                             dl = fetch_defillama_tvl(proto.name) if proto else None
                             if dl:
-                                session.add(TvlSnapshot(
-                                    protocol_id=job.protocol_id,
-                                    defillama_tvl=round(dl["tvl"], 2) if dl["tvl"] else None,
-                                    chain_breakdown=dl["chain_breakdown"],
-                                    source="defillama",
-                                ))
+                                session.add(
+                                    TvlSnapshot(
+                                        protocol_id=job.protocol_id,
+                                        defillama_tvl=round(dl["tvl"], 2) if dl["tvl"] else None,
+                                        chain_breakdown=dl["chain_breakdown"],
+                                        source="defillama",
+                                    )
+                                )
                                 session.commit()
                         except Exception:
                             logger.exception("Initial TVL snapshot failed for protocol %s", job.protocol_id)

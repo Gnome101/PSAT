@@ -77,9 +77,9 @@ def fetch_defillama_tvl(protocol_name: str) -> dict | None:
 
     # Filter out borrowed/staking/pool2 keys — keep only chain names
     chain_breakdown = {
-        k: v for k, v in chain_breakdown.items()
-        if not any(k.lower().startswith(p) for p in ("borrowed", "staking", "pool2"))
-        and isinstance(v, (int, float))
+        k: v
+        for k, v in chain_breakdown.items()
+        if not any(k.lower().startswith(p) for p in ("borrowed", "staking", "pool2")) and isinstance(v, (int, float))
     }
 
     return {
@@ -95,13 +95,7 @@ def fetch_defillama_tvl(protocol_name: str) -> dict | None:
 
 def _get_protocol_addresses(session: Session, protocol_id: int) -> list[Contract]:
     """Return contracts to fetch balances for, excluding implementation-behind-proxy."""
-    contracts = (
-        session.execute(
-            select(Contract).where(Contract.protocol_id == protocol_id)
-        )
-        .scalars()
-        .all()
-    )
+    contracts = session.execute(select(Contract).where(Contract.protocol_id == protocol_id)).scalars().all()
 
     # Build set of implementation addresses that sit behind a proxy
     impl_addresses: set[str] = set()
@@ -110,10 +104,7 @@ def _get_protocol_addresses(session: Session, protocol_id: int) -> list[Contract
             impl_addresses.add(c.implementation.lower())
 
     # Keep proxy contracts (they hold the funds) and non-impl regular contracts
-    return [
-        c for c in contracts
-        if c.address and c.address.lower() not in impl_addresses
-    ]
+    return [c for c in contracts if c.address and c.address.lower() not in impl_addresses]
 
 
 def refresh_contract_balances(
@@ -158,9 +149,7 @@ def refresh_contract_balances(
             token_list = []
 
         # Clear old balances for this contract
-        session.query(ContractBalance).filter(
-            ContractBalance.contract_id == contract.id
-        ).delete()
+        session.query(ContractBalance).filter(ContractBalance.contract_id == contract.id).delete()
 
         # Native ETH
         if eth_wei > 0:
@@ -198,10 +187,12 @@ def refresh_contract_balances(
             usd = tok.get("usd_value")
             if usd:
                 contract_total += usd
-                tokens.append({
-                    "symbol": tok["token_symbol"],
-                    "usd_value": round(usd, 2),
-                })
+                tokens.append(
+                    {
+                        "symbol": tok["token_symbol"],
+                        "usd_value": round(usd, 2),
+                    }
+                )
 
         breakdown[address.lower()] = {
             "name": contract.contract_name,
@@ -228,11 +219,7 @@ def _read_existing_balances(session: Session, protocol_id: int) -> dict[str, dic
     breakdown: dict[str, dict] = {}
     for contract in contracts:
         rows = (
-            session.execute(
-                select(ContractBalance).where(ContractBalance.contract_id == contract.id)
-            )
-            .scalars()
-            .all()
+            session.execute(select(ContractBalance).where(ContractBalance.contract_id == contract.id)).scalars().all()
         )
         contract_total = 0.0
         tokens: list[dict] = []
@@ -277,9 +264,7 @@ def take_tvl_snapshot(
         contract_breakdown = refresh_contract_balances(session, protocol_id)
     else:
         contract_breakdown = _read_existing_balances(session, protocol_id)
-    on_chain_total = sum(
-        entry.get("total_usd", 0) for entry in contract_breakdown.values()
-    )
+    on_chain_total = sum(entry.get("total_usd", 0) for entry in contract_breakdown.values())
 
     # Determine source and headline number
     if dl_tvl is not None and contract_breakdown:
