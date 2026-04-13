@@ -10,7 +10,10 @@ from cache_helpers import (
     ADDR_B,
     _create_completed_job_with_static_data,
     db_session,  # noqa: F401
+    requires_postgres,
 )
+
+pytestmark = requires_postgres
 
 # Extra addresses used in inventory merge / dedup tests
 ADDR_C = "0x1111111111111111111111111111111111111111"

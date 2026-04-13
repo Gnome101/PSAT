@@ -117,11 +117,11 @@ echo "Starting workers..."
 bash start_workers.sh &
 WORKERS_PID=$!
 
-# Start proxy monitor (event scanner + storage poller)
-echo "Starting proxy monitor..."
-uv run python -m workers.proxy_monitor &
+# Start protocol monitor (unified event scanner + storage poller)
+echo "Starting protocol monitor..."
+uv run python -m workers.protocol_monitor &
 PROXY_SCANNER_PID=$!
-uv run python -m workers.proxy_monitor --poll &
+uv run python -m workers.protocol_monitor --poll &
 PROXY_POLLER_PID=$!
 
 echo ""

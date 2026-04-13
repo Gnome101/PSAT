@@ -9,14 +9,14 @@ Tests cover:
   - resolve_current_implementation with real and empty slots
 
 All tests run without live services (no RPC, no database).
-Uses an in-memory SQLite database for WatchedProxy / ProxyUpgradeEvent rows.
+Uses PostgreSQL for WatchedProxy / ProxyUpgradeEvent rows.
 """
 
 from __future__ import annotations
 
 from unittest.mock import call, patch
 
-from conftest import ADDR, _add_proxy, _admin_data, _make_log, _topic_for
+from conftest import ADDR, _add_proxy, _admin_data, _make_log, _topic_for, requires_postgres
 
 from db.models import ProxyUpgradeEvent
 from services.discovery.upgrade_history import (
@@ -30,6 +30,8 @@ from services.monitoring.proxy_watcher import (
     resolve_current_implementation,
     scan_for_upgrades,
 )
+
+pytestmark = requires_postgres
 
 EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
 

@@ -14,9 +14,11 @@ import subprocess
 import time as _time
 
 import pytest
-from cache_helpers import db_session  # noqa: F401
+from cache_helpers import db_session, requires_postgres  # noqa: F401
 
 _HAS_ANVIL = shutil.which("anvil") is not None
+
+pytestmark = requires_postgres
 
 # EIP-1967 implementation storage slot
 _EIP1967_IMPL_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"

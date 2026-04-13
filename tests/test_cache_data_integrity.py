@@ -24,7 +24,10 @@ from cache_helpers import (  # noqa: E402
     _create_source_job_with_proxy,
     _sqlite_compatible_store_artifact,
     db_session,  # noqa: F401
+    requires_postgres,
 )
+
+pytestmark = requires_postgres
 
 # ---------------------------------------------------------------------------
 # 1. copy_static_cache must NOT zero proxy fields

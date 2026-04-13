@@ -10,7 +10,10 @@ from cache_helpers import (
     ADDR_B,
     _create_completed_job_with_static_data,
     db_session,  # noqa: F401
+    requires_postgres,
 )
+
+pytestmark = requires_postgres
 
 # ---------------------------------------------------------------------------
 # 1. Cache lookup tests

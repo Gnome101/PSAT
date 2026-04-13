@@ -2,18 +2,50 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import ProxySubscription, ProxyUpgradeEvent, WatchedProxy
+from db.models import (
+    Base,
+    MonitoredContract,
+    MonitoredEvent,
+    Protocol,
+    ProtocolSubscription,
+    ProxySubscription,
+    ProxyUpgradeEvent,
+    WatchedProxy,
+)
+
+# ---------------------------------------------------------------------------
+# PostgreSQL connection
+# ---------------------------------------------------------------------------
+
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+
+
+def _can_connect() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,31 +96,31 @@ def _make_log(
 
 @pytest.fixture()
 def db_session():
-    """In-memory SQLite database with proxy monitoring tables.
+    """PostgreSQL database session with full schema.
 
-    Uses StaticPool + check_same_thread=False so the session can be shared
-    with FastAPI's TestClient (which runs endpoints in a worker thread).
+    Creates all tables if they don't exist, yields a session, then
+    cleans up test-created rows on teardown.
     """
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    @event.listens_for(engine, "connect")
-    def _set_sqlite_pragma(dbapi_conn, _connection_record):
-        cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxySubscription.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)
 
     session = Session(engine, expire_on_commit=False)
     try:
         yield session
     finally:
+        session.rollback()
+        # Clean monitoring tables (order respects FK constraints)
+        for model in [
+            MonitoredEvent,
+            MonitoredContract,
+            ProtocolSubscription,
+            ProxyUpgradeEvent,
+            ProxySubscription,
+            WatchedProxy,
+            Protocol,
+        ]:
+            session.query(model).delete()
+        session.commit()
         session.close()
         engine.dispose()
 
