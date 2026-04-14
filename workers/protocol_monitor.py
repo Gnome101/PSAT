@@ -35,6 +35,11 @@ def main():
         help="Run state-polling loop instead of event-based scanning",
     )
     parser.add_argument(
+        "--tvl",
+        action="store_true",
+        help="Run TVL tracking loop (periodic balance snapshots)",
+    )
+    parser.add_argument(
         "--legacy",
         action="store_true",
         help="Run the legacy proxy-only scanner (backward compat fallback)",
@@ -48,6 +53,14 @@ def main():
 
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
+
+    if args.tvl:
+        from services.monitoring.tvl import DEFAULT_TVL_INTERVAL, run_tvl_loop
+
+        interval = args.interval if args.interval is not None else DEFAULT_TVL_INTERVAL
+        logger.info("TVL tracker starting (interval=%ss)", interval)
+        run_tvl_loop(interval)
+        return
 
     if args.legacy:
         # Fall back to the old proxy-only scanner

@@ -33,6 +33,7 @@ from db.models import (
     ProxySubscription,
     ProxyUpgradeEvent,
     SessionLocal,
+    TvlSnapshot,
     UpgradeEvent,
     WatchedProxy,
 )
@@ -46,6 +47,7 @@ SITE_DIST_DIR = SITE_DIR / "dist"
 SITE_ASSETS_DIR = SITE_DIST_DIR / "assets"
 
 DEFAULT_RPC_URL = os.environ.get("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+MAX_TVL_HISTORY_DAYS = 90
 GENERIC_PROXY_NAMES = {
     "uupsproxy",
     "erc1967proxy",
@@ -1411,10 +1413,29 @@ def company_overview(company_name: str) -> dict:
             key=lambda x: (not x["analyzed"], x["name"] or "zzz"),
         )
 
+        # Latest TVL snapshot
+        tvl_data: dict[str, Any] | None = None
+        p_id = protocol_row.id if protocol_row else None
+        if p_id is not None:
+            latest_tvl = session.execute(
+                select(TvlSnapshot)
+                .where(TvlSnapshot.protocol_id == p_id)
+                .order_by(TvlSnapshot.timestamp.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if latest_tvl:
+                tvl_data = {
+                    "total_usd": float(latest_tvl.total_usd) if latest_tvl.total_usd else None,
+                    "defillama_tvl": float(latest_tvl.defillama_tvl) if latest_tvl.defillama_tvl else None,
+                    "source": latest_tvl.source,
+                    "timestamp": latest_tvl.timestamp.isoformat(),
+                }
+
         return {
             "company": company_name,
             "protocol_id": protocol_row.id if protocol_row else None,
             "contract_count": len(contracts),
+            "tvl": tvl_data,
             "contracts": contracts,
             "principals": principals,
             "ownership_hierarchy": hierarchy,
@@ -1905,6 +1926,53 @@ def list_monitored_events(
             }
             for e in events
         ]
+
+
+@app.get("/api/protocols/{protocol_id}/tvl")
+def protocol_tvl(protocol_id: int, days: int = 30) -> dict[str, Any]:
+    """Current TVL and historical snapshots for a protocol."""
+    from datetime import datetime, timedelta, timezone
+
+    days = min(days, MAX_TVL_HISTORY_DAYS)
+
+    with SessionLocal() as session:
+        protocol = session.get(Protocol, protocol_id)
+        if protocol is None:
+            raise HTTPException(status_code=404, detail="Protocol not found")
+
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        stmt = (
+            select(TvlSnapshot)
+            .where(
+                TvlSnapshot.protocol_id == protocol_id,
+                TvlSnapshot.timestamp >= cutoff,
+            )
+            .order_by(TvlSnapshot.timestamp.desc())
+        )
+        snapshots = session.execute(stmt).scalars().all()
+
+        latest = snapshots[0] if snapshots else None
+        return {
+            "protocol_id": protocol_id,
+            "protocol_name": protocol.name,
+            "current": {
+                "total_usd": float(latest.total_usd) if latest and latest.total_usd else None,
+                "defillama_tvl": float(latest.defillama_tvl) if latest and latest.defillama_tvl else None,
+                "source": latest.source if latest else None,
+                "timestamp": latest.timestamp.isoformat() if latest else None,
+                "contract_breakdown": latest.contract_breakdown if latest else None,
+                "chain_breakdown": latest.chain_breakdown if latest else None,
+            },
+            "history": [
+                {
+                    "timestamp": s.timestamp.isoformat(),
+                    "total_usd": float(s.total_usd) if s.total_usd else None,
+                    "defillama_tvl": float(s.defillama_tvl) if s.defillama_tvl else None,
+                    "source": s.source,
+                }
+                for s in snapshots
+            ],
+        }
 
 
 @app.get("/{full_path:path}")

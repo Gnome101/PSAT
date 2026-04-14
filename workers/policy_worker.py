@@ -268,6 +268,28 @@ class PolicyWorker(BaseWorker):
                             "Auto-enrolled protocol %s contracts into monitoring",
                             job.protocol_id,
                         )
+                        # Fetch DeFiLlama TVL so the protocol has a number immediately.
+                        # Per-contract tracked value is already in contract_balances
+                        # from the resolution stage — the hourly loop will create
+                        # a full snapshot combining both.
+                        try:
+                            from db.models import Protocol, TvlSnapshot
+                            from services.monitoring.tvl import fetch_defillama_tvl
+
+                            proto = session.get(Protocol, job.protocol_id)
+                            dl = fetch_defillama_tvl(proto.name) if proto else None
+                            if dl:
+                                session.add(
+                                    TvlSnapshot(
+                                        protocol_id=job.protocol_id,
+                                        defillama_tvl=round(dl["tvl"], 2) if dl["tvl"] else None,
+                                        chain_breakdown=dl["chain_breakdown"],
+                                        source="defillama",
+                                    )
+                                )
+                                session.commit()
+                        except Exception:
+                            logger.exception("Initial TVL snapshot failed for protocol %s", job.protocol_id)
                 except Exception:
                     logger.exception("Auto-enrollment failed for protocol %s", job.protocol_id)
 
