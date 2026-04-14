@@ -89,8 +89,14 @@ class InteractionLog:
             source = i.data or ""
             if source:
                 entry["sources"].add(source)
+            # Infer chain from any URL-like field — i.url is always a URL, and
+            # for scraped page addresses i.data sometimes holds the full explorer
+            # href. Calldata (hex) can't contain explorer domain names anyway.
+            for candidate in (i.url, source):
+                if not candidate or not candidate.startswith(("http://", "https://")):
+                    continue
                 for explorer, chain in EXPLORER_CHAINS.items():
-                    if explorer in source:
+                    if explorer in candidate:
                         entry["chains"].add(chain)
 
         return [

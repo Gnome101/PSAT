@@ -21,3 +21,4 @@ out/
 *.pen
 *.png
 .db_snapshots/
+.claude/

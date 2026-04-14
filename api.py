@@ -37,7 +37,7 @@ from db.models import (
     UpgradeEvent,
     WatchedProxy,
 )
-from db.queue import create_job, get_all_artifacts, get_artifact
+from db.queue import create_job, find_existing_job_for_address, get_all_artifacts, get_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -398,6 +398,16 @@ def analyze_remaining(company_name: str) -> dict[str, Any]:
 
         queued = []
         for contract in unanalyzed:
+            # Re-check inside the loop so concurrent calls (double-click or
+            # duplicate request) don't each create a job for the same contract.
+            session.refresh(contract, attribute_names=["job_id"])
+            if contract.job_id is not None:
+                continue
+            existing = find_existing_job_for_address(session, contract.address, chain=contract.chain)
+            if existing is not None:
+                contract.job_id = existing.id
+                session.commit()
+                continue
             req_dict = {
                 "address": contract.address,
                 "name": contract.contract_name or f"{company_name}_{contract.address[2:10]}",
