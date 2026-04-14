@@ -64,6 +64,7 @@ def _job(**overrides: Any) -> SimpleNamespace:
     payload: dict[str, Any] = {
         "id": uuid.uuid4(),
         "name": None,
+        "company": None,
         "protocol_id": None,
         "request": {
             "dapp_urls": ["https://example.com"],
@@ -90,8 +91,15 @@ def _patch_worker_deps(
     store_calls: list[tuple[str, Any]] = []
     create_calls: list[dict] = []
     complete_calls: list[tuple] = []
+    protocol_calls: list[tuple[str, str | None]] = []
 
     monkeypatch.setattr(worker_module, "crawl_dapp", lambda urls, chain_id=1, wait=10, progress=None: crawl_result)
+
+    def fake_get_or_create_protocol(session, name, official_domain=None):
+        protocol_calls.append((name, official_domain))
+        return SimpleNamespace(id=1, name=name, official_domain=official_domain)
+
+    monkeypatch.setattr(worker_module, "get_or_create_protocol", fake_get_or_create_protocol)
     # BaseWorker.update_detail calls update_job_detail; patch it on the class
     monkeypatch.setattr(
         worker_module.DAppCrawlWorker,
@@ -122,6 +130,7 @@ def _patch_worker_deps(
         "store_calls": store_calls,
         "create_calls": create_calls,
         "complete_calls": complete_calls,
+        "protocol_calls": protocol_calls,
     }
 
 
@@ -313,8 +322,8 @@ class TestAnalyzeLimit:
             "addresses": [ADDR_A, ADDR_B, ADDR_C],
             "interaction_count": 3,
         }
-        # analyze_limit defaults to 25, but already_used=24 leaves room for 1
-        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result, already_used=24)
+        # analyze_limit defaults to 5, but already_used=4 leaves room for 1
+        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result, already_used=4)
         session = _session_with_dedup(set())
         job = _job()
 
@@ -330,7 +339,7 @@ class TestAnalyzeLimit:
             "interaction_count": 2,
         }
         # already_used >= analyze_limit => remaining = 0
-        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result, already_used=25)
+        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result, already_used=5)
         session = _session_with_dedup(set())
         job = _job()
 
@@ -371,7 +380,7 @@ class TestJobName:
 
 
 class TestChainPropagation:
-    """When request has a 'chain' key, it is passed through to child requests."""
+    """Chain is propagated to children — explicit from request, per-address from crawl, or defaulted from chain_id."""
 
     def test_chain_key_forwarded(self, monkeypatch, dapp_worker_module):
         crawl_result = {"addresses": [ADDR_A], "interaction_count": 1}
@@ -385,7 +394,7 @@ class TestChainPropagation:
 
         assert spies["create_calls"][0]["chain"] == "ethereum"
 
-    def test_no_chain_key_omitted(self, monkeypatch, dapp_worker_module):
+    def test_chain_defaulted_from_chain_id_when_omitted(self, monkeypatch, dapp_worker_module):
         crawl_result = {"addresses": [ADDR_A], "interaction_count": 1}
         spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
         session = _session_with_dedup(set())
@@ -395,7 +404,24 @@ class TestChainPropagation:
         with pytest.raises(JobHandledDirectly):
             worker.process(session, cast(Any, job))
 
-        assert "chain" not in spies["create_calls"][0]
+        # chain_id defaults to 1 → "ethereum"
+        assert spies["create_calls"][0]["chain"] == "ethereum"
+
+    def test_per_address_inferred_chain_wins(self, monkeypatch, dapp_worker_module):
+        crawl_result = {
+            "addresses": [ADDR_A],
+            "interaction_count": 1,
+            "address_details": [{"address": ADDR_A, "chain": "arbitrum", "source_urls": []}],
+        }
+        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
+        session = _session_with_dedup(set())
+        job = _job()
+
+        worker = dapp_worker_module.DAppCrawlWorker()
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        assert spies["create_calls"][0]["chain"] == "arbitrum"
 
 
 class TestCrawlParameters:
@@ -550,3 +576,108 @@ class TestChildRequestPropagation:
             worker.process(session, cast(Any, job))
 
         assert spies["create_calls"][0]["rpc_url"] == "https://rpc.mainnet.example"
+
+
+class TestProtocolCreation:
+    """Protocol row is created / looked up from URL hostname when company is absent."""
+
+    def test_hostname_derived_when_no_company(self, monkeypatch, dapp_worker_module):
+        crawl_result = {"addresses": [], "interaction_count": 0}
+        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
+        session = _session_with_dedup(set())
+        job = _job(request={"dapp_urls": ["https://ether.fi/stake"]})
+
+        worker = dapp_worker_module.DAppCrawlWorker()
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        # get_or_create_protocol called with hostname-derived name and domain
+        assert spies["protocol_calls"] == [("ether.fi", "ether.fi")]
+        assert job.protocol_id == 1
+        assert job.company == "ether.fi"
+
+    def test_www_stripped_from_hostname(self, monkeypatch, dapp_worker_module):
+        crawl_result = {"addresses": [], "interaction_count": 0}
+        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
+        session = _session_with_dedup(set())
+        job = _job(request={"dapp_urls": ["https://www.uniswap.org"]})
+
+        worker = dapp_worker_module.DAppCrawlWorker()
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        assert spies["protocol_calls"] == [("uniswap.org", "uniswap.org")]
+
+    def test_company_prefers_over_hostname(self, monkeypatch, dapp_worker_module):
+        crawl_result = {"addresses": [], "interaction_count": 0}
+        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
+        session = _session_with_dedup(set())
+        job = _job(company="Ether.fi", request={"dapp_urls": ["https://stake.ether.fi"]})
+
+        worker = dapp_worker_module.DAppCrawlWorker()
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        # Name comes from job.company; domain still derived from URL
+        assert spies["protocol_calls"] == [("Ether.fi", "stake.ether.fi")]
+        assert job.company == "Ether.fi"
+
+
+class TestCompanyPropagatedToChildren:
+    def test_child_request_carries_company(self, monkeypatch, dapp_worker_module):
+        crawl_result = {"addresses": [ADDR_A], "interaction_count": 1}
+        spies = _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
+        session = _session_with_dedup(set())
+        job = _job(request={"dapp_urls": ["https://ether.fi"]})
+
+        worker = dapp_worker_module.DAppCrawlWorker()
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        assert spies["create_calls"][0]["company"] == "ether.fi"
+        assert spies["create_calls"][0]["protocol_id"] == 1
+
+
+class TestInteractionPersistence:
+    def test_interactions_written_to_session(self, monkeypatch, dapp_worker_module):
+        crawl_result = {
+            "addresses": [ADDR_A],
+            "interaction_count": 2,
+            "interactions": [
+                {
+                    "type": "sendTransaction",
+                    "url": "https://ether.fi/stake",
+                    "timestamp": 1700000000000,
+                    "to": ADDR_A.upper(),
+                    "value": "0x0",
+                    "data": "0xabcdef01",
+                    "method_selector": "0xabcdef01",
+                    "is_permit": False,
+                },
+                {
+                    "type": "personal_sign",
+                    "url": "https://ether.fi/",
+                    "timestamp": 1700000001000,
+                    "to": None,
+                    "message": "sign in",
+                    "is_permit": False,
+                },
+            ],
+        }
+        _patch_worker_deps(monkeypatch, dapp_worker_module, crawl_result=crawl_result)
+        session = _session_with_dedup(set())
+        job = _job()
+
+        worker = dapp_worker_module.DAppCrawlWorker()
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        added = [call.args[0] for call in session.add.call_args_list]
+        interactions = [row for row in added if type(row).__name__ == "DAppInteraction"]
+        assert len(interactions) == 2
+        types = {row.type for row in interactions}
+        assert types == {"sendTransaction", "personal_sign"}
+        # `to` is lowercased
+        send_row = next(row for row in interactions if row.type == "sendTransaction")
+        assert send_row.to_address == ADDR_A.lower()
+        assert send_row.method_selector == "0xabcdef01"

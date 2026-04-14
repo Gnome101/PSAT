@@ -226,13 +226,83 @@ function isRoleIdAddress(address) {
   return leadingZeros >= 24;
 }
 
-function collectPrincipals(fn) {
+function collectPrincipals(fn, companyData) {
   const byAddress = new Map();
+
+  // Build a graph of who controls whom from per-contract control graphs
+  // controllerOf: address → [{address, type, label, details}]
+  const controllerOf = new Map();
+  const nodeInfo = new Map();
+
+  if (companyData) {
+    for (const contract of companyData.contracts || []) {
+      const cg = contract.control_graph;
+      if (!cg) continue;
+      for (const node of cg.nodes || []) {
+        const addr = (node.address || "").toLowerCase();
+        if (addr) nodeInfo.set(addr, node);
+      }
+      for (const edge of cg.edges || []) {
+        if (edge.relation === "safe_owner") continue; // owners are nested inside their Safe
+        const from = (edge.from || "").toLowerCase();
+        const to = (edge.to || "").toLowerCase();
+        if (!from || !to || from === to) continue;
+        if (!controllerOf.has(from)) controllerOf.set(from, []);
+        const existing = controllerOf.get(from);
+        if (!existing.some((e) => e.to === to)) {
+          existing.push({ to, relation: edge.relation });
+        }
+      }
+    }
+  }
+
+  // Walk the control graph to find the first non-contract controller
+  function resolveController(address, visited) {
+    if (!visited) visited = new Set();
+    if (visited.has(address)) return null;
+    visited.add(address);
+    const node = nodeInfo.get(address);
+    if (!node) return null;
+    // If this node is not a contract, it's the real controller
+    if (node.type !== "contract") return node;
+    // Walk outgoing edges to find who this contract delegates to
+    const edges = controllerOf.get(address);
+    if (!edges || edges.length === 0) return null;
+    for (const edge of edges) {
+      const resolved = resolveController(edge.to, visited);
+      if (resolved) return resolved;
+    }
+    return null;
+  }
 
   function pushPrincipal(principal, origin) {
     const address = String(principal?.address || "").toLowerCase();
     if (!address.startsWith("0x")) return;
     if (isRoleIdAddress(address)) return;
+
+    // Resolve contract principals through the control graph
+    if (principal.resolved_type === "contract") {
+      const resolved = resolveController(address);
+      if (resolved) {
+        const rAddr = (resolved.address || "").toLowerCase();
+        if (rAddr && !isRoleIdAddress(rAddr)) {
+          if (byAddress.has(rAddr)) {
+            byAddress.get(rAddr).origins.push(origin);
+          } else {
+            byAddress.set(rAddr, {
+              address: rAddr,
+              resolvedType: String(resolved.type || "unknown"),
+              details: resolved.details && typeof resolved.details === "object" ? { ...resolved.details } : {},
+              sourceContract: address,
+              sourceControllerId: principal.source_controller_id || null,
+              origins: [origin],
+            });
+          }
+          return;
+        }
+      }
+    }
+
     const existing = byAddress.get(address);
     if (existing) {
       existing.origins.push(origin);
@@ -268,8 +338,8 @@ function collectPrincipals(fn) {
   return [...byAddress.values()].sort((left, right) => left.address.localeCompare(right.address));
 }
 
-function guardSummary(fn) {
-  const principals = collectPrincipals(fn);
+function guardSummary(fn, companyData) {
+  const principals = collectPrincipals(fn, companyData);
 
   if (!principals.length) {
     const meta = TYPE_META[fn.authority_public ? "open" : "unknown"];
@@ -333,8 +403,8 @@ function buildMachines(companyData, functionData) {
           tone: toneForFunction(fn, lane),
           action: compactActionSummary(fn),
           effectLabels: fn.effect_labels || [],
-          guard: guardSummary(fn),
-          principals: collectPrincipals(fn),
+          guard: guardSummary(fn, companyData),
+          principals: collectPrincipals(fn, companyData),
           authorityPublic: Boolean(fn.authority_public),
         });
       }

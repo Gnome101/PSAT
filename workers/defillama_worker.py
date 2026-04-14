@@ -14,7 +14,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage
-from db.queue import complete_job, count_analysis_children, create_job, store_artifact
+from db.queue import (
+    complete_job,
+    count_analysis_children,
+    create_job,
+    get_or_create_protocol,
+    store_artifact,
+)
 from services.crawlers.defillama.scan import scan_protocol
 from workers.base import BaseWorker, JobHandledDirectly
 
@@ -36,6 +42,14 @@ class DefiLlamaWorker(BaseWorker):
 
         analyze_limit = request.get("analyze_limit", 5)
         no_clone = os.getenv("DEFILLAMA_NO_CLONE", "").lower() in ("1", "true", "yes")
+
+        # Derive / create Protocol row from company or slug
+        protocol_name = job.company or str(protocol)
+        protocol_row = get_or_create_protocol(session, protocol_name)
+        job.protocol_id = protocol_row.id
+        if not job.company:
+            job.company = protocol_row.name
+        session.commit()
 
         self.update_detail(session, job, f"Preparing DefiLlama scan for {protocol}")
         logger.info("DefiLlama scan started for job %s: protocol=%s", job.id, protocol)
@@ -87,7 +101,7 @@ class DefiLlamaWorker(BaseWorker):
                 chain_by_address[addr] = chain
 
         # Write ALL discovered addresses to contracts table
-        protocol_id = job.protocol_id
+        protocol_id = protocol_row.id
         for addr in addresses:
             normalized = addr.lower()
             chain = chain_by_address.get(normalized)
@@ -123,7 +137,14 @@ class DefiLlamaWorker(BaseWorker):
                 continue
             seen_addresses.add(normalized)
 
-            existing = session.execute(select(Job).where(Job.address == addr).limit(1)).scalar_one_or_none()
+            existing = session.execute(
+                select(Job)
+                .where(
+                    Job.address == addr,
+                    Job.request["root_job_id"].as_string() == root_job_id,
+                )
+                .limit(1)
+            ).scalar_one_or_none()
             if existing:
                 logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
                 continue
@@ -131,6 +152,7 @@ class DefiLlamaWorker(BaseWorker):
             child_request = {
                 "address": addr,
                 "name": f"{protocol}_{addr[2:10]}",
+                "company": protocol_row.name,
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "rpc_url": request.get("rpc_url"),

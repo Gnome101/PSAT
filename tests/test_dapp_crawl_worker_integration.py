@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import Base, Job, JobStage, JobStatus
+from db.models import Base, Contract, DAppInteraction, Job, JobStage, JobStatus, Protocol
 from db.queue import create_job, get_artifact
 from workers.base import JobHandledDirectly
 
@@ -90,13 +90,17 @@ def db_session():
         yield session
     finally:
         session.rollback()
-        # Only delete jobs with test addresses (cascades to artifacts/source_files)
+        # Only delete jobs with test addresses (cascades to artifacts/source_files/dapp_interactions)
         test_addrs = [ADDR_A, ADDR_B, ADDR_C]
         for j in session.execute(select(Job).where(Job.address.in_(test_addrs))).scalars():
             session.delete(j)
         # Delete the crawl job itself (no address, identified by dapp_urls in request)
         for j in session.execute(select(Job).where(Job.address.is_(None), Job.name.like("DApp crawl%"))).scalars():
             session.delete(j)
+        # Clean up Contract + Protocol rows our test creates (don't cascade from Job deletion)
+        for c in session.execute(select(Contract).where(Contract.address.in_(test_addrs))).scalars():
+            session.delete(c)
+        session.query(Protocol).filter(Protocol.name == "127.0.0.1").delete(synchronize_session=False)
         session.commit()
         session.close()
         engine.dispose()
@@ -242,3 +246,80 @@ def test_process_runs_against_real_queue_and_fake_dapp(
     assert req0["parent_job_id"] == str(job.id)
     assert req0["rpc_url"] == "https://rpc.example"
     assert req0["chain"] == "polygon"
+    assert req0["company"] == "127.0.0.1"
+
+    # Protocol row created from hostname, job tagged with its id
+    assert job.protocol_id is not None
+    protocol_row = db_session.get(Protocol, job.protocol_id)
+    assert protocol_row is not None
+    assert protocol_row.name == "127.0.0.1"
+    assert protocol_row.official_domain == "127.0.0.1"
+
+    # Contracts table populated with all discovered addresses under this protocol
+    contracts = db_session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
+    contract_addrs = {c.address for c in contracts}
+    assert {ADDR_A, ADDR_B, ADDR_C}.issubset(contract_addrs)
+    assert all(c.discovery_source == "dapp_crawl" for c in contracts)
+
+
+@requires_postgres
+def test_persists_dapp_interactions(
+    db_session: Session,
+    fake_dapp_url: str,
+    dapp_worker_module,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Full interaction log is persisted to the dapp_interactions table."""
+
+    def fake_crawl(urls, *, chain_id=1, wait=10, progress=None):
+        return {
+            "addresses": [ADDR_A],
+            "interaction_count": 2,
+            "interactions": [
+                {
+                    "type": "sendTransaction",
+                    "url": urls[0],
+                    "timestamp": 1700000000000,
+                    "to": ADDR_A.upper(),
+                    "value": "0x0",
+                    "data": "0xdeadbeef",
+                    "method_selector": "0xdeadbeef",
+                    "is_permit": False,
+                },
+                {
+                    "type": "personal_sign",
+                    "url": urls[0],
+                    "timestamp": 1700000001000,
+                    "to": None,
+                    "message": "Sign in",
+                    "is_permit": False,
+                },
+            ],
+        }
+
+    monkeypatch.setattr(dapp_worker_module, "crawl_dapp", fake_crawl)
+
+    job = create_job(
+        db_session,
+        {"dapp_urls": [fake_dapp_url], "analyze_limit": 1, "chain_id": 1, "wait": 5},
+        initial_stage=JobStage.dapp_crawl,
+    )
+
+    worker = dapp_worker_module.DAppCrawlWorker()
+    with pytest.raises(JobHandledDirectly):
+        worker.process(db_session, job)
+
+    rows = (
+        db_session.execute(select(DAppInteraction).where(DAppInteraction.job_id == job.id).order_by(DAppInteraction.id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 2
+    assert rows[0].type == "sendTransaction"
+    assert rows[0].to_address == ADDR_A  # lowercased
+    assert rows[0].method_selector == "0xdeadbeef"
+    assert rows[0].data == "0xdeadbeef"
+    assert rows[0].protocol_id == job.protocol_id
+    assert rows[1].type == "personal_sign"
+    assert rows[1].to_address is None
+    assert rows[1].message == "Sign in"

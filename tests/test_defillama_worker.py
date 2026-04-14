@@ -57,6 +57,7 @@ def _patch_worker_deps(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     store_calls: list[tuple[str, Any]] = []
     create_calls: list[dict] = []
     complete_calls: list[tuple] = []
+    protocol_calls: list[tuple[str, str | None]] = []
 
     def fake_store(session, job_id, name, data=None, text_data=None):
         store_calls.append((name, data))
@@ -75,16 +76,22 @@ def _patch_worker_deps(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     def fake_update_detail(session, job_id, detail):
         pass
 
+    def fake_get_or_create_protocol(session, name, official_domain=None):
+        protocol_calls.append((name, official_domain))
+        return SimpleNamespace(id=1, name=name, official_domain=official_domain)
+
     monkeypatch.setattr("workers.defillama_worker.store_artifact", fake_store)
     monkeypatch.setattr("workers.defillama_worker.create_job", fake_create)
     monkeypatch.setattr("workers.defillama_worker.complete_job", fake_complete)
     monkeypatch.setattr("workers.defillama_worker.count_analysis_children", fake_count)
+    monkeypatch.setattr("workers.defillama_worker.get_or_create_protocol", fake_get_or_create_protocol)
     monkeypatch.setattr("workers.base.update_job_detail", fake_update_detail)
 
     return {
         "store_calls": store_calls,
         "create_calls": create_calls,
         "complete_calls": complete_calls,
+        "protocol_calls": protocol_calls,
     }
 
 
@@ -609,3 +616,64 @@ class TestScanProtocolRaises:
 
         with pytest.raises(RuntimeError, match="clone failed"):
             worker.process(session, cast(Any, job))
+
+
+class TestProtocolCreation:
+    """Protocol row is created from defillama slug when company is absent."""
+
+    def test_slug_becomes_protocol_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = DefiLlamaWorker()
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = None
+        job = _job()
+
+        trackers = _patch_worker_deps(monkeypatch)
+        monkeypatch.setattr(
+            "workers.defillama_worker.scan_protocol",
+            lambda **kwargs: _scan_result(addresses=[]),
+        )
+
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        assert trackers["protocol_calls"] == [(PROTOCOL, None)]
+        assert job.protocol_id == 1
+        assert job.company == PROTOCOL
+
+    def test_company_prefers_over_slug(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = DefiLlamaWorker()
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = None
+        job = _job(company="Aave")
+
+        trackers = _patch_worker_deps(monkeypatch)
+        monkeypatch.setattr(
+            "workers.defillama_worker.scan_protocol",
+            lambda **kwargs: _scan_result(addresses=[]),
+        )
+
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        assert trackers["protocol_calls"] == [("Aave", None)]
+        assert job.company == "Aave"
+
+
+class TestCompanyPropagatedToChildren:
+    def test_child_request_carries_company(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = DefiLlamaWorker()
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = None
+        job = _job()
+
+        trackers = _patch_worker_deps(monkeypatch)
+        monkeypatch.setattr(
+            "workers.defillama_worker.scan_protocol",
+            lambda **kwargs: _scan_result(addresses=[ADDR_1]),
+        )
+
+        with pytest.raises(JobHandledDirectly):
+            worker.process(session, cast(Any, job))
+
+        assert trackers["create_calls"][0]["company"] == PROTOCOL
+        assert trackers["create_calls"][0]["protocol_id"] == 1

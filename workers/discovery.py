@@ -11,7 +11,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Contract, Job, JobStage, Protocol
+from db.models import Contract, Job, JobStage
 from db.queue import (
     copy_static_cache,
     count_analysis_children,
@@ -20,6 +20,7 @@ from db.queue import (
     find_existing_job_for_address,
     find_previous_company_inventory,
     get_artifact,
+    get_or_create_protocol,
     is_known_proxy,
     store_artifact,
     store_source_files,
@@ -75,18 +76,7 @@ class DiscoveryWorker(BaseWorker):
         store_artifact(session, job.id, "contract_inventory", data=inventory)
 
         # Create or look up Protocol row
-        protocol_row = session.execute(select(Protocol).where(Protocol.name == company)).scalar_one_or_none()
-        if protocol_row is None:
-            protocol_row = Protocol(
-                name=company,
-                official_domain=inventory.get("official_domain"),
-            )
-            session.add(protocol_row)
-            session.flush()
-        elif inventory.get("official_domain") and not protocol_row.official_domain:
-            protocol_row.official_domain = inventory.get("official_domain")
-            session.flush()
-
+        protocol_row = get_or_create_protocol(session, company, official_domain=inventory.get("official_domain"))
         job.protocol_id = protocol_row.id
         session.commit()
 

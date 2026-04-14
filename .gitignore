@@ -15,4 +15,10 @@ repo/
 !tests/fixtures/contracts/
 !tests/fixtures/contracts/**
 .coverage
+cache/
+crytic-export/
+out/
+*.pen
+*.png
 .db_snapshots/
+.claude/

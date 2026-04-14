@@ -317,6 +317,7 @@ select {
   z-index: 10;
   background: #12151a;
   overflow: hidden;
+  color: #f8fafc;
 }
 
 /* Submit dropdown */
@@ -1802,7 +1803,8 @@ button.ghost {
 .ps-surface-search-overlay {
   position: absolute;
   top: 16px;
-  right: 400px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 20;
   background: rgba(17, 22, 32, 0.88);
   backdrop-filter: blur(12px);
@@ -1903,6 +1905,10 @@ button.ghost {
   flex-direction: row;
   max-height: calc(100vh - 160px);
   position: relative;
+}
+
+.ps-surface-fullscreen .ps-sidebar {
+  max-height: 100%;
 }
 
 .ps-sidebar-handle {

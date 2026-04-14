@@ -37,7 +37,7 @@ from db.models import (
     UpgradeEvent,
     WatchedProxy,
 )
-from db.queue import create_job, get_all_artifacts, get_artifact
+from db.queue import create_job, find_existing_job_for_address, get_all_artifacts, get_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -74,8 +74,11 @@ class AnalyzeRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_target(self) -> "AnalyzeRequest":
-        targets = [self.address, self.company, self.dapp_urls, self.defillama_protocol]
-        if sum(bool(t) for t in targets) != 1:
+        # address + company is allowed (address is target, company is context)
+        primary = [self.address, self.dapp_urls, self.defillama_protocol]
+        company_only = self.company and not any(primary)
+        has_primary = sum(bool(t) for t in primary) == 1
+        if not has_primary and not company_only:
             raise ValueError("Provide exactly one of: address, company, dapp_urls, defillama_protocol")
         return self
 
@@ -372,6 +375,52 @@ def analyze_address(request: AnalyzeRequest) -> dict[str, Any]:
         else:
             job = create_job(session, req_dict)
         return job.to_dict()
+
+
+@app.post("/api/company/{company_name}/analyze-remaining")
+def analyze_remaining(company_name: str) -> dict[str, Any]:
+    """Queue analysis jobs for all discovered-but-not-analyzed contracts in a company."""
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        unanalyzed = (
+            session.execute(
+                select(Contract).where(
+                    Contract.protocol_id == protocol_row.id,
+                    Contract.job_id.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        queued = []
+        for contract in unanalyzed:
+            # Re-check inside the loop so concurrent calls (double-click or
+            # duplicate request) don't each create a job for the same contract.
+            session.refresh(contract, attribute_names=["job_id"])
+            if contract.job_id is not None:
+                continue
+            existing = find_existing_job_for_address(session, contract.address, chain=contract.chain)
+            if existing is not None:
+                contract.job_id = existing.id
+                session.commit()
+                continue
+            req_dict = {
+                "address": contract.address,
+                "name": contract.contract_name or f"{company_name}_{contract.address[2:10]}",
+                "chain": contract.chain,
+                "protocol_id": protocol_row.id,
+                "company": company_name,
+            }
+            job = create_job(session, req_dict)
+            contract.job_id = job.id
+            session.commit()
+            queued.append({"job_id": str(job.id), "address": contract.address})
+
+        return {"queued": len(queued), "jobs": queued}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -1088,7 +1137,7 @@ def company_overview(company_name: str) -> dict:
                 elif impl_job.name:
                     contract_name = impl_job.name
             if not contract_name:
-                contract_name = job.name or (contract_row.contract_name if contract_row else None) or ""
+                contract_name = (contract_row.contract_name if contract_row else None) or job.name or ""
             standards = list(summary_row.standards or []) if summary_row else []
             is_factory = summary_row.is_factory if summary_row else False
             has_timelock = summary_row.has_timelock if summary_row else False
@@ -1177,6 +1226,34 @@ def company_overview(company_name: str) -> dict:
                 "balances": balances_list,
                 "total_usd": round(total_usd, 2) if total_usd > 0 else None,
             }
+
+            # Add control graph for principal resolution
+            graph_contract = lookup_contract or contract_row
+            if graph_contract:
+                from db.models import ControlGraphEdge as CGE2
+                from db.models import ControlGraphNode as CGN2
+
+                cg_nodes = session.execute(select(CGN2).where(CGN2.contract_id == graph_contract.id)).scalars().all()
+                cg_edges = session.execute(select(CGE2).where(CGE2.contract_id == graph_contract.id)).scalars().all()
+                entry["control_graph"] = {
+                    "nodes": [
+                        {
+                            "address": n.address,
+                            "type": n.resolved_type,
+                            "label": n.contract_name or n.label,
+                            "details": n.details or {},
+                        }
+                        for n in cg_nodes
+                    ],
+                    "edges": [
+                        {
+                            "from": e.from_node_id.replace("address:", ""),
+                            "to": e.to_node_id.replace("address:", ""),
+                            "relation": e.relation,
+                        }
+                        for e in cg_edges
+                    ],
+                }
             contracts.append(entry)
 
             if owner:
@@ -1406,6 +1483,7 @@ def company_overview(company_name: str) -> dict:
                     "is_proxy": cr.is_proxy,
                     "analyzed": cr.job_id is not None,
                     "discovery_source": cr.discovery_source,
+                    "discovery_url": cr.discovery_url,
                     "chain": cr.chain,
                 }
                 for cr in all_contract_rows
