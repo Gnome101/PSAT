@@ -271,3 +271,73 @@ class TestRefreshAllProtocols:
 
         snapshots = db_session.query(TvlSnapshot).all()
         assert len(snapshots) == 2
+
+
+# ---------------------------------------------------------------------------
+# Issue: duplicate snapshot dedup
+# ---------------------------------------------------------------------------
+
+
+@requires_postgres
+class TestSnapshotDedup:
+    """Two rapid take_tvl_snapshot calls should not produce duplicate rows."""
+
+    def test_back_to_back_snapshots_deduped(self, db_session, monkeypatch, _cleanup):
+        protocol = Protocol(name="DedupProto")
+        db_session.add(protocol)
+        db_session.flush()
+
+        addr = _addr("all_protos", "dd")
+        db_session.add(Contract(address=addr, chain="ethereum", protocol_id=protocol.id, contract_name="V"))
+        db_session.commit()
+
+        monkeypatch.setattr("services.monitoring.tvl.fetch_defillama_tvl", lambda name: None)
+        monkeypatch.setattr("utils.etherscan.get_eth_balance", lambda address, chain_id=1: 0)
+        monkeypatch.setattr("utils.etherscan.get_eth_price", lambda chain_id=1: 2000.0)
+        monkeypatch.setattr("utils.etherscan.get_token_balances", lambda address, chain_id=1: [])
+
+        s1 = take_tvl_snapshot(db_session, protocol.id)
+        s2 = take_tvl_snapshot(db_session, protocol.id)
+
+        assert s1 is not None
+        # Second call within the minimum interval should be skipped
+        assert s2 is None
+
+        rows = db_session.query(TvlSnapshot).filter(TvlSnapshot.protocol_id == protocol.id).all()
+        assert len(rows) == 1
+
+
+@requires_postgres
+class TestEthPriceDegradationDB:
+    """ETH price failure should log which contracts are affected."""
+
+    def test_price_failure_logs_contract_count(self, db_session, monkeypatch, _cleanup, caplog):
+        import logging
+
+        protocol = Protocol(name="PriceFail")
+        db_session.add(protocol)
+        db_session.flush()
+
+        addr1 = _addr("snap_both", "e1")
+        addr2 = _addr("snap_both", "e2")
+        db_session.add(Contract(address=addr1, chain="ethereum", protocol_id=protocol.id, contract_name="V1"))
+        db_session.add(Contract(address=addr2, chain="ethereum", protocol_id=protocol.id, contract_name="V2"))
+        db_session.commit()
+
+        def _raise_price(chain_id=1):
+            raise RuntimeError("down")
+
+        monkeypatch.setattr("utils.etherscan.get_eth_balance", lambda address, chain_id=1: 5_000_000_000_000_000_000)
+        monkeypatch.setattr("utils.etherscan.get_eth_price", _raise_price)
+        monkeypatch.setattr("utils.etherscan.get_token_balances", lambda address, chain_id=1: [])
+
+        with caplog.at_level(logging.WARNING, logger="services.monitoring.tvl"):
+            breakdown = refresh_contract_balances(db_session, protocol.id)
+
+        # All contracts should still appear but with $0 ETH value
+        assert len(breakdown) == 2
+
+        # The log message should mention the number of contracts affected
+        assert any("2 contract(s)" in r.message for r in caplog.records), (
+            f"Expected log mentioning '2 contract(s)' affected, got: {[r.message for r in caplog.records]}"
+        )

@@ -231,3 +231,33 @@ def test_artifact_endpoint_serves_json_and_text(mock_session_cls, mock_get_artif
     assert json_response.json()["summary"]["control_model"] == "ownable"
     assert txt_response.status_code == 200
     assert "report body" in txt_response.text
+
+
+@patch("api.SessionLocal")
+def test_protocol_tvl_caps_days(mock_session_cls) -> None:
+    """days parameter should be capped to MAX_TVL_HISTORY_DAYS."""
+    client = make_client()
+
+    fake_protocol = MagicMock()
+    fake_protocol.id = 1
+    fake_protocol.name = "TestProto"
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = fake_protocol
+
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = []
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value = mock_scalars
+    mock_session.execute.return_value = mock_execute_result
+
+    mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+    response = client.get("/api/protocols/1/tvl?days=9999")
+    assert response.status_code == 200
+
+    import api
+
+    assert hasattr(api, "MAX_TVL_HISTORY_DAYS"), "api.py should define MAX_TVL_HISTORY_DAYS"
+    assert api.MAX_TVL_HISTORY_DAYS <= 365

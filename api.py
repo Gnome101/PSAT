@@ -47,6 +47,7 @@ SITE_DIST_DIR = SITE_DIR / "dist"
 SITE_ASSETS_DIR = SITE_DIST_DIR / "assets"
 
 DEFAULT_RPC_URL = os.environ.get("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+MAX_TVL_HISTORY_DAYS = 90
 GENERIC_PROXY_NAMES = {
     "uupsproxy",
     "erc1967proxy",
@@ -1931,6 +1932,8 @@ def list_monitored_events(
 def protocol_tvl(protocol_id: int, days: int = 30) -> dict[str, Any]:
     """Current TVL and historical snapshots for a protocol."""
     from datetime import datetime, timedelta, timezone
+
+    days = min(days, MAX_TVL_HISTORY_DAYS)
 
     with SessionLocal() as session:
         protocol = session.get(Protocol, protocol_id)

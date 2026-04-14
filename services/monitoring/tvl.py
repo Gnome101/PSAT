@@ -33,6 +33,9 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 logger = logging.getLogger(__name__)
 
 DEFAULT_TVL_INTERVAL = int(os.getenv("PROTOCOL_TVL_INTERVAL", "3600"))
+# Minimum seconds between snapshots for the same protocol.  Prevents
+# duplicate rows when the loop is retriggered quickly (restart, signal, etc.).
+MIN_SNAPSHOT_INTERVAL = int(os.getenv("PROTOCOL_TVL_MIN_INTERVAL", "300"))
 DEFILLAMA_PROTOCOL_URL = "https://api.llama.fi/protocol"
 
 
@@ -127,7 +130,11 @@ def refresh_contract_balances(
     try:
         eth_price = get_eth_price()
     except Exception as exc:
-        logger.warning("ETH price fetch failed: %s", exc)
+        logger.warning(
+            "ETH price fetch failed: %s — ETH balances will not include USD values for %d contract(s)",
+            exc,
+            len(contracts),
+        )
 
     breakdown: dict[str, dict] = {}
 
@@ -249,9 +256,33 @@ def take_tvl_snapshot(
        (used by the pipeline where the resolution stage already
        fetched them).
     3. Writes a ``TvlSnapshot`` row.
+
+    Returns ``None`` (and skips work) if a snapshot for this protocol
+    already exists within the last ``MIN_SNAPSHOT_INTERVAL`` seconds.
     """
+    from datetime import datetime, timedelta, timezone
+
     protocol = session.get(Protocol, protocol_id)
     if protocol is None:
+        return None
+
+    # Dedup guard — skip if a recent snapshot already exists
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=MIN_SNAPSHOT_INTERVAL)
+    recent = session.execute(
+        select(TvlSnapshot)
+        .where(
+            TvlSnapshot.protocol_id == protocol_id,
+            TvlSnapshot.timestamp >= cutoff,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    if recent is not None:
+        logger.debug(
+            "Skipping TVL snapshot for %s — last snapshot at %s is within %ds",
+            protocol.name,
+            recent.timestamp,
+            MIN_SNAPSHOT_INTERVAL,
+        )
         return None
 
     # Tier 1: DefiLlama
