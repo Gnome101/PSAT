@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import Artifact, Base, Contract, DAppInteraction, Job, JobStage, JobStatus, Protocol, SourceFile
+from db.models import Base, Contract, DAppInteraction, Job, JobStage, JobStatus, Protocol
 from db.queue import create_job, get_artifact
 from workers.base import JobHandledDirectly
 
@@ -256,11 +256,7 @@ def test_process_runs_against_real_queue_and_fake_dapp(
     assert protocol_row.official_domain == "127.0.0.1"
 
     # Contracts table populated with all discovered addresses under this protocol
-    contracts = (
-        db_session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id))
-        .scalars()
-        .all()
-    )
+    contracts = db_session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
     contract_addrs = {c.address for c in contracts}
     assert {ADDR_A, ADDR_B, ADDR_C}.issubset(contract_addrs)
     assert all(c.discovery_source == "dapp_crawl" for c in contracts)

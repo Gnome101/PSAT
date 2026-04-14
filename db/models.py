@@ -12,6 +12,7 @@ from typing import Any
 from dotenv import load_dotenv
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     Enum,
@@ -587,7 +588,7 @@ class DAppInteraction(Base):
     typed_data: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     is_permit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    captured_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    captured_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (

@@ -1218,7 +1218,8 @@ def company_overview(company_name: str) -> dict:
             # Add control graph for principal resolution
             graph_contract = lookup_contract or contract_row
             if graph_contract:
-                from db.models import ControlGraphEdge as CGE2, ControlGraphNode as CGN2
+                from db.models import ControlGraphEdge as CGE2
+                from db.models import ControlGraphNode as CGN2
 
                 cg_nodes = session.execute(select(CGN2).where(CGN2.contract_id == graph_contract.id)).scalars().all()
                 cg_edges = session.execute(select(CGE2).where(CGE2.contract_id == graph_contract.id)).scalars().all()

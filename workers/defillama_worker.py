@@ -138,10 +138,12 @@ class DefiLlamaWorker(BaseWorker):
             seen_addresses.add(normalized)
 
             existing = session.execute(
-                select(Job).where(
+                select(Job)
+                .where(
                     Job.address == addr,
                     Job.request["root_job_id"].as_string() == root_job_id,
-                ).limit(1)
+                )
+                .limit(1)
             ).scalar_one_or_none()
             if existing:
                 logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)

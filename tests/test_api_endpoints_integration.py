@@ -130,17 +130,25 @@ def test_analyze_company_creates_job(mock_create_job, mock_session_cls):
 # ---------------------------------------------------------------------------
 
 
-def test_analyze_rejects_both_address_and_company():
-    """Providing both address and company should return 422."""
+@patch("api.SessionLocal")
+@patch("api.create_job")
+def test_analyze_accepts_address_with_company_context(mock_create_job, mock_session_cls):
+    """address + company together is valid (address is target, company is context)."""
     client = _make_client()
+    addr = "0x1111111111111111111111111111111111111111"
+    fake_job = _fake_api_job(address=addr, company="etherfi", status="queued", stage="discovery")
+    mock_create_job.return_value = fake_job
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
     response = client.post(
         "/api/analyze",
-        json={
-            "address": "0x1111111111111111111111111111111111111111",
-            "company": "etherfi",
-        },
+        json={"address": addr, "company": "etherfi"},
     )
-    assert response.status_code == 422
+    assert response.status_code == 200
+    req_dict = mock_create_job.call_args[0][1]
+    assert req_dict["address"] == addr
+    assert req_dict["company"] == "etherfi"
 
 
 def test_analyze_rejects_neither_address_nor_company():

@@ -131,17 +131,12 @@ def test_analyze_endpoint_rejects_bad_address() -> None:
     assert response.status_code == 422
 
 
-def test_analyze_endpoint_requires_exactly_one_target() -> None:
+def test_analyze_endpoint_requires_at_least_one_target() -> None:
     client = make_client()
 
     missing = client.post("/api/analyze", json={"name": "demo"})
-    both = client.post(
-        "/api/analyze",
-        json={"address": "0x1234567890123456789012345678901234567890", "company": "etherfi"},
-    )
 
     assert missing.status_code == 422
-    assert both.status_code == 422
 
 
 @patch("api.SessionLocal")
