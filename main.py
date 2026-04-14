@@ -25,6 +25,7 @@ Usage:
 import argparse
 import csv
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -40,7 +41,6 @@ from services.discovery import (
 )
 from services.discovery.classifier import classify_contracts
 from services.discovery.dependency_graph_builder import write_dependency_visualization
-from services.discovery.static_dependencies import resolve_rpc_for_address
 from services.discovery.upgrade_history import write_upgrade_history
 from services.resolution import write_control_tracking_plan
 from services.static import analyze, analyze_contract, analyze_with_llm
@@ -139,7 +139,9 @@ def process(
         step += 1
         try:
             if not resolved_rpc:
-                _, resolved_rpc = resolve_rpc_for_address(address, deps_rpc or dynamic_rpc)
+                resolved_rpc = deps_rpc or dynamic_rpc or os.getenv("ETH_RPC")
+                if not resolved_rpc:
+                    raise RuntimeError("No RPC URL available for classification")
             unique_deps = sorted(
                 set((deps_output or {}).get("dependencies", []) + (dyn_output or {}).get("dependencies", []))
             )

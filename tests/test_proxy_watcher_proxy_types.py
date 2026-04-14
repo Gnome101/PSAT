@@ -22,24 +22,43 @@ Proxy types tested:
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session as SASession
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import ProxyUpgradeEvent, WatchedProxy
+from db.models import Base, ProxyUpgradeEvent, WatchedProxy
 from services.discovery.upgrade_history import (
     ADMIN_CHANGED_TOPIC0,
     BEACON_UPGRADED_TOPIC0,
     UPGRADED_TOPIC0,
 )
 from services.monitoring.proxy_watcher import poll_for_upgrades, scan_for_upgrades
+
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+
+
+def _can_connect() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -84,10 +103,9 @@ def _make_log(address: str, topics: list[str], data: str = "0x") -> dict:
 
 @pytest.fixture
 def db_session():
-    """Create an in-memory SQLite DB with monitoring tables and a watched proxy."""
-    engine = create_engine("sqlite:///:memory:")
-    WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-    ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+    """PostgreSQL database session with a pre-registered watched proxy."""
+    engine = create_engine(DATABASE_URL)
+    Base.metadata.create_all(engine)
 
     session = SASession(engine, expire_on_commit=False)
     proxy = WatchedProxy(
@@ -103,6 +121,10 @@ def db_session():
 
     yield session, proxy
 
+    session.rollback()
+    session.query(ProxyUpgradeEvent).delete()
+    session.query(WatchedProxy).delete()
+    session.commit()
     session.close()
     engine.dispose()
 

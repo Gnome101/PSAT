@@ -14,6 +14,7 @@ Run with:
 
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
@@ -23,8 +24,25 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import create_engine, text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
+
+
+def _pg_can_connect() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        engine = create_engine(DATABASE_URL)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        engine.dispose()
+        return True
+    except Exception:
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Skip conditions
@@ -235,12 +253,12 @@ def _compile_and_deploy(
 @pytest.mark.skipif(not _has_anvil, reason="anvil not found on PATH")
 @pytest.mark.skipif(not _has_cast, reason="cast not found on PATH")
 @pytest.mark.skipif(not shutil.which("forge"), reason="forge not found on PATH")
+@pytest.mark.skipif(not _pg_can_connect(), reason="PostgreSQL not available")
 def test_deploy_watch_upgrade_detect(tmp_path):
     """Full live test: deploy proxy, watch it, upgrade it, detect the upgrade."""
-    from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SASession
 
-    from db.models import ProxyUpgradeEvent, WatchedProxy
+    from db.models import Base, ProxyUpgradeEvent, WatchedProxy
     from services.monitoring.proxy_watcher import (
         resolve_current_implementation,
         scan_for_upgrades,
@@ -285,12 +303,8 @@ def test_deploy_watch_upgrade_detect(tmp_path):
         current_block = int(current_block_hex)
 
         # -- 3. Create test database and register the proxy --
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        # Only create the tables needed for monitoring (not Job which uses
-        # PostgreSQL-specific JSONB columns incompatible with SQLite)
-        WatchedProxy.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
-        ProxyUpgradeEvent.__table__.create(engine, checkfirst=True)  # type: ignore[attr-defined]
+        engine = create_engine(DATABASE_URL)
+        Base.metadata.create_all(engine)
         session = SASession(engine, expire_on_commit=False)
 
         proxy = WatchedProxy(
@@ -348,6 +362,9 @@ def test_deploy_watch_upgrade_detect(tmp_path):
         events_2 = scan_for_upgrades(session, rpc_url)
         assert events_2 == []
 
+        session.query(ProxyUpgradeEvent).delete()
+        session.query(WatchedProxy).delete()
+        session.commit()
         session.close()
         engine.dispose()
 

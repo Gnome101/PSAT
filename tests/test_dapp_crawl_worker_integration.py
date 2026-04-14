@@ -30,7 +30,7 @@ from db.models import Artifact, Base, Contract, DAppInteraction, Job, JobStage, 
 from db.queue import create_job, get_artifact
 from workers.base import JobHandledDirectly
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 ADDR_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ADDR_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -90,12 +90,17 @@ def db_session():
         yield session
     finally:
         session.rollback()
-        session.query(SourceFile).delete()
-        session.query(Artifact).delete()
-        session.query(DAppInteraction).delete()
-        session.query(Contract).delete()
-        session.query(Job).delete()
-        session.query(Protocol).delete()
+        # Only delete jobs with test addresses (cascades to artifacts/source_files/dapp_interactions)
+        test_addrs = [ADDR_A, ADDR_B, ADDR_C]
+        for j in session.execute(select(Job).where(Job.address.in_(test_addrs))).scalars():
+            session.delete(j)
+        # Delete the crawl job itself (no address, identified by dapp_urls in request)
+        for j in session.execute(select(Job).where(Job.address.is_(None), Job.name.like("DApp crawl%"))).scalars():
+            session.delete(j)
+        # Clean up Contract + Protocol rows our test creates (don't cascade from Job deletion)
+        for c in session.execute(select(Contract).where(Contract.address.in_(test_addrs))).scalars():
+            session.delete(c)
+        session.query(Protocol).filter(Protocol.name == "127.0.0.1").delete(synchronize_session=False)
         session.commit()
         session.close()
         engine.dispose()

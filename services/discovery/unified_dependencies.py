@@ -106,8 +106,16 @@ def build_unified_dependencies(
     return output
 
 
-def enrich_dependency_metadata(unified: dict) -> dict:
-    """Resolve contract names and selectors in-place for a unified dependency output."""
+def enrich_dependency_metadata(
+    unified: dict,
+    info_cache: dict[str, tuple[str | None, dict[str, str]]] | None = None,
+) -> dict:
+    """Resolve contract names and selectors in-place for a unified dependency output.
+
+    If *info_cache* is provided it is used as a pre-populated lookup and is
+    **mutated in-place** — newly fetched entries are added so the caller can
+    persist the updated cache.
+    """
     deps = unified.get("dependencies", {})
     if not isinstance(deps, dict) or not deps:
         return unified
@@ -124,9 +132,11 @@ def enrich_dependency_metadata(unified: dict) -> dict:
         elif isinstance(implementation, str):
             addrs_to_fetch.add(implementation)
 
-    info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
+    if info_cache is None:
+        info_cache = {}
     for addr in sorted(addrs_to_fetch):
-        info_cache[addr] = get_contract_info(addr)
+        if addr not in info_cache:
+            info_cache[addr] = get_contract_info(addr)
 
     for addr, info in deps.items():
         if not isinstance(info, dict):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import requests
@@ -12,19 +13,42 @@ JSON_RPC_TIMEOUT_SECONDS = 10
 # Maximum calls per JSON-RPC batch (stay under provider limits)
 MAX_BATCH_SIZE = 500
 
+RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
 
-def rpc_request(rpc_url: str, method: str, params: list[Any]) -> Any:
-    response = requests.post(
-        rpc_url,
-        json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-        timeout=JSON_RPC_TIMEOUT_SECONDS,
-        headers={"Content-Type": "application/json"},
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("error"):
-        raise RuntimeError(str(payload["error"]))
-    return payload.get("result")
+
+def normalize_address(address: str) -> str:
+    """Normalize an Ethereum address to lowercase with a single 0x prefix."""
+    return "0x" + address.lower().replace("0x", "", 1)
+
+
+def rpc_request(rpc_url: str, method: str, params: list[Any], retries: int = 1) -> Any:
+    for attempt in range(retries + 1):
+        try:
+            response = requests.post(
+                rpc_url,
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                timeout=JSON_RPC_TIMEOUT_SECONDS,
+                headers={"Content-Type": "application/json"},
+            )
+            if response.status_code in RETRYABLE_HTTP_CODES and attempt < retries:
+                time.sleep(0.3 * (2**attempt))
+                continue
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("error"):
+                raise RuntimeError(str(payload["error"]))
+            return payload.get("result")
+        except (requests.ConnectionError, requests.Timeout, OSError) as exc:
+            if attempt < retries:
+                time.sleep(0.3 * (2**attempt))
+                continue
+            raise RuntimeError(f"RPC request failed for {rpc_url}: {exc}") from exc
+    raise RuntimeError(f"RPC request failed for {rpc_url}: all {retries + 1} attempts exhausted")
+
+
+def get_code(rpc_url: str, address: str) -> str:
+    """Fetch deployed EVM bytecode at an address via eth_getCode."""
+    return rpc_request(rpc_url, "eth_getCode", [address, "latest"]) or "0x"
 
 
 def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[Any]:
@@ -67,8 +91,15 @@ def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[
 
 
 def parse_address_result(raw: Any) -> str | None:
-    """Extract a valid address from a raw ``eth_getStorageAt`` / ``eth_call`` result."""
-    if not raw or raw == "0x" + "0" * 64:
+    """Extract a valid address from a raw ``eth_getStorageAt`` / ``eth_call`` result.
+
+    Returns None for empty, zero-address, too-short, or revert-like responses.
+    A valid ABI-encoded address is at least 66 chars (``0x`` + 64 hex digits).
+    Shorter responses are reverts, error selectors, or empty returns.
+    """
+    if not raw or not isinstance(raw, str) or len(raw) < 66:
+        return None
+    if raw == "0x" + "0" * 64:
         return None
     addr = "0x" + raw[-40:]
     if addr == "0x" + "0" * 40:

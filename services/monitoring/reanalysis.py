@@ -1,0 +1,281 @@
+"""Queue re-analysis jobs when governance events indicate stale analysis data."""
+
+from __future__ import annotations
+
+import logging
+import os
+from typing import Any
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from db.models import (
+    Contract,
+    ContractSummary,
+    ControllerValue,
+    EffectiveFunction,
+    Job,
+    JobStatus,
+    MonitoredContract,
+)
+from db.queue import create_job
+
+# Must match _OWNER_CONTROLLER_IDS in unified_watcher.py.
+_OWNER_CONTROLLER_IDS = ("owner", "state_variable:owner")
+
+logger = logging.getLogger(__name__)
+
+# Event types that should trigger a full re-analysis job.
+REANALYSIS_EVENT_TYPES = frozenset(
+    {
+        # Proxy upgrades — implementation code changed, entire analysis is stale
+        "upgraded",
+        "new_implementation",
+        "changed_master_copy",
+        "target_updated",
+        # Beacon upgrade — all proxies pointing at this beacon delegate to new code
+        "beacon_upgraded",
+        # Admin changed — control graph and effective permissions are stale
+        "admin_changed",
+        # Ownership transferred — control graph needs re-resolution
+        "ownership_transferred",
+    }
+)
+
+# State-poll field names that map to the same triggers above.
+REANALYSIS_POLL_FIELDS = frozenset(
+    {
+        "implementation",  # equivalent to proxy upgrade
+        "owner",  # equivalent to ownership_transferred
+    }
+)
+
+
+def should_trigger_reanalysis(event_type: str, data: dict | None = None) -> bool:
+    """Return True if *event_type* (with optional *data*) warrants a re-analysis."""
+    if event_type in REANALYSIS_EVENT_TYPES:
+        return True
+    if event_type == "state_changed_poll" and data:
+        return data.get("field") in REANALYSIS_POLL_FIELDS
+    return False
+
+
+def maybe_queue_reanalysis(
+    session: Session,
+    mc: MonitoredContract,
+    event_type: str,
+    data: dict | None = None,
+) -> Job | None:
+    """Queue a re-analysis job if the event warrants it.
+
+    Checks:
+    1. Event type is in the trigger set.
+    2. No queued or processing job already exists for this address+chain.
+
+    The job starts at the ``discovery`` stage so the caching system can
+    copy static artifacts (source files, contract_analysis, etc.) and the
+    static worker can detect implementation changes via
+    ``_check_proxy_cache``.
+
+    Returns the created :class:`Job`, or ``None`` if skipped.
+    """
+    if not should_trigger_reanalysis(event_type, data):
+        return None
+
+    # Deduplicate: skip if a job is already in-flight for this address+chain.
+    in_flight_candidates = (
+        session.execute(
+            select(Job).where(
+                func.lower(Job.address) == mc.address.lower(),
+                Job.status.in_([JobStatus.queued, JobStatus.processing]),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for candidate in in_flight_candidates:
+        req = candidate.request if isinstance(candidate.request, dict) else {}
+        if req.get("chain", "ethereum") == mc.chain:
+            logger.info(
+                "Skipping re-analysis for %s: job %s already in-flight (stage=%s)",
+                mc.address,
+                candidate.id,
+                candidate.stage.value,
+            )
+            return None
+
+    # Determine a human-readable trigger label
+    if event_type == "state_changed_poll":
+        trigger = f"poll:{(data or {}).get('field', 'unknown')}"
+    else:
+        trigger = event_type
+
+    rpc_url = os.environ.get("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+
+    request_dict: dict = {
+        "address": mc.address,
+        "chain": mc.chain,
+        "name": f"Re-analysis ({trigger})",
+        "rpc_url": rpc_url,
+        "reanalysis_trigger": trigger,
+    }
+    if mc.protocol_id:
+        request_dict["protocol_id"] = mc.protocol_id
+
+    # Snapshot current analysis state so the completion webhook can show a diff.
+    snapshot = _build_snapshot(session, mc)
+    if snapshot:
+        request_dict["reanalysis_snapshot"] = snapshot
+
+    job = create_job(session, request_dict)
+
+    logger.info(
+        "Queued re-analysis job %s for %s (trigger: %s)",
+        job.id,
+        mc.address,
+        trigger,
+    )
+    return job
+
+
+# ---------------------------------------------------------------------------
+# Snapshot & diff helpers
+# ---------------------------------------------------------------------------
+
+
+def _build_snapshot(session: Session, mc: MonitoredContract) -> dict[str, Any]:
+    """Capture the current analysis state for later comparison."""
+    snap: dict[str, Any] = {}
+    if not mc.contract_id:
+        return snap
+
+    contract = session.get(Contract, mc.contract_id)
+    if not contract:
+        return snap
+
+    snap["implementation"] = contract.implementation
+    snap["admin"] = contract.admin
+
+    summary = session.execute(
+        select(ContractSummary).where(ContractSummary.contract_id == contract.id)
+    ).scalar_one_or_none()
+    if summary:
+        snap["risk_level"] = summary.risk_level
+        snap["control_model"] = summary.control_model
+        snap["is_pausable"] = summary.is_pausable
+
+    # Privileged function names
+    fns = (
+        session.execute(select(EffectiveFunction.function_name).where(EffectiveFunction.contract_id == contract.id))
+        .scalars()
+        .all()
+    )
+    snap["privileged_functions"] = sorted(fns)
+
+    # Owner value
+    owner_cv = (
+        session.execute(
+            select(ControllerValue).where(
+                ControllerValue.contract_id == contract.id,
+                ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if owner_cv:
+        snap["owner"] = owner_cv.value
+
+    return snap
+
+
+def build_reanalysis_diff(session: Session, job: Job) -> list[str]:
+    """Compare the pre-reanalysis snapshot with the current DB state.
+
+    Returns a list of human-readable change descriptions (may be empty).
+    """
+    request = job.request if isinstance(job.request, dict) else {}
+    snapshot: dict[str, Any] = request.get("reanalysis_snapshot", {})
+    if not snapshot:
+        return []
+
+    address = (job.address or "").lower()
+    chain = request.get("chain", "ethereum")
+
+    contract = (
+        session.execute(
+            select(Contract).where(
+                func.lower(Contract.address) == address,
+                Contract.chain == chain,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not contract:
+        return []
+
+    changes: list[str] = []
+
+    # Implementation
+    old_impl = snapshot.get("implementation")
+    new_impl = contract.implementation
+    if old_impl and new_impl and old_impl.lower() != new_impl.lower():
+        changes.append(f"Implementation: `{old_impl}` → `{new_impl}`")
+    elif not old_impl and new_impl:
+        changes.append(f"Implementation: (none) → `{new_impl}`")
+
+    # Admin
+    old_admin = snapshot.get("admin")
+    new_admin = contract.admin
+    if old_admin and new_admin and old_admin.lower() != new_admin.lower():
+        changes.append(f"Admin: `{old_admin}` → `{new_admin}`")
+
+    # Summary fields
+    summary = session.execute(
+        select(ContractSummary).where(ContractSummary.contract_id == contract.id)
+    ).scalar_one_or_none()
+    if summary:
+        old_risk = snapshot.get("risk_level")
+        if old_risk and summary.risk_level and old_risk != summary.risk_level:
+            changes.append(f"Risk level: {old_risk} → {summary.risk_level}")
+
+        old_model = snapshot.get("control_model")
+        if old_model and summary.control_model and old_model != summary.control_model:
+            changes.append(f"Control model: {old_model} → {summary.control_model}")
+
+    # Privileged functions diff
+    old_fns = set(snapshot.get("privileged_functions", []))
+    new_fns_rows = (
+        session.execute(select(EffectiveFunction.function_name).where(EffectiveFunction.contract_id == contract.id))
+        .scalars()
+        .all()
+    )
+    new_fns = set(new_fns_rows)
+    added = sorted(new_fns - old_fns)
+    removed = sorted(old_fns - new_fns)
+    if added or removed:
+        parts = [f"Functions: {len(old_fns)} → {len(new_fns)}"]
+        if added:
+            parts.append(f"+{', '.join(added)}")
+        if removed:
+            parts.append(f"-{', '.join(removed)}")
+        changes.append(" | ".join(parts))
+
+    # Owner
+    old_owner = snapshot.get("owner")
+    owner_cv = (
+        session.execute(
+            select(ControllerValue).where(
+                ControllerValue.contract_id == contract.id,
+                ControllerValue.controller_id.in_(_OWNER_CONTROLLER_IDS),
+            )
+        )
+        .scalars()
+        .first()
+    )
+    new_owner = owner_cv.value if owner_cv else None
+    if old_owner and new_owner and old_owner.lower() != new_owner.lower():
+        changes.append(f"Owner: `{old_owner}` → `{new_owner}`")
+
+    return changes

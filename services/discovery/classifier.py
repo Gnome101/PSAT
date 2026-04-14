@@ -588,8 +588,6 @@ def main():
 
     from dotenv import load_dotenv
 
-    from services.discovery.static_dependencies import resolve_rpc_for_address
-
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
     parser = argparse.ArgumentParser(description="Classify contract dependencies")
@@ -598,8 +596,9 @@ def main():
     parser.add_argument("--deps", nargs="*", default=[], help="Dependency addresses")
     args = parser.parse_args()
 
-    rpc = args.rpc or os.getenv("ETH_RPC")
-    _, resolved_rpc = resolve_rpc_for_address(args.address.strip(), rpc)
+    resolved_rpc = args.rpc or os.getenv("ETH_RPC")
+    if not resolved_rpc:
+        raise SystemExit("No RPC URL provided (use --rpc or set ETH_RPC)")
 
     result = classify_contracts(args.address.strip(), args.deps, resolved_rpc)
     print(json.dumps(result, indent=2))
