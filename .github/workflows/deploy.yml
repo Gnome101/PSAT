@@ -1,0 +1,48 @@
+name: Deploy to Fly
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Only deploy if CI passed (or on manual dispatch).
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          fetch-depth: 2
+
+      - name: Check for deployable changes
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          PATTERN='(^Dockerfile$|^pyproject\.toml$|^uv\.lock$|^api\.py$|^main\.py$|^fly\.toml$|^alembic\.ini$|^\.python-version$|^start_.*\.sh$|^db/|^workers/|^services/|^utils/|^schemas/|^site/|^\.github/workflows/deploy\.yml$)'
+          if git diff --name-only HEAD~1 HEAD | grep -E "$PATTERN" > /dev/null; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No deployable paths changed; skipping Fly deploy."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup flyctl
+        if: steps.changes.outputs.deploy == 'true'
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy
+        if: steps.changes.outputs.deploy == 'true'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_GITHUB_KEY }}
+        run: flyctl deploy --remote-only --wait-timeout 600

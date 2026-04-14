@@ -22,3 +22,4 @@ out/
 *.png
 .db_snapshots/
 .claude/
+.codex
