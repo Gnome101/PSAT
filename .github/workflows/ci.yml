@@ -81,11 +81,15 @@ jobs:
         with:
           version: stable
       - uses: astral-sh/setup-uv@v5
-      - name: Create test database
-        run: PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
+      - name: Create test databases
+        run: |
+          PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
+          PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test_baseline OWNER psat;"
 
       - name: Baseline coverage (main)
         if: github.event_name == 'pull_request'
+        env:
+          TEST_DATABASE_URL: postgresql://psat:psat@localhost:5432/psat_test_baseline
         run: |
           git checkout origin/main
           uv sync --dev
