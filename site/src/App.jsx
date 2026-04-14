@@ -67,7 +67,9 @@ function parseLocationPath(pathname) {
   }
 
   if (segments[0] === "company" && segments[1]) {
-    return { mode: "company", value: segments[1], tab: "summary" };
+    const validCompanyTabs = ["overview", "surface", "graph", "risk", "monitoring"];
+    const companyTab = validCompanyTabs.includes(segments[2]) ? segments[2] : "overview";
+    return { mode: "company", value: segments[1], tab: "summary", companyTab };
   }
 
   if (segments[0] === "proxies") {
@@ -1097,7 +1099,7 @@ function GraphTab({ detail }) {
 // Company overview
 // ---------------------------------------------------------------------------
 
-function CompanyOverview({ companyName, onSelectContract }) {
+function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, onNavigateToGraph, onNavigateToRisk, onNavigateToMonitoring }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -1112,7 +1114,7 @@ function CompanyOverview({ companyName, onSelectContract }) {
   if (error) return <div className="page"><section className="panel"><p className="empty">Failed to load company overview: {error}</p></section></div>;
   if (!data) return <div className="page"><section className="panel"><p className="empty">Loading...</p></section></div>;
 
-  const { contracts, ownership_hierarchy: hierarchy } = data;
+  const { contracts, ownership_hierarchy: hierarchy, all_addresses: allAddresses } = data;
   const riskColor = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e", unknown: "#94a3b8" };
 
   return (
@@ -1124,6 +1126,25 @@ function CompanyOverview({ companyName, onSelectContract }) {
             <h2>{companyName}</h2>
           </div>
           <div className="chips"><span className="chip alt">{contracts.length} contracts</span></div>
+        </div>
+
+        <div className="company-nav-cards">
+          <button className="company-nav-card" onClick={onNavigateToSurface}>
+            <span className="company-nav-card-title">Control Surface</span>
+            <span className="company-nav-card-desc">Full protocol surface map</span>
+          </button>
+          <button className="company-nav-card" onClick={onNavigateToGraph}>
+            <span className="company-nav-card-title">Ownership Graph</span>
+            <span className="company-nav-card-desc">Interactive ownership visualization</span>
+          </button>
+          <button className="company-nav-card" onClick={onNavigateToRisk}>
+            <span className="company-nav-card-title">Risk Matrix</span>
+            <span className="company-nav-card-desc">Contract risk assessment</span>
+          </button>
+          <button className="company-nav-card" onClick={onNavigateToMonitoring}>
+            <span className="company-nav-card-title">Monitoring</span>
+            <span className="company-nav-card-desc">Live event monitoring &amp; Discord alerts</span>
+          </button>
         </div>
       </section>
 
@@ -1199,6 +1220,34 @@ function CompanyOverview({ companyName, onSelectContract }) {
           ))}
         </div>
       </section>
+
+      {/* All discovered addresses */}
+      {allAddresses && allAddresses.length > 0 && (
+        <section className="panel">
+          <h3 style={{ marginBottom: 16 }}>All Addresses ({allAddresses.length})</h3>
+          <div className="runs-table">
+            <div className="runs-table-header">
+              <span style={{ flex: 2 }}>Name</span>
+              <span style={{ flex: 3 }}>Address</span>
+              <span>Verified</span>
+              <span>Source</span>
+              <span>Status</span>
+            </div>
+            {allAddresses.map((a) => (
+              <div key={a.address} className="runs-table-row" style={{ cursor: "default" }}>
+                <span className="runs-cell-name" style={{ flex: 2 }}>
+                  {a.name || <span style={{ color: "#94a3b8" }}>N/A</span>}
+                  {a.is_proxy && <span className="proxy-badge">proxy</span>}
+                </span>
+                <span className="mono runs-cell-addr" style={{ flex: 3 }}>{a.address}</span>
+                <span>{a.source_verified === true ? <span style={{ color: "#22c55e" }}>Yes</span> : a.source_verified === false ? <span style={{ color: "#ef4444" }}>No</span> : <span style={{ color: "#94a3b8" }}>N/A</span>}</span>
+                <span style={{ fontSize: 11 }}>{a.discovery_source || <span style={{ color: "#94a3b8" }}>-</span>}</span>
+                <span>{a.analyzed ? <span className="chip" style={{ fontSize: 10, padding: "2px 8px" }}>Analyzed</span> : <span style={{ color: "#94a3b8", fontSize: 11 }}>Not analyzed</span>}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -1257,6 +1306,473 @@ function mergeProxyImpl(analyses) {
 }
 
 // ---------------------------------------------------------------------------
+// Protocol Monitoring
+// ---------------------------------------------------------------------------
+
+const CONTRACT_TYPE_COLORS = {
+  proxy: "#2563eb",
+  safe: "#7c3aed",
+  timelock: "#d97706",
+  pausable: "#ea580c",
+  access_control: "#0d9488",
+  regular: "#64748b",
+};
+
+const CONTRACT_TYPE_ORDER = ["proxy", "safe", "timelock", "pausable", "access_control", "regular"];
+
+const ALL_EVENT_TYPES = [
+  "upgraded", "admin_changed", "beacon_upgraded", "ownership_transferred",
+  "paused", "unpaused", "role_granted", "role_revoked",
+  "signer_added", "signer_removed", "threshold_changed",
+  "timelock_scheduled", "timelock_executed", "delay_changed",
+  "state_changed_poll",
+];
+
+const EVENT_TYPE_COLORS = {
+  ownership_transferred: "#ef4444",
+  paused: "#ef4444",
+  unpaused: "#ef4444",
+  upgraded: "#f59e0b",
+  admin_changed: "#f59e0b",
+  beacon_upgraded: "#f59e0b",
+  timelock_executed: "#f59e0b",
+  timelock_scheduled: "#3b82f6",
+  signer_added: "#3b82f6",
+  signer_removed: "#3b82f6",
+  role_granted: "#f59e0b",
+  role_revoked: "#f59e0b",
+  threshold_changed: "#f59e0b",
+  delay_changed: "#f59e0b",
+  state_changed_poll: "#8b5cf6",
+};
+
+function ProtocolMonitoringPage({ companyName }) {
+  const [protocolId, setProtocolId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [noProtocol, setNoProtocol] = useState(false);
+  const [contracts, setContracts] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookLabel, setWebhookLabel] = useState("");
+  const [webhookEventTypes, setWebhookEventTypes] = useState([]);
+  const [showEventPicker, setShowEventPicker] = useState(false);
+  const [addingWebhook, setAddingWebhook] = useState(false);
+  const [error, setError] = useState(null);
+  const [reEnrolling, setReEnrolling] = useState(false);
+
+  // Fetch protocol_id from company overview
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await api(`/api/company/${encodeURIComponent(companyName)}`);
+        if (cancelled) return;
+        if (data.protocol_id) {
+          setProtocolId(data.protocol_id);
+        } else {
+          setNoProtocol(true);
+        }
+      } catch {
+        if (!cancelled) setNoProtocol(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [companyName]);
+
+  // Fetch monitoring data once protocolId is known + auto-refresh
+  const refresh = useMemo(() => {
+    if (!protocolId) return null;
+    return async () => {
+      try {
+        const [c, s, e] = await Promise.all([
+          api(`/api/protocols/${protocolId}/monitoring`),
+          api(`/api/protocols/${protocolId}/subscriptions`),
+          api(`/api/protocols/${protocolId}/events?limit=100`),
+        ]);
+        setContracts(c);
+        setSubscriptions(s);
+        setEvents(e);
+      } catch (err) {
+        console.error("Failed to load monitoring data:", err);
+      }
+    };
+  }, [protocolId]);
+
+  useEffect(() => {
+    if (!refresh) return;
+    refresh();
+    const timer = setInterval(refresh, 10000);
+    return () => clearInterval(timer);
+  }, [refresh]);
+
+  async function addWebhook(e) {
+    e.preventDefault();
+    if (!webhookUrl.trim() || !protocolId) return;
+    setAddingWebhook(true);
+    setError(null);
+    try {
+      const body = {
+        discord_webhook_url: webhookUrl.trim(),
+        label: webhookLabel.trim() || null,
+      };
+      if (webhookEventTypes.length > 0) {
+        body.event_filter = { event_types: webhookEventTypes };
+      }
+      await api(`/api/protocols/${protocolId}/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      setWebhookUrl("");
+      setWebhookLabel("");
+      setWebhookEventTypes([]);
+      setShowEventPicker(false);
+      if (refresh) refresh();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setAddingWebhook(false);
+    }
+  }
+
+  async function reEnroll() {
+    if (!protocolId) return;
+    setReEnrolling(true);
+    setError(null);
+    try {
+      await api(`/api/protocols/${protocolId}/re-enroll`, { method: "POST" });
+      if (refresh) refresh();
+    } catch (err) {
+      setError(String(err.message || err));
+    } finally {
+      setReEnrolling(false);
+    }
+  }
+
+  async function toggleContractActive(contractId, currentActive) {
+    try {
+      await api(`/api/monitored-contracts/${contractId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: !currentActive }),
+      });
+      if (refresh) refresh();
+    } catch (err) {
+      console.error("Failed to toggle contract:", err);
+    }
+  }
+
+  async function removeSubscription(subId) {
+    try {
+      await api(`/api/protocol-subscriptions/${subId}`, { method: "DELETE" });
+      if (refresh) refresh();
+    } catch (err) {
+      console.error("Failed to remove subscription:", err);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="page">
+        <section className="panel">
+          <p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading protocol monitoring...</p>
+        </section>
+      </div>
+    );
+  }
+
+  if (noProtocol) {
+    return (
+      <div className="page">
+        <section className="panel">
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Protocol Monitoring</p>
+              <h2>Not Available</h2>
+            </div>
+          </div>
+          <p className="empty">No protocol monitoring available for this company. Run a protocol analysis first.</p>
+        </section>
+      </div>
+    );
+  }
+
+  // Sort contracts by type priority
+  const sortedContracts = [...contracts].sort((a, b) => {
+    const ai = CONTRACT_TYPE_ORDER.indexOf(a.contract_type);
+    const bi = CONTRACT_TYPE_ORDER.indexOf(b.contract_type);
+    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+  });
+
+  // Helper: extract monitoring config flags as chips
+  function monitoringChips(config) {
+    if (!config || typeof config !== "object") return null;
+    const flags = [];
+    if (config.watch_upgrades) flags.push("upgrades");
+    if (config.watch_ownership) flags.push("ownership");
+    if (config.watch_pause) flags.push("pause");
+    if (config.watch_roles) flags.push("roles");
+    if (config.watch_signers) flags.push("signers");
+    if (config.watch_timelock) flags.push("timelock");
+    if (config.watch_state) flags.push("state");
+    if (flags.length === 0) return <span style={{ color: "#475569" }}>none</span>;
+    return flags.map((f) => (
+      <span key={f} className="chip" style={{ fontSize: 11, marginRight: 4, marginBottom: 2 }}>{f}</span>
+    ));
+  }
+
+  // Helper: render event details from data object
+  function renderEventDetails(data) {
+    if (!data || typeof data !== "object") return "-";
+    const entries = Object.entries(data).filter(([k]) => !["contract_address", "contract_type", "chain"].includes(k));
+    if (entries.length === 0) return "-";
+    return entries.map(([k, v]) => (
+      <span key={k} style={{ marginRight: 8, fontSize: 12 }}>
+        <span style={{ color: "#64748b" }}>{k.replace(/_/g, " ")}:</span>{" "}
+        <span className="mono" style={{ color: "#e2e8f0" }}>{typeof v === "string" && v.startsWith("0x") ? shortenAddress(v) : String(v)}</span>
+      </span>
+    ));
+  }
+
+  return (
+    <div className="page">
+      {/* Section 1: Discord Notifications */}
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Discord Notifications</p>
+            <h2>Webhook Subscriptions ({subscriptions.length})</h2>
+          </div>
+        </div>
+
+        <form onSubmit={addWebhook} style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              value={webhookUrl}
+              onChange={(e) => setWebhookUrl(e.target.value)}
+              placeholder="Discord webhook URL"
+              required
+              style={{ flex: "1 1 300px", fontFamily: "monospace", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+            />
+            <input
+              value={webhookLabel}
+              onChange={(e) => setWebhookLabel(e.target.value)}
+              placeholder="Label (optional)"
+              style={{ flex: "0 1 200px", fontSize: 13, padding: "8px 12px", borderRadius: 6, border: "1px solid #334155", background: "#0f172a", color: "#e2e8f0" }}
+            />
+            <button type="submit" disabled={addingWebhook} style={{ padding: "8px 16px", borderRadius: 6, background: "#2563eb", color: "#fff", border: "none", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+              {addingWebhook ? "Adding..." : "Add Webhook"}
+            </button>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              onClick={() => setShowEventPicker(!showEventPicker)}
+              style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 12, padding: 0 }}
+            >
+              {showEventPicker ? "- Hide event filter" : "+ Filter by event type"}
+              {webhookEventTypes.length > 0 && ` (${webhookEventTypes.length} selected)`}
+            </button>
+            {showEventPicker && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8, padding: 8, borderRadius: 6, border: "1px solid #334155", background: "#0f172a" }}>
+                {ALL_EVENT_TYPES.map((et) => {
+                  const selected = webhookEventTypes.includes(et);
+                  const evtColor = EVENT_TYPE_COLORS[et] || "#94a3b8";
+                  return (
+                    <button
+                      key={et}
+                      type="button"
+                      onClick={() => {
+                        setWebhookEventTypes((prev) =>
+                          selected ? prev.filter((t) => t !== et) : [...prev, et]
+                        );
+                      }}
+                      style={{
+                        padding: "3px 8px",
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        border: selected ? `1px solid ${evtColor}` : "1px solid #334155",
+                        background: selected ? evtColor + "22" : "transparent",
+                        color: selected ? evtColor : "#64748b",
+                      }}
+                    >
+                      {et.replace(/_/g, " ")}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </form>
+        {error && <p style={{ color: "#ef4444", fontSize: 13, marginBottom: 12 }}>{error}</p>}
+
+        {subscriptions.length === 0 ? (
+          <p className="empty">No webhook subscriptions. Add one above to receive Discord notifications for governance events.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #334155", textAlign: "left" }}>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Label</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Webhook URL</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Event Filter</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Created</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {subscriptions.map((s) => (
+                  <tr key={s.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                    <td style={{ padding: "8px 12px" }}>{s.label || <span style={{ color: "#475569" }}>-</span>}</td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <span className="mono" style={{ fontSize: 12 }}>
+                        {s.discord_webhook_url ? s.discord_webhook_url.slice(0, 60) + (s.discord_webhook_url.length > 60 ? "..." : "") : "-"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 12px" }}>
+                      {s.event_filter && Array.isArray(s.event_filter.event_types) && s.event_filter.event_types.length > 0 ? (
+                        s.event_filter.event_types.map((f) => (
+                          <span key={f} className="chip" style={{ fontSize: 11, marginRight: 4 }}>{f.replace(/_/g, " ")}</span>
+                        ))
+                      ) : <span style={{ color: "#475569" }}>all events</span>}
+                    </td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: "#94a3b8", fontSize: 12 }}>
+                      {s.created_at ? new Date(s.created_at).toLocaleDateString() : "-"}
+                    </td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <button onClick={() => removeSubscription(s.id)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 12 }}>remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Section 2: Monitored Contracts */}
+      <section className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <p className="eyebrow">Monitored Contracts</p>
+            <h2>Contracts ({sortedContracts.length})</h2>
+          </div>
+          <button
+            onClick={reEnroll}
+            disabled={reEnrolling}
+            style={{ padding: "6px 14px", borderRadius: 6, background: "#1e293b", color: "#94a3b8", border: "1px solid #334155", cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}
+          >
+            {reEnrolling ? "Re-enrolling..." : "Re-enroll Contracts"}
+          </button>
+        </div>
+        {sortedContracts.length === 0 ? (
+          <p className="empty">No contracts being monitored for this protocol.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #334155", textAlign: "left" }}>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Address</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Type</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Watching</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Polling</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Last Block</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Active</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedContracts.map((c) => {
+                  const typeColor = CONTRACT_TYPE_COLORS[c.contract_type] || CONTRACT_TYPE_COLORS.regular;
+                  return (
+                    <tr key={c.id} style={{ borderBottom: "1px solid #1e293b", opacity: c.is_active ? 1 : 0.5 }}>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(c.address)}</span></td>
+                      <td style={{ padding: "8px 12px" }}>
+                        <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: typeColor + "22", color: typeColor }}>
+                          {c.contract_type || "regular"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 12px" }}>{monitoringChips(c.monitoring_config)}</td>
+                      <td style={{ padding: "8px 12px" }}>{c.needs_polling ? <span className="chip warn">polling</span> : <span className="chip">events</span>}</td>
+                      <td style={{ padding: "8px 12px" }}>{c.last_scanned_block ? c.last_scanned_block.toLocaleString() : "-"}</td>
+                      <td style={{ padding: "8px 12px" }}>
+                        <button
+                          onClick={() => toggleContractActive(c.id, c.is_active)}
+                          style={{
+                            padding: "2px 10px", borderRadius: 4, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                            border: "1px solid " + (c.is_active ? "#22c55e" : "#475569"),
+                            background: c.is_active ? "#22c55e22" : "transparent",
+                            color: c.is_active ? "#22c55e" : "#475569",
+                          }}
+                        >
+                          {c.is_active ? "on" : "off"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {/* Section 3: Detected Events */}
+      <section className="panel" style={{ marginTop: 16 }}>
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Detected Events</p>
+            <h2>Governance Events ({events.length})</h2>
+          </div>
+        </div>
+        {events.length === 0 ? (
+          <p className="empty">No governance events detected yet. Events will appear here as they are detected by the monitoring system.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid #334155", textAlign: "left" }}>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Time</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Contract</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Event</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Details</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Block</th>
+                  <th style={{ padding: "8px 12px", color: "#94a3b8" }}>Tx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {events.map((evt) => {
+                  const evtColor = EVENT_TYPE_COLORS[evt.event_type] || "#94a3b8";
+                  const contractAddr = evt.data?.contract_address || "";
+                  return (
+                    <tr key={evt.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                      <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{evt.detected_at ? new Date(evt.detected_at).toLocaleString() : "-"}</td>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{shortenAddress(contractAddr)}</span></td>
+                      <td style={{ padding: "8px 12px" }}>
+                        <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: evtColor + "22", color: evtColor }}>
+                          {(evt.event_type || "unknown").replace(/_/g, " ")}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 12px" }}>{renderEventDetails(evt.data)}</td>
+                      <td style={{ padding: "8px 12px" }}>{evt.block_number || "-"}</td>
+                      <td style={{ padding: "8px 12px" }}><span className="mono">{evt.tx_hash ? shortenAddress(evt.tx_hash) : "-"}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Proxy Watcher (WIP)
 // ---------------------------------------------------------------------------
 
@@ -1272,6 +1788,16 @@ function ProxyWatcherPage() {
   const [subscriptions, setSubscriptions] = useState({});
   const [expandedProxy, setExpandedProxy] = useState(null);
   const [newWebhook, setNewWebhook] = useState("");
+  const [monitoredCount, setMonitoredCount] = useState(0);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const mc = await api("/api/monitored-contracts");
+        setMonitoredCount(Array.isArray(mc) ? mc.length : 0);
+      } catch { /* ignore */ }
+    })();
+  }, []);
 
   async function refresh() {
     try {
@@ -1371,6 +1897,12 @@ function ProxyWatcherPage() {
 
   return (
     <div className="page">
+      {monitoredCount > 0 && (
+        <div style={{ marginBottom: 16, padding: "10px 16px", borderRadius: 8, background: "#1e293b", border: "1px solid #334155", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+          <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "#22c55e" }} />
+          <span style={{ color: "#e2e8f0" }}>Protocol monitoring active &mdash; <strong>{monitoredCount}</strong> contract{monitoredCount !== 1 ? "s" : ""} monitored</span>
+        </div>
+      )}
       <section className="panel">
         <div className="panel-header">
           <div>
@@ -1559,6 +2091,42 @@ function formatElapsed(ms) {
   return `${h}h ${m % 60}m`;
 }
 
+function formatStageLabel(stage) {
+  return String(stage || "").replaceAll("_", " ").toUpperCase();
+}
+
+function sortByUpdatedAtDesc(a, b) {
+  return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+}
+
+function monitorJobLabel(job) {
+  return job.name || job.company || (job.address ? shortenAddress(job.address) : "Job");
+}
+
+function monitorJobScope(job) {
+  const request = job?.request && typeof job.request === "object" ? job.request : {};
+
+  if (job.stage === "dapp_crawl") {
+    const urls = Array.isArray(request.dapp_urls) ? request.dapp_urls.filter(Boolean) : [];
+    if (urls.length) {
+      try {
+        return new URL(urls[0]).host;
+      } catch {
+        return String(urls[0]);
+      }
+    }
+  }
+
+  if (job.stage === "defillama_scan" && request.defillama_protocol) {
+    return `protocol ${request.defillama_protocol}`;
+  }
+
+  if (job.company) return job.company;
+  if (job.address) return shortenAddress(job.address);
+  return job.job_id?.slice(0, 8) || "job";
+}
+
+
 function PipelineDashboard() {
   const [allJobs, setAllJobs] = useState([]);
   const [stats, setStats] = useState(null);
@@ -1594,11 +2162,13 @@ function PipelineDashboard() {
   const implProxyAddresses = useMemo(() =>
     new Set(allJobs.map((j) => (j.request?.proxy_address || "").toLowerCase()).filter(Boolean)),
   [allJobs]);
-  const analysisJobs = useMemo(() =>
+  const visiblePipelineJobs = useMemo(() =>
     allJobs.filter((j) => {
-      if (j.is_proxy) return false;
-      if (!j.is_proxy && j.address && implProxyAddresses.has(j.address.toLowerCase())) return false;
-      if (j.company && hasChildJobs) return false;
+      // Always show jobs that are still actively running
+      const isActive = j.status === "queued" || j.status === "processing";
+      if (j.is_proxy && !isActive) return false;
+      if (!j.is_proxy && j.address && implProxyAddresses.has(j.address.toLowerCase()) && !isActive) return false;
+      if (j.company && hasChildJobs && j.status === "completed") return false;
       return true;
     }),
   [allJobs, hasChildJobs, implProxyAddresses]);
@@ -1606,24 +2176,35 @@ function PipelineDashboard() {
   const buckets = useMemo(() => {
     const b = {};
     for (const s of ALL_STAGES) b[s] = { queued: [], processing: [], completed: [], failed: [] };
-    for (const j of analysisJobs) {
+    for (const j of visiblePipelineJobs) {
       const stage = j.stage || "discovery";
       const status = j.status || "queued";
       if (b[stage] && b[stage][status]) b[stage][status].push(j);
     }
     return b;
-  }, [analysisJobs]);
+  }, [visiblePipelineJobs]);
 
   const totals = useMemo(() => {
     const t = { queued: 0, processing: 0, completed: 0, failed: 0, total: 0 };
-    for (const j of analysisJobs) {
+    for (const j of visiblePipelineJobs) {
       t[j.status] = (t[j.status] || 0) + 1; t.total++;
     }
     return t;
-  }, [analysisJobs]);
+  }, [visiblePipelineJobs]);
+
+  const activeStageGroups = useMemo(() =>
+    ALL_STAGES
+      .map((stage) => ({
+        stage,
+        jobs: visiblePipelineJobs
+          .filter((job) => job.stage === stage && job.status === "processing")
+          .sort(sortByUpdatedAtDesc),
+      }))
+      .filter((entry) => entry.jobs.length > 0),
+  [visiblePipelineJobs]);
 
   if (!loaded) {
-    return <div className="page"><section className="panel"><p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading pipeline status…</p></section></div>;
+    return <div className="page"><section className="panel"><p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading pipeline status...</p></section></div>;
   }
   if (!allJobs.length) {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
@@ -1631,7 +2212,7 @@ function PipelineDashboard() {
 
   const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", done: "#16a34a" };
   const statusColors = { queued: "#94a3b8", processing: "#f59e0b", completed: "#22c55e", failed: "#ef4444" };
-  const colW = 160, gapW = 80, headerH = 50, dotR = 6;
+  const colW = 160, gapW = 80, headerH = 64, dotR = 6;
   const totalW = ALL_STAGES.length * colW + (ALL_STAGES.length - 1) * gapW;
   const dotsPerRow = Math.floor((colW - 20) / (dotR * 2 + 4));
   const maxDots = Math.max(1, ...ALL_STAGES.map((s) => { const b = buckets[s]; return (b.processing?.length || 0) + (b.queued?.length || 0) + (b.completed?.length || 0) + (b.failed?.length || 0); }));
@@ -1676,8 +2257,18 @@ function PipelineDashboard() {
                 <rect x={x} y={0} width={colW} height={totalH} rx="12" fill={stageColors[stage]} opacity="0.06" />
                 <rect x={x} y={0} width={colW} height={headerH} rx="12" fill={stageColors[stage]} opacity="0.12" />
                 <rect x={x} y={headerH - 12} width={colW} height={12} fill={stageColors[stage]} opacity="0.12" />
-                <text x={x + colW / 2} y={24} textAnchor="middle" fontSize="12" fontWeight="700" fill={stageColors[stage]}>{stage.toUpperCase()}</text>
+                <text x={x + colW / 2} y={24} textAnchor="middle" fontSize="12" fontWeight="700" fill={stageColors[stage]}>{formatStageLabel(stage)}</text>
                 <text x={x + colW / 2} y={40} textAnchor="middle" fontSize="11" fill={stageColors[stage]} opacity="0.7">{all.length}</text>
+                {b.processing.length > 0 && (
+                  <>
+                    <circle cx={x + colW / 2 - 28} cy={54} r="4" fill={statusColors.processing}>
+                      <animate attributeName="opacity" values="1;0.35;1" dur="1.4s" repeatCount="indefinite" />
+                    </circle>
+                    <text x={x + colW / 2} y={58} textAnchor="middle" fontSize="10" fontWeight="700" fill={statusColors.processing}>
+                      {`${b.processing.length} active`}
+                    </text>
+                  </>
+                )}
                 {renderDots(all, x, headerH + 10)}
                 {i < ALL_STAGES.length - 1 && <line x1={x + colW + 8} y1={totalH / 2} x2={x + colW + gapW - 8} y2={totalH / 2} stroke="#cbd5e1" strokeWidth="2" markerEnd="url(#pipeline-arrow)" />}
               </g>
@@ -1692,6 +2283,50 @@ function PipelineDashboard() {
           <span className="chip" style={{ background: "#fee2e2", color: "#991b1b", fontSize: 10 }}>Failed</span>
         </div>
       </section>
+
+      {activeStageGroups.length > 0 && (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-header">
+            <div>
+              <p className="eyebrow">Live Stage Activity</p>
+              <h2>{totals.processing} Running Jobs</h2>
+            </div>
+          </div>
+          <div className="monitor-stage-grid">
+            {activeStageGroups.map(({ stage, jobs }) => (
+              <article className="monitor-stage-card" key={stage}>
+                <div className="monitor-stage-card-header">
+                  <div className="monitor-stage-heading">
+                    <span className="monitor-stage-name" style={{ color: stageColors[stage] }}>{formatStageLabel(stage)}</span>
+                    <span className="monitor-stage-subtitle">{jobs.length} running</span>
+                  </div>
+                  <span className="chip" style={{ background: `${stageColors[stage]}18`, color: stageColors[stage], borderColor: `${stageColors[stage]}33` }}>
+                    live
+                  </span>
+                </div>
+                <div className="monitor-stage-list">
+                  {jobs.slice(0, 3).map((job) => {
+                    const created = new Date(job.created_at).getTime();
+                    const end = now;
+                    return (
+                      <div className="monitor-stage-item" key={job.job_id}>
+                        <div className="monitor-stage-item-top">
+                          <span className="monitor-stage-item-name">{monitorJobLabel(job)}</span>
+                          <span className="monitor-stage-item-time">{formatElapsed(end - created)}</span>
+                        </div>
+                        <div className="monitor-stage-item-meta">{monitorJobScope(job)}</div>
+                        <div className="monitor-stage-item-detail">{job.detail || "Working..."}</div>
+                      </div>
+                    );
+                  })}
+                  {jobs.length > 3 && <div className="monitor-stage-more">+{jobs.length - 3} more running in this stage</div>}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
 
       {/* Active / Recent jobs table */}
       <section className="panel" style={{ marginTop: 16 }}>
@@ -1710,11 +2345,12 @@ function PipelineDashboard() {
             </tr>
           </thead>
           <tbody>
-            {allJobs
+            {visiblePipelineJobs
               .filter((j) => j.status === "processing" || j.status === "failed" || j.status === "queued")
               .sort((a, b) => {
                 const order = { processing: 0, failed: 1, queued: 2 };
-                return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+                const delta = (order[a.status] ?? 3) - (order[b.status] ?? 3);
+                return delta !== 0 ? delta : sortByUpdatedAtDesc(a, b);
               })
               .slice(0, 30)
               .map((j) => (
@@ -1768,64 +2404,26 @@ function PipelineDashboard() {
 // Runs list page
 // ---------------------------------------------------------------------------
 
-function ProtocolView({ companyName }) {
-  const [protoTab, setProtoTab] = useState("surface");
-  return (
-    <div className="page" style={{ height: "calc(100vh - 60px)", display: "flex", flexDirection: "column", gap: 8 }}>
-      <div className="proto-tabs">
-        <button className={`proto-tab ${protoTab === "surface" ? "active" : ""}`} onClick={() => setProtoTab("surface")}>surface</button>
-        <button className={`proto-tab ${protoTab === "graph" ? "active" : ""}`} onClick={() => setProtoTab("graph")}>ownership</button>
-        <button className={`proto-tab ${protoTab === "risk" ? "active" : ""}`} onClick={() => setProtoTab("risk")}>risk matrix</button>
-      </div>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        {protoTab === "surface" && (
-          <ProtocolSurface companyName={companyName} />
-        )}
-        {protoTab === "graph" && (
-          <div className="protocol-graph-wrapper" style={{ height: "100%" }}>
-            <ProtocolGraph companyName={companyName} />
-          </div>
-        )}
-        {protoTab === "risk" && (
-          <RiskSurface companyName={companyName} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-
 function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectCompany }) {
   const [search, setSearch] = useState("");
 
-  const filtered = useMemo(() => {
-    if (!search.trim()) return analyses;
-    const q = search.toLowerCase();
-    return analyses.filter((a) =>
-      (displayName(a) || "").toLowerCase().includes(q) ||
-      (a.address || "").toLowerCase().includes(q) ||
-      (a.company || "").toLowerCase().includes(q)
-    );
-  }, [analyses, search]);
-
-  const grouped = useMemo(() => {
-    const groups = [];
+  const { companies, standalone } = useMemo(() => {
     const map = new Map();
-    const standalone = [];
-    const sorted = [...filtered].sort((a, b) => (b.rank_score ?? -1) - (a.rank_score ?? -1));
-    for (const a of sorted) {
-      if (a.company) {
-        if (!map.has(a.company)) { const g = { company: a.company, items: [] }; map.set(a.company, g); groups.push(g); }
-        map.get(a.company).items.push(a);
-      } else {
-        standalone.push(a);
-      }
+    const solo = [];
+    for (const a of analyses) {
+      const co = a.company;
+      if (!co) { solo.push(a); continue; }
+      if (!map.has(co)) map.set(co, { company: co, contracts: 0 });
+      map.get(co).contracts++;
     }
-    return { groups, standalone };
-  }, [filtered]);
+    return { companies: [...map.values()].sort((a, b) => b.contracts - a.contracts), standalone: solo };
+  }, [analyses]);
 
-  const riskColor = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e", unknown: "#94a3b8" };
+  const filtered = useMemo(() => {
+    if (!search.trim()) return companies;
+    const q = search.toLowerCase();
+    return companies.filter((c) => c.company.toLowerCase().includes(q));
+  }, [companies, search]);
 
   return (
     <div className="page">
@@ -1851,66 +2449,51 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectComp
         </div>
       )}
 
-      <div className="runs-search">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search contracts..." />
-      </div>
-
-      {grouped.groups.map((group) => (
-        <section key={group.company} className="panel runs-group-panel">
-          <div className="runs-group-header">
-            <h3><button className="top-nav-link" style={{ fontSize: "inherit", fontWeight: "inherit" }} onClick={() => onSelectCompany && onSelectCompany(group.company)}>{group.company}</button></h3>
-            <div className="chips" style={{ gap: 6 }}>
-              <span className="chip alt">{group.items.length} contracts</span>
-              <button className="discover-more" title={`Discover more`} onClick={() => onDiscoverMore(group.company)}>+</button>
-            </div>
+      <section className="panel">
+        <div className="panel-header">
+          <div>
+            <p className="eyebrow">Analyzed Protocols</p>
+            <h2>Companies</h2>
           </div>
+          <div className="runs-search" style={{ margin: 0 }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies..." />
+          </div>
+        </div>
+
+        {filtered.length > 0 ? (
           <div className="runs-table">
             <div className="runs-table-header">
-              <span>Contract</span>
-              <span>Address</span>
-              <span>Model</span>
-              <span>Risk</span>
-              <span>Score</span>
+              <span style={{ flex: 2 }}>Company</span>
+              <span>Contracts</span>
             </div>
-            {group.items.map((a) => (
+            {filtered.map((c) => (
+              <button key={c.company} className="runs-table-row" onClick={() => onSelectCompany(c.company)}>
+                <span className="runs-cell-name" style={{ flex: 2 }}>{c.company}</span>
+                <span>{c.contracts}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="empty">{search ? "No companies match your search." : "No analyses yet. Submit a company to get started."}</p>
+        )}
+      </section>
+
+      {standalone.length > 0 && (
+        <section className="panel" style={{ marginTop: 16 }}>
+          <h3 style={{ marginBottom: 12 }}>Standalone Analyses</h3>
+          <div className="runs-table">
+            <div className="runs-table-header">
+              <span style={{ flex: 2 }}>Contract</span>
+              <span style={{ flex: 3 }}>Address</span>
+            </div>
+            {standalone.map((a) => (
               <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
-                <span className="runs-cell-name">
-                  {displayName(a)}
-                  {a.proxy_address_display && <span className="proxy-badge" title={`${a.proxy_type_display || "proxy"} at ${a.proxy_address_display}`}>proxy</span>}
-                  {a.is_proxy && !a.proxy_address_display && <span className="proxy-badge dim">proxy</span>}
-                </span>
-                <span className="mono runs-cell-addr">{a.proxy_address_display || a.address || ""}</span>
-                <span>{a.summary?.control_model || "unknown"}</span>
-                <span><span className="risk-dot" style={{ background: riskColor[a.summary?.static_risk_level] || "#94a3b8" }} />{a.summary?.static_risk_level || "unknown"}</span>
-                <span>{a.rank_score != null ? a.rank_score.toFixed(2) : "-"}</span>
+                <span className="runs-cell-name" style={{ flex: 2 }}>{a.contract_name || a.run_name || "Unknown"}</span>
+                <span className="mono runs-cell-addr" style={{ flex: 3 }}>{a.address || ""}</span>
               </button>
             ))}
           </div>
         </section>
-      ))}
-
-      {grouped.standalone.length > 0 && (
-        <section className="panel runs-group-panel">
-          <div className="runs-group-header"><h3>Standalone</h3></div>
-          <div className="runs-table">
-            <div className="runs-table-header">
-              <span>Contract</span><span>Address</span><span>Model</span><span>Risk</span><span>Score</span>
-            </div>
-            {grouped.standalone.map((a) => (
-              <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
-                <span className="runs-cell-name">{displayName(a)}</span>
-                <span className="mono runs-cell-addr">{a.address || ""}</span>
-                <span>{a.summary?.control_model || "unknown"}</span>
-                <span><span className="risk-dot" style={{ background: riskColor[a.summary?.static_risk_level] || "#94a3b8" }} />{a.summary?.static_risk_level || "unknown"}</span>
-                <span>{a.rank_score != null ? a.rank_score.toFixed(2) : "-"}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {!analyses.length && !activeJobs.length && (
-        <section className="panel empty-state"><p className="empty">No analyses yet. Submit a contract or company to get started.</p></section>
       )}
     </div>
   );
@@ -1940,6 +2523,40 @@ class ErrorBoundary extends React.Component {
 }
 
 // ---------------------------------------------------------------------------
+// Hamburger menu (slide-out drawer)
+// ---------------------------------------------------------------------------
+
+function HamburgerMenu({ onClose, viewMode, companyName, companyTab, onNavigate, onNavigateCompanyTab }) {
+  return (
+    <>
+      <div className="hamburger-backdrop" onClick={onClose} />
+      <aside className="hamburger-drawer">
+        <div className="hamburger-header">
+          <span className="hamburger-brand">PSAT</span>
+          <button className="hamburger-close" onClick={onClose}>&times;</button>
+        </div>
+        <nav className="hamburger-nav">
+          <div className="hamburger-section-label">Navigation</div>
+          <button className={`hamburger-link ${viewMode === "default" ? "active" : ""}`} onClick={() => { onNavigate("/", "default"); onClose(); }}>Runs</button>
+          <button className={`hamburger-link ${viewMode === "monitor" ? "active" : ""}`} onClick={() => { onNavigate("/monitor", "monitor"); onClose(); }}>Monitor</button>
+          <button className={`hamburger-link ${viewMode === "proxies" ? "active" : ""}`} onClick={() => { onNavigate("/proxies", "proxies"); onClose(); }}>Proxies</button>
+        </nav>
+        {companyName && (
+          <nav className="hamburger-nav hamburger-company-section">
+            <div className="hamburger-section-label">{companyName}</div>
+            <button className={`hamburger-link ${viewMode === "company" && companyTab === "overview" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("overview"); onClose(); }}>Overview</button>
+            <button className={`hamburger-link ${viewMode === "company" && companyTab === "surface" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("surface"); onClose(); }}>Surface</button>
+            <button className={`hamburger-link ${viewMode === "company" && companyTab === "graph" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("graph"); onClose(); }}>Ownership</button>
+            <button className={`hamburger-link ${viewMode === "company" && companyTab === "risk" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("risk"); onClose(); }}>Risk Matrix</button>
+            <button className={`hamburger-link ${viewMode === "company" && companyTab === "monitoring" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("monitoring"); onClose(); }}>Monitoring</button>
+          </nav>
+        )}
+      </aside>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
@@ -1949,6 +2566,8 @@ export default function App() {
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [viewMode, setViewMode] = useState(() => parseLocationPath(window.location.pathname).mode);
   const [companyName, setCompanyName] = useState(() => { const r = parseLocationPath(window.location.pathname); return r.mode === "company" ? r.value : null; });
+  const [companyTab, setCompanyTab] = useState(() => parseLocationPath(window.location.pathname).companyTab || "overview");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("summary");
   const [job, setJob] = useState(null);
   const [activeJobs, setActiveJobs] = useState([]);
@@ -1961,6 +2580,11 @@ export default function App() {
 
   useEffect(() => { analysesRef.current = analyses; }, [analyses]);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => {
+    function handleKey(e) { if (e.key === "Escape" && menuOpen) setMenuOpen(false); }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [menuOpen]);
 
   function navigate(path, mode) {
     const m = mode || parseLocationPath(path).mode;
@@ -1971,9 +2595,17 @@ export default function App() {
 
   function openCompany(name) {
     setCompanyName(name);
+    setCompanyTab("overview");
     setViewMode("company");
     window.history.pushState({}, "", `/company/${encodeURIComponent(name)}`);
   }
+
+  function navigateCompanyTab(tab) {
+    setCompanyTab(tab);
+    const suffix = tab === "overview" ? "" : `/${tab}`;
+    window.history.pushState({}, "", `/company/${encodeURIComponent(companyName)}${suffix}`);
+  }
+
 
   async function loadAnalysis(runId, options = {}) {
     try {
@@ -2007,6 +2639,7 @@ export default function App() {
       setViewMode(route.mode);
       if (route.mode === "company") {
         setCompanyName(route.value);
+        setCompanyTab(route.companyTab || "overview");
       } else if (route.mode === "run" || route.mode === "address") {
         setCompanyName(null);
         const list = analysesRef.current;
@@ -2021,6 +2654,7 @@ export default function App() {
       const route = parseLocationPath(window.location.pathname);
       if (route.mode === "company") {
         setCompanyName(route.value);
+        setCompanyTab(route.companyTab || "overview");
       } else if (route.mode === "run" || route.mode === "address") {
         let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
         if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
@@ -2031,11 +2665,28 @@ export default function App() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Job polling
+  // Job polling — scoped to the current submission's job tree
   useEffect(() => {
     if (!job?.job_id) return undefined;
     let stopped = false;
     let timer;
+
+    // Collect all job IDs belonging to this submission's tree
+    function getJobTree(allJobs, rootId) {
+      const ids = new Set([rootId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const j of allJobs) {
+          if (ids.has(j.job_id)) continue;
+          if (ids.has(j.request?.parent_job_id) || ids.has(j.request?.root_job_id)) {
+            ids.add(j.job_id);
+            changed = true;
+          }
+        }
+      }
+      return ids;
+    }
 
     async function poll() {
       if (stopped) return;
@@ -2043,14 +2694,16 @@ export default function App() {
         const allJobs = await api("/api/jobs");
         if (stopped) return;
         const now = new Date();
-        const visible = allJobs.filter((j) =>
+        const treeIds = getJobTree(allJobs, job.job_id);
+        const treeJobs = allJobs.filter((j) => treeIds.has(j.job_id));
+        const visible = treeJobs.filter((j) =>
           j.status === "queued" || j.status === "processing" ||
           ((j.status === "completed" || j.status === "failed") && j.updated_at && now - new Date(j.updated_at) < 30000)
         );
         setActiveJobs(visible);
         const parent = allJobs.find((j) => j.job_id === job.job_id);
         if (parent) setJob(parent);
-        const stillRunning = allJobs.some((j) => j.status === "queued" || j.status === "processing");
+        const stillRunning = treeJobs.some((j) => j.status === "queued" || j.status === "processing");
         if (!stillRunning && !doneTimerRef.current) {
           doneTimerRef.current = setTimeout(async () => {
             stopped = true; clearInterval(timer); setActiveJobs([]); doneTimerRef.current = null;
@@ -2122,12 +2775,13 @@ export default function App() {
   return (
     <ErrorBoundary>
       {/* Top nav */}
-      <nav className="top-nav">
+      <nav className={`top-nav ${isCompany && companyTab === "surface" ? "top-nav-dark" : ""}`}>
         <div className="top-nav-left">
+          <button className="hamburger-btn" onClick={() => setMenuOpen(!menuOpen)} aria-label="Menu">
+            <span className="hamburger-icon" />
+          </button>
           <button className="top-nav-brand" onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>PSAT</button>
-          <button className={`top-nav-link ${!isDetail && !isMonitor && !isProxies ? "active" : ""}`} onClick={() => { navigate("/", "default"); refreshAnalyses(); }}>Runs</button>
-          <button className={`top-nav-link ${isMonitor ? "active" : ""}`} onClick={() => navigate("/monitor", "monitor")}>Monitor</button>
-          <button className={`top-nav-link ${isProxies ? "active" : ""}`} onClick={() => navigate("/proxies", "proxies")}>Proxies</button>
+          {companyName && <span className="top-nav-context">{companyName}</span>}
         </div>
         <div className="top-nav-right">
           <button className="top-nav-submit-btn" onClick={() => setFormOpen(!formOpen)}>
@@ -2135,6 +2789,18 @@ export default function App() {
           </button>
         </div>
       </nav>
+
+      {/* Hamburger drawer */}
+      {menuOpen && (
+        <HamburgerMenu
+          onClose={() => setMenuOpen(false)}
+          viewMode={viewMode}
+          companyName={companyName}
+          companyTab={companyTab}
+          onNavigate={(path, mode) => { navigate(path, mode); refreshAnalyses(); }}
+          onNavigateCompanyTab={navigateCompanyTab}
+        />
+      )}
 
       {/* Submit form dropdown */}
       {formOpen && (
@@ -2187,8 +2853,35 @@ export default function App() {
         </div>
       )}
 
-      {isCompany && companyName && (
-        <ProtocolView companyName={companyName} />
+      {isCompany && companyName && companyTab === "overview" && (
+        <CompanyOverview
+          companyName={companyName}
+          onSelectContract={(jobId) => loadAnalysis(jobId, { history: "push" })}
+          onNavigateToSurface={() => navigateCompanyTab("surface")}
+          onNavigateToGraph={() => navigateCompanyTab("graph")}
+          onNavigateToRisk={() => navigateCompanyTab("risk")}
+          onNavigateToMonitoring={() => navigateCompanyTab("monitoring")}
+        />
+      )}
+      {isCompany && companyName && companyTab === "surface" && (
+        <div className="fullscreen-surface">
+          <ProtocolSurface companyName={companyName} />
+        </div>
+      )}
+      {isCompany && companyName && companyTab === "graph" && (
+        <div className="page" style={{ height: "calc(100vh - 52px)", display: "flex", flexDirection: "column" }}>
+          <div className="protocol-graph-wrapper" style={{ flex: 1, minHeight: 0 }}>
+            <ProtocolGraph companyName={companyName} />
+          </div>
+        </div>
+      )}
+      {isCompany && companyName && companyTab === "risk" && (
+        <div className="page">
+          <RiskSurface companyName={companyName} />
+        </div>
+      )}
+      {isCompany && companyName && companyTab === "monitoring" && (
+        <ProtocolMonitoringPage companyName={companyName} />
       )}
 
       {!isDetail && !isMonitor && !isCompany && !isProxies && (

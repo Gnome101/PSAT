@@ -11,6 +11,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Enum,
@@ -62,6 +63,9 @@ class Job(Base):
     request: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    protocol_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -176,7 +180,7 @@ class ProxyUpgradeEvent(Base):
 
 
 # ---------------------------------------------------------------------------
-# feat/database schema: protocol, sources, findings, claims, evidence
+# Protocol / company entity + feat schema (sources, findings, claims, evidence)
 # ---------------------------------------------------------------------------
 
 
@@ -191,6 +195,15 @@ class Protocol(Base):
     contracts: Mapped[list["Contract"]] = relationship("Contract", back_populates="protocol")
     sources: Mapped[list["Source"]] = relationship("Source", back_populates="protocol", cascade="all, delete-orphan")
     findings: Mapped[list["Finding"]] = relationship("Finding", back_populates="protocol", cascade="all, delete-orphan")
+    monitored_contracts: Mapped[list["MonitoredContract"]] = relationship(
+        "MonitoredContract", backref="protocol", foreign_keys="MonitoredContract.protocol_id"
+    )
+    protocol_subscriptions: Mapped[list["ProtocolSubscription"]] = relationship(
+        "ProtocolSubscription", backref="protocol"
+    )
+    official_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (UniqueConstraint("name", name="uq_protocol_name"),)
 
 
 class Source(Base):
@@ -271,13 +284,14 @@ class Contract(Base):
     __tablename__ = "contracts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    job_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True
     )
     protocol_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
     )
     address: Mapped[str] = mapped_column(String(42), nullable=False)
+    source_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     chain: Mapped[str | None] = mapped_column(String(100), nullable=True)
     contract_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     compiler_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -340,7 +354,11 @@ class Contract(Base):
         "ContractBalance", back_populates="contract", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("ix_contracts_job_id", "job_id"),)
+    __table_args__ = (
+        Index("ix_contracts_job_id", "job_id"),
+        Index("ix_contracts_protocol_id", "protocol_id"),
+        UniqueConstraint("address", "chain", name="uq_contract_address_chain"),
+    )
 
 
 class ContractSummary(Base):
@@ -532,6 +550,89 @@ class ContractDependency(Base):
     admin: Mapped[str | None] = mapped_column(String(42), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="dependencies")
+
+
+# ---------------------------------------------------------------------------
+# Unified monitoring tables
+# ---------------------------------------------------------------------------
+
+
+class MonitoredContract(Base):
+    __tablename__ = "monitored_contracts"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    address: Mapped[str] = mapped_column(String(42), nullable=False)
+    chain: Mapped[str] = mapped_column(String(100), nullable=False, default="ethereum")
+    protocol_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
+    )
+    contract_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("contracts.id", ondelete="SET NULL"), nullable=True
+    )
+    watched_proxy_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("watched_proxies.id", ondelete="SET NULL"), nullable=True
+    )
+    contract_type: Mapped[str] = mapped_column(String(50), nullable=False, default="regular")
+    monitoring_config: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True
+    )
+    last_known_state: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True
+    )
+    last_scanned_block: Mapped[int] = mapped_column(Integer, default=0)
+    needs_polling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    enrollment_source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    events: Mapped[list["MonitoredEvent"]] = relationship(
+        "MonitoredEvent", back_populates="monitored_contract", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("address", "chain", name="uq_monitored_contract_address_chain"),
+        Index("ix_monitored_contracts_protocol_id", "protocol_id"),
+    )
+
+
+class MonitoredEvent(Base):
+    __tablename__ = "monitored_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    monitored_contract_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("monitored_contracts.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    block_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    tx_hash: Mapped[str] = mapped_column(String(66), nullable=False)
+    data: Mapped[dict[str, Any] | None] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    monitored_contract: Mapped[MonitoredContract] = relationship("MonitoredContract", back_populates="events")
+
+    __table_args__ = (
+        Index("ix_monitored_events_contract_id", "monitored_contract_id"),
+        Index("ix_monitored_events_event_type", "event_type"),
+        Index("ix_monitored_events_detected_at", "detected_at"),
+    )
+
+
+class ProtocolSubscription(Base):
+    __tablename__ = "protocol_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
+    discord_webhook_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    event_filter: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (Index("ix_protocol_subscriptions_protocol_id", "protocol_id"),)
 
 
 class ContractBalance(Base):

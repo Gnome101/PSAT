@@ -12,7 +12,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStage
+from db.models import Contract, Job, JobStage
 from db.queue import complete_job, count_analysis_children, create_job, store_artifact
 from services.crawlers.dapp.crawl import crawl_dapp
 from workers.base import BaseWorker, JobHandledDirectly
@@ -34,14 +34,19 @@ class DAppCrawlWorker(BaseWorker):
         wait = request.get("wait") or 10
         analyze_limit = request.get("analyze_limit", 25)
 
-        self.update_detail(session, job, f"Crawling {len(urls)} DApp URL(s)")
+        self.update_detail(session, job, f"Preparing crawl for {len(urls)} DApp URL(s)")
         logger.info("DApp crawl started for job %s: %d URLs", job.id, len(urls))
+
+        def report(detail: str) -> None:
+            self.update_detail(session, job, detail)
+
 
         # Call crawler directly — no subprocess
         result = crawl_dapp(
             urls,
             chain_id=chain_id,
             wait=wait,
+            progress=report,
         )
 
         addresses = result["addresses"]
@@ -59,6 +64,28 @@ class DAppCrawlWorker(BaseWorker):
                 "interaction_count": result.get("interaction_count", 0),
             },
         )
+
+        # Write ALL discovered addresses to contracts table
+        protocol_id = job.protocol_id
+        crawl_chain = request.get("chain")
+        for addr in addresses:
+            normalized = addr.lower()
+            existing_contract = session.execute(
+                select(Contract).where(Contract.address == normalized, Contract.chain == crawl_chain)
+            ).scalar_one_or_none()
+            if existing_contract is None:
+                session.add(
+                    Contract(
+                        address=normalized,
+                        chain=crawl_chain,
+                        protocol_id=protocol_id,
+                        discovery_source="dapp_crawl",
+                    )
+                )
+            elif existing_contract.protocol_id is None and protocol_id:
+                existing_contract.protocol_id = protocol_id
+        session.commit()
+
 
         # Deduplicate against existing jobs and create children (shared global cap)
         root_job_id = request.get("root_job_id", str(job.id))
@@ -87,6 +114,8 @@ class DAppCrawlWorker(BaseWorker):
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "rpc_url": request.get("rpc_url"),
+                "discovery_source": "dapp_crawl",
+                "protocol_id": protocol_id,
             }
             if request.get("chain"):
                 child_request["chain"] = request["chain"]

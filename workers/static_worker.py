@@ -14,8 +14,8 @@ from pathlib import Path
 
 from sqlalchemy import select
 
-from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition, SlitherFinding
-from db.queue import create_job, get_source_files, store_artifact
+from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition
+from db.queue import _MUTABLE_CONTRACT_FIELDS, create_job, get_artifact, get_source_files, store_artifact
 from services.discovery import (
     build_unified_dependencies,
     classify_contracts,
@@ -24,9 +24,12 @@ from services.discovery import (
     find_dynamic_dependencies,
     write_dependency_visualization,
 )
+from services.discovery.dynamic_dependencies import NoNewTransactionsError
+from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
 from services.static.vyper_analysis import is_vyper_project
+from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
@@ -56,6 +59,258 @@ def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, 
             error=error,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Dynamic dependency merge helper
+# ---------------------------------------------------------------------------
+
+
+def _merge_dynamic_deps(prev: dict, new: dict) -> dict:
+    """Merge previous and new dynamic dependency results (append-only).
+
+    Unions dependencies, provenance, edges, transactions, trace methods,
+    and trace errors — deduplicating where appropriate.
+    """
+    # Union dependencies (sorted, deduplicated)
+    prev_deps = set(prev.get("dependencies", []))
+    new_deps = set(new.get("dependencies", []))
+    merged_deps = sorted(prev_deps | new_deps)
+
+    # Union provenance dicts (merge per-address lists, deduplicate)
+    merged_provenance: dict[str, list[dict]] = {}
+    for prov_dict in [prev.get("provenance", {}), new.get("provenance", {})]:
+        for addr, records in prov_dict.items():
+            existing = merged_provenance.setdefault(addr, [])
+            for record in records:
+                if record not in existing:
+                    existing.append(record)
+
+    # Union dependency_graph edges (deduplicate by from+to+op+selector)
+    seen_edges: set[tuple[str, str, str, str]] = set()
+    merged_graph: list[dict] = []
+    for graph_list in [prev.get("dependency_graph", []), new.get("dependency_graph", [])]:
+        for edge in graph_list:
+            key = (edge["from"], edge["to"], edge["op"], edge.get("selector", ""))
+            if key in seen_edges:
+                # Merge provenance into existing edge
+                for existing_edge in merged_graph:
+                    existing_key = (
+                        existing_edge["from"],
+                        existing_edge["to"],
+                        existing_edge["op"],
+                        existing_edge.get("selector", ""),
+                    )
+                    if existing_key == key:
+                        for prov in edge.get("provenance", []):
+                            if prov not in existing_edge.get("provenance", []):
+                                existing_edge.setdefault("provenance", []).append(prov)
+                        break
+                continue
+            seen_edges.add(key)
+            merged_graph.append(dict(edge))
+
+    # Concatenate transactions_analyzed (deduplicate by tx_hash)
+    seen_tx_hashes: set[str] = set()
+    merged_txs: list[dict] = []
+    for tx_list in [prev.get("transactions_analyzed", []), new.get("transactions_analyzed", [])]:
+        for tx in tx_list:
+            tx_hash = tx.get("tx_hash", "")
+            if tx_hash not in seen_tx_hashes:
+                seen_tx_hashes.add(tx_hash)
+                merged_txs.append(tx)
+
+    # Union trace_methods
+    merged_methods = sorted(set(prev.get("trace_methods", [])) | set(new.get("trace_methods", [])))
+
+    # Concatenate trace_errors (deduplicate by tx_hash)
+    seen_error_hashes: set[str] = set()
+    merged_errors: list[dict] = []
+    for err_list in [prev.get("trace_errors", []), new.get("trace_errors", [])]:
+        for err in err_list:
+            err_hash = err.get("tx_hash", "")
+            if err_hash not in seen_error_hashes:
+                seen_error_hashes.add(err_hash)
+                merged_errors.append(err)
+
+    return {
+        "address": new.get("address") or prev.get("address"),
+        "rpc": new.get("rpc") or prev.get("rpc"),
+        "transactions_analyzed": merged_txs,
+        "trace_methods": merged_methods,
+        "dependencies": merged_deps,
+        "provenance": merged_provenance,
+        "dependency_graph": merged_graph,
+        "trace_errors": merged_errors,
+    }
+
+
+def _resolve_dynamic_deps(
+    session,
+    job,
+    address: str,
+    dynamic_rpc: str | None,
+    tx_limit: int,
+    tx_hashes: list[str] | None,
+    proxy_addr: str | None,
+    code_cache: dict[str, str],
+) -> tuple[dict | None, str | None]:
+    """Load cached dynamic deps, discover new ones, merge, and persist.
+
+    Returns ``(dyn_output, error_string)``.  On success *error_string* is
+    ``None``.  When previous deps exist and no new transactions are found,
+    the previous output is returned as-is (not an error).
+    """
+    # --- Load previous dynamic deps for append-only merge ---
+    # The artifact is either on this job already (copied by copy_static_cache
+    # as a seed artifact, or stored by a previous attempt of this job).
+    prev_dyn: dict | None = None
+    if not tx_hashes:
+        _raw_dyn = get_artifact(session, job.id, "dynamic_dependencies")
+        if isinstance(_raw_dyn, dict):
+            prev_dyn = _raw_dyn
+
+    # --- Compute start_block for incremental fetch ---
+    start_block: int | None = None
+    if prev_dyn:
+        prev_txs = prev_dyn.get("transactions_analyzed", [])
+        last_block = max((tx.get("block_number") or 0 for tx in prev_txs), default=0)
+        if last_block > 0:
+            start_block = last_block + 1
+
+    # --- Discover ---
+    try:
+        dyn_output = find_dynamic_dependencies(
+            address,
+            rpc_url=dynamic_rpc,
+            tx_limit=tx_limit,
+            tx_hashes=tx_hashes,
+            proxy_address=proxy_addr,
+            code_cache=code_cache,
+            start_block=start_block,
+        )
+        if prev_dyn and not tx_hashes:
+            dyn_output = _merge_dynamic_deps(prev_dyn, dyn_output)
+        store_artifact(session, job.id, "dynamic_dependencies", data=dyn_output)
+        return dyn_output, None
+    except NoNewTransactionsError:
+        if prev_dyn:
+            store_artifact(session, job.id, "dynamic_dependencies", data=prev_dyn)
+            return prev_dyn, None
+        return None, "No representative transactions found"
+    except Exception as exc:
+        return None, str(exc)
+
+
+# ---------------------------------------------------------------------------
+# Upgrade history merge helper
+# ---------------------------------------------------------------------------
+
+
+def _merge_upgrade_history(prev: dict, new: dict) -> dict:
+    """Merge previous and new upgrade history results (append-only).
+
+    For each proxy present in both, events are unioned (deduplicated by
+    block_number + tx_hash + event_type) and timelines rebuilt.  Proxies
+    appearing in only one side are kept as-is.
+    """
+    from services.discovery.upgrade_history import _build_implementation_timeline
+
+    merged_proxies: dict[str, dict] = {}
+
+    all_proxy_addrs = set(prev.get("proxies", {}).keys()) | set(new.get("proxies", {}).keys())
+
+    total_upgrades = 0
+    for addr in all_proxy_addrs:
+        prev_proxy = prev.get("proxies", {}).get(addr)
+        new_proxy = new.get("proxies", {}).get(addr)
+
+        if prev_proxy and not new_proxy:
+            merged_proxies[addr] = prev_proxy
+            total_upgrades += prev_proxy.get("upgrade_count", 0)
+            continue
+        if new_proxy and not prev_proxy:
+            merged_proxies[addr] = new_proxy
+            total_upgrades += new_proxy.get("upgrade_count", 0)
+            continue
+
+        # Both exist — merge events
+        prev_events = prev_proxy.get("events", [])
+        new_events = new_proxy.get("events", [])
+
+        # Deduplicate by (block_number, tx_hash, event_type)
+        seen: set[tuple[int, str, str]] = set()
+        merged_events: list[dict] = []
+        for event in prev_events + new_events:
+            key = (event.get("block_number", 0), event.get("tx_hash", ""), event.get("event_type", ""))
+            if key not in seen:
+                seen.add(key)
+                merged_events.append(event)
+
+        merged_events.sort(key=lambda e: (e.get("block_number", 0), e.get("log_index", 0)))
+
+        # Rebuild timeline from merged events
+        current_impl = new_proxy.get("current_implementation") or prev_proxy.get("current_implementation")
+        implementations = _build_implementation_timeline(merged_events, current_impl)
+        upgrade_events = [e for e in merged_events if e["event_type"] == "upgraded"]
+
+        merged_proxies[addr] = {
+            "proxy_address": addr,
+            "proxy_type": new_proxy.get("proxy_type") or prev_proxy.get("proxy_type"),
+            "current_implementation": current_impl,
+            "upgrade_count": len(upgrade_events),
+            "first_upgrade_block": upgrade_events[0]["block_number"] if upgrade_events else None,
+            "last_upgrade_block": upgrade_events[-1]["block_number"] if upgrade_events else None,
+            "implementations": implementations,
+            "events": merged_events,
+        }
+        total_upgrades += len(upgrade_events)
+
+    return {
+        "schema_version": new.get("schema_version") or prev.get("schema_version", "0.1"),
+        "target_address": new.get("target_address") or prev.get("target_address"),
+        "proxies": merged_proxies,
+        "total_upgrades": total_upgrades,
+    }
+
+
+def _resolve_upgrade_history(
+    session,
+    job,
+    dependencies_path,
+    prev_uh: dict | None,
+) -> dict | None:
+    """Load cached upgrade history, fetch incrementally, merge, and persist.
+
+    Returns the (possibly merged) upgrade history dict, or None on failure.
+    """
+    from services.discovery.upgrade_history import build_upgrade_history
+
+    # Compute from_block for incremental fetch
+    from_block = 0
+    if prev_uh and isinstance(prev_uh, dict) and prev_uh.get("proxies"):
+        max_block = 0
+        for proxy_info in prev_uh["proxies"].values():
+            for event in proxy_info.get("events", []):
+                block = event.get("block_number", 0)
+                if block > max_block:
+                    max_block = block
+        if max_block > 0:
+            from_block = max_block + 1
+
+    uh = build_upgrade_history(dependencies_path, from_block=from_block)
+
+    if prev_uh and isinstance(prev_uh, dict) and prev_uh.get("proxies"):
+        if uh.get("proxies"):
+            uh = _merge_upgrade_history(prev_uh, uh)
+        else:
+            # No new events — use previous as-is
+            uh = prev_uh
+
+    if uh.get("proxies"):
+        store_artifact(session, job.id, "upgrade_history", data=uh)
+
+    return uh if uh.get("proxies") else None
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +402,192 @@ def _prune_remappings(remappings: list[str], source_paths: set[str]) -> list[str
     return kept
 
 
+# Proxy types where the implementation is baked into bytecode (immutable) —
+# safe to reuse from cache without an RPC slot check.
+_IMMUTABLE_PROXY_TYPES = frozenset({"eip1167"})
+
+# Proxy types with multiple facets that can't be verified with a single slot check.
+_MULTI_FACET_PROXY_TYPES = frozenset({"eip2535"})
+
+_PROXY_FIELDS = _MUTABLE_CONTRACT_FIELDS
+
+
+def _validate_cached_dep_classifications(
+    prev_cls: dict,
+    rpc_url: str,
+) -> dict[str, dict]:
+    """Validate cached dependency proxy classifications against live on-chain state.
+
+    For each cached proxy classification that has a known implementation
+    address, makes a single RPC call to verify the implementation hasn't
+    changed.  Returns a dict of ``{address: classification}`` entries that
+    are still valid.
+
+    Stale entries (where the on-chain implementation differs) are dropped
+    so ``classify_contracts`` will re-classify them from scratch.
+
+    Non-proxy entries and immutable proxy types (e.g. EIP-1167) are kept
+    unconditionally.
+    """
+    valid: dict[str, dict] = {}
+
+    for addr, cls_info in prev_cls.get("classifications", {}).items():
+        if not isinstance(cls_info, dict):
+            continue
+
+        # Non-proxy classifications are immutable — keep as-is
+        if cls_info.get("type") != "proxy":
+            valid[addr] = cls_info
+            continue
+
+        proxy_type = cls_info.get("proxy_type")
+        cached_impl = cls_info.get("implementation")
+
+        # Immutable proxy types: implementation baked into bytecode
+        if proxy_type in _IMMUTABLE_PROXY_TYPES:
+            valid[addr] = cls_info
+            continue
+
+        # Diamond proxies: can't verify with a single call
+        if proxy_type in _MULTI_FACET_PROXY_TYPES:
+            continue
+
+        # No cached implementation to compare — keep as-is (e.g. beacon
+        # proxies that only have a beacon address, or partial classifications).
+        if not cached_impl:
+            valid[addr] = cls_info
+            continue
+
+        # Single RPC call to check current implementation
+        try:
+            current_impl = resolve_current_implementation(addr, rpc_url, proxy_type=proxy_type)
+            if not current_impl:
+                continue  # can't verify — re-classify to be safe
+            if normalize_hex(current_impl) != normalize_hex(cached_impl):
+                logger.info(
+                    "Cached dep %s proxy upgraded: cached=%s current=%s — will re-classify",
+                    addr,
+                    cached_impl,
+                    current_impl,
+                )
+                continue  # upgraded — drop from cache
+        except Exception as exc:
+            logger.debug("Cached dep %s proxy check failed: %s — will re-classify", addr, exc)
+            continue
+
+        valid[addr] = cls_info
+
+    return valid
+
+
+def _apply_proxy_cache(session, src_contract, contract_row, proxy_state: dict | None = None) -> dict:
+    """Copy proxy fields from *src_contract* (or *proxy_state* dict) to
+    *contract_row* and return a ``classify_single``-style dict for downstream
+    consumers.
+
+    When *proxy_state* is provided (e.g. from a ``cached_proxy_state``
+    artifact), its values take precedence over the ``src_contract`` attributes
+    — this handles the case where the unique-constraint reuse in
+    ``copy_static_cache`` reset the proxy fields on the shared Contract row.
+    """
+    for field in _PROXY_FIELDS:
+        if proxy_state is not None:
+            setattr(contract_row, field, proxy_state.get(field))
+        else:
+            setattr(contract_row, field, getattr(src_contract, field))
+    session.commit()
+
+    is_proxy = proxy_state["is_proxy"] if proxy_state else src_contract.is_proxy
+    if not is_proxy:
+        return {"type": "regular"}
+    return {
+        "type": "proxy",
+        **{
+            f: (proxy_state.get(f) if proxy_state else getattr(src_contract, f))
+            for f in _PROXY_FIELDS
+            if f != "is_proxy"
+        },
+    }
+
+
+def _check_proxy_cache(session, job, contract_row) -> dict | None:
+    """Check whether proxy classification can be reused from a cached source job.
+
+    Returns a ``classify_single``-style dict if the cached proxy state is still
+    valid, or ``None`` when full ``_resolve_proxy`` must run.
+    """
+    request = job.request if isinstance(job.request, dict) else {}
+    if not request.get("static_cached"):
+        return None
+
+    source_job_id = request.get("cache_source_job_id")
+    if not source_job_id:
+        return None
+
+    try:
+        src_contract = session.execute(
+            select(Contract).where(Contract.job_id == source_job_id).limit(1)
+        ).scalar_one_or_none()
+    except Exception as exc:
+        logger.debug("Cache source contract lookup failed for job %s: %s", job.id, exc)
+        src_contract = None
+
+    # With the (address, chain) unique constraint, copy_static_cache may have
+    # reused the same Contract row (updating its job_id to the target and
+    # resetting proxy fields).  Read the saved proxy state from artifact.
+    cached_proxy_state: dict | None = None
+    if src_contract is None:
+        _raw_proxy = get_artifact(session, job.id, "cached_proxy_state")
+        if not isinstance(_raw_proxy, dict):
+            return None
+        cached_proxy_state = _raw_proxy
+        # Use contract_row as the base but check proxy state from artifact
+        src_contract = contract_row
+
+    # Determine proxy state: prefer artifact (accurate pre-reset snapshot)
+    src_is_proxy = cached_proxy_state["is_proxy"] if cached_proxy_state else src_contract.is_proxy
+    src_proxy_type = cached_proxy_state.get("proxy_type") if cached_proxy_state else src_contract.proxy_type
+    src_implementation = cached_proxy_state.get("implementation") if cached_proxy_state else src_contract.implementation
+
+    # Non-proxy source: non-proxies don't become proxies.
+    if not src_is_proxy:
+        return _apply_proxy_cache(session, src_contract, contract_row, proxy_state=cached_proxy_state)
+
+    proxy_type = src_proxy_type
+
+    # Diamond proxies have multiple facets — can't verify with a single call.
+    if proxy_type in _MULTI_FACET_PROXY_TYPES:
+        return None
+
+    # Immutable proxy types (e.g. EIP-1167): impl is baked into bytecode.
+    if proxy_type in _IMMUTABLE_PROXY_TYPES:
+        return _apply_proxy_cache(session, src_contract, contract_row, proxy_state=cached_proxy_state)
+
+    cached_impl = src_implementation
+    if not cached_impl:
+        return None
+
+    rpc_url = request.get("rpc_url") or os.getenv("ETH_RPC")
+    if not rpc_url:
+        return None
+
+    # Single RPC call — resolve_current_implementation handles all proxy types
+    # (slot reads, getter calls, fallback discovery).
+    try:
+        current_impl = resolve_current_implementation(contract_row.address, rpc_url, proxy_type=proxy_type)
+        if not current_impl:
+            return None
+        current_impl = normalize_hex(current_impl)
+    except Exception as exc:
+        logger.debug("Proxy implementation check failed for job %s: %s", job.id, exc)
+        return None
+
+    if current_impl != normalize_hex(cached_impl):
+        return None  # upgraded — need full re-classification
+
+    return _apply_proxy_cache(session, src_contract, contract_row, proxy_state=cached_proxy_state)
+
+
 class StaticWorker(BaseWorker):
     stage = JobStage.static
     next_stage = JobStage.resolution
@@ -192,6 +633,8 @@ class StaticWorker(BaseWorker):
         if job.name:
             meta["display_name"] = job.name
 
+        request = job.request if isinstance(job.request, dict) else {}
+
         logger.info(
             "Static stage started for job %s address=%s contract=%s",
             job_id_str,
@@ -199,17 +642,43 @@ class StaticWorker(BaseWorker):
             contract_name,
         )
 
-        # Always attempt semantic proxy classification when RPC is available.
-        # Hidden proxies often won't match name-based heuristics so we run
-        # this unconditionally.  The result is reused by classify_contracts()
-        # in the dependency phase to avoid duplicate RPC calls.
-        target_classification = self._resolve_proxy(session, job, address, contract_name)
+        # Attempt to reuse proxy classification from a cached source job.
+        # This avoids 3-8 RPC calls when the proxy hasn't been upgraded.
+        cached_proxy = _check_proxy_cache(session, job, contract_row)
+        if cached_proxy is not None:
+            target_classification = cached_proxy
+            # Store contract_flags artifact to match what _resolve_proxy would produce
+            cached_type = cached_proxy.get("type", "regular")
+            flags = {
+                "is_proxy": cached_type == "proxy",
+                "classification_type": cached_type,
+                "cached_from_job": str(request.get("cache_source_job_id", "")),
+                **{f: cached_proxy.get(f) for f in _PROXY_FIELDS if f != "is_proxy"},
+            }
+            store_artifact(session, job.id, "contract_flags", data=flags)
+            logger.info(
+                "Job %s: proxy classification reused from cache (type=%s)",
+                job.id,
+                cached_type,
+            )
+        else:
+            # Always attempt semantic proxy classification when RPC is available.
+            # Hidden proxies often won't match name-based heuristics so we run
+            # this unconditionally.  The result is reused by classify_contracts()
+            # in the dependency phase to avoid duplicate RPC calls.
+            target_classification = self._resolve_proxy(session, job, address, contract_name)
 
         # Check if proxy classification marked this as a proxy — if so,
         # skip Slither/analysis on the proxy source (it's just a thin wrapper).
         # Dependency discovery still runs because proxy-address deps are useful.
         session.refresh(contract_row)
         is_proxy = contract_row.is_proxy
+
+        # Check if the discovery worker flagged this job as using cached static
+        # data.  When set, we skip the expensive Slither / contract-analysis /
+        # tracking-plan phases but still run the dependency phase (resolution
+        # needs it).
+        has_cached_static = bool(request.get("static_cached"))
 
         # Create temp directory and write source files
         tmp_dir = tempfile.mkdtemp(prefix="psat_static_")
@@ -232,6 +701,14 @@ class StaticWorker(BaseWorker):
 
                 complete_job(session, job.id, f"Proxy {contract_name} — impl child job queued for full analysis")
                 raise JobHandledDirectly()
+            elif has_cached_static:
+                # Static artifacts already present from cache — skip analysis phases.
+                logger.info(
+                    "Static stage cache hit for job %s (%s) — skipping Slither/analysis/tracking plan",
+                    job_id_str,
+                    contract_name,
+                )
+                self.update_detail(session, job, "Static analysis complete (cached)")
             else:
                 # Phase 1: Slither
                 t0 = time.monotonic()
@@ -395,6 +872,8 @@ class StaticWorker(BaseWorker):
             }
             if request.get("chain") is not None:
                 child_request["chain"] = request.get("chain")
+            if getattr(job, "protocol_id", None):
+                child_request["protocol_id"] = job.protocol_id
             child_job = create_job(session, child_request)
             logger.info(
                 "Job %s: created %s job %s for %s (%s)",
@@ -481,57 +960,77 @@ class StaticWorker(BaseWorker):
         )
 
         deps_output = None
-        try:
-            t0 = time.monotonic()
-            deps_output = find_dependencies(address, deps_rpc, code_cache=code_cache)
-            if DEBUG_TIMING:
-                n = len(deps_output.get("dependencies", []))
-                logger.info("[TIMING] static deps: %.1fs (%d deps)", time.monotonic() - t0, n)
+
+        # Check for cached static dependencies (bytecode is immutable, so these
+        # never change and can be reused permanently).  The artifact is
+        # self-describing — if it exists on this job it's valid, whether it
+        # was copied from a prior completed job or stored on a previous
+        # attempt of this same job that failed later in the pipeline.
+        _raw_static_deps = get_artifact(session, job.id, "static_dependencies")
+        cached_static_deps = _raw_static_deps if isinstance(_raw_static_deps, dict) else None
+
+        if cached_static_deps is not None:
+            deps_output = cached_static_deps
             logger.info(
-                "Static stage static dependencies complete for job %s address=%s count=%d",
+                "Static stage static dependencies loaded from cache for job %s address=%s count=%d",
                 job.id,
                 address,
                 len(deps_output.get("dependencies", [])),
             )
-        except Exception as exc:
-            dependency_errors["static"] = str(exc)
+        else:
+            try:
+                t0 = time.monotonic()
+                deps_output = find_dependencies(address, deps_rpc, code_cache=code_cache)
+                if DEBUG_TIMING:
+                    n = len(deps_output.get("dependencies", []))
+                    logger.info("[TIMING] static deps: %.1fs (%d deps)", time.monotonic() - t0, n)
+                logger.info(
+                    "Static stage static dependencies complete for job %s address=%s count=%d",
+                    job.id,
+                    address,
+                    len(deps_output.get("dependencies", [])),
+                )
+                # Persist for future cache hits
+                store_artifact(session, job.id, "static_dependencies", data=deps_output)
+            except Exception as exc:
+                dependency_errors["static"] = str(exc)
+                logger.warning(
+                    "Static stage static dependency discovery failed for job %s address=%s: %s",
+                    job.id,
+                    address,
+                    exc,
+                )
+
+        t0 = time.monotonic()
+        tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
+        dyn_output, dyn_error = _resolve_dynamic_deps(
+            session,
+            job,
+            address,
+            dynamic_rpc,
+            int(dynamic_tx_limit),
+            tx_hashes,
+            request.get("proxy_address"),
+            code_cache,
+        )
+        if DEBUG_TIMING and dyn_output:
+            logger.info(
+                "[TIMING] dynamic deps: %.1fs (%d deps)", time.monotonic() - t0, len(dyn_output.get("dependencies", []))
+            )
+        if dyn_error:
+            dependency_errors["dynamic"] = dyn_error
             logger.warning(
-                "Static stage static dependency discovery failed for job %s address=%s: %s",
+                "Static stage dynamic dependency discovery failed for job %s address=%s: %s",
                 job.id,
                 address,
-                exc,
+                dyn_error,
             )
-
-        dyn_output = None
-        try:
-            t0 = time.monotonic()
-            tx_limit = int(dynamic_tx_limit)
-            tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
-            proxy_addr = request.get("proxy_address")
-            dyn_output = find_dynamic_dependencies(
-                address,
-                rpc_url=dynamic_rpc,
-                tx_limit=tx_limit,
-                tx_hashes=tx_hashes,
-                proxy_address=proxy_addr,
-                code_cache=code_cache,
-            )
-            if DEBUG_TIMING:
-                n = len(dyn_output.get("dependencies", []))
-                logger.info("[TIMING] dynamic deps: %.1fs (%d deps)", time.monotonic() - t0, n)
+        elif dyn_output:
             logger.info(
                 "Static stage dynamic dependencies complete for job %s address=%s count=%d",
                 job.id,
                 address,
                 len(dyn_output.get("dependencies", [])),
-            )
-        except Exception as exc:
-            dependency_errors["dynamic"] = str(exc)
-            logger.warning(
-                "Static stage dynamic dependency discovery failed for job %s address=%s: %s",
-                job.id,
-                address,
-                exc,
             )
 
         resolved_rpc = None
@@ -547,19 +1046,32 @@ class StaticWorker(BaseWorker):
             )
             try:
                 t0 = time.monotonic()
-                pre_classified = None
-                if target_classification:
-                    from services.discovery.static_dependencies import normalize_address
+                from services.discovery.static_dependencies import normalize_address
 
-                    pre_classified = {normalize_address(address): target_classification}
+                pre_classified = {}
+                if target_classification:
+                    pre_classified[normalize_address(address)] = target_classification
+
+                # Load previous classifications to skip already-classified addresses.
+                # Validate cached proxy classifications against live on-chain
+                # state so upgraded dependencies get re-classified.
+                prev_cls = get_artifact(session, job.id, "classifications")
+                if isinstance(prev_cls, dict):
+                    validated_cls = _validate_cached_dep_classifications(prev_cls, resolved_rpc)
+                    for cls_addr, cls_info in validated_cls.items():
+                        if cls_addr not in pre_classified:
+                            pre_classified[cls_addr] = cls_info
+
                 cls_output = classify_contracts(
                     address,
                     unique_deps,
                     resolved_rpc,
                     dynamic_edges=(dyn_output or {}).get("dependency_graph"),
                     code_cache=code_cache,
-                    pre_classified=pre_classified,
+                    pre_classified=pre_classified or None,
                 )
+                # Store classifications artifact for future cache hits
+                store_artifact(session, job.id, "classifications", data=cls_output)
                 if DEBUG_TIMING:
                     logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
                 logger.info(
@@ -587,10 +1099,24 @@ class StaticWorker(BaseWorker):
             unified = build_unified_dependencies(
                 address, deps_output, dyn_output, cls_output, target_classification=target_classification
             )
+            # Load cached enrichment data (contract names + selectors are immutable)
+            prev_enrichment = get_artifact(session, job.id, "enrichment_cache")
+            info_cache: dict[str, tuple[str | None, dict[str, str]]] = {}
+            if isinstance(prev_enrichment, dict):
+                for _addr, _data in prev_enrichment.items():
+                    if isinstance(_data, dict):
+                        info_cache[_addr] = (_data.get("name"), _data.get("selectors", {}))
+
             t0 = time.monotonic()
-            enrich_dependency_metadata(unified)
+            enrich_dependency_metadata(unified, info_cache=info_cache)
             if DEBUG_TIMING:
                 logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
+
+            # Store updated enrichment cache (includes any newly fetched entries)
+            enrichment_data = {
+                addr: {"name": name, "selectors": selectors} for addr, (name, selectors) in info_cache.items()
+            }
+            store_artifact(session, job.id, "enrichment_cache", data=enrichment_data)
 
             # Write to contract_dependencies table
             from sqlalchemy import select as sa_select
@@ -651,13 +1177,13 @@ class StaticWorker(BaseWorker):
                     address,
                 )
 
-            # Upgrade history for proxy contracts
+            # Upgrade history for proxy contracts (incremental / append-only)
             try:
-                from services.discovery.upgrade_history import build_upgrade_history
-
-                uh = build_upgrade_history(dependencies_path)
-                if uh.get("proxies"):
-                    store_artifact(session, job.id, "upgrade_history", data=uh)
+                prev_uh = get_artifact(session, job.id, "upgrade_history")
+                if prev_uh is not None and not isinstance(prev_uh, dict):
+                    prev_uh = None
+                uh = _resolve_upgrade_history(session, job, dependencies_path, prev_uh)
+                if uh:
                     logger.info(
                         "Static stage upgrade history complete for job %s address=%s upgrades=%d",
                         job.id,
@@ -709,27 +1235,6 @@ class StaticWorker(BaseWorker):
         slither_path = project_dir / "slither_results.json"
         if slither_path.exists():
             slither_data = json.loads(slither_path.read_text())
-
-            # Write to slither_findings table
-            from sqlalchemy import select as sa_select
-
-            contract_row = session.execute(
-                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
-            if contract_row:
-                session.query(SlitherFinding).filter(SlitherFinding.contract_id == contract_row.id).delete()
-                for finding in slither_data.get("results", {}).get("detectors", []):
-                    session.add(
-                        SlitherFinding(
-                            contract_id=contract_row.id,
-                            detector=finding.get("check"),
-                            severity=finding.get("impact"),
-                            description=finding.get("description"),
-                            elements=finding.get("elements"),
-                        )
-                    )
-                session.commit()
-
             store_artifact(session, job.id, "slither_results", data=slither_data)
 
         report_path = project_dir / "analysis_report.txt"

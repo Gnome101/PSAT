@@ -26,11 +26,11 @@ from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from db.models import Artifact, Base, Job, JobStage, JobStatus, SourceFile
+from db.models import Base, Job, JobStage, JobStatus
 from db.queue import create_job, get_artifact
 from workers.base import JobHandledDirectly
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
+DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 ADDR_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ADDR_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -90,9 +90,13 @@ def db_session():
         yield session
     finally:
         session.rollback()
-        session.query(SourceFile).delete()
-        session.query(Artifact).delete()
-        session.query(Job).delete()
+        # Only delete jobs with test addresses (cascades to artifacts/source_files)
+        test_addrs = [ADDR_A, ADDR_B, ADDR_C]
+        for j in session.execute(select(Job).where(Job.address.in_(test_addrs))).scalars():
+            session.delete(j)
+        # Delete the crawl job itself (no address, identified by dapp_urls in request)
+        for j in session.execute(select(Job).where(Job.address.is_(None), Job.name.like("DApp crawl%"))).scalars():
+            session.delete(j)
         session.commit()
         session.close()
         engine.dispose()
@@ -148,7 +152,13 @@ def test_process_runs_against_real_queue_and_fake_dapp(
 ) -> None:
     captured: dict[str, int] = {}
 
-    def fake_crawl(urls: list[str], *, chain_id: int = 1, wait: int = 10) -> dict[str, object]:
+    def fake_crawl(
+        urls: list[str],
+        *,
+        chain_id: int = 1,
+        wait: int = 10,
+        progress=None,
+    ) -> dict[str, object]:
         captured["chain_id"] = chain_id
         captured["wait"] = wait
         addresses: list[str] = []

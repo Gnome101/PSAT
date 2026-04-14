@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 
 from db.models import (
@@ -26,6 +26,10 @@ from db.models import (
     Job,
     JobStage,
     JobStatus,
+    MonitoredContract,
+    MonitoredEvent,
+    Protocol,
+    ProtocolSubscription,
     ProxySubscription,
     ProxyUpgradeEvent,
     SessionLocal,
@@ -88,6 +92,34 @@ class WatchProxyRequest(BaseModel):
 class SubscribeRequest(BaseModel):
     discord_webhook_url: str = Field(min_length=1, description="Discord webhook URL for upgrade notifications.")
     label: str | None = None
+
+
+class ProtocolSubscribeRequest(BaseModel):
+    discord_webhook_url: str = Field(min_length=1, description="Discord webhook URL for protocol event notifications.")
+    label: str | None = None
+    event_filter: dict | None = Field(default=None, description='Optional filter: {"event_types": ["upgraded", ...]}')
+
+    @field_validator("event_filter")
+    @classmethod
+    def validate_event_filter(cls, v: dict | None) -> dict | None:
+        if v is None:
+            return v
+        if "event_types" not in v:
+            raise ValueError(
+                'event_filter must contain an \'event_types\' key, e.g. {"event_types": ["upgraded", "paused"]}'
+            )
+        event_types = v["event_types"]
+        if not isinstance(event_types, list):
+            raise ValueError(f"event_filter.event_types must be a list of strings, got {type(event_types).__name__}")
+        from services.monitoring.event_topics import ALL_EVENT_TOPICS
+
+        valid_types = set(ALL_EVENT_TOPICS.values()) | {"state_changed_poll"}
+        for et in event_types:
+            if not isinstance(et, str):
+                raise ValueError(f"event_filter.event_types entries must be strings, got {type(et).__name__}")
+            if et not in valid_types:
+                raise ValueError(f"Unknown event type: '{et}'. Valid types: {sorted(valid_types)}")
+        return v
 
 
 @asynccontextmanager
@@ -512,8 +544,13 @@ def analysis_detail(run_name: str) -> dict:
         # Load artifacts (for those still stored as artifacts)
         all_artifacts = get_all_artifacts(session, job.id)
 
-        # Load from relational tables
+        # Load from relational tables — fall back to address lookup when
+        # copy_static_cache has reassigned the Contract row to a newer job.
         contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+        if contract_row is None and job.address:
+            contract_row = session.execute(
+                select(Contract).where(Contract.address == job.address.lower()).limit(1)
+            ).scalar_one_or_none()
 
         payload: dict[str, Any] = {
             "run_name": job.name or str(job.id),
@@ -861,37 +898,50 @@ def analysis_detail(run_name: str) -> dict:
 def company_overview(company_name: str) -> dict:
     """Aggregated governance overview for all contracts in a company."""
     with SessionLocal() as session:
-        # Find the company discovery job
-        company_job = session.execute(
-            select(Job).where(Job.company == company_name).order_by(Job.updated_at.desc()).limit(1)
-        ).scalar_one_or_none()
-        if company_job is None:
-            raise HTTPException(status_code=404, detail="Company not found")
+        # Look up protocol — try by protocol table first, fall back to job.company
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
 
-        company_job_id = str(company_job.id)
+        if protocol_row:
+            # Get all jobs that belong to this protocol
+            company_jobs = (
+                session.execute(
+                    select(Job).where(
+                        Job.protocol_id == protocol_row.id,
+                        Job.status == JobStatus.completed,
+                        Job.address.isnot(None),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        else:
+            # Fallback: find by company string (legacy data)
+            company_job = session.execute(
+                select(Job).where(Job.company == company_name).order_by(Job.updated_at.desc()).limit(1)
+            ).scalar_one_or_none()
+            if company_job is None:
+                raise HTTPException(status_code=404, detail="Company not found")
 
-        # Find all completed jobs belonging to this company (children + grandchildren)
-        # Load ALL completed jobs (including those without addresses) for parent chain walking
-        all_completed = session.execute(select(Job).where(Job.status == JobStatus.completed)).scalars().all()
-        all_jobs = [j for j in all_completed if j.address]
+            company_job_id = str(company_job.id)
+            all_completed = session.execute(select(Job).where(Job.status == JobStatus.completed)).scalars().all()
 
-        def belongs_to_company(job: Job) -> bool:
-            seen: set[str] = set()
-            current: Job | None = job
-            jobs_by_id = {str(j.id): j for j in all_completed}
-            jobs_by_id[company_job_id] = company_job
-            while current is not None:
-                if current.company == company_name:
-                    return True
-                request = current.request if isinstance(current.request, dict) else {}
-                parent_id = request.get("parent_job_id")
-                if not isinstance(parent_id, str) or parent_id in seen:
-                    return False
-                seen.add(parent_id)
-                current = jobs_by_id.get(parent_id)
-            return False
+            def belongs_to_company(job: Job) -> bool:
+                seen: set[str] = set()
+                current: Job | None = job
+                jobs_by_id = {str(j.id): j for j in all_completed}
+                jobs_by_id[company_job_id] = company_job
+                while current is not None:
+                    if current.company == company_name:
+                        return True
+                    request = current.request if isinstance(current.request, dict) else {}
+                    parent_id = request.get("parent_job_id")
+                    if not isinstance(parent_id, str) or parent_id in seen:
+                        return False
+                    seen.add(parent_id)
+                    current = jobs_by_id.get(parent_id)
+                return False
 
-        company_jobs = [j for j in all_jobs if belongs_to_company(j)]
+            company_jobs = [j for j in all_completed if j.address and belongs_to_company(j)]
 
         # Build contract entries from relational tables
         contracts = []
@@ -903,10 +953,19 @@ def company_overview(company_name: str) -> dict:
             if is_impl:
                 continue
 
-            # Read from contracts table
+            # Read from contracts table — fall back to address lookup when
+            # copy_static_cache has reassigned the Contract row to a newer job.
             contract_row = session.execute(
                 select(Contract).where(Contract.job_id == job.id).limit(1)
             ).scalar_one_or_none()
+            if contract_row is None and job.address:
+                chain = request.get("chain")
+                addr_stmt = select(Contract).where(
+                    Contract.address == job.address.lower(),
+                )
+                if chain:
+                    addr_stmt = addr_stmt.where(Contract.chain == chain)
+                contract_row = session.execute(addr_stmt.limit(1)).scalar_one_or_none()
 
             is_proxy = contract_row.is_proxy if contract_row else False
             proxy_type = contract_row.proxy_type if contract_row else None
@@ -1104,6 +1163,7 @@ def company_overview(company_name: str) -> dict:
                 "controllers": controllers,
                 "control_model": control_model,
                 "risk_level": summary_row.risk_level if summary_row else None,
+                "source_verified": summary_row.source_verified if summary_row else None,
                 "upgrade_count": upgrade_count,
                 "role": role,
                 "standards": standards,
@@ -1322,13 +1382,44 @@ def company_overview(company_name: str) -> dict:
 
         principals = list(principal_map.values())
 
+        # Build all_addresses from contracts table (includes discovered + analyzed)
+        if protocol_row:
+            all_contract_rows = (
+                session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
+            )
+        else:
+            # Fallback: collect from company_jobs
+            all_contract_rows = []
+            for j in company_jobs:
+                cr = session.execute(select(Contract).where(Contract.job_id == j.id).limit(1)).scalar_one_or_none()
+                if cr:
+                    all_contract_rows.append(cr)
+
+        all_addresses = sorted(
+            [
+                {
+                    "address": cr.address,
+                    "name": cr.contract_name,
+                    "source_verified": cr.source_verified,
+                    "is_proxy": cr.is_proxy,
+                    "analyzed": cr.job_id is not None,
+                    "discovery_source": cr.discovery_source,
+                    "chain": cr.chain,
+                }
+                for cr in all_contract_rows
+            ],
+            key=lambda x: (not x["analyzed"], x["name"] or "zzz"),
+        )
+
         return {
             "company": company_name,
+            "protocol_id": protocol_row.id if protocol_row else None,
             "contract_count": len(contracts),
             "contracts": contracts,
             "principals": principals,
             "ownership_hierarchy": hierarchy,
             "fund_flows": fund_flows,
+            "all_addresses": all_addresses,
         }
 
 
@@ -1434,6 +1525,28 @@ def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
                 label=request.label,
             )
             session.add(subscription)
+
+        # Also create a MonitoredContract for unified monitoring
+        existing_mc = session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.address == address,
+                MonitoredContract.chain == request.chain,
+            )
+        ).scalar_one_or_none()
+        if not existing_mc:
+            mc = MonitoredContract(
+                address=address,
+                chain=request.chain,
+                contract_type="proxy",
+                watched_proxy_id=proxy.id,
+                monitoring_config={"watch_upgrades": True, "watch_ownership": True},
+                last_known_state={"implementation": current_impl} if current_impl else {},
+                last_scanned_block=from_block,
+                needs_polling=needs_polling,
+                is_active=True,
+                enrollment_source="proxy_watch",
+            )
+            session.add(mc)
 
         session.commit()
         session.refresh(proxy)
@@ -1543,6 +1656,255 @@ def remove_subscription(subscription_id: str) -> dict[str, str]:
         session.delete(sub)
         session.commit()
         return {"status": "removed"}
+
+
+# ---------------------------------------------------------------------------
+# Unified protocol monitoring endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/protocols/{protocol_id}/monitoring")
+def list_protocol_monitoring(protocol_id: int) -> list[dict[str, Any]]:
+    """List all MonitoredContract rows for a protocol (including inactive)."""
+    with SessionLocal() as session:
+        stmt = select(MonitoredContract).where(
+            MonitoredContract.protocol_id == protocol_id,
+        )
+        contracts = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(c.id),
+                "address": c.address,
+                "chain": c.chain,
+                "contract_type": c.contract_type,
+                "monitoring_config": c.monitoring_config,
+                "last_known_state": c.last_known_state,
+                "last_scanned_block": c.last_scanned_block,
+                "needs_polling": c.needs_polling,
+                "is_active": c.is_active,
+                "enrollment_source": c.enrollment_source,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in contracts
+        ]
+
+
+@app.post("/api/protocols/{protocol_id}/re-enroll")
+def re_enroll_protocol(protocol_id: int, chain: str = "ethereum") -> dict[str, Any]:
+    """Manually trigger monitoring enrollment for a protocol.
+
+    Calls enroll_protocol_contracts directly, bypassing the automatic
+    in-flight job checks. Useful when enrollment produced wrong results
+    or after manual DB changes.
+    """
+    rpc_url = DEFAULT_RPC_URL
+    with SessionLocal() as session:
+        protocol = session.get(Protocol, protocol_id)
+        if protocol is None:
+            raise HTTPException(status_code=404, detail="Protocol not found")
+
+        from services.monitoring.enrollment import enroll_protocol_contracts
+
+        enrolled = enroll_protocol_contracts(session, protocol_id, rpc_url, chain)
+        return {
+            "status": "enrolled",
+            "protocol_id": protocol_id,
+            "contracts_enrolled": len(enrolled),
+            "contracts": [
+                {
+                    "id": str(mc.id),
+                    "address": mc.address,
+                    "contract_type": mc.contract_type,
+                    "monitoring_config": mc.monitoring_config,
+                    "needs_polling": mc.needs_polling,
+                    "is_active": mc.is_active,
+                }
+                for mc in enrolled
+            ],
+        }
+
+
+@app.post("/api/protocols/{protocol_id}/subscribe")
+def subscribe_to_protocol(protocol_id: int, request: ProtocolSubscribeRequest) -> dict[str, Any]:
+    """Create a ProtocolSubscription for governance event notifications."""
+    with SessionLocal() as session:
+        protocol = session.get(Protocol, protocol_id)
+        if protocol is None:
+            raise HTTPException(status_code=404, detail="Protocol not found")
+
+        sub = ProtocolSubscription(
+            protocol_id=protocol_id,
+            discord_webhook_url=request.discord_webhook_url,
+            label=request.label,
+            event_filter=request.event_filter,
+        )
+        session.add(sub)
+        session.commit()
+        session.refresh(sub)
+        return {
+            "id": str(sub.id),
+            "protocol_id": sub.protocol_id,
+            "discord_webhook_url": sub.discord_webhook_url,
+            "label": sub.label,
+            "event_filter": sub.event_filter,
+            "created_at": sub.created_at.isoformat() if sub.created_at else None,
+        }
+
+
+@app.get("/api/protocols/{protocol_id}/subscriptions")
+def list_protocol_subscriptions(protocol_id: int) -> list[dict[str, Any]]:
+    """List all ProtocolSubscription rows for a protocol."""
+    with SessionLocal() as session:
+        stmt = select(ProtocolSubscription).where(ProtocolSubscription.protocol_id == protocol_id)
+        subs = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(s.id),
+                "protocol_id": s.protocol_id,
+                "discord_webhook_url": s.discord_webhook_url,
+                "label": s.label,
+                "event_filter": s.event_filter,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in subs
+        ]
+
+
+@app.delete("/api/protocol-subscriptions/{sub_id}")
+def delete_protocol_subscription(sub_id: str) -> dict[str, str]:
+    """Delete a ProtocolSubscription by id."""
+    with SessionLocal() as session:
+        sub = session.get(ProtocolSubscription, uuid.UUID(sub_id))
+        if sub is None:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        session.delete(sub)
+        session.commit()
+        return {"status": "removed"}
+
+
+@app.get("/api/protocols/{protocol_id}/events")
+def list_protocol_events(protocol_id: int, limit: int = 50) -> list[dict[str, Any]]:
+    """List MonitoredEvents for all contracts in a protocol."""
+    with SessionLocal() as session:
+        stmt = (
+            select(MonitoredEvent, MonitoredContract)
+            .join(MonitoredContract, MonitoredEvent.monitored_contract_id == MonitoredContract.id)
+            .where(MonitoredContract.protocol_id == protocol_id)
+            .order_by(MonitoredEvent.detected_at.desc())
+            .limit(limit)
+        )
+        rows = session.execute(stmt).all()
+        return [
+            {
+                "id": str(e.id),
+                "monitored_contract_id": str(e.monitored_contract_id),
+                "event_type": e.event_type,
+                "block_number": e.block_number,
+                "tx_hash": e.tx_hash,
+                "data": {**(e.data or {}), "contract_address": mc.address},
+                "detected_at": e.detected_at.isoformat() if e.detected_at else None,
+            }
+            for e, mc in rows
+        ]
+
+
+@app.get("/api/monitored-contracts")
+def list_monitored_contracts(
+    protocol_id: int | None = None,
+    chain: str | None = None,
+) -> list[dict[str, Any]]:
+    """List all MonitoredContract rows, optionally filtered."""
+    with SessionLocal() as session:
+        stmt = select(MonitoredContract).order_by(MonitoredContract.created_at.desc())
+        if protocol_id is not None:
+            stmt = stmt.where(MonitoredContract.protocol_id == protocol_id)
+        if chain is not None:
+            stmt = stmt.where(MonitoredContract.chain == chain)
+        contracts = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(c.id),
+                "address": c.address,
+                "chain": c.chain,
+                "protocol_id": c.protocol_id,
+                "contract_type": c.contract_type,
+                "monitoring_config": c.monitoring_config,
+                "last_known_state": c.last_known_state,
+                "last_scanned_block": c.last_scanned_block,
+                "needs_polling": c.needs_polling,
+                "is_active": c.is_active,
+                "enrollment_source": c.enrollment_source,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+            }
+            for c in contracts
+        ]
+
+
+class UpdateMonitoredContractRequest(BaseModel):
+    monitoring_config: dict | None = Field(default=None, description="Updated monitoring config flags")
+    is_active: bool | None = Field(default=None, description="Toggle monitoring on/off")
+    needs_polling: bool | None = Field(default=None, description="Toggle storage-slot polling")
+
+
+@app.patch("/api/monitored-contracts/{contract_id}")
+def update_monitored_contract(contract_id: str, request: UpdateMonitoredContractRequest) -> dict[str, Any]:
+    """Update monitoring_config, is_active, or needs_polling on a MonitoredContract."""
+    with SessionLocal() as session:
+        mc = session.get(MonitoredContract, uuid.UUID(contract_id))
+        if mc is None:
+            raise HTTPException(status_code=404, detail="MonitoredContract not found")
+
+        if request.monitoring_config is not None:
+            mc.monitoring_config = request.monitoring_config
+        if request.is_active is not None:
+            mc.is_active = request.is_active
+        if request.needs_polling is not None:
+            mc.needs_polling = request.needs_polling
+
+        session.commit()
+        session.refresh(mc)
+        return {
+            "id": str(mc.id),
+            "address": mc.address,
+            "chain": mc.chain,
+            "protocol_id": mc.protocol_id,
+            "contract_type": mc.contract_type,
+            "monitoring_config": mc.monitoring_config,
+            "last_known_state": mc.last_known_state,
+            "last_scanned_block": mc.last_scanned_block,
+            "needs_polling": mc.needs_polling,
+            "is_active": mc.is_active,
+            "enrollment_source": mc.enrollment_source,
+            "created_at": mc.created_at.isoformat() if mc.created_at else None,
+        }
+
+
+@app.get("/api/monitored-events")
+def list_monitored_events(
+    contract_id: str | None = None,
+    event_type: str | None = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """List all MonitoredEvent rows, optionally filtered."""
+    with SessionLocal() as session:
+        stmt = select(MonitoredEvent).order_by(MonitoredEvent.detected_at.desc()).limit(limit)
+        if contract_id is not None:
+            stmt = stmt.where(MonitoredEvent.monitored_contract_id == contract_id)
+        if event_type is not None:
+            stmt = stmt.where(MonitoredEvent.event_type == event_type)
+        events = session.execute(stmt).scalars().all()
+        return [
+            {
+                "id": str(e.id),
+                "monitored_contract_id": str(e.monitored_contract_id),
+                "event_type": e.event_type,
+                "block_number": e.block_number,
+                "tx_hash": e.tx_hash,
+                "data": e.data,
+                "detected_at": e.detected_at.isoformat() if e.detected_at else None,
+            }
+            for e in events
+        ]
 
 
 @app.get("/{full_path:path}")

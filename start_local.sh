@@ -76,6 +76,12 @@ cleanup_stale_workers
 echo "Initializing database tables..."
 uv run python3 -c "from db.models import create_tables; create_tables(); print('Tables ready.')"
 
+# Ensure Playwright browsers are installed (needed by dapp_crawl_worker)
+if ! [ -d "$HOME/.cache/ms-playwright/chromium_headless_shell-1208" ]; then
+  echo "Installing Playwright browsers..."
+  uv run playwright install chromium
+fi
+
 # Trap to clean up background processes on exit
 cleanup() {
   echo ""
@@ -111,11 +117,11 @@ echo "Starting workers..."
 bash start_workers.sh &
 WORKERS_PID=$!
 
-# Start proxy monitor (event scanner + storage poller)
-echo "Starting proxy monitor..."
-uv run python -m workers.proxy_monitor &
+# Start protocol monitor (unified event scanner + storage poller)
+echo "Starting protocol monitor..."
+uv run python -m workers.protocol_monitor &
 PROXY_SCANNER_PID=$!
-uv run python -m workers.proxy_monitor --poll &
+uv run python -m workers.protocol_monitor --poll &
 PROXY_POLLER_PID=$!
 
 echo ""

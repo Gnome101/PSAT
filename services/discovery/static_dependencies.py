@@ -4,51 +4,19 @@
 import argparse
 import json
 import os
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
 
+from utils.rpc import JSON_RPC_TIMEOUT_SECONDS as RPC_TIMEOUT_SECONDS  # noqa: F401 — re-export
+from utils.rpc import (
+    get_code,  # noqa: F401 — re-export for backward compat
+    normalize_address,  # noqa: F401 — re-export for backward compat
+    rpc_request,
+)
+
 EMPTY_CODE_VALUES = {"0x", "0x0"}
-RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
-RPC_TIMEOUT_SECONDS = 8
-DEFAULT_PUBLIC_RPCS_BY_NETWORK = {
-    "ethereum": (
-        "https://eth.llamarpc.com",
-        "https://rpc.flashbots.net",
-        "https://eth-mainnet.public.blastapi.io",
-        "https://cloudflare-eth.com",
-        "https://ethereum-rpc.publicnode.com",
-    ),
-    "base": (
-        "https://mainnet.base.org",
-        "https://base.llamarpc.com",
-        "https://base-rpc.publicnode.com",
-    ),
-    "optimism": (
-        "https://mainnet.optimism.io",
-        "https://optimism.llamarpc.com",
-        "https://optimism-rpc.publicnode.com",
-    ),
-    "arbitrum": (
-        "https://arb1.arbitrum.io/rpc",
-        "https://arbitrum.llamarpc.com",
-        "https://arbitrum-one-rpc.publicnode.com",
-    ),
-    "polygon": (
-        "https://polygon-rpc.com",
-        "https://polygon.llamarpc.com",
-        "https://polygon-bor-rpc.publicnode.com",
-    ),
-}
-
-
-def normalize_address(address: str) -> str:
-    """Normalize an Ethereum address to lowercase with a single 0x prefix."""
-    return "0x" + address.lower().replace("0x", "", 1)
 
 
 def has_deployed_code(bytecode_hex: str) -> bool:
@@ -57,63 +25,8 @@ def has_deployed_code(bytecode_hex: str) -> bool:
 
 
 def rpc_call(rpc_url: str, method: str, params: list, retries: int = 1) -> Any:
-    """Send a JSON-RPC POST request with retries/backoff and return the 'result' field."""
-    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode("utf-8")
-    request = urllib.request.Request(
-        rpc_url,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "getContractAddresses/1.0",
-        },
-    )
-    for attempt in range(retries + 1):
-        try:
-            with urllib.request.urlopen(request, timeout=RPC_TIMEOUT_SECONDS) as response:
-                body = json.loads(response.read().decode("utf-8"))
-            if body.get("error"):
-                raise RuntimeError(str(body["error"]))
-            return body.get("result") or "0x"
-        except urllib.error.HTTPError as exc:
-            if exc.code in RETRYABLE_HTTP_CODES and attempt < retries:
-                time.sleep(0.3 * (2**attempt))
-                continue
-            raise RuntimeError(f"RPC request failed for {rpc_url}: HTTP Error {exc.code}") from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            if attempt < retries:
-                time.sleep(0.3 * (2**attempt))
-                continue
-            raise RuntimeError(f"RPC request failed for {rpc_url}: {exc}") from exc
-    raise RuntimeError(f"RPC request failed for {rpc_url}: all {retries + 1} attempts exhausted")
-
-
-def get_code(rpc_url: str, address: str) -> str:
-    """Fetch the deployed EVM bytecode at an address via eth_getCode."""
-    return rpc_call(rpc_url, "eth_getCode", [address, "latest"])
-
-
-def resolve_rpc_for_address(address: str, rpc_url: str | None = None) -> tuple[str, str]:
-    """Pick an RPC endpoint where the address has deployed bytecode."""
-    address = normalize_address(address)
-    if rpc_url:
-        if not has_deployed_code(get_code(rpc_url, address)):
-            raise RuntimeError(f"Address {address} has no deployed bytecode.")
-        return "custom", rpc_url
-
-    errors = []
-    for network, candidates in DEFAULT_PUBLIC_RPCS_BY_NETWORK.items():
-        for candidate_rpc in candidates:
-            try:
-                if has_deployed_code(get_code(candidate_rpc, address)):
-                    return network, candidate_rpc
-            except RuntimeError as exc:
-                errors.append(f"{network}: {exc}")
-
-    message = f"Could not find deployed bytecode for {address} on known public RPC endpoints."
-    if errors:
-        message += " " + " | ".join(errors[:3])
-    raise RuntimeError(message)
+    """Backward-compatible wrapper. Prefer utils.rpc.rpc_request for new code."""
+    return rpc_request(rpc_url, method, params, retries=retries) or "0x"
 
 
 def extract_push20_addresses(bytecode_hex: str) -> set[str]:
@@ -181,29 +94,13 @@ def discover_dependencies(
 def find_dependencies(address: str, rpc_url: str | None = None, code_cache: dict[str, str] | None = None) -> dict:
     """Resolve an RPC endpoint and return discovered static contract dependencies."""
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-    env_rpc = os.getenv("ETH_RPC")
-    effective_rpc = rpc_url or env_rpc
+    effective_rpc = rpc_url or os.getenv("ETH_RPC")
+    if not effective_rpc:
+        raise RuntimeError("No RPC URL provided and ETH_RPC not set")
 
-    if effective_rpc:
-        try:
-            network, resolved_rpc = resolve_rpc_for_address(address, effective_rpc)
-        except RuntimeError:
-            if rpc_url:
-                raise
-            network, resolved_rpc = resolve_rpc_for_address(address, None)
-    else:
-        network, resolved_rpc = resolve_rpc_for_address(address, None)
-
-    deps = discover_dependencies(resolved_rpc, address, code_cache=code_cache)
-
-    output = {
-        "address": normalize_address(address),
-        "dependencies": deps,
-        "rpc": resolved_rpc,
-    }
-    if network != "custom":
-        output["network"] = network
-    return output
+    address = normalize_address(address)
+    deps = discover_dependencies(effective_rpc, address, code_cache=code_cache)
+    return {"address": address, "dependencies": deps, "rpc": effective_rpc}
 
 
 def main():

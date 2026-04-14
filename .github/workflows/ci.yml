@@ -26,6 +26,22 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: psat
+          POSTGRES_PASSWORD: psat
+          POSTGRES_DB: psat
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U psat"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://psat:psat@localhost:5432/psat_test
     steps:
       - uses: actions/checkout@v4
       - uses: foundry-rs/foundry-toolchain@v1
@@ -34,11 +50,29 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --dev
       - run: forge --version
+      - name: Create test database
+        run: PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
       - run: uv run pytest -k "not live" -q
 
   coverage:
     runs-on: ubuntu-latest
     needs: test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: psat
+          POSTGRES_PASSWORD: psat
+          POSTGRES_DB: psat
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U psat"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://psat:psat@localhost:5432/psat_test
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +81,8 @@ jobs:
         with:
           version: stable
       - uses: astral-sh/setup-uv@v5
+      - name: Create test database
+        run: PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
 
       - name: Baseline coverage (main)
         if: github.event_name == 'pull_request'

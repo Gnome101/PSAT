@@ -8,16 +8,31 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Contract, Job, JobStage
-from db.queue import count_analysis_children, create_job, store_artifact, store_source_files
+from db.models import Contract, Job, JobStage, Protocol
+from db.queue import (
+    copy_static_cache,
+    count_analysis_children,
+    create_job,
+    find_completed_static_cache,
+    find_existing_job_for_address,
+    find_previous_company_inventory,
+    get_artifact,
+    is_known_proxy,
+    store_artifact,
+    store_source_files,
+)
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
-from services.discovery.inventory import search_protocol_inventory
+from services.discovery.inventory import merge_inventory, search_protocol_inventory
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.discovery")
+
+# Minimum confidence threshold for creating child analysis jobs.
+_MIN_CONFIDENCE_THRESHOLD = 0.3
 
 
 class DiscoveryWorker(BaseWorker):
@@ -42,19 +57,95 @@ class DiscoveryWorker(BaseWorker):
         analyze_limit = request.get("analyze_limit", 5)
         root_job_id = str(job.id)
 
+        # Load previous inventory from a prior completed company job (same chain)
+        prev_inventory: dict | None = None
+        prev_job = find_previous_company_inventory(session, company, exclude_job_id=job.id, chain=chain)
+        if prev_job:
+            _raw = get_artifact(session, prev_job.id, "contract_inventory")
+            if isinstance(_raw, dict):
+                prev_inventory = _raw
+
         self.update_detail(session, job, f"Discovering contracts for {company}")
         inventory = search_protocol_inventory(company, chain=chain)
 
+        # Merge with previous inventory if available
+        if prev_inventory and isinstance(prev_inventory, dict):
+            inventory = merge_inventory(prev_inventory, inventory)
+
         store_artifact(session, job.id, "contract_inventory", data=inventory)
 
+        # Create or look up Protocol row
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company)).scalar_one_or_none()
+        if protocol_row is None:
+            protocol_row = Protocol(
+                name=company,
+                official_domain=inventory.get("official_domain"),
+            )
+            session.add(protocol_row)
+            session.flush()
+        elif inventory.get("official_domain") and not protocol_row.official_domain:
+            protocol_row.official_domain = inventory.get("official_domain")
+            session.flush()
+
+        job.protocol_id = protocol_row.id
+        session.commit()
+
         discovered = [e for e in inventory.get("contracts", []) if e.get("address")]
+
+        # Write ALL discovered addresses to contracts table
+        for entry in discovered:
+            addr = str(entry["address"]).lower()
+            entry_chains = entry.get("chains")
+            entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
+            existing = session.execute(
+                select(Contract).where(Contract.address == addr, Contract.chain == entry_chain)
+            ).scalar_one_or_none()
+            if existing is None:
+                session.add(
+                    Contract(
+                        address=addr,
+                        chain=entry_chain,
+                        protocol_id=protocol_row.id,
+                        contract_name=entry.get("name"),
+                        rank_score=entry.get("rank_score"),
+                        confidence=entry.get("confidence"),
+                        discovery_source=entry.get("discovery_source") or "inventory",
+                        chains=entry.get("chains"),
+                    )
+                )
+            elif existing.protocol_id is None:
+                existing.protocol_id = protocol_row.id
+        session.commit()
+
         already_used = count_analysis_children(session, root_job_id)
         remaining = max(0, analyze_limit - already_used)
-        selected = discovered[:remaining]
+        # Filter by minimum confidence threshold
+        eligible = [e for e in discovered if (e.get("confidence") or 0) >= _MIN_CONFIDENCE_THRESHOLD]
+
+        # Select entries, deduplicating as we go so skipped entries don't
+        # consume slots — the limit is filled from further down the list.
+        selected = []
+        for entry in eligible:
+            if len(selected) >= remaining:
+                break
+            addr = str(entry["address"])
+            entry_chains = entry.get("chains")
+            entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
+            existing = find_existing_job_for_address(session, addr, chain=entry_chain)
+            if existing:
+                if not is_known_proxy(session, addr, chain=entry_chain):
+                    logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
+                    continue
+                logger.info(
+                    "Job %s: proxy %s has existing job %s but re-queuing for upgrade check",
+                    job.id,
+                    addr,
+                    existing.id,
+                )
+            selected.append(entry)
 
         if not selected:
             self.update_detail(session, job, "No contracts found to analyze")
-            # Store summary and let base worker complete the job
             store_artifact(
                 session,
                 job.id,
@@ -66,11 +157,9 @@ class DiscoveryWorker(BaseWorker):
                     "analyzed_count": 0,
                 },
             )
-            # Override next_stage to done since there's nothing to process
             from db.queue import complete_job
 
             complete_job(session, job.id, f"Discovery complete for {company}: no contracts found")
-            # Signal base worker to skip the normal advance
             raise JobHandledDirectly()
 
         child_ids = []
@@ -88,8 +177,9 @@ class DiscoveryWorker(BaseWorker):
                 "root_job_id": root_job_id,
                 "rank_score": contract.get("rank_score"),
                 "confidence": contract.get("confidence"),
-                "discovery_source": contract.get("discovery_source"),
+                "discovery_source": contract.get("discovery_source") or "inventory",
                 "chains": contract.get("chains"),
+                "protocol_id": protocol_row.id,
             }
             child_job = create_job(session, child_request)
             child_ids.append({"job_id": str(child_job.id), "address": addr, "name": child_name, "chain": child_chain})
@@ -159,14 +249,14 @@ class DiscoveryWorker(BaseWorker):
             defillama_request = {
                 "defillama_protocol": slug,
                 "name": f"{company}_defillama_{slug}",
+                "company": company,
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "analyze_limit": request.get("analyze_limit", 5),
                 "rpc_url": request.get("rpc_url"),
+                "protocol_id": job.protocol_id,
             }
             dl_job = create_job(session, defillama_request, initial_stage=JobStage.defillama_scan)
-            dl_job.company = company
-            session.commit()
             logger.info("Job %s: spawned DefiLlama scan job %s (slug=%s)", job.id, dl_job.id, slug)
 
         # Spawn DApp crawl
@@ -175,16 +265,16 @@ class DiscoveryWorker(BaseWorker):
             dapp_request = {
                 "dapp_urls": [dapp_url],
                 "name": f"{company}_dapp_crawl",
+                "company": company,
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "analyze_limit": request.get("analyze_limit", 5),
                 "chain_id": request.get("chain_id") or 1,
                 "wait": request.get("wait", 10),
                 "rpc_url": request.get("rpc_url"),
+                "protocol_id": job.protocol_id,
             }
             crawl_job = create_job(session, dapp_request, initial_stage=JobStage.dapp_crawl)
-            crawl_job.company = company
-            session.commit()
             logger.info("Job %s: spawned DApp crawl job %s (url=%s)", job.id, crawl_job.id, dapp_url)
 
     def _process_address(self, session: Session, job: Job) -> None:
@@ -192,6 +282,43 @@ class DiscoveryWorker(BaseWorker):
         address = job.address
         if address is None:
             raise ValueError("Address job missing address")
+
+        # Check for cached static data from a previously completed job (same chain)
+        request = job.request if isinstance(job.request, dict) else {}
+        cached_job = find_completed_static_cache(session, address, chain=request.get("chain"))
+        if cached_job is not None:
+            self.update_detail(session, job, f"Reusing cached static data for {address}")
+            new_contract_id = copy_static_cache(session, cached_job.id, job.id)
+            if new_contract_id is not None:
+                # Mark the job so downstream workers know static data was cached
+                req = job.request if isinstance(job.request, dict) else {}
+                job.request = {**req, "static_cached": True, "cache_source_job_id": str(cached_job.id)}
+                session.commit()
+
+                # Set job name from the cached contract if not already set
+                if not job.name:
+                    from sqlalchemy import select as sa_select
+
+                    contract_row = session.execute(
+                        sa_select(Contract).where(Contract.job_id == job.id).limit(1)
+                    ).scalar_one_or_none()
+                    if contract_row and contract_row.contract_name:
+                        job.name = f"{contract_row.contract_name}_{address[2:10]}"
+                        session.commit()
+
+                logger.info(
+                    "Discovery cache hit for %s — reused data from job %s",
+                    address,
+                    cached_job.id,
+                )
+                self.update_detail(session, job, f"Discovery complete (cached): {address}")
+                return
+
+            logger.warning(
+                "Discovery cache copy failed for %s from job %s — falling back to fetch",
+                address,
+                cached_job.id,
+            )
 
         self.update_detail(session, job, f"Fetching verified source for {address}")
         result = fetch(address)
@@ -215,29 +342,55 @@ class DiscoveryWorker(BaseWorker):
         except Exception:
             logger.debug("Could not fetch deployer for %s", address)
 
-        # Write to contracts table (replaces contract_meta + build_settings artifacts)
+        # Write to contracts table — upsert to handle pre-existing discovered rows
         request = job.request if isinstance(job.request, dict) else {}
-        contract = Contract(
-            job_id=job.id,
-            address=address,
-            chain=request.get("chain"),
-            contract_name=contract_name,
-            compiler_version=result.get("CompilerVersion", ""),
-            language="vyper" if is_vyper_result(result) else "solidity",
-            evm_version=evm_version,
-            optimization=result.get("OptimizationUsed", "1") == "1",
-            optimization_runs=int(result.get("Runs", "200") or 200),
-            source_format="standard_json" if "sources" in str(result.get("SourceCode", ""))[:10] else "flat",
-            source_file_count=len(sources),
-            license=result.get("LicenseType", ""),
-            deployer=deployer,
-            remappings=remappings or [],
-            rank_score=request.get("rank_score"),
-            confidence=request.get("confidence"),
-            discovery_source=request.get("discovery_source"),
-            chains=request.get("chains"),
-        )
-        session.merge(contract)
+        existing = session.execute(
+            select(Contract).where(
+                Contract.address == address.lower(),
+                Contract.chain == request.get("chain"),
+            )
+        ).scalar_one_or_none()
+
+        if existing:
+            existing.job_id = job.id
+            existing.contract_name = contract_name
+            existing.compiler_version = result.get("CompilerVersion", "")
+            existing.language = "vyper" if is_vyper_result(result) else "solidity"
+            existing.evm_version = evm_version
+            existing.optimization = result.get("OptimizationUsed", "1") == "1"
+            existing.optimization_runs = int(result.get("Runs", "200") or 200)
+            existing.source_format = "standard_json" if "sources" in str(result.get("SourceCode", ""))[:10] else "flat"
+            existing.source_file_count = len(sources)
+            existing.license = result.get("LicenseType", "")
+            existing.deployer = deployer
+            existing.remappings = remappings or []
+            existing.source_verified = True
+            if not existing.protocol_id and job.protocol_id:
+                existing.protocol_id = job.protocol_id
+        else:
+            contract = Contract(
+                job_id=job.id,
+                address=address.lower(),
+                chain=request.get("chain"),
+                protocol_id=job.protocol_id,
+                contract_name=contract_name,
+                compiler_version=result.get("CompilerVersion", ""),
+                language="vyper" if is_vyper_result(result) else "solidity",
+                evm_version=evm_version,
+                optimization=result.get("OptimizationUsed", "1") == "1",
+                optimization_runs=int(result.get("Runs", "200") or 200),
+                source_format="standard_json" if "sources" in str(result.get("SourceCode", ""))[:10] else "flat",
+                source_file_count=len(sources),
+                license=result.get("LicenseType", ""),
+                deployer=deployer,
+                remappings=remappings or [],
+                rank_score=request.get("rank_score"),
+                confidence=request.get("confidence"),
+                discovery_source=request.get("discovery_source"),
+                chains=request.get("chains"),
+                source_verified=True,
+            )
+            session.add(contract)
         session.commit()
 
         if not job.name:

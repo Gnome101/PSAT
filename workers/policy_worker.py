@@ -251,6 +251,39 @@ class PolicyWorker(BaseWorker):
                 job.name or "Contract",
             )
 
+            # Auto-enroll protocol contracts into unified monitoring
+            if job.protocol_id:
+                try:
+                    from services.monitoring.enrollment import maybe_enroll_protocol
+
+                    enrolled = maybe_enroll_protocol(
+                        session,
+                        job.protocol_id,
+                        rpc_url,
+                        chain="ethereum",
+                        exclude_job_id=job.id,
+                    )
+                    if enrolled:
+                        logger.info(
+                            "Auto-enrolled protocol %s contracts into monitoring",
+                            job.protocol_id,
+                        )
+                except Exception:
+                    logger.exception("Auto-enrollment failed for protocol %s", job.protocol_id)
+
+            # Send completion webhook for re-analysis jobs
+            request = job.request if isinstance(job.request, dict) else {}
+            if request.get("reanalysis_trigger"):
+                try:
+                    from services.monitoring.notifier import notify_reanalysis_complete
+
+                    notify_reanalysis_complete(session, job)
+                except Exception:
+                    logger.exception(
+                        "Reanalysis completion notification failed for job %s",
+                        job.id,
+                    )
+
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 

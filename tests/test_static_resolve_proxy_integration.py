@@ -34,6 +34,7 @@ def _job(**overrides):
         "address": _ADDR,
         "name": "TestContract",
         "request": {"rpc_url": _RPC},
+        "protocol_id": None,
     }
     payload.update(overrides)
     return SimpleNamespace(**payload)

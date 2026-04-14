@@ -120,7 +120,7 @@ async function mockApi(page) {
 /** Navigate to the company surface page. */
 async function goToSurface(page) {
   await mockApi(page);
-  await page.goto("/company/testco");
+  await page.goto("/company/testco/surface");
   // Wait for surface header to render
   await page.waitForSelector(".ps-surface", { timeout: 10000 });
   // Wait for ReactFlow canvas + ELK layout to produce nodes
@@ -238,7 +238,7 @@ test.describe("Guard badge navigation", () => {
 test.describe("URL focus parameter", () => {
   test("focus param in URL highlights node with gold border on load", async ({ page }) => {
     await mockApi(page);
-    await page.goto(`/company/testco?focus=${VAULT_ADDR}`);
+    await page.goto(`/company/testco/surface?focus=${VAULT_ADDR}`);
     await page.waitForSelector(".ps-node", { timeout: 10000 });
 
     // Wait for focus to apply

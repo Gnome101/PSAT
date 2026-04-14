@@ -41,6 +41,9 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "live: tests that require a running API server and workers (deselected by default)",
+]
 
 [tool.ruff]
 target-version = "py310"
@@ -53,6 +56,7 @@ select = ["E", "F", "I", "W"]
 "services/crawlers/dapp/browser.py" = ["E501"]
 "tests/test_effect_label_adversarial.py" = ["E501"]
 "tests/test_symbolic_effects.py" = ["E501"]
+"tests/*" = ["F811"]
 
 [tool.coverage.run]
 source = ["api", "workers", "services", "db", "utils"]

@@ -26,7 +26,6 @@ from db.models import (
 )
 from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlTrackingPlan
-from services.discovery.upgrade_history import write_upgrade_history
 from services.resolution.recursive import write_resolved_control_graph
 from services.resolution.tracking import build_control_snapshot
 from workers.base import DEBUG_TIMING, BaseWorker
@@ -321,7 +320,9 @@ class ResolutionWorker(BaseWorker):
             child_job = create_job(session, child_request, initial_stage=JobStage.discovery)
             if parent_company:
                 child_job.company = parent_company
-                session.commit()
+            if job.protocol_id:
+                child_job.protocol_id = job.protocol_id
+            session.commit()
 
             queued_count += 1
             logger.info(
@@ -340,49 +341,47 @@ class ResolutionWorker(BaseWorker):
             )
 
     def _run_upgrade_history(self, session: Session, job: Job, project_dir: Path) -> None:
-        """Fetch upgrade history for proxy contracts found in dependencies. Non-fatal."""
-        dependencies = get_artifact(session, job.id, "dependencies")
-        if not isinstance(dependencies, dict):
-            logger.info("Job %s: skipping upgrade history — no dependencies artifact", job.id)
+        """Write upgrade events to the relational table from the cached artifact.
+
+        The static worker already fetches and caches upgrade history
+        incrementally as the ``upgrade_history`` artifact.  This method
+        just reads that artifact and projects it into the
+        ``upgrade_events`` table for relational queries.
+        """
+        uh_data = get_artifact(session, job.id, "upgrade_history")
+        if not isinstance(uh_data, dict) or not uh_data.get("proxies"):
+            logger.info("Job %s: skipping upgrade history — no upgrade_history artifact", job.id)
             return
 
-        self.update_detail(session, job, "Fetching proxy upgrade history")
-        deps_path = project_dir / "dependencies.json"
-        deps_path.write_text(json.dumps(dependencies, indent=2) + "\n")
-
+        self.update_detail(session, job, "Writing upgrade events")
         try:
-            uh_path = write_upgrade_history(deps_path)
-            if uh_path and uh_path.exists():
-                uh_data = json.loads(uh_path.read_text())
-                # Write to upgrade_events table
-                contract_row = session.execute(
-                    select(Contract).where(Contract.job_id == job.id).limit(1)
-                ).scalar_one_or_none()
-                if contract_row and isinstance(uh_data, dict):
-                    session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == contract_row.id).delete()
-                    for evt in uh_data.get("upgrades", []):
+            contract_row = session.execute(
+                select(Contract).where(Contract.job_id == job.id).limit(1)
+            ).scalar_one_or_none()
+            if contract_row:
+                session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == contract_row.id).delete()
+                for proxy_info in uh_data["proxies"].values():
+                    proxy_addr = proxy_info.get("proxy_address", "")
+                    for evt in proxy_info.get("events", []):
+                        if evt.get("event_type") != "upgraded":
+                            continue
                         session.add(
                             UpgradeEvent(
                                 contract_id=contract_row.id,
-                                proxy_address=evt.get("proxy", ""),
-                                old_impl=evt.get("old_implementation"),
-                                new_impl=evt.get("new_implementation"),
+                                proxy_address=proxy_addr,
+                                old_impl=None,
+                                new_impl=evt.get("implementation"),
                                 block_number=evt.get("block_number"),
                                 tx_hash=evt.get("tx_hash"),
                             )
                         )
-                    session.commit()
+                session.commit()
 
-                logger.info(
-                    "Resolution stage upgrade history complete for job %s address=%s",
-                    job.id,
-                    job.address or "0x0",
-                )
-            else:
-                logger.info(
-                    "Resolution stage upgrade history skipped for job %s — no proxies found",
-                    job.id,
-                )
+            logger.info(
+                "Resolution stage upgrade history complete for job %s address=%s",
+                job.id,
+                job.address or "0x0",
+            )
         except Exception as exc:
             logger.warning(
                 "Resolution stage upgrade history failed for job %s address=%s: %s",
@@ -390,7 +389,6 @@ class ResolutionWorker(BaseWorker):
                 job.address or "0x0",
                 exc,
             )
-            store_artifact(session, job.id, "upgrade_history_error", data={"error": str(exc)})
 
 
 def main():

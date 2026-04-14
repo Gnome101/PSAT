@@ -54,6 +54,7 @@ def _job(**overrides) -> Any:
         "name": "TestContract",
         "request": {"rpc_url": "https://rpc.example"},
         "company": None,
+        "protocol_id": None,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -123,6 +124,7 @@ def _patch_dep_phase(monkeypatch, worker, static=None, dynamic=None, classify=No
         "workers.static_worker.store_artifact",
         lambda _s, _j, name, data=None, text_data=None: store.update({name: data or text_data}),
     )
+    monkeypatch.setattr("workers.static_worker.get_artifact", lambda _s, _j, _name: None)
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         "workers.static_worker.find_dependencies",
@@ -132,16 +134,16 @@ def _patch_dep_phase(monkeypatch, worker, static=None, dynamic=None, classify=No
         "workers.static_worker.find_dynamic_dependencies",
         dynamic
         or (
-            lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None: _dynamic_deps(
-                addr
+            lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None, **kw: (
+                _dynamic_deps(addr)
             )
         ),
     )
     monkeypatch.setattr(
         "workers.static_worker.classify_contracts",
-        classify or (lambda tgt, deps, rpc, dynamic_edges=None, code_cache=None: _classifications(tgt)),
+        classify or (lambda tgt, deps, rpc, dynamic_edges=None, code_cache=None, **kw: _classifications(tgt)),
     )
-    monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda u: u)
+    monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda u, **kw: u)
     return store
 
 
@@ -158,7 +160,7 @@ def test_dep_phase_passes_proxy_address(monkeypatch, tmp_path):
     worker = StaticWorker()
     captured: list[dict] = []
 
-    def capture_dynamic(address, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None):
+    def capture_dynamic(address, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None, **kw):
         captured.append({"address": address, "proxy_address": proxy_address})
         graph = [{"from": address, "to": DEP_A, "op": "CALL", "provenance": []}]
         return _dynamic_deps(address, deps=[DEP_A], graph=graph)
@@ -172,7 +174,12 @@ def test_dep_phase_passes_proxy_address(monkeypatch, tmp_path):
     # Mock upgrade history to avoid Etherscan calls
     monkeypatch.setattr(
         "services.discovery.upgrade_history.build_upgrade_history",
-        lambda _p, enrich=True: {"schema_version": "0.1", "target_address": IMPL, "proxies": {}, "total_upgrades": 0},
+        lambda _p, enrich=True, from_block=0: {
+            "schema_version": "0.1",
+            "target_address": IMPL,
+            "proxies": {},
+            "total_upgrades": 0,
+        },
     )
 
     project_dir = tmp_path / "p"
@@ -200,8 +207,16 @@ def test_dep_phase_stores_upgrade_history(monkeypatch, tmp_path):
         static=_static_deps(TARGET, [DEP_A]),
         dynamic=lambda addr, **_kw: _dynamic_deps(addr, [DEP_A]),
     )
-    fake_uh = {"schema_version": "0.1", "target_address": TARGET, "proxies": {DEP_A: {}}, "total_upgrades": 2}
-    monkeypatch.setattr("services.discovery.upgrade_history.build_upgrade_history", lambda _p, enrich=True: fake_uh)
+    fake_uh = {
+        "schema_version": "0.1",
+        "target_address": TARGET,
+        "proxies": {DEP_A: {}},
+        "total_upgrades": 2,
+    }
+    monkeypatch.setattr(
+        "services.discovery.upgrade_history.build_upgrade_history",
+        lambda _p, enrich=True, from_block=0: fake_uh,
+    )
 
     project_dir = tmp_path / "p"
     project_dir.mkdir()
@@ -468,7 +483,7 @@ def test_full_data_flow_unified_through_graph_and_upgrade_history(monkeypatch, t
     assert any(e["op"] == "STATIC_REF" and e["to"] == f"addr:{DEP_B}" for e in viz["edges"])
 
     # -- upgrade history (mock Etherscan boundary) --
-    monkeypatch.setattr("services.discovery.upgrade_history._fetch_logs_etherscan", lambda _a, _t: [])
+    monkeypatch.setattr("services.discovery.upgrade_history._fetch_logs_etherscan", lambda _a, _t, from_block=0: [])
     from utils import etherscan
 
     monkeypatch.setattr(etherscan, "get_contract_info", lambda _a: (None, {}))
@@ -1017,10 +1032,17 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
         address=None,
         company="TestProtocol",
         name=None,
+        protocol_id=None,
         request={"company": "TestProtocol", "chain": "ethereum", "rpc_url": "https://rpc.example", "analyze_limit": 2},
     )
-    # Mock session.commit to avoid DB calls
+    # Mock session.commit and session.flush to avoid DB calls
     session.commit = MagicMock()
+    session.flush = MagicMock()
+    session.add = MagicMock()
+    # Mock session.execute to return None for Protocol lookup and Contract lookups
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    session.execute = MagicMock(return_value=mock_result)
 
     stored_artifacts: dict[str, Any] = {}
     created_jobs: list[dict] = []
@@ -1032,7 +1054,7 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
     monkeypatch.setattr(
         "workers.discovery.create_job",
         lambda _s, req, initial_stage=None: (
-            created_jobs.append(req) or SimpleNamespace(id=f"child-{len(created_jobs)}", company=None)
+            created_jobs.append(req) or SimpleNamespace(id=f"child-{len(created_jobs)}", company=None, protocol_id=None)
         ),
     )
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
@@ -1043,13 +1065,30 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
         lambda _s, _root_id: 0,
     )
 
+    # Mock get_artifact (no previous inventory)
+    monkeypatch.setattr(
+        "workers.discovery.get_artifact",
+        lambda _s, _j, _name: None,
+    )
+
+    # Mock cache lookup and dedup functions (no previous inventory, no existing jobs)
+    monkeypatch.setattr(
+        "workers.discovery.find_previous_company_inventory",
+        lambda _s, _company, exclude_job_id=None, chain=None: None,
+    )
+    monkeypatch.setattr(
+        "workers.discovery.find_existing_job_for_address",
+        lambda _s, _addr, chain=None: None,
+    )
+
+
     # Mock inventory search to return 2 contracts
     monkeypatch.setattr(
         "workers.discovery.search_protocol_inventory",
         lambda company, chain=None, limit=25: {
             "contracts": [
-                {"address": "0xaaaa" + "a" * 36, "name": "TokenA", "chains": ["ethereum"]},
-                {"address": "0xbbbb" + "b" * 36, "name": "TokenB", "chains": ["ethereum"]},
+                {"address": "0xaaaa" + "a" * 36, "name": "TokenA", "chains": ["ethereum"], "confidence": 0.9},
+                {"address": "0xbbbb" + "b" * 36, "name": "TokenB", "chains": ["ethereum"], "confidence": 0.8},
             ],
             "official_domain": "testprotocol.io",
         },
@@ -1247,6 +1286,7 @@ def test_dep_phase_stores_dependency_errors_on_failure(monkeypatch, tmp_path):
         "workers.static_worker.store_artifact",
         lambda _s, _j, name, data=None, text_data=None: store.update({name: data or text_data}),
     )
+    monkeypatch.setattr("workers.static_worker.get_artifact", lambda _s, _j, _name: None)
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
     monkeypatch.setattr(
         "workers.static_worker.find_dependencies",
@@ -1254,7 +1294,7 @@ def test_dep_phase_stores_dependency_errors_on_failure(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         "workers.static_worker.find_dynamic_dependencies",
-        lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None: (
+        lambda addr, rpc_url=None, tx_limit=10, tx_hashes=None, proxy_address=None, code_cache=None, **kw: (
             _ for _ in ()
         ).throw(RuntimeError("dynamic dep error")),
     )
