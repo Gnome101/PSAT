@@ -8,12 +8,19 @@ jobs for each discovered address.
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Contract, Job, JobStage
-from db.queue import complete_job, count_analysis_children, create_job, store_artifact
+from db.models import Contract, DAppInteraction, Job, JobStage
+from db.queue import (
+    complete_job,
+    count_analysis_children,
+    create_job,
+    get_or_create_protocol,
+    store_artifact,
+)
 from services.crawlers.dapp.crawl import crawl_dapp
 from workers.base import BaseWorker, JobHandledDirectly
 
@@ -42,7 +49,19 @@ class DAppCrawlWorker(BaseWorker):
             534352: "scroll",
         }
         wait = request.get("wait") or 10
-        analyze_limit = request.get("analyze_limit", 25)
+        analyze_limit = request.get("analyze_limit", 5)
+
+        # Derive / create Protocol row from URL hostname if no company context exists
+        first_host = (urlparse(urls[0]).hostname or "").lstrip(".")
+        if first_host.startswith("www."):
+            first_host = first_host[4:]
+        protocol_name = job.company or first_host or f"dapp_{str(job.id)[:8]}"
+        official_domain = first_host or None
+        protocol_row = get_or_create_protocol(session, protocol_name, official_domain=official_domain)
+        job.protocol_id = protocol_row.id
+        if not job.company:
+            job.company = protocol_row.name
+        session.commit()
 
         self.update_detail(session, job, f"Preparing crawl for {len(urls)} DApp URL(s)")
         logger.info("DApp crawl started for job %s: %d URLs", job.id, len(urls))
@@ -74,8 +93,29 @@ class DAppCrawlWorker(BaseWorker):
             },
         )
 
+        # Persist full interaction log for later audit / analytics
+        for entry in result.get("interactions", []):
+            to_raw = entry.get("to") or ""
+            session.add(
+                DAppInteraction(
+                    job_id=job.id,
+                    protocol_id=protocol_row.id,
+                    type=str(entry.get("type") or "unknown"),
+                    page_url=entry.get("url"),
+                    to_address=to_raw.lower() if to_raw else None,
+                    value=entry.get("value"),
+                    data=entry.get("data"),
+                    method_selector=entry.get("method_selector"),
+                    typed_data=entry.get("typed_data"),
+                    is_permit=bool(entry.get("is_permit")),
+                    message=entry.get("message"),
+                    captured_at=entry.get("timestamp"),
+                )
+            )
+        session.commit()
+
         # Write ALL discovered addresses to contracts table
-        protocol_id = job.protocol_id
+        protocol_id = protocol_row.id
         default_chain = request.get("chain") or chain_id_to_name.get(chain_id)
         # Build per-address context from address_details
         detail_by_addr: dict[str, dict] = {}
@@ -122,22 +162,28 @@ class DAppCrawlWorker(BaseWorker):
                 continue
             seen_addresses.add(normalized)
 
-            existing = session.execute(select(Job).where(Job.address == addr).limit(1)).scalar_one_or_none()
+            existing = session.execute(
+                select(Job).where(
+                    Job.address == addr,
+                    Job.request["root_job_id"].as_string() == root_job_id,
+                ).limit(1)
+            ).scalar_one_or_none()
             if existing:
                 logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
                 continue
 
+            addr_info = detail_by_addr.get(normalized, {})
             child_request = {
                 "address": addr,
                 "name": f"dapp_{addr[2:10]}",
+                "company": protocol_row.name,
                 "parent_job_id": str(job.id),
                 "root_job_id": root_job_id,
                 "rpc_url": request.get("rpc_url"),
                 "discovery_source": "dapp_crawl",
                 "protocol_id": protocol_id,
+                "chain": addr_info.get("chain") or request.get("chain") or default_chain,
             }
-            if request.get("chain"):
-                child_request["chain"] = request["chain"]
 
             child_job = create_job(session, child_request)
             child_ids.append({"job_id": str(child_job.id), "address": addr})

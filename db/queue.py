@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from .models import Artifact, Job, JobStage, JobStatus, SourceFile
+from .models import Artifact, Job, JobStage, JobStatus, Protocol, SourceFile
 
 
 def create_job(
@@ -31,6 +31,24 @@ def create_job(
     session.commit()
     session.refresh(job)
     return job
+
+
+def get_or_create_protocol(
+    session: Session,
+    name: str,
+    official_domain: str | None = None,
+) -> Protocol:
+    """Look up Protocol by name, create if missing. Backfill official_domain if still null."""
+    row = session.execute(select(Protocol).where(Protocol.name == name)).scalar_one_or_none()
+    if row is None:
+        row = Protocol(name=name, official_domain=official_domain)
+        session.add(row)
+        session.flush()
+        return row
+    if official_domain and not row.official_domain:
+        row.official_domain = official_domain
+        session.flush()
+    return row
 
 
 def claim_job(session: Session, target_stage: JobStage, worker_id: str) -> Job | None:

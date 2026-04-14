@@ -478,6 +478,35 @@ class ContractBalance(Base):
     __table_args__ = (Index("ix_contract_balances_contract_id", "contract_id"),)
 
 
+class DAppInteraction(Base):
+    __tablename__ = "dapp_interactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    protocol_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
+    )
+    type: Mapped[str] = mapped_column(String(50), nullable=False)
+    page_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    to_address: Mapped[str | None] = mapped_column(String(42), nullable=True)
+    value: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    method_selector: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    typed_data: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    is_permit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    captured_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_dapp_interactions_job_id", "job_id"),
+        Index("ix_dapp_interactions_to_address", "to_address"),
+        Index("ix_dapp_interactions_protocol_id", "protocol_id"),
+    )
+
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")

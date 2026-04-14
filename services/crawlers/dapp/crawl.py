@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
 
@@ -86,6 +87,7 @@ def crawl_dapp(
     return {
         "addresses": addresses,
         "address_details": interaction_log.get_address_details(),
+        "interactions": [asdict(i) for i in interaction_log.interactions],
         "interaction_count": len(interaction_log.interactions),
         "session_start": interaction_log.session_start,
     }

@@ -11,8 +11,8 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Contract, Job, JobStage, Protocol
-from db.queue import count_analysis_children, create_job, store_artifact, store_source_files
+from db.models import Contract, Job, JobStage
+from db.queue import count_analysis_children, create_job, get_or_create_protocol, store_artifact, store_source_files
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import search_protocol_inventory
@@ -49,18 +49,7 @@ class DiscoveryWorker(BaseWorker):
         store_artifact(session, job.id, "contract_inventory", data=inventory)
 
         # Create or look up Protocol row
-        protocol_row = session.execute(select(Protocol).where(Protocol.name == company)).scalar_one_or_none()
-        if protocol_row is None:
-            protocol_row = Protocol(
-                name=company,
-                official_domain=inventory.get("official_domain"),
-            )
-            session.add(protocol_row)
-            session.flush()
-        elif inventory.get("official_domain") and not protocol_row.official_domain:
-            protocol_row.official_domain = inventory.get("official_domain")
-            session.flush()
-
+        protocol_row = get_or_create_protocol(session, company, official_domain=inventory.get("official_domain"))
         job.protocol_id = protocol_row.id
         session.commit()
 
