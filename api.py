@@ -307,6 +307,13 @@ def index():
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
+    from sqlalchemy import text
+
+    try:
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+    except Exception as exc:  # pragma: no cover - surfaces DB failures to Fly healthchecks
+        raise HTTPException(status_code=503, detail=f"db unavailable: {exc}") from exc
     return {"status": "ok"}
 
 

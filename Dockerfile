@@ -32,11 +32,13 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
+RUN uv run --no-sync playwright install --with-deps chromium
+
 COPY main.py api.py alembic.ini ./
 COPY db/ db/
 COPY workers/ workers/
-COPY start_workers.sh ./
-RUN chmod +x start_workers.sh
+COPY start_workers.sh start_monitor.sh ./
+RUN chmod +x start_workers.sh start_monitor.sh
 COPY services/ services/
 COPY schemas/ schemas/
 COPY utils/ utils/

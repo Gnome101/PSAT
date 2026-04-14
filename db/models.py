@@ -28,6 +28,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
+from sqlalchemy.pool import NullPool
 
 
 class Base(DeclarativeBase):
@@ -621,7 +622,26 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+
+def _make_engine(url: str):
+    # Neon's pgbouncer pooler runs in transaction mode, which breaks SQLAlchemy's
+    # prepared statement cache. Detect the pooler URL (or allow an explicit opt-in)
+    # and disable client-side pooling so each checkout opens a fresh connection.
+    use_null_pool = os.environ.get("DB_USE_NULL_POOL") == "1" or "-pooler." in url
+    if use_null_pool:
+        return create_engine(url, poolclass=NullPool, pool_pre_ping=True)
+    # Direct connections: keep a small pool so 10+ worker subprocesses don't
+    # individually open large pools against Neon (connection limits are lower there).
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        pool_size=int(os.environ.get("DB_POOL_SIZE", "5")),
+        max_overflow=int(os.environ.get("DB_MAX_OVERFLOW", "5")),
+        pool_recycle=int(os.environ.get("DB_POOL_RECYCLE", "1800")),
+    )
+
+
+engine = _make_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
 
 
