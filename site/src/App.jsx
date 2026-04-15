@@ -19,8 +19,56 @@ import ProtocolSurface from "./ProtocolSurface.jsx";
 const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "raw"];
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
-async function api(path, options) {
-  const response = await fetch(path, options);
+// TODO: replace this with a real sign-in page + session-based auth. Options
+// that fit our Fly deployment: (a) an identity-aware proxy sidecar such as
+// oauth2-proxy or Pomerium that authenticates real users (Google/GitHub SSO)
+// and injects X-PSAT-Admin-Key server-side so the key never touches a browser,
+// or (b) an app-level user system with per-user login + roles (fastapi-users,
+// a managed provider like WorkOS/Clerk, etc.). The window.prompt +
+// localStorage pattern below is a stopgap so admins can click buttons during
+// local dev and early prod — it's a shared-secret bearer token sitting in
+// every admin's browser, with no per-user audit log and no revocation story
+// beyond rotating the key and logging everyone out.
+const ADMIN_KEY_STORAGE = "psat_admin_key";
+
+function getAdminKey() {
+  try {
+    return window.localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  } catch {
+    return "";
+  }
+}
+
+function setAdminKey(key) {
+  try {
+    if (key) window.localStorage.setItem(ADMIN_KEY_STORAGE, key);
+    else window.localStorage.removeItem(ADMIN_KEY_STORAGE);
+  } catch {
+    // localStorage unavailable (private mode, etc.) — admin actions will
+    // require re-entering the key on every request.
+  }
+}
+
+function buildHeadersWithKey(options, key) {
+  const headers = new Headers(options.headers || {});
+  if (key && !headers.has("X-PSAT-Admin-Key")) {
+    headers.set("X-PSAT-Admin-Key", key);
+  }
+  return headers;
+}
+
+async function api(path, options = {}) {
+  let response = await fetch(path, { ...options, headers: buildHeadersWithKey(options, getAdminKey()) });
+  if (response.status === 401) {
+    const entered = window.prompt(
+      "Admin key required for this action.\nPaste your PSAT admin key:",
+      getAdminKey(),
+    );
+    if (entered) {
+      setAdminKey(entered);
+      response = await fetch(path, { ...options, headers: buildHeadersWithKey(options, entered) });
+    }
+  }
   if (!response.ok) {
     throw new Error(await response.text());
   }
