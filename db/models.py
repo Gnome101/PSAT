@@ -626,7 +626,7 @@ SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
 
 
 def create_tables() -> None:
-    """Create all tables (idempotent). Call this instead of alembic migrations."""
+    """Create all tables (idempotent)."""
     # Ensure enum types exist before creating tables
     from sqlalchemy import text
 

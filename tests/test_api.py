@@ -81,6 +81,49 @@ def test_health_and_config_endpoints() -> None:
     assert "default_rpc_url" in config.json()
 
 
+def test_admin_key_required_for_non_get(monkeypatch) -> None:
+    """Without a valid admin key, write endpoints must return 401."""
+    import api
+
+    # Drop the conftest override for this test only and force a known key.
+    api.app.dependency_overrides.pop(api.require_admin_key, None)
+    monkeypatch.setattr(api, "ADMIN_KEY", "real-key")
+
+    client = TestClient(api.app)
+
+    no_header = client.post(
+        "/api/analyze",
+        json={"address": "0x1234567890123456789012345678901234567890", "name": "demo"},
+    )
+    bad_header = client.post(
+        "/api/analyze",
+        json={"address": "0x1234567890123456789012345678901234567890", "name": "demo"},
+        headers={"X-PSAT-Admin-Key": "wrong"},
+    )
+    assert no_header.status_code == 401
+    assert bad_header.status_code == 401
+
+
+def test_cors_allows_configured_origin(monkeypatch) -> None:
+    """Configured origins should be reflected in CORS responses."""
+    monkeypatch.setenv("PSAT_SITE_ORIGIN", "https://psat.example.com")
+    import importlib
+
+    import api
+
+    importlib.reload(api)
+    try:
+        api.app.dependency_overrides[api.require_admin_key] = lambda: None
+        client = TestClient(api.app)
+
+        response = client.get("/api/health", headers={"Origin": "https://psat.example.com"})
+        assert response.status_code == 200
+        assert response.headers.get("access-control-allow-origin") == "https://psat.example.com"
+    finally:
+        monkeypatch.delenv("PSAT_SITE_ORIGIN", raising=False)
+        importlib.reload(api)
+
+
 @patch("api.SessionLocal")
 @patch("api.create_job")
 def test_analyze_endpoint_creates_job(mock_create_job, mock_session_cls) -> None:
