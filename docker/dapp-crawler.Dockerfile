@@ -25,6 +25,5 @@ COPY workers/ workers/
 COPY services/ services/
 COPY db/ db/
 COPY utils/ utils/
-COPY alembic.ini ./
 
 CMD ["uv", "run", "--no-sync", "python", "-m", "workers.dapp_crawl_worker"]

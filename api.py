@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import uuid
@@ -10,7 +11,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -141,7 +143,36 @@ async def lifespan(app: FastAPI):
     yield
 
 
+ADMIN_KEY = os.environ.get("PSAT_ADMIN_KEY")
+if not ADMIN_KEY:
+    logger.warning(
+        "PSAT_ADMIN_KEY is not set — write endpoints will reject every request. "
+        "Set PSAT_ADMIN_KEY in the environment to enable admin operations."
+    )
+
+
+def require_admin_key(x_psat_admin_key: str | None = Header(default=None)) -> None:
+    """Reject any non-GET request that does not carry a valid admin key."""
+    if not ADMIN_KEY or not x_psat_admin_key or not hmac.compare_digest(x_psat_admin_key, ADMIN_KEY):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin key required")
+
+
+_raw_origins = os.environ.get("PSAT_SITE_ORIGIN", "")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+if not ALLOWED_ORIGINS:
+    logger.warning(
+        "PSAT_SITE_ORIGIN is not set — CORS will deny all cross-origin requests. "
+        "Set PSAT_SITE_ORIGIN to a comma-separated list of allowed origins."
+    )
+
 app = FastAPI(title="PSAT Demo", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-PSAT-Admin-Key"],
+)
 if SITE_ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=SITE_ASSETS_DIR), name="assets")
 
@@ -362,7 +393,7 @@ def list_jobs() -> list[dict[str, Any]]:
         return result
 
 
-@app.post("/api/analyze")
+@app.post("/api/analyze", dependencies=[Depends(require_admin_key)])
 def analyze_address(request: AnalyzeRequest) -> dict[str, Any]:
     if request.address and not request.address.startswith("0x"):
         raise HTTPException(status_code=400, detail="Address must start with 0x")
@@ -377,7 +408,7 @@ def analyze_address(request: AnalyzeRequest) -> dict[str, Any]:
         return job.to_dict()
 
 
-@app.post("/api/company/{company_name}/analyze-remaining")
+@app.post("/api/company/{company_name}/analyze-remaining", dependencies=[Depends(require_admin_key)])
 def analyze_remaining(company_name: str) -> dict[str, Any]:
     """Queue analysis jobs for all discovered-but-not-analyzed contracts in a company."""
     with SessionLocal() as session:
@@ -1536,7 +1567,7 @@ def _watched_proxy_to_dict(proxy: WatchedProxy) -> dict[str, Any]:
     }
 
 
-@app.post("/api/watched-proxies")
+@app.post("/api/watched-proxies", dependencies=[Depends(require_admin_key)])
 def add_watched_proxy(request: WatchProxyRequest) -> dict[str, Any]:
     """Subscribe to proxy upgrade notifications."""
     if not request.address.startswith("0x"):
@@ -1665,7 +1696,7 @@ def list_watched_proxies() -> list[dict[str, Any]]:
         return [_watched_proxy_to_dict(p) for p in proxies]
 
 
-@app.delete("/api/watched-proxies/{proxy_id}")
+@app.delete("/api/watched-proxies/{proxy_id}", dependencies=[Depends(require_admin_key)])
 def remove_watched_proxy(proxy_id: str) -> dict[str, str]:
     """Stop watching a proxy contract."""
     with SessionLocal() as session:
@@ -1721,7 +1752,7 @@ def list_subscriptions(proxy_id: str) -> list[dict[str, Any]]:
         ]
 
 
-@app.post("/api/watched-proxies/{proxy_id}/subscriptions")
+@app.post("/api/watched-proxies/{proxy_id}/subscriptions", dependencies=[Depends(require_admin_key)])
 def add_subscription(proxy_id: str, request: SubscribeRequest) -> dict[str, Any]:
     """Add a notification subscription to an existing watched proxy."""
     with SessionLocal() as session:
@@ -1745,7 +1776,7 @@ def add_subscription(proxy_id: str, request: SubscribeRequest) -> dict[str, Any]
         }
 
 
-@app.delete("/api/subscriptions/{subscription_id}")
+@app.delete("/api/subscriptions/{subscription_id}", dependencies=[Depends(require_admin_key)])
 def remove_subscription(subscription_id: str) -> dict[str, str]:
     """Remove a notification subscription."""
     with SessionLocal() as session:
@@ -1788,7 +1819,7 @@ def list_protocol_monitoring(protocol_id: int) -> list[dict[str, Any]]:
         ]
 
 
-@app.post("/api/protocols/{protocol_id}/re-enroll")
+@app.post("/api/protocols/{protocol_id}/re-enroll", dependencies=[Depends(require_admin_key)])
 def re_enroll_protocol(protocol_id: int, chain: str = "ethereum") -> dict[str, Any]:
     """Manually trigger monitoring enrollment for a protocol.
 
@@ -1823,7 +1854,7 @@ def re_enroll_protocol(protocol_id: int, chain: str = "ethereum") -> dict[str, A
         }
 
 
-@app.post("/api/protocols/{protocol_id}/subscribe")
+@app.post("/api/protocols/{protocol_id}/subscribe", dependencies=[Depends(require_admin_key)])
 def subscribe_to_protocol(protocol_id: int, request: ProtocolSubscribeRequest) -> dict[str, Any]:
     """Create a ProtocolSubscription for governance event notifications."""
     with SessionLocal() as session:
@@ -1869,7 +1900,7 @@ def list_protocol_subscriptions(protocol_id: int) -> list[dict[str, Any]]:
         ]
 
 
-@app.delete("/api/protocol-subscriptions/{sub_id}")
+@app.delete("/api/protocol-subscriptions/{sub_id}", dependencies=[Depends(require_admin_key)])
 def delete_protocol_subscription(sub_id: str) -> dict[str, str]:
     """Delete a ProtocolSubscription by id."""
     with SessionLocal() as session:
@@ -1945,7 +1976,7 @@ class UpdateMonitoredContractRequest(BaseModel):
     needs_polling: bool | None = Field(default=None, description="Toggle storage-slot polling")
 
 
-@app.patch("/api/monitored-contracts/{contract_id}")
+@app.patch("/api/monitored-contracts/{contract_id}", dependencies=[Depends(require_admin_key)])
 def update_monitored_contract(contract_id: str, request: UpdateMonitoredContractRequest) -> dict[str, Any]:
     """Update monitoring_config, is_active, or needs_polling on a MonitoredContract."""
     with SessionLocal() as session:

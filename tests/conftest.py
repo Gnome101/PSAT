@@ -31,6 +31,23 @@ from db.models import (
 
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
+os.environ.setdefault("PSAT_ADMIN_KEY", "test-admin-key")
+
+
+@pytest.fixture(autouse=True)
+def _bypass_admin_key():
+    """Override the admin-key dependency for every test so existing API tests keep working."""
+    try:
+        import api as _api
+    except Exception:
+        yield
+        return
+    _api.app.dependency_overrides[_api.require_admin_key] = lambda: None
+    try:
+        yield
+    finally:
+        _api.app.dependency_overrides.pop(_api.require_admin_key, None)
+
 
 def _can_connect() -> bool:
     if not DATABASE_URL:

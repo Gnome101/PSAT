@@ -71,7 +71,6 @@ cleanup_stale_workers() {
   exit 1
 }
 
-# Run migrations
 cleanup_stale_workers
 
 echo "Initializing database tables..."
