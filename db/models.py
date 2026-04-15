@@ -104,8 +104,12 @@ class Artifact(Base):
         UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
+    # Legacy inline storage. Kept nullable so pre-Tigris rows still read; new writes leave NULL.
     data: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     text_data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     job: Mapped[Job] = relationship("Job", back_populates="artifacts")
@@ -121,7 +125,8 @@ class SourceFile(Base):
         UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
     )
     path: Mapped[str] = mapped_column(String, nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     job: Mapped[Job] = relationship("Job", back_populates="source_files")
 
@@ -625,6 +630,25 @@ engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
 
 
+def apply_storage_migrations(target_engine=None) -> None:
+    """Add object-storage columns to existing artifact and source_files tables.
+
+    Idempotent — every ALTER uses IF NOT EXISTS or is a NULL-relaxing change.
+    Called from create_tables() during app startup and from test fixtures so
+    a TEST_DATABASE_URL that already has the old schema picks up the new columns.
+    """
+    from sqlalchemy import text
+
+    target = target_engine if target_engine is not None else engine
+    with target.connect() as conn:
+        conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
+        conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS size_bytes BIGINT"))
+        conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS content_type VARCHAR(64)"))
+        conn.execute(text("ALTER TABLE source_files ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
+        conn.execute(text("ALTER TABLE source_files ALTER COLUMN content DROP NOT NULL"))
+        conn.commit()
+
+
 def create_tables() -> None:
     """Create all tables (idempotent)."""
     # Ensure enum types exist before creating tables
@@ -649,6 +673,7 @@ def create_tables() -> None:
             )
         conn.commit()
     Base.metadata.create_all(engine)
+    apply_storage_migrations(engine)
 
 
 def drop_tables() -> None:

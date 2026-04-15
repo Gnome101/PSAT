@@ -279,12 +279,13 @@ def test_list_jobs_with_proxy_flag(mock_session_cls):
             # First call: list jobs
             result.scalars.return_value.all.return_value = [job1, job2]
         else:
-            # Second call: batch-fetch contract_flags artifacts
-            # Return a row that marks job1 as proxy
+            # Second call: batch-fetch contract_flags artifacts via .scalars()
             flag_row = MagicMock()
             flag_row.job_id = job1.id
+            flag_row.storage_key = None
             flag_row.data = {"is_proxy": True}
-            result.__iter__ = MagicMock(return_value=iter([flag_row]))
+            flag_row.text_data = None
+            result.scalars.return_value = iter([flag_row])
         return result
 
     mock_session.execute.side_effect = route_execute
