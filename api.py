@@ -48,6 +48,7 @@ from db.queue import (
     get_all_artifacts,
     get_artifact,
 )
+from db.storage import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -403,7 +404,9 @@ def list_jobs() -> list[dict[str, Any]]:
             for art in session.execute(flags_stmt).scalars():
                 try:
                     value = _resolve_artifact_value(art)
-                except Exception:
+                except StorageError:
+                    # Storage object missing or unreachable — skip but don't block the list.
+                    logger.warning("contract_flags storage read failed for job %s", art.job_id)
                     continue
                 if isinstance(value, dict) and value.get("is_proxy"):
                     proxy_ids.add(str(art.job_id))

@@ -15,10 +15,12 @@ import json
 import sys
 import urllib.request
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -349,3 +351,134 @@ def test_inline_fallback_when_storage_unconfigured(db_session, monkeypatch):
     assert row.storage_key is None
     assert row.data == {"v": 1}
     assert get_artifact(db_session, job.id, "x") == {"v": 1}
+
+
+# ---------------------------------------------------------------------------
+# 11. store_artifact cleans up the storage object when the DB write fails
+# ---------------------------------------------------------------------------
+
+
+def test_store_artifact_deletes_orphan_on_db_failure(db_session, storage_bucket):
+    """Storage object is deleted if the INSERT raises — no dangling orphans in the bucket."""
+    from db.queue import artifact_key, create_job, store_artifact
+    from db.storage import StorageKeyMissing
+
+    job = create_job(db_session, {"address": "0xab", "name": "orphan-1"})
+    key = artifact_key(job.id, "will_orphan")
+
+    real_execute = db_session.execute
+
+    def failing_execute(stmt, *a, **kw):
+        stmt_text = str(stmt).lower()
+        if "insert into artifacts" in stmt_text:
+            raise OperationalError("simulated DB outage", {}, Exception())
+        return real_execute(stmt, *a, **kw)
+
+    with patch.object(db_session, "execute", side_effect=failing_execute):
+        with pytest.raises(OperationalError):
+            store_artifact(db_session, job.id, "will_orphan", data={"v": 1})
+    db_session.rollback()
+
+    with pytest.raises(StorageKeyMissing):
+        storage_bucket.get(key)
+
+
+# ---------------------------------------------------------------------------
+# 12. store_source_files deletes partial uploads when a later put fails
+# ---------------------------------------------------------------------------
+
+
+def test_store_source_files_cleans_up_orphans_on_midbatch_failure(db_session, storage_bucket):
+    """Uploads from earlier iterations are deleted when a later iteration raises."""
+    from db.models import SourceFile
+    from db.queue import create_job, source_file_key, store_source_files
+    from db.storage import StorageClient, StorageKeyMissing
+
+    job = create_job(db_session, {"address": "0xab", "name": "orphan-2"})
+
+    real_put = StorageClient.put
+    calls = {"n": 0}
+
+    def flaky_put(self, key, body, content_type, metadata=None):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("simulated Tigris outage mid-batch")
+        return real_put(self, key, body, content_type, metadata=metadata)
+
+    files_in_order = {
+        "src/First.sol": "first content",
+        "src/Second.sol": "second content",
+        "src/Third.sol": "third content",
+    }
+
+    with patch.object(StorageClient, "put", flaky_put):
+        with pytest.raises(RuntimeError, match="simulated Tigris outage"):
+            store_source_files(db_session, job.id, files_in_order)
+
+    db_session.rollback()
+
+    rows = db_session.execute(select(SourceFile).where(SourceFile.job_id == job.id)).scalars().all()
+    assert rows == []
+
+    first_key = source_file_key(job.id, "src/First.sol")
+    with pytest.raises(StorageKeyMissing):
+        storage_bucket.get(first_key)
+
+
+# ---------------------------------------------------------------------------
+# 13. Source file path is recoverable from S3 user-metadata
+# ---------------------------------------------------------------------------
+
+
+def test_source_file_path_recoverable_from_storage_metadata(db_session, storage_bucket):
+    """Even if the DB row is lost, head_object returns the original path in user-metadata."""
+    from db.models import SourceFile
+    from db.queue import create_job, store_source_files
+
+    job = create_job(db_session, {"address": "0xab", "name": "recovery"})
+    store_source_files(db_session, job.id, {"src/Important.sol": "contract Important {}"})
+
+    row = db_session.execute(select(SourceFile).where(SourceFile.job_id == job.id)).scalar_one()
+    storage_key = row.storage_key
+
+    # Simulate losing the row (backup restore, cascade delete, etc).
+    db_session.delete(row)
+    db_session.commit()
+
+    head = storage_bucket._client.head_object(Bucket=storage_bucket.bucket, Key=storage_key)
+    user_metadata = {k.lower(): v for k, v in (head.get("Metadata") or {}).items()}
+    assert user_metadata.get("path") == "src/Important.sol"
+    assert user_metadata.get("job_id") == str(job.id)
+
+
+# ---------------------------------------------------------------------------
+# 14. /api/jobs surfaces programming bugs instead of silently swallowing them
+# ---------------------------------------------------------------------------
+
+
+def test_list_jobs_surfaces_non_storage_errors(db_session, storage_bucket):
+    """A resolver bug (AttributeError) bubbles up as a 500 instead of hiding as is_proxy=False."""
+    import api as api_module
+    from db.models import JobStage, JobStatus
+    from db.queue import create_job, store_artifact
+
+    job = create_job(db_session, {"address": "0xabcdefde00000000000000000000000000000042", "name": "bug-test"})
+    job.status = JobStatus.completed
+    job.stage = JobStage.done
+    db_session.commit()
+
+    store_artifact(db_session, job.id, "contract_flags", data={"is_proxy": True})
+
+    api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
+
+    def buggy_resolver(art):
+        raise AttributeError("BUG: artifact.dat typo (should be artifact.data)")
+
+    with (
+        patch.object(api_module, "SessionLocal", _SessionFactory(db_session)),
+        patch.object(api_module, "_resolve_artifact_value", side_effect=buggy_resolver),
+    ):
+        client = TestClient(api_module.app, raise_server_exceptions=False)
+        resp = client.get("/api/jobs")
+
+    assert resp.status_code == 500

@@ -97,11 +97,25 @@ class StorageClient:
             config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
         )
 
-    def put(self, key: str, body: bytes, content_type: str) -> None:
+    def put(
+        self,
+        key: str,
+        body: bytes,
+        content_type: str,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
         from botocore.exceptions import BotoCoreError, ClientError
 
+        params: dict[str, Any] = {
+            "Bucket": self.bucket,
+            "Key": key,
+            "Body": body,
+            "ContentType": content_type,
+        }
+        if metadata:
+            params["Metadata"] = metadata
         try:
-            self._client.put_object(Bucket=self.bucket, Key=key, Body=body, ContentType=content_type)
+            self._client.put_object(**params)
         except (BotoCoreError, ClientError) as exc:
             raise StorageUnavailable(f"put_object failed for {key}: {exc}") from exc
 

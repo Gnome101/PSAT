@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import func, select
@@ -20,6 +21,7 @@ from .models import (
     SourceFile,
 )
 from .storage import (
+    StorageError,
     StorageKeyMissing,
     artifact_key,
     deserialize_artifact,
@@ -27,6 +29,8 @@ from .storage import (
     serialize_artifact,
     source_file_key,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_job(
@@ -169,12 +173,21 @@ def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, t
     When ``ARTIFACT_STORAGE_*`` env vars are set, the body is written to object
     storage and only metadata (storage_key, size_bytes, content_type) is stored
     in Postgres. Otherwise, the body lives inline in ``data`` / ``text_data``.
+
+    If the storage put succeeds but the DB write fails, the storage object is
+    deleted — but only if the row did not pre-exist. Overwriting a previously-
+    committed artifact with the same deterministic key and then rolling back
+    leaves the object in place (deleting it would break the previous row).
     """
     client = get_storage_client()
     if client is not None:
         body, content_type = serialize_artifact(data, text_data)
         key = artifact_key(job_id, name)
-        client.put(key, body, content_type)
+        preexisting = session.execute(
+            select(Artifact.id).where(Artifact.job_id == job_id, Artifact.name == name).limit(1)
+        ).scalar_one_or_none()
+
+        client.put(key, body, content_type, metadata={"artifact_name": name, "job_id": str(job_id)})
         stmt = pg_insert(Artifact).values(
             job_id=job_id,
             name=name,
@@ -194,8 +207,17 @@ def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, t
                 "content_type": stmt.excluded.content_type,
             },
         )
-        session.execute(stmt)
-        session.commit()
+        try:
+            session.execute(stmt)
+            session.commit()
+        except Exception:
+            session.rollback()
+            if preexisting is None:
+                try:
+                    client.delete(key)
+                except StorageError:
+                    logger.warning("Failed to clean up orphan storage object %s", key)
+            raise
         return
 
     stmt = pg_insert(Artifact).values(
@@ -245,19 +267,47 @@ def get_all_artifacts(session: Session, job_id: Any) -> dict[str, Any]:
 def store_source_files(session: Session, job_id: Any, files: dict[str, str]) -> None:
     """Bulk insert source files for a job (replaces existing).
 
-    When object storage is configured, file bodies are uploaded and only the
-    storage key is kept in Postgres.
+    When object storage is configured, every body is uploaded first with the
+    path carried in user-metadata (so the path is recoverable from storage
+    alone). Only after all uploads succeed do we swap the DB rows. If any
+    upload fails, already-uploaded objects are deleted so the bucket does not
+    accumulate orphans pointing at nothing.
     """
-    session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
     client = get_storage_client()
-    for path, content in files.items():
-        if client is not None:
-            key = source_file_key(job_id, path)
-            client.put(key, content.encode("utf-8"), "text/plain; charset=utf-8")
-            session.add(SourceFile(job_id=job_id, path=path, content=None, storage_key=key))
-        else:
+    if client is None:
+        session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
+        for path, content in files.items():
             session.add(SourceFile(job_id=job_id, path=path, content=content))
-    session.commit()
+        session.commit()
+        return
+
+    uploaded_keys: list[str] = []
+    try:
+        entries: list[tuple[str, str]] = []
+        for path, content in files.items():
+            key = source_file_key(job_id, path)
+            client.put(
+                key,
+                content.encode("utf-8"),
+                "text/plain; charset=utf-8",
+                metadata={"path": path, "job_id": str(job_id)},
+            )
+            uploaded_keys.append(key)
+            entries.append((path, key))
+
+        # All uploads succeeded — swap DB rows atomically.
+        session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
+        for path, key in entries:
+            session.add(SourceFile(job_id=job_id, path=path, content=None, storage_key=key))
+        session.commit()
+    except Exception:
+        session.rollback()
+        for key in uploaded_keys:
+            try:
+                client.delete(key)
+            except StorageError:
+                logger.warning("Failed to clean up orphan source file object %s", key)
+        raise
 
 
 def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
