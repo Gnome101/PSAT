@@ -25,7 +25,7 @@ from sqlalchemy.exc import OperationalError
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.cache_helpers import requires_postgres  # noqa: E402
-from tests.conftest import requires_storage  # noqa: E402
+from tests.conftest import SessionFactory, requires_storage  # noqa: E402
 
 pytestmark = [requires_postgres, requires_storage]
 
@@ -35,28 +35,12 @@ pytestmark = [requires_postgres, requires_storage]
 # ---------------------------------------------------------------------------
 
 
-class _SessionFactory:
-    """Stand-in for sessionmaker that yields a single shared Session."""
-
-    def __init__(self, session):
-        self._session = session
-
-    def __call__(self):
-        return self
-
-    def __enter__(self):
-        return self._session
-
-    def __exit__(self, *exc):
-        return False
-
-
 @pytest.fixture()
 def api_with(monkeypatch, db_session, storage_bucket):
     """Wire the FastAPI app to the test DB session and storage bucket."""
     import api as api_module
 
-    monkeypatch.setattr(api_module, "SessionLocal", _SessionFactory(db_session))
+    monkeypatch.setattr(api_module, "SessionLocal", SessionFactory(db_session))
     api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
     return api_module
 
@@ -247,15 +231,31 @@ def test_list_jobs_detects_proxy_via_storage(api_with, db_session, storage_bucke
 
 
 # ---------------------------------------------------------------------------
-# 7. /api/health hits the DB
+# 7. /api/health probes both the DB and storage
 # ---------------------------------------------------------------------------
 
 
-def test_health_endpoint_runs_db_select(api_with):
+def test_health_endpoint_reports_db_and_storage(api_with):
     client = TestClient(api_with.app)
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {"status": "ok", "db": "ok", "storage": "ok"}
+
+
+def test_health_endpoint_503_when_storage_unreachable(api_with, monkeypatch):
+    """If storage is configured but the bucket can't be reached, return 503."""
+    from db import storage as storage_module
+
+    def _boom(self):
+        raise storage_module.StorageUnavailable("bucket gone")
+
+    monkeypatch.setattr(storage_module.StorageClient, "health_check", _boom)
+
+    client = TestClient(api_with.app)
+    resp = client.get("/api/health")
+    assert resp.status_code == 503
+    payload = resp.json()
+    assert payload == {"status": "unavailable", "db": "ok", "storage": "unavailable"}
 
 
 # ---------------------------------------------------------------------------
@@ -475,7 +475,7 @@ def test_list_jobs_surfaces_non_storage_errors(db_session, storage_bucket):
         raise AttributeError("BUG: artifact.dat typo (should be artifact.data)")
 
     with (
-        patch.object(api_module, "SessionLocal", _SessionFactory(db_session)),
+        patch.object(api_module, "SessionLocal", SessionFactory(db_session)),
         patch.object(api_module, "_resolve_artifact_value", side_effect=buggy_resolver),
     ):
         client = TestClient(api_module.app, raise_server_exceptions=False)

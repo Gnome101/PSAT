@@ -94,7 +94,13 @@ class StorageClient:
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
             region_name=region,
-            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+            config=Config(
+                signature_version="s3v4",
+                s3={"addressing_style": "path"},
+                connect_timeout=2,
+                read_timeout=5,
+                retries={"max_attempts": 1},
+            ),
         )
 
     def put(
@@ -174,6 +180,15 @@ class StorageClient:
             self._client.head_bucket(Bucket=self.bucket)
         except ClientError:
             self._client.create_bucket(Bucket=self.bucket)
+
+    def health_check(self) -> None:
+        """Verify the bucket is reachable. Raises StorageUnavailable on failure."""
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        try:
+            self._client.head_bucket(Bucket=self.bucket)
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageUnavailable(f"head_bucket failed for {self.bucket}: {exc}") from exc
 
 
 def _read_env() -> tuple[str | None, str | None, str | None, str | None]:

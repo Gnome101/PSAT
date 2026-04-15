@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tests.cache_helpers import requires_postgres  # noqa: E402
+
 
 def _make_fake_job(
     job_id: str | None = None,
@@ -69,14 +71,17 @@ def test_spa_fallback_serves_html_for_deep_link() -> None:
     assert "Run an address and inspect the control surface" in response.text
 
 
-def test_health_and_config_endpoints() -> None:
-    client = make_client()
-
-    health = client.get("/api/health")
-    config = client.get("/api/config")
+@requires_postgres
+def test_health_and_config_endpoints(api_client) -> None:
+    health = api_client.get("/api/health")
+    config = api_client.get("/api/config")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    payload = health.json()
+    assert payload["status"] == "ok"
+    assert payload["db"] == "ok"
+    # conftest scrubs ARTIFACT_STORAGE_*, so this client sees the inline path.
+    assert payload["storage"] == "inline"
     assert config.status_code == 200
     assert "default_rpc_url" in config.json()
 
@@ -104,8 +109,11 @@ def test_admin_key_required_for_non_get(monkeypatch) -> None:
     assert bad_header.status_code == 401
 
 
-def test_cors_allows_configured_origin(monkeypatch) -> None:
+@requires_postgres
+def test_cors_allows_configured_origin(monkeypatch, db_session) -> None:
     """Configured origins should be reflected in CORS responses."""
+    from tests.conftest import SessionFactory
+
     monkeypatch.setenv("PSAT_SITE_ORIGIN", "https://psat.example.com")
     import importlib
 
@@ -113,6 +121,9 @@ def test_cors_allows_configured_origin(monkeypatch) -> None:
 
     importlib.reload(api)
     try:
+        # The reload reset SessionLocal to the prod-default engine; point it
+        # back at the test DB so /api/health can reach Postgres.
+        api.SessionLocal = SessionFactory(db_session)
         api.app.dependency_overrides[api.require_admin_key] = lambda: None
         client = TestClient(api.app)
 

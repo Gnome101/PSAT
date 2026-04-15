@@ -13,19 +13,14 @@ from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# Strip any ARTIFACT_STORAGE_* leaked in from a developer's .env so tests that
-# don't opt in to the storage_bucket fixture see the inline-Postgres path.
-# Tests that need storage explicitly receive `storage_bucket` and the fixture
-# re-populates the env from TEST_ARTIFACT_STORAGE_*.
-for _k in (
+_STORAGE_ENV_KEYS = (
     "ARTIFACT_STORAGE_ENDPOINT",
     "ARTIFACT_STORAGE_BUCKET",
     "ARTIFACT_STORAGE_ACCESS_KEY",
     "ARTIFACT_STORAGE_SECRET_KEY",
-):
-    os.environ.pop(_k, None)
+)
 
-from db.models import (  # noqa: E402  (import after env scrub)
+from db.models import (  # noqa: E402
     Base,
     MonitoredContract,
     MonitoredEvent,
@@ -116,6 +111,27 @@ def storage_bucket(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _scrub_storage_env(monkeypatch):
+    """Clear ARTIFACT_STORAGE_* before every test.
+
+    `db/models.py` calls `load_dotenv()` at import, which re-populates these
+    from a developer's `.env` after any one-time scrub. Doing it per-test
+    via monkeypatch is the only reliable way to keep the storage-off path
+    available; tests that need real storage receive `storage_bucket`, which
+    re-sets the same vars (monkeypatch lets the later setenv win).
+    """
+    for k in _STORAGE_ENV_KEYS:
+        monkeypatch.delenv(k, raising=False)
+    try:
+        from db.storage import reset_client_cache
+    except ImportError:
+        pass
+    else:
+        reset_client_cache()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _bypass_admin_key():
     """Override the admin-key dependency for every test so existing API tests keep working."""
     try:
@@ -128,6 +144,41 @@ def _bypass_admin_key():
         yield
     finally:
         _api.app.dependency_overrides.pop(_api.require_admin_key, None)
+
+
+class SessionFactory:
+    """Stand-in for sessionmaker that yields a single shared Session.
+
+    Use to wire ``api.SessionLocal`` (or any code expecting a sessionmaker)
+    at the test DB without mutating ``DATABASE_URL`` globally.
+    """
+
+    def __init__(self, session):
+        self._session = session
+
+    def __call__(self):
+        return self
+
+    def __enter__(self):
+        return self._session
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.fixture()
+def api_client(monkeypatch, db_session):
+    """TestClient with ``api.SessionLocal`` pointed at the test DB session.
+
+    Avoids the prod-default engine (DATABASE_URL=postgresql://...:5433/psat)
+    that the FastAPI app would otherwise use.
+    """
+    from fastapi.testclient import TestClient
+
+    import api as api_module
+
+    monkeypatch.setattr(api_module, "SessionLocal", SessionFactory(db_session))
+    return TestClient(api_module.app)
 
 
 def _can_connect() -> bool:

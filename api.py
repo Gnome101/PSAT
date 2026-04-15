@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from db.models import (
     Artifact,
@@ -48,7 +48,7 @@ from db.queue import (
     get_all_artifacts,
     get_artifact,
 )
-from db.storage import StorageError
+from db.storage import StorageError, StorageUnavailable, get_storage_client
 
 logger = logging.getLogger(__name__)
 
@@ -347,18 +347,37 @@ def index():
 
 @app.get("/api/health")
 def health():
-    """Real liveness probe — verifies the database is reachable."""
+    """Liveness/readiness probe — verifies the database and object storage are reachable."""
     from fastapi.responses import JSONResponse
 
-    from db.models import engine
+    body: dict[str, Any] = {"status": "ok", "db": "ok", "storage": "inline"}
+    failures: list[str] = []
 
     try:
-        with engine.connect() as conn:
-            conn.execute(select(1))
-    except Exception as exc:
-        logger.warning("Health check failed: %s", exc)
-        return JSONResponse({"status": "unavailable", "error": str(exc)}, status_code=503)
-    return {"status": "ok"}
+        with SessionLocal() as session:
+            # Cap the probe at 2s so a hung Postgres can't hang the health endpoint.
+            # SET LOCAL statement_timeout is Postgres-specific syntax.
+            session.execute(text("SET LOCAL statement_timeout = 2000"))
+            session.execute(select(1))
+    except Exception:
+        logger.exception("Health check: db unreachable")
+        body["db"] = "unavailable"
+        failures.append("db")
+
+    storage_client = get_storage_client()
+    if storage_client is not None:
+        try:
+            storage_client.health_check()
+            body["storage"] = "ok"
+        except StorageUnavailable:
+            logger.exception("Health check: storage unreachable")
+            body["storage"] = "unavailable"
+            failures.append("storage")
+
+    if failures:
+        body["status"] = "unavailable"
+        return JSONResponse(body, status_code=503)
+    return body
 
 
 @app.get("/api/config")
