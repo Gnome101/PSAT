@@ -46,9 +46,6 @@ def _report(
     title: str = "Protocol Audit",
     date: str | None = "2023-06-15",
     pdf_url: str | None = None,
-    scope: list[str] | None = None,
-    findings: dict | None = None,
-    summary: str | None = None,
     confidence: float = 0.9,
 ) -> dict:
     return {
@@ -57,9 +54,6 @@ def _report(
         "auditor": auditor,
         "title": title,
         "date": date,
-        "scope": scope or [],
-        "findings": findings,
-        "summary": summary,
         "source_url": url,
         "confidence": confidence,
         "discovered_at": "2026-01-01T00:00:00+00:00",
@@ -129,12 +123,10 @@ class TestMergeAuditReports:
 
     def test_richer_entry_wins_on_overlap(self):
         """When both have the same URL, keep the entry with more non-null fields."""
-        sparse = _report(url="https://a.com/report", pdf_url=None, findings=None, summary=None, date=None)
+        sparse = _report(url="https://a.com/report", pdf_url=None, date=None)
         rich = _report(
             url="https://a.com/report",
             pdf_url="https://a.com/report.pdf",
-            findings={"critical": 0, "high": 1},
-            summary="Found issues",
             date="2023-06-15",
         )
         # New is richer
@@ -150,16 +142,15 @@ class TestMergeAuditReports:
         rich = _report(
             url="https://a.com/report",
             pdf_url="https://a.com/report.pdf",
-            findings={"critical": 0},
-            summary="Good",
             date="2023-01-01",
         )
-        sparse = _report(url="https://a.com/report", pdf_url=None, findings=None, summary=None, date=None)
+        sparse = _report(url="https://a.com/report", pdf_url=None, date=None)
         merged = merge_audit_reports(
             {"company": "X", "reports": [rich]},
             {"company": "X", "reports": [sparse]},
         )
-        assert merged["reports"][0]["summary"] == "Good"
+        assert merged["reports"][0]["pdf_url"] == "https://a.com/report.pdf"
+        assert merged["reports"][0]["date"] == "2023-01-01"
 
     def test_empty_prev_returns_new(self):
         new = {"company": "X", "reports": [_report()]}
@@ -258,16 +249,13 @@ class TestClassifySearchResults:
 
 class TestExtractReportDetails:
     def test_successful_extraction(self, monkeypatch):
-        """LLM returns reports array with structured data + linked URLs."""
+        """LLM returns reports array with identifying metadata + linked URLs."""
         llm_response = json.dumps({
             "reports": [{
                 "auditor": "OpenZeppelin",
                 "title": "Aave V3 Security Review",
                 "date": "2023-06-15",
-                "scope": ["AavePool.sol", "PoolConfigurator.sol"],
                 "pdf_url": "https://a.com/report.pdf",
-                "findings": {"critical": 0, "high": 2, "medium": 5, "low": 8, "informational": 12},
-                "summary": "Comprehensive security review of Aave V3 core contracts.",
             }],
             "linked_urls": ["https://other.com/another-audit"],
         })
@@ -280,8 +268,6 @@ class TestExtractReportDetails:
         assert report["auditor"] == "OpenZeppelin"
         assert report["title"] == "Aave V3 Security Review"
         assert report["date"] == "2023-06-15"
-        assert report["findings"]["high"] == 2
-        assert len(report["scope"]) == 2
         assert report["pdf_url"] == "https://a.com/report.pdf"
         assert result["linked_urls"] == ["https://other.com/another-audit"]
 
@@ -307,10 +293,7 @@ class TestExtractReportDetails:
             "auditor": "OZ",
             "title": "Single Audit",
             "date": "2023-01-01",
-            "scope": [],
             "pdf_url": None,
-            "findings": None,
-            "summary": "A review.",
         })
         monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", lambda *a, **kw: llm_response)
 
@@ -335,41 +318,6 @@ class TestExtractReportDetails:
         assert result is not None
         assert len(result["reports"]) == 1
         assert result["reports"][0]["title"] == "Valid Report"
-
-    def test_findings_normalization(self, monkeypatch):
-        """Only known severity keys are kept; float values are cast to int."""
-        llm_response = json.dumps({
-            "reports": [{
-                "auditor": "Firm",
-                "title": "Audit",
-                "findings": {"critical": 1.0, "high": 2, "unknown_key": 5},
-                "date": None,
-                "scope": [],
-                "pdf_url": None,
-                "summary": None,
-            }],
-            "linked_urls": [],
-        })
-        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", lambda *a, **kw: llm_response)
-
-        result = extract_report_details("https://a.com", "text", "Test")
-        assert result is not None
-        assert result["reports"][0]["findings"] == {"critical": 1, "high": 2}
-
-    def test_null_findings_preserved(self, monkeypatch):
-        llm_response = json.dumps({
-            "reports": [{
-                "auditor": "Firm",
-                "title": "Audit",
-                "findings": None,
-            }],
-            "linked_urls": [],
-        })
-        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", lambda *a, **kw: llm_response)
-
-        result = extract_report_details("https://a.com", "text", "Test")
-        assert result is not None
-        assert result["reports"][0]["findings"] is None
 
     def test_llm_failure_returns_none(self, monkeypatch):
         monkeypatch.setattr(
@@ -431,10 +379,7 @@ class TestSearchAuditReports:
                 "auditor": "OpenZeppelin",
                 "title": "Aave V3 Security Audit",
                 "date": "2023-06-15",
-                "scope": ["AavePool.sol"],
                 "pdf_url": "https://blog.openzeppelin.com/aave-audit.pdf",
-                "findings": {"critical": 0, "high": 2, "medium": 5, "low": 8, "informational": 12},
-                "summary": "Comprehensive review of Aave V3.",
             }],
             "linked_urls": [],
         })
@@ -468,7 +413,7 @@ class TestSearchAuditReports:
 
         oz = next(r for r in result["reports"] if r["auditor"] == "OpenZeppelin")
         assert oz["title"] == "Aave V3 Security Audit"
-        assert oz["findings"]["high"] == 2
+        assert oz["date"] == "2023-06-15"
 
         tob = next(r for r in result["reports"] if r["auditor"] == "Trail of Bits")
         assert tob["pdf_url"] == "https://github.com/aave/audits/tob.pdf"
@@ -507,7 +452,6 @@ class TestSearchAuditReports:
                 "auditor": "Firm A",
                 "title": "V2 Audit",
                 "date": "2023-06-01",
-                "findings": {"critical": 0, "high": 1, "medium": 3},
             }],
             "linked_urls": [],
         })
@@ -536,7 +480,7 @@ class TestSearchAuditReports:
         assert "V2 Audit" in titles
         # The V2 audit was found via link following
         v2 = next(r for r in result["reports"] if r["title"] == "V2 Audit")
-        assert v2["findings"]["high"] == 1
+        assert v2["date"] == "2023-06-01"
 
     def test_no_results_returns_empty(self, monkeypatch):
         monkeypatch.setattr(
@@ -889,9 +833,6 @@ class TestSyncAuditReportsToDb:
                 "title": "Audit 1",
                 "pdf_url": None,
                 "date": "2023-01-01",
-                "scope": ["Pool.sol"],
-                "findings": {"critical": 0},
-                "summary": "Review",
                 "confidence": 0.9,
                 "source_url": "https://a.com/audit",
             },

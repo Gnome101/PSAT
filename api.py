@@ -1611,9 +1611,6 @@ def company_overview(company_name: str) -> dict:
                     "auditor": ar.auditor,
                     "title": ar.title,
                     "date": ar.date,
-                    "scope": list(ar.scope or []),
-                    "findings": ar.findings,
-                    "summary": ar.summary,
                     "confidence": float(ar.confidence) if ar.confidence is not None else None,
                 }
                 for ar in audit_rows
@@ -1663,9 +1660,6 @@ def company_audits(company_name: str) -> dict[str, Any]:
                     "auditor": ar.auditor,
                     "title": ar.title,
                     "date": ar.date,
-                    "scope": list(ar.scope or []),
-                    "findings": ar.findings,
-                    "summary": ar.summary,
                     "confidence": float(ar.confidence) if ar.confidence is not None else None,
                 }
                 for ar in audit_rows

@@ -50,12 +50,6 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
         if not url or not auditor or not title:
             continue
 
-        scope = report.get("scope")
-        if isinstance(scope, list):
-            scope = [str(s) for s in scope if s]
-        else:
-            scope = None
-
         stmt = pg_insert(AuditReport).values(
             protocol_id=protocol_id,
             url=url,
@@ -63,9 +57,6 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
             auditor=auditor,
             title=title,
             date=report.get("date"),
-            scope=scope,
-            findings=report.get("findings"),
-            summary=report.get("summary"),
             confidence=report.get("confidence"),
             source_url=report.get("source_url"),
         )
@@ -76,9 +67,6 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
                 "auditor": stmt.excluded.auditor,
                 "title": stmt.excluded.title,
                 "date": stmt.excluded.date,
-                "scope": stmt.excluded.scope,
-                "findings": stmt.excluded.findings,
-                "summary": stmt.excluded.summary,
                 "confidence": stmt.excluded.confidence,
                 "source_url": stmt.excluded.source_url,
             },

@@ -899,9 +899,6 @@ def _fake_audit_report(**overrides):
     ar.auditor = overrides.get("auditor", "OpenZeppelin")
     ar.title = overrides.get("title", "Aave V3 Security Audit")
     ar.date = overrides.get("date", "2023-06-15")
-    ar.scope = overrides.get("scope", ["AavePool.sol", "PoolConfigurator.sol"])
-    ar.findings = overrides.get("findings", {"critical": 0, "high": 2, "medium": 5})
-    ar.summary = overrides.get("summary", "Comprehensive review of Aave V3.")
     ar.confidence = overrides.get("confidence", 0.95)
     return ar
 
@@ -924,8 +921,6 @@ def test_company_audits_endpoint(mock_session_cls):
         auditor="Trail of Bits",
         title="Aave V3 Review",
         date="2023-03-01",
-        findings=None,
-        summary=None,
         confidence=0.85,
     )
 
@@ -956,12 +951,10 @@ def test_company_audits_endpoint(mock_session_cls):
     assert oz["title"] == "Aave V3 Security Audit"
     assert oz["date"] == "2023-06-15"
     assert oz["pdf_url"] == "https://blog.openzeppelin.com/aave-v3-audit.pdf"
-    assert oz["findings"]["high"] == 2
     assert oz["confidence"] == 0.95
 
     tob = next(a for a in body["audits"] if a["auditor"] == "Trail of Bits")
     assert tob["pdf_url"] is None
-    assert tob["findings"] is None
     assert tob["confidence"] == 0.85
 
 

@@ -226,9 +226,6 @@ class AuditReport(Base):
     auditor: Mapped[str] = mapped_column(String(255), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     date: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    scope: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
-    findings: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     discovered_at: Mapped[datetime] = mapped_column(

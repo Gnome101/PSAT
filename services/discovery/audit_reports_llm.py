@@ -130,9 +130,9 @@ Reply with ONLY a JSON array. Each element must have:
 - "confidence": 0.0 to 1.0 how confident you are this is a real {company} audit page"""
 
 _EXTRACTION_PROMPT = """\
-Extract structured information about smart contract security audits from the \
-following page content. We are looking for audits of the **{company}** protocol \
-specifically.
+Identify third-party security audits of the **{company}** smart-contract protocol \
+listed on the following page. We only need enough metadata to *identify* each \
+audit — no findings, scope, or summary is required.
 
 Page URL: {url}
 Page content (truncated):
@@ -140,19 +140,16 @@ Page content (truncated):
 
 CRITICAL FILTER: Many pages are auditor publication directories or aggregator \
 indexes that list audits for many DIFFERENT protocols. You must extract ONLY \
-the audits that are clearly for {company}. Audits whose title, scope, or \
-filename references a different protocol must be excluded — even if they are \
-listed on the same page. When in doubt, exclude.
+the audits that are clearly for {company}. Audits whose title or filename \
+references a different protocol must be excluded — even if they are listed on \
+the same page. When in doubt, exclude.
 
 Return ONLY a JSON object with these fields:
 - "reports": a list of audit report objects (audits of {company} only), each with:
   - "auditor": the auditing firm name (string)
   - "title": the audit report title (string) — should reference {company} or one of its products
   - "date": the audit date in ISO format YYYY-MM-DD if available, or YYYY-MM, or YYYY (string or null)
-  - "scope": list of contract names, repository paths, or protocol components audited (list of strings, may be empty)
   - "pdf_url": direct URL to the PDF report if found on the page (string or null)
-  - "findings": object with keys "critical", "high", "medium", "low", "informational" as integer counts, or null if not extractable
-  - "summary": one-sentence summary of the audit scope or conclusion (string or null)
 - "linked_urls": list of URLs found on this page that point to other audit reports, \
 audit PDFs, or audit listing pages for {company} that are NOT already covered in the \
 "reports" list above (list of strings, may be empty). Include direct PDF links, links \
@@ -357,7 +354,7 @@ def extract_report_details(
     raw_reports: list[Any] = []
     raw_links: list[Any] = []
     parsed_any = False
-    for i, chunk in enumerate(chunks):
+    for chunk in chunks:
         parsed = _extract_one_chunk(url, chunk, company, debug=debug)
         if parsed is None:
             continue
@@ -384,23 +381,6 @@ def extract_report_details(
         if not auditor or not title:
             continue
 
-        # Normalize findings
-        findings = raw.get("findings")
-        if isinstance(findings, dict):
-            normalized: dict[str, int] = {}
-            for severity in ("critical", "high", "medium", "low", "informational"):
-                val = findings.get(severity)
-                if isinstance(val, (int, float)):
-                    normalized[severity] = int(val)
-            findings = normalized if normalized else None
-
-        # Normalize scope
-        scope = raw.get("scope")
-        if isinstance(scope, list):
-            scope = [str(s).strip() for s in scope if s]
-        else:
-            scope = []
-
         # Resolve pdf_url — may be relative
         pdf_url_raw = str(raw["pdf_url"]).strip() if raw.get("pdf_url") else None
         if pdf_url_raw and not pdf_url_raw.startswith(("http://", "https://")):
@@ -411,10 +391,7 @@ def extract_report_details(
             "auditor": auditor,
             "title": title,
             "date": str(raw["date"]).strip() if raw.get("date") else None,
-            "scope": scope,
             "pdf_url": pdf_url_raw,
-            "findings": findings,
-            "summary": str(raw["summary"]).strip() if raw.get("summary") else None,
         })
 
     # Normalize linked URLs — resolve relative paths against the source page URL

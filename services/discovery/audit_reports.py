@@ -459,11 +459,8 @@ def _fetch_github_tree_as_reports(
                 "auditor": auditor,
                 "title": title,
                 "date": date,
-                "scope": [],
                 "pdf_url": pdf_url,
                 "report_url": report_url,
-                "findings": None,
-                "summary": None,
             })
 
         _debug_log(debug, f"GitHub tree: built {len(reports)} report(s) from {len(audit_files)} file(s)")
@@ -579,11 +576,8 @@ def _expand_blob_to_directory(
             "auditor": auditor,
             "title": title,
             "date": date,
-            "scope": [],
             "pdf_url": f["download_url"] if is_pdf else None,
             "report_url": f.get("html_url") or f.get("download_url"),
-            "findings": None,
-            "summary": None,
         })
     return {"reports": reports, "linked_urls": []}
 
@@ -710,9 +704,6 @@ def _build_report_entry(
         "auditor": report["auditor"],
         "title": report["title"],
         "date": report.get("date"),
-        "scope": report.get("scope") or [],
-        "findings": report.get("findings"),
-        "summary": report.get("summary"),
         "source_url": source_url,
         "confidence": round(confidence, 4),
         "discovered_at": now_iso,
@@ -738,11 +729,7 @@ def _title_tokens(title: str) -> set[str]:
 
 
 def _richness_score(report: dict[str, Any]) -> int:
-    return sum(
-        1
-        for key in ("pdf_url", "date", "scope", "findings", "summary")
-        if report.get(key)
-    )
+    return sum(1 for key in ("pdf_url", "date") if report.get(key))
 
 
 def _collapse_same_audit_mirrors(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -838,9 +825,6 @@ def _build_fallback_entry(
         "auditor": str(classification.get("auditor") or "").strip() or "Unknown",
         "title": title,
         "date": classification.get("date") or None,
-        "scope": [],
-        "findings": None,
-        "summary": None,
         "source_url": url,
         "confidence": round(confidence, 4),
         "discovered_at": now_iso,
@@ -1078,11 +1062,7 @@ def _empty_result(
 
 def _richness(report: dict[str, Any]) -> int:
     """Count non-null detail fields as a richness score."""
-    return sum(
-        1
-        for key in ("pdf_url", "date", "scope", "findings", "summary")
-        if report.get(key)
-    )
+    return sum(1 for key in ("pdf_url", "date") if report.get(key))
 
 
 def merge_audit_reports(prev: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
