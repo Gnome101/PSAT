@@ -207,7 +207,38 @@ class Protocol(Base):
     )
     official_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    audit_reports: Mapped[list["AuditReport"]] = relationship(
+        "AuditReport", backref="protocol", cascade="all, delete-orphan"
+    )
+
     __table_args__ = (UniqueConstraint("name", name="uq_protocol_name"),)
+
+
+class AuditReport(Base):
+    __tablename__ = "audit_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    protocol_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False
+    )
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auditor: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    scope: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
+    findings: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("protocol_id", "url", name="uq_audit_report_protocol_url"),
+        Index("ix_audit_reports_protocol_id", "protocol_id"),
+    )
 
 
 # ---------------------------------------------------------------------------

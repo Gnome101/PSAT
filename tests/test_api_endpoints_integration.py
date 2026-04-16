@@ -884,3 +884,125 @@ def test_list_proxy_events(mock_session_cls):
     assert body[0]["event_type"] == "upgraded"
     assert body[0]["block_number"] == 999
     assert body[0]["new_implementation"] == "0x" + "bb" * 20
+
+
+# ---------------------------------------------------------------------------
+# Audit report endpoints
+# ---------------------------------------------------------------------------
+
+
+def _fake_audit_report(**overrides):
+    """Build a MagicMock that behaves like db.models.AuditReport."""
+    ar = MagicMock()
+    ar.url = overrides.get("url", "https://blog.openzeppelin.com/aave-v3-audit")
+    ar.pdf_url = overrides.get("pdf_url", "https://blog.openzeppelin.com/aave-v3-audit.pdf")
+    ar.auditor = overrides.get("auditor", "OpenZeppelin")
+    ar.title = overrides.get("title", "Aave V3 Security Audit")
+    ar.date = overrides.get("date", "2023-06-15")
+    ar.scope = overrides.get("scope", ["AavePool.sol", "PoolConfigurator.sol"])
+    ar.findings = overrides.get("findings", {"critical": 0, "high": 2, "medium": 5})
+    ar.summary = overrides.get("summary", "Comprehensive review of Aave V3.")
+    ar.confidence = overrides.get("confidence", 0.95)
+    return ar
+
+
+@patch("api.SessionLocal")
+def test_company_audits_endpoint(mock_session_cls):
+    """GET /api/company/{name}/audits returns audit reports for a protocol."""
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    protocol = MagicMock()
+    protocol.id = 1
+    protocol.name = "aave"
+
+    audit1 = _fake_audit_report()
+    audit2 = _fake_audit_report(
+        url="https://github.com/trailofbits/aave-audit",
+        pdf_url=None,
+        auditor="Trail of Bits",
+        title="Aave V3 Review",
+        date="2023-03-01",
+        findings=None,
+        summary=None,
+        confidence=0.85,
+    )
+
+    call_count = {"n": 0}
+
+    def route_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        result = MagicMock()
+        if call_count["n"] == 1:
+            # Protocol lookup
+            result.scalar_one_or_none.return_value = protocol
+        else:
+            # AuditReport query
+            result.scalars.return_value.all.return_value = [audit1, audit2]
+        return result
+
+    mock_session.execute.side_effect = route_execute
+
+    response = client.get("/api/company/aave/audits")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["company"] == "aave"
+    assert body["protocol_id"] == 1
+    assert body["audit_count"] == 2
+    assert len(body["audits"]) == 2
+
+    oz = next(a for a in body["audits"] if a["auditor"] == "OpenZeppelin")
+    assert oz["title"] == "Aave V3 Security Audit"
+    assert oz["date"] == "2023-06-15"
+    assert oz["pdf_url"] == "https://blog.openzeppelin.com/aave-v3-audit.pdf"
+    assert oz["findings"]["high"] == 2
+    assert oz["confidence"] == 0.95
+
+    tob = next(a for a in body["audits"] if a["auditor"] == "Trail of Bits")
+    assert tob["pdf_url"] is None
+    assert tob["findings"] is None
+    assert tob["confidence"] == 0.85
+
+
+@patch("api.SessionLocal")
+def test_company_audits_not_found(mock_session_cls):
+    """GET /api/company/{name}/audits returns 404 for unknown company."""
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    mock_session.execute.return_value.scalar_one_or_none.return_value = None
+
+    response = client.get("/api/company/nonexistent/audits")
+    assert response.status_code == 404
+
+
+@patch("api.SessionLocal")
+def test_company_audits_empty(mock_session_cls):
+    """GET /api/company/{name}/audits returns empty list when no audits exist."""
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    protocol = MagicMock()
+    protocol.id = 1
+
+    call_count = {"n": 0}
+
+    def route_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        result = MagicMock()
+        if call_count["n"] == 1:
+            result.scalar_one_or_none.return_value = protocol
+        else:
+            result.scalars.return_value.all.return_value = []
+        return result
+
+    mock_session.execute.side_effect = route_execute
+
+    response = client.get("/api/company/aave/audits")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["audit_count"] == 0
+    assert body["audits"] == []

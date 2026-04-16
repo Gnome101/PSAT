@@ -27,6 +27,7 @@ from db.queue import (
 )
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
+from services.discovery.audit_reports import merge_audit_reports, search_audit_reports
 from services.discovery.inventory import merge_inventory, search_protocol_inventory
 from workers.base import BaseWorker, JobHandledDirectly
 
@@ -34,6 +35,56 @@ logger = logging.getLogger("workers.discovery")
 
 # Minimum confidence threshold for creating child analysis jobs.
 _MIN_CONFIDENCE_THRESHOLD = 0.3
+
+
+def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[dict]) -> None:
+    """Upsert audit report rows into the relational table."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from db.models import AuditReport
+
+    for report in reports:
+        auditor = str(report.get("auditor") or "").strip()
+        title = str(report.get("title") or "").strip()
+        url = str(report.get("url") or "").strip()
+        if not url or not auditor or not title:
+            continue
+
+        scope = report.get("scope")
+        if isinstance(scope, list):
+            scope = [str(s) for s in scope if s]
+        else:
+            scope = None
+
+        stmt = pg_insert(AuditReport).values(
+            protocol_id=protocol_id,
+            url=url,
+            pdf_url=report.get("pdf_url"),
+            auditor=auditor,
+            title=title,
+            date=report.get("date"),
+            scope=scope,
+            findings=report.get("findings"),
+            summary=report.get("summary"),
+            confidence=report.get("confidence"),
+            source_url=report.get("source_url"),
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_audit_report_protocol_url",
+            set_={
+                "pdf_url": stmt.excluded.pdf_url,
+                "auditor": stmt.excluded.auditor,
+                "title": stmt.excluded.title,
+                "date": stmt.excluded.date,
+                "scope": stmt.excluded.scope,
+                "findings": stmt.excluded.findings,
+                "summary": stmt.excluded.summary,
+                "confidence": stmt.excluded.confidence,
+                "source_url": stmt.excluded.source_url,
+            },
+        )
+        session.execute(stmt)
+    session.commit()
 
 
 class DiscoveryWorker(BaseWorker):
@@ -79,6 +130,29 @@ class DiscoveryWorker(BaseWorker):
         protocol_row = get_or_create_protocol(session, company, official_domain=inventory.get("official_domain"))
         job.protocol_id = protocol_row.id
         session.commit()
+
+        # --- Audit report discovery ---
+        self.update_detail(session, job, f"Discovering audit reports for {company}")
+        prev_audits: dict | None = None
+        if prev_job:
+            _raw_audits = get_artifact(session, prev_job.id, "audit_reports")
+            if isinstance(_raw_audits, dict):
+                prev_audits = _raw_audits
+
+        try:
+            audit_result = search_audit_reports(
+                company,
+                official_domain=inventory.get("official_domain"),
+            )
+            if prev_audits:
+                audit_result = merge_audit_reports(prev_audits, audit_result)
+            store_artifact(session, job.id, "audit_reports", data=audit_result)
+            _sync_audit_reports_to_db(session, protocol_row.id, audit_result.get("reports", []))
+            audit_count = len(audit_result.get("reports", []))
+            if audit_count:
+                logger.info("Job %s: found %d audit report(s) for %s", job.id, audit_count, company)
+        except Exception as exc:
+            logger.warning("Job %s: audit report discovery failed: %s", job.id, exc)
 
         discovered = [e for e in inventory.get("contracts", []) if e.get("address")]
 

@@ -1590,16 +1590,86 @@ def company_overview(company_name: str) -> dict:
                     "timestamp": latest_tvl.timestamp.isoformat(),
                 }
 
+        # Audit reports from relational table
+        from db.models import AuditReport
+
+        audit_reports_list: list[dict[str, Any]] = []
+        if protocol_row:
+            audit_rows = (
+                session.execute(
+                    select(AuditReport)
+                    .where(AuditReport.protocol_id == protocol_row.id)
+                    .order_by(AuditReport.date.desc().nullslast())
+                )
+                .scalars()
+                .all()
+            )
+            audit_reports_list = [
+                {
+                    "url": ar.url,
+                    "pdf_url": ar.pdf_url,
+                    "auditor": ar.auditor,
+                    "title": ar.title,
+                    "date": ar.date,
+                    "scope": list(ar.scope or []),
+                    "findings": ar.findings,
+                    "summary": ar.summary,
+                    "confidence": float(ar.confidence) if ar.confidence is not None else None,
+                }
+                for ar in audit_rows
+            ]
+
         return {
             "company": company_name,
             "protocol_id": protocol_row.id if protocol_row else None,
             "contract_count": len(contracts),
             "tvl": tvl_data,
+            "audit_reports": audit_reports_list,
             "contracts": contracts,
             "principals": principals,
             "ownership_hierarchy": hierarchy,
             "fund_flows": fund_flows,
             "all_addresses": all_addresses,
+        }
+
+
+@app.get("/api/company/{company_name}/audits")
+def company_audits(company_name: str) -> dict[str, Any]:
+    """List all known audit reports for a company."""
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        audit_rows = (
+            session.execute(
+                select(AuditReport)
+                .where(AuditReport.protocol_id == protocol_row.id)
+                .order_by(AuditReport.date.desc().nullslast())
+            )
+            .scalars()
+            .all()
+        )
+        return {
+            "company": company_name,
+            "protocol_id": protocol_row.id,
+            "audit_count": len(audit_rows),
+            "audits": [
+                {
+                    "url": ar.url,
+                    "pdf_url": ar.pdf_url,
+                    "auditor": ar.auditor,
+                    "title": ar.title,
+                    "date": ar.date,
+                    "scope": list(ar.scope or []),
+                    "findings": ar.findings,
+                    "summary": ar.summary,
+                    "confidence": float(ar.confidence) if ar.confidence is not None else None,
+                }
+                for ar in audit_rows
+            ],
         }
 
 

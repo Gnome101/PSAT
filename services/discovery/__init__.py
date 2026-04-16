@@ -1,6 +1,7 @@
 """Discovery package."""
 
 from .activity import enrich_with_activity
+from .audit_reports import merge_audit_reports, search_audit_reports
 from .chain_resolver import resolve_unknown_chains
 from .classifier import classify_contracts
 from .dependency_graph_builder import write_dependency_visualization
@@ -16,6 +17,7 @@ __all__ = [
     "build_unified_dependencies",
     "CONTRACTS_DIR",
     "classify_contracts",
+    "merge_audit_reports",
     "enrich_dependency_metadata",
     "enrich_with_activity",
     "expand_from_deployers",
@@ -27,6 +29,7 @@ __all__ = [
     "parse_sources",
     "parse_verification_bundle",
     "scaffold",
+    "search_audit_reports",
     "search_protocol_inventory",
     "write_dependency_visualization",
     "write_upgrade_history",
