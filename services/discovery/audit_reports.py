@@ -331,7 +331,61 @@ _AUDIT_FOLDER_CANDIDATES: tuple[str, ...] = (
 # holds hundreds of repos) can't blow out the GitHub API budget for a
 # single Stage-2 hit. Sorted by pushed_at desc, so the newest repos —
 # which is where current audits live — are probed first.
-_MAX_ORG_REPOS = 30
+# Set to cover real-world protocol orgs at the top end (morpho-org is ~40
+# public repos, several of which carry audit folders in legacy/token
+# repos that sort lower by pushed_at).
+_MAX_ORG_REPOS = 100
+
+
+# Common dependency / tooling library name substrings. Protocols routinely
+# fork these into their own org (e.g. ``morpho-org/openzeppelin-contracts``)
+# for pinning or modifications, and the fork carries the upstream's own
+# ``audits/`` history — which is not a protocol-level audit of *our*
+# company. Skip any repo whose name contains one of these substrings.
+_DEPENDENCY_LIBRARY_PATTERNS: tuple[str, ...] = (
+    "openzeppelin-contracts",
+    "openzeppelin-contracts-upgradeable",
+    "forge-std",
+    "solmate",
+    "solady",
+    "permit2",
+    "uniswap-v2",
+    "uniswap-v3",
+    "uniswap-v4",
+    "ds-test",
+    "ds-math",
+    "create2-helpers",
+    "halmos-cheatcodes",
+    "prb-math",
+    "safe-contracts",
+    "seaport",
+)
+
+
+def _is_dependency_library_repo(repo_name: str) -> bool:
+    """True if the repo name matches a common vendored library fork —
+    audits inside such a repo belong to the library, not the protocol."""
+    lower = repo_name.lower()
+    return any(pat in lower for pat in _DEPENDENCY_LIBRARY_PATTERNS)
+
+
+# Path segments that indicate a vendored dependency's own folder. An audit
+# folder *inside* any of these belongs to the dep, not the protocol.
+_VENDORED_DEP_PATH_SEGMENTS: frozenset[str] = frozenset({
+    "lib", "libs", "node_modules", "vendor", "vendors", "third_party",
+    "third-party", "submodules", "submodule", "deps", "dependencies",
+    "packages", "externals", "external",
+})
+
+
+def _is_vendored_dependency_path(path: str) -> bool:
+    """True if the path sits under a conventional vendored-deps directory
+    (e.g. ``lib/openzeppelin-contracts/audits``) — skip these, the
+    audits belong to the vendored dep itself."""
+    parts = path.lower().split("/")
+    # Check parents only (exclude the last segment, which is typically
+    # ``audits`` itself — we care whether any *parent* looks vendored).
+    return any(p in _VENDORED_DEP_PATH_SEGMENTS for p in parts[:-1])
 
 
 def _list_org_repos(owner: str, debug: bool = False) -> list[str]:
@@ -393,6 +447,13 @@ def _fetch_github_org_as_reports(
     probed_with_audits = 0
 
     for repo in repos:
+        if _is_dependency_library_repo(repo):
+            _debug_log(
+                debug,
+                f"GitHub org {owner}: skipping library fork {repo} "
+                f"(audits belong to the upstream library, not the protocol)",
+            )
+            continue
         folders = _discover_repo_audit_folders(owner, repo, debug=debug)
         if not folders:
             continue
@@ -456,6 +517,10 @@ def _discover_repo_audit_folders(
                 continue
             path = (item.get("path") or "").strip()
             if not path:
+                continue
+            if _is_vendored_dependency_path(path):
+                # Skip audits folders nested under lib/, node_modules/,
+                # vendor/, etc. — those belong to the vendored dependency.
                 continue
             last_segment = path.rsplit("/", 1)[-1].lower()
             if last_segment in {"audit", "audits", "audit-reports", "security-audits"}:
@@ -577,6 +642,74 @@ def _fetch_github_tree_as_reports(
     except _requests.RequestException as exc:
         _debug_log(debug, f"GitHub API failed for {api_url}: {exc!r}")
         return None
+
+
+def _should_auto_hop_org(
+    url: str, company: str, auto_hopped: set[str],
+) -> bool:
+    """Return True when the caller should fan out from this URL to the
+    whole GitHub org.
+
+    We hop up to the org level only when:
+      1. The URL parses as a GitHub tree / blob / repo URL.
+      2. The owner name looks like the protocol's own org — i.e. it
+         contains a company-name variant as a substring. This excludes
+         third-party vendor orgs like ``Certora/<protocol>-fork`` that
+         hold hundreds of unrelated repos.
+      3. We haven't already auto-hopped for this owner in this run.
+
+    The hop lets us find audits that live in sibling repos (cash-v3,
+    weETH-cross-chain, bundler3, universal-rewards-distributor, etc.)
+    that Tavily doesn't tend to surface on its own.
+    """
+    github = _parse_github_url(url)
+    if not github:
+        return False
+    if github["kind"] not in ("tree", "blob", "repo"):
+        return False
+    owner = github["owner"].lower()
+    if owner in auto_hopped:
+        return False
+    variants = _company_name_variants(company)
+    if not variants:
+        return False
+    owner_norm = re.sub(r"[^a-z0-9]", "", owner)
+    return any(v in owner_norm for v in variants)
+
+
+def _maybe_auto_hop_to_org(
+    url: str,
+    company: str,
+    auto_hopped_orgs: set[str],
+    confidence: float,
+    now_iso: str,
+    reports: list[dict[str, Any]],
+    debug: bool = False,
+) -> None:
+    """If ``url`` triggers an auto-hop (protocol-owned GitHub repo/tree/blob
+    URL we haven't fanned out from yet), enumerate the whole org and
+    append every sibling repo's audits to ``reports``.
+
+    Mutates ``auto_hopped_orgs`` and ``reports`` in place. A no-op when
+    the URL isn't eligible.
+    """
+    if not _should_auto_hop_org(url, company, auto_hopped_orgs):
+        return
+    github = _parse_github_url(url)
+    if github is None:
+        return
+    owner = github["owner"]
+    auto_hopped_orgs.add(owner.lower())
+    org_url = f"https://github.com/{owner}"
+    _debug_log(debug, f"Auto-hop to org {owner} (triggered by {url})")
+    extracted_org = _fetch_github_org_as_reports(
+        owner, company, org_url, debug=debug,
+    )
+    if extracted_org:
+        for report in extracted_org.get("reports", []):
+            reports.append(_build_report_entry(
+                report, org_url, confidence, now_iso,
+            ))
 
 
 def _company_name_variants(company: str) -> list[str]:
@@ -1071,6 +1204,7 @@ def search_audit_reports(
     now_iso = datetime.now(timezone.utc).isoformat()
     reports: list[dict[str, Any]] = []
     processed_urls: set[str] = set()
+    auto_hopped_orgs: set[str] = set()
     extraction_count = 0
     # URLs discovered by the LLM on fetched pages, to follow in Stage 3
     discovered_links: list[dict[str, Any]] = []
@@ -1088,6 +1222,11 @@ def search_audit_reports(
         processed_urls.add(url_key)
 
         stage1_confidence = item.get("confidence", 0.5)
+
+        _maybe_auto_hop_to_org(
+            url, clean_company, auto_hopped_orgs, stage1_confidence,
+            now_iso, reports, debug=debug,
+        )
 
         # For direct PDF links: record as fallback (we can't extract text from PDFs)
         # but still record what we know from the Tavily snippet + classification
@@ -1142,6 +1281,11 @@ def search_audit_reports(
         processed_urls.add(url_key)
 
         parent_confidence = link_item.get("parent_confidence", 0.5)
+
+        _maybe_auto_hop_to_org(
+            url, clean_company, auto_hopped_orgs, parent_confidence,
+            now_iso, reports, debug=debug,
+        )
 
         # PDF links from discovered pages: record directly with parent context
         if _is_pdf_url(url):

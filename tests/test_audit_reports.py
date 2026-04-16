@@ -623,6 +623,14 @@ class TestSearchAuditReports:
                 yield self.text.encode()
 
         def fake_requests_get(url, **kwargs):
+            # Auto-org-hop triggers on the etherfi-protocol tree URL and
+            # queries the org's repo list. Return an empty list so the
+            # auto-hop produces zero sibling reports, isolating the test
+            # to the tree-URL extraction path it was written to cover.
+            if url.startswith("https://api.github.com/orgs/"):
+                return FakeResp([])
+            if url.startswith("https://api.github.com/users/"):
+                return FakeResp({"message": "Not Found"}, status=404)
             if "api.github.com" in url:
                 return FakeResp(api_payload)
             return FakeResp("", status=404, content_type="text/plain")
@@ -814,6 +822,349 @@ class TestSearchAuditReports:
         assert r["title"] == "Omniscia EtherFi ETH2.0 Audit"
         assert r["pdf_url"] == pdf_url
 
+    def test_org_enumeration_skips_library_fork_repos(self, monkeypatch):
+        """Regression: ``morpho-org/openzeppelin-contracts`` is Morpho's
+        vendored fork of the OpenZeppelin contracts library. Its ``audits/``
+        folder holds OZ's own audit history (``Audit Report 2017-03.pdf``
+        etc.), which isn't a Morpho audit. Auto-org-hop was adding them as
+        6 spurious Morpho entries.
+        """
+        org_url = "https://github.com/morpho-org"
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [_tavily_result(org_url, "morpho-org")],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                import re as _re
+                names = _re.findall(r"^- (.+)$", content, _re.MULTILINE)
+                return json.dumps([{
+                    "filename": n, "auditor": "Unknown",
+                    "title": n.rsplit(".", 1)[0], "date": "2017-03",
+                } for n in names])
+            return json.dumps([
+                {"url": org_url, "is_audit": True, "type": "listing",
+                 "auditor": None, "title": "morpho-org",
+                 "date": None, "confidence": 0.95},
+            ])
+
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        class FakeResp:
+            def __init__(self, payload, status=200):
+                self._payload = payload
+                self.status_code = status
+                self.headers = {"content-type": "application/json"}
+                self.text = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+            def json(self): return self._payload
+            def close(self): pass
+            def iter_content(self, chunk_size=64_000): yield self.text.encode()
+
+        def fake_requests_get(url, **kwargs):
+            if url.startswith("https://api.github.com/orgs/morpho-org/repos"):
+                return FakeResp([
+                    {"name": "openzeppelin-contracts", "default_branch": "master"},
+                ])
+            if url.startswith("https://api.github.com/users/morpho-org/repos"):
+                return FakeResp({"message": "Not Found"}, status=404)
+            if url == "https://api.github.com/repos/morpho-org/openzeppelin-contracts":
+                return FakeResp({"default_branch": "master"})
+            if "/git/trees/master?recursive=1" in url:
+                return FakeResp({"tree": [{"path": "audits", "type": "tree"}]})
+            if "/contents/audits" in url:
+                return FakeResp([{
+                    "name": "Audit Report 2017-03.pdf", "type": "file",
+                    "download_url": "https://raw.githubusercontent.com/morpho-org/openzeppelin-contracts/master/audits/Audit%20Report%202017-03.pdf",
+                    "html_url": "https://github.com/morpho-org/openzeppelin-contracts/blob/master/audits/Audit%20Report%202017-03.pdf",
+                }])
+            return FakeResp({}, status=404)
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._requests.get", fake_requests_get,
+        )
+
+        result = search_audit_reports("morpho")
+        urls = [r["url"] for r in result["reports"]]
+        assert not any("openzeppelin-contracts" in u for u in urls), (
+            f"library fork 'openzeppelin-contracts' should be skipped; urls={urls}"
+        )
+
+    def test_vendored_submodule_audit_folders_skipped(self, monkeypatch):
+        """Regression: ``etherfi-protocol/beHYPE`` vendors OZ contracts at
+        ``lib/openzeppelin-contracts/`` with that library's own ``audits/``
+        folder inside. The recursive-tree scan was surfacing both the
+        top-level ``audits/`` (real BeHYPE audits) AND the nested
+        ``lib/openzeppelin-contracts/audits/`` (spurious OZ library audits)
+        because both folder names end in ``audits``. Nested paths under
+        conventional vendored-dependency directories must be skipped.
+        """
+        tree_url = "https://github.com/etherfi-protocol/beHYPE"
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [_tavily_result(tree_url, "EtherFi beHYPE")],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                import re as _re
+                names = _re.findall(r"^- (.+)$", content, _re.MULTILINE)
+                return json.dumps([
+                    {"filename": n,
+                     "auditor": "Certora" if "behype" in n.lower() else "Unknown",
+                     "title": n.rsplit(".", 1)[0], "date": None}
+                    for n in names
+                ])
+            return json.dumps([
+                {"url": tree_url, "is_audit": True, "type": "listing",
+                 "auditor": None, "title": "etherfi beHYPE",
+                 "date": None, "confidence": 0.95},
+            ])
+
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        class FakeResp:
+            def __init__(self, payload, status=200):
+                self._payload = payload
+                self.status_code = status
+                self.headers = {"content-type": "application/json"}
+                self.text = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+            def json(self): return self._payload
+            def close(self): pass
+            def iter_content(self, chunk_size=64_000): yield self.text.encode()
+
+        def fake_requests_get(url, **kwargs):
+            # Keep auto-org-hop a no-op for this test.
+            if url.startswith("https://api.github.com/orgs/"):
+                return FakeResp([])
+            if url.startswith("https://api.github.com/users/"):
+                return FakeResp({"message": "Not Found"}, status=404)
+            # Repo metadata
+            if url == "https://api.github.com/repos/etherfi-protocol/beHYPE":
+                return FakeResp({"default_branch": "main"})
+            # Recursive tree shows BOTH the real audits/ and the vendored one.
+            if "/git/trees/main?recursive=1" in url:
+                return FakeResp({"tree": [
+                    {"path": "audits", "type": "tree"},
+                    {"path": "lib/openzeppelin-contracts/audits", "type": "tree"},
+                ]})
+            if url.endswith("/contents/audits?ref=main"):
+                return FakeResp([{
+                    "name": "EtherFi BeHype Audit.pdf", "type": "file",
+                    "download_url": "https://raw.githubusercontent.com/etherfi-protocol/beHYPE/main/audits/EtherFi%20BeHype%20Audit.pdf",
+                    "html_url": "https://github.com/etherfi-protocol/beHYPE/blob/main/audits/EtherFi%20BeHype%20Audit.pdf",
+                }])
+            if "lib/openzeppelin-contracts/audits" in url:
+                return FakeResp([{
+                    "name": "Audit Report 2017-03.pdf", "type": "file",
+                    "download_url": "https://raw.githubusercontent.com/etherfi-protocol/beHYPE/main/lib/openzeppelin-contracts/audits/Audit%20Report%202017-03.pdf",
+                    "html_url": "https://github.com/etherfi-protocol/beHYPE/blob/main/lib/openzeppelin-contracts/audits/Audit%20Report%202017-03.pdf",
+                }])
+            return FakeResp({}, status=404)
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._requests.get", fake_requests_get,
+        )
+
+        result = search_audit_reports("etherfi")
+        urls = [r["url"] for r in result["reports"]]
+        joined = " ".join(urls)
+        assert "EtherFi%20BeHype%20Audit" in joined, (
+            f"real beHYPE audit missing; urls={urls}"
+        )
+        assert "lib/openzeppelin-contracts" not in joined and "lib%2Fopenzeppelin" not in joined, (
+            f"vendored OZ audit folder should be skipped; urls={urls}"
+        )
+
+    def test_singular_audit_folder_is_discovered(self, monkeypatch):
+        """Regression: EtherFi's ``cash-v3`` and ``weETH-cross-chain`` repos
+        ship audits under ``audit/`` (singular), not ``audits/`` (plural).
+        Before this fix ``_AUDIT_FOLDER_CANDIDATES`` only listed the plural
+        form, so 14 reports across those two repos were silently skipped."""
+        repo_url = "https://github.com/etherfi-protocol/cash-v3"
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [_tavily_result(repo_url, "EtherFi cash-v3 repo")],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                return json.dumps([{
+                    "filename": "EtherFi-Bundle_11.pdf",
+                    "auditor": "Certora", "date": None,
+                    "title": "EtherFi Bundle 11",
+                }])
+            return json.dumps([
+                {"url": repo_url, "is_audit": True, "type": "listing",
+                 "auditor": None, "title": "etherfi-protocol/cash-v3",
+                 "date": None, "confidence": 0.95},
+            ])
+
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        class FakeResp:
+            def __init__(self, payload, status=200):
+                self._payload = payload
+                self.status_code = status
+                self.headers = {"content-type": "application/json"}
+                self.text = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+            def json(self): return self._payload
+            def close(self): pass
+            def iter_content(self, chunk_size=64_000): yield self.text.encode()
+
+        def fake_requests_get(url, **kwargs):
+            # Repo metadata
+            if url == "https://api.github.com/repos/etherfi-protocol/cash-v3":
+                return FakeResp({"default_branch": "master"})
+            # Recursive tree — only has `audit/` (singular)
+            if "/git/trees/master?recursive=1" in url:
+                return FakeResp({"tree": [{"path": "audit", "type": "tree"}]})
+            # Plural `audits/` — returns 404, must fall through
+            if url.endswith("/contents/audits?ref=master") or "/contents/audits?" in url and "cash-v3" in url:
+                return FakeResp({"message": "Not Found"}, status=404)
+            # Singular `audit/` — the actual folder
+            if "/contents/audit?" in url or url.endswith("/contents/audit"):
+                return FakeResp([{
+                    "name": "EtherFi-Bundle_11.pdf", "type": "file",
+                    "download_url": "https://raw.githubusercontent.com/etherfi-protocol/cash-v3/master/audit/EtherFi-Bundle_11.pdf",
+                    "html_url": "https://github.com/etherfi-protocol/cash-v3/blob/master/audit/EtherFi-Bundle_11.pdf",
+                }])
+            return FakeResp({}, status=404)
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._requests.get", fake_requests_get,
+        )
+
+        result = search_audit_reports("etherfi")
+        urls = [r["url"] for r in result["reports"]]
+        assert any("EtherFi-Bundle_11.pdf" in u for u in urls), (
+            f"audit (singular) folder was not discovered; urls={urls}"
+        )
+
+    def test_repo_url_auto_hops_to_sibling_org_repos(self, monkeypatch):
+        """Regression: Tavily commonly returns a single protocol repo URL
+        like ``github.com/etherfi-protocol/smart-contracts``. The pipeline
+        must also enumerate the org's other repos (``cash-contracts``,
+        ``cash-v3``, etc.) when the owner name matches the company — those
+        sibling repos hold ~14 EtherFi audits each. Before this fix the org
+        fan-out only fired when Tavily returned a bare org URL."""
+        repo_url = "https://github.com/etherfi-protocol/smart-contracts"
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [_tavily_result(repo_url, "etherfi-protocol/smart-contracts")],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                import re as _re
+                names = _re.findall(r"^- (.+)$", content, _re.MULTILINE)
+                return json.dumps([
+                    {"filename": n, "auditor": "Certora", "date": None,
+                     "title": n.rsplit(".", 1)[0]}
+                    for n in names
+                ])
+            return json.dumps([
+                {"url": repo_url, "is_audit": True, "type": "listing",
+                 "auditor": None, "title": "etherfi-protocol/smart-contracts",
+                 "date": None, "confidence": 0.95},
+            ])
+
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        class FakeResp:
+            def __init__(self, payload, status=200):
+                self._payload = payload
+                self.status_code = status
+                self.headers = {"content-type": "application/json"}
+                self.text = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+            def json(self): return self._payload
+            def close(self): pass
+            def iter_content(self, chunk_size=64_000): yield self.text.encode()
+
+        # Org listing (for etherfi-protocol) returns both smart-contracts and cash-v3
+        org_repos = [
+            {"name": "smart-contracts", "default_branch": "master"},
+            {"name": "cash-v3", "default_branch": "master"},
+        ]
+
+        audits_by_repo = {
+            "smart-contracts": [{
+                "name": "2025.01.16 - Certora - EETH share inflation by burn shares.pdf",
+                "type": "file",
+                "download_url": "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/audits/2025.01.16%20-%20Certora%20-%20EETH%20share%20inflation%20by%20burn%20shares.pdf",
+                "html_url": "https://github.com/etherfi-protocol/smart-contracts/blob/master/audits/2025.01.16%20-%20Certora%20-%20EETH%20share%20inflation%20by%20burn%20shares.pdf",
+            }],
+            "cash-v3": [{
+                "name": "EtherFi-Bundle_11.pdf",
+                "type": "file",
+                "download_url": "https://raw.githubusercontent.com/etherfi-protocol/cash-v3/master/audit/EtherFi-Bundle_11.pdf",
+                "html_url": "https://github.com/etherfi-protocol/cash-v3/blob/master/audit/EtherFi-Bundle_11.pdf",
+            }],
+        }
+
+        def fake_requests_get(url, **kwargs):
+            # Org enumeration
+            if url.startswith("https://api.github.com/orgs/etherfi-protocol/repos"):
+                return FakeResp(org_repos)
+            if url.startswith("https://api.github.com/users/etherfi-protocol/repos"):
+                return FakeResp({"message": "Not Found"}, status=404)
+            # Repo metadata
+            for repo in ("smart-contracts", "cash-v3"):
+                if url == f"https://api.github.com/repos/etherfi-protocol/{repo}":
+                    return FakeResp({"default_branch": "master"})
+            # Recursive tree — smart-contracts has `audits/`, cash-v3 has `audit/`
+            if "/git/trees/master?recursive=1" in url:
+                if "/smart-contracts/" in url:
+                    return FakeResp({"tree": [{"path": "audits", "type": "tree"}]})
+                if "/cash-v3/" in url:
+                    return FakeResp({"tree": [{"path": "audit", "type": "tree"}]})
+            # Contents endpoints
+            if "/contents/audits" in url and "/smart-contracts/" in url:
+                return FakeResp(audits_by_repo["smart-contracts"])
+            if "/contents/audit" in url and "/cash-v3/" in url and "/contents/audits" not in url:
+                return FakeResp(audits_by_repo["cash-v3"])
+            return FakeResp({}, status=404)
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._requests.get", fake_requests_get,
+        )
+
+        result = search_audit_reports("etherfi")
+        urls = [r["url"] for r in result["reports"]]
+        joined = " ".join(urls)
+        assert "smart-contracts" in joined, (
+            f"smart-contracts audit missing; urls={urls}"
+        )
+        assert "cash-v3" in joined, (
+            f"cash-v3 sibling repo was not auto-enumerated; urls={urls}"
+        )
+
     def test_mirror_dedup_collapses_cross_host_same_auditor_named_mirrors(self, monkeypatch):
         """Regression: EtherFi's Omniscia 2023-05-16 audit showed up twice in
         the pipeline output — once at
@@ -940,6 +1291,13 @@ class TestSearchAuditReports:
                 yield self.text.encode()
 
         def fake_requests_get(url, **kwargs):
+            # Auto-org-hop short-circuit: return an empty repo list so the
+            # sibling enumeration contributes nothing, isolating this test
+            # to the folder-siblings logic under the single tree URL.
+            if url.startswith("https://api.github.com/orgs/"):
+                return FakeResp([])
+            if url.startswith("https://api.github.com/users/"):
+                return FakeResp({"message": "Not Found"}, status=404)
             if "api.github.com" in url:
                 return FakeResp(api_payload)
             return FakeResp("", status=404)
