@@ -854,8 +854,12 @@ def _collapse_same_audit_mirrors(reports: list[dict[str, Any]]) -> list[dict[str
     Two passes, both designed to never merge two genuinely distinct audits:
 
       1. Drop reports whose auditor is "Unknown" when another report on the
-         exact same date has a named auditor — those are almost always
-         alternate hostings of that audit (gitbook PDF vs. github PDF).
+         exact same date has a named auditor AND sits on a different host
+         — i.e. the Unknown entry is an alternate hosting (gitbook PDF vs
+         github PDF) rather than a sibling file in the same repo/folder.
+         Same-host siblings stay: e.g. ``2025-09-15-blackthorn.pdf`` next
+         to ``2025-09-15-chainsecurity.pdf`` in the same audits folder
+         are distinct audits by lesser- and well-known firms.
 
       2. For each (auditor, date) group with >1 entry, collapse entries
          whose titles share their non-generic content (one title's
@@ -863,23 +867,70 @@ def _collapse_same_audit_mirrors(reports: list[dict[str, Any]]) -> list[dict[str
          the same auditor on the same day keep different titles, so they
          stay separate.
     """
-    # Pass 1: dates that have a named-auditor entry
-    named_dates: set[str] = set()
+    # Pass 1: for each date with a named-auditor entry, record the set of
+    # hosts those named entries live on.
+    named_dates_hosts: dict[str, set[str]] = {}
     for r in reports:
         auditor = (r.get("auditor") or "").strip().lower()
         date = (r.get("date") or "").strip()
         if date and auditor and auditor != "unknown":
-            named_dates.add(date)
+            host = urlparse(r.get("url") or "").netloc.lower()
+            named_dates_hosts.setdefault(date, set()).add(host)
 
     pass1: list[dict[str, Any]] = []
     for r in reports:
         auditor = (r.get("auditor") or "").strip().lower()
         date = (r.get("date") or "").strip()
-        if auditor in ("", "unknown") and date in named_dates:
-            continue
+        if auditor in ("", "unknown") and date in named_dates_hosts:
+            host = urlparse(r.get("url") or "").netloc.lower()
+            # Drop only when this entry sits on a host that no named
+            # same-date entry uses — that signature matches a cross-host
+            # mirror. Same-host Unknowns keep: they're siblings in one
+            # audits folder whose auditor the LLM happened to miss.
+            if host and host not in named_dates_hosts[date]:
+                continue
         pass1.append(r)
 
-    # Pass 2: collapse mirrors that share (auditor, date, title-tokens).
+    # Pass 2: collapse cross-host named-auditor mirrors.
+    #
+    # When the same PDF is mirrored to two hosts (e.g. a gitbook CDN copy
+    # and the github audits-folder copy) each classification can produce a
+    # different title — "Omniscia Audit" from the bare filename vs.
+    # "EtherFi ETH2.0 Smart Contract Audit Report" from the gitbook page
+    # header. Pass 3 groups by title tokens and misses these because the
+    # non-generic tokens are disjoint. Here we catch same-(auditor, date)
+    # entries spread across >1 host and keep the richest one.
+    drop_cross_host: set[int] = set()
+    cross_host_groups: dict[tuple[str, str], list[int]] = {}
+    for i, r in enumerate(pass1):
+        auditor = (r.get("auditor") or "").strip().lower()
+        if not auditor or auditor == "unknown":
+            continue
+        date = (r.get("date") or "").strip()
+        if not date:
+            continue
+        cross_host_groups.setdefault((auditor, date), []).append(i)
+
+    for indices in cross_host_groups.values():
+        if len(indices) < 2:
+            continue
+        hosts = {
+            urlparse(pass1[i].get("url") or "").netloc.lower()
+            for i in indices
+        }
+        if len(hosts) < 2:
+            # All on one host — pass 3's title-token grouping is better
+            # equipped to tell siblings from mirrors here (e.g. Certora's
+            # same-day v2.49 and Instant Withdrawal audits).
+            continue
+        best = max(indices, key=lambda i: (_richness_score(pass1[i]), -i))
+        for i in indices:
+            if i != best:
+                drop_cross_host.add(i)
+
+    pass1 = [r for i, r in enumerate(pass1) if i not in drop_cross_host]
+
+    # Pass 3: collapse mirrors that share (auditor, date, title-tokens).
     # Distinct audits by the same auditor on the same day still stay
     # separate because they have different non-generic title tokens
     # (e.g. Certora's "EtherFi v2.49" vs "EtherFi Instant Withdrawal

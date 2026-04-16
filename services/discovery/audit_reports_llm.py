@@ -80,7 +80,11 @@ _KNOWN_AUDITORS = (
     "Cantina, Zellic, Cyfrin, Hexens, MixBytes, Dedaub, "
     "Nethermind (their report IDs are formatted NM-#### or NM_####), ChainSecurity, "
     "Certora, PeckShield, SlowMist, Ackee, Omniscia, Solidified, Paladin, Decurity, "
-    "Pashov, OtterSec, Statemind, Runtime Verification, Hats Finance"
+    "Pashov, OtterSec, Statemind, Runtime Verification, Hats Finance, "
+    "Pessimistic, Blackthorn, ABDK Consulting, CertiK, Lexfo, Securing, "
+    "Immunefi, Zokyo, Kudelski Security, Secure3, Veridise, Chainlight, "
+    "0xMacro, Guardian Audits, Three Sigma, Pragma, Certik, Solidprof, "
+    "Sec3 (formerly Soteria), Fuzzland, Oak Security, Block Analitica"
 )
 
 _CLASSIFICATION_PROMPT = """\

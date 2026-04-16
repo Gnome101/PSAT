@@ -814,6 +814,154 @@ class TestSearchAuditReports:
         assert r["title"] == "Omniscia EtherFi ETH2.0 Audit"
         assert r["pdf_url"] == pdf_url
 
+    def test_mirror_dedup_collapses_cross_host_same_auditor_named_mirrors(self, monkeypatch):
+        """Regression: EtherFi's Omniscia 2023-05-16 audit showed up twice in
+        the pipeline output — once at
+        ``Certora/etherfi-smart-contracts-fork/audits/2023.05.16 - Omniscia.pdf``
+        and once on a gitbook CDN (``246895607-files.gitbook.io/...``).
+        Both classifications correctly identified the auditor as ``Omniscia``
+        with date ``2023-05-16``, but with different titles (``Omniscia Audit``
+        vs ``EtherFi ETH2.0 Smart Contract Audit Report``). The existing
+        title-token pass couldn't see them as mirrors because the non-generic
+        tokens are disjoint (``{omniscia}`` vs ``{etherfi, eth2.0}``).
+        Cross-host same-(auditor, date) pairs should collapse to one entry.
+        """
+        github_pdf = "https://raw.githubusercontent.com/etherfi/audits/2023.05.16%20-%20Omniscia.pdf"
+        gitbook_pdf = "https://246895607-files.gitbook.io/spaces/G3Lk76lfvw9ecPIg0mK8/uploads/Omniscia_Audit_EtherFi.pdf"
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [
+                _tavily_result(github_pdf, "Omniscia EtherFi Audit"),
+                _tavily_result(
+                    gitbook_pdf,
+                    "[PDF] EtherFi ETH2.0 Smart Contract Audit Report",
+                ),
+            ],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports_llm.llm.chat",
+            lambda *a, **kw: json.dumps([
+                {"url": github_pdf, "is_audit": True, "type": "pdf",
+                 "auditor": "Omniscia", "title": "Omniscia Audit",
+                 "date": "2023-05-16", "confidence": 0.95},
+                {"url": gitbook_pdf, "is_audit": True, "type": "pdf",
+                 "auditor": "Omniscia",
+                 "title": "EtherFi ETH2.0 Smart Contract Audit Report",
+                 "date": "2023-05-16", "confidence": 0.95},
+            ]),
+        )
+
+        result = search_audit_reports("EtherFi")
+        omniscia = [r for r in result["reports"] if r["auditor"] == "Omniscia"]
+        assert len(omniscia) == 1, (
+            f"cross-host mirrors of the same Omniscia 2023-05-16 audit "
+            f"should collapse; got {len(omniscia)}: "
+            f"{[r.get('url') for r in omniscia]}"
+        )
+
+    def test_mirror_dedup_keeps_same_folder_unknown_siblings(self, monkeypatch):
+        """Regression: three audits delivered on the same day that all live
+        side-by-side in ``morpho-org/vault-v2/audits/`` must all survive,
+        even when the filename-LLM doesn't recognize one firm's name
+        ("Blackthorn" isn't on the known-auditors list, so its entry comes
+        back as auditor='Unknown'). Before this fix the Unknown entry was
+        collapsed by pass-1 of ``_collapse_same_audit_mirrors`` — that pass
+        treats same-date Unknown entries as mirrors of a named one, which
+        is correct across hosts (gitbook PDF vs. github PDF) but wrong for
+        sibling files in the same folder.
+        """
+        tree_url = "https://github.com/morpho-org/vault-v2/tree/main/audits"
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [_tavily_result(tree_url, "Morpho vault-v2 audits")],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        api_payload = [
+            {"name": "2025-09-15-chainsecurity.pdf", "type": "file",
+             "download_url": "https://raw.githubusercontent.com/morpho-org/vault-v2/main/audits/2025-09-15-chainsecurity.pdf",
+             "html_url": "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-chainsecurity.pdf"},
+            {"name": "2025-09-15-spearbit.pdf", "type": "file",
+             "download_url": "https://raw.githubusercontent.com/morpho-org/vault-v2/main/audits/2025-09-15-spearbit.pdf",
+             "html_url": "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-spearbit.pdf"},
+            {"name": "2025-09-15-blackthorn.pdf", "type": "file",
+             "download_url": "https://raw.githubusercontent.com/morpho-org/vault-v2/main/audits/2025-09-15-blackthorn.pdf",
+             "html_url": "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-blackthorn.pdf"},
+        ]
+
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                # Realistic filename-LLM response: Blackthorn is not in the
+                # known-firms list, so the LLM returns Unknown for it.
+                return json.dumps([
+                    {"filename": "2025-09-15-chainsecurity.pdf",
+                     "auditor": "ChainSecurity", "date": "2025-09-15",
+                     "title": "ChainSecurity Audit"},
+                    {"filename": "2025-09-15-spearbit.pdf",
+                     "auditor": "Spearbit", "date": "2025-09-15",
+                     "title": "Spearbit Audit"},
+                    {"filename": "2025-09-15-blackthorn.pdf",
+                     "auditor": None, "date": "2025-09-15",
+                     "title": "2025-09-15-blackthorn"},
+                ])
+            return json.dumps([
+                {"url": tree_url, "is_audit": True, "type": "listing",
+                 "auditor": None, "title": "Morpho vault-v2 audits",
+                 "date": None, "confidence": 0.95},
+            ])
+
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        class FakeResp:
+            def __init__(self, payload, status=200):
+                self._payload = payload
+                self.status_code = status
+                self.headers = {"content-type": "application/json"}
+                self.text = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+
+            def json(self):
+                return self._payload
+
+            def close(self):
+                pass
+
+            def iter_content(self, chunk_size=64_000):
+                yield self.text.encode()
+
+        def fake_requests_get(url, **kwargs):
+            if "api.github.com" in url:
+                return FakeResp(api_payload)
+            return FakeResp("", status=404)
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._requests.get", fake_requests_get,
+        )
+
+        result = search_audit_reports("morpho")
+        urls = {r["url"] for r in result["reports"]}
+
+        # Every file in the same folder is a distinct audit — all three should survive.
+        assert len(result["reports"]) == 3, (
+            f"expected 3 reports (one per folder sibling); got "
+            f"{len(result['reports'])}: {urls}"
+        )
+        assert any("blackthorn" in u.lower() for u in urls), (
+            f"Blackthorn audit missing; got {urls}"
+        )
+        assert any("chainsecurity" in u.lower() for u in urls)
+        assert any("spearbit" in u.lower() for u in urls)
+
     def test_github_org_url_enumerates_repos_across_org(self, monkeypatch):
         """Regression: when Tavily hits just a GitHub org URL like
         ``github.com/morpho-org``, the pipeline should expand it via the
