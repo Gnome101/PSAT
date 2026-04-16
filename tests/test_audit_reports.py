@@ -814,6 +814,145 @@ class TestSearchAuditReports:
         assert r["title"] == "Omniscia EtherFi ETH2.0 Audit"
         assert r["pdf_url"] == pdf_url
 
+    def test_github_org_url_enumerates_repos_across_org(self, monkeypatch):
+        """Regression: when Tavily hits just a GitHub org URL like
+        ``github.com/morpho-org``, the pipeline should expand it via the
+        GitHub API — enumerating every repo in the org and pulling audit
+        folders from each. Before this fix the org URL fell through to
+        plain HTML fetch of a React SPA and the LLM couldn't surface the
+        sibling repos that hold the core Morpho Blue / Morpho Optimizers
+        audits (verified against docs.morpho.org)."""
+        org_url = "https://github.com/morpho-org"
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [_tavily_result(org_url, "morpho-org Organization")],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        def fake_llm_chat(messages, **kwargs):
+            import re as _re
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                # Per-filename batch: return one entry per `- filename` line.
+                names = _re.findall(r"^- (.+)$", content, _re.MULTILINE)
+                out = []
+                for name in names:
+                    base = name.rsplit(".", 1)[0]
+                    # Collapse separators so real-world filenames like
+                    # ``open-zeppelin`` still match ``openzeppelin``.
+                    norm = _re.sub(r"[^a-z0-9]", "", name.lower())
+                    if "trailofbits" in norm or "tob" in norm:
+                        auditor = "Trail of Bits"
+                    elif "zeppelin" in norm:
+                        auditor = "OpenZeppelin"
+                    elif "spearbit" in norm:
+                        auditor = "Spearbit"
+                    else:
+                        auditor = "Unknown"
+                    out.append({
+                        "filename": name, "auditor": auditor,
+                        "title": base, "date": "2024-01-01",
+                    })
+                return json.dumps(out)
+            # Stage 1 classification for the org URL.
+            return json.dumps([
+                {"url": org_url, "is_audit": True, "type": "listing",
+                 "auditor": None, "title": "morpho-org",
+                 "date": None, "confidence": 0.95},
+            ])
+
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        # The org's HTML page never helps — this forces the "before" code
+        # path to register just a fallback entry (no sibling repos found).
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._fetch_html_page",
+            lambda url, debug=False: None,
+        )
+
+        class FakeResp:
+            def __init__(self, payload, status=200):
+                self._payload = payload
+                self.status_code = status
+                self.headers = {"content-type": "application/json"}
+                self.text = json.dumps(payload) if isinstance(payload, (dict, list)) else str(payload)
+
+            def json(self):
+                return self._payload
+
+            def close(self):
+                pass
+
+            def iter_content(self, chunk_size=64_000):
+                yield self.text.encode()
+
+        # A minimal slice of morpho-org: three repos with audits + one without.
+        repo_listing = [
+            {"name": "morpho-blue", "default_branch": "main", "archived": False},
+            {"name": "morpho-optimizers", "default_branch": "main", "archived": False},
+            {"name": "vault-v2", "default_branch": "main", "archived": False},
+            {"name": "frontend", "default_branch": "main", "archived": False},
+        ]
+
+        audits_per_repo = {
+            "morpho-blue": [{
+                "name": "2023-10-13-morpho-blue-and-speed-jump-irm-open-zeppelin.pdf", "type": "file",
+                "download_url": "https://raw.githubusercontent.com/morpho-org/morpho-blue/main/audits/2023-10-13-morpho-blue-and-speed-jump-irm-open-zeppelin.pdf",
+                "html_url": "https://github.com/morpho-org/morpho-blue/blob/main/audits/2023-10-13-morpho-blue-and-speed-jump-irm-open-zeppelin.pdf",
+            }],
+            "morpho-optimizers": [{
+                "name": "TrailOfBits_Morpho_Compound.pdf", "type": "file",
+                "download_url": "https://raw.githubusercontent.com/morpho-org/morpho-optimizers/main/audits/TrailOfBits_Morpho_Compound.pdf",
+                "html_url": "https://github.com/morpho-org/morpho-optimizers/blob/main/audits/TrailOfBits_Morpho_Compound.pdf",
+            }],
+            "vault-v2": [{
+                "name": "2025-05-19-spearbit.pdf", "type": "file",
+                "download_url": "https://raw.githubusercontent.com/morpho-org/vault-v2/main/audits/2025-05-19-spearbit.pdf",
+                "html_url": "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-05-19-spearbit.pdf",
+            }],
+        }
+
+        def fake_requests_get(url, **kwargs):
+            # Org listing (orgs endpoint)
+            if url.startswith("https://api.github.com/orgs/morpho-org/repos"):
+                return FakeResp(repo_listing)
+            if url.startswith("https://api.github.com/users/morpho-org/repos"):
+                return FakeResp({"message": "Not Found"}, status=404)
+            # Per-repo metadata
+            for name in ("morpho-blue", "morpho-optimizers", "vault-v2", "frontend"):
+                if url == f"https://api.github.com/repos/morpho-org/{name}":
+                    return FakeResp({"default_branch": "main"})
+            # Recursive tree — surfaces an `audits` folder for the three repos we care about
+            if "/git/trees/main?recursive=1" in url:
+                for name in ("morpho-blue", "morpho-optimizers", "vault-v2"):
+                    if f"/repos/morpho-org/{name}/" in url:
+                        return FakeResp({"tree": [{"path": "audits", "type": "tree"}]})
+                return FakeResp({"tree": [{"path": "src", "type": "tree"}]})
+            # Contents endpoint for each repo's audits directory
+            if "/contents/audits" in url:
+                for name, files in audits_per_repo.items():
+                    if f"/repos/morpho-org/{name}/" in url:
+                        return FakeResp(files)
+            return FakeResp({}, status=404)
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._requests.get", fake_requests_get,
+        )
+
+        result = search_audit_reports("morpho")
+        urls = [r["url"] for r in result["reports"]]
+        joined = " ".join(urls)
+        assert "morpho-blue" in joined, f"morpho-blue audit missing; urls={urls}"
+        assert "morpho-optimizers" in joined, f"morpho-optimizers audit missing; urls={urls}"
+        assert "vault-v2" in joined, f"vault-v2 audit missing; urls={urls}"
+        # At least one real audit per discovered repo.
+        assert len(result["reports"]) >= 3, f"expected ≥3 reports, got {len(result['reports'])}"
+
 
 # ============================================================================
 # 6. _sync_audit_reports_to_db

@@ -172,6 +172,16 @@ _GITHUB_BLOB_RE = re.compile(
 _GITHUB_REPO_RE = re.compile(
     r"^https?://github\.com/([^/]+)/([^/]+?)(?:\.git)?/?$"
 )
+_GITHUB_ORG_RE = re.compile(r"^https?://github\.com/([^/?#]+)/?$")
+
+# Single-segment GitHub paths that look like orgs but aren't ownable accounts.
+_RESERVED_GITHUB_PATHS = frozenset({
+    "orgs", "users", "settings", "marketplace", "topics", "search",
+    "sponsors", "explore", "about", "pricing", "enterprise", "trending",
+    "collections", "events", "features", "customer-stories", "team",
+    "contact", "site", "login", "join", "new", "organizations",
+    "notifications", "issues", "pulls", "watching", "stars", "codespaces",
+})
 
 
 def _github_api_headers() -> dict[str, str]:
@@ -292,9 +302,15 @@ def _parse_github_url(url: str) -> dict[str, str] | None:
     if m:
         repo = m.group(2)
         # ``github.com/<org>`` (no repo) and known non-repo paths shouldn't match.
-        if repo in {"orgs", "users", "settings", "marketplace", "topics", "search"}:
+        if repo in _RESERVED_GITHUB_PATHS:
             return None
         return {"kind": "repo", "owner": m.group(1), "repo": repo, "ref": "", "path": ""}
+    m = _GITHUB_ORG_RE.match(url)
+    if m:
+        owner = m.group(1)
+        if owner in _RESERVED_GITHUB_PATHS:
+            return None
+        return {"kind": "org", "owner": owner, "repo": "", "ref": "", "path": ""}
     return None
 
 
@@ -309,6 +325,98 @@ _AUDIT_FOLDER_CANDIDATES: tuple[str, ...] = (
     "docs/audits",
     "security",
 )
+
+
+# Cap the per-org repo enumeration so a vendor org (e.g. Certora, which
+# holds hundreds of repos) can't blow out the GitHub API budget for a
+# single Stage-2 hit. Sorted by pushed_at desc, so the newest repos —
+# which is where current audits live — are probed first.
+_MAX_ORG_REPOS = 30
+
+
+def _list_org_repos(owner: str, debug: bool = False) -> list[str]:
+    """List public repo names for a GitHub org or user, ordered by most
+    recently pushed. Returns up to ``_MAX_ORG_REPOS`` names.
+
+    Tries the ``/orgs/{owner}/repos`` endpoint first; falls back to
+    ``/users/{owner}/repos`` so this works for both org and user accounts.
+    """
+    params = f"per_page={_MAX_ORG_REPOS}&sort=pushed&direction=desc&type=public"
+    for endpoint in ("orgs", "users"):
+        url = f"https://api.github.com/{endpoint}/{owner}/repos?{params}"
+        try:
+            resp = _requests.get(url, timeout=30, headers=_github_api_headers())
+        except _requests.RequestException as exc:
+            _debug_log(debug, f"GitHub {endpoint} list failed for {owner}: {exc!r}")
+            continue
+        if resp.status_code == 404:
+            continue
+        if resp.status_code != 200:
+            _debug_log(debug, f"GitHub {endpoint} list {resp.status_code} for {owner}")
+            return []
+        data = resp.json()
+        if not isinstance(data, list):
+            return []
+        # Include archived repos — protocol teams routinely archive the
+        # previous major version's repo (e.g. ``morpho-optimizers``, the
+        # legacy V1 Morpho codebase) while its audit files remain the
+        # authoritative record for that version.
+        names = [
+            str(item.get("name"))
+            for item in data
+            if item.get("name")
+        ]
+        _debug_log(debug, f"GitHub {endpoint} {owner}: {len(names)} repo(s)")
+        return names[:_MAX_ORG_REPOS]
+    _debug_log(debug, f"GitHub {owner}: neither orgs nor users endpoint returned data")
+    return []
+
+
+def _fetch_github_org_as_reports(
+    owner: str, company: str, url: str, debug: bool = False,
+) -> dict[str, Any] | None:
+    """Enumerate every repo in a GitHub org and pull audit folders from each.
+
+    Protocol teams routinely split their codebase across sibling repos
+    (core contracts in one repo, periphery in another, each vault version
+    in its own) with a shared ``audits/`` folder pattern. A bare org URL
+    like ``github.com/morpho-org`` has to expand into all of those to catch
+    audits that aren't reachable from the single repo Tavily happens to
+    surface.
+    """
+    repos = _list_org_repos(owner, debug=debug)
+    if not repos:
+        return None
+
+    merged_reports: list[dict[str, Any]] = []
+    merged_linked: list[str] = []
+    probed_with_audits = 0
+
+    for repo in repos:
+        folders = _discover_repo_audit_folders(owner, repo, debug=debug)
+        if not folders:
+            continue
+        probed_with_audits += 1
+        for folder in folders:
+            tree_url = (
+                f"https://github.com/{owner}/{repo}"
+                f"/tree/{folder['ref']}/{folder['path']}"
+            )
+            sub = _fetch_github_tree_as_reports(
+                owner, repo, folder["path"],
+                ref=folder["ref"], company=company, url=tree_url, debug=debug,
+            )
+            if not sub:
+                continue
+            merged_reports.extend(sub.get("reports", []))
+            merged_linked.extend(sub.get("linked_urls", []))
+
+    _debug_log(
+        debug,
+        f"GitHub org {owner}: {probed_with_audits}/{len(repos)} repo(s) "
+        f"had audit folder(s); {len(merged_reports)} report(s) total",
+    )
+    return {"reports": merged_reports, "linked_urls": merged_linked}
 
 
 def _discover_repo_audit_folders(
@@ -633,6 +741,14 @@ def _fetch_and_extract(
             return _fetch_github_tree_as_reports(
                 github["owner"], github["repo"], github["path"],
                 ref=github["ref"], company=company, url=url, debug=debug,
+            )
+        if github["kind"] == "org":
+            # Bare org URL: enumerate every repo in the org and probe each
+            # for an audits folder. Protocol teams typically shard their
+            # audits across sibling repos (core, periphery, v2, etc.), so
+            # one Tavily hit on the org root needs to fan out.
+            return _fetch_github_org_as_reports(
+                github["owner"], company, url, debug=debug,
             )
         if github["kind"] == "repo":
             # Repo root URL: ask GitHub which subdirectories hold audits, then
