@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from db.models import (
     Artifact,
@@ -39,7 +39,16 @@ from db.models import (
     UpgradeEvent,
     WatchedProxy,
 )
-from db.queue import create_job, find_existing_job_for_address, get_all_artifacts, get_artifact
+from db.queue import (
+    _artifact_row_to_value as _resolve_artifact_value,
+)
+from db.queue import (
+    create_job,
+    find_existing_job_for_address,
+    get_all_artifacts,
+    get_artifact,
+)
+from db.storage import StorageError, StorageUnavailable, get_storage_client
 
 logger = logging.getLogger(__name__)
 
@@ -337,8 +346,38 @@ def index():
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health():
+    """Liveness/readiness probe — verifies the database and object storage are reachable."""
+    from fastapi.responses import JSONResponse
+
+    body: dict[str, Any] = {"status": "ok", "db": "ok", "storage": "inline"}
+    failures: list[str] = []
+
+    try:
+        with SessionLocal() as session:
+            # Cap the probe at 2s so a hung Postgres can't hang the health endpoint.
+            # SET LOCAL statement_timeout is Postgres-specific syntax.
+            session.execute(text("SET LOCAL statement_timeout = 2000"))
+            session.execute(select(1))
+    except Exception:
+        logger.exception("Health check: db unreachable")
+        body["db"] = "unavailable"
+        failures.append("db")
+
+    storage_client = get_storage_client()
+    if storage_client is not None:
+        try:
+            storage_client.health_check()
+            body["storage"] = "ok"
+        except StorageUnavailable:
+            logger.exception("Health check: storage unreachable")
+            body["storage"] = "unavailable"
+            failures.append("storage")
+
+    if failures:
+        body["status"] = "unavailable"
+        return JSONResponse(body, status_code=503)
+    return body
 
 
 @app.get("/api/config")
@@ -374,16 +413,22 @@ def list_jobs() -> list[dict[str, Any]]:
         stmt = select(Job).order_by(Job.created_at.desc())
         jobs = session.execute(stmt).scalars().all()
 
-        # Batch-fetch contract_flags to tag proxy jobs
+        # Batch-fetch contract_flags to tag proxy jobs.
+        # Artifacts may live inline (data) or in object storage (storage_key);
+        # _resolve_artifact_value() handles both transparently.
         job_ids = [job.id for job in jobs]
         proxy_ids: set[str] = set()
         if job_ids:
-            flags_stmt = select(Artifact.job_id, Artifact.data).where(
-                Artifact.job_id.in_(job_ids), Artifact.name == "contract_flags"
-            )
-            for row in session.execute(flags_stmt):
-                if isinstance(row.data, dict) and row.data.get("is_proxy"):
-                    proxy_ids.add(str(row.job_id))
+            flags_stmt = select(Artifact).where(Artifact.job_id.in_(job_ids), Artifact.name == "contract_flags")
+            for art in session.execute(flags_stmt).scalars():
+                try:
+                    value = _resolve_artifact_value(art)
+                except StorageError:
+                    # Storage object missing or unreachable — skip but don't block the list.
+                    logger.warning("contract_flags storage read failed for job %s", art.job_id)
+                    continue
+                if isinstance(value, dict) and value.get("is_proxy"):
+                    proxy_ids.add(str(art.job_id))
 
         result = []
         for job in jobs:
@@ -559,7 +604,14 @@ def analyses() -> list[dict]:
 
 @app.get("/api/analyses/{run_name:path}/artifact/{artifact_name:path}")
 def analysis_artifact(run_name: str, artifact_name: str):
-    """Get a specific artifact for an analysis."""
+    """Get a specific artifact for an analysis.
+
+    Storage-backed artifacts are fetched from object storage transparently;
+    inline (legacy) artifacts are served from Postgres. Either way, the body
+    is returned directly to the client.
+    """
+    from fastapi.responses import JSONResponse
+
     with SessionLocal() as session:
         # Find job by name or id or address
         stmt = select(Job).where(Job.name == run_name).order_by(Job.updated_at.desc()).limit(1)
@@ -593,9 +645,7 @@ def analysis_artifact(run_name: str, artifact_name: str):
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
 
-        if isinstance(artifact, dict):
-            from fastapi.responses import JSONResponse
-
+        if isinstance(artifact, (dict, list)):
             return JSONResponse(content=artifact)
         return PlainTextResponse(str(artifact))
 

@@ -47,6 +47,37 @@ if ! docker compose ps postgres --status running -q 2>/dev/null | grep -q .; the
   sleep 3
 fi
 
+# Start minio (object storage) if not running.
+# With ARTIFACT_STORAGE_* set, artifact bodies live in minio; without them,
+# the app falls back to inline Postgres storage.
+if ! docker compose ps minio --status running -q 2>/dev/null | grep -q .; then
+  echo "Starting minio..."
+  docker compose up minio minio-init -d
+  echo "Waiting for minio to be healthy..."
+  until docker compose ps minio --status running -q 2>/dev/null | grep -q .; do
+    sleep 1
+  done
+  # minio-init creates the bucket then exits 0 — wait for that to complete.
+  # Note: `docker compose ps` hides stopped containers by default, so pass -a.
+  until [ "$(docker compose ps -a minio-init --format '{{.State}}' 2>/dev/null)" = "exited" ]; do
+    sleep 1
+  done
+fi
+
+# Report which artifact storage mode the app will use on boot.
+if [ -n "$ARTIFACT_STORAGE_ENDPOINT" ] && [ -n "$ARTIFACT_STORAGE_BUCKET" ] \
+   && [ -n "$ARTIFACT_STORAGE_ACCESS_KEY" ] && [ -n "$ARTIFACT_STORAGE_SECRET_KEY" ]; then
+  echo "Artifact storage: minio ($ARTIFACT_STORAGE_ENDPOINT → $ARTIFACT_STORAGE_BUCKET)"
+  echo "  Console: http://localhost:9001 (login: $ARTIFACT_STORAGE_ACCESS_KEY)"
+else
+  echo "WARNING: ARTIFACT_STORAGE_* not fully set in .env — app will use inline Postgres fallback."
+  echo "  To use minio, add to .env:"
+  echo "    ARTIFACT_STORAGE_ENDPOINT=http://localhost:9000"
+  echo "    ARTIFACT_STORAGE_BUCKET=psat-artifacts"
+  echo "    ARTIFACT_STORAGE_ACCESS_KEY=psat-minio"
+  echo "    ARTIFACT_STORAGE_SECRET_KEY=psat-minio-secret"
+fi
+
 cleanup_stale_workers() {
   local stale
   stale=$(pgrep -af "$WORKER_PATTERN" || true)

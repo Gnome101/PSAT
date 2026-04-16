@@ -16,6 +16,37 @@ services:
       retries: 5
     restart: unless-stopped
 
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: psat-minio
+      MINIO_ROOT_PASSWORD: psat-minio-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        mc alias set local http://minio:9000 psat-minio psat-minio-secret &&
+        mc mb --ignore-existing local/psat-artifacts &&
+        mc mb --ignore-existing local/psat-artifacts-test
+      "
+    restart: "no"
+
   api:
     build:
       context: .
@@ -25,11 +56,17 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+      ARTIFACT_STORAGE_ENDPOINT: http://minio:9000
+      ARTIFACT_STORAGE_BUCKET: psat-artifacts
+      ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
+      ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   workers:
@@ -41,6 +78,10 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+      ARTIFACT_STORAGE_ENDPOINT: http://minio:9000
+      ARTIFACT_STORAGE_BUCKET: psat-artifacts
+      ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
+      ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
       PSAT_DEBUG_TIMING: "1"
     command: ["bash", "start_workers.sh"]
     depends_on:
@@ -48,6 +89,8 @@ services:
         condition: service_healthy
       api:
         condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   proxy-scanner:
@@ -89,9 +132,15 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+      ARTIFACT_STORAGE_ENDPOINT: http://minio:9000
+      ARTIFACT_STORAGE_BUCKET: psat-artifacts
+      ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
+      ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
     depends_on:
       postgres:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   site:
@@ -111,3 +160,4 @@ services:
 
 volumes:
   pgdata:
+  miniodata:

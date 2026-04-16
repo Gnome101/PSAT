@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import func, select
@@ -19,6 +20,17 @@ from .models import (
     Protocol,
     SourceFile,
 )
+from .storage import (
+    StorageError,
+    StorageKeyMissing,
+    artifact_key,
+    deserialize_artifact,
+    get_storage_client,
+    serialize_artifact,
+    source_file_key,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def create_job(
@@ -140,8 +152,74 @@ def count_analysis_children(session: Session, root_job_id: str) -> int:
     return count
 
 
+def _artifact_row_to_value(artifact: Artifact) -> dict | list | str | None:
+    """Resolve an Artifact row to its decoded payload (handles inline + storage)."""
+    if artifact.storage_key:
+        client = get_storage_client()
+        if client is None:
+            raise RuntimeError(
+                f"Artifact {artifact.name} on job {artifact.job_id} has storage_key but storage is not configured"
+            )
+        body = client.get(artifact.storage_key)
+        return deserialize_artifact(body, artifact.content_type)
+    if artifact.data is not None:
+        return artifact.data
+    return artifact.text_data
+
+
 def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, text_data: str | None = None) -> None:
-    """Upsert an artifact for a job (unique on job_id + name)."""
+    """Upsert an artifact for a job (unique on job_id + name).
+
+    When ``ARTIFACT_STORAGE_*`` env vars are set, the body is written to object
+    storage and only metadata (storage_key, size_bytes, content_type) is stored
+    in Postgres. Otherwise, the body lives inline in ``data`` / ``text_data``.
+
+    If the storage put succeeds but the DB write fails, the storage object is
+    deleted — but only if the row did not pre-exist. Overwriting a previously-
+    committed artifact with the same deterministic key and then rolling back
+    leaves the object in place (deleting it would break the previous row).
+    """
+    client = get_storage_client()
+    if client is not None:
+        body, content_type = serialize_artifact(data, text_data)
+        key = artifact_key(job_id, name)
+        preexisting = session.execute(
+            select(Artifact.id).where(Artifact.job_id == job_id, Artifact.name == name).limit(1)
+        ).scalar_one_or_none()
+
+        client.put(key, body, content_type, metadata={"artifact_name": name, "job_id": str(job_id)})
+        stmt = pg_insert(Artifact).values(
+            job_id=job_id,
+            name=name,
+            data=None,
+            text_data=None,
+            storage_key=key,
+            size_bytes=len(body),
+            content_type=content_type,
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_artifact_job_name",
+            set_={
+                "data": None,
+                "text_data": None,
+                "storage_key": stmt.excluded.storage_key,
+                "size_bytes": stmt.excluded.size_bytes,
+                "content_type": stmt.excluded.content_type,
+            },
+        )
+        try:
+            session.execute(stmt)
+            session.commit()
+        except Exception:
+            session.rollback()
+            if preexisting is None:
+                try:
+                    client.delete(key)
+                except StorageError:
+                    logger.warning("Failed to clean up orphan storage object %s", key)
+            raise
+        return
+
     stmt = pg_insert(Artifact).values(
         job_id=job_id,
         name=name,
@@ -150,21 +228,25 @@ def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, t
     )
     stmt = stmt.on_conflict_do_update(
         constraint="uq_artifact_job_name",
-        set_={"data": stmt.excluded.data, "text_data": stmt.excluded.text_data},
+        set_={
+            "data": stmt.excluded.data,
+            "text_data": stmt.excluded.text_data,
+            "storage_key": None,
+            "size_bytes": None,
+            "content_type": None,
+        },
     )
     session.execute(stmt)
     session.commit()
 
 
-def get_artifact(session: Session, job_id: Any, name: str) -> dict | str | None:
-    """Read an artifact by job_id and name. Returns data (JSONB) or text_data."""
+def get_artifact(session: Session, job_id: Any, name: str) -> dict | list | str | None:
+    """Read an artifact by job_id and name."""
     stmt = select(Artifact).where(Artifact.job_id == job_id, Artifact.name == name)
     artifact = session.execute(stmt).scalar_one_or_none()
     if artifact is None:
         return None
-    if artifact.data is not None:
-        return artifact.data
-    return artifact.text_data
+    return _artifact_row_to_value(artifact)
 
 
 def get_all_artifacts(session: Session, job_id: Any) -> dict[str, Any]:
@@ -173,26 +255,80 @@ def get_all_artifacts(session: Session, job_id: Any) -> dict[str, Any]:
     artifacts = session.execute(stmt).scalars().all()
     result: dict[str, Any] = {}
     for artifact in artifacts:
-        if artifact.data is not None:
-            result[artifact.name] = artifact.data
-        elif artifact.text_data is not None:
-            result[artifact.name] = artifact.text_data
+        try:
+            value = _artifact_row_to_value(artifact)
+        except StorageKeyMissing:
+            continue
+        if value is not None:
+            result[artifact.name] = value
     return result
 
 
 def store_source_files(session: Session, job_id: Any, files: dict[str, str]) -> None:
-    """Bulk insert source files for a job (replaces existing)."""
-    session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
-    for path, content in files.items():
-        session.add(SourceFile(job_id=job_id, path=path, content=content))
-    session.commit()
+    """Bulk insert source files for a job (replaces existing).
+
+    When object storage is configured, every body is uploaded first with the
+    path carried in user-metadata (so the path is recoverable from storage
+    alone). Only after all uploads succeed do we swap the DB rows. If any
+    upload fails, already-uploaded objects are deleted so the bucket does not
+    accumulate orphans pointing at nothing.
+    """
+    client = get_storage_client()
+    if client is None:
+        session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
+        for path, content in files.items():
+            session.add(SourceFile(job_id=job_id, path=path, content=content))
+        session.commit()
+        return
+
+    uploaded_keys: list[str] = []
+    try:
+        entries: list[tuple[str, str]] = []
+        for path, content in files.items():
+            key = source_file_key(job_id, path)
+            client.put(
+                key,
+                content.encode("utf-8"),
+                "text/plain; charset=utf-8",
+                metadata={"path": path, "job_id": str(job_id)},
+            )
+            uploaded_keys.append(key)
+            entries.append((path, key))
+
+        # All uploads succeeded — swap DB rows atomically.
+        session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
+        for path, key in entries:
+            session.add(SourceFile(job_id=job_id, path=path, content=None, storage_key=key))
+        session.commit()
+    except Exception:
+        session.rollback()
+        for key in uploaded_keys:
+            try:
+                client.delete(key)
+            except StorageError:
+                logger.warning("Failed to clean up orphan source file object %s", key)
+        raise
 
 
 def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
     """Returns {relative_path: file_content} for all source files of a job."""
     stmt = select(SourceFile).where(SourceFile.job_id == job_id)
     rows = session.execute(stmt).scalars().all()
-    return {row.path: row.content for row in rows}
+    out: dict[str, str] = {}
+    client = get_storage_client()
+    for row in rows:
+        if row.storage_key:
+            if client is None:
+                raise RuntimeError(
+                    f"SourceFile {row.path} on job {row.job_id} has storage_key but storage is not configured"
+                )
+            try:
+                out[row.path] = client.get(row.storage_key).decode("utf-8")
+            except StorageKeyMissing:
+                continue
+        elif row.content is not None:
+            out[row.path] = row.content
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -466,10 +602,17 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     session.flush()
     new_contract = src_contract
 
+    storage = get_storage_client()
+
     # --- source files ---
     src_files = session.execute(select(SourceFile).where(SourceFile.job_id == source_job_id)).scalars().all()
     for sf in src_files:
-        copy_row(session, sf, job_id=target_job_id)
+        if sf.storage_key and storage is not None:
+            new_key = source_file_key(target_job_id, sf.path)
+            storage.copy(sf.storage_key, new_key)
+            session.add(SourceFile(job_id=target_job_id, path=sf.path, content=None, storage_key=new_key))
+        else:
+            copy_row(session, sf, job_id=target_job_id)
 
     # --- artifacts (static + seed) ---
     src_artifacts = (
@@ -483,7 +626,31 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
         .all()
     )
     for art in src_artifacts:
-        store_artifact(session, target_job_id, art.name, data=art.data, text_data=art.text_data)
+        if art.storage_key and storage is not None:
+            new_key = artifact_key(target_job_id, art.name)
+            storage.copy(art.storage_key, new_key)
+            stmt = pg_insert(Artifact).values(
+                job_id=target_job_id,
+                name=art.name,
+                data=None,
+                text_data=None,
+                storage_key=new_key,
+                size_bytes=art.size_bytes,
+                content_type=art.content_type,
+            )
+            stmt = stmt.on_conflict_do_update(
+                constraint="uq_artifact_job_name",
+                set_={
+                    "data": None,
+                    "text_data": None,
+                    "storage_key": stmt.excluded.storage_key,
+                    "size_bytes": stmt.excluded.size_bytes,
+                    "content_type": stmt.excluded.content_type,
+                },
+            )
+            session.execute(stmt)
+        else:
+            store_artifact(session, target_job_id, art.name, data=art.data, text_data=art.text_data)
 
     session.commit()
     return new_contract.id  # type: ignore[attr-defined]

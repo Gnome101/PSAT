@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tests.cache_helpers import requires_postgres  # noqa: E402
+
 
 def _make_fake_job(
     job_id: str | None = None,
@@ -69,14 +71,17 @@ def test_spa_fallback_serves_html_for_deep_link() -> None:
     assert "Run an address and inspect the control surface" in response.text
 
 
-def test_health_and_config_endpoints() -> None:
-    client = make_client()
-
-    health = client.get("/api/health")
-    config = client.get("/api/config")
+@requires_postgres
+def test_health_and_config_endpoints(api_client) -> None:
+    health = api_client.get("/api/health")
+    config = api_client.get("/api/config")
 
     assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
+    payload = health.json()
+    assert payload["status"] == "ok"
+    assert payload["db"] == "ok"
+    # conftest scrubs ARTIFACT_STORAGE_*, so this client sees the inline path.
+    assert payload["storage"] == "inline"
     assert config.status_code == 200
     assert "default_rpc_url" in config.json()
 
@@ -104,8 +109,11 @@ def test_admin_key_required_for_non_get(monkeypatch) -> None:
     assert bad_header.status_code == 401
 
 
-def test_cors_allows_configured_origin(monkeypatch) -> None:
+@requires_postgres
+def test_cors_allows_configured_origin(monkeypatch, db_session) -> None:
     """Configured origins should be reflected in CORS responses."""
+    from tests.conftest import SessionFactory
+
     monkeypatch.setenv("PSAT_SITE_ORIGIN", "https://psat.example.com")
     import importlib
 
@@ -113,6 +121,9 @@ def test_cors_allows_configured_origin(monkeypatch) -> None:
 
     importlib.reload(api)
     try:
+        # The reload reset SessionLocal to the prod-default engine; point it
+        # back at the test DB so /api/health can reach Postgres.
+        api.SessionLocal = SessionFactory(db_session)
         api.app.dependency_overrides[api.require_admin_key] = lambda: None
         client = TestClient(api.app)
 
@@ -240,34 +251,44 @@ def test_missing_analysis_returns_404(mock_session_cls, mock_get_all_artifacts) 
     assert response.status_code == 404
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_artifact_endpoint_serves_json_and_text(mock_session_cls, mock_get_artifact) -> None:
+def test_artifact_endpoint_serves_json_and_text(mock_session_cls) -> None:
+    """Inline-stored artifacts (no storage_key) are served directly."""
     client = make_client()
     fake_job = _make_fake_job(name="demo_run")
 
+    fake_json_artifact = MagicMock()
+    fake_json_artifact.storage_key = None
+    fake_json_artifact.data = {"summary": {"control_model": "ownable"}}
+    fake_json_artifact.text_data = None
+    fake_json_artifact.content_type = "application/json"
+
+    fake_text_artifact = MagicMock()
+    fake_text_artifact.storage_key = None
+    fake_text_artifact.data = None
+    fake_text_artifact.text_data = "report body"
+    fake_text_artifact.content_type = "text/plain"
+
+    # Per-request the endpoint runs: Job lookup (1) → Artifact lookup (2).
+    # Two endpoint calls back-to-back = four execute() invocations total.
+    sequence = [fake_job, fake_json_artifact, fake_job, fake_text_artifact]
+
+    def execute_side_effect(*_args, **_kwargs):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = sequence.pop(0) if sequence else None
+        return result
+
     mock_session = MagicMock()
-    mock_execute = MagicMock()
-    mock_execute.scalar_one_or_none.return_value = fake_job
-    mock_session.execute.return_value = mock_execute
+    mock_session.execute.side_effect = execute_side_effect
     mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
     mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
-
-    def fake_get_artifact(session, job_id, name):
-        if name == "contract_analysis":
-            return {"summary": {"control_model": "ownable"}}
-        if name == "analysis_report":
-            return "report body"
-        return None
-
-    mock_get_artifact.side_effect = fake_get_artifact
 
     json_response = client.get("/api/analyses/demo_run/artifact/contract_analysis.json")
     txt_response = client.get("/api/analyses/demo_run/artifact/analysis_report.txt")
 
-    assert json_response.status_code == 200
+    assert json_response.status_code == 200, json_response.text
     assert json_response.json()["summary"]["control_model"] == "ownable"
-    assert txt_response.status_code == 200
+    assert txt_response.status_code == 200, txt_response.text
     assert "report body" in txt_response.text
 
 

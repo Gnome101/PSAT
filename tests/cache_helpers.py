@@ -252,10 +252,12 @@ def db_session():
         SourceFile,
         UpgradeEvent,
         WatchedProxy,
+        apply_storage_migrations,
     )
 
     engine = create_engine(DATABASE_URL)
     Base.metadata.create_all(engine)
+    apply_storage_migrations(engine)
     session = Session(engine, expire_on_commit=False)
 
     try:
