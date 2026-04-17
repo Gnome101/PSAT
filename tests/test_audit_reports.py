@@ -345,6 +345,22 @@ class TestExtractReportDetails:
 # ============================================================================
 
 
+@pytest.fixture(autouse=True)
+def _mock_external_seeds(monkeypatch):
+    """The orchestrator's Stage 0 (Solodit), Stage 3.5 (portfolio crawl)
+    and Stage 3.6 (allied-infra crawl) all make real network calls. Tests
+    should not hit the network — stub them to return empty by default;
+    tests that need to verify those paths override the mocks locally."""
+    monkeypatch.setattr(
+        "services.discovery.audit_reports._solodit.search",
+        lambda *a, **kw: [],
+    )
+    monkeypatch.setattr(
+        "services.discovery.audit_reports._list_repo_root_for_company",
+        lambda *a, **kw: None,
+    )
+
+
 class TestSearchAuditReports:
     def test_full_pipeline_with_mocked_externals(self, monkeypatch):
         """End-to-end orchestrator test with mocked Tavily and LLM."""
@@ -1693,3 +1709,675 @@ class TestDiscoveryWorkerAuditIntegration:
         urls = {r["url"] for r in stored_reports}
         assert "https://old.com/audit" in urls
         assert "https://new.com/audit" in urls
+
+
+# ============================================================================
+# 6. Date extraction + LLM-filled auditor (Fix 3)
+#
+# Auditor inference is now an LLM concern (filename batch + final validation
+# pass). The deterministic side keeps only date extraction, which is exact
+# and benefits from being free of LLM nondeterminism.
+# ============================================================================
+
+
+class TestDateExtraction:
+    @pytest.mark.parametrize("filename, expected", [
+        ("2024.06.25 - Halborn - EFIP.pdf", "2024-06-25"),
+        ("2023-12-20 - Hats Finance.md", "2023-12-20"),
+        ("2025_03_15_audit.pdf", "2025-03-15"),
+        ("20241109-scroll-native-minting.md", "2024-11-09"),
+        ("2024-06_audit.pdf", "2024-06"),
+        ("Audit-2023.pdf", "2023"),
+        # URL-encoded
+        ("2025.10.20%20-%20WeETH%20withdrawal%20adapter.pdf", "2025-10-20"),
+        # Invalid month → falls through to year-only
+        ("2024-13-01.pdf", "2024"),
+        # Random digits don't match (audit report ID-like)
+        ("Bundle_11.pdf", None),
+        ("Cash Audit Report.pdf", None),
+    ])
+    def test_date_extraction(self, filename, expected):
+        from services.discovery.audit_reports import _extract_date_from_filename
+        assert _extract_date_from_filename(filename) == expected
+
+    def test_augment_fills_date_only(self):
+        """LLM output wins for date; auditor pass-through (LLM-only now)."""
+        from services.discovery.audit_reports import _augment_filename_metadata
+        # LLM date present — left untouched
+        meta = {"auditor": "Cantina", "date": "2024-01-01", "title": "X"}
+        out = _augment_filename_metadata("2025.10.20-Halborn.pdf", meta)
+        assert out["date"] == "2024-01-01"
+        assert out["auditor"] == "Cantina"
+        # LLM date null → fill from filename
+        meta = {"auditor": "Halborn", "date": None, "title": "X"}
+        out = _augment_filename_metadata("2025.10.20-Halborn.pdf", meta)
+        assert out["date"] == "2025-10-20"
+        assert out["auditor"] == "Halborn"  # untouched
+        # LLM auditor null AND filename has obvious auditor → still null
+        # (auditor inference is the LLM's job now, not the augmenter's)
+        meta = {"auditor": None, "date": None, "title": "X"}
+        out = _augment_filename_metadata("2025.10.20-Halborn.pdf", meta)
+        assert out["date"] == "2025-10-20"
+        assert out.get("auditor") is None
+
+
+# ============================================================================
+# 7. Audit folder name matching (Fix 4)
+# ============================================================================
+
+
+class TestFolderNameMatching:
+    """The recursive-tree scan recognises the broader folder name set."""
+
+    @pytest.mark.parametrize("folder_name", [
+        "audits", "audit", "audit-reports", "security-audits",
+        "reviews", "security-reviews", "external-audits",
+        "code-audits", "formal-verification", "security-reports",
+    ])
+    def test_recognized_folders(self, folder_name):
+        from services.discovery.audit_reports import _AUDIT_FOLDER_LAST_SEGMENTS
+        assert folder_name in _AUDIT_FOLDER_LAST_SEGMENTS
+
+    @pytest.mark.parametrize("folder_name", [
+        "src", "test", "lib", "node_modules", "docs",
+    ])
+    def test_unrelated_folders_excluded(self, folder_name):
+        from services.discovery.audit_reports import _AUDIT_FOLDER_LAST_SEGMENTS
+        assert folder_name not in _AUDIT_FOLDER_LAST_SEGMENTS
+
+
+# ============================================================================
+# 8. Org-enumeration dedup (Fix 1)
+# ============================================================================
+
+
+class TestOrgDedup:
+    """``auto_hopped_orgs`` prevents the same GitHub org from being enumerated
+    twice in a single ``search_audit_reports`` call."""
+
+    def test_should_auto_hop_includes_org_kind(self):
+        from services.discovery.audit_reports import _should_auto_hop_org
+        # Bare org URL whose owner matches company name → auto-hop
+        assert _should_auto_hop_org("https://github.com/morpho-org", "Morpho", set())
+        # Same org already enumerated → don't re-hop
+        assert not _should_auto_hop_org(
+            "https://github.com/morpho-org", "Morpho", {"morpho-org"}
+        )
+        # Org name doesn't substring-match company → don't hop
+        assert not _should_auto_hop_org("https://github.com/Certora", "Morpho", set())
+
+    def test_org_then_tree_does_not_re_enumerate(self, monkeypatch):
+        """Two URLs into the same org (one bare org, one tree) trigger
+        exactly one ``_fetch_github_org_as_reports`` call."""
+        org_url = "https://github.com/morpho-org"
+        tree_url = "https://github.com/morpho-org/vault-v2/tree/main/audits"
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [
+                _tavily_result(org_url, "Morpho org"),
+                _tavily_result(tree_url, "Morpho vault audits"),
+            ],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        # Stage 1 LLM: classify both as audits.
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                return json.dumps([])  # not used in this test
+            return json.dumps([
+                {"url": org_url, "is_audit": True, "type": "listing",
+                 "auditor": None, "title": "Morpho org",
+                 "date": None, "confidence": 0.9},
+                {"url": tree_url, "is_audit": True, "type": "listing",
+                 "auditor": None, "title": "Morpho vault audits",
+                 "date": None, "confidence": 0.9},
+            ])
+
+        monkeypatch.setattr("utils.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        # Count how many times the org-enumerate function is called.
+        from services.discovery import audit_reports as ar
+        call_count = {"n": 0}
+        original = ar._fetch_github_org_as_reports
+
+        def counted(*args, **kwargs):
+            call_count["n"] += 1
+            # Return non-None so the dedup set gets populated.
+            return {"reports": [], "linked_urls": []}
+
+        monkeypatch.setattr(ar, "_fetch_github_org_as_reports", counted)
+
+        ar.search_audit_reports("Morpho")
+        assert call_count["n"] == 1, (
+            f"expected exactly one org enumeration, got {call_count['n']}"
+        )
+
+    def test_failed_enumeration_does_not_block_fallback(self, monkeypatch):
+        """If org enumeration returns None (rate-limit, no repos), the
+        owner is NOT marked covered, so a per-URL tree fetch can still run."""
+        from services.discovery import audit_reports as ar
+
+        auto_hopped: set[str] = set()
+        monkeypatch.setattr(
+            ar, "_fetch_github_org_as_reports",
+            lambda *a, **kw: None,  # simulate failed enumeration
+        )
+        ar._maybe_auto_hop_to_org(
+            "https://github.com/morpho-org/vault-v2/tree/main/audits",
+            "Morpho", auto_hopped, 0.9, "2024-01-01T00:00:00", [],
+        )
+        assert "morpho-org" not in auto_hopped, (
+            "failed enumeration must not register coverage"
+        )
+
+
+# ============================================================================
+# 9. GitHub blob PDF routing (Fix 2)
+# ============================================================================
+
+
+class TestBlobPdfRouting:
+    """A Stage-2 hit on ``Zellic/publications/blob/.../X.pdf`` routes to
+    ``_expand_blob_to_directory`` instead of becoming a fallback-only entry."""
+
+    def test_blob_pdf_triggers_directory_expansion(self, monkeypatch):
+        from services.discovery import audit_reports as ar
+
+        blob_url = (
+            "https://github.com/Zellic/publications/blob/master/"
+            "EtherFi%20-%20Zellic%20Audit%20Report.pdf"
+        )
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [_tavily_result(blob_url, "EtherFi Zellic audit")],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                return json.dumps([])
+            return json.dumps([
+                {"url": blob_url, "is_audit": True, "type": "report",
+                 "auditor": "Zellic", "title": "EtherFi Zellic Audit",
+                 "date": "2024-01-01", "confidence": 0.95},
+            ])
+
+        monkeypatch.setattr("utils.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        # Track invocations of the directory-expansion helper.
+        expand_calls = {"n": 0}
+
+        def counted_expand(*args, **kwargs):
+            expand_calls["n"] += 1
+            return {"reports": [], "linked_urls": []}
+
+        monkeypatch.setattr(ar, "_expand_blob_to_directory", counted_expand)
+
+        # The URL is for github.com/Zellic — the company "EtherFi" doesn't
+        # substring-match "zellic", so no auto-hop fires; this isolates the
+        # blob-PDF routing change.
+        ar.search_audit_reports("EtherFi")
+
+        assert expand_calls["n"] == 1, (
+            f"expected blob PDF to trigger _expand_blob_to_directory once, "
+            f"got {expand_calls['n']}"
+        )
+
+
+# ============================================================================
+# 10. LLM validate-and-cluster pass
+# ============================================================================
+
+
+class TestLLMValidateAndCluster:
+    """``_llm_validate_and_cluster`` clusters mirrors, drops invalids, fills
+    auditors, and falls back gracefully on LLM failure."""
+
+    def test_clusters_mirrors_and_picks_richest(self, monkeypatch):
+        from services.discovery import audit_reports as ar
+
+        reports = [
+            # Cluster 1: same audit, two mirror entries; entry 1 has the PDF
+            {"url": "https://docs.morpho.org/audit-X-2024.html",
+             "pdf_url": None, "auditor": "Spearbit", "title": "Morpho X",
+             "date": "2024-05-01"},
+            {"url": "https://github.com/morpho-org/X/audits/spearbit-X.pdf",
+             "pdf_url": "https://github.com/morpho-org/X/audits/spearbit-X.pdf",
+             "auditor": "Spearbit", "title": "Spearbit Morpho X audit",
+             "date": "2024-05-01"},
+            # Standalone audit
+            {"url": "https://example.com/halborn-Y.pdf",
+             "pdf_url": "https://example.com/halborn-Y.pdf",
+             "auditor": "Halborn", "title": "Halborn Y", "date": "2024-08-01"},
+        ]
+
+        def fake_llm_chat(messages, **kwargs):
+            return json.dumps({
+                "entries": [
+                    {"i": 0, "valid": True, "cluster": 1},
+                    {"i": 1, "valid": True, "cluster": 1},
+                    {"i": 2, "valid": True, "cluster": 2},
+                ],
+            })
+
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        result = ar._llm_validate_and_cluster(reports, "Morpho")
+        assert result is not None
+        cleaned, stats = result
+        assert len(cleaned) == 2
+        # The PDF-bearing entry wins as canonical
+        cluster1_canonical = next(
+            r for r in cleaned if "Morpho" in (r.get("title") or "")
+            or "Spearbit" in (r.get("title") or "")
+        )
+        assert cluster1_canonical["pdf_url"] is not None
+        assert stats["collapsed_mirrors"] == 1
+        assert stats["dropped_invalid"] == 0
+
+    def test_drops_invalid_entries(self, monkeypatch):
+        from services.discovery import audit_reports as ar
+
+        reports = [
+            {"url": "https://example.com/audit.pdf", "pdf_url": "x.pdf",
+             "auditor": "Spearbit", "title": "X audit", "date": "2024-01-01"},
+            {"url": "https://mintlify.com/morpho-org/security/audits",
+             "pdf_url": None, "auditor": "Unknown", "title": "audits",
+             "date": None},
+        ]
+
+        def fake_llm_chat(messages, **kwargs):
+            return json.dumps({
+                "entries": [
+                    {"i": 0, "valid": True, "cluster": 1},
+                    {"i": 1, "valid": False, "reason": "docs landing page"},
+                ],
+            })
+
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        result = ar._llm_validate_and_cluster(reports, "Morpho")
+        assert result is not None
+        cleaned, stats = result
+        assert len(cleaned) == 1
+        assert cleaned[0]["url"].endswith(".pdf")
+        assert stats["dropped_invalid"] == 1
+
+    def test_fills_unknown_auditor(self, monkeypatch):
+        from services.discovery import audit_reports as ar
+
+        reports = [
+            {"url": "https://example.com/x.pdf", "pdf_url": "x.pdf",
+             "auditor": "Unknown", "title": "Bundle 11", "date": None},
+        ]
+
+        def fake_llm_chat(messages, **kwargs):
+            return json.dumps({
+                "entries": [
+                    {"i": 0, "valid": True, "cluster": 1, "auditor": "Certora"},
+                ],
+            })
+
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        result = ar._llm_validate_and_cluster(reports, "EtherFi")
+        assert result is not None
+        cleaned, stats = result
+        assert cleaned[0]["auditor"] == "Certora"
+        assert stats["auditor_filled"] == 1
+
+    def test_returns_none_on_llm_failure(self, monkeypatch):
+        from services.discovery import audit_reports as ar
+
+        def boom(*a, **kw):
+            raise RuntimeError("LLM down")
+
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", boom)
+
+        reports = [{"url": "x", "pdf_url": None, "auditor": "X",
+                    "title": "Y", "date": None}] * 2
+        assert ar._llm_validate_and_cluster(reports, "Foo") is None
+
+    def test_returns_none_on_unparseable_response(self, monkeypatch):
+        from services.discovery import audit_reports as ar
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.llm.chat",
+            lambda *a, **kw: "not json at all",
+        )
+
+        reports = [{"url": "x", "pdf_url": None, "auditor": "X",
+                    "title": "Y", "date": None}] * 2
+        assert ar._llm_validate_and_cluster(reports, "Foo") is None
+
+    def test_short_circuits_on_empty_list(self):
+        from services.discovery import audit_reports as ar
+        result = ar._llm_validate_and_cluster([], "Foo")
+        assert result is not None
+        cleaned, stats = result
+        assert cleaned == []
+        assert stats["collapsed_mirrors"] == 0
+
+    def test_portfolio_allowlist_crawls_each_repo(self, monkeypatch):
+        """Stage 3.5 calls ``_list_repo_root_for_company`` for every entry
+        in ``_AUDITOR_PORTFOLIO_REPOS`` once, and skips entries whose owner
+        was already auto-hopped."""
+        from services.discovery import audit_reports as ar
+
+        # No-op Tavily / Solodit / classification.
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.llm.chat",
+            lambda *a, **kw: json.dumps({"entries": []}),
+        )
+
+        called_with: list[tuple[str, str]] = []
+
+        def fake_root(owner, repo, company, debug=False):
+            called_with.append((owner, repo))
+            # Pretend Zellic returns one report; everyone else returns nothing.
+            if owner == "Zellic" and repo == "publications":
+                return {"reports": [{
+                    "auditor": "Zellic", "title": "Foo Audit",
+                    "date": "2024-01-01",
+                    "pdf_url": "https://x.pdf",
+                    "report_url": "https://x.pdf",
+                }], "linked_urls": []}
+            return None
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._list_repo_root_for_company",
+            fake_root,
+        )
+
+        result = ar.search_audit_reports("Foo")
+
+        # Every portfolio entry should have been probed exactly once.
+        assert called_with == list(ar._AUDITOR_PORTFOLIO_REPOS)
+        # The Zellic hit should make it into the final result set.
+        assert any(r.get("auditor") == "Zellic" for r in result["reports"])
+
+    def test_portfolio_allowlist_skips_already_enumerated_orgs(self, monkeypatch):
+        """If auto-hop already enumerated ``Layr-Labs`` (an allowlist entry),
+        Stage 3.5 doesn't double-fetch it."""
+        from services.discovery import audit_reports as ar
+
+        # Force Tavily to return a Layr-Labs URL so auto-hop fires.
+        # We also need the company name to substring-match; use "Layr".
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [_tavily_result(
+                "https://github.com/Layr-Labs/eigenlayer-contracts/tree/main/audits",
+                "Layr-Labs audits",
+            )],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "Below are file names" in content:
+                return json.dumps([])
+            if "candidate audit reports discovered" in content:
+                return json.dumps({"entries": []})
+            return json.dumps([{
+                "url": "https://github.com/Layr-Labs/eigenlayer-contracts/tree/main/audits",
+                "is_audit": True, "type": "listing",
+                "auditor": None, "title": "Layr audits",
+                "date": None, "confidence": 0.9,
+            }])
+
+        monkeypatch.setattr("utils.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        # Force the org-enumerate to return non-None so Layr-Labs gets
+        # registered in auto_hopped_orgs.
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._fetch_github_org_as_reports",
+            lambda *a, **kw: {"reports": [], "linked_urls": []},
+        )
+
+        # Track portfolio calls — Layr-Labs entry should be skipped.
+        portfolio_calls: list[tuple[str, str]] = []
+
+        def fake_root(owner, repo, company, debug=False):
+            portfolio_calls.append((owner, repo))
+            return None
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._list_repo_root_for_company",
+            fake_root,
+        )
+
+        ar.search_audit_reports("Layr")
+
+        # Layr-Labs is in the allowlist; auto-hop covered it; portfolio
+        # crawl should skip the (Layr-Labs, eigenlayer-contracts) entry.
+        assert ("Layr-Labs", "eigenlayer-contracts") not in portfolio_calls
+        # All other portfolio entries should still be probed.
+        for owner, repo in ar._AUDITOR_PORTFOLIO_REPOS:
+            if owner == "Layr-Labs":
+                continue
+            assert (owner, repo) in portfolio_calls, (
+                f"expected portfolio probe for {owner}/{repo}"
+            )
+
+    def test_orchestrator_falls_back_to_heuristic_on_llm_failure(self, monkeypatch):
+        """When the validation LLM fails, ``_collapse_same_audit_mirrors``
+        still runs so cross-host duplicates don't survive."""
+        from services.discovery import audit_reports as ar
+
+        # Fake Stage 1+2 to return two mirror entries on different hosts.
+        url_a = "https://docs.example.com/audit.pdf"
+        url_b = "https://github.com/proto/audits/audit.pdf"
+
+        monkeypatch.setattr(
+            "services.discovery.audit_reports._tavily_search",
+            lambda *a, **kw: [
+                _tavily_result(url_a, "Audit"),
+                _tavily_result(url_b, "Audit"),
+            ],
+        )
+        monkeypatch.setattr(
+            "services.discovery.audit_reports.generate_followup_query",
+            lambda *a, **kw: None,
+        )
+
+        # All LLM calls return data EXCEPT the validate-and-cluster one,
+        # which we force to fail.
+        def fake_llm_chat(messages, **kwargs):
+            content = messages[0]["content"]
+            if "candidate audit reports discovered" in content:
+                # validate-and-cluster prompt
+                raise RuntimeError("validation LLM down")
+            if "Below are file names" in content:
+                return json.dumps([])
+            # Stage 1 classification: both URLs are direct PDFs
+            return json.dumps([
+                {"url": url_a, "is_audit": True, "type": "pdf",
+                 "auditor": "Halborn", "title": "Halborn audit",
+                 "date": "2024-01-01", "confidence": 0.9},
+                {"url": url_b, "is_audit": True, "type": "pdf",
+                 "auditor": "Halborn", "title": "Halborn audit",
+                 "date": "2024-01-01", "confidence": 0.9},
+            ])
+
+        monkeypatch.setattr("utils.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", fake_llm_chat)
+        monkeypatch.setattr("services.discovery.audit_reports.llm.chat", fake_llm_chat)
+
+        result = ar.search_audit_reports("Proto")
+        # Either the new filename-based pre-pass OR the heuristic mirror
+        # collapse should dedupe the cross-host pair down to 1.
+        assert len(result["reports"]) == 1
+        assert any(
+            "heuristic" in n.lower()
+            or "Mirror dedup" in n
+            or "Cross-source dedup" in n
+            for n in result["notes"]
+        )
+
+
+# ============================================================================
+# 11. Cross-source filename dedup + inherited-infrastructure tag
+# ============================================================================
+
+
+class TestFilenameDedup:
+    def test_collapses_same_filename_different_urls(self):
+        from services.discovery.audit_reports import _collapse_by_filename
+        reports = [
+            # Same PDF mirrored on two hosts — should collapse
+            {"url": "https://solodit.cyfrin.io/audit.pdf",
+             "pdf_url": "https://s3/audit.pdf",
+             "auditor": "Spearbit", "title": "Foo", "date": "2024-05-01"},
+            {"url": "https://github.com/spearbit/portfolio/blob/main/audit.pdf",
+             "pdf_url": "https://raw.github.com/spearbit/portfolio/main/audit.pdf",
+             "auditor": "Spearbit", "title": "Foo Audit longer title",
+             "date": "2024-05-01"},
+            # Different filename — standalone
+            {"url": "https://github.com/x/y/other.pdf",
+             "pdf_url": "https://github.com/x/y/other.pdf",
+             "auditor": "Halborn", "title": "Bar", "date": "2024-05-01"},
+        ]
+        out = _collapse_by_filename(reports)
+        assert len(out) == 2
+        # Richer entry (longer title) wins
+        foo = next(r for r in out if r["auditor"] == "Spearbit")
+        assert "longer title" in foo["title"]
+
+    def test_different_year_month_stays_separate(self):
+        """Same filename, different date = different audits (retest, etc.)"""
+        from services.discovery.audit_reports import _collapse_by_filename
+        reports = [
+            {"url": "x/audit.pdf", "pdf_url": "x/audit.pdf",
+             "auditor": "Foo", "title": "A", "date": "2024-05-01"},
+            {"url": "y/audit.pdf", "pdf_url": "y/audit.pdf",
+             "auditor": "Foo", "title": "A", "date": "2024-11-01"},
+        ]
+        out = _collapse_by_filename(reports)
+        assert len(out) == 2
+
+    def test_missing_filename_never_groups(self):
+        """Opaque URLs (cantina.xyz/portfolio/<uuid>) shouldn't merge with
+        other opaque URLs."""
+        from services.discovery.audit_reports import _collapse_by_filename
+        reports = [
+            {"url": "https://cantina.xyz/portfolio/abcd", "pdf_url": None,
+             "auditor": "Cantina", "title": "X", "date": "2024-05-01"},
+            {"url": "https://cantina.xyz/portfolio/efgh", "pdf_url": None,
+             "auditor": "Cantina", "title": "Y", "date": "2024-05-01"},
+        ]
+        out = _collapse_by_filename(reports)
+        # The trailing path segments differ, so stems differ → no collapse
+        assert len(out) == 2
+
+    def test_prefers_pdf_url_over_no_pdf(self):
+        from services.discovery.audit_reports import _collapse_by_filename
+        reports = [
+            {"url": "x/audit.pdf", "pdf_url": None,
+             "auditor": "Foo", "title": "A", "date": "2024-05-01"},
+            {"url": "y/audit.pdf", "pdf_url": "y/audit.pdf",
+             "auditor": "Foo", "title": "A", "date": "2024-05-01"},
+        ]
+        out = _collapse_by_filename(reports)
+        assert len(out) == 1
+        assert out[0]["pdf_url"] is not None
+
+
+class TestProvenanceFields:
+    def test_build_report_entry_passes_source_commit(self):
+        """Forensic provenance fields (source_commit/repo/path) surface on
+        the final report entry when the upstream fetch captured them."""
+        from services.discovery.audit_reports import _build_report_entry
+        sha = "a" * 40
+        out = _build_report_entry(
+            {
+                "auditor": "Foo", "title": "T", "date": "2024-01-01",
+                "pdf_url": "https://x.pdf",
+                "source_commit": sha,
+                "source_repo": "owner/repo",
+                "source_path": "audits/X.pdf",
+            },
+            "https://src/", 0.9, "2024-01-01T00:00:00Z",
+        )
+        assert out["source_commit"] == sha
+        assert out["source_repo"] == "owner/repo"
+        assert out["source_path"] == "audits/X.pdf"
+
+    def test_build_report_entry_omits_provenance_when_missing(self):
+        """Non-GitHub sources (Solodit, docs pages) don't supply a commit
+        SHA; the report entry should not carry empty placeholder fields."""
+        from services.discovery.audit_reports import _build_report_entry
+        out = _build_report_entry(
+            {"auditor": "Foo", "title": "T", "date": "2024-01-01",
+             "pdf_url": "https://x.pdf"},
+            "https://src/", 0.9, "2024-01-01T00:00:00Z",
+        )
+        assert "source_commit" not in out
+        assert "source_repo" not in out
+        assert "source_path" not in out
+
+
+class TestResolveBranchCommit:
+    def test_resolves_and_caches(self, monkeypatch):
+        from services.discovery import audit_reports as ar
+
+        # Reset the module-level cache so this test runs in isolation.
+        ar._BRANCH_SHA_CACHE.clear()
+
+        call_count = {"n": 0}
+        sha = "b" * 40
+
+        def fake_get(url, **kwargs):
+            call_count["n"] += 1
+            class R:
+                status_code = 200
+                def json(self):
+                    return {"ref": "refs/heads/main", "object": {"sha": sha}}
+            return R()
+
+        monkeypatch.setattr(ar._requests, "get", fake_get)
+        assert ar._resolve_branch_commit("owner", "repo", "main") == sha
+        assert call_count["n"] == 1
+        # Second call should hit the cache, no extra HTTP
+        assert ar._resolve_branch_commit("owner", "repo", "main") == sha
+        assert call_count["n"] == 1
+
+    def test_returns_none_on_404(self, monkeypatch):
+        from services.discovery import audit_reports as ar
+        ar._BRANCH_SHA_CACHE.clear()
+
+        def fake_get(url, **kwargs):
+            class R:
+                status_code = 404
+                def json(self):
+                    return {"message": "Not Found"}
+            return R()
+
+        monkeypatch.setattr(ar._requests, "get", fake_get)
+        assert ar._resolve_branch_commit("owner", "ghost-repo", "main") is None

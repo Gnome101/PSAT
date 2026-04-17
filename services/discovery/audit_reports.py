@@ -19,6 +19,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from typing import Any
+import urllib.parse
 from urllib.parse import urlparse
 
 import requests as _requests
@@ -32,6 +33,7 @@ from .inventory_domain import (
     _fetch_page,
     _tavily_search,
 )
+from . import solodit as _solodit
 
 # Maximum pages to fetch+extract in Stage 2 (initial confirmed hits).
 _MAX_STAGE2_PAGES = 5
@@ -197,15 +199,133 @@ def _github_api_headers() -> dict[str, str]:
         headers["Authorization"] = f"token {token}"
     return headers
 
+
+# Cache of resolved (owner, repo, branch) -> commit SHA lookups so a single
+# discovery run that touches the same branch multiple times (a repo with
+# two audit folders, the repo-root scan AND a blob expansion, etc.) spends
+# exactly one API call per branch. Cleared implicitly when the process exits.
+_BRANCH_SHA_CACHE: dict[tuple[str, str, str], str | None] = {}
+
+
+def _resolve_branch_commit(
+    owner: str, repo: str, branch: str, debug: bool = False,
+) -> str | None:
+    """Return the current HEAD commit SHA for a branch, or ``None``.
+
+    Recorded on every GitHub-sourced audit so a phase-2 linker can verify
+    the PDF still lives at the same SHA and build stable permalinks. Costs
+    one ``/git/refs/heads/`` call per (repo, branch); cached in-process.
+    """
+    key = (owner.lower(), repo.lower(), branch)
+    if key in _BRANCH_SHA_CACHE:
+        return _BRANCH_SHA_CACHE[key]
+
+    url = f"https://api.github.com/repos/{owner}/{repo}/git/refs/heads/{branch}"
+    sha: str | None = None
+    try:
+        resp = _requests.get(url, timeout=15, headers=_github_api_headers())
+    except _requests.RequestException as exc:
+        _debug_log(debug, f"GitHub ref lookup failed for {owner}/{repo}@{branch}: {exc!r}")
+    else:
+        if resp.status_code == 200:
+            try:
+                payload = resp.json() or {}
+            except ValueError:
+                payload = {}
+            if isinstance(payload, dict):
+                obj = payload.get("object") or {}
+                if isinstance(obj, dict):
+                    sha_val = obj.get("sha")
+                    if isinstance(sha_val, str) and len(sha_val) == 40:
+                        sha = sha_val
+        else:
+            _debug_log(
+                debug,
+                f"GitHub ref {resp.status_code} for {owner}/{repo}@{branch}",
+            )
+
+    _BRANCH_SHA_CACHE[key] = sha
+    return sha
+
 # Process at most this many filenames per LLM call so the JSON response stays
 # well under the model's output limit even for repos with 50+ audit files.
 _FILENAME_BATCH_SIZE = 12
+
+
+# ---------------------------------------------------------------------------
+# Date extraction from filenames
+#
+# Dates are deterministic and exact when present in a filename. Auditor
+# inference is delegated to LLM calls (filename batch + final validation
+# pass) since a maintained-by-hand auditor list is brittle and the LLM
+# can use folder + sibling context that a substring table cannot.
+# ---------------------------------------------------------------------------
+
+
+def _extract_date_from_filename(name: str) -> str | None:
+    """Best-effort ISO date from a filename, or None.
+
+    Recognises ``YYYY-MM-DD`` / ``YYYY_MM_DD`` / ``YYYY.MM.DD`` / ``YYYYMMDD``
+    (any separator) and the partial forms ``YYYY-MM`` and ``YYYY``. Validates
+    calendar plausibility — months 1–12, days 1–31, year 2015–2099 — to avoid
+    matching version numbers or unrelated digit runs.
+    """
+    from urllib.parse import unquote
+
+    decoded = unquote(name or "")
+    if not decoded:
+        return None
+
+    for pattern in (
+        r"(?<!\d)(\d{4})[-_.](\d{2})[-_.](\d{2})(?!\d)",
+        r"(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)",
+    ):
+        m = re.search(pattern, decoded)
+        if m:
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 2015 <= y <= 2099 and 1 <= mo <= 12 and 1 <= d <= 31:
+                return f"{y:04d}-{mo:02d}-{d:02d}"
+
+    m = re.search(r"(?<!\d)(\d{4})[-_.](\d{2})(?!\d)", decoded)
+    if m:
+        y, mo = int(m.group(1)), int(m.group(2))
+        if 2015 <= y <= 2099 and 1 <= mo <= 12:
+            return f"{y:04d}-{mo:02d}"
+
+    m = re.search(r"(?<!\d)(20\d{2})(?!\d)", decoded)
+    if m:
+        return m.group(1)
+
+    return None
+
+
+def _augment_filename_metadata(
+    name: str, meta: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Fill the ``date`` field deterministically when the LLM left it blank.
+
+    Auditor isn't filled here — it's better served by the LLM (filename
+    batch with sibling context, plus the final validation pass) than by
+    a hand-maintained substring table.
+    """
+    out = dict(meta or {})
+
+    date_val = out.get("date")
+    date_str = str(date_val).strip() if date_val else ""
+    if not date_str:
+        deterministic_date = _extract_date_from_filename(name)
+        if deterministic_date:
+            out["date"] = deterministic_date
+
+    return out
 
 
 def _llm_extract_filename_metadata(
     filenames: list[str],
     company: str,
     debug: bool = False,
+    *,
+    folder_context: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Ask the LLM to extract auditor / date / title for each filename.
 
@@ -213,9 +333,15 @@ def _llm_extract_filename_metadata(
     LLM couldn't classify are simply absent from the map; the caller is
     responsible for falling back gracefully.
 
-    The call is split into small batches so the JSON output never exceeds
-    the model's response cap — the previous single-shot call silently
-    truncated for large directories.
+    Filenames are still sliced into batches so the JSON output never exceeds
+    the model's response cap, but **every batch sees the full list of sibling
+    filenames as context**. That lets the LLM infer auditors for entries
+    where the auditor name only appears in adjacent files (e.g. a folder of
+    Halborn-named PDFs with one untagged ``Final.pdf``).
+
+    ``folder_context`` (e.g. ``"etherfi-protocol/smart-contracts/audits"``)
+    further grounds the inference — the LLM treats the path as a hint about
+    who owns and audits the contracts.
     """
     from .audit_reports_llm import _parse_json_array
 
@@ -224,21 +350,37 @@ def _llm_extract_filename_metadata(
 
     from .audit_reports_llm import _KNOWN_AUDITORS
 
+    siblings_block = ""
+    if len(filenames) > 1:
+        siblings_block = (
+            "\nFull file list in this folder (use as context for any file "
+            "whose own name lacks a clear auditor):\n"
+            + "\n".join(f"  - {n}" for n in filenames)
+            + "\n"
+        )
+
+    folder_block = f"\nFolder path: {folder_context}\n" if folder_context else ""
+
     out: dict[str, dict[str, Any]] = {}
     for start in range(0, len(filenames), _FILENAME_BATCH_SIZE):
         batch = filenames[start : start + _FILENAME_BATCH_SIZE]
         file_list = "\n".join(f"- {name}" for name in batch)
         prompt = (
             f"Below are file names from a GitHub audit directory for the "
-            f"{company} smart-contract protocol.\n"
+            f"{company} smart-contract protocol.{folder_block}"
             f"For each file, extract the auditing firm name, the audit date, "
-            f"and a clean human-readable title.\n\n"
+            f"and a clean human-readable title. When a single file name is "
+            f"ambiguous, look at the sibling files for context — protocols "
+            f"often ship multiple reports from the same auditor in one "
+            f"folder, and untagged files usually share that auditor.\n\n"
             f"Common auditing firms (use these names verbatim when you spot "
-            f"a match — including from abbreviations or report-ID prefixes): "
-            f"{_KNOWN_AUDITORS}.\n\n"
-            f"{file_list}\n\n"
-            f"Reply with ONLY a JSON array, one object per file, in the same "
-            f"order. Each object MUST have these keys:\n"
+            f"a match — including from abbreviations or report-ID prefixes "
+            f"like ``NM-####`` for Nethermind, ``ToB-`` for Trail of Bits, "
+            f"``OZ-`` for OpenZeppelin): {_KNOWN_AUDITORS}.\n"
+            f"{siblings_block}\n"
+            f"Files to classify in this batch:\n{file_list}\n\n"
+            f"Reply with ONLY a JSON array, one object per batched file, in "
+            f"the same order. Each object MUST have these keys:\n"
             f'- "filename": the exact filename including extension\n'
             f'- "auditor": auditing firm name, or null if not identifiable\n'
             f'- "date": audit date as YYYY-MM-DD (or YYYY-MM / YYYY), or null\n'
@@ -324,7 +466,30 @@ _AUDIT_FOLDER_CANDIDATES: tuple[str, ...] = (
     "security/audits",
     "docs/audits",
     "security",
+    "reviews",
+    "security-reviews",
+    "external-audits",
+    "code-audits",
+    "formal-verification",
+    "security-reports",
 )
+
+
+# Last-segment folder names recognised when scanning the recursive tree.
+# Same list as the contents-API probes (without the path-prefixed variants),
+# expressed as a set for O(1) membership tests.
+_AUDIT_FOLDER_LAST_SEGMENTS: frozenset[str] = frozenset({
+    "audit",
+    "audits",
+    "audit-reports",
+    "security-audits",
+    "reviews",
+    "security-reviews",
+    "external-audits",
+    "code-audits",
+    "formal-verification",
+    "security-reports",
+})
 
 
 # Cap the per-org repo enumeration so a vendor org (e.g. Certora, which
@@ -523,7 +688,7 @@ def _discover_repo_audit_folders(
                 # vendor/, etc. — those belong to the vendored dependency.
                 continue
             last_segment = path.rsplit("/", 1)[-1].lower()
-            if last_segment in {"audit", "audits", "audit-reports", "security-audits"}:
+            if last_segment in _AUDIT_FOLDER_LAST_SEGMENTS:
                 found_paths.append(path)
         if data.get("truncated"):
             _debug_log(debug, f"GitHub tree truncated for {owner}/{repo}; some folders may be missed")
@@ -599,22 +764,59 @@ def _fetch_github_tree_as_reports(
             _debug_log(debug, f"No audit files found in {owner}/{repo}/{path}")
             return {"reports": [], "linked_urls": subdirs}
 
+        # If the owner doesn't substring-match the company, this is almost
+        # certainly an auditor publication repo (Trail of Bits, Zellic etc.)
+        # whose ``audits/`` or ``reviews/`` folder holds reports for many
+        # different protocols. Filter to just the company-named files to
+        # avoid pulling in 400+ unrelated audits.
+        company_variants = _company_name_variants(company)
+        owner_norm = re.sub(r"[^a-z0-9]", "", owner.lower())
+        owner_matches_company = bool(company_variants) and any(
+            v in owner_norm for v in company_variants
+        )
+        if not owner_matches_company and company_variants:
+            before_count = len(audit_files)
+            audit_files = [
+                f for f in audit_files
+                if _filename_mentions_company(f["name"], company_variants)
+            ]
+            dropped = before_count - len(audit_files)
+            if dropped:
+                _debug_log(
+                    debug,
+                    f"GitHub tree {owner}/{repo}/{path}: company-name filter "
+                    f"dropped {dropped} of {before_count} file(s) "
+                    f"(third-party portfolio repo)",
+                )
+            if not audit_files:
+                _debug_log(
+                    debug,
+                    f"No {company}-named files in {owner}/{repo}/{path}",
+                )
+                return {"reports": [], "linked_urls": subdirs}
+
         # Ask the LLM to extract structured metadata per filename. We batch
         # large directories so the JSON response never gets truncated by the
         # token cap (the previous 2048-token call silently truncated for
         # protocols like ether.fi that ship 30+ audit files).
         file_metadata = _llm_extract_filename_metadata(
             [f["name"] for f in audit_files], company, debug=debug,
+            folder_context=f"{owner}/{repo}/{path}",
         )
+
+        # Resolve the branch's current commit so each report can carry a
+        # forensic pointer to the exact revision it was discovered at.
+        source_commit = _resolve_branch_commit(owner, repo, ref, debug=debug)
 
         # Build report entries from the LLM output. Anything the LLM couldn't
         # classify falls through with auditor="Unknown" and the bare filename
         # (extension stripped) as the title — same convention as the
-        # Stage-1 PDF fallback path.
+        # Stage-1 PDF fallback path. ``_augment_filename_metadata`` fills
+        # auditor/date deterministically when the LLM left them blank.
         reports: list[dict[str, Any]] = []
         for f in audit_files:
             name = f["name"]
-            meta = file_metadata.get(name, {})
+            meta = _augment_filename_metadata(name, file_metadata.get(name, {}))
 
             base_name = name.rsplit(".", 1)[0] if "." in name else name
             auditor = str(meta.get("auditor") or "").strip() or "Unknown"
@@ -634,6 +836,9 @@ def _fetch_github_tree_as_reports(
                 "date": date,
                 "pdf_url": pdf_url,
                 "report_url": report_url,
+                "source_commit": source_commit,
+                "source_repo": f"{owner}/{repo}",
+                "source_path": f"{path}/{name}",
             })
 
         _debug_log(debug, f"GitHub tree: built {len(reports)} report(s) from {len(audit_files)} file(s)")
@@ -651,7 +856,7 @@ def _should_auto_hop_org(
     whole GitHub org.
 
     We hop up to the org level only when:
-      1. The URL parses as a GitHub tree / blob / repo URL.
+      1. The URL parses as a GitHub org / tree / blob / repo URL.
       2. The owner name looks like the protocol's own org — i.e. it
          contains a company-name variant as a substring. This excludes
          third-party vendor orgs like ``Certora/<protocol>-fork`` that
@@ -660,12 +865,15 @@ def _should_auto_hop_org(
 
     The hop lets us find audits that live in sibling repos (cash-v3,
     weETH-cross-chain, bundler3, universal-rewards-distributor, etc.)
-    that Tavily doesn't tend to surface on its own.
+    that Tavily doesn't tend to surface on its own. ``kind == "org"``
+    is included so a bare ``github.com/<org>`` URL takes the same single
+    enumeration path and doesn't get re-enumerated by a sibling tree URL
+    later in the run.
     """
     github = _parse_github_url(url)
     if not github:
         return False
-    if github["kind"] not in ("tree", "blob", "repo"):
+    if github["kind"] not in ("tree", "blob", "repo", "org"):
         return False
     owner = github["owner"].lower()
     if owner in auto_hopped:
@@ -691,7 +899,10 @@ def _maybe_auto_hop_to_org(
     append every sibling repo's audits to ``reports``.
 
     Mutates ``auto_hopped_orgs`` and ``reports`` in place. A no-op when
-    the URL isn't eligible.
+    the URL isn't eligible. ``auto_hopped_orgs`` is only updated when the
+    org enumeration actually completed (returned non-None) — a failed
+    enumeration (rate-limited, no repos returned) leaves the set untouched
+    so per-URL fallback can still run.
     """
     if not _should_auto_hop_org(url, company, auto_hopped_orgs):
         return
@@ -699,17 +910,19 @@ def _maybe_auto_hop_to_org(
     if github is None:
         return
     owner = github["owner"]
-    auto_hopped_orgs.add(owner.lower())
     org_url = f"https://github.com/{owner}"
     _debug_log(debug, f"Auto-hop to org {owner} (triggered by {url})")
     extracted_org = _fetch_github_org_as_reports(
         owner, company, org_url, debug=debug,
     )
-    if extracted_org:
-        for report in extracted_org.get("reports", []):
-            reports.append(_build_report_entry(
-                report, org_url, confidence, now_iso,
-            ))
+    if extracted_org is None:
+        # Enumeration didn't run — don't claim coverage of this owner.
+        return
+    auto_hopped_orgs.add(owner.lower())
+    for report in extracted_org.get("reports", []):
+        reports.append(_build_report_entry(
+            report, org_url, confidence, now_iso,
+        ))
 
 
 def _company_name_variants(company: str) -> list[str]:
@@ -802,12 +1015,15 @@ def _expand_blob_to_directory(
 
     file_metadata = _llm_extract_filename_metadata(
         [f["name"] for f in audit_files], company, debug=debug,
+        folder_context=f"{owner}/{repo}/{parent}",
     )
+
+    source_commit = _resolve_branch_commit(owner, repo, ref, debug=debug)
 
     reports: list[dict[str, Any]] = []
     for f in audit_files:
         name = f["name"]
-        meta = file_metadata.get(name, {})
+        meta = _augment_filename_metadata(name, file_metadata.get(name, {}))
         base_name = name.rsplit(".", 1)[0] if "." in name else name
         auditor = str(meta.get("auditor") or "").strip() or "Unknown"
         title = str(meta.get("title") or "").strip() or base_name
@@ -819,6 +1035,142 @@ def _expand_blob_to_directory(
             "date": date,
             "pdf_url": f["download_url"] if is_pdf else None,
             "report_url": f.get("html_url") or f.get("download_url"),
+            "source_commit": source_commit,
+            "source_repo": f"{owner}/{repo}",
+            "source_path": f"{parent}/{name}" if parent else name,
+        })
+    return {"reports": reports, "linked_urls": []}
+
+
+def _list_repo_root_for_company(
+    owner: str, repo: str, company: str, debug: bool = False,
+) -> dict[str, Any] | None:
+    """Recursively list every PDF/MD in a repo and pull company-named ones.
+
+    Fallback for auditor publication repos (``Zellic/publications``,
+    ``runtimeverification/publications``, ``spearbit/portfolio``,
+    ``trailofbits/publications``) that ship per-protocol reports either
+    at the root OR nested under a category folder
+    (``publications/reports/smart-contracts/Morpho-Audit-Report.pdf``).
+    ``_discover_repo_audit_folders`` returns empty for these because the
+    folder names aren't in the audit-folder candidate list, and the prior
+    root-only listing missed nested files.
+
+    Uses one recursive tree API call (cap: ~100K paths per request, more
+    than enough for any auditor portfolio) and then filters PDFs/MDs by
+    company-name substring. Vendored-dep paths are excluded.
+    """
+    meta_url = f"https://api.github.com/repos/{owner}/{repo}"
+    try:
+        resp = _requests.get(meta_url, timeout=15, headers=_github_api_headers())
+    except _requests.RequestException as exc:
+        _debug_log(debug, f"GitHub repo metadata failed for {owner}/{repo}: {exc!r}")
+        return None
+    if resp.status_code != 200:
+        _debug_log(debug, f"GitHub repo metadata {resp.status_code} for {owner}/{repo}")
+        return None
+    default_branch = (resp.json() or {}).get("default_branch") or "main"
+
+    tree_url = (
+        f"https://api.github.com/repos/{owner}/{repo}/git/trees/"
+        f"{default_branch}?recursive=1"
+    )
+    try:
+        tree_resp = _requests.get(tree_url, timeout=30, headers=_github_api_headers())
+    except _requests.RequestException as exc:
+        _debug_log(debug, f"GitHub recursive-tree failed for {owner}/{repo}: {exc!r}")
+        return None
+    if tree_resp.status_code != 200:
+        _debug_log(
+            debug,
+            f"GitHub recursive-tree {tree_resp.status_code} for {owner}/{repo}",
+        )
+        return None
+    data = tree_resp.json() or {}
+
+    variants = _company_name_variants(company)
+    if not variants:
+        return None
+
+    audit_files: list[dict[str, str]] = []
+    for item in data.get("tree", []):
+        if item.get("type") != "blob":
+            continue
+        path = (item.get("path") or "").strip()
+        if not path:
+            continue
+        if _is_vendored_dependency_path(path):
+            continue
+        lower = path.lower()
+        if not lower.endswith((".pdf", ".md")):
+            continue
+        name = path.rsplit("/", 1)[-1]
+        if name.lower().startswith((".gitkeep", "readme")):
+            continue
+        # When matching at any depth, demand the company-name variant
+        # appears in the FILENAME — matching on the path would let
+        # "ether-fi-protocol-fork/foo.pdf" sneak through whose own
+        # filename has nothing to do with the company.
+        if not _filename_mentions_company(name, variants):
+            continue
+        encoded_path = "/".join(
+            urllib.parse.quote(seg, safe="")
+            for seg in path.split("/") if seg
+        )
+        audit_files.append({
+            "name": name,
+            "path": path,
+            "download_url": (
+                f"https://raw.githubusercontent.com/{owner}/{repo}/"
+                f"{default_branch}/{encoded_path}"
+            ),
+            "html_url": (
+                f"https://github.com/{owner}/{repo}/blob/{default_branch}/{encoded_path}"
+            ),
+        })
+
+    if data.get("truncated"):
+        _debug_log(
+            debug,
+            f"GitHub tree truncated for {owner}/{repo} — recursive listing "
+            f"may be incomplete",
+        )
+
+    if not audit_files:
+        _debug_log(debug, f"No {company}-named files anywhere in {owner}/{repo}")
+        return None
+
+    _debug_log(
+        debug,
+        f"Recursive scan {owner}/{repo}: {len(audit_files)} "
+        f"{company}-named file(s)",
+    )
+
+    file_metadata = _llm_extract_filename_metadata(
+        [f["name"] for f in audit_files], company, debug=debug,
+        folder_context=f"{owner}/{repo}",
+    )
+
+    source_commit = _resolve_branch_commit(owner, repo, default_branch, debug=debug)
+
+    reports: list[dict[str, Any]] = []
+    for f in audit_files:
+        name = f["name"]
+        meta = _augment_filename_metadata(name, file_metadata.get(name, {}))
+        base_name = name.rsplit(".", 1)[0] if "." in name else name
+        auditor = str(meta.get("auditor") or "").strip() or "Unknown"
+        title = str(meta.get("title") or "").strip() or base_name
+        date = str(meta.get("date") or "").strip() or None
+        is_pdf = name.lower().endswith(".pdf")
+        reports.append({
+            "auditor": auditor,
+            "title": title,
+            "date": date,
+            "pdf_url": f["download_url"] if is_pdf else None,
+            "report_url": f.get("html_url") or f.get("download_url"),
+            "source_commit": source_commit,
+            "source_repo": f"{owner}/{repo}",
+            "source_path": f["path"],
         })
     return {"reports": reports, "linked_urls": []}
 
@@ -860,11 +1212,17 @@ def _fetch_and_extract(
     company: str,
     all_results: list[dict[str, Any]],
     debug: bool = False,
+    *,
+    enumerated_orgs: set[str] | None = None,
 ) -> dict[str, Any] | None:
     """Fetch a page and run LLM extraction.
 
     For GitHub tree/blob URLs, uses the GitHub API for clean structured data
     instead of scraping the HTML (which is a React SPA with huge boilerplate).
+
+    ``enumerated_orgs`` (when provided) is mutated to record any GitHub org
+    that gets fully enumerated here. The orchestrator uses this to skip
+    subsequent same-org URLs that the enumeration already covered.
     """
     github = _parse_github_url(url)
 
@@ -880,9 +1238,15 @@ def _fetch_and_extract(
             # for an audits folder. Protocol teams typically shard their
             # audits across sibling repos (core, periphery, v2, etc.), so
             # one Tavily hit on the org root needs to fan out.
-            return _fetch_github_org_as_reports(
+            extracted = _fetch_github_org_as_reports(
                 github["owner"], company, url, debug=debug,
             )
+            if extracted is not None and enumerated_orgs is not None:
+                # Only register coverage when the enumeration actually ran;
+                # an empty list back from _list_org_repos (rate limit, none
+                # returned) shouldn't suppress per-URL fallback later.
+                enumerated_orgs.add(github["owner"].lower())
+            return extracted
         if github["kind"] == "repo":
             # Repo root URL: ask GitHub which subdirectories hold audits, then
             # consume each one as if Tavily had returned the /tree/audits/ URL
@@ -946,8 +1310,14 @@ def _build_report_entry(
     confidence: float,
     now_iso: str,
 ) -> dict[str, Any]:
-    """Build a final report dict from extracted LLM data."""
-    return {
+    """Build a final report dict from extracted LLM data.
+
+    ``source_commit``, ``source_repo``, ``source_path`` (when the upstream
+    fetch captured them) record exactly where the PDF lived at discovery
+    time. A phase-2 linker uses these to build stable permalinks and to
+    verify the artifact hasn't been moved or rewritten out from under us.
+    """
+    entry = {
         "url": report.get("pdf_url") or report.get("report_url") or source_url,
         "pdf_url": report.get("pdf_url"),
         "auditor": report["auditor"],
@@ -957,6 +1327,14 @@ def _build_report_entry(
         "confidence": round(confidence, 4),
         "discovered_at": now_iso,
     }
+    # Forensic provenance fields. Included only when populated so the
+    # schema stays thin for non-GitHub sources (Solodit, docs scrapes)
+    # that can't supply a commit SHA.
+    for key in ("source_commit", "source_repo", "source_path"):
+        val = report.get(key)
+        if val:
+            entry[key] = val
+    return entry
 
 
 _GENERIC_TITLE_TOKENS = frozenset({"audit", "report", "review", "security", "smart", "contract", "assessment"})
@@ -980,6 +1358,332 @@ def _title_tokens(title: str) -> set[str]:
 def _richness_score(report: dict[str, Any]) -> int:
     return sum(1 for key in ("pdf_url", "date") if report.get(key))
 
+
+def _collapse_by_filename(
+    reports: list[dict[str, Any]], debug: bool = False,
+) -> list[dict[str, Any]]:
+    """Pre-cluster dedup: collapse entries that share the same filename.
+
+    The same audit artifact surfaced by different pipeline paths (a
+    Solodit-seeded row + a spearbit/portfolio recursive-scan row, or a
+    protocol-repo PDF + its cryptocompare mirror) ends up with two
+    distinct URLs but the exact same filename. URL-keyed dedup misses
+    these; the LLM validate pass can miss them too when the titles look
+    different enough to read as separate audits.
+
+    Key: ``(normalized_filename_stem, year-month)`` where:
+      - stem = URL-decoded filename, extension stripped, lowercase,
+        non-alphanumerics removed (so ``Foo - 2024.06.pdf`` and
+        ``Foo_2024_06.pdf`` share a stem)
+      - year-month = first ``YYYY-MM`` from the report's date field
+
+    Entries without a filename (org-root URLs, opaque UUIDs) are never
+    grouped — they pass through to the LLM. Within each group, keep the
+    richest entry by ``(has_pdf, has_date, has_named_auditor,
+    title_length)``. Ties resolve to the first occurrence.
+    """
+    if len(reports) <= 1:
+        return reports
+
+    from urllib.parse import unquote
+
+    def _stem(url: str) -> str:
+        if not url:
+            return ""
+        decoded = unquote(url.rsplit("/", 1)[-1])
+        if not decoded or decoded.endswith("/"):
+            return ""
+        stem = decoded.rsplit(".", 1)[0] if "." in decoded else decoded
+        return re.sub(r"[^a-z0-9]", "", stem.lower())
+
+    def _year_month(date: Any) -> str:
+        if not date:
+            return ""
+        m = re.match(r"(\d{4})-(\d{2})", str(date))
+        return f"{m.group(1)}-{m.group(2)}" if m else ""
+
+    def _richness(idx: int) -> tuple[int, int, int, int]:
+        r = reports[idx]
+        has_pdf = 1 if r.get("pdf_url") else 0
+        has_date = 1 if r.get("date") else 0
+        auditor = (r.get("auditor") or "").strip().lower()
+        has_named = 0 if auditor in ("", "unknown") else 1
+        title_len = len(r.get("title") or "")
+        return (has_pdf, has_date, has_named, title_len)
+
+    groups: dict[tuple[str, str], list[int]] = {}
+    for i, r in enumerate(reports):
+        url = r.get("pdf_url") or r.get("url") or ""
+        stem = _stem(url)
+        if not stem:
+            continue
+        groups.setdefault((stem, _year_month(r.get("date"))), []).append(i)
+
+    drop: set[int] = set()
+    for indices in groups.values():
+        if len(indices) < 2:
+            continue
+        best = max(indices, key=lambda i: (_richness(i), -i))
+        for i in indices:
+            if i != best:
+                drop.add(i)
+
+    if drop:
+        _debug_log(
+            debug,
+            f"Cross-source filename dedup: dropped {len(drop)} of "
+            f"{len(reports)} entry(ies)",
+        )
+    return [r for i, r in enumerate(reports) if i not in drop]
+
+
+# ---------------------------------------------------------------------------
+# Final LLM validation + clustering pass
+#
+# Solves three classes of failure that the heuristic mirror-collapse can't:
+#   1. Same audit appearing under different repo paths with subtly different
+#      titles or dates (Certora vault-v2/audits vs morpho-blue-irm/audits
+#      both shipping the "Market V1 Adapter V2" report at different commits).
+#   2. ``auditor: Unknown`` entries that are obviously inferable from sibling
+#      reports in the same folder (Certora bundle PDFs in cash-v3/audit/
+#      surrounded by Certora-named reports).
+#   3. Garbled titles or false positives (a docs landing page like
+#      ``mintlify.com/morpho-org/vault-v2/security/audits`` that survived
+#      Stage 1 classification because the URL looked plausible).
+#
+# Implemented as a single LLM call after URL-keyed dedup, replacing the
+# 3-pass heuristic when it succeeds and falling back to the heuristic when
+# the LLM round-trip fails.
+# ---------------------------------------------------------------------------
+
+
+def _llm_validate_and_cluster(
+    reports: list[dict[str, Any]],
+    company: str,
+    debug: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, int]] | None:
+    """One-shot LLM pass that validates entries and clusters mirrors.
+
+    Returns ``(cleaned_reports, stats)`` or ``None`` if the LLM call fails.
+    The caller falls back to ``_collapse_same_audit_mirrors`` on ``None`` so
+    a transient LLM failure never silently widens the output.
+    """
+    from .audit_reports_llm import _parse_json_object
+
+    if not reports:
+        return reports, {"dropped_invalid": 0, "collapsed_mirrors": 0,
+                         "auditor_filled": 0, "title_fixed": 0}
+
+    # Compact one-line-per-entry format keeps the input under the model's
+    # context cap even for protocols with 100+ candidates. Filename is
+    # included as a separate field so the LLM can preserve scope detail
+    # in titles ("Cantina Morpho Blue IRM Feb 2024" vs the over-normalized
+    # "Cantina Morpho Audit") and cross-reference auditors across siblings.
+    def _filename_of(url: str) -> str:
+        if not url:
+            return ""
+        from urllib.parse import unquote
+        return unquote(url.rsplit("/", 1)[-1])[:80]
+
+    formatted = "\n".join(
+        f"{i}: auditor={(r.get('auditor') or 'Unknown')!r} | "
+        f"title={((r.get('title') or '')[:100])!r} | "
+        f"date={r.get('date') or 'None'} | "
+        f"file={_filename_of(r.get('pdf_url') or r.get('url') or '')!r} | "
+        f"url={r.get('url') or ''}"
+        for i, r in enumerate(reports)
+    )
+
+    prompt = (
+        f"You are reviewing {len(reports)} candidate audit reports discovered "
+        f"for the {company} smart-contract protocol.\n\n"
+        f"For each entry, decide:\n\n"
+        f"1. VALIDITY — is this a third-party smart-contract security audit "
+        f"OF {company} itself? Count as VALID only when the audit's scope "
+        f"is {company}'s own contracts (or a product/version shipped by "
+        f"{company}).\n"
+        f"   Mark INVALID for:\n"
+        f"   - docs landing pages, bug-bounty program pages, marketing pages\n"
+        f"   - generic security blog posts\n"
+        f"   - audits of an unrelated protocol that surfaced by accident\n"
+        f"   - framework / base-layer audits whose scope is the framework "
+        f"itself (e.g. an EigenLayer audit isn't an audit of an LRT that "
+        f"happens to use EigenLayer; a BoringVault framework audit isn't "
+        f"an audit of a vault product that happens to deploy a BoringVault) "
+        f"— those belong to the framework's own protocol record, not here\n"
+        f"   - DNS/infrastructure scans, frontend/UI-only audits (dApp UX "
+        f"reviews) — only smart-contract-level audits count\n"
+        f"   When in doubt, keep as valid.\n\n"
+        f"2. CLUSTERING — which entries are the SAME audit appearing under "
+        f"different URLs/repos/titles? Use the same integer ``cluster`` for "
+        f"every entry that's a mirror. Distinct audits get distinct "
+        f"clusters. Strong mirror signals: same auditor + same date "
+        f"(±2 weeks) + overlapping scope words; cross-host duplicates "
+        f"(gitbook PDF + github PDF); a Certora-of-X fork repo carrying "
+        f"the same files as the canonical X repo; a Cantina/Sherlock "
+        f"competition page that resolves to the same scope as a Spearbit/OZ "
+        f"review on the protocol's docs.\n"
+        f"   Distinct audits to KEEP separate: same auditor on the same "
+        f"day for clearly different products (e.g. ``v2.49`` vs "
+        f"``Instant Withdrawal``); sequential bundles (``Bundle_9`` vs "
+        f"``Bundle_11``); per-version reports; initial audit vs retest.\n\n"
+        f"3. AUDITOR FIX — when ``auditor=Unknown`` but the auditor is "
+        f"obvious from neighbours, supply ``auditor`` in the response. "
+        f"Strong signals:\n"
+        f"   - The filename mentions an audit firm directly (e.g. "
+        f"``etherfi_syncpools_audit_final.pdf`` in a folder mostly named "
+        f"after Halborn = Halborn).\n"
+        f"   - The folder is a single auditor's portfolio "
+        f"(``trailofbits/publications/...`` = Trail of Bits).\n"
+        f"   - Sibling entries on the same date and same scope have a "
+        f"named auditor and this Unknown is a near-duplicate.\n"
+        f"   Don't guess randomly — only fill when you have at least one "
+        f"of those signals.\n\n"
+        f"4. TITLE FIX — fix titles that are garbled page text "
+        f"(``Morpho-related DNS's & Morpho-related Github's``), generic "
+        f"placeholders (``audits``, ``Final Report``), or just the "
+        f"protocol's name with no detail.\n"
+        f"   IMPORTANT: when the entry's ``file`` field is a meaningful "
+        f"audit filename (e.g. ``2025.10.20 - WeETH withdrawal adapter.pdf``, "
+        f"``Morpho Blue Periphery Audit.pdf``), DO NOT rewrite the title to "
+        f"a generic ``Auditor + Protocol`` form — the filename already "
+        f"contains the scope detail and a generic title destroys "
+        f"information. Only fix titles when the filename is opaque "
+        f"(e.g. ``cantina.xyz/portfolio/<uuid>``, drive.google.com/file/d/..., "
+        f"or no filename at all).\n\n"
+        f"Reply with ONLY a JSON object of this shape:\n"
+        f'{{"entries": [\n'
+        f'  {{"i": 0, "valid": true, "cluster": 1, "auditor": "Foo", "title": "Foo X Audit"}},\n'
+        f'  {{"i": 1, "valid": false, "reason": "docs landing page"}},\n'
+        f"  ...\n"
+        f"]}}\n\n"
+        f'Each entry MUST include "i" (the original index) and "valid". '
+        f'Valid entries MUST include "cluster" (integer; reuse value to '
+        f'mark mirrors). The "auditor" and "title" overrides are optional '
+        f"— omit them when the existing value is already correct.\n\n"
+        f"Entries:\n{formatted}\n"
+    )
+
+    try:
+        response = llm.chat(
+            [{"role": "user", "content": prompt}],
+            max_tokens=16384,
+            temperature=0.0,
+        )
+    except Exception as exc:
+        _debug_log(debug, f"Validate+cluster LLM call failed: {exc!r}")
+        return None
+
+    parsed = _parse_json_object(response)
+    if not parsed or not isinstance(parsed.get("entries"), list):
+        _debug_log(debug, "Validate+cluster: unparseable LLM response")
+        return None
+
+    val_by_idx: dict[int, dict[str, Any]] = {}
+    for item in parsed["entries"]:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("i")
+        if not isinstance(idx, int) or not (0 <= idx < len(reports)):
+            continue
+        val_by_idx[idx] = item
+
+    if not val_by_idx:
+        _debug_log(debug, "Validate+cluster: LLM returned no usable entries")
+        return None
+
+    # Group by cluster, drop invalid, keep entries the LLM didn't classify
+    # as fallback so a partial response doesn't drop unrelated entries.
+    clusters: dict[int, list[int]] = {}
+    standalone: list[int] = []
+    dropped = 0
+    for i in range(len(reports)):
+        v = val_by_idx.get(i)
+        if v is None:
+            standalone.append(i)
+            continue
+        if not v.get("valid", True):
+            dropped += 1
+            continue
+        cluster = v.get("cluster")
+        if isinstance(cluster, int):
+            clusters.setdefault(cluster, []).append(i)
+        else:
+            standalone.append(i)
+
+    def richness(idx: int) -> int:
+        return _richness_score(reports[idx])
+
+    out: list[dict[str, Any]] = []
+    auditor_filled = 0
+    title_fixed = 0
+    collapsed = 0
+
+    for indices in clusters.values():
+        if len(indices) > 1:
+            collapsed += len(indices) - 1
+        canonical = max(indices, key=lambda i: (richness(i), -i))
+        r = dict(reports[canonical])
+        v = val_by_idx[canonical]
+        new_auditor = (v.get("auditor") or "").strip()
+        if new_auditor and new_auditor.lower() != "unknown":
+            old = (r.get("auditor") or "").strip().lower()
+            if old in ("", "unknown") or old != new_auditor.lower():
+                if old in ("", "unknown"):
+                    auditor_filled += 1
+                r["auditor"] = new_auditor
+        new_title = (v.get("title") or "").strip()
+        if new_title and new_title != (r.get("title") or "").strip():
+            title_fixed += 1
+            r["title"] = new_title
+        out.append(r)
+
+    for i in standalone:
+        out.append(dict(reports[i]))
+
+    stats = {
+        "dropped_invalid": dropped,
+        "collapsed_mirrors": collapsed,
+        "auditor_filled": auditor_filled,
+        "title_fixed": title_fixed,
+    }
+    _debug_log(
+        debug,
+        f"Validate+cluster: {len(reports)} → {len(out)} "
+        f"(dropped={dropped}, collapsed={collapsed}, "
+        f"auditor_filled={auditor_filled}, title_fixed={title_fixed})",
+    )
+    return out, stats
+
+
+# ---------------------------------------------------------------------------
+# Curated audit-portfolio allowlist (Stage 3.5)
+#
+# Each entry is a real, stable GitHub repo whose root contents include
+# per-protocol audit PDFs/MDs. We crawl them all unconditionally every run
+# with a company-name filename filter — irrelevant files get silently
+# dropped, so the cost of probing a non-matching portfolio is one
+# recursive GitHub tree call.
+#
+# Scope: direct third-party audits of the requested protocol only.
+# Framework/inherited audits (EigenLayer-of-LRT, BoringVault-of-vault)
+# belong to the framework's own protocol record — a phase-2 linker joins
+# via a separate dependency graph rather than cross-contaminating the
+# per-protocol audit set.
+# ---------------------------------------------------------------------------
+
+_AUDITOR_PORTFOLIO_REPOS: tuple[tuple[str, str], ...] = (
+    # Auditor publication portfolios. Always crawled, filtered by
+    # company-name substring match on the filename so cross-protocol
+    # entries drop out silently.
+    ("Zellic", "publications"),
+    ("spearbit", "portfolio"),
+    ("runtimeverification", "publications"),
+    ("trailofbits", "publications"),
+    ("Cyfrin", "cyfrin-audit-reports"),
+    ("sherlock-protocol", "sherlock-reports"),
+    ("ChainSecurity-Public", "audits"),
+)
 
 def _collapse_same_audit_mirrors(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse entries that look like mirrors of the same audit.
@@ -1152,6 +1856,40 @@ def search_audit_reports(
 
     _debug_log(debug, f"Starting audit report discovery for: {clean_company}")
 
+    now_iso = datetime.now(timezone.utc).isoformat()
+    reports: list[dict[str, Any]] = []
+    processed_urls: set[str] = set()
+    auto_hopped_orgs: set[str] = set()
+    extraction_count = 0
+
+    # --- Stage 0: Solodit (Cyfrin's curated audit aggregator) ---
+    # Highest-leverage upstream source. For well-indexed protocols, returns
+    # the canonical PDF URLs + auditor + date directly. Best-effort: a
+    # Solodit outage / rate-limit returns ``[]`` and the rest of the
+    # pipeline carries on as before.
+    solodit_results = _solodit.search(clean_company, debug=debug)
+    for entry in solodit_results:
+        url = entry.get("url", "")
+        if not url:
+            continue
+        url_key = _normalize_url(url)
+        if url_key in processed_urls:
+            continue
+        processed_urls.add(url_key)
+        reports.append({
+            "url": url,
+            "pdf_url": entry.get("pdf_url"),
+            "auditor": entry.get("auditor") or "Unknown",
+            "title": entry.get("title") or f"{clean_company} audit",
+            "date": entry.get("date"),
+            "source_url": entry.get("source_url") or "https://solodit.cyfrin.io/",
+            "confidence": float(entry.get("confidence") or 0.95),
+            "discovered_at": now_iso,
+        })
+    if solodit_results:
+        notes.append(f"Solodit: {len(solodit_results)} audit(s)")
+        _debug_log(debug, f"Solodit seeded {len(solodit_results)} audit(s)")
+
     # --- Tavily searches ---
 
     # Query 1: broad search
@@ -1182,16 +1920,17 @@ def search_audit_reports(
 
     if not all_results:
         notes.append("No search results found")
-        return _empty_result(clean_company, official_domain, queries_used[0], errors, notes)
 
     # --- Stage 1: LLM classification ---
+    # Classification still runs even when Tavily returned nothing, since
+    # ``classify_search_results`` short-circuits to ``[]`` on an empty
+    # input. The Stage 2/3 loops then skip; Solodit's already-seeded
+    # reports flow straight into validate+cluster at the end.
 
     classified = classify_search_results(all_results, clean_company, debug=debug)
     notes.append(f"LLM classified {len(classified)} result(s) as audit reports")
-
-    if not classified:
+    if not classified and all_results:
         notes.append("No results classified as audit reports")
-        return _empty_result(clean_company, official_domain, queries_used[0], errors, notes)
 
     # Sort: listing pages first (each one expands into many reports — high
     # value), then everything else by descending confidence. Without this,
@@ -1200,12 +1939,6 @@ def search_audit_reports(
     classified.sort(
         key=lambda x: (x.get("type") != "listing", -x.get("confidence", 0))
     )
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-    reports: list[dict[str, Any]] = []
-    processed_urls: set[str] = set()
-    auto_hopped_orgs: set[str] = set()
-    extraction_count = 0
     # URLs discovered by the LLM on fetched pages, to follow in Stage 3
     discovered_links: list[dict[str, Any]] = []
 
@@ -1228,16 +1961,35 @@ def search_audit_reports(
             now_iso, reports, debug=debug,
         )
 
-        # For direct PDF links: record as fallback (we can't extract text from PDFs)
-        # but still record what we know from the Tavily snippet + classification
-        if _is_pdf_url(url):
+        # If a GitHub URL's owner has already been org-enumerated (either
+        # by the auto-hop just above or by an earlier iteration), the
+        # enumeration covered every audit folder under that owner — skip
+        # the explicit per-URL fetch to avoid duplicate API + LLM work.
+        github = _parse_github_url(url)
+        if github and github["owner"].lower() in auto_hopped_orgs:
+            _debug_log(debug, f"Skipping {url} — org {github['owner']} already enumerated")
+            continue
+
+        # GitHub blob PDFs need ``_expand_blob_to_directory`` (reachable
+        # via _fetch_and_extract); other PDFs short-circuit to fallback
+        # since we can't extract text from a PDF page directly here.
+        is_github_blob_pdf = (
+            github is not None
+            and github["kind"] == "blob"
+            and _is_pdf_url(github["path"])
+        )
+
+        if _is_pdf_url(url) and not is_github_blob_pdf:
             reports.append(_build_fallback_entry(
                 url, item, clean_company, all_results,
                 confidence=stage1_confidence, now_iso=now_iso, pdf_url=url,
             ))
             continue
 
-        extracted = _fetch_and_extract(url, clean_company, all_results, debug=debug)
+        extracted = _fetch_and_extract(
+            url, clean_company, all_results, debug=debug,
+            enumerated_orgs=auto_hopped_orgs,
+        )
         extraction_count += 1
 
         if extracted is None:
@@ -1287,8 +2039,21 @@ def search_audit_reports(
             now_iso, reports, debug=debug,
         )
 
-        # PDF links from discovered pages: record directly with parent context
-        if _is_pdf_url(url):
+        github = _parse_github_url(url)
+        if github and github["owner"].lower() in auto_hopped_orgs:
+            _debug_log(debug, f"Skipping {url} — org {github['owner']} already enumerated")
+            continue
+
+        is_github_blob_pdf = (
+            github is not None
+            and github["kind"] == "blob"
+            and _is_pdf_url(github["path"])
+        )
+
+        # PDF links from discovered pages: record directly with parent context.
+        # Github blob PDFs route through _fetch_and_extract so the parent
+        # directory expansion runs (handles auditor-portfolio repos).
+        if _is_pdf_url(url) and not is_github_blob_pdf:
             reports.append(_build_fallback_entry(
                 url, {}, clean_company, all_results,
                 confidence=parent_confidence, now_iso=now_iso, pdf_url=url,
@@ -1296,7 +2061,10 @@ def search_audit_reports(
             links_followed += 1
             continue
 
-        extracted = _fetch_and_extract(url, clean_company, all_results, debug=debug)
+        extracted = _fetch_and_extract(
+            url, clean_company, all_results, debug=debug,
+            enumerated_orgs=auto_hopped_orgs,
+        )
         extraction_count += 1
         links_followed += 1
 
@@ -1313,6 +2081,46 @@ def search_audit_reports(
         _debug_log(debug, f"Stage 3: found {stage3_count} additional report(s) from {links_followed} linked page(s)")
         notes.append(f"Link following: {stage3_count} additional report(s) from {links_followed} linked page(s)")
 
+    # --- Stage 3.5: curated auditor-portfolio crawl -----------------------
+    # Replaces a noisy Sonnet "what other repos should we crawl" call. Each
+    # repo in ``_AUDITOR_PORTFOLIO_REPOS`` gets a recursive root-listing
+    # with the company-name filename filter — irrelevant files (other
+    # protocols' audits in the same portfolio) silently drop out. Cost is
+    # one ``git/trees?recursive=1`` call per portfolio, which is well
+    # within GitHub's 5000/hr token budget.
+    portfolio_yielded = 0
+    portfolio_skipped = 0
+    for owner, repo in _AUDITOR_PORTFOLIO_REPOS:
+        if owner.lower() in auto_hopped_orgs:
+            # Already enumerated as part of an auto-hop — don't double-fetch.
+            portfolio_skipped += 1
+            continue
+        extracted = _list_repo_root_for_company(
+            owner, repo, clean_company, debug=debug,
+        )
+        if not extracted:
+            continue
+        new_reports = extracted.get("reports", [])
+        if not new_reports:
+            continue
+        portfolio_yielded += 1
+        for report in new_reports:
+            reports.append(_build_report_entry(
+                report, f"https://github.com/{owner}/{repo}", 0.95, now_iso,
+            ))
+
+    if portfolio_yielded or portfolio_skipped:
+        _debug_log(
+            debug,
+            f"Portfolio crawl: {portfolio_yielded}/{len(_AUDITOR_PORTFOLIO_REPOS)} "
+            f"portfolio(s) yielded reports ({portfolio_skipped} skipped — "
+            f"already enumerated)",
+        )
+        notes.append(
+            f"Portfolio allowlist: {portfolio_yielded}/{len(_AUDITOR_PORTFOLIO_REPOS)} "
+            f"portfolio(s) had {clean_company}-named report(s)"
+        )
+
     # --- Deduplicate reports by URL ---
 
     seen_report_urls: set[str] = set()
@@ -1324,11 +2132,44 @@ def search_audit_reports(
             deduped.append(report)
     reports = deduped
 
-    # --- Collapse mirror entries (same audit, different host) -------------
-    pre_mirror = len(reports)
-    reports = _collapse_same_audit_mirrors(reports)
-    if pre_mirror != len(reports):
-        notes.append(f"Mirror dedup: collapsed {pre_mirror - len(reports)} entry(ies)")
+    # --- Cross-source filename dedup (pre-cluster pass) ---------------------
+    # URL-keyed dedup doesn't catch the same PDF surfaced by different
+    # pipeline paths (Solodit-seeded + spearbit/portfolio recursive-scan,
+    # or protocol-repo PDF + its third-party mirror). A filename-exact
+    # match groups those together deterministically before the LLM
+    # validate pass sees them.
+    pre_filename_dedup = len(reports)
+    reports = _collapse_by_filename(reports, debug=debug)
+    if len(reports) != pre_filename_dedup:
+        notes.append(
+            f"Cross-source dedup: collapsed "
+            f"{pre_filename_dedup - len(reports)} filename-duplicate(s)"
+        )
+
+    # --- Final LLM validation + clustering pass ---------------------------
+    # Replaces the heuristic 3-pass mirror dedup when it succeeds. The
+    # heuristic stays as a fallback so a transient LLM failure can't drop
+    # us back to the raw URL-deduped list with cross-host mirrors intact.
+    pre_validate = len(reports)
+    validate_result = _llm_validate_and_cluster(reports, clean_company, debug=debug)
+    if validate_result is not None:
+        reports, vstats = validate_result
+        notes.append(
+            f"LLM validate+cluster: {pre_validate} → {len(reports)} "
+            f"(dropped={vstats['dropped_invalid']}, "
+            f"collapsed={vstats['collapsed_mirrors']}, "
+            f"auditor_filled={vstats['auditor_filled']}, "
+            f"title_fixed={vstats['title_fixed']})"
+        )
+    else:
+        # LLM unavailable — fall back to the heuristic so we still collapse
+        # the obvious cross-host mirrors.
+        reports = _collapse_same_audit_mirrors(reports)
+        if pre_validate != len(reports):
+            notes.append(
+                f"LLM validation unavailable; heuristic mirror dedup collapsed "
+                f"{pre_validate - len(reports)} entry(ies)"
+            )
 
     notes.append(f"Extracted {len(reports)} audit report(s)")
     notes.append(f"Tavily queries used: {queries_used[0]}/{max_queries}")
