@@ -1630,6 +1630,25 @@ def company_overview(company_name: str) -> dict:
         }
 
 
+def _audit_report_to_dict(ar: Any) -> dict[str, Any]:
+    """Serialize an AuditReport row, including text-extraction state."""
+    return {
+        "id": ar.id,
+        "url": ar.url,
+        "pdf_url": ar.pdf_url,
+        "auditor": ar.auditor,
+        "title": ar.title,
+        "date": ar.date,
+        "confidence": float(ar.confidence) if ar.confidence is not None else None,
+        "text_extraction_status": ar.text_extraction_status,
+        "text_extracted_at": (
+            ar.text_extracted_at.isoformat() if ar.text_extracted_at else None
+        ),
+        "text_size_bytes": ar.text_size_bytes,
+        "has_text": ar.text_extraction_status == "success",
+    }
+
+
 @app.get("/api/company/{company_name}/audits")
 def company_audits(company_name: str) -> dict[str, Any]:
     """List all known audit reports for a company."""
@@ -1653,18 +1672,65 @@ def company_audits(company_name: str) -> dict[str, Any]:
             "company": company_name,
             "protocol_id": protocol_row.id,
             "audit_count": len(audit_rows),
-            "audits": [
-                {
-                    "url": ar.url,
-                    "pdf_url": ar.pdf_url,
-                    "auditor": ar.auditor,
-                    "title": ar.title,
-                    "date": ar.date,
-                    "confidence": float(ar.confidence) if ar.confidence is not None else None,
-                }
-                for ar in audit_rows
-            ],
+            "audits": [_audit_report_to_dict(ar) for ar in audit_rows],
         }
+
+
+@app.get("/api/audits/{audit_id}")
+def get_audit(audit_id: int) -> dict[str, Any]:
+    """Fetch a single audit report's metadata, including text-extraction state."""
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        return _audit_report_to_dict(ar)
+
+
+@app.get("/api/audits/{audit_id}/text", response_class=PlainTextResponse)
+def get_audit_text(audit_id: int) -> str:
+    """Return the extracted plain-text body of an audit report.
+
+    Streams the text directly from object storage. Returns 404 for an
+    unknown audit, 409 if extraction hasn't completed successfully yet
+    (so the caller knows to retry later), and 503 if object storage is
+    unreachable.
+    """
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+
+        if ar.text_extraction_status != "success" or not ar.text_storage_key:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "text not available",
+                    "status": ar.text_extraction_status,
+                    "reason": ar.text_extraction_error,
+                },
+            )
+
+        storage_key = ar.text_storage_key
+
+    client = get_storage_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="object storage not configured")
+    try:
+        body = client.get(storage_key)
+    except StorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=f"storage error: {exc}") from exc
+    except StorageError as exc:
+        # Covers StorageKeyMissing — DB says text is available but the object
+        # got deleted. Inconsistent state; surface as 500 so ops notice.
+        raise HTTPException(
+            status_code=500,
+            detail=f"text record missing from storage: {exc}",
+        ) from exc
+    return body.decode("utf-8")
 
 
 def _watched_proxy_to_dict(proxy: WatchedProxy) -> dict[str, Any]:

@@ -227,6 +227,22 @@ class AuditReport(Base):
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     date: Mapped[str | None] = mapped_column(String(20), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+
+    # Text-extraction pipeline state. Populated by workers.audit_text_extraction.
+    # status values: NULL (not yet attempted), "processing", "success",
+    # "failed", "skipped" (e.g. image-only PDFs that need OCR).
+    text_extraction_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    text_extraction_worker: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    text_extraction_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    text_extracted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    text_extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     discovered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -235,6 +251,10 @@ class AuditReport(Base):
     __table_args__ = (
         UniqueConstraint("protocol_id", "url", name="uq_audit_report_protocol_url"),
         Index("ix_audit_reports_protocol_id", "protocol_id"),
+        Index(
+            "ix_audit_reports_text_extraction_status",
+            "text_extraction_status",
+        ),
     )
 
 
@@ -674,6 +694,23 @@ def apply_storage_migrations(target_engine=None) -> None:
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS content_type VARCHAR(64)"))
         conn.execute(text("ALTER TABLE source_files ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
         conn.execute(text("ALTER TABLE source_files ALTER COLUMN content DROP NOT NULL"))
+        # Text-extraction columns added to audit_reports after the first release
+        # of that table. Older test DBs miss these; create_all() is a no-op
+        # once the table exists, so apply them here idempotently.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extraction_status VARCHAR(20)"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extraction_worker VARCHAR(128)"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extraction_started_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extracted_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extraction_error TEXT"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_storage_key TEXT"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_size_bytes INTEGER"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_sha256 VARCHAR(64)"))
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_reports_text_extraction_status "
+                "ON audit_reports (text_extraction_status)"
+            )
+        )
         conn.commit()
 
 

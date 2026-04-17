@@ -48,6 +48,8 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.defillama_worker &
 PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.audit_text_extraction &
+PIDS+=($!)
 
 echo "All workers started: ${PIDS[*]}"
 wait "${PIDS[@]}"
