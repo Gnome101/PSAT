@@ -690,10 +690,30 @@ def analysis_detail(run_name: str) -> dict:
                 select(Contract).where(Contract.address == job.address.lower()).limit(1)
             ).scalar_one_or_none()
 
+        # Resolve company by walking the job tree — analyses() uses the
+        # same pattern. The detail endpoint didn't expose it before; the
+        # Audits tab needs it to build links back to the per-protocol
+        # audit list.
+        def _company_for(j: Job) -> str | None:
+            seen: set[str] = set()
+            current: Job | None = j
+            while current is not None:
+                if current.company:
+                    return current.company
+                request = current.request if isinstance(current.request, dict) else {}
+                parent_id = request.get("parent_job_id")
+                if not isinstance(parent_id, str) or parent_id in seen:
+                    return None
+                seen.add(parent_id)
+                current = session.get(Job, parent_id)
+            return None
+
         payload: dict[str, Any] = {
             "run_name": job.name or str(job.id),
             "job_id": str(job.id),
             "address": job.address,
+            "contract_id": contract_row.id if contract_row else None,
+            "company": _company_for(job),
             "deployer": contract_row.deployer if contract_row else None,
             "available_artifacts": sorted(all_artifacts.keys()),
         }
@@ -1291,6 +1311,7 @@ def company_overview(company_name: str) -> dict:
             entry = {
                 "address": job.address,
                 "name": contract_name,
+                "contract_id": contract_row.id if contract_row else None,
                 "job_id": str(job.id),
                 "impl_job_id": impl_job_id,
                 "is_proxy": is_proxy,

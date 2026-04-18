@@ -202,24 +202,6 @@ class DiscoveryWorker(BaseWorker):
                 )
             selected.append(entry)
 
-        if not selected:
-            self.update_detail(session, job, "No contracts found to analyze")
-            store_artifact(
-                session,
-                job.id,
-                "discovery_summary",
-                data={
-                    "mode": "company",
-                    "company": company,
-                    "discovered_count": len(discovered),
-                    "analyzed_count": 0,
-                },
-            )
-            from db.queue import complete_job
-
-            complete_job(session, job.id, f"Discovery complete for {company}: no contracts found")
-            raise JobHandledDirectly()
-
         child_ids = []
         for contract in selected:
             addr = str(contract["address"])
@@ -261,18 +243,44 @@ class DiscoveryWorker(BaseWorker):
             job.name = company
             session.commit()
 
+        # Always spawn parallel discovery (DApp crawl + DefiLlama scans).
+        # These are independent discovery sources — if the primary inventory
+        # was empty, they're the best chance of finding contracts. Before
+        # this fix, an empty inventory short-circuited the pipeline here
+        # and parallel discovery never ran, so a protocol that Etherscan
+        # search didn't cover would end up with zero analyzed contracts
+        # even though DefiLlama or a DApp crawl would have found them.
+        # Audit report discovery already ran unconditionally above and
+        # isn't gated by `analyze_limit`; keep that property for the rest
+        # of the discovery pipeline too.
         self._spawn_parallel_discovery(session, job, company, request, root_job_id)
 
-        self.update_detail(
-            session,
-            job,
-            f"Discovered {len(discovered)} contracts, queued {len(child_ids)} for analysis",
-        )
+        if child_ids:
+            self.update_detail(
+                session,
+                job,
+                f"Discovered {len(discovered)} contracts, queued {len(child_ids)} for analysis",
+            )
+        else:
+            self.update_detail(
+                session,
+                job,
+                f"No inventory contracts; parallel discovery spawned for {company}",
+            )
 
-        # Complete the parent job — children will run through the pipeline independently
+        # Complete the parent job — children + parallel discovery jobs run
+        # through the pipeline independently.
         from db.queue import complete_job
 
-        complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
+        if child_ids:
+            complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
+        else:
+            complete_job(
+                session,
+                job.id,
+                f"Discovery complete for {company}: no inventory contracts; "
+                "parallel discovery spawned",
+            )
         raise JobHandledDirectly()
 
     def _spawn_parallel_discovery(
