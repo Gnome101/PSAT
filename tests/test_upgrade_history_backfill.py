@@ -586,3 +586,213 @@ def test_coverage_matcher_links_audit_to_backfilled_impl(db_session, seed_protoc
     # Audit dated 2024-03-01 is in the open-ended [100, None) window → high.
     assert row.match_confidence == "high"
     assert row.covered_from_block == 100
+
+
+# ---------------------------------------------------------------------------
+# 5. Regression — backfill must trigger a coverage refresh for the new rows
+# ---------------------------------------------------------------------------
+
+
+def test_backfill_triggers_coverage_refresh_for_created_rows(
+    db_session, seed_protocol, worker, stub_etherscan
+):
+    """Regression for the "RoleRegistry shows unaudited" bug: when
+    ``_backfill_historical_impls`` creates a new historical-impl Contract
+    row, coverage for every existing audit whose scope names that impl
+    must be upserted in the same pass.
+
+    Before the fix, scope extraction ran before the impl row existed, so
+    ``upsert_coverage_for_audit`` at that point matched zero contracts.
+    The backfill later created the Contract row but nothing re-ran the
+    matcher, leaving the audit ↔ impl pair with no coverage row — the UI
+    reported "not audited" even though the matcher, invoked live, would
+    have produced a match.
+    """
+    from db.models import (
+        AuditContractCoverage,
+        AuditReport,
+        Contract,
+        UpgradeEvent,
+    )
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+
+    # 1. Proxy exists. Its historical impl has NOT been backfilled yet —
+    # this mirrors the race that caused the bug.
+    proxy = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0x100),
+        chain="ethereum",
+        contract_name="Proxy",
+        is_proxy=True,
+    )
+    impl_addr = _addr(0xAAAA)
+    # The proxy's upgrade history references the impl that will later
+    # be backfilled. Block 100 → currently-active window (no successor).
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            new_impl=impl_addr,
+            block_number=100,
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            tx_hash="0x" + "a" * 64,
+        )
+    )
+
+    # 2. Audit whose scope names the impl — already through scope
+    # extraction, as if it ran before the backfill fired.
+    audit = AuditReport(
+        protocol_id=protocol_id,
+        url=f"https://example.com/{uuid.uuid4().hex}.pdf",
+        auditor="Certora",
+        title="Reaudit Core Contracts",
+        date="2024-03-01",
+        scope_extraction_status="success",
+        scope_contracts=["HistoricalImpl"],
+    )
+    db_session.add(audit)
+    db_session.commit()
+
+    # 3. Scope extraction's side effect at the time it ran: zero matches,
+    # because no Contract had the name "HistoricalImpl" yet.
+    inserted = upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    assert inserted == 0
+    assert (
+        db_session.query(AuditContractCoverage)
+        .filter_by(protocol_id=protocol_id)
+        .count()
+        == 0
+    )
+
+    # 4. Backfill happens — late. Stub Etherscan to return the name the
+    # audit scope is looking for, so the match is possible once the row
+    # exists.
+    stub_etherscan.names[impl_addr] = "HistoricalImpl"
+    worker._backfill_historical_impls(
+        db_session,
+        protocol_id=protocol_id,
+        chain="ethereum",
+        impl_addrs={impl_addr},
+    )
+    db_session.commit()
+
+    created = (
+        db_session.query(Contract)
+        .filter_by(protocol_id=protocol_id, address=impl_addr)
+        .one()
+    )
+    assert created.contract_name == "HistoricalImpl"
+    assert created.discovery_source == "upgrade_history"
+
+    # 5. The regression check: after backfill, a coverage row linking
+    # the audit to the newly-created impl must exist. Before the fix
+    # this count was 0 and the "audited?" UI pulled "no".
+    rows = (
+        db_session.query(AuditContractCoverage)
+        .filter_by(protocol_id=protocol_id, contract_id=created.id)
+        .all()
+    )
+    assert len(rows) == 1, (
+        "backfill created the Contract row but did not refresh coverage — "
+        "audit ↔ historical-impl link is missing"
+    )
+    r = rows[0]
+    assert r.audit_report_id == audit.id
+    assert r.matched_name == "HistoricalImpl"
+    # Block 100 is the open-ended current window, audit dated inside it
+    # → impl_era / high. Same semantics as the fresh-path coverage test
+    # above; proves the late-arriving row reaches the same terminal state.
+    assert r.match_type == "impl_era"
+    assert r.match_confidence == "high"
+    assert r.covered_from_block == 100
+    assert r.covered_to_block is None
+
+
+def test_backfill_coverage_refresh_covers_adopted_rows_too(
+    db_session, seed_protocol, worker, stub_etherscan
+):
+    """The adoption branch (pre-existing orphan row adopted into the
+    protocol) must also trigger a coverage refresh. Without the refresh
+    the row would join the protocol but stay unlinked to matching audits.
+    """
+    from db.models import AuditContractCoverage, AuditReport, Contract, UpgradeEvent
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+
+    # Proxy in our protocol.
+    proxy = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0x200),
+        chain="ethereum",
+        contract_name="Proxy2",
+        is_proxy=True,
+    )
+    # Orphan Contract row (protocol_id=None) that happens to match a
+    # scope name. Will be adopted by backfill.
+    orphan_addr = _addr(0xBBBB)
+    orphan = _add_contract(
+        db_session,
+        protocol_id=None,
+        address=orphan_addr,
+        chain="ethereum",
+        contract_name="OrphanImpl",
+        is_proxy=False,
+    )
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            new_impl=orphan_addr,
+            block_number=50,
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            tx_hash="0x" + "b" * 64,
+        )
+    )
+    audit = AuditReport(
+        protocol_id=protocol_id,
+        url=f"https://example.com/{uuid.uuid4().hex}.pdf",
+        auditor="Nethermind",
+        title="Adoption Path",
+        date="2024-04-01",
+        scope_extraction_status="success",
+        scope_contracts=["OrphanImpl"],
+    )
+    db_session.add(audit)
+    db_session.commit()
+
+    # Pre-adoption: the orphan isn't in our protocol, so the matcher
+    # can't link it.
+    inserted = upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    assert inserted == 0
+
+    worker._backfill_historical_impls(
+        db_session,
+        protocol_id=protocol_id,
+        chain="ethereum",
+        impl_addrs={orphan_addr},
+    )
+    db_session.commit()
+
+    db_session.refresh(orphan)
+    assert orphan.protocol_id == protocol_id  # adopted
+    assert orphan.discovery_source == "upgrade_history"
+
+    # Adoption must pull coverage through too.
+    rows = (
+        db_session.query(AuditContractCoverage)
+        .filter_by(protocol_id=protocol_id, contract_id=orphan.id)
+        .all()
+    )
+    assert len(rows) == 1, (
+        "adoption path didn't refresh coverage — orphan was pulled into "
+        "the protocol but the audit link was not materialized"
+    )
+    assert rows[0].audit_report_id == audit.id
+    assert rows[0].matched_name == "OrphanImpl"

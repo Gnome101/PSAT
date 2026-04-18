@@ -455,17 +455,31 @@ class ResolutionWorker(BaseWorker):
 
         created = 0
         adopted = 0
+        # Contract rows that just joined (or were created into) this
+        # protocol. Coverage needs to be refreshed for each of these so
+        # audits whose scope names them get linked — scope extraction
+        # may have run before these rows existed, and without a refresh
+        # here the audit ↔ historical-impl join would stay empty until
+        # the next admin refresh_coverage call.
+        refresh_ids: list[int] = []
         for addr in impl_addrs:
             existing = existing_rows.get(addr)
             if existing is not None:
                 if existing.protocol_id is None or existing.protocol_id == protocol_id:
+                    was_orphan = existing.protocol_id is None
+                    had_no_tag = not existing.discovery_source
                     # Adopt: plug a homeless row into this protocol, or
                     # top up an already-owned row that lacked the tag.
-                    if existing.protocol_id is None:
+                    if was_orphan:
                         existing.protocol_id = protocol_id
-                    if not existing.discovery_source:
+                    if had_no_tag:
                         existing.discovery_source = "upgrade_history"
                     adopted += 1
+                    # Only refresh when we actually changed protocol
+                    # ownership — a no-op adoption (same protocol, tag
+                    # already set) won't change what the matcher emits.
+                    if was_orphan or had_no_tag:
+                        refresh_ids.append(existing.id)
                 else:
                     logger.warning(
                         "Job protocol %s: historical impl %s already owned by protocol %s — "
@@ -482,19 +496,22 @@ class ResolutionWorker(BaseWorker):
                 logger.exception("Etherscan name fetch failed for historical impl %s", addr)
                 name = None
 
-            session.add(
-                Contract(
-                    protocol_id=protocol_id,
-                    address=addr,
-                    chain=chain,
-                    contract_name=name or "UnknownImpl",
-                    is_proxy=False,
-                    job_id=None,
-                    discovery_source="upgrade_history",
-                    source_verified=bool(name),
-                )
+            new_row = Contract(
+                protocol_id=protocol_id,
+                address=addr,
+                chain=chain,
+                contract_name=name or "UnknownImpl",
+                is_proxy=False,
+                job_id=None,
+                discovery_source="upgrade_history",
+                source_verified=bool(name),
             )
+            session.add(new_row)
             created += 1
+            # Flush so ``new_row.id`` is assigned — needed to upsert
+            # coverage keyed on contract_id below.
+            session.flush()
+            refresh_ids.append(new_row.id)
 
         if created or adopted:
             session.commit()
@@ -505,6 +522,36 @@ class ResolutionWorker(BaseWorker):
                 created,
                 adopted,
             )
+
+        # Coverage refresh hook. ``upsert_coverage_for_contract`` is
+        # delete-then-insert keyed on contract_id, so it's safe to call
+        # per row: each new/adopted historical impl picks up every audit
+        # whose scope names it. Imported lazily so the worker boot path
+        # doesn't pull the audits service eagerly.
+        if refresh_ids:
+            from services.audits.coverage import upsert_coverage_for_contract
+
+            refreshed = 0
+            for contract_id in refresh_ids:
+                try:
+                    refreshed += upsert_coverage_for_contract(session, contract_id)
+                except Exception:
+                    # Per-row swallow: one flaky match shouldn't poison
+                    # the rest of the refresh. The row itself is already
+                    # committed; a follow-up refresh_coverage admin call
+                    # will fill in anything we missed.
+                    logger.exception(
+                        "Coverage refresh failed for backfilled impl contract_id=%s",
+                        contract_id,
+                    )
+            session.commit()
+            if refreshed:
+                logger.info(
+                    "Protocol %s: linked %d audit coverage row(s) to %d backfilled impl(s)",
+                    protocol_id,
+                    refreshed,
+                    len(refresh_ids),
+                )
 
 
 def main():
