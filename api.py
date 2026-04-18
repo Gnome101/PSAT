@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -1684,6 +1685,148 @@ def company_audits(company_name: str) -> dict[str, Any]:
         }
 
 
+# Failed-status lookback window for the pipeline endpoint. Keeps the
+# "recent failures" panel from growing unbounded while still surfacing
+# anything an on-call dev would want to see.
+_PIPELINE_FAILED_LOOKBACK_HOURS = 24
+
+# Hard cap per bucket so a pathological backlog can't wedge the monitor.
+_PIPELINE_BUCKET_LIMIT = 50
+
+
+def _pipeline_item(ar: Any, protocol_name: str | None, now: datetime) -> dict[str, Any]:
+    """Shape one audit row for the monitor page's worker-card list."""
+    started = ar.text_extraction_started_at or ar.scope_extraction_started_at
+    elapsed = int((now - started).total_seconds()) if started else None
+    return {
+        "audit_id": ar.id,
+        "protocol_id": ar.protocol_id,
+        "company": protocol_name,
+        "auditor": ar.auditor,
+        "title": ar.title,
+        "worker_id": (
+            ar.text_extraction_worker if ar.text_extraction_status == "processing" else ar.scope_extraction_worker
+        ),
+        "started_at": started.isoformat() if started else None,
+        "elapsed_seconds": elapsed,
+        "error": (
+            ar.text_extraction_error
+            if ar.text_extraction_status == "failed"
+            else ar.scope_extraction_error
+            if ar.scope_extraction_status == "failed"
+            else None
+        ),
+    }
+
+
+@app.get("/api/audits/pipeline")
+def audits_pipeline() -> dict[str, Any]:
+    """In-flight audit text + scope extraction, grouped by bucket.
+
+    Feeds the monitor page's "Audit Extraction" shelf (parallel to
+    ``/api/jobs`` for the job pipeline). Text and scope workers drive a
+    column state machine on ``audit_reports`` rather than the ``jobs``
+    queue, so they need their own endpoint.
+
+    Response shape per worker:
+        {
+          "processing": [item, ...],  # currently being worked
+          "pending":    [item, ...],  # ready to claim, not yet picked up
+          "failed":     [item, ...],  # terminal failures in the last 24h
+        }
+
+    The scope ``pending`` list only includes rows whose text extraction has
+    already succeeded — otherwise they aren't actually claimable.
+
+    Each list is capped at ``_PIPELINE_BUCKET_LIMIT`` entries; callers
+    should surface an overflow indicator when counts hit the cap.
+
+    Route MUST stay registered before ``/api/audits/{audit_id}`` — FastAPI
+    matches in declaration order and the param route would otherwise try to
+    parse ``"pipeline"`` as an int and 422.
+    """
+    from db.models import AuditReport
+
+    now = datetime.now(timezone.utc)
+    failed_cutoff = now - timedelta(hours=_PIPELINE_FAILED_LOOKBACK_HOURS)
+
+    with SessionLocal() as session:
+        # Pre-load protocol names in one query so every row can be decorated
+        # without N+1 lookups.
+        protocol_names: dict[int, str] = {
+            row.id: row.name for row in session.execute(select(Protocol.id, Protocol.name)).all()
+        }
+
+        def _fetch(stmt) -> list[Any]:
+            return list(session.execute(stmt).scalars().all())
+
+        text_processing = _fetch(
+            select(AuditReport)
+            .where(AuditReport.text_extraction_status == "processing")
+            .order_by(AuditReport.text_extraction_started_at.asc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+        text_pending = _fetch(
+            select(AuditReport)
+            .where(AuditReport.text_extraction_status.is_(None))
+            .order_by(AuditReport.discovered_at.asc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+        text_failed = _fetch(
+            select(AuditReport)
+            .where(
+                AuditReport.text_extraction_status == "failed",
+                AuditReport.text_extracted_at >= failed_cutoff,
+            )
+            .order_by(AuditReport.text_extracted_at.desc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+
+        # Scope is only reachable once text extraction succeeded. Filter on
+        # that so the "pending" count reflects actually-claimable work.
+        scope_processing = _fetch(
+            select(AuditReport)
+            .where(AuditReport.scope_extraction_status == "processing")
+            .order_by(AuditReport.scope_extraction_started_at.asc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+        scope_pending = _fetch(
+            select(AuditReport)
+            .where(
+                AuditReport.scope_extraction_status.is_(None),
+                AuditReport.text_extraction_status == "success",
+            )
+            .order_by(AuditReport.text_extracted_at.asc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+        scope_failed = _fetch(
+            select(AuditReport)
+            .where(
+                AuditReport.scope_extraction_status == "failed",
+                AuditReport.scope_extracted_at >= failed_cutoff,
+            )
+            .order_by(AuditReport.scope_extracted_at.desc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+
+        def _shape(rows: list[Any]) -> list[dict[str, Any]]:
+            return [_pipeline_item(ar, protocol_names.get(ar.protocol_id), now) for ar in rows]
+
+        return {
+            "text_extraction": {
+                "processing": _shape(text_processing),
+                "pending": _shape(text_pending),
+                "failed": _shape(text_failed),
+            },
+            "scope_extraction": {
+                "processing": _shape(scope_processing),
+                "pending": _shape(scope_pending),
+                "failed": _shape(scope_failed),
+            },
+            "generated_at": now.isoformat(),
+        }
+
+
 @app.get("/api/audits/{audit_id}")
 def get_audit(audit_id: int) -> dict[str, Any]:
     """Fetch a single audit report's metadata, including text-extraction state."""
@@ -2621,8 +2764,6 @@ def list_monitored_events(
 @app.get("/api/protocols/{protocol_id}/tvl")
 def protocol_tvl(protocol_id: int, days: int = 30) -> dict[str, Any]:
     """Current TVL and historical snapshots for a protocol."""
-    from datetime import datetime, timedelta, timezone
-
     days = min(days, MAX_TVL_HISTORY_DAYS)
 
     with SessionLocal() as session:
