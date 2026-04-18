@@ -25,9 +25,9 @@ from db.queue import (
     store_artifact,
     store_source_files,
 )
+from services.discovery.audit_reports import merge_audit_reports, search_audit_reports
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
-from services.discovery.audit_reports import merge_audit_reports, search_audit_reports
 from services.discovery.inventory import merge_inventory, search_protocol_inventory
 from workers.base import BaseWorker, JobHandledDirectly
 
@@ -59,6 +59,11 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
             date=report.get("date"),
             confidence=report.get("confidence"),
             source_url=report.get("source_url"),
+            # ``source_repo`` lets the source-equivalence matcher reach
+            # back to the original GitHub repo to compare reviewed code
+            # against Etherscan-verified source. Populated by the
+            # discovery crawler when it resolves an audit PDF on GitHub.
+            source_repo=report.get("source_repo"),
         )
         stmt = stmt.on_conflict_do_update(
             constraint="uq_audit_report_protocol_url",
@@ -69,6 +74,7 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
                 "date": stmt.excluded.date,
                 "confidence": stmt.excluded.confidence,
                 "source_url": stmt.excluded.source_url,
+                "source_repo": stmt.excluded.source_repo,
             },
         )
         session.execute(stmt)

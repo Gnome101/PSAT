@@ -250,7 +250,18 @@ class AuditReport(Base):
     scope_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     scope_contracts: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
 
+    # Commit SHAs mentioned in the PDF as the reviewed revision. Extracted
+    # by regex over the scope-section text (see
+    # ``services.audits.source_equivalence.extract_reviewed_commits``).
+    # Populated after scope extraction; ``source_repo`` on the same row
+    # locates where on GitHub to resolve them.
+    reviewed_commits: Mapped[list[str] | None] = mapped_column(ARRAY(String(40)), nullable=True)
+
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # GitHub repo the PDF was discovered in — used by the source-equivalence
+    # matcher to fetch reviewed files and compare against Etherscan's
+    # verified source for a deployed impl.
+    source_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -795,6 +806,10 @@ def apply_storage_migrations(target_engine=None) -> None:
                 "ON audit_reports (text_sha256) WHERE scope_extraction_status = 'success'"
             )
         )
+        # reviewed_commits + source_repo support the source-equivalence
+        # matcher — added idempotently so existing test DBs pick them up.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS reviewed_commits TEXT[]"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS source_repo VARCHAR(255)"))
         # audit_contract_coverage — persistent contract↔audit link. Created
         # idempotently here so long-lived test DBs (and prod) pick it up
         # without an Alembic run. Base.metadata.create_all handles fresh

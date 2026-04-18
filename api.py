@@ -2021,11 +2021,20 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
                 .scalars()
                 .all()
             )
-            # 'audited' requires a HIGH-confidence match covering the
-            # currently-open impl window. Grace-medium matches don't count
-            # — an audit 10 days before the impl went live is suggestive
-            # but not proof the new code was reviewed.
-            has_current = any(r.match_confidence == "high" and (r.covered_to_block is None) for r in current_cov)
+            # 'audited' requires definitive coverage of the currently-open
+            # impl window:
+            #   - match_type='reviewed_commit' (source-equivalence proof —
+            #     PDF referenced a commit whose source file sha matches
+            #     Etherscan-verified source), OR
+            #   - high-confidence temporal match (audit date lands inside
+            #     the open window).
+            # Grace-medium temporal matches are intentionally NOT enough —
+            # an audit 10 days before the impl went live is suggestive
+            # but not proof the reviewed code is what shipped.
+            has_current = any(
+                (r.match_type == "reviewed_commit") or (r.match_confidence == "high" and r.covered_to_block is None)
+                for r in current_cov
+            )
             if has_current:
                 return "audited"
             if current_cov or cov_rows:
@@ -2051,13 +2060,24 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
     "/api/company/{company_name}/refresh_coverage",
     dependencies=[Depends(require_admin_key)],
 )
-def refresh_company_coverage(company_name: str) -> dict[str, Any]:
+def refresh_company_coverage(
+    company_name: str,
+    verify_source_equivalence: bool = False,
+) -> dict[str, Any]:
     """Rebuild ``audit_contract_coverage`` rows for every scoped audit in a protocol.
 
     Idempotent backfill. Useful when inventory is updated after audits are
     scoped (new Contract rows match pre-existing audit scope) or when a
     bulk data migration needs to re-seat links without waiting for the
     next scope re-extraction.
+
+    ``verify_source_equivalence=true`` runs the GitHub + Etherscan
+    cross-check: for each audit with reviewed_commits + source_repo,
+    compare the byte content of each scope file against Etherscan's
+    verified source for matching impls. Hits upgrade to
+    ``match_type='reviewed_commit'`` / ``match_confidence='high'`` and
+    flip ``current_status`` to ``'audited'`` even when the temporal
+    window doesn't line up. Network-bound; off by default.
     """
     from services.audits.coverage import upsert_coverage_for_protocol
 
@@ -2065,12 +2085,17 @@ def refresh_company_coverage(company_name: str) -> dict[str, Any]:
         protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
         if protocol_row is None:
             raise HTTPException(status_code=404, detail="Company not found")
-        inserted = upsert_coverage_for_protocol(session, protocol_row.id)
+        inserted = upsert_coverage_for_protocol(
+            session,
+            protocol_row.id,
+            verify_source_equivalence=verify_source_equivalence,
+        )
         session.commit()
         return {
             "company": company_name,
             "protocol_id": protocol_row.id,
             "coverage_rows": inserted,
+            "verify_source_equivalence": verify_source_equivalence,
         }
 
 

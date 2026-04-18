@@ -16,12 +16,27 @@ the ``upsert_coverage_for_protocol`` wrapper) writes them to the DB with
 idempotent delete-then-insert semantics so re-running is safe and scope
 re-extractions pick up cleanly.
 
-Matching signals in v1 (temporal + name). The ``AuditReport.source_commit``
-field is a *discovery-time* SHA (where the PDF was found in an org's repo),
-not a review-commit anchor — all 47 GitHub-discovered ether.fi audits share
-the same SHA because that's the repo's HEAD at crawl time. Bytecode matching
-against a reviewed commit is reserved for a later feature that extracts the
-real commit from PDF text.
+Matching signals are layered, cheapest first:
+
+  - ``'direct'`` — scope name matches a Contract.contract_name. No proxy
+    history; confidence=high if audit has a date, medium if not.
+  - ``'impl_era'`` — scope name matches AND the impl was active at the
+    audit's date per ``UpgradeEvent`` history. Confidence=high inside
+    window, medium in a 14-day grace zone on either boundary, low when
+    clearly outside.
+  - ``'reviewed_commit'`` — source-equivalence proof (see
+    ``services/audits/source_equivalence.py``). The audit PDF references
+    a commit whose source file is byte-identical to Etherscan's verified
+    source for the matched impl. Overrides temporal confidence with
+    high — this is definitive evidence the audit reviewed the deployed
+    code. Opt-in via ``verify_source_equivalence=True`` because it
+    costs ~2 HTTP requests per (scope-contract × reviewed-commit) pair.
+
+The ``AuditReport.source_commit`` field is a *discovery-time* SHA (where
+the PDF was found in an org's repo), not a review-commit anchor. The
+real reviewed commits live in ``AuditReport.reviewed_commits``, extracted
+from PDF text by scope extraction and then consumed by the source-
+equivalence pass.
 """
 
 from __future__ import annotations
@@ -504,13 +519,93 @@ def _match_to_row_kwargs(match: CoverageMatch) -> dict:
     }
 
 
-def upsert_coverage_for_audit(session: Session, audit_id: int) -> int:
+def _reviewed_commit_upgrades(
+    session: Session,
+    audit_id: int,
+    matches: list[CoverageMatch],
+) -> list[CoverageMatch]:
+    """For each match, try to prove it via source-equivalence.
+
+    When the audit has ``reviewed_commits`` + ``source_repo``, runs a
+    GitHub + Etherscan cross-check against each candidate contract. A
+    positive hit upgrades the match to ``match_type='reviewed_commit'``
+    / ``match_confidence='high'`` — the audit is proven to have reviewed
+    the byte-exact source now deployed at that impl. Temporal bounds
+    (``covered_from_block`` / ``covered_to_block``) pass through unchanged;
+    the proof is per-file, not per-window.
+
+    Non-destructive: returns a new list; never mutates caller's input.
+    Swallows per-match exceptions — if proof fails to resolve, the
+    existing temporal match stands.
+    """
+    import os
+
+    from services.audits.source_equivalence import check_audit_row_covers_contract
+
+    audit = session.get(AuditReport, audit_id)
+    if audit is None:
+        return matches
+    if not (audit.reviewed_commits and audit.source_repo):
+        return matches
+
+    gh_token = os.environ.get("GITHUB_TOKEN") or None
+    upgraded: list[CoverageMatch] = []
+    for m in matches:
+        try:
+            proofs = check_audit_row_covers_contract(session, audit_id, m.contract_id, github_token=gh_token)
+        except Exception:
+            logger.exception(
+                "source-equivalence check crashed for audit %s / contract %s",
+                audit_id,
+                m.contract_id,
+            )
+            upgraded.append(m)
+            continue
+        if proofs:
+            proof = proofs[0]
+            upgraded.append(
+                CoverageMatch(
+                    audit_report_id=m.audit_report_id,
+                    contract_id=m.contract_id,
+                    protocol_id=m.protocol_id,
+                    matched_name=m.matched_name,
+                    match_type="reviewed_commit",
+                    match_confidence="high",
+                    covered_from_block=m.covered_from_block,
+                    covered_to_block=m.covered_to_block,
+                )
+            )
+            logger.info(
+                "coverage: audit %s proven to cover contract %s via source-equivalence at commit %s / path %s",
+                audit_id,
+                m.contract_id,
+                proof.commit,
+                proof.etherscan_path,
+            )
+        else:
+            upgraded.append(m)
+    return upgraded
+
+
+def upsert_coverage_for_audit(
+    session: Session,
+    audit_id: int,
+    *,
+    verify_source_equivalence: bool = False,
+) -> int:
     """Replace all coverage rows for ``audit_id`` with a fresh match.
 
     Delete-then-insert (inside the caller's transaction) gives free
     invalidation when scope re-extraction changes ``scope_contracts[]`` —
     stale rows are gone, new rows reflect the current scope. Returns the
     number of rows inserted. The caller is responsible for ``session.commit()``.
+
+    ``verify_source_equivalence`` (default False) runs a GitHub + Etherscan
+    cross-check on each match: when the audit has ``reviewed_commits`` +
+    ``source_repo`` set and a candidate impl's Etherscan-verified source
+    is byte-identical to the file at the reviewed commit, the match is
+    upgraded to ``'reviewed_commit'`` / ``'high'``. Opt-in because it
+    costs ~2 HTTP requests per scope-contract × reviewed-commit pair.
     """
     audit = session.get(AuditReport, audit_id)
     if audit is None:
@@ -531,6 +626,9 @@ def upsert_coverage_for_audit(session: Session, audit_id: int) -> int:
         )
         return 0
 
+    if verify_source_equivalence:
+        matches = _reviewed_commit_upgrades(session, audit_id, matches)
+
     for match in matches:
         session.add(AuditContractCoverage(**_match_to_row_kwargs(match)))
     return len(matches)
@@ -550,12 +648,19 @@ def upsert_coverage_for_contract(session: Session, contract_id: int) -> int:
     return len(matches)
 
 
-def upsert_coverage_for_protocol(session: Session, protocol_id: int) -> int:
+def upsert_coverage_for_protocol(
+    session: Session,
+    protocol_id: int,
+    *,
+    verify_source_equivalence: bool = False,
+) -> int:
     """Rebuild coverage for every scoped audit in a protocol.
 
     Idempotent. Used as the batch entry point — call from CLI flows,
     admin-triggered refresh endpoints, and integration tests. Returns
-    the total inserted row count.
+    the total inserted row count. ``verify_source_equivalence`` forwards
+    to ``upsert_coverage_for_audit``; set True only when the caller is OK
+    with the network cost of per-audit GitHub + Etherscan lookups.
     """
     audit_ids = (
         session.execute(
@@ -569,5 +674,5 @@ def upsert_coverage_for_protocol(session: Session, protocol_id: int) -> int:
     )
     total = 0
     for aid in audit_ids:
-        total += upsert_coverage_for_audit(session, aid)
+        total += upsert_coverage_for_audit(session, aid, verify_source_equivalence=verify_source_equivalence)
     return total

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -104,6 +105,8 @@ class SeedStats:
 
 
 def _session_factory():
+    # TEST_DB is validated non-None at import time (sys.exit above).
+    assert TEST_DB is not None
     engine = create_engine(TEST_DB)
     Base.metadata.create_all(engine)
     apply_storage_migrations(engine)
@@ -111,22 +114,68 @@ def _session_factory():
 
 
 def _wipe_prior_ether_fi(session) -> None:
-    """Delete any prior ether.fi rows so the script is re-run-safe."""
+    """Delete any prior ether.fi rows so the script is re-run-safe.
+
+    ``Contract.protocol_id`` has ``ON DELETE SET NULL``, so a prior run
+    that deleted the Protocol without cleaning Contracts leaves orphan
+    rows that block re-insert via the ``(address, chain)`` unique
+    constraint. We clean BOTH by-protocol and by-known-address to cover
+    both the happy-path and the crashed-prior-run case.
+    """
     protocol = session.execute(select(Protocol).where(Protocol.name == "ether.fi")).scalar_one_or_none()
-    if protocol is None:
-        return
-    session.query(AuditContractCoverage).filter_by(protocol_id=protocol.id).delete()
-    contract_ids = [c.id for c in session.query(Contract).filter_by(protocol_id=protocol.id).all()]
-    if contract_ids:
-        session.query(UpgradeEvent).filter(UpgradeEvent.contract_id.in_(contract_ids)).delete(synchronize_session=False)
-    session.query(Contract).filter_by(protocol_id=protocol.id).delete()
-    session.query(AuditReport).filter_by(protocol_id=protocol.id).delete()
-    session.query(Protocol).filter_by(id=protocol.id).delete()
+
+    # Collect every address the script touches — known proxies + any
+    # existing Contract rows attributed to ether.fi via protocol_id.
+    known_addrs = {a.lower() for a in KNOWN_ETHER_FI_PROXIES}
+    orphan_query = select(Contract).where(Contract.address.in_(known_addrs))
+    orphans = session.execute(orphan_query).scalars().all()
+
+    contract_ids_to_wipe: set[int] = {c.id for c in orphans}
+    if protocol is not None:
+        session.query(AuditContractCoverage).filter_by(protocol_id=protocol.id).delete()
+        contract_ids_to_wipe.update(c.id for c in session.query(Contract).filter_by(protocol_id=protocol.id).all())
+
+    if contract_ids_to_wipe:
+        session.query(AuditContractCoverage).filter(AuditContractCoverage.contract_id.in_(contract_ids_to_wipe)).delete(
+            synchronize_session=False
+        )
+        session.query(UpgradeEvent).filter(UpgradeEvent.contract_id.in_(contract_ids_to_wipe)).delete(
+            synchronize_session=False
+        )
+        session.query(Contract).filter(Contract.id.in_(contract_ids_to_wipe)).delete(synchronize_session=False)
+    if protocol is not None:
+        session.query(AuditReport).filter_by(protocol_id=protocol.id).delete()
+        session.query(Protocol).filter_by(id=protocol.id).delete()
     session.commit()
 
 
+_GH_URL_RE = re.compile(r"^https?://(?:raw\.githubusercontent\.com|github\.com)/([^/]+/[^/]+)")
+
+
+def _infer_source_repo(report: dict) -> str | None:
+    """Prefer the already-populated source_repo; otherwise infer from URL."""
+    explicit = report.get("source_repo")
+    if explicit:
+        return str(explicit)
+    for url_key in ("pdf_url", "url", "source_url"):
+        val = report.get(url_key)
+        if not val:
+            continue
+        m = _GH_URL_RE.match(str(val))
+        if m:
+            return m.group(1)
+    return None
+
+
 def _seed_audits(session, protocol_id: int) -> tuple[int, int]:
-    """Read audit_reports.json + scope_extraction_v8.json → AuditReport rows."""
+    """Read audit_reports.json + scope_extraction_v8.json → AuditReport rows.
+
+    Also populates ``reviewed_commits`` by regex-extracting commit SHAs from
+    each audit's scope_section_text, and ``source_repo`` from the discovery
+    URL when available. Both feed the source-equivalence matcher.
+    """
+    from services.audits.source_equivalence import extract_reviewed_commits
+
     ar_path = ROOT / "protocols" / "ether.fi" / "audit_reports.json"
     v8_path = ROOT / "protocols" / "ether.fi" / "scope_extraction_v8.json"
     audit_data = json.loads(ar_path.read_text())
@@ -134,6 +183,7 @@ def _seed_audits(session, protocol_id: int) -> tuple[int, int]:
 
     seeded = 0
     with_scope = 0
+    commits_populated = 0
     now = datetime.now(timezone.utc)
     for report in audit_data.get("reports", []):
         url = report.get("url")
@@ -150,6 +200,7 @@ def _seed_audits(session, protocol_id: int) -> tuple[int, int]:
             date=report.get("date"),
             confidence=report.get("confidence"),
             source_url=report.get("source_url"),
+            source_repo=_infer_source_repo(report),
             text_extraction_status="success",
             text_extracted_at=now,
         )
@@ -164,11 +215,22 @@ def _seed_audits(session, protocol_id: int) -> tuple[int, int]:
                 ar.date = extracted_date
             if contracts:
                 with_scope += 1
+            # Pull reviewed-commit hashes from the preserved scope section
+            # text — this is what the new scope-extraction pass would also
+            # do during PDF processing. Both fields + scope_section_text
+            # and first_chars are worth scanning — Solidified embeds its
+            # commit in the title page prose, not in scope.
+            signal_text = (v8_entry.get("scope_section_text") or "") + "\n" + (v8_entry.get("first_chars") or "")
+            commits = extract_reviewed_commits(signal_text)
+            if commits:
+                ar.reviewed_commits = commits
+                commits_populated += 1
         elif v8_entry and v8_entry.get("status") == "skipped":
             ar.scope_extraction_status = "skipped"
         session.add(ar)
         seeded += 1
     session.commit()
+    print(f"  reviewed_commits populated on {commits_populated} audit(s)")
     return seeded, with_scope
 
 
@@ -180,18 +242,28 @@ def _resolve_contract_name(address: str) -> str | None:
 
 
 def _seed_known_proxies(session, protocol_id: int) -> int:
+    """Idempotent — adopts orphan rows from prior crashed runs."""
     seeded = 0
     for addr in KNOWN_ETHER_FI_PROXIES:
         name = _resolve_contract_name(addr) or "UnknownProxy"
-        session.add(
-            Contract(
-                protocol_id=protocol_id,
-                address=addr.lower(),
-                chain="ethereum",
-                contract_name=name,
-                is_proxy=True,
+        lower_addr = addr.lower()
+        existing = session.execute(
+            select(Contract).where(Contract.address == lower_addr, Contract.chain == "ethereum")
+        ).scalar_one_or_none()
+        if existing is None:
+            session.add(
+                Contract(
+                    protocol_id=protocol_id,
+                    address=lower_addr,
+                    chain="ethereum",
+                    contract_name=name,
+                    is_proxy=True,
+                )
             )
-        )
+        else:
+            existing.protocol_id = protocol_id
+            existing.contract_name = name
+            existing.is_proxy = True
         print(f"  seeded proxy  {addr[:10]}… → {name}")
         seeded += 1
     session.commit()
@@ -234,10 +306,15 @@ def _seed_upgrade_history(
         name = _resolve_contract_name(addr)
         if name:
             impls_resolved += 1
+        # Look up by (address, chain) — the unique constraint — not by
+        # protocol. This is idempotent across crashed prior runs that
+        # left orphan rows (protocol_id NULL after the protocol row was
+        # deleted). We ADOPT such orphans into the current protocol
+        # rather than try to insert a duplicate.
         existing = session.execute(
             select(Contract).where(
-                Contract.protocol_id == protocol_id,
                 Contract.address == addr,
+                Contract.chain == "ethereum",
             )
         ).scalar_one_or_none()
         if existing is None:
@@ -250,6 +327,11 @@ def _seed_upgrade_history(
                     is_proxy=False,
                 )
             )
+        else:
+            existing.protocol_id = protocol_id
+            if name and not existing.contract_name:
+                existing.contract_name = name
+            existing.is_proxy = False
         latest_impl = addr
 
     impl_tuples: list[tuple[str, int, datetime | None]] = []
@@ -476,23 +558,80 @@ def main() -> int:
         api_module.SessionLocal = SessionLocal
         client = TestClient(api_module.app)
 
-        _banner("6. Per-proxy current_status distribution (the headline signal)")
-        summaries = _proxy_timelines(client, session, protocol.id)
-        for name, s in sorted(summaries.items(), key=lambda kv: kv[1]["status"] or ""):
+        _banner("6. Per-proxy current_status — temporal matcher only")
+        before = _proxy_timelines(client, session, protocol.id)
+        for name, s in sorted(before.items(), key=lambda kv: kv[1]["status"] or ""):
             print(
                 f"  {name:<46}  {s['status']:<26}  "
                 f"impls={s['impl_windows']}  "
                 f"cov={s['coverage_total']} (high={s['coverage_high']},"
                 f"med={s['coverage_medium']},low={s['coverage_low']})"
             )
-            stats.proxy_status[name] = s["status"] or ""
-        statuses = {v["status"] for v in summaries.values()}
+        statuses = {v["status"] for v in before.values()}
         print(f"\n  Distinct statuses observed: {sorted(x for x in statuses if x)}")
 
-        _banner("7. Spot-check: Solidified 2023-10-26 window boundaries")
+        _banner("7. Re-running matcher with verify_source_equivalence=True")
+        print("  (cross-references audit reviewed_commits × GitHub ↔ Etherscan)")
+        print("  ...this takes ~30-60s over GitHub + Etherscan")
+        rc_total = upsert_coverage_for_protocol(session, protocol.id, verify_source_equivalence=True)
+        session.commit()
+        print(f"  {rc_total} coverage row(s) re-inserted.")
+
+        _banner("8. Per-proxy current_status — after source-equivalence pass")
+        after = _proxy_timelines(client, session, protocol.id)
+        flipped = 0
+        for name, s in sorted(after.items(), key=lambda kv: kv[1]["status"] or ""):
+            prior = before.get(name, {}).get("status")
+            marker = "  (FLIPPED)" if prior != s["status"] else ""
+            if prior != s["status"]:
+                flipped += 1
+            print(f"  {name:<46}  {s['status']:<26}  impls={s['impl_windows']}  cov={s['coverage_total']}{marker}")
+        statuses_after = {v["status"] for v in after.values()}
+        print(f"\n  Distinct statuses observed: {sorted(x for x in statuses_after if x)}")
+        print(f"  Proxies whose status flipped: {flipped}")
+        stats.proxy_status = {k: v["status"] or "" for k, v in after.items()}
+
+        # Dump the reviewed_commit rows for the headline cases.
+        from db.models import AuditContractCoverage
+
+        for name, proxy_addr in [
+            ("LiquidityPool", "0x308861a430be4cce5502d0a12724771fc6daf216"),
+            ("EtherFiNodesManager", "0x8b71140ad2e5d1e7018d2a7f8a288bd3cd38916f"),
+        ]:
+            cur_impl_row = session.execute(
+                select(Contract).where(
+                    Contract.protocol_id == protocol.id,
+                    Contract.address.in_(
+                        select(Contract.implementation).where(
+                            Contract.protocol_id == protocol.id,
+                            Contract.address == proxy_addr,
+                        )
+                    ),
+                )
+            ).scalar_one_or_none()
+            if cur_impl_row is None:
+                continue
+            rc_rows = (
+                session.execute(
+                    select(AuditContractCoverage).where(
+                        AuditContractCoverage.contract_id == cur_impl_row.id,
+                        AuditContractCoverage.match_type == "reviewed_commit",
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            print(f"\n  {name} current impl has {len(rc_rows)} reviewed_commit coverage row(s):")
+            for r in rc_rows:
+                a = session.get(AuditReport, r.audit_report_id)
+                if a is None:
+                    continue
+                print(f"    → {a.date}  {a.auditor}  :: {a.title}  (matched '{r.matched_name}')")
+
+        _banner("9. Spot-check: Solidified 2023-10-26 window boundaries")
         spot_ok = _spot_check_solidified_window(session, protocol.id)
 
-        _banner("8. Non-proxy impl timeline (LiquidityPool impl contract)")
+        _banner("10. Non-proxy impl timeline (LiquidityPool impl contract)")
         np = _non_proxy_impl_timeline(client, session, protocol.id)
         if np is None:
             print("  FAIL — no LiquidityPool impl Contract row found")
@@ -507,7 +646,7 @@ def main() -> int:
             if not non_proxy_ok:
                 print("  FAIL — unexpected shape for non-proxy timeline")
 
-        _banner("9. Verdict")
+        _banner("11. Verdict")
         saw_audited = "audited" in statuses
         saw_unaudited = "unaudited_since_upgrade" in statuses
         ok = (

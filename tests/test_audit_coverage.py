@@ -639,3 +639,294 @@ def test_upsert_on_audit_with_no_matches_inserts_nothing(db_session, seed_protoc
     assert upsert_coverage_for_audit(db_session, audit.id) == 0
     db_session.commit()
     assert db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).count() == 0
+
+
+# ---------------------------------------------------------------------------
+# 7. Reviewed-commit extraction — regex over PDF text
+# ---------------------------------------------------------------------------
+
+
+def test_extract_reviewed_commits_pulls_git_shas():
+    from services.audits.source_equivalence import extract_reviewed_commits
+
+    text = "Initial Commit Hash: 3b6b81b a643d24f2 7fc5100\nThe audit reviewed src/LiquidityPool.sol at commit abc1234."
+    got = extract_reviewed_commits(text)
+    # All four plus the 7-char abc1234 — deduped, lowercase, order preserved.
+    assert got == ["3b6b81b", "a643d24f2", "7fc5100", "abc1234"]
+
+
+def test_extract_reviewed_commits_filters_all_digit_and_palette_tokens():
+    from services.audits.source_equivalence import extract_reviewed_commits
+
+    # 7 digits with no hex-letters → rejected (block number / issue ID).
+    # Repeated-char token (0x000000..0) → rejected.
+    # Real commit → kept.
+    text = "issue 1234567 placeholder 0000000 real commit deadbeefcafe01"
+    assert extract_reviewed_commits(text) == ["deadbeefcafe01"]
+
+
+def test_extract_reviewed_commits_empty_input_safe():
+    from services.audits.source_equivalence import extract_reviewed_commits
+
+    assert extract_reviewed_commits("") == []
+    assert extract_reviewed_commits(None) == []  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# 8. Source-equivalence matcher — synthetic GitHub / Etherscan stubs
+# ---------------------------------------------------------------------------
+
+
+def test_source_equivalence_proves_coverage_when_hashes_match(db_session, seed_protocol, monkeypatch):
+    """When audit.reviewed_commits[0] has a src file whose sha matches the
+    impl's Etherscan source, the upsert path upgrades the match to
+    ``reviewed_commit`` / ``high`` — regardless of temporal fit.
+    """
+    import hashlib
+
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+
+    # Seed an impl + an audit whose date falls OUTSIDE all temporal windows.
+    # If only temporal matching applied, we'd get 'direct'/'medium' at best.
+    impl = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2099-01-01")
+    # Manually set the source-equivalence inputs (would be populated by
+    # scope extraction in production).
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    db_session.commit()
+
+    content = "contract MyPool {}"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    # Stub Etherscan: return a single source file whose sha matches.
+    def fake_etherscan(address):
+        return source_equivalence.VerifiedSource(
+            contract_name="MyPool",
+            compiler_version="0.8.27",
+            files={"src/MyPool.sol": content_hash},
+        )
+
+    # Stub GitHub: same hash → equivalence proven.
+    def fake_github(repo, commit, path, *, token=None):
+        return content_hash if path == "src/MyPool.sol" else None
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", fake_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
+
+    n = upsert_coverage_for_audit(db_session, audit.id, verify_source_equivalence=True)
+    db_session.commit()
+    assert n == 1
+
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.contract_id == impl.id
+    assert row.match_type == "reviewed_commit"
+    assert row.match_confidence == "high"
+
+
+def test_source_equivalence_leaves_temporal_match_when_hashes_differ(db_session, seed_protocol, monkeypatch):
+    """Source hashes don't match → match stays at its original type/confidence.
+    Proof failure must never DOWNGRADE a match the temporal matcher already
+    emitted.
+    """
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    db_session.commit()
+
+    # Stubs return mismatching hashes.
+    def fake_etherscan(address):
+        return source_equivalence.VerifiedSource(
+            contract_name="MyPool", compiler_version="0.8", files={"src/MyPool.sol": "aaa"}
+        )
+
+    def fake_github(repo, commit, path, *, token=None):
+        return "bbb"  # different sha
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", fake_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
+
+    upsert_coverage_for_audit(db_session, audit.id, verify_source_equivalence=True)
+    db_session.commit()
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    # Original temporal match stands — 'direct' because no proxy history.
+    assert row.match_type == "direct"
+
+
+def test_source_equivalence_prefers_db_source_files(db_session, seed_protocol, monkeypatch):
+    """When a Contract's Job has SourceFile rows, source-equivalence reads
+    them instead of hitting Etherscan. Saves one HTTP call per impl and
+    keeps the matcher usable when Etherscan is rate-limited.
+    """
+    import hashlib
+    import uuid as _uuid
+
+    from db.models import AuditContractCoverage, Job, JobStage, JobStatus, SourceFile
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    impl = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+
+    # Attach a Job + SourceFile so fetch_db_source_files finds content
+    # without needing Etherscan.
+    job = Job(id=_uuid.uuid4(), status=JobStatus.completed, stage=JobStage.done)
+    db_session.add(job)
+    db_session.flush()
+    impl.job_id = job.id
+
+    content = "contract MyPool {}"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    db_session.add(SourceFile(job_id=job.id, path="src/MyPool.sol", content=content))
+    db_session.commit()
+
+    # Etherscan stub blows up loudly — if the DB path fails, we'll know.
+    etherscan_calls = {"count": 0}
+
+    def boom_etherscan(address):
+        etherscan_calls["count"] += 1
+        raise AssertionError("Etherscan should not be called when DB source is available")
+
+    # GitHub stub returns the matching hash.
+    def fake_github(repo, commit, path, *, token=None):
+        return content_hash if path == "src/MyPool.sol" else None
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", boom_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
+
+    upsert_coverage_for_audit(db_session, audit.id, verify_source_equivalence=True)
+    db_session.commit()
+
+    assert etherscan_calls["count"] == 0, "DB path must short-circuit Etherscan"
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.match_type == "reviewed_commit"
+    assert row.match_confidence == "high"
+
+    # Cleanup — the autouse teardown doesn't know about the Job we created.
+    db_session.query(SourceFile).filter_by(job_id=job.id).delete()
+    # Detach the job_id from the contract so the contract teardown doesn't
+    # cascade-delete a job that other tests may depend on (Job has no FK
+    # back here but keeping clean is nice).
+    impl.job_id = None
+    db_session.commit()
+    db_session.query(Job).filter_by(id=job.id).delete()
+    db_session.commit()
+
+
+def test_source_equivalence_falls_back_to_etherscan_when_no_db_source(db_session, seed_protocol, monkeypatch):
+    """Contract has no Job → no SourceFile rows → DB path returns None →
+    matcher falls through to Etherscan. Proves the fallback is wired,
+    not just a happy-path optimization.
+    """
+    import hashlib
+
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    db_session.commit()
+
+    content = "contract MyPool {}"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    etherscan_calls = {"count": 0}
+
+    def fake_etherscan(address):
+        etherscan_calls["count"] += 1
+        return source_equivalence.VerifiedSource(
+            contract_name="MyPool",
+            compiler_version="0.8",
+            files={"src/MyPool.sol": content_hash},
+        )
+
+    def fake_github(repo, commit, path, *, token=None):
+        return content_hash if path == "src/MyPool.sol" else None
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", fake_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
+
+    upsert_coverage_for_audit(db_session, audit.id, verify_source_equivalence=True)
+    db_session.commit()
+
+    assert etherscan_calls["count"] == 1, "Etherscan must be the fallback when DB is empty"
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.match_type == "reviewed_commit"
+
+
+def test_source_equivalence_skipped_when_audit_missing_commits(db_session, seed_protocol, monkeypatch):
+    """No reviewed_commits populated → equivalence short-circuits without
+    any HTTP calls. Protects us from a config error pounding GitHub."""
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    # reviewed_commits is None (not set).
+    db_session.commit()
+
+    called = {"etherscan": 0, "github": 0}
+
+    def boom_etherscan(address):
+        called["etherscan"] += 1
+        return None
+
+    def boom_github(*args, **kwargs):
+        called["github"] += 1
+        return None
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", boom_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", boom_github)
+
+    upsert_coverage_for_audit(db_session, audit.id, verify_source_equivalence=True)
+    db_session.commit()
+    assert called == {"etherscan": 0, "github": 0}
+
+
+def test_verify_source_equivalence_off_by_default(db_session, seed_protocol, monkeypatch):
+    """verify_source_equivalence=False (the default) must not reach GitHub /
+    Etherscan at all, even when reviewed_commits is populated."""
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "etherfi-protocol/smart-contracts"
+    db_session.commit()
+
+    called = {"etherscan": 0, "github": 0}
+
+    def boom_etherscan(address):
+        called["etherscan"] += 1
+        return None
+
+    def boom_github(*args, **kwargs):
+        called["github"] += 1
+        return None
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", boom_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", boom_github)
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    assert called == {"etherscan": 0, "github": 0}

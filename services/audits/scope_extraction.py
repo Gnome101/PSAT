@@ -90,13 +90,13 @@ _SCOPE_HEADERS: Final[tuple[str, ...]] = (
 # names like "EthfiL2Token" match across both halves of the pipeline.
 # Source: U+FB00-FB06 covers the ASCII ligatures in the PDF spec.
 _LIGATURE_MAP: Final[dict[str, str]] = {
-    "\ufb00": "ff",   # ﬀ
-    "\ufb01": "fi",   # ﬁ
-    "\ufb02": "fl",   # ﬂ
+    "\ufb00": "ff",  # ﬀ
+    "\ufb01": "fi",  # ﬁ
+    "\ufb02": "fl",  # ﬂ
     "\ufb03": "ffi",  # ﬃ
     "\ufb04": "ffl",  # ﬄ
-    "\ufb05": "ft",   # ﬅ
-    "\ufb06": "st",   # ﬆ
+    "\ufb05": "ft",  # ﬅ
+    "\ufb06": "st",  # ﬆ
 }
 
 
@@ -234,12 +234,17 @@ class ScopeExtractionOutcome:
     ``status`` mirrors the ``AuditReport.scope_extraction_status`` values:
     "success" / "failed" / "skipped". ``method`` tells the worker how the
     contracts came out — "llm", "regex_fallback", or "cache_copy".
+    ``reviewed_commits`` carries git SHAs mentioned in the PDF text;
+    the worker persists them to ``AuditReport.reviewed_commits`` so the
+    source-equivalence matcher can prove coverage by comparing reviewed
+    code against Etherscan-verified impl source.
     """
 
     status: str
     contracts: tuple[str, ...] = ()
     storage_key: str | None = None
     extracted_date: str | None = None
+    reviewed_commits: tuple[str, ...] = ()
     error: str | None = None
     method: str = "llm"
     raw_response: str | None = field(default=None, repr=False)
@@ -670,9 +675,7 @@ def _has_scope_signal(text: str, extracted_names: list[str]) -> bool:
     #     a whole audit on ONE contract repeats the name across finding
     #     prose (idx 31 Certora WeETHWithdrawAdapter).
     non_empty = [n for n in extracted_names if n]
-    freq_hits = sum(
-        1 for n in non_empty if lower_text.count(n.lower()) >= 2
-    )
+    freq_hits = sum(1 for n in non_empty if lower_text.count(n.lower()) >= 2)
     if len(non_empty) == 1 and freq_hits == 1:
         return True
     return freq_hits >= 2
@@ -721,9 +724,7 @@ def extract_scope_via_chunk_scan(
 
     for idx, chunk in enumerate(chunks, start=1):
         try:
-            names, response, model = extract_scope_with_llm(
-                [chunk], title, auditor
-            )
+            names, response, model = extract_scope_with_llm([chunk], title, auditor)
         except LLMUnavailableError as exc:
             last_error = exc
             failure_count += 1
@@ -766,9 +767,7 @@ def extract_scope_via_chunk_scan(
     # a clean empty result so the caller can mark 'skipped'.
     if not merged_names:
         if failure_count == len(chunks) and last_error is not None:
-            raise LLMUnavailableError(
-                f"chunk-scan: all {len(chunks)} chunks failed; last: {last_error}"
-            )
+            raise LLMUnavailableError(f"chunk-scan: all {len(chunks)} chunks failed; last: {last_error}")
         return [], "", "", len(chunks), None
 
     logger.info(
@@ -1032,6 +1031,12 @@ def process_audit_scope(
     # again defensively but work is idempotent.
     raw_text = _normalize_ligatures(raw_text)
     extracted_date = extract_date_from_pdf_text(raw_text)
+    # Pull commit-like hashes out of the full text. Later consumed by
+    # ``services.audits.source_equivalence`` to cross-reference audit's
+    # reviewed source against Etherscan-verified impl source.
+    from services.audits.source_equivalence import extract_reviewed_commits
+
+    reviewed_commits = tuple(extract_reviewed_commits(raw_text))
 
     sections = locate_scope_section(raw_text)
 
@@ -1047,9 +1052,7 @@ def process_audit_scope(
     if sections:
         llm_input_text = "\n\n===\n\n".join(s.text_slice for s in sections)
         try:
-            names, raw_response, model = extract_scope_with_llm(
-                sections, audit_title, auditor
-            )
+            names, raw_response, model = extract_scope_with_llm(sections, audit_title, auditor)
         except LLMUnavailableError as exc:
             logger.warning(
                 "scope: LLM unavailable for audit %s (%s); falling back to regex",
@@ -1125,6 +1128,7 @@ def process_audit_scope(
             raw_response=raw_response,
             model=model,
             extracted_date=extracted_date,
+            reviewed_commits=reviewed_commits,
         )
 
     payload = build_artifact_payload(
@@ -1142,6 +1146,7 @@ def process_audit_scope(
         contracts=tuple(validated),
         storage_key=storage_key,
         extracted_date=extracted_date,
+        reviewed_commits=reviewed_commits,
         method=method,
         raw_response=raw_response,
         model=model,

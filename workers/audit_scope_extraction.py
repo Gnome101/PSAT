@@ -262,6 +262,9 @@ class AuditScopeExtractionWorker:
                 audit.scope_extracted_at = now
                 audit.scope_storage_key = sibling.scope_storage_key
                 audit.scope_contracts = list(sibling.scope_contracts or [])
+                # Same PDF → same reviewed_commits; clone from sibling.
+                if sibling.reviewed_commits:
+                    audit.reviewed_commits = list(sibling.reviewed_commits)
                 self._maybe_backfill_date(audit, sibling.date)
                 self._refresh_coverage(session, audit_id)
                 session.commit()
@@ -281,6 +284,8 @@ class AuditScopeExtractionWorker:
                 audit.scope_extracted_at = now
                 audit.scope_storage_key = outcome.storage_key
                 audit.scope_contracts = list(outcome.contracts)
+                if outcome.reviewed_commits:
+                    audit.reviewed_commits = list(outcome.reviewed_commits)
                 self._maybe_backfill_date(audit, outcome.extracted_date)
                 self._refresh_coverage(session, audit_id)
             session.commit()

@@ -36,6 +36,17 @@ from .scope_extraction import (
     scope_artifact_key,
     validate_contracts,
 )
+from .source_equivalence import (
+    EquivalenceMatch,
+    VerifiedSource,
+    check_audit_covers_impl,
+    check_audit_row_covers_contract,
+    extract_reviewed_commits,
+    fetch_contract_source_files,
+    fetch_db_source_files,
+    fetch_etherscan_source_files,
+    fetch_github_source_hash,
+)
 from .text_extraction import (
     AUDIT_TEXT_CONTENT_TYPE,
     ExtractionOutcome,
@@ -78,4 +89,14 @@ __all__ = [
     "upsert_coverage_for_audit",
     "upsert_coverage_for_contract",
     "upsert_coverage_for_protocol",
+    # source-equivalence exports
+    "EquivalenceMatch",
+    "VerifiedSource",
+    "check_audit_covers_impl",
+    "check_audit_row_covers_contract",
+    "extract_reviewed_commits",
+    "fetch_contract_source_files",
+    "fetch_db_source_files",
+    "fetch_etherscan_source_files",
+    "fetch_github_source_hash",
 ]
