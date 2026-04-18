@@ -218,9 +218,7 @@ class AuditReport(Base):
     __tablename__ = "audit_reports"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    protocol_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False
-    )
+    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     auditor: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -233,20 +231,27 @@ class AuditReport(Base):
     # "failed", "skipped" (e.g. image-only PDFs that need OCR).
     text_extraction_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
     text_extraction_worker: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    text_extraction_started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    text_extracted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    text_extraction_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    text_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     text_extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     text_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     text_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Scope-extraction pipeline state. Populated by workers.audit_scope_extraction
+    # once text_extraction_status='success'. Mirrors the text_* state machine:
+    # NULL (eligible) -> "processing" -> "success"/"failed"/"skipped".
+    # "skipped" means no scope-section header was found in the PDF text.
+    scope_extraction_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    scope_extraction_worker: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    scope_extraction_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scope_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scope_extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_contracts: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    discovered_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         UniqueConstraint("protocol_id", "url", name="uq_audit_report_protocol_url"),
@@ -254,6 +259,10 @@ class AuditReport(Base):
         Index(
             "ix_audit_reports_text_extraction_status",
             "text_extraction_status",
+        ),
+        Index(
+            "ix_audit_reports_scope_extraction_status",
+            "scope_extraction_status",
         ),
     )
 
@@ -709,6 +718,37 @@ def apply_storage_migrations(target_engine=None) -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS ix_audit_reports_text_extraction_status "
                 "ON audit_reports (text_extraction_status)"
+            )
+        )
+        # Scope-extraction columns — added after text-extraction landed. Same
+        # state-machine shape (status/worker/started_at/extracted_at/error)
+        # plus a storage key for the per-audit JSON artifact and a denormalized
+        # array of contract names that powers the /audit_coverage endpoint.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extraction_status VARCHAR(20)"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extraction_worker VARCHAR(128)"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extraction_started_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extracted_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extraction_error TEXT"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_storage_key TEXT"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_contracts TEXT[]"))
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_reports_scope_extraction_status "
+                "ON audit_reports (scope_extraction_status)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_reports_scope_contracts "
+                "ON audit_reports USING GIN (scope_contracts)"
+            )
+        )
+        # Partial index on text_sha256 for rows already scoped — powers the
+        # content-hash cache lookup in the scope-extraction worker.
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_reports_text_sha256_scoped "
+                "ON audit_reports (text_sha256) WHERE scope_extraction_status = 'success'"
             )
         )
         conn.commit()

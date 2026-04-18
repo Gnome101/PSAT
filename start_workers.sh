@@ -50,6 +50,8 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.audit_text_extraction &
 PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.audit_scope_extraction &
+PIDS+=($!)
 
 echo "All workers started: ${PIDS[*]}"
 wait "${PIDS[@]}"

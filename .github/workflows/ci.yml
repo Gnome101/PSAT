@@ -46,6 +46,10 @@ jobs:
       TEST_ARTIFACT_STORAGE_BUCKET: psat-artifacts-test
       TEST_ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
       TEST_ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
+      # Routes services.audits.scope_extraction._call_llm through fixture
+      # files instead of OpenRouter. Integration tests depend on this
+      # being set — without it they would attempt a real LLM call.
+      PSAT_LLM_STUB_DIR: tests/fixtures/scope_extraction/llm_responses
     steps:
       - uses: actions/checkout@v4
       - uses: foundry-rs/foundry-toolchain@v1
@@ -98,6 +102,7 @@ jobs:
       TEST_ARTIFACT_STORAGE_BUCKET: psat-artifacts-test
       TEST_ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
       TEST_ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
+      PSAT_LLM_STUB_DIR: tests/fixtures/scope_extraction/llm_responses
     steps:
       - uses: actions/checkout@v4
         with:

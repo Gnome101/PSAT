@@ -1631,7 +1631,8 @@ def company_overview(company_name: str) -> dict:
 
 
 def _audit_report_to_dict(ar: Any) -> dict[str, Any]:
-    """Serialize an AuditReport row, including text-extraction state."""
+    """Serialize an AuditReport row, including text- and scope-extraction state."""
+    scope_contracts = list(ar.scope_contracts or [])
     return {
         "id": ar.id,
         "url": ar.url,
@@ -1641,11 +1642,13 @@ def _audit_report_to_dict(ar: Any) -> dict[str, Any]:
         "date": ar.date,
         "confidence": float(ar.confidence) if ar.confidence is not None else None,
         "text_extraction_status": ar.text_extraction_status,
-        "text_extracted_at": (
-            ar.text_extracted_at.isoformat() if ar.text_extracted_at else None
-        ),
+        "text_extracted_at": (ar.text_extracted_at.isoformat() if ar.text_extracted_at else None),
         "text_size_bytes": ar.text_size_bytes,
         "has_text": ar.text_extraction_status == "success",
+        "scope_extraction_status": ar.scope_extraction_status,
+        "scope_extracted_at": (ar.scope_extracted_at.isoformat() if ar.scope_extracted_at else None),
+        "scope_contract_count": len(scope_contracts),
+        "has_scope": ar.scope_extraction_status == "success",
     }
 
 
@@ -1731,6 +1734,145 @@ def get_audit_text(audit_id: int) -> str:
             detail=f"text record missing from storage: {exc}",
         ) from exc
     return body.decode("utf-8")
+
+
+@app.get("/api/audits/{audit_id}/scope")
+def get_audit_scope(audit_id: int) -> dict[str, Any]:
+    """Return the list of in-scope contracts + date for a completed audit.
+
+    Reads from the denormalized ``scope_contracts`` column — the JSON
+    artifact in object storage is source-of-truth but not served here
+    (that would be a debug-only endpoint). 404 for unknown audit, 409 if
+    scope extraction hasn't completed successfully.
+    """
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        if ar.scope_extraction_status != "success":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "scope not available",
+                    "status": ar.scope_extraction_status,
+                    "reason": ar.scope_extraction_error,
+                },
+            )
+        return {
+            "audit_id": audit_id,
+            "auditor": ar.auditor,
+            "title": ar.title,
+            "date": ar.date,
+            "contracts": list(ar.scope_contracts or []),
+            "scope_extracted_at": (ar.scope_extracted_at.isoformat() if ar.scope_extracted_at else None),
+        }
+
+
+@app.get("/api/company/{company_name}/audit_coverage")
+def company_audit_coverage(company_name: str) -> dict[str, Any]:
+    """For each contract in the company's inventory, list audits covering it.
+
+    Joins by case-insensitive exact match between ``Contract.contract_name``
+    and entries in ``AuditReport.scope_contracts``. The ``last_audit``
+    pointer is the most recent matching audit by ``date`` (nulls last).
+    """
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        contracts = session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
+
+        audits = (
+            session.execute(
+                select(AuditReport)
+                .where(
+                    AuditReport.protocol_id == protocol_row.id,
+                    AuditReport.scope_extraction_status == "success",
+                )
+                .order_by(AuditReport.date.desc().nullslast(), AuditReport.id.desc())
+            )
+            .scalars()
+            .all()
+        )
+
+        coverage: list[dict[str, Any]] = []
+        for c in contracts:
+            name = c.contract_name
+            if not name:
+                coverage.append(
+                    {
+                        "address": c.address,
+                        "chain": c.chain,
+                        "contract_name": None,
+                        "audit_count": 0,
+                        "last_audit": None,
+                        "audits": [],
+                    }
+                )
+                continue
+            name_lc = name.lower()
+            matching = [
+                {
+                    "audit_id": a.id,
+                    "auditor": a.auditor,
+                    "title": a.title,
+                    "date": a.date,
+                }
+                for a in audits
+                if any((n or "").lower() == name_lc for n in (a.scope_contracts or []))
+            ]
+            coverage.append(
+                {
+                    "address": c.address,
+                    "chain": c.chain,
+                    "contract_name": name,
+                    "audit_count": len(matching),
+                    "last_audit": matching[0] if matching else None,
+                    "audits": matching,
+                }
+            )
+        return {
+            "company": company_name,
+            "protocol_id": protocol_row.id,
+            "contract_count": len(contracts),
+            "audit_count": len(audits),
+            "coverage": coverage,
+        }
+
+
+@app.post(
+    "/api/audits/{audit_id}/reextract_scope",
+    dependencies=[Depends(require_admin_key)],
+)
+def reextract_audit_scope(audit_id: int) -> dict[str, Any]:
+    """Reset scope-extraction state so the worker picks the row up again.
+
+    Requires that text extraction already succeeded — without the stored
+    text body there's nothing to re-scope. Idempotent: a fresh row with
+    NULL status is a no-op reset.
+    """
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        if ar.text_extraction_status != "success":
+            raise HTTPException(
+                status_code=409,
+                detail="text extraction has not succeeded for this audit",
+            )
+        ar.scope_extraction_status = None
+        ar.scope_extraction_error = None
+        ar.scope_extraction_worker = None
+        ar.scope_extraction_started_at = None
+        session.commit()
+    return {"audit_id": audit_id, "reset": True}
 
 
 def _watched_proxy_to_dict(proxy: WatchedProxy) -> dict[str, Any]:
