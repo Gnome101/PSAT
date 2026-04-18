@@ -316,9 +316,6 @@ function UpgradesTab({ detail }) {
   const contractId = detail?.contract_id ?? null;
   const companyName = detail?.company || null;
 
-  // Audit timeline for the subject contract — fetched per tab mount. Not
-  // refreshed on upgrade-event writes because those live on a different
-  // cadence and a stale chip for a minute is fine.
   const [auditTimeline, setAuditTimeline] = useState(null);
   const [auditTimelineError, setAuditTimelineError] = useState(null);
   useEffect(() => {
@@ -339,19 +336,42 @@ function UpgradesTab({ detail }) {
   const coverageRows = auditTimeline?.coverage || [];
   const currentStatus = auditTimeline?.current_status || null;
 
-  // impl-era overlap test. The in-artifact upgrade_history uses
-  // block_introduced / block_replaced per implementation; audit_timeline
-  // uses covered_from_block / covered_to_block. Both are block-indexed on
-  // the same chain so a raw numeric compare does what we want.
-  function matchesEra(cov, fromBlock, toBlock) {
+  // Null block range on a coverage row → fall back to audit date vs
+  // impl-era timestamps, else the same audit shows under every era.
+  function parseAuditTs(date) {
+    if (!date) return null;
+    const t = Date.parse(date);
+    return Number.isNaN(t) ? null : t;
+  }
+  function matchesEra(cov, impl) {
     const covFrom = cov.covered_from_block;
     const covTo = cov.covered_to_block;
-    if (covFrom == null && covTo == null) return true;
-    const eraFrom = fromBlock ?? -Infinity;
-    const eraTo = toBlock ?? Infinity;
-    const cFrom = covFrom ?? -Infinity;
-    const cTo = covTo ?? Infinity;
-    return cFrom < eraTo && cTo > eraFrom;
+    const hasBlocks = covFrom != null || covTo != null;
+    if (hasBlocks) {
+      const eraFrom = impl?.block_introduced ?? -Infinity;
+      const eraTo = impl?.block_replaced ?? Infinity;
+      const cFrom = covFrom ?? -Infinity;
+      const cTo = covTo ?? Infinity;
+      return cFrom < eraTo && cTo > eraFrom;
+    }
+    const auditTs = parseAuditTs(cov.date);
+    if (auditTs == null) return false;
+    // impl timestamps are unix seconds; Date.parse returns ms.
+    const eraFromTs = impl?.timestamp_introduced != null ? impl.timestamp_introduced * 1000 : -Infinity;
+    const eraToTs = impl?.timestamp_replaced != null ? impl.timestamp_replaced * 1000 : Infinity;
+    return auditTs >= eraFromTs && auditTs < eraToTs;
+  }
+
+  function frontendCurrentImplAudited() {
+    if (!auditTimeline || !history?.proxies) return false;
+    const targetProxy = Object.entries(history.proxies).find(
+      ([addr]) => addr.toLowerCase() === (detail?.address || history.target_address || "").toLowerCase(),
+    );
+    if (!targetProxy) return false;
+    const impls = targetProxy[1]?.implementations || [];
+    if (!impls.length) return false;
+    const current = impls[impls.length - 1];
+    return coverageRows.some((c) => matchesEra(c, current));
   }
 
   function auditStatusBanner() {
@@ -361,6 +381,11 @@ function UpgradesTab({ detail }) {
     }
     if (!auditTimeline) {
       return <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>loading audits…</span>;
+    }
+    // Backend is block-range strict; relax to "audited" when date alignment
+    // on the current impl-era has evidence the backend couldn't see.
+    if (currentStatus === "unaudited_since_upgrade" && frontendCurrentImplAudited()) {
+      return <span className="chip" style={{ background: "#dcfce7", color: "#166534" }}>Current impl audited</span>;
     }
     switch (currentStatus) {
       case "audited":
@@ -427,11 +452,32 @@ function UpgradesTab({ detail }) {
       {contractId ? (
         <div className="chips">
           {auditStatusBanner()}
-          {auditTimeline && coverageRows.length ? (
-            <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>
-              {coverageRows.length} audit{coverageRows.length === 1 ? "" : "s"} in history
-            </span>
-          ) : null}
+          {auditTimeline && coverageRows.length ? (() => {
+            // Raw coverageRows.length over-counts when audits linked to
+            // the proxy via a generic scope name (e.g. "UUPSProxy").
+            const proxy = history?.proxies
+              ? Object.entries(history.proxies).find(
+                  ([addr]) => addr.toLowerCase() === (detail?.address || history.target_address || "").toLowerCase(),
+                )?.[1]
+              : null;
+            const impls = proxy?.implementations || [];
+            const placed = new Set();
+            for (const cov of coverageRows) {
+              for (const impl of impls) {
+                if (matchesEra(cov, impl)) {
+                  placed.add(cov.audit_id);
+                  break;
+                }
+              }
+            }
+            const n = placed.size;
+            if (n === 0) return null;
+            return (
+              <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>
+                {n} audit{n === 1 ? "" : "s"} in history
+              </span>
+            );
+          })() : null}
         </div>
       ) : null}
       <div className="summary-grid">
@@ -476,12 +522,9 @@ function UpgradesTab({ detail }) {
               <div className="subsection-title">Implementation Timeline</div>
               <div className="timeline">
                 {proxy.implementations.map((impl, idx) => {
-                  // Only overlay audit chips on the subject proxy — other
-                  // proxies shown in this view belong to sibling contracts
-                  // and would need their own timeline fetch. Keep it
-                  // focused for v1.
+                  // Other proxies would need their own timeline fetch.
                   const coverageForEra = isTarget(addr)
-                    ? coverageRows.filter((c) => matchesEra(c, impl.block_introduced ?? null, impl.block_replaced ?? null))
+                    ? coverageRows.filter((c) => matchesEra(c, impl))
                     : [];
                   return (
                   <div className={`timeline-entry ${idx === proxy.implementations.length - 1 ? "current" : "past"}`} key={impl.address + idx}>
@@ -3046,6 +3089,7 @@ export default function App() {
         <AuditTimelineView
           contractId={selectedDetail?.contract_id}
           companyName={selectedDetail?.company}
+          upgradeHistory={selectedDetail?.upgrade_history}
         />
       </div>
     ),

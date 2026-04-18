@@ -43,51 +43,101 @@ function formatAuditDate(date) {
   return String(date);
 }
 
-// Window overlap: an audit's (covered_from_block, covered_to_block) overlaps
-// an impl-era window (fromBlock, toBlock). Treat null ends as ±∞. Coverage
-// rows with no blocks at all (e.g. reviewed_commit matches on non-proxies)
-// are treated as "matches every era" — the server would've filtered out
-// unrelated ones during the upsert.
-export function coverageMatchesWindow(coverage, fromBlock, toBlock) {
-  const covFrom = coverage.covered_from_block;
-  const covTo = coverage.covered_to_block;
-  if (covFrom == null && covTo == null) return true;
-  const eraFrom = fromBlock ?? -Infinity;
-  const eraTo = toBlock ?? Infinity;
-  const cFrom = covFrom ?? -Infinity;
-  const cTo = covTo ?? Infinity;
-  return cFrom < eraTo && cTo > eraFrom;
+function parseAuditTs(date) {
+  if (!date) return null;
+  const t = Date.parse(date);
+  return Number.isNaN(t) ? null : t;
 }
 
-// Core renderer used by UpgradesTab (overlay mode) and the address-detail
-// Audits tab (standalone mode).
-export function AuditTimelinePanel({ timeline, loading, error, companyName }) {
+// Null block range → fall back to audit date vs window timestamps, else
+// the same audit shows under every era.
+export function coverageMatchesWindow(coverage, window) {
+  const covFrom = coverage.covered_from_block;
+  const covTo = coverage.covered_to_block;
+  const hasBlocks = covFrom != null || covTo != null;
+  if (hasBlocks) {
+    const eraFrom = window?.from_block ?? -Infinity;
+    const eraTo = window?.to_block ?? Infinity;
+    const cFrom = covFrom ?? -Infinity;
+    const cTo = covTo ?? Infinity;
+    return cFrom < eraTo && cTo > eraFrom;
+  }
+  const auditTs = parseAuditTs(coverage.date);
+  if (auditTs == null) return false;
+  const eraFromTs = window?.from_ts != null ? parseAuditTs(window.from_ts) ?? -Infinity : -Infinity;
+  const eraToTs = window?.to_ts != null ? parseAuditTs(window.to_ts) ?? Infinity : Infinity;
+  return auditTs >= eraFromTs && auditTs < eraToTs;
+}
+
+// Fallback windows when the audit_timeline endpoint has none yet —
+// artifact-level data from /api/analyses fills the gap until the
+// resolution worker projects UpgradeEvent rows.
+function derivedWindowsFromArtifact(upgradeHistory, contractAddress) {
+  if (!upgradeHistory?.proxies || !contractAddress) return [];
+  const needle = contractAddress.toLowerCase();
+  const proxyEntry = Object.values(upgradeHistory.proxies).find(
+    (p) => (p?.proxy_address || "").toLowerCase() === needle,
+  );
+  if (!proxyEntry) return [];
+  const impls = proxyEntry.implementations || [];
+  // Normalize artifact unix seconds to the endpoint's ISO string shape.
+  return impls.map((impl) => ({
+    impl_address: impl.address,
+    from_block: impl.block_introduced ?? null,
+    to_block: impl.block_replaced ?? null,
+    from_ts: impl.timestamp_introduced != null ? new Date(impl.timestamp_introduced * 1000).toISOString() : null,
+    to_ts: impl.timestamp_replaced != null ? new Date(impl.timestamp_replaced * 1000).toISOString() : null,
+  }));
+}
+
+export function AuditTimelinePanel({ timeline, loading, error, companyName, upgradeHistory }) {
   if (loading) return <p className="empty">Loading audit timeline…</p>;
   if (error) return <p className="empty" style={{ color: "#991b1b" }}>Audit timeline error: {error}</p>;
   if (!timeline) return null;
 
-  const chip = statusChip(timeline.current_status);
   const coverage = timeline.coverage || [];
 
-  // Per-impl-era overlay. Windows are ordered by block asc in the response.
-  const windows = timeline.impl_windows || [];
+  let windows = timeline.impl_windows || [];
+  if (windows.length === 0 && upgradeHistory && timeline.contract?.is_proxy) {
+    windows = derivedWindowsFromArtifact(upgradeHistory, timeline.contract.address);
+  }
+
   const eraCards = windows.map((w, idx) => {
-    const matches = coverage.filter((c) => coverageMatchesWindow(c, w.from_block, w.to_block));
+    const matches = coverage.filter((c) => coverageMatchesWindow(c, w));
     return { window: w, matches, idx };
   });
 
-  // Un-windowed coverage (non-proxy or contracts whose timeline has no
-  // impl events but still link to audits). Show below the main list.
-  const unwindowed = windows.length ? [] : coverage;
+  const placedAuditIds = new Set();
+  for (const card of eraCards) {
+    for (const m of card.matches) placedAuditIds.add(m.audit_id);
+  }
+  const unwindowed = windows.length
+    ? coverage.filter((c) => !placedAuditIds.has(c.audit_id))
+    : coverage;
+
+  // Backend is block-range strict; relax to "audited" when date alignment
+  // on the current era has evidence the backend couldn't see.
+  let displayStatus = timeline.current_status;
+  if (
+    displayStatus === "unaudited_since_upgrade"
+    && timeline.contract?.is_proxy
+    && eraCards.length > 0
+  ) {
+    const currentCard = eraCards[eraCards.length - 1];
+    if (currentCard?.matches?.length) displayStatus = "audited";
+  }
+  const chip = statusChip(displayStatus);
+
+  const placedCount = placedAuditIds.size + (windows.length ? 0 : unwindowed.length);
 
   return (
     <div className="stack">
       <div className="chips">
         <span className="chip" style={chip.style}>{chip.label}</span>
         {timeline.contract?.is_proxy ? (
-          <span className="chip" style={CHIP_GRAY}>proxy · {coverage.length} audit{coverage.length === 1 ? "" : "s"} matched</span>
+          <span className="chip" style={CHIP_GRAY}>proxy · {placedCount} audit{placedCount === 1 ? "" : "s"} matched</span>
         ) : (
-          <span className="chip" style={CHIP_GRAY}>{coverage.length} audit{coverage.length === 1 ? "" : "s"} matched</span>
+          <span className="chip" style={CHIP_GRAY}>{placedCount} audit{placedCount === 1 ? "" : "s"} matched</span>
         )}
       </div>
 
@@ -162,7 +212,9 @@ export function AuditTimelinePanel({ timeline, loading, error, companyName }) {
 
       {unwindowed.length ? (
         <div className="card">
-          <div className="subsection-title">Audits</div>
+          <div className="subsection-title">
+            {windows.length ? "Audits outside any known impl era" : "Audits"}
+          </div>
           <div className="chips" style={{ marginTop: 6 }}>
             {unwindowed.map((m) => {
               const baseStyle = matchStyle(m.match_confidence);
@@ -207,7 +259,7 @@ export function AuditTimelinePanel({ timeline, loading, error, companyName }) {
   );
 }
 
-export default function AuditTimelineView({ contractId, companyName }) {
+export default function AuditTimelineView({ contractId, companyName, upgradeHistory }) {
   const [timeline, setTimeline] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -229,5 +281,13 @@ export default function AuditTimelineView({ contractId, companyName }) {
     return () => { cancelled = true; };
   }, [contractId]);
 
-  return <AuditTimelinePanel timeline={timeline} loading={loading} error={error} companyName={companyName} />;
+  return (
+    <AuditTimelinePanel
+      timeline={timeline}
+      loading={loading}
+      error={error}
+      companyName={companyName}
+      upgradeHistory={upgradeHistory}
+    />
+  );
 }

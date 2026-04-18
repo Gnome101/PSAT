@@ -2,9 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import { getPipeline } from "./api/audits.js";
 
-// Palette-distinct from the existing stageColors in App.jsx — teal #0891b2
-// is already used for defillama_scan, so use a deeper teal; violet #7c3aed
-// is the policy stage, so use a distinct violet for scope.
 const AUDIT_COLORS = {
   text_extraction: "#0891b2",
   scope_extraction: "#7c3aed",
@@ -25,7 +22,6 @@ function formatElapsedSeconds(s) {
   return `${h}h ${m % 60}m`;
 }
 
-// Shortening a title for the monitor card header; the cards are narrow.
 function shortLabel(str, max = 48) {
   if (!str) return "";
   return str.length > max ? `${str.slice(0, max - 1)}…` : str;
@@ -157,9 +153,6 @@ export default function AuditExtractionShelf() {
 
   useEffect(() => {
     let cancelled = false;
-    // Poll cadence mirrors /api/jobs in PipelineDashboard (2500ms). Running
-    // in parallel with the existing job poller — intentional, the two
-    // feeds are independent and the backend queries are cheap.
     async function fetchOnce() {
       try {
         const d = await getPipeline();
@@ -207,8 +200,7 @@ export default function AuditExtractionShelf() {
     if (!item?.company) return;
     const suffix = item.audit_id ? `?audit=${item.audit_id}` : "";
     window.history.pushState({}, "", `/company/${encodeURIComponent(item.company)}/audits${suffix}`);
-    // Fire a popstate so App.jsx picks up the new URL — this matches the
-    // pattern used elsewhere in this codebase (see handlePopState in App.jsx).
+    // handlePopState in App.jsx re-parses the URL into viewMode / companyTab.
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 

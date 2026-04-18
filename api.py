@@ -690,10 +690,7 @@ def analysis_detail(run_name: str) -> dict:
                 select(Contract).where(Contract.address == job.address.lower()).limit(1)
             ).scalar_one_or_none()
 
-        # Resolve company by walking the job tree — analyses() uses the
-        # same pattern. The detail endpoint didn't expose it before; the
-        # Audits tab needs it to build links back to the per-protocol
-        # audit list.
+        # Walk the job tree — mirrors analyses().
         def _company_for(j: Job) -> str | None:
             seen: set[str] = set()
             current: Job | None = j

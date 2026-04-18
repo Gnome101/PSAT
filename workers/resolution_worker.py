@@ -455,12 +455,9 @@ class ResolutionWorker(BaseWorker):
 
         created = 0
         adopted = 0
-        # Contract rows that just joined (or were created into) this
-        # protocol. Coverage needs to be refreshed for each of these so
-        # audits whose scope names them get linked — scope extraction
-        # may have run before these rows existed, and without a refresh
-        # here the audit ↔ historical-impl join would stay empty until
-        # the next admin refresh_coverage call.
+        # New/adopted rows that need a coverage refresh — scope extraction
+        # ran before these existed, so the audit ↔ impl join is empty
+        # until we re-run the matcher per contract.
         refresh_ids: list[int] = []
         for addr in impl_addrs:
             existing = existing_rows.get(addr)
@@ -468,16 +465,13 @@ class ResolutionWorker(BaseWorker):
                 if existing.protocol_id is None or existing.protocol_id == protocol_id:
                     was_orphan = existing.protocol_id is None
                     had_no_tag = not existing.discovery_source
-                    # Adopt: plug a homeless row into this protocol, or
-                    # top up an already-owned row that lacked the tag.
                     if was_orphan:
                         existing.protocol_id = protocol_id
                     if had_no_tag:
                         existing.discovery_source = "upgrade_history"
                     adopted += 1
-                    # Only refresh when we actually changed protocol
-                    # ownership — a no-op adoption (same protocol, tag
-                    # already set) won't change what the matcher emits.
+                    # No-op adoption (same protocol, tag already set) wouldn't
+                    # change matcher output — skip the refresh.
                     if was_orphan or had_no_tag:
                         refresh_ids.append(existing.id)
                 else:
@@ -508,9 +502,7 @@ class ResolutionWorker(BaseWorker):
             )
             session.add(new_row)
             created += 1
-            # Flush so ``new_row.id`` is assigned — needed to upsert
-            # coverage keyed on contract_id below.
-            session.flush()
+            session.flush()  # materialize new_row.id for the refresh below
             refresh_ids.append(new_row.id)
 
         if created or adopted:
@@ -523,12 +515,8 @@ class ResolutionWorker(BaseWorker):
                 adopted,
             )
 
-        # Coverage refresh hook. ``upsert_coverage_for_contract`` is
-        # delete-then-insert keyed on contract_id, so it's safe to call
-        # per row: each new/adopted historical impl picks up every audit
-        # whose scope names it. Imported lazily so the worker boot path
-        # doesn't pull the audits service eagerly.
         if refresh_ids:
+            # Lazy import keeps the worker boot path free of audits-service deps.
             from services.audits.coverage import upsert_coverage_for_contract
 
             refreshed = 0
@@ -536,10 +524,8 @@ class ResolutionWorker(BaseWorker):
                 try:
                     refreshed += upsert_coverage_for_contract(session, contract_id)
                 except Exception:
-                    # Per-row swallow: one flaky match shouldn't poison
-                    # the rest of the refresh. The row itself is already
-                    # committed; a follow-up refresh_coverage admin call
-                    # will fill in anything we missed.
+                    # One flaky match shouldn't poison the rest; admin
+                    # refresh_coverage can fill in what we missed.
                     logger.exception(
                         "Coverage refresh failed for backfilled impl contract_id=%s",
                         contract_id,

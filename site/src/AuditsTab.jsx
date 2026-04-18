@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { listAudits, getCoverage, getScope, refreshCoverage } from "./api/audits.js";
+import { listAudits, getCoverage, getScope } from "./api/audits.js";
 
 // Status → chip colors. These are semantic: the in-repo .chip.alt / .chip.warn
 // don't map cleanly to green/amber/red, so we set inline backgrounds for
@@ -181,8 +181,6 @@ export default function AuditsTab({ companyName, focusAuditId }) {
   const [audits, setAudits] = useState(null);
   const [coverage, setCoverage] = useState(null);
   const [error, setError] = useState(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshMessage, setRefreshMessage] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -210,44 +208,6 @@ export default function AuditsTab({ companyName, focusAuditId }) {
       node.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }, [focusAuditId, audits, cardRefs]);
-
-  const breakdown = useMemo(() => {
-    if (!coverage) return null;
-    let audited = 0;
-    let staleOnly = 0;  // coverage exists but every row is closed (covered_to_block != null)
-    let unaudited = 0;
-    for (const row of coverage.coverage || []) {
-      if (!row.audit_count) { unaudited += 1; continue; }
-      const hasOpen = (row.audits || []).some(
-        (a) => a.covered_to_block == null && (a.match_confidence === "high" || a.match_type === "reviewed_commit"),
-      );
-      if (hasOpen) audited += 1;
-      else staleOnly += 1;
-    }
-    return { audited, staleOnly, unaudited, total: (coverage.coverage || []).length };
-  }, [coverage]);
-
-  const mostRecentAuditDate = useMemo(() => {
-    if (!audits?.audits?.length) return null;
-    const withDate = audits.audits.map((a) => a.date).filter(Boolean).sort();
-    return withDate.length ? withDate[withDate.length - 1] : null;
-  }, [audits]);
-
-  async function onRefreshCoverage({ verifySourceEquivalence }) {
-    setRefreshing(true);
-    setRefreshMessage(null);
-    try {
-      const res = await refreshCoverage(companyName, { verifySourceEquivalence });
-      setRefreshMessage(`Rebuilt ${res.coverage_rows} coverage row${res.coverage_rows === 1 ? "" : "s"}.`);
-      const [a, c] = await Promise.all([listAudits(companyName), getCoverage(companyName)]);
-      setAudits(a);
-      setCoverage(c);
-    } catch (err) {
-      setRefreshMessage(`Error: ${err.message || String(err)}`);
-    } finally {
-      setRefreshing(false);
-    }
-  }
 
   if (error) {
     return (
@@ -277,61 +237,12 @@ export default function AuditsTab({ companyName, focusAuditId }) {
           </div>
           <div className="chips">
             <span className="chip" style={CHIP_GRAY}>{audits.audit_count} audits</span>
-            {mostRecentAuditDate ? (
-              <span className="chip" style={CHIP_GRAY}>latest · {formatAuditDate(mostRecentAuditDate)}</span>
-            ) : null}
           </div>
         </div>
-
-        {breakdown ? (
-          <div className="summary-grid" style={{ marginTop: 12 }}>
-            <div className="stat-card">
-              <div className="eyebrow">Contracts with live coverage</div>
-              <div className="stat" style={{ color: "#16a34a" }}>{breakdown.audited}</div>
-            </div>
-            <div className="stat-card">
-              <div className="eyebrow">Audited before last upgrade</div>
-              <div className="stat" style={{ color: "#d97706" }}>{breakdown.staleOnly}</div>
-            </div>
-            <div className="stat-card">
-              <div className="eyebrow">No audit coverage</div>
-              <div className="stat" style={{ color: "#ef4444" }}>{breakdown.unaudited}</div>
-            </div>
-            <div className="stat-card">
-              <div className="eyebrow">Contracts</div>
-              <div className="stat">{breakdown.total}</div>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="chips" style={{ marginTop: 12 }}>
-          <button
-            className="chip"
-            style={{ ...CHIP_GRAY, cursor: refreshing ? "default" : "pointer" }}
-            disabled={refreshing}
-            onClick={() => onRefreshCoverage({ verifySourceEquivalence: false })}
-          >
-            {refreshing ? "Refreshing…" : "Refresh coverage"}
-          </button>
-          <button
-            className="chip"
-            style={{ ...CHIP_GRAY, cursor: refreshing ? "default" : "pointer" }}
-            disabled={refreshing}
-            onClick={() => onRefreshCoverage({ verifySourceEquivalence: true })}
-            title="Slower: cross-check Etherscan source against audited commits"
-          >
-            Refresh + verify source
-          </button>
-          {refreshMessage ? <span className="muted" style={{ fontSize: 12 }}>{refreshMessage}</span> : null}
-        </div>
-      </section>
-
-      <section className="panel">
-        <h3 style={{ marginBottom: 12 }}>Audit Reports</h3>
         {audits.audits.length === 0 ? (
-          <p className="empty">No audits discovered yet for this protocol.</p>
+          <p className="empty" style={{ marginTop: 12 }}>No audits discovered yet for this protocol.</p>
         ) : (
-          <div className="card-grid">
+          <div className="card-grid" style={{ marginTop: 12 }}>
             {audits.audits.map((audit) => (
               <AuditCard
                 key={audit.id}
@@ -359,19 +270,35 @@ export default function AuditsTab({ companyName, focusAuditId }) {
               <span style={{ flex: 1 }}>Status</span>
               <span style={{ flex: 2 }}>Latest audit</span>
             </div>
-            {coverage.coverage.map((row) => {
+            {[...coverage.coverage].sort((a, b) => {
+              // Analyzed (named) contracts first so the useful part of
+              // the table is at the top. Within each bucket keep the
+              // server's order.
+              const aNamed = !!(a.contract_name && String(a.contract_name).trim());
+              const bNamed = !!(b.contract_name && String(b.contract_name).trim());
+              if (aNamed !== bNamed) return aNamed ? -1 : 1;
+              // Within named, audits-having first, then alphabetical by name.
+              if (aNamed) {
+                if (!!a.audit_count !== !!b.audit_count) return a.audit_count ? -1 : 1;
+                return String(a.contract_name).localeCompare(String(b.contract_name));
+              }
+              return 0;
+            }).map((row) => {
               const last = row.last_audit;
+              const hasName = !!(row.contract_name && String(row.contract_name).trim());
               const hasOpen = (row.audits || []).some(
                 (a) => a.covered_to_block == null && (a.match_confidence === "high" || a.match_type === "reviewed_commit"),
               );
-              const status = !row.audit_count
-                ? { label: "no audit", style: CHIP_RED }
-                : hasOpen
-                  ? { label: "covered", style: CHIP_GREEN }
-                  : { label: "before upgrade", style: CHIP_AMBER };
+              const status = !hasName
+                ? { label: "pending analysis", style: CHIP_GRAY }
+                : !row.audit_count
+                  ? { label: "no audit", style: CHIP_RED }
+                  : hasOpen
+                    ? { label: "covered", style: CHIP_GREEN }
+                    : { label: "before upgrade", style: CHIP_AMBER };
               return (
                 <div key={row.address} className="runs-table-row" style={{ cursor: "default" }}>
-                  <span className="runs-cell-name" style={{ flex: 2 }}>{row.contract_name || "—"}</span>
+                  <span className="runs-cell-name" style={{ flex: 2 }}>{row.contract_name || <span className="muted">—</span>}</span>
                   <span className="mono runs-cell-addr" style={{ flex: 3 }}>{row.address}</span>
                   <span style={{ flex: 1 }}>
                     <span className="chip" style={status.style}>{status.label}</span>

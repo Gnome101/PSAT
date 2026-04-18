@@ -59,10 +59,7 @@ def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[
             date=report.get("date"),
             confidence=report.get("confidence"),
             source_url=report.get("source_url"),
-            # ``source_repo`` lets the source-equivalence matcher reach
-            # back to the original GitHub repo to compare reviewed code
-            # against Etherscan-verified source. Populated by the
-            # discovery crawler when it resolves an audit PDF on GitHub.
+            # Needed by services/audits/source_equivalence for GitHub lookup.
             source_repo=report.get("source_repo"),
         )
         stmt = stmt.on_conflict_do_update(
@@ -243,16 +240,8 @@ class DiscoveryWorker(BaseWorker):
             job.name = company
             session.commit()
 
-        # Always spawn parallel discovery (DApp crawl + DefiLlama scans).
-        # These are independent discovery sources — if the primary inventory
-        # was empty, they're the best chance of finding contracts. Before
-        # this fix, an empty inventory short-circuited the pipeline here
-        # and parallel discovery never ran, so a protocol that Etherscan
-        # search didn't cover would end up with zero analyzed contracts
-        # even though DefiLlama or a DApp crawl would have found them.
-        # Audit report discovery already ran unconditionally above and
-        # isn't gated by `analyze_limit`; keep that property for the rest
-        # of the discovery pipeline too.
+        # Run unconditionally: DApp crawl + DefiLlama scans are independent
+        # sources, and empty primary inventory is the case that most needs them.
         self._spawn_parallel_discovery(session, job, company, request, root_job_id)
 
         if child_ids:
@@ -268,8 +257,6 @@ class DiscoveryWorker(BaseWorker):
                 f"No inventory contracts; parallel discovery spawned for {company}",
             )
 
-        # Complete the parent job — children + parallel discovery jobs run
-        # through the pipeline independently.
         from db.queue import complete_job
 
         if child_ids:
