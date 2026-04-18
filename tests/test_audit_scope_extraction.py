@@ -134,6 +134,33 @@ def test_locate_scope_section_merges_overlapping_slices():
     assert len(sections) == 1
 
 
+def test_merged_section_preserves_text_from_later_match():
+    # Regression test for the bug that lost SettlementDispatcher at
+    # idx 4 (Certora Combined Audit): the merge kept only the first
+    # candidate's text_slice, dropping later content from the merged
+    # range. Now the merged slice must cover everything.
+    text = _doc(
+        _page(1, "Cover"),
+        _page(2, "Project Scope\nSubProject A"),
+        _page(3, "Files in scope:\n- SubAContract.sol"),
+        _page(
+            4,
+            "Additional scope for SubProject B\n"
+            "The following contracts are in scope:\n- SubBContract.sol",
+        ),
+        _page(5, "Findings"),
+    )
+    sections = locate_scope_section(text)
+    # The two header regions (Project Scope, Files in scope, Additional)
+    # overlap, merge into one wider ScopeSection.
+    assert len(sections) == 1
+    # Both contract names must be in the final text slice; the old
+    # implementation lost SubBContract.sol because the merge kept only
+    # the slice from the first match.
+    assert "SubAContract.sol" in sections[0].text_slice
+    assert "SubBContract.sol" in sections[0].text_slice
+
+
 def test_locate_scope_section_survives_no_page_markers():
     # Guard against bodies that somehow skipped the page-marker shim.
     text = "Scope\nPool.sol reviewed.\nMore content."
@@ -257,6 +284,22 @@ def test_validate_contracts_empty_input():
 
 def test_validate_contracts_drops_empty_strings():
     assert validate_contracts(["", "Pool", "  "], "Pool") == ["Pool"]
+
+
+def test_validate_contracts_preserves_interfaces_with_matching_impls():
+    # The earlier interface-collapse heuristic was rolled back — Certora
+    # audits explicitly list src/interfaces/IFoo.sol as first-class scope,
+    # so a blanket "drop IFoo if Foo present" over-corrected. Instead the
+    # LLM's per-audit judgment decides. Pin the current behaviour: both
+    # variants survive validation as long as they appear in raw_text.
+    names = ["StakingManager", "IStakingManager", "LiquidityPool", "ILiquidityPool"]
+    raw = "StakingManager IStakingManager LiquidityPool ILiquidityPool"
+    assert validate_contracts(names, raw) == [
+        "StakingManager",
+        "IStakingManager",
+        "LiquidityPool",
+        "ILiquidityPool",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -715,3 +758,138 @@ def test_chunk_scan_raises_only_when_every_call_fails(monkeypatch):
     text = _doc(*(_page(i, "x") for i in range(1, 6)))
     with pytest.raises(LLMUnavailableError):
         extract_scope_via_chunk_scan(text, "T", "A")
+
+
+def test_chunk_scan_rejects_findings_only_chunks_without_scope_signal(
+    monkeypatch,
+):
+    # A chunk where the LLM extracts contract names from one-off finding
+    # titles should be rejected — no scope header, no .sol listing, and
+    # each name appears only once (fails the frequency fallback too).
+    def fake_call(prompt):
+        return '["Pool", "Vault"]', "stub"
+
+    monkeypatch.setattr(
+        "services.audits.scope_extraction._call_llm", fake_call
+    )
+
+    # Each contract name appears exactly once — classic findings-title
+    # extraction artifact.
+    text = _doc(
+        _page(1, "L-01: Pool has an edge case\nSeverity: Low\nDescription: lorem ipsum."),
+        _page(2, "L-02: Vault config needs review\nSeverity: Info\nOther prose."),
+    )
+    names, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
+    assert names == []
+    assert winning_chunk is None
+
+
+def test_chunk_scan_accepts_chunk_with_scope_signal(monkeypatch):
+    # Same LLM response, but this time the chunk clearly has scope
+    # content (flat .sol listing) — should be accepted.
+    def fake_call(prompt):
+        return '["Pool", "Vault"]', "stub"
+
+    monkeypatch.setattr(
+        "services.audits.scope_extraction._call_llm", fake_call
+    )
+
+    text = _doc(
+        _page(
+            1,
+            "Audited Files:\n"
+            "src/Pool.sol (420 nSLOC)\n"
+            "src/Vault.sol (310 nSLOC)\n",
+        ),
+        _page(2, "Findings"),
+    )
+    names, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
+    assert names == ["Pool", "Vault"]
+    assert winning_chunk is not None
+
+
+def test_chunk_scan_merges_across_multiple_passing_chunks(monkeypatch):
+    # Short multi-section audit: chunk 1 has one scope contract, chunk 2
+    # has the main scope table. Previously chunk-scan stopped at first
+    # non-empty result and missed chunk 2's contents. Now it merges
+    # across all chunks that pass the scope-signal gate.
+    calls = {"count": 0}
+
+    def fake_call(prompt):
+        calls["count"] += 1
+        if "MAIN_SCOPE_MARKER" in prompt:
+            return '["Pool", "Vault", "Strategy"]', "stub"
+        if "TITLE_PAGE_MARKER" in prompt:
+            return '["TitleContract"]', "stub"
+        return "[]", "stub"
+
+    monkeypatch.setattr("services.audits.scope_extraction._call_llm", fake_call)
+
+    # Chunk 1 (pages 1-5): title with TitleContract mentioned multiple
+    # times AND appearing as .sol. Chunk 2 (pages 6-10): main scope
+    # table MAIN_SCOPE_MARKER. Both should pass the signal gate.
+    text = _doc(
+        _page(
+            1,
+            "Security Review TITLE_PAGE_MARKER\n"
+            "Program: TitleContract\n"
+            "TitleContract is the focus of this report. TitleContract.sol",
+        ),
+        _page(2, "boilerplate " * 10),
+        _page(3, "boilerplate " * 10),
+        _page(4, "boilerplate " * 10),
+        _page(5, "boilerplate " * 10),
+        _page(
+            6,
+            "Files in scope MAIN_SCOPE_MARKER:\n"
+            "src/Pool.sol\nsrc/Vault.sol\nsrc/Strategy.sol",
+        ),
+        _page(7, "body"),
+        _page(8, "body"),
+        _page(9, "body"),
+        _page(10, "body"),
+    )
+    names, _, _, chunks_used, winning_chunk = extract_scope_via_chunk_scan(
+        text, "T", "A"
+    )
+    # Merged across both chunks; dedupes, preserves first-seen order.
+    assert "TitleContract" in names
+    assert "Pool" in names
+    assert "Vault" in names
+    assert "Strategy" in names
+    # Both chunks were consulted.
+    assert calls["count"] == 2
+    # Winning chunk is the first accepted one (chunk 1).
+    assert winning_chunk is not None
+    assert "TITLE_PAGE_MARKER" in winning_chunk.text_slice
+
+
+def test_chunk_scan_accepts_single_focus_audit_via_frequency(monkeypatch):
+    # Certora-style "WeETH Withdrawal Adapter" single-focus audit —
+    # no formal scope header, no .sol suffixes, but the contract name
+    # is mentioned multiple times across findings. The frequency
+    # fallback rule (>=2 mentions) should accept it.
+    def fake_call(prompt):
+        return '["WeETHWithdrawAdapter"]', "stub"
+
+    monkeypatch.setattr(
+        "services.audits.scope_extraction._call_llm", fake_call
+    )
+
+    text = _doc(
+        _page(
+            1,
+            "L-01: WeETHWithdrawAdapter may revert\n"
+            "The WeETHWithdrawAdapter contract has issue X. Recommendation: "
+            "update the function. Customer response: acknowledged.",
+        ),
+        _page(
+            2,
+            "L-02: WeETHWithdrawAdapter rate limit issue\n"
+            "Additional analysis of WeETHWithdrawAdapter.",
+        ),
+    )
+    names, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
+    # Accepted because WeETHWithdrawAdapter appears multiple times.
+    assert names == ["WeETHWithdrawAdapter"]
+    assert winning_chunk is not None

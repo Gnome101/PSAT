@@ -303,7 +303,12 @@ def locate_scope_section(text: str) -> list[ScopeSection]:
     # ("5. Scope", "5.1 Files in scope", "5 Scope"). Kept permissive but
     # anchored to line start so body prose doesn't match.
     _NUMBERED_PREFIX = r"(?:\d+(?:\.\d+)*\.?[ \t]+)?"
-    sections: list[ScopeSection] = []
+    # Track candidates as (start_offset, end_offset, start_page, end_page, header)
+    # tuples so the overlap-merge step can correctly extend the text slice
+    # across merged ranges instead of keeping only the first candidate's
+    # slice (which silently dropped later sub-scope content — see idx 4
+    # Certora Combined Audit where SettlementDispatcher was lost).
+    candidates: list[tuple[int, int, int, int, str]] = []
     seen_offsets: set[int] = set()
     for header in _SCOPE_HEADERS:
         # Allow any amount of same-line whitespace between header words.
@@ -337,14 +342,7 @@ def locate_scope_section(text: str) -> list[ScopeSection]:
                 (off for (p, off) in pages if p > end_page),
                 len(text),
             )
-            sections.append(
-                ScopeSection(
-                    start_page=start_page,
-                    end_page=end_page,
-                    header=header,
-                    text_slice=text[start:end_offset],
-                )
-            )
+            candidates.append((start, end_offset, start_page, end_page, header))
 
     # Second pass: scope-introduction content patterns. Catches body prose
     # like "The following contract list is included in the scope of this
@@ -366,31 +364,47 @@ def locate_scope_section(text: str) -> list[ScopeSection]:
                 (off for (p, off) in pages if p > end_page),
                 len(text),
             )
-            sections.append(
-                ScopeSection(
-                    start_page=start_page,
-                    end_page=end_page,
-                    header=f"content:{m.group(0)[:40].strip()}",
-                    text_slice=text[start:end_offset],
+            candidates.append(
+                (
+                    start,
+                    end_offset,
+                    start_page,
+                    end_page,
+                    f"content:{m.group(0)[:40].strip()}",
                 )
             )
 
-    # Merge overlapping slices (e.g. "Scope" on p.2 and "Files in scope"
-    # on p.3 — their 3-page windows overlap, one covers the other).
-    sections.sort(key=lambda s: s.start_page)
-    merged: list[ScopeSection] = []
-    for s in sections:
-        if merged and s.start_page <= merged[-1].end_page:
-            prev = merged[-1]
-            merged[-1] = ScopeSection(
-                start_page=prev.start_page,
-                end_page=max(prev.end_page, s.end_page),
-                header=prev.header,
-                text_slice=prev.text_slice,
+    # Merge overlapping candidates by text offset. Two candidates merge
+    # when their offset ranges overlap OR adjoin (gap ≤ 0). The resulting
+    # ScopeSection's text_slice covers the FULL merged range so no
+    # content is silently dropped — previously the merge kept only the
+    # first candidate's slice, which lost sub-scope listings from later
+    # matches in combined reports.
+    candidates.sort(key=lambda c: c[0])
+    merged: list[tuple[int, int, int, int, str]] = []
+    for c in candidates:
+        start, end, sp, ep, hdr = c
+        if merged and start <= merged[-1][1]:
+            pstart, pend, psp, pep, phdr = merged[-1]
+            merged[-1] = (
+                pstart,
+                max(pend, end),
+                psp,
+                max(pep, ep),
+                phdr,
             )
         else:
-            merged.append(s)
-    return merged
+            merged.append(c)
+
+    return [
+        ScopeSection(
+            start_page=sp,
+            end_page=ep,
+            header=hdr,
+            text_slice=text[start:end],
+        )
+        for (start, end, sp, ep, hdr) in merged
+    ]
 
 
 # --- LLM call -------------------------------------------------------------
@@ -583,27 +597,128 @@ def _split_text_into_chunks(text: str) -> list[ScopeSection]:
     return chunks
 
 
+# Phrases that, if present in a chunk, indicate scope-like content (not
+# findings prose or system overview). Used to gate chunk-scan output —
+# if the winning chunk has none of these and none of the extracted names
+# appear as .sol filenames, we're probably picking up finding titles.
+_SCOPE_HEADER_SIGNAL: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:smart\s+contracts?\s+in\s+scope|"
+    r"contracts?\s+in\s+scope|"
+    r"files?\s+in\s+scope|"
+    r"items?\s+in\s+scope|"
+    r"audited\s+files?|"
+    r"audited\s+contracts?|"
+    r"assessment\s+scope|"
+    r"audit\s+scope|"
+    r"project\s+scope|"
+    r"project\s+targets?|"
+    r"code\s+repository|"
+    r"the\s+following\s+(?:smart\s+)?(?:files?|contracts?)|"
+    r"(?:audited|reviewed|assessed)\s+the\s+following|"
+    r"\b(?:Program|Target)\s*[:\n])",
+    re.IGNORECASE,
+)
+
+
+def _has_scope_signal(text: str, extracted_names: list[str]) -> bool:
+    """Return True if ``text`` contains a scope indicator.
+
+    Three ways to qualify (any one is sufficient):
+
+    1. An explicit scope header / intro phrase appears in the chunk
+       ("Audited Files", "Files in scope", "Program:", etc.).
+    2. At least one extracted name appears as ``<Name>.sol`` (or
+       ``.vy``) in the chunk — the classic "scope table" signal.
+    3. At least one extracted name appears **≥ 2 times** in the chunk
+       — strong indicator that the contract is the *subject* of the
+       audit (discussed repeatedly) rather than a passing mention in a
+       single finding title.
+
+    This combination catches:
+
+    - Nethermind/Spearbit-style tables (rule 1)
+    - Flat src/ listings (rule 2)
+    - Certora single-focus audits like "WeETH Withdrawal Adapter"
+      that have no structural header but discuss the one contract
+      dozens of times (rule 3)
+    - Zellic "Program:" reviews where the program name is repeated
+      across findings
+
+    Rejects:
+
+    - Findings-page chunks where each contract name appears once in
+      a finding title with no ``.sol`` suffix and no scope prose.
+    """
+    if _SCOPE_HEADER_SIGNAL.search(text):
+        return True
+    lower_text = text.lower()
+    for name in extracted_names:
+        if not name:
+            continue
+        n = name.lower()
+        if f"{n}.sol" in lower_text or f"{n}.vy" in lower_text:
+            return True
+    # Frequency fallback. Findings pages list different contracts in
+    # different finding titles — each name appears ~1x. Scope listings
+    # or single-focus audits repeat the contract name. Distinguish:
+    #   - multi-name case: require ≥2 distinct names each appearing
+    #     ≥2 times. A single repeated name in a multi-name extraction
+    #     is often coincidental finding-prose (idx 29 "EtherFiNode" is
+    #     mentioned twice in finding descriptions while two other
+    #     extracted names appear once).
+    #   - single-name case: one name appearing ≥2 times is sufficient —
+    #     a whole audit on ONE contract repeats the name across finding
+    #     prose (idx 31 Certora WeETHWithdrawAdapter).
+    non_empty = [n for n in extracted_names if n]
+    freq_hits = sum(
+        1 for n in non_empty if lower_text.count(n.lower()) >= 2
+    )
+    if len(non_empty) == 1 and freq_hits == 1:
+        return True
+    return freq_hits >= 2
+
+
 def extract_scope_via_chunk_scan(
     text: str, title: str, auditor: str
 ) -> tuple[list[str], str, str, int, ScopeSection | None]:
     """Brute-force fallback: walk the first ~20 pages chunk-by-chunk and
-    ask the LLM if each chunk contains a scope listing. Stop at the first
-    chunk that returns a non-empty list.
+    ask the LLM for contracts in each. Merge results from every chunk
+    that passes the scope-signal gate.
 
     Returns ``(names, raw_response, model, chunks_consumed, winning_chunk)``
-    where ``winning_chunk`` is the ``ScopeSection`` whose LLM call produced
-    ``names`` (or None when no chunk matched). Raises ``LLMUnavailableError``
-    only if *every* chunk call fails.
+    where ``winning_chunk`` is the *first* ``ScopeSection`` whose LLM
+    call produced accepted names (used for artifact provenance). Raises
+    ``LLMUnavailableError`` only if *every* chunk call fails.
 
-    The per-chunk prompt is the same as the structured extraction prompt,
-    and the parser is the same too — the LLM is already good at returning
-    [] when no scope content is present, so we don't need special phrasing.
+    Why merge (not stop at first hit):
+
+    Short multi-section audits sometimes mention a single contract on
+    an early page (title / intro) and list the full scope on a later
+    page. Stopping at the first non-empty response would capture only
+    the intro mention and miss the bulk listing. Since each chunk is
+    filtered by ``_has_scope_signal`` before acceptance, merging adds
+    real scope content without letting findings-only chunks through.
+
+    The scope-signal gate still does the heavy lifting: chunks that
+    lack a header / .sol listing / ≥2-mention signal are rejected,
+    preventing findings-page extractions (idx 29 case) from polluting
+    the merged result.
     """
     chunks = _split_text_into_chunks(text)
     if not chunks:
         raise LLMUnavailableError("chunk-scan: text is empty")
 
+    # Track everything across chunks so we can dedupe while preserving
+    # first-seen order (stable output).
+    merged_names: list[str] = []
+    seen: set[str] = set()
+    first_winning_chunk: ScopeSection | None = None
+    first_response: str = ""
+    first_model: str = ""
+    accepted_count = 0
     last_error: Exception | None = None
+    failure_count = 0
+
     for idx, chunk in enumerate(chunks, start=1):
         try:
             names, response, model = extract_scope_with_llm(
@@ -611,40 +726,75 @@ def extract_scope_via_chunk_scan(
             )
         except LLMUnavailableError as exc:
             last_error = exc
+            failure_count += 1
             continue
-        if names:
+        if not names:
+            continue
+        if not _has_scope_signal(chunk.text_slice, names):
             logger.info(
-                "scope: chunk-scan found %d name(s) in chunk %d/%d (pages %d-%d)",
+                "scope: chunk-scan rejecting %d name(s) from chunk %d/%d "
+                "(pages %d-%d) — no scope-signal pattern in chunk",
                 len(names),
                 idx,
                 len(chunks),
                 chunk.start_page,
                 chunk.end_page,
             )
-            return names, response, model, idx, chunk
-
-    # No chunk yielded names. If every call failed, propagate; otherwise
-    # report an empty successful scan so the caller can mark 'skipped'.
-    if last_error is not None and all(
-        isinstance(e, LLMUnavailableError)
-        for e in [last_error]
-    ):
-        raise LLMUnavailableError(
-            f"chunk-scan: all {len(chunks)} chunks failed; last: {last_error}"
+            continue
+        logger.info(
+            "scope: chunk-scan accepting %d name(s) from chunk %d/%d (pages %d-%d)",
+            len(names),
+            idx,
+            len(chunks),
+            chunk.start_page,
+            chunk.end_page,
         )
-    return [], "", "", len(chunks), None
+        # First accepted chunk wins provenance fields.
+        if first_winning_chunk is None:
+            first_winning_chunk = chunk
+            first_response = response
+            first_model = model
+        accepted_count += 1
+        for n in names:
+            key = n.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged_names.append(n)
+
+    # Nothing came through. Propagate if every chunk threw; otherwise
+    # a clean empty result so the caller can mark 'skipped'.
+    if not merged_names:
+        if failure_count == len(chunks) and last_error is not None:
+            raise LLMUnavailableError(
+                f"chunk-scan: all {len(chunks)} chunks failed; last: {last_error}"
+            )
+        return [], "", "", len(chunks), None
+
+    logger.info(
+        "scope: chunk-scan merged %d name(s) across %d accepted chunk(s)",
+        len(merged_names),
+        accepted_count,
+    )
+    return merged_names, first_response, first_model, len(chunks), first_winning_chunk
 
 
 # --- Validate -------------------------------------------------------------
 
 
 def validate_contracts(names: list[str], raw_text: str) -> list[str]:
-    """Drop names that never appear in ``raw_text``.
+    """Drop names that never appear in ``raw_text`` (hallucination guard).
 
-    Hallucination guard — the LLM occasionally invents plausible contract
-    names (e.g. an audit of MorphoBlue mentions "IPool" and the model
-    extrapolates to "Pool"). A verbatim case-insensitive substring check
-    against the raw PDF text catches these.
+    Each surviving name must appear verbatim (case-insensitive) somewhere
+    in the raw PDF text. Catches cases where the LLM extrapolates e.g.
+    "Pool" from a passing mention of "IPool" elsewhere.
+
+    An earlier iteration also collapsed ``IFoo``→``Foo`` duplicates to
+    match Nethermind's LoC-table convention, but that ran 23 wrong drops
+    against 11 right drops — Certora audits explicitly list
+    ``src/interfaces/IFoo.sol`` as first-class scope items, so a blanket
+    rule over-corrects. The LLM's per-audit judgment (helped by the
+    prompt's interface note) handles this better than post-filtering.
     """
     if not names:
         return []
