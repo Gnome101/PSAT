@@ -1770,15 +1770,35 @@ def get_audit_scope(audit_id: int) -> dict[str, Any]:
         }
 
 
+def _audit_brief(audit: Any, match: Any | None = None) -> dict[str, Any]:
+    """Compact audit-report dict for the coverage/timeline endpoints."""
+    out: dict[str, Any] = {
+        "audit_id": audit.id,
+        "auditor": audit.auditor,
+        "title": audit.title,
+        "date": audit.date,
+    }
+    if match is not None:
+        out["match_type"] = match.match_type
+        out["match_confidence"] = match.match_confidence
+        out["covered_from_block"] = match.covered_from_block
+        out["covered_to_block"] = match.covered_to_block
+    return out
+
+
 @app.get("/api/company/{company_name}/audit_coverage")
 def company_audit_coverage(company_name: str) -> dict[str, Any]:
     """For each contract in the company's inventory, list audits covering it.
 
-    Joins by case-insensitive exact match between ``Contract.contract_name``
-    and entries in ``AuditReport.scope_contracts``. The ``last_audit``
-    pointer is the most recent matching audit by ``date`` (nulls last).
+    Reads from the persisted ``audit_contract_coverage`` join table — rows
+    are written proxy-aware by ``services.audits.coverage`` when scope
+    extraction completes or a live upgrade event is detected. The
+    ``last_audit`` pointer is the most recent matching audit by ``date``
+    (nulls last, then id desc to break ties). Each audit entry carries
+    ``match_type`` + ``match_confidence`` so the UI can flag low-confidence
+    links differently.
     """
-    from db.models import AuditReport
+    from db.models import AuditContractCoverage, AuditReport
 
     with SessionLocal() as session:
         protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
@@ -1787,7 +1807,7 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
 
         contracts = session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
 
-        audits = (
+        audit_rows = (
             session.execute(
                 select(AuditReport)
                 .where(
@@ -1799,38 +1819,40 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
             .scalars()
             .all()
         )
+        audits_by_id = {a.id: a for a in audit_rows}
+
+        # Pull every coverage row for the protocol in one query, then
+        # bucket in Python — cheaper than N queries for N contracts.
+        coverage_rows = (
+            session.execute(
+                select(AuditContractCoverage).where(
+                    AuditContractCoverage.protocol_id == protocol_row.id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        coverage_by_contract: dict[int, list[Any]] = {}
+        for row in coverage_rows:
+            coverage_by_contract.setdefault(row.contract_id, []).append(row)
+
+        def _sort_key(row: Any) -> tuple:
+            audit = audits_by_id.get(row.audit_report_id)
+            date = (audit.date if audit else None) or ""
+            return (date, row.audit_report_id)
 
         coverage: list[dict[str, Any]] = []
         for c in contracts:
-            name = c.contract_name
-            if not name:
-                coverage.append(
-                    {
-                        "address": c.address,
-                        "chain": c.chain,
-                        "contract_name": None,
-                        "audit_count": 0,
-                        "last_audit": None,
-                        "audits": [],
-                    }
-                )
-                continue
-            name_lc = name.lower()
+            entries = coverage_by_contract.get(c.id, [])
+            entries = sorted(entries, key=_sort_key, reverse=True)
             matching = [
-                {
-                    "audit_id": a.id,
-                    "auditor": a.auditor,
-                    "title": a.title,
-                    "date": a.date,
-                }
-                for a in audits
-                if any((n or "").lower() == name_lc for n in (a.scope_contracts or []))
+                _audit_brief(audits_by_id[e.audit_report_id], e) for e in entries if e.audit_report_id in audits_by_id
             ]
             coverage.append(
                 {
                     "address": c.address,
                     "chain": c.chain,
-                    "contract_name": name,
+                    "contract_name": c.contract_name,
                     "audit_count": len(matching),
                     "last_audit": matching[0] if matching else None,
                     "audits": matching,
@@ -1840,8 +1862,215 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
             "company": company_name,
             "protocol_id": protocol_row.id,
             "contract_count": len(contracts),
-            "audit_count": len(audits),
+            "audit_count": len(audit_rows),
             "coverage": coverage,
+        }
+
+
+@app.get("/api/contracts/{contract_id}/audit_timeline")
+def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
+    """Per-impl audit timeline for a single contract, annotated with coverage.
+
+    Response shape:
+      - ``contract``: address, name, is_proxy, current_implementation
+      - ``impl_windows``: list of (from_block, to_block, impl_address, ...)
+        gathered from ``UpgradeEvent`` history; empty for non-proxies and
+        for proxies whose first impl never emitted an upgrade event
+      - ``coverage``: list of coverage rows with the audit + range
+      - ``current_status``: one of
+        ``'audited'`` — current impl is covered by ≥1 high/medium audit
+        ``'unaudited_since_upgrade'`` — some prior impl was covered but
+          the current impl isn't
+        ``'never_audited'`` — proxy with impls, no coverage anywhere
+        ``'non_proxy_audited'`` / ``'non_proxy_unaudited'`` — plain contracts
+    """
+    from db.models import AuditContractCoverage, AuditReport
+
+    with SessionLocal() as session:
+        contract = session.get(Contract, contract_id)
+        if contract is None:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        # Historical upgrade windows on this contract if it's a proxy.
+        upgrade_rows = (
+            session.execute(
+                select(UpgradeEvent)
+                .where(UpgradeEvent.contract_id == contract.id)
+                .order_by(
+                    UpgradeEvent.block_number.asc().nullslast(),
+                    UpgradeEvent.id.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        impl_windows: list[dict[str, Any]] = []
+        for i, ev in enumerate(upgrade_rows):
+            nxt = upgrade_rows[i + 1] if i + 1 < len(upgrade_rows) else None
+            impl_windows.append(
+                {
+                    "impl_address": ev.new_impl,
+                    "from_block": ev.block_number,
+                    "to_block": nxt.block_number if nxt is not None else None,
+                    "from_ts": ev.timestamp.isoformat() if ev.timestamp else None,
+                    "to_ts": nxt.timestamp.isoformat() if (nxt and nxt.timestamp) else None,
+                    "tx_hash": ev.tx_hash,
+                }
+            )
+
+        # Coverage rows. For a proxy the timeline should show every audit
+        # that covered ANY impl in its history — not just direct name
+        # matches on the proxy row. We union:
+        #   - rows keyed to the contract itself (direct matches OR, when
+        #     the contract is an impl, its own impl_era coverage)
+        #   - for proxies, rows keyed to every historical-impl Contract.id
+        #     resolved from UpgradeEvent.new_impl
+        scope_contract_ids = {contract.id}
+        if contract.is_proxy and upgrade_rows:
+            impl_addrs = {ev.new_impl.lower() for ev in upgrade_rows if ev.new_impl}
+            if impl_addrs:
+                impl_contract_ids = (
+                    session.execute(
+                        select(Contract.id).where(
+                            Contract.protocol_id == contract.protocol_id,
+                            Contract.address.in_(impl_addrs),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                scope_contract_ids.update(impl_contract_ids)
+
+        cov_rows = (
+            session.execute(
+                select(AuditContractCoverage).where(
+                    AuditContractCoverage.contract_id.in_(scope_contract_ids),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        audit_ids = [r.audit_report_id for r in cov_rows]
+        audits_by_id: dict[int, Any] = {}
+        if audit_ids:
+            audits_by_id = {
+                a.id: a
+                for a in session.execute(select(AuditReport).where(AuditReport.id.in_(audit_ids))).scalars().all()
+            }
+
+        # Dedupe: multiple impl rows can produce rows against the same
+        # audit_id (the audit's scope name matched several historical
+        # impls). Keep the one with highest confidence, then widest
+        # window, then lowest contract_id as tiebreaker.
+        confidence_rank = {"low": 0, "medium": 1, "high": 2}
+        best_by_audit: dict[int, Any] = {}
+        for r in cov_rows:
+            prev = best_by_audit.get(r.audit_report_id)
+            if prev is None:
+                best_by_audit[r.audit_report_id] = r
+                continue
+            if confidence_rank.get(r.match_confidence, 0) > confidence_rank.get(prev.match_confidence, 0):
+                best_by_audit[r.audit_report_id] = r
+
+        coverage_out: list[dict[str, Any]] = []
+        for r in best_by_audit.values():
+            audit = audits_by_id.get(r.audit_report_id)
+            if not audit:
+                continue
+            coverage_out.append(_audit_brief(audit, r))
+        # Newest first by audit date (nulls last, id desc to break ties).
+        coverage_out.sort(key=lambda e: (e.get("date") or "", e["audit_id"]), reverse=True)
+
+        # --- current_status computation ---
+        #
+        # "audited" is a strong claim we only grant when the current impl
+        # has a HIGH-confidence open-ended coverage row (audit dated inside
+        # the impl's active window). A 'medium' match means the audit sits
+        # in the grace zone on either side of the window boundary — e.g.
+        # "audit published 10 days before this impl went live, so it might
+        # have reviewed the new code, but also might have reviewed the
+        # previous impl and been finalized right before the upgrade." Those
+        # audits still appear in the ``coverage`` array; the UI can surface
+        # them without the contract being badged as audited on their
+        # strength alone.
+        def _current_status(c: Contract) -> str:
+            if not c.is_proxy:
+                return "non_proxy_audited" if cov_rows else "non_proxy_unaudited"
+
+            # Proxy: need to know if the current impl has live coverage.
+            current_impl = c.implementation
+            if not current_impl:
+                return "never_audited" if not cov_rows else "unaudited_since_upgrade"
+
+            impl_contract = session.execute(
+                select(Contract).where(
+                    Contract.address == current_impl.lower(),
+                    Contract.protocol_id == c.protocol_id,
+                )
+            ).scalar_one_or_none()
+            if impl_contract is None:
+                # Current impl isn't in inventory. We can't tell.
+                return "unaudited_since_upgrade" if cov_rows else "never_audited"
+
+            current_cov = (
+                session.execute(
+                    select(AuditContractCoverage).where(
+                        AuditContractCoverage.contract_id == impl_contract.id,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # 'audited' requires a HIGH-confidence match covering the
+            # currently-open impl window. Grace-medium matches don't count
+            # — an audit 10 days before the impl went live is suggestive
+            # but not proof the new code was reviewed.
+            has_current = any(r.match_confidence == "high" and (r.covered_to_block is None) for r in current_cov)
+            if has_current:
+                return "audited"
+            if current_cov or cov_rows:
+                return "unaudited_since_upgrade"
+            return "never_audited"
+
+        return {
+            "contract": {
+                "contract_id": contract.id,
+                "address": contract.address,
+                "chain": contract.chain,
+                "contract_name": contract.contract_name,
+                "is_proxy": contract.is_proxy,
+                "current_implementation": contract.implementation,
+            },
+            "impl_windows": impl_windows,
+            "coverage": coverage_out,
+            "current_status": _current_status(contract),
+        }
+
+
+@app.post(
+    "/api/company/{company_name}/refresh_coverage",
+    dependencies=[Depends(require_admin_key)],
+)
+def refresh_company_coverage(company_name: str) -> dict[str, Any]:
+    """Rebuild ``audit_contract_coverage`` rows for every scoped audit in a protocol.
+
+    Idempotent backfill. Useful when inventory is updated after audits are
+    scoped (new Contract rows match pre-existing audit scope) or when a
+    bulk data migration needs to re-seat links without waiting for the
+    next scope re-extraction.
+    """
+    from services.audits.coverage import upsert_coverage_for_protocol
+
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+        inserted = upsert_coverage_for_protocol(session, protocol_row.id)
+        session.commit()
+        return {
+            "company": company_name,
+            "protocol_id": protocol_row.id,
+            "coverage_rows": inserted,
         }
 
 

@@ -267,6 +267,50 @@ class AuditReport(Base):
     )
 
 
+class AuditContractCoverage(Base):
+    """Link between an ``AuditReport`` and a ``Contract`` that was in scope.
+
+    Persisted so "which audits cover this impl?" is a plain join, not a
+    query-time scan of ``scope_contracts[]``. Proxy-aware: the row links
+    the implementation-era ``Contract`` the audit actually reviewed, not
+    the proxy. See ``services.audits.coverage`` for the matcher.
+    """
+
+    __tablename__ = "audit_contract_coverage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
+    audit_report_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("audit_reports.id", ondelete="CASCADE"), nullable=False
+    )
+    # Denormalized FK so per-protocol queries don't need to join through
+    # audit_reports or contracts every time.
+    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
+    # The scope_contracts[] entry that matched — a debug trail so a mismatch
+    # between what the LLM extracted and how we interpreted it is traceable.
+    matched_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # How we matched. See services/audits/coverage.py for the full taxonomy.
+    # 'direct' — name match, contract has no proxy-impl history
+    # 'impl_era' — name match, contract was an active impl at audit time
+    # 'reviewed_commit' — reserved for a future bytecode/commit anchor
+    match_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 'high' | 'medium' | 'low' — string enum, not a float, to avoid
+    # false precision when downstream filters come calling.
+    match_confidence: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Impl active window the audit applies to. NULL on both when the
+    # match has no proxy history (direct match).
+    covered_from_block: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    covered_to_block: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("contract_id", "audit_report_id", name="uq_audit_contract_coverage_pair"),
+        Index("ix_audit_contract_coverage_contract_id", "contract_id"),
+        Index("ix_audit_contract_coverage_audit_report_id", "audit_report_id"),
+        Index("ix_audit_contract_coverage_protocol_id", "protocol_id"),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Pipeline artifact tables (replace JSONB blobs)
 # ---------------------------------------------------------------------------
@@ -749,6 +793,46 @@ def apply_storage_migrations(target_engine=None) -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS ix_audit_reports_text_sha256_scoped "
                 "ON audit_reports (text_sha256) WHERE scope_extraction_status = 'success'"
+            )
+        )
+        # audit_contract_coverage — persistent contract↔audit link. Created
+        # idempotently here so long-lived test DBs (and prod) pick it up
+        # without an Alembic run. Base.metadata.create_all handles fresh
+        # databases; this block handles upgrades.
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS audit_contract_coverage ("
+                "  id SERIAL PRIMARY KEY,"
+                "  contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,"
+                "  audit_report_id INTEGER NOT NULL REFERENCES audit_reports(id) ON DELETE CASCADE,"
+                "  protocol_id INTEGER NOT NULL REFERENCES protocols(id) ON DELETE CASCADE,"
+                "  matched_name VARCHAR(255) NOT NULL,"
+                "  match_type VARCHAR(32) NOT NULL,"
+                "  match_confidence VARCHAR(10) NOT NULL,"
+                "  covered_from_block BIGINT,"
+                "  covered_to_block BIGINT,"
+                "  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+                "  CONSTRAINT uq_audit_contract_coverage_pair "
+                "    UNIQUE (contract_id, audit_report_id)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_contract_coverage_contract_id "
+                "ON audit_contract_coverage (contract_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_contract_coverage_audit_report_id "
+                "ON audit_contract_coverage (audit_report_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_contract_coverage_protocol_id "
+                "ON audit_contract_coverage (protocol_id)"
             )
         )
         conn.commit()

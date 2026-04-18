@@ -263,6 +263,7 @@ class AuditScopeExtractionWorker:
                 audit.scope_storage_key = sibling.scope_storage_key
                 audit.scope_contracts = list(sibling.scope_contracts or [])
                 self._maybe_backfill_date(audit, sibling.date)
+                self._refresh_coverage(session, audit_id)
                 session.commit()
                 logger.info(
                     "Audit %s → cache-copy from %s (%d contracts)",
@@ -281,12 +282,38 @@ class AuditScopeExtractionWorker:
                 audit.scope_storage_key = outcome.storage_key
                 audit.scope_contracts = list(outcome.contracts)
                 self._maybe_backfill_date(audit, outcome.extracted_date)
+                self._refresh_coverage(session, audit_id)
             session.commit()
         except Exception:
             session.rollback()
             logger.exception("Failed to persist scope outcome for audit %s", audit_id)
         finally:
             session.close()
+
+    @staticmethod
+    def _refresh_coverage(session: Session, audit_id: int) -> None:
+        """Rebuild ``audit_contract_coverage`` rows for this audit.
+
+        Runs inside the caller's transaction so a coverage failure rolls
+        the scope persist back too — but we also guard with try/except so
+        an unexpected coverage bug never blocks a successful extraction
+        from being recorded. Import is local to avoid a circular at
+        worker-module import time.
+        """
+        from services.audits.coverage import upsert_coverage_for_audit
+
+        try:
+            inserted = upsert_coverage_for_audit(session, audit_id)
+            logger.info(
+                "Audit %s → coverage refreshed (%d row(s))",
+                audit_id,
+                inserted,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to refresh coverage for audit %s — scope persist still proceeds",
+                audit_id,
+            )
 
     @staticmethod
     def _maybe_backfill_date(audit: AuditReport, candidate: str | None) -> None:

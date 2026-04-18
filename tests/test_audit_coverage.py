@@ -1,0 +1,641 @@
+"""Unit tests for the audit-coverage matcher.
+
+Focus: the *rules* — direct vs. impl_era matching, temporal window
+selection, confidence downgrade on boundary misses, proxy resolution,
+date parsing quirks (partial months, null dates). Integration with the
+scope worker + live API is covered separately in
+``test_audit_coverage_integration.py``.
+
+Requires a real test Postgres (matcher queries UpgradeEvent / Contract /
+AuditReport) — skipped cleanly on a dev box without TEST_DATABASE_URL.
+Object storage is NOT required here; we never touch the scope artifact
+bucket.
+"""
+
+from __future__ import annotations
+
+import sys
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+from sqlalchemy import select
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tests.conftest import requires_postgres  # noqa: E402
+
+pytestmark = [requires_postgres]
+
+
+# ---------------------------------------------------------------------------
+# Seeding helpers
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def seed_protocol(db_session):
+    """Fresh, unique-named Protocol + cascading cleanup."""
+    from db.models import AuditContractCoverage, AuditReport, Contract, Protocol, UpgradeEvent
+
+    name = f"cov-test-{uuid.uuid4().hex[:12]}"
+    p = Protocol(name=name)
+    db_session.add(p)
+    db_session.commit()
+    protocol_id = p.id
+    try:
+        yield protocol_id, name
+    finally:
+        # Cascade order matters: coverage refs contract+audit, upgrade
+        # refs contract, so delete children first.
+        db_session.query(AuditContractCoverage).filter_by(protocol_id=protocol_id).delete()
+        contract_ids = [c.id for c in db_session.query(Contract).filter_by(protocol_id=protocol_id).all()]
+        if contract_ids:
+            db_session.query(UpgradeEvent).filter(UpgradeEvent.contract_id.in_(contract_ids)).delete(
+                synchronize_session=False
+            )
+        db_session.query(Contract).filter_by(protocol_id=protocol_id).delete()
+        db_session.query(AuditReport).filter_by(protocol_id=protocol_id).delete()
+        db_session.query(Protocol).filter_by(id=protocol_id).delete()
+        db_session.commit()
+
+
+def _add_contract(
+    session,
+    protocol_id: int,
+    *,
+    address: str,
+    name: str,
+    is_proxy: bool = False,
+    implementation: str | None = None,
+    chain: str = "ethereum",
+):
+    """Create a Contract row and return it (already committed)."""
+    from db.models import Contract
+
+    c = Contract(
+        protocol_id=protocol_id,
+        address=address.lower(),
+        contract_name=name,
+        is_proxy=is_proxy,
+        implementation=implementation.lower() if implementation else None,
+        chain=chain,
+    )
+    session.add(c)
+    session.commit()
+    return c
+
+
+def _add_audit(
+    session,
+    protocol_id: int,
+    *,
+    auditor: str = "TestFirm",
+    title: str = "Audit",
+    date: str | None = None,
+    scope: list[str] | None = None,
+    status: str | None = "success",
+):
+    """Create an AuditReport with scope_contracts + status='success' by default."""
+    from db.models import AuditReport
+
+    ar = AuditReport(
+        protocol_id=protocol_id,
+        url=f"https://example.com/{uuid.uuid4().hex}.pdf",
+        auditor=auditor,
+        title=title,
+        date=date,
+        confidence=0.9,
+        scope_extraction_status=status,
+        scope_contracts=scope or [],
+    )
+    session.add(ar)
+    session.commit()
+    return ar
+
+
+def _add_upgrade_event(
+    session,
+    *,
+    contract_id: int,
+    proxy_address: str,
+    new_impl: str,
+    old_impl: str | None = None,
+    block_number: int,
+    timestamp: datetime | None = None,
+    tx_hash: str | None = None,
+):
+    """Append an UpgradeEvent row on the proxy's contract_id."""
+    from db.models import UpgradeEvent
+
+    ev = UpgradeEvent(
+        contract_id=contract_id,
+        proxy_address=proxy_address.lower(),
+        old_impl=old_impl.lower() if old_impl else None,
+        new_impl=new_impl.lower(),
+        block_number=block_number,
+        timestamp=timestamp,
+        tx_hash=tx_hash or f"0x{uuid.uuid4().hex[:64]}",
+    )
+    session.add(ev)
+    session.commit()
+    return ev
+
+
+def _ts(year: int, month: int = 1, day: int = 1) -> datetime:
+    return datetime(year, month, day, tzinfo=timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# 1. Date parser — the foundation every confidence call depends on
+# ---------------------------------------------------------------------------
+
+
+def test_audit_effective_ts_full_date():
+    from services.audits.coverage import _audit_effective_ts
+
+    got = _audit_effective_ts("2024-06-15")
+    assert got is not None
+    # End-of-day semantics so "impl replaced on 2024-06-15" matches.
+    assert got.year == 2024 and got.month == 6 and got.day == 15
+    assert got.hour == 23 and got.minute == 59
+
+
+def test_audit_effective_ts_month_placeholder():
+    from services.audits.coverage import _audit_effective_ts
+
+    # Both the scope-extraction "YYYY-MM-00" placeholder and "YYYY-MM"
+    # resolve to end of month.
+    a = _audit_effective_ts("2024-06-00")
+    b = _audit_effective_ts("2024-06")
+    assert a == b
+    assert a is not None and a.month == 6 and a.day == 30
+
+
+def test_audit_effective_ts_year_only():
+    from services.audits.coverage import _audit_effective_ts
+
+    got = _audit_effective_ts("2023")
+    assert got is not None
+    assert got.month == 12 and got.day == 31
+
+
+def test_audit_effective_ts_none_and_garbage():
+    from services.audits.coverage import _audit_effective_ts
+
+    assert _audit_effective_ts(None) is None
+    assert _audit_effective_ts("") is None
+    assert _audit_effective_ts("nonsense") is None
+
+
+# ---------------------------------------------------------------------------
+# 2. Direct match — no proxy history
+# ---------------------------------------------------------------------------
+
+
+def test_direct_match_high_when_audit_has_date(db_session, seed_protocol):
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    contract = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-15")
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    m = matches[0]
+    assert m.contract_id == contract.id
+    assert m.match_type == "direct"
+    assert m.match_confidence == "high"
+    assert m.covered_from_block is None
+    assert m.covered_to_block is None
+    assert m.matched_name == "Pool"
+
+
+def test_direct_match_medium_without_audit_date(db_session, seed_protocol):
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date=None)
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].match_confidence == "medium"
+
+
+def test_direct_match_is_case_insensitive(db_session, seed_protocol):
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="EtherFiNodesManager")
+    audit = _add_audit(db_session, protocol_id, scope=["etherfinodesmanager"], date="2024-01-01")
+    assert len(match_contracts_for_audit(db_session, audit.id)) == 1
+
+
+def test_scope_name_not_in_protocol_yields_zero_matches(db_session, seed_protocol):
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    # Name in scope doesn't exist in this protocol's contracts.
+    audit = _add_audit(db_session, protocol_id, scope=["UnrelatedThing"], date="2024-01-01")
+    assert match_contracts_for_audit(db_session, audit.id) == []
+
+
+def test_duplicate_scope_names_collapse_to_single_match(db_session, seed_protocol):
+    """Extraction glitches sometimes ship the same contract twice under
+    near-identical names (e.g. 'EtherFiNodesManager' + 'EtherFiNodeManager').
+    Only one coverage row should emerge for the single Contract row.
+    """
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool", "pool", "POOL"], date="2024-01-01")
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+
+
+# ---------------------------------------------------------------------------
+# 3. impl_era match — the proxy-aware path
+# ---------------------------------------------------------------------------
+
+
+def test_impl_era_match_inside_window_is_high(db_session, seed_protocol):
+    """Proxy was X (block 100) → Y (block 200). Audit on X dated between
+    those blocks lands in X's window → high confidence, range set."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "1" * 40,
+        name="Proxy",
+        is_proxy=True,
+        implementation="0x" + "b" * 40,  # currently pointing at Y
+    )
+    impl_x = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MorphoBlue")
+    _add_contract(db_session, protocol_id, address="0x" + "b" * 40, name="MorphoBlueV2")
+
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_x.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl="0x" + "b" * 40,
+        old_impl=impl_x.address,
+        block_number=200,
+        timestamp=_ts(2024, 6, 1),
+    )
+
+    audit = _add_audit(db_session, protocol_id, scope=["MorphoBlue"], date="2024-03-15")
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    m = matches[0]
+    assert m.contract_id == impl_x.id
+    assert m.match_type == "impl_era"
+    assert m.match_confidence == "high"
+    assert m.covered_from_block == 100
+    assert m.covered_to_block == 200
+
+
+def test_impl_era_match_open_ended_window_for_current_impl(db_session, seed_protocol):
+    """An audit dated AFTER the latest upgrade covers the still-current
+    impl — covered_to_block is NULL because the impl hasn't been replaced."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "1" * 40,
+        name="Proxy",
+        is_proxy=True,
+        implementation="0x" + "a" * 40,
+    )
+    impl_x = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MorphoBlue")
+
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_x.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+
+    audit = _add_audit(db_session, protocol_id, scope=["MorphoBlue"], date="2024-06-01")
+    [m] = match_contracts_for_audit(db_session, audit.id)
+    assert m.covered_from_block == 100
+    assert m.covered_to_block is None
+    assert m.match_confidence == "high"
+
+
+def test_impl_era_grace_window_gives_medium_confidence(db_session, seed_protocol):
+    """Audit published 10 days AFTER the impl was replaced should still
+    attach to that impl at 'medium' — typical 'audit finalized after
+    remediation upgrade shipped' pattern."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(db_session, protocol_id, address="0x" + "1" * 40, name="Proxy", is_proxy=True)
+    impl_x = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MorphoBlue")
+
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_x.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl="0x" + "b" * 40,
+        old_impl=impl_x.address,
+        block_number=200,
+        timestamp=_ts(2024, 6, 1),
+    )
+
+    # 10 days after replacement — within the 14-day grace.
+    audit = _add_audit(db_session, protocol_id, scope=["MorphoBlue"], date="2024-06-11")
+    [m] = match_contracts_for_audit(db_session, audit.id)
+    assert m.match_confidence == "medium"
+    assert m.contract_id == impl_x.id
+
+
+def test_impl_era_far_outside_window_is_low(db_session, seed_protocol):
+    """Audit dated years after the impl was replaced — name matches but
+    timing is clearly off. Still emits a row (don't silently drop) but
+    marks it low so a UI can hide or badge it."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(db_session, protocol_id, address="0x" + "1" * 40, name="Proxy", is_proxy=True)
+    impl_x = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MorphoBlue")
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_x.address,
+        block_number=100,
+        timestamp=_ts(2023, 1, 1),
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl="0x" + "b" * 40,
+        old_impl=impl_x.address,
+        block_number=200,
+        timestamp=_ts(2023, 6, 1),
+    )
+
+    audit = _add_audit(db_session, protocol_id, scope=["MorphoBlue"], date="2025-01-01")
+    [m] = match_contracts_for_audit(db_session, audit.id)
+    assert m.match_confidence == "low"
+    assert m.contract_id == impl_x.id
+
+
+def test_impl_era_with_no_audit_date_falls_to_low(db_session, seed_protocol):
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(db_session, protocol_id, address="0x" + "1" * 40, name="Proxy", is_proxy=True)
+    impl_x = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="MorphoBlue")
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_x.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+
+    audit = _add_audit(db_session, protocol_id, scope=["MorphoBlue"], date=None)
+    [m] = match_contracts_for_audit(db_session, audit.id)
+    assert m.match_confidence == "low"
+    assert m.match_type == "impl_era"
+
+
+def test_impl_era_picks_correct_window_across_multiple_upgrades(db_session, seed_protocol):
+    """Proxy: A (block 100) → B (200) → A (300) → C (400). Audit dated
+    in the [300,400) window matches A again with THAT window, not the
+    earlier [100,200) one."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(db_session, protocol_id, address="0x" + "1" * 40, name="Proxy", is_proxy=True)
+    impl_a = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="ImplA")
+
+    # A active [100, 200), then B [200, 300), then A again [300, 400), then C.
+    for ts, block, new_impl, old_impl in [
+        (_ts(2024, 1, 1), 100, impl_a.address, None),
+        (_ts(2024, 2, 1), 200, "0x" + "b" * 40, impl_a.address),
+        (_ts(2024, 3, 1), 300, impl_a.address, "0x" + "b" * 40),
+        (_ts(2024, 4, 1), 400, "0x" + "c" * 40, impl_a.address),
+    ]:
+        _add_upgrade_event(
+            db_session,
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            new_impl=new_impl,
+            old_impl=old_impl,
+            block_number=block,
+            timestamp=ts,
+        )
+
+    audit = _add_audit(db_session, protocol_id, scope=["ImplA"], date="2024-03-15")
+    [m] = match_contracts_for_audit(db_session, audit.id)
+    # Audit lands in the SECOND active window of A: [300, 400).
+    assert m.covered_from_block == 300
+    assert m.covered_to_block == 400
+    assert m.match_confidence == "high"
+
+
+# ---------------------------------------------------------------------------
+# 4. Proxy that shares a name with its impl
+# ---------------------------------------------------------------------------
+
+
+def test_proxy_and_impl_both_matched_when_both_named(db_session, seed_protocol):
+    """Proxy row and impl row both carry the scope name — both get
+    coverage rows. UI dedups, matcher doesn't."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "1" * 40,
+        name="SharedName",
+        is_proxy=True,
+    )
+    impl = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="SharedName")
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    audit = _add_audit(db_session, protocol_id, scope=["SharedName"], date="2024-03-01")
+    matches = match_contracts_for_audit(db_session, audit.id)
+    by_id = {m.contract_id: m for m in matches}
+    assert set(by_id) == {proxy.id, impl.id}
+    # Proxy has no impl history of its own — direct match.
+    assert by_id[proxy.id].match_type == "direct"
+    # Impl was active from block 100 — impl_era.
+    assert by_id[impl.id].match_type == "impl_era"
+
+
+# ---------------------------------------------------------------------------
+# 5. Symmetry — match_audits_for_contract returns the same thing
+# ---------------------------------------------------------------------------
+
+
+def test_match_audits_for_contract_is_symmetric(db_session, seed_protocol):
+    from services.audits.coverage import match_audits_for_contract, match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    impl = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+
+    m_from_audit = match_contracts_for_audit(db_session, audit.id)
+    m_from_contract = match_audits_for_contract(db_session, impl.id)
+    assert len(m_from_audit) == 1
+    assert len(m_from_contract) == 1
+    assert m_from_audit[0].contract_id == m_from_contract[0].contract_id == impl.id
+    assert m_from_audit[0].audit_report_id == m_from_contract[0].audit_report_id == audit.id
+    assert m_from_audit[0].match_type == m_from_contract[0].match_type
+
+
+def test_match_audits_for_contract_ignores_non_success_scope(db_session, seed_protocol):
+    from services.audits.coverage import match_audits_for_contract
+
+    protocol_id, _ = seed_protocol
+    contract = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    # A failed/skipped/pending extraction shouldn't contribute coverage.
+    _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01", status="skipped")
+    _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01", status="failed")
+    _add_audit(db_session, protocol_id, scope=None, date="2024-06-01", status=None)
+
+    assert match_audits_for_contract(db_session, contract.id) == []
+
+
+# ---------------------------------------------------------------------------
+# 6. Upsert helpers — idempotency + scope re-extraction invalidation
+# ---------------------------------------------------------------------------
+
+
+def test_upsert_coverage_for_audit_is_idempotent(db_session, seed_protocol):
+    from db.models import AuditContractCoverage
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+
+    n1 = upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    n2 = upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    assert n1 == n2 == 1
+    rows = (
+        db_session.execute(select(AuditContractCoverage).where(AuditContractCoverage.audit_report_id == audit.id))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 1
+
+
+def test_upsert_drops_stale_rows_after_scope_change(db_session, seed_protocol):
+    """Simulates a re-extraction where scope_contracts changes from
+    ['Pool'] to ['Vault']. The prior Pool coverage row must disappear;
+    a fresh Vault row must appear."""
+    from db.models import AuditContractCoverage, AuditReport
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    pool = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    vault = _add_contract(db_session, protocol_id, address="0x" + "b" * 40, name="Vault")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    rows = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).all()
+    assert {r.contract_id for r in rows} == {pool.id}
+
+    # Re-extraction result: scope now says Vault instead of Pool.
+    ar = db_session.get(AuditReport, audit.id)
+    ar.scope_contracts = ["Vault"]
+    db_session.commit()
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    rows = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).all()
+    assert {r.contract_id for r in rows} == {vault.id}
+
+
+def test_upsert_skipped_audit_wipes_rows(db_session, seed_protocol):
+    """If an audit transitions from success → skipped (e.g. a
+    reextract_scope that later failed), coverage rows for it must
+    clear. Otherwise stale data outlives the extraction."""
+    from db.models import AuditContractCoverage, AuditReport
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    assert db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).count() == 1
+
+    ar = db_session.get(AuditReport, audit.id)
+    ar.scope_extraction_status = "skipped"
+    db_session.commit()
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    assert db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).count() == 0
+
+
+def test_upsert_coverage_for_protocol_batches(db_session, seed_protocol):
+    from db.models import AuditContractCoverage
+    from services.audits.coverage import upsert_coverage_for_protocol
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    _add_contract(db_session, protocol_id, address="0x" + "b" * 40, name="Vault")
+    _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+    _add_audit(db_session, protocol_id, scope=["Vault"], date="2024-07-01")
+    _add_audit(db_session, protocol_id, scope=["Pool", "Vault"], date="2024-08-01")
+
+    inserted = upsert_coverage_for_protocol(db_session, protocol_id)
+    db_session.commit()
+    assert inserted == 4  # 1 + 1 + 2
+    assert db_session.query(AuditContractCoverage).filter_by(protocol_id=protocol_id).count() == 4
+
+
+def test_upsert_on_audit_with_no_matches_inserts_nothing(db_session, seed_protocol):
+    from db.models import AuditContractCoverage
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    audit = _add_audit(db_session, protocol_id, scope=["NoSuchContract"], date="2024-06-01")
+    assert upsert_coverage_for_audit(db_session, audit.id) == 0
+    db_session.commit()
+    assert db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).count() == 0

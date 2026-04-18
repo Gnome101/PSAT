@@ -21,6 +21,7 @@ _STORAGE_ENV_KEYS = (
 )
 
 from db.models import (  # noqa: E402
+    AuditContractCoverage,
     Base,
     MonitoredContract,
     MonitoredEvent,
@@ -287,8 +288,11 @@ def db_session():
         yield session
     finally:
         session.rollback()
-        # Clean monitoring tables (order respects FK constraints)
+        # Clean monitoring + coverage tables (order respects FK constraints).
+        # AuditContractCoverage references Contract + AuditReport + Protocol;
+        # delete it before those get cascaded away via Protocol cleanup.
         for model in [
+            AuditContractCoverage,
             MonitoredEvent,
             MonitoredContract,
             ProtocolSubscription,

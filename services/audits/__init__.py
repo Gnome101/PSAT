@@ -5,8 +5,21 @@ This package holds the pieces that run *after* discovery:
     object storage, and update the ``AuditReport`` row's extraction state.
   - ``scope_extraction`` — locate the scope section in the extracted text,
     LLM-extract the list of in-scope contracts, and write a JSON artifact.
+  - ``coverage`` — match scope contracts to ``Contract`` rows (proxy-aware
+    via ``UpgradeEvent`` history) and persist the link in
+    ``audit_contract_coverage``.
 """
 
+from .coverage import (
+    GRACE_DAYS,
+    CoverageMatch,
+    ImplWindow,
+    match_audits_for_contract,
+    match_contracts_for_audit,
+    upsert_coverage_for_audit,
+    upsert_coverage_for_contract,
+    upsert_coverage_for_protocol,
+)
 from .scope_extraction import (
     PROMPT_VERSION,
     SCOPE_ARTIFACT_CONTENT_TYPE,
@@ -56,4 +69,13 @@ __all__ = [
     "process_audit_scope",
     "scope_artifact_key",
     "validate_contracts",
+    # coverage exports
+    "CoverageMatch",
+    "GRACE_DAYS",
+    "ImplWindow",
+    "match_audits_for_contract",
+    "match_contracts_for_audit",
+    "upsert_coverage_for_audit",
+    "upsert_coverage_for_contract",
+    "upsert_coverage_for_protocol",
 ]
