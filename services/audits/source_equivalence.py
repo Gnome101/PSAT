@@ -1,46 +1,18 @@
 """Prove an audit reviewed the code currently deployed at an impl address.
 
-Bridges the gap between "audit date + impl deployment date" (temporal) and
-"audit PDF referenced commit X; commit X's source is byte-identical to
-what the impl was verified with" (forensic). Skips compilation entirely —
-source-text equality is sufficient proof.
+Forensic complement to temporal matching: if the audit PDF mentions commit
+X and commit X's source is byte-identical to the impl's Etherscan-verified
+source, the audit's coverage of that impl is proven. Source-text equality
+is sufficient — no compilation step needed.
 
-The impl's verified source comes from the first of:
+Impl source: DB ``SourceFile`` rows first (populated by the static worker),
+Etherscan ``getsourcecode`` fallback. Audit source: GitHub raw, keyed on
+``source_repo`` + ``reviewed_commits``.
 
-  1. ``SourceFile`` rows in the DB keyed on ``Contract.job_id``. The
-     discovery worker populates these for every Contract that's been
-     through the static-analysis pipeline, so a protocol with analyzed
-     impls needs zero Etherscan traffic for source-equivalence checks.
-
-  2. A fresh Etherscan ``getsourcecode`` call for impls that have never
-     been analyzed (common case: historical impls surfaced only through
-     ``UpgradeEvent`` backfill). Cached per-address via the shared
-     ``utils.etherscan`` cache.
-
-The audit's reviewed source comes from GitHub raw, keyed on
-``AuditReport.source_repo`` + each entry in ``AuditReport.reviewed_commits``.
-
-Flow for one (audit, impl) pair:
-
-    1. ``extract_reviewed_commits(scope_section_text)`` — regex over the
-       PDF-extracted scope text, pull 7-40 char hex sequences that look
-       like commit SHAs. Deduped + normalized lowercase.
-
-    2. ``fetch_contract_source_files(session, contract_id)`` — prefer DB
-       over Etherscan; returns ``VerifiedSource`` with ``{path: sha256}``
-       or None.
-
-    3. ``fetch_github_source_hash(repo, commit, path)`` — GET the raw
-       file from GitHub and return ``sha256(content)``. Missing file
-       returns None.
-
-    4. ``check_audit_covers_impl(audit, impl)`` — for each ``(commit,
-       scope_name)`` in the audit and each candidate path in the impl's
-       verified source, compare hashes. One match → coverage proven.
-
-Helpers are session-optional so they're testable with fixtures and
-callable from any worker / verification script. Short-term caching is
-in-process via ``lru_cache``; persistent cross-run caching is future work.
+Per-pair flow inside ``check_audit_covers_impl``: for each (commit, scope
+name) × each candidate source path, compare SHA-256. One match proves
+coverage. In-process ``lru_cache`` covers the hot path; persistent caching
+is future work.
 """
 
 from __future__ import annotations
@@ -62,21 +34,16 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-# Commit-like hex token: 7-40 chars. Lower bound of 7 is git's abbrev default;
-# upper bound is a full SHA. Anchoring on word boundaries avoids matching
-# addresses, selectors, etc. We filter out pure-digit tokens because block
-# numbers and dates slip through otherwise (e.g. "2023" is 4 chars so passes
-# the length filter if we were laxer, but "1234567" is seven digits and would).
+# 7-40 char hex tokens: 7 is git's abbrev default, 40 is a full SHA.
 _HEX_TOKEN_RE = re.compile(r"\b([0-9a-f]{7,40})\b", re.IGNORECASE)
 
 
 def extract_reviewed_commits(text: str) -> list[str]:
     """Pull commit-SHA-like hex tokens from audit PDF text.
 
-    Returns a deduplicated, lower-cased list preserving first-seen order.
-    No validation against GitHub — the caller decides whether to probe.
-    Pure-digit and palette-of-a tokens are rejected (``0000000``, ``ffffffff``)
-    because they're nearly always noise.
+    Deduped, lowercased, first-seen order. Pure-digit tokens (block
+    numbers) and all-same-char tokens (``0000000``, ``ffffffff``) are
+    rejected as noise. No GitHub validation — the caller decides.
     """
     if not text:
         return []
@@ -154,16 +121,11 @@ def fetch_etherscan_source_files(address: str) -> VerifiedSource | None:
 
 
 def fetch_db_source_files(session: Any, contract_id: int) -> VerifiedSource | None:
-    """Return the verified source for a Contract from ``source_files`` rows.
+    """Return a Contract's verified source from ``SourceFile`` rows.
 
-    Every Contract that's been through the discovery worker has its
-    Etherscan-fetched source persisted in ``SourceFile`` rows (inline
-    content or via object storage) keyed to ``Contract.job_id``. This
-    helper reuses that existing data instead of round-tripping back to
-    Etherscan — saves one request per source-equivalence check.
-
-    Returns None when the contract hasn't been analyzed (no ``job_id``)
-    or the job has no source rows. Caller falls back to
+    Reuses what the discovery worker already persisted (keyed on
+    ``Contract.job_id``) to avoid an Etherscan round-trip. Returns ``None``
+    when the contract hasn't been analyzed yet — caller falls back to
     ``fetch_etherscan_source_files``.
     """
     from db.models import Contract
@@ -258,18 +220,14 @@ def fetch_github_source_hash(repo: str, commit: str, path: str, *, token: str | 
 def _candidate_paths_for_name(name: str, etherscan_paths: list[str]) -> list[str]:
     """Paths in Etherscan's source that plausibly correspond to ``name``.
 
-    Picks files whose basename is exactly ``name.sol`` or ``name.vy`` —
-    case-insensitive. We prefer Etherscan paths verbatim (they encode the
-    project's actual directory layout) and fall back to conventional
-    ``src/<name>.sol`` when the Etherscan bundle doesn't include a path
-    matching the name (e.g. flattened verification).
+    Prefers Etherscan paths verbatim (they carry the project's actual
+    layout); falls back to conventional ``src/`` / ``contracts/`` when the
+    bundle doesn't include a matching name (flattened verification).
     """
     name_lc = name.lower()
     matches = [p for p in etherscan_paths if p.rsplit("/", 1)[-1].lower() in (f"{name_lc}.sol", f"{name_lc}.vy")]
     if matches:
         return matches
-    # Fallbacks — if Etherscan used a flattened layout or didn't include
-    # the file under a matching name, try conventional locations.
     return [f"src/{name}.sol", f"contracts/{name}.sol"]
 
 
@@ -296,20 +254,13 @@ def check_audit_covers_impl(
     source_repo: str | None,
     github_token: str | None = None,
 ) -> list[EquivalenceMatch]:
-    """Find every (commit, scope_name, path) triple where the audit's
-    reviewed source matches the impl's verified source byte-for-byte.
+    """Find every (commit, scope_name, path) triple with byte-identical source.
 
-    Returns a list of ``EquivalenceMatch`` — may be empty (no overlap
-    proven) or multiple (a file matched at several commits, or several
-    files matched at the same commit). The caller typically cares only
-    about "is this non-empty?" but preserving the full list lets the
-    UI show "this audit @ commit abc123 covers LiquidityPool.sol and
-    EtherFiRedemptionManager.sol on this impl."
-
-    Bails early when:
-      - No reviewed_commits (nothing to compare)
-      - No source_repo (can't fetch from GitHub)
-      - impl_source has no files (Etherscan didn't verify)
+    Empty list = no overlap proven. Multiple entries = same file across
+    several commits, or several files at one commit — preserved so the
+    UI can show "audit @ commit abc covers LiquidityPool.sol + …".
+    Bails when ``reviewed_commits`` / ``source_repo`` / ``impl_source.files``
+    is missing.
     """
     if not reviewed_commits or not source_repo or not impl_source.files:
         return []

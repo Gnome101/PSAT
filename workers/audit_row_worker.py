@@ -1,32 +1,18 @@
 """Base class for workers that drain a column-state-machine on ``audit_reports``.
 
-The text-extraction and scope-extraction workers share ~80% of their
-scaffolding — signal handling, batch claim via ``SELECT ... FOR UPDATE
-SKIP LOCKED``, stale-row recovery, the outer run loop with its thread
-pool, and the "open your own session to persist" pattern. Before this
-base class, that scaffolding lived twice with subtle drift risk: a bug
-fix to stale recovery had to land in two places, and adding a third
-row-worker meant copy-pasting ~100 LOC of boilerplate.
+Text-extraction and scope-extraction workers share claim + threadpool +
+stale-recovery scaffolding. Subclasses override only what differs:
 
-Subclasses declare only what actually differs:
+    _pending_rows_query   — eligibility SELECT (+ FOR UPDATE SKIP LOCKED)
+    _mark_processing      — flip a claimed row to 'processing'
+    _stale_recovery_query — reset a stuck row back to NULL
+    _process_row          — the real work (runs on a thread)
+    _persist_outcome      — write the result (opens its own session)
 
-  - ``_pending_rows_query``       which rows are eligible for this phase
-  - ``_mark_processing``          how to flip a row to "processing"
-  - ``_stale_recovery_query``     how to reset a stuck row back to pending
-  - ``_process_row``              the phase's real work (runs on a thread)
-  - ``_persist_outcome``          how to write the result back (own session)
-  - ``_log_outcome``              optional per-row log line (default: minimal)
-
-Tunables (batch size, concurrency, poll interval, stale timeout) are
-class attributes so subclasses can override at class-definition time
-from their own env-driven defaults. Nothing in the base class reads
-env directly — scheduling decisions stay owned by the subclass.
-
-This is NOT a ``workers.base.BaseWorker`` subclass. BaseWorker drives
-the ``jobs`` queue via ``db.queue.claim_job``; this one drives the
-``audit_reports`` queue via its own column state machine. Same shape,
-different table, deliberately kept separate so the two queues can't
-accidentally become each other's abstractions.
+Not a ``workers.base.BaseWorker`` subclass: that drives the ``jobs``
+queue via ``db.queue.claim_job``; this one drives the ``audit_reports``
+column state machine. Same shape, different table — kept separate so
+they can't drift into each other.
 """
 
 from __future__ import annotations
@@ -91,32 +77,15 @@ class AuditRowWorker:
     # -- Abstract hooks ---------------------------------------------------
 
     def _pending_rows_query(self) -> Select:
-        """Return the eligibility SELECT (with LIMIT + FOR UPDATE SKIP LOCKED).
-
-        Must SELECT ``AuditReport`` rows whose state column(s) match the
-        phase's "ready to claim" condition. The base's ``_claim_batch``
-        executes this and flips each returned row to processing via
-        ``_mark_processing``.
-        """
+        """SELECT of ``AuditReport`` rows ready to claim (with FOR UPDATE SKIP LOCKED)."""
         raise NotImplementedError
 
     def _mark_processing(self, row: AuditReport, now: datetime) -> None:
-        """Mutate ``row`` so its status is 'processing' with this worker's id.
-
-        Called on every row returned from ``_pending_rows_query`` inside
-        the claim transaction. Subclass writes to its own status /
-        worker / started_at / error columns; the base commits.
-        """
+        """Flip the row's phase status + worker + started_at to 'processing'."""
         raise NotImplementedError
 
     def _stale_recovery_query(self, cutoff: datetime) -> Update:
-        """Return the UPDATE ... RETURNING id query that resets stale rows.
-
-        Matches rows in the 'processing' state for this phase whose
-        ``started_at`` is older than ``cutoff``, zeroes the status/
-        worker/started_at columns, and RETURNS the ids so the base can
-        log what it unstuck.
-        """
+        """UPDATE ... RETURNING id that resets rows stuck past ``cutoff``."""
         raise NotImplementedError
 
     def _process_row(self, audit: AuditReport) -> tuple[int, Any]:

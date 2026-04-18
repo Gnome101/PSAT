@@ -79,11 +79,19 @@ class LLMRouter:
 
 @pytest.fixture()
 def llm_router(monkeypatch):
-    """Replace ``utils.llm.chat`` across every import site."""
+    """Replace ``llm.chat`` at every import site.
+
+    Every submodule does ``from utils import llm`` then calls ``llm.chat``
+    — attribute lookup on the ``llm`` module object happens at call time,
+    so patching ``utils.llm.chat`` propagates to all importers. The
+    explicit per-module patches below guard against any future site that
+    imports ``chat`` directly by name (``from utils.llm import chat``).
+    """
     router = LLMRouter()
     monkeypatch.setattr("utils.llm.chat", router)
     monkeypatch.setattr("services.discovery.audit_reports_llm.llm.chat", router)
-    monkeypatch.setattr("services.discovery.audit_reports.llm.chat", router)
+    monkeypatch.setattr("services.discovery.audit_reports._github.llm.chat", router)
+    monkeypatch.setattr("services.discovery.audit_reports._dedup.llm.chat", router)
     return router
 
 

@@ -702,7 +702,7 @@ def test_chunk_scan_stops_at_first_hit(tmp_path, monkeypatch):
         return "[]", "stub"
 
     monkeypatch.setattr(
-        "services.audits.scope_extraction._call_llm", fake_call
+        "services.audits.scope_extraction._llm._call_llm", fake_call
     )
 
     text = _doc(
@@ -733,7 +733,7 @@ def test_chunk_scan_returns_empty_when_no_chunk_has_scope(
         return "[]", "stub"
 
     monkeypatch.setattr(
-        "services.audits.scope_extraction._call_llm", fake_call
+        "services.audits.scope_extraction._llm._call_llm", fake_call
     )
 
     text = _doc(*(_page(i, "no scope anywhere " * 20) for i in range(1, 11)))
@@ -753,7 +753,7 @@ def test_chunk_scan_raises_only_when_every_call_fails(monkeypatch):
         raise LLMUnavailableError("network down")
 
     monkeypatch.setattr(
-        "services.audits.scope_extraction._call_llm", fake_call
+        "services.audits.scope_extraction._llm._call_llm", fake_call
     )
     text = _doc(*(_page(i, "x") for i in range(1, 6)))
     with pytest.raises(LLMUnavailableError):
@@ -770,7 +770,7 @@ def test_chunk_scan_rejects_findings_only_chunks_without_scope_signal(
         return '["Pool", "Vault"]', "stub"
 
     monkeypatch.setattr(
-        "services.audits.scope_extraction._call_llm", fake_call
+        "services.audits.scope_extraction._llm._call_llm", fake_call
     )
 
     # Each contract name appears exactly once — classic findings-title
@@ -791,7 +791,7 @@ def test_chunk_scan_accepts_chunk_with_scope_signal(monkeypatch):
         return '["Pool", "Vault"]', "stub"
 
     monkeypatch.setattr(
-        "services.audits.scope_extraction._call_llm", fake_call
+        "services.audits.scope_extraction._llm._call_llm", fake_call
     )
 
     text = _doc(
@@ -823,7 +823,7 @@ def test_chunk_scan_merges_across_multiple_passing_chunks(monkeypatch):
             return '["TitleContract"]', "stub"
         return "[]", "stub"
 
-    monkeypatch.setattr("services.audits.scope_extraction._call_llm", fake_call)
+    monkeypatch.setattr("services.audits.scope_extraction._llm._call_llm", fake_call)
 
     # Chunk 1 (pages 1-5): title with TitleContract mentioned multiple
     # times AND appearing as .sol. Chunk 2 (pages 6-10): main scope
@@ -873,7 +873,7 @@ def test_chunk_scan_accepts_single_focus_audit_via_frequency(monkeypatch):
         return '["WeETHWithdrawAdapter"]', "stub"
 
     monkeypatch.setattr(
-        "services.audits.scope_extraction._call_llm", fake_call
+        "services.audits.scope_extraction._llm._call_llm", fake_call
     )
 
     text = _doc(

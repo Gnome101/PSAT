@@ -615,24 +615,24 @@ def make_fresh_worker(monkeypatch):
 
 @pytest.fixture()
 def llm_call_counter(monkeypatch):
-    """Wrap services.audits.scope_extraction._call_llm with a counter.
+    """Wrap services.audits.scope_extraction._llm._call_llm with a counter.
 
     Lets tests assert exactly how many LLM calls happened across a
     sequence of worker runs — the surest way to prove the cache
     short-circuited re-processing.
     """
     counter = {"calls": 0}
-    # Import lazily so monkeypatch hooks the real module-level function
-    # the service uses (not a local binding that was taken at import).
-    import services.audits.scope_extraction as scope_mod
+    # Patch ``_call_llm`` at its source (``_llm`` submodule) — patching the
+    # package-level re-export wouldn't intercept calls from inside ``_llm``.
+    import services.audits.scope_extraction._llm as llm_mod
 
-    real = scope_mod._call_llm
+    real = llm_mod._call_llm
 
     def counting_call(prompt):
         counter["calls"] += 1
         return real(prompt)
 
-    monkeypatch.setattr(scope_mod, "_call_llm", counting_call)
+    monkeypatch.setattr(llm_mod, "_call_llm", counting_call)
     return counter
 
 

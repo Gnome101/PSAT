@@ -60,12 +60,9 @@ from db.models import (
 logger = logging.getLogger(__name__)
 
 
-# --- Tunables -----------------------------------------------------------
-
-# Grace window around an impl's active range. An audit published a few days
-# after an upgrade usually reviewed the older impl — the engagement predates
-# the publish date. 14 days is loose enough to catch common cases without
-# letting the audit match an impl that was active weeks later.
+# Grace zone around an impl's active range — audits published shortly
+# after an upgrade usually reviewed the older impl (engagement predates
+# publication). 14d catches the common case without overreaching.
 GRACE_DAYS: Final[int] = 14
 
 
@@ -102,19 +99,12 @@ class CoverageMatch:
 
 
 def _audit_effective_ts(audit_date: str | None) -> datetime | None:
-    """Parse ``AuditReport.date`` into a tz-aware datetime.
+    """Parse ``AuditReport.date`` into a tz-aware datetime (end-of-period).
 
-    Accepted forms (produced by the discovery + scope-extraction pipeline):
-      - YYYY-MM-DD → that day at 23:59:59 UTC (end-of-day)
-      - YYYY-MM or YYYY-MM-00 → last day of month at 23:59:59 UTC
-      - YYYY → December 31 at 23:59:59 UTC
-      - None / unparseable → None
-
-    Returns None rather than raising so a malformed discovery-time date
-    downgrades to ``'low'`` confidence instead of blocking coverage.
-    End-of-period semantics are intentional: audits finalize late in the
-    stated period, so picking the latest plausible moment is the most
-    generous interpretation of "was this impl active at audit time?".
+    Accepts ``YYYY-MM-DD`` / ``YYYY-MM`` / ``YYYY-MM-00`` / ``YYYY``. Returns
+    ``None`` on malformed input so coverage downgrades to ``low`` instead
+    of crashing. End-of-period semantics are deliberate — audits finalize
+    late in the stated period.
     """
     if not audit_date:
         return None
@@ -166,18 +156,10 @@ def _end_of_month(year: int, month: int) -> datetime:
 def _compute_impl_windows_for_contract(session: Session, contract: Contract) -> list[ImplWindow]:
     """Return windows during which ``contract.address`` was an active impl.
 
-    Walks ``UpgradeEvent`` rows where ``new_impl`` matches the contract's
-    address. The upper bound of each window is the *next* upgrade on the
-    same proxy (same ``UpgradeEvent.contract_id``) with a strictly greater
-    block number — NULL means the impl is still current on that proxy.
-
-    Address comparison is case-insensitive via a lowered match because
-    Etherscan and EVM tooling disagree about checksum casing.
-
-    A contract used as the impl of multiple proxies gets multiple windows;
-    the caller unions them when deciding "was the audit consistent with
-    any active window?". Kept explicit so the UI can later distinguish
-    "audit covers impl X on proxy P1" from "impl X on proxy P2".
+    The upper bound of each window is the next event on the same proxy;
+    NULL means the impl is still current. A contract used on multiple
+    proxies gets one window per proxy so the UI can distinguish them.
+    Address comparison is lowercase-case (Etherscan vs EVM checksum drift).
     """
     if not contract.address:
         return []
@@ -256,20 +238,15 @@ def _compute_impl_windows_for_contract(session: Session, contract: Contract) -> 
 
 
 def _confidence_for_impl_era(audit_ts: datetime | None, windows: list[ImplWindow]) -> tuple[str, ImplWindow | None]:
-    """Pick the best-matching window for the audit timestamp + grade it.
+    """Pick the best-matching window for the audit timestamp.
 
-    - ``high``: the audit landed inside one of the contract's active windows.
-      Open-ended windows (``to_ts=None``, still current) count too.
-    - ``medium``: audit is within ``GRACE_DAYS`` of a window boundary on
-      either side. Covers the common "audit published shortly after an
-      upgrade happened" case where the reviewed code is actually the
-      just-replaced impl.
-    - ``low``: audit timestamp is None (nothing to place against) or falls
-      clearly outside every window. The row still gets emitted so the UI
-      can show "we found a name match but the timing doesn't line up".
+    Returns ``(confidence, window)``:
+        high   — audit lands inside an active window
+        medium — audit within ``GRACE_DAYS`` of a window boundary
+        low    — no timestamp, or clearly outside every window
 
-    Returns the chosen window for range-column population. ``None`` when
-    every window is a bad fit — the row gets NULL range bounds.
+    Low-confidence rows still emit so the UI can flag name-matches with
+    bad timing. Window is ``None`` when nothing is a plausible anchor.
     """
     if not windows:
         # No impl history at all — shouldn't be called in impl_era mode.
@@ -334,15 +311,10 @@ def _confidence_for_impl_era(audit_ts: datetime | None, windows: list[ImplWindow
 
 
 def _confidence_for_direct(audit_ts: datetime | None, contract: Contract) -> str:
-    """Confidence for a direct (no-impl-history) match.
+    """High when audit has a date, medium when name-only (no date).
 
-    - ``high`` when we have an audit date AND the contract deployment /
-      verification plausibly predates it. We don't have a deployment-time
-      column on Contract today, so "plausibly" is just "audit has a date".
-    - ``medium`` when the audit has no date (name-only match).
-    - (No ``low`` from this path — a direct match with nothing to verify
-      against is still a clean name match; falling to low would under-sell
-      it relative to a distant impl_era match.)
+    Direct matches never go low: a clean name match without history to
+    falsify against beats a distant impl_era match.
     """
     return "high" if audit_ts is not None else "medium"
 
@@ -523,25 +495,13 @@ def _reviewed_commit_upgrades(
     session: Session,
     matches: list[CoverageMatch],
 ) -> list[CoverageMatch]:
-    """For each match, try to prove it via source-equivalence.
+    """Upgrade matches to ``reviewed_commit`` when source-equivalence proves them.
 
-    Each match carries its own ``audit_report_id``, so a single call can
-    span matches from multiple audits (needed by the contract-centric
-    refresh path). AuditReport rows are looked up once per audit_id via
-    an in-call cache so a batch of matches on the same audit fetches the
-    row only once.
-
-    When the audit has ``reviewed_commits`` + ``source_repo``, runs a
-    GitHub + Etherscan cross-check against each candidate contract. A
-    positive hit upgrades the match to ``match_type='reviewed_commit'``
-    / ``match_confidence='high'`` — the audit is proven to have reviewed
-    the byte-exact source now deployed at that impl. Temporal bounds
-    (``covered_from_block`` / ``covered_to_block``) pass through unchanged;
-    the proof is per-file, not per-window.
-
-    Non-destructive: returns a new list; never mutates caller's input.
-    Swallows per-match exceptions — if proof fails to resolve, the
-    existing temporal match stands.
+    When the audit has ``reviewed_commits`` + ``source_repo``, cross-checks
+    GitHub vs Etherscan for each candidate. Hit → ``match_type='reviewed_commit'``,
+    ``confidence='high'``; miss → the temporal match stands unchanged.
+    Audit rows are cached per call so a batch on one audit hits the DB once.
+    Non-destructive (returns a fresh list) and per-match failures are swallowed.
     """
     import os
 
@@ -562,9 +522,7 @@ def _reviewed_commit_upgrades(
             upgraded.append(m)
             continue
         try:
-            proofs = check_audit_row_covers_contract(
-                session, m.audit_report_id, m.contract_id, github_token=gh_token
-            )
+            proofs = check_audit_row_covers_contract(session, m.audit_report_id, m.contract_id, github_token=gh_token)
         except Exception:
             logger.exception(
                 "source-equivalence check crashed for audit %s / contract %s",
@@ -607,17 +565,10 @@ def upsert_coverage_for_audit(
 ) -> int:
     """Replace all coverage rows for ``audit_id`` with a fresh match.
 
-    Delete-then-insert (inside the caller's transaction) gives free
-    invalidation when scope re-extraction changes ``scope_contracts[]`` —
-    stale rows are gone, new rows reflect the current scope. Returns the
-    number of rows inserted. The caller is responsible for ``session.commit()``.
-
-    ``verify_source_equivalence`` (default False) runs a GitHub + Etherscan
-    cross-check on each match: when the audit has ``reviewed_commits`` +
-    ``source_repo`` set and a candidate impl's Etherscan-verified source
-    is byte-identical to the file at the reviewed commit, the match is
-    upgraded to ``'reviewed_commit'`` / ``'high'``. Opt-in because it
-    costs ~2 HTTP requests per scope-contract × reviewed-commit pair.
+    Delete-then-insert in the caller's transaction — free invalidation on
+    scope re-extraction. Returns inserted row count; caller commits.
+    ``verify_source_equivalence`` is opt-in (~2 HTTP/pair); upgrades
+    matches to ``reviewed_commit``/``high`` when proof succeeds.
     """
     audit = session.get(AuditReport, audit_id)
     if audit is None:
@@ -652,16 +603,10 @@ def upsert_coverage_for_contract(
     *,
     verify_source_equivalence: bool = False,
 ) -> int:
-    """Refresh coverage rows whose ``contract_id`` points at this contract.
+    """Refresh coverage rows for one contract (delete-then-insert by contract_id).
 
-    Used when a live upgrade changes the contract's impl windows — any
-    existing impl_era rows may have stale block ranges. Delete-then-insert
-    keyed on ``contract_id`` keeps the write side simple.
-
-    ``verify_source_equivalence`` piggybacks on the same GitHub + Etherscan
-    cross-check as the audit-centric path. Enabled by the end-of-pipeline
-    coverage worker so proof-grade ``reviewed_commit`` matches get written
-    as a natural part of analyzing a contract.
+    Called after a live upgrade changes the contract's impl windows.
+    ``verify_source_equivalence`` forwards to the source-equivalence pass.
     """
     session.execute(sql_delete(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract_id))
     matches = match_audits_for_contract(session, contract_id)
@@ -678,13 +623,10 @@ def upsert_coverage_for_protocol(
     *,
     verify_source_equivalence: bool = False,
 ) -> int:
-    """Rebuild coverage for every scoped audit in a protocol.
+    """Rebuild coverage for every scoped audit in a protocol. Idempotent.
 
-    Idempotent. Used as the batch entry point — call from CLI flows,
-    admin-triggered refresh endpoints, and integration tests. Returns
-    the total inserted row count. ``verify_source_equivalence`` forwards
-    to ``upsert_coverage_for_audit``; set True only when the caller is OK
-    with the network cost of per-audit GitHub + Etherscan lookups.
+    Batch entry point used by CLI flows, admin refresh endpoints, and
+    integration tests. ``verify_source_equivalence`` adds ~2 HTTP/pair.
     """
     audit_ids = (
         session.execute(

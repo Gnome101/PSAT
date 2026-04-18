@@ -1,19 +1,12 @@
-"""Download audit-report PDFs, extract text, and store the text in object storage.
+"""Download audit PDFs, extract text, store it in object storage.
 
-The pipeline is intentionally I/O-only at this layer — orchestration (claiming
-rows, updating DB state, rate limiting across hosts) lives in
-``workers.audit_text_extraction``. This module is importable and testable
-without a running database or S3.
+I/O-only at this layer — orchestration (claiming rows, DB state, rate
+limiting) lives in ``workers.audit_text_extraction``. Importable and
+testable without DB or S3.
 
-Flow for one audit:
-  1. ``download_pdf(url)``   — HTTP GET with size + timeout caps, returns bytes
-                                 or raises a typed error.
-  2. ``extract_text_from_pdf(body)`` — pypdf parse with page markers.
-  3. ``store_audit_text(audit_id, text)`` — write to object storage under a
-                                             deterministic key, return metadata.
-
-``process_audit_report`` chains all three and returns an ``ExtractionOutcome``
-so the worker can apply the result to the DB row in one place.
+``process_audit_report`` chains ``download_pdf`` → ``extract_text_from_pdf``
+→ ``store_audit_text`` and returns an ``ExtractionOutcome`` the worker
+persists.
 """
 
 from __future__ import annotations
@@ -30,38 +23,31 @@ from db.storage import StorageUnavailable, get_storage_client
 
 logger = logging.getLogger(__name__)
 
-# --- Limits ---------------------------------------------------------------
-
-# Hard cap on bytes we'll fetch for a single PDF. Audits >50MB are rare and
-# almost always indicate a scanned image dump we wouldn't usefully parse
-# anyway. Keeping this bounded protects the worker from OOM on hostile hosts.
-_MAX_PDF_BYTES: Final[int] = 50 * 1024 * 1024  # 50 MB
-
-# Network timeouts for (connect, read). Individual audit-firm hosts have
-# highly variable latency; we'd rather fail fast and retry than hold threads
-# open on a slow server.
+# Size cap: >50MB is almost always a scanned-image dump anyway, plus OOM
+# protection against hostile hosts. Under-500-char extracts get marked
+# ``skipped`` as image-only PDFs (OCR is out of scope).
+_MAX_PDF_BYTES: Final[int] = 50 * 1024 * 1024
 _CONNECT_TIMEOUT: Final[float] = 10.0
 _READ_TIMEOUT: Final[float] = 60.0
-
-# An extracted body shorter than this is almost certainly a PDF whose only
-# content is a raster image of the audit — pypdf can parse the structure but
-# gets back empty text layers. OCR is out of scope for this worker.
 _MIN_USEFUL_TEXT_LENGTH: Final[int] = 500
 
-# Content types we'll accept from the server. Many CDNs serve PDFs as
-# ``application/octet-stream`` so we accept that too; non-matching types
-# short-circuit to avoid parsing HTML error pages as PDFs.
-_ACCEPTED_CONTENT_TYPES: Final[frozenset[str]] = frozenset({
-    "application/pdf",
-    "application/octet-stream",
-    "binary/octet-stream",
-    "application/x-pdf",
-})
+# CDNs often serve PDFs as ``application/octet-stream`` — accept those too.
+# Non-matching content-types short-circuit so we don't parse HTML error
+# pages as PDFs.
+_ACCEPTED_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "application/pdf",
+        "application/octet-stream",
+        "binary/octet-stream",
+        "application/x-pdf",
+    }
+)
 
 AUDIT_TEXT_CONTENT_TYPE: Final[str] = "text/plain; charset=utf-8"
 
 
 # --- Errors ---------------------------------------------------------------
+
 
 class TextExtractionError(RuntimeError):
     """Base class for failures during the download/extract/store flow."""
@@ -85,6 +71,7 @@ class StorageWriteError(TextExtractionError):
 
 # --- Result type ----------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class ExtractionOutcome:
     """Structured result of ``process_audit_report``.
@@ -102,12 +89,14 @@ class ExtractionOutcome:
 
 # --- Storage key ---------------------------------------------------------
 
+
 def audit_text_key(audit_report_id: int) -> str:
     """Deterministic object-storage key for an audit's extracted text body."""
     return f"audits/text/{int(audit_report_id)}.txt"
 
 
 # --- Download ------------------------------------------------------------
+
 
 def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
     """Fetch a PDF by URL. Streams to memory with a hard size cap.
@@ -143,9 +132,7 @@ def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
         # tell upfront the body is too big.
         content_length = resp.headers.get("content-length")
         if content_length and content_length.isdigit() and int(content_length) > _MAX_PDF_BYTES:
-            raise PdfTooLargeError(
-                f"Content-Length {content_length} exceeds cap {_MAX_PDF_BYTES}"
-            )
+            raise PdfTooLargeError(f"Content-Length {content_length} exceeds cap {_MAX_PDF_BYTES}")
 
         chunks: list[bytes] = []
         total = 0
@@ -154,9 +141,7 @@ def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
                 continue
             total += len(chunk)
             if total > _MAX_PDF_BYTES:
-                raise PdfTooLargeError(
-                    f"streamed body exceeded cap {_MAX_PDF_BYTES}"
-                )
+                raise PdfTooLargeError(f"streamed body exceeded cap {_MAX_PDF_BYTES}")
             chunks.append(chunk)
 
         return b"".join(chunks)
@@ -166,15 +151,13 @@ def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
 
 # --- Extract -------------------------------------------------------------
 
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
-    """Parse a PDF's text content page-by-page.
+    """Parse a PDF page-by-page with ``\\f\\n--- page {n} ---\\n\\f`` separators.
 
-    Pages are separated by ``\\f\\n--- page {n} ---\\n\\f`` so a future scope-
-    extraction pass can recover page boundaries without re-parsing the PDF.
-    Returns the concatenated text (may be empty — the caller decides whether
-    empty/short output is a "skipped" outcome).
-
-    Raises ``PdfParseError`` if pypdf rejects the body outright.
+    Scope extraction uses the markers to recover page boundaries without
+    re-parsing. Empty/short output is the caller's call to skip. Raises
+    ``PdfParseError`` when pypdf rejects the body outright.
     """
     try:
         from pypdf import PdfReader
@@ -190,8 +173,7 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         raise PdfParseError(f"pypdf failed: {exc}") from exc
 
     if getattr(reader, "is_encrypted", False):
-        # Try empty-password decrypt; many "encrypted" PDFs use the empty
-        # string (a legacy print-protection flag rather than real encryption).
+        # Empty-password decrypt covers legacy print-protection PDFs.
         try:
             if not reader.decrypt(""):
                 raise PdfParseError("encrypted PDF; no password available")
@@ -212,6 +194,7 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
 
 # --- Store ---------------------------------------------------------------
 
+
 def store_audit_text(
     audit_report_id: int,
     text: str,
@@ -223,9 +206,7 @@ def store_audit_text(
     """
     client = get_storage_client()
     if client is None:
-        raise StorageWriteError(
-            "object storage not configured (ARTIFACT_STORAGE_* env vars unset)"
-        )
+        raise StorageWriteError("object storage not configured (ARTIFACT_STORAGE_* env vars unset)")
 
     body = text.encode("utf-8")
     digest = hashlib.sha256(body).hexdigest()
@@ -249,17 +230,17 @@ def store_audit_text(
 
 # --- Orchestration ---------------------------------------------------------
 
+
 def process_audit_report(
     audit_report_id: int,
     url: str,
     session: requests.Session | None = None,
 ) -> ExtractionOutcome:
-    """Run the full download → parse → store chain for one audit.
+    """Run download → parse → store for one audit. Never raises.
 
-    Catches the typed errors raised by the constituent functions and
-    translates each into a final ``ExtractionOutcome`` with a status the
-    worker can persist directly. Never raises — any unexpected exception
-    still surfaces as ``status="failed"`` with the error message.
+    Typed errors from each stage become ``ExtractionOutcome(status=...)``
+    the worker can persist directly; unexpected exceptions still surface
+    as ``status="failed"`` with the error message captured.
     """
     if not url:
         return ExtractionOutcome(status="failed", error="no URL on audit row")
@@ -328,11 +309,14 @@ def _cli() -> None:
     )
     parser.add_argument("url", help="Full URL of the PDF (gh raw, CDN, etc.)")
     parser.add_argument(
-        "--save", metavar="PATH",
+        "--save",
+        metavar="PATH",
         help="Also write the extracted text to this local path.",
     )
     parser.add_argument(
-        "--head", type=int, default=800,
+        "--head",
+        type=int,
+        default=800,
         help="Print only the first N chars (default: 800).",
     )
     args = parser.parse_args()
@@ -356,13 +340,13 @@ def _cli() -> None:
     print(f"  {len(text):,} chars", file=sys.stderr)
     if len(text) < _MIN_USEFUL_TEXT_LENGTH:
         print(
-            f"  ⚠ under {_MIN_USEFUL_TEXT_LENGTH} chars — worker would SKIP "
-            f"this as image-only PDF",
+            f"  ⚠ under {_MIN_USEFUL_TEXT_LENGTH} chars — worker would SKIP this as image-only PDF",
             file=sys.stderr,
         )
 
     if args.save:
         from pathlib import Path
+
         Path(args.save).write_text(text)
         print(f"→ saved to {args.save}", file=sys.stderr)
 
