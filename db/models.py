@@ -48,6 +48,7 @@ class JobStage(str, enum.Enum):
     static = "static"
     resolution = "resolution"
     policy = "policy"
+    coverage = "coverage"
     done = "done"
 
 
@@ -752,6 +753,11 @@ def apply_storage_migrations(target_engine=None) -> None:
     from sqlalchemy import text
 
     target = target_engine if target_engine is not None else engine
+    # ``ALTER TYPE ... ADD VALUE`` cannot run inside a transaction block on
+    # Postgres, so run it on a dedicated AUTOCOMMIT connection. ``IF NOT
+    # EXISTS`` keeps it idempotent across restarts and test-DB reuse.
+    with target.connect().execution_options(isolation_level="AUTOCOMMIT") as ac_conn:
+        ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'coverage' BEFORE 'done'"))
     with target.connect() as conn:
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS size_bytes BIGINT"))
@@ -866,12 +872,21 @@ def create_tables() -> None:
                     "THEN CREATE TYPE jobstatus AS ENUM ('queued','processing','completed','failed'); END IF; END $$;"
                 )
             )
-        for enum_val in ("discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy", "done"):
+        for enum_val in (
+            "discovery",
+            "dapp_crawl",
+            "defillama_scan",
+            "static",
+            "resolution",
+            "policy",
+            "coverage",
+            "done",
+        ):
             conn.execute(
                 text(
                     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'jobstage') "
                     "THEN CREATE TYPE jobstage AS ENUM ("
-                    "'discovery','dapp_crawl','defillama_scan','static','resolution','policy','done'"
+                    "'discovery','dapp_crawl','defillama_scan','static','resolution','policy','coverage','done'"
                     "); END IF; END $$;"
                 )
             )

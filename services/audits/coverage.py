@@ -521,10 +521,15 @@ def _match_to_row_kwargs(match: CoverageMatch) -> dict:
 
 def _reviewed_commit_upgrades(
     session: Session,
-    audit_id: int,
     matches: list[CoverageMatch],
 ) -> list[CoverageMatch]:
     """For each match, try to prove it via source-equivalence.
+
+    Each match carries its own ``audit_report_id``, so a single call can
+    span matches from multiple audits (needed by the contract-centric
+    refresh path). AuditReport rows are looked up once per audit_id via
+    an in-call cache so a batch of matches on the same audit fetches the
+    row only once.
 
     When the audit has ``reviewed_commits`` + ``source_repo``, runs a
     GitHub + Etherscan cross-check against each candidate contract. A
@@ -542,21 +547,28 @@ def _reviewed_commit_upgrades(
 
     from services.audits.source_equivalence import check_audit_row_covers_contract
 
-    audit = session.get(AuditReport, audit_id)
-    if audit is None:
-        return matches
-    if not (audit.reviewed_commits and audit.source_repo):
-        return matches
-
     gh_token = os.environ.get("GITHUB_TOKEN") or None
+    audit_cache: dict[int, AuditReport | None] = {}
+
+    def _audit(audit_id: int) -> AuditReport | None:
+        if audit_id not in audit_cache:
+            audit_cache[audit_id] = session.get(AuditReport, audit_id)
+        return audit_cache[audit_id]
+
     upgraded: list[CoverageMatch] = []
     for m in matches:
+        audit = _audit(m.audit_report_id)
+        if audit is None or not (audit.reviewed_commits and audit.source_repo):
+            upgraded.append(m)
+            continue
         try:
-            proofs = check_audit_row_covers_contract(session, audit_id, m.contract_id, github_token=gh_token)
+            proofs = check_audit_row_covers_contract(
+                session, m.audit_report_id, m.contract_id, github_token=gh_token
+            )
         except Exception:
             logger.exception(
                 "source-equivalence check crashed for audit %s / contract %s",
-                audit_id,
+                m.audit_report_id,
                 m.contract_id,
             )
             upgraded.append(m)
@@ -577,7 +589,7 @@ def _reviewed_commit_upgrades(
             )
             logger.info(
                 "coverage: audit %s proven to cover contract %s via source-equivalence at commit %s / path %s",
-                audit_id,
+                m.audit_report_id,
                 m.contract_id,
                 proof.commit,
                 proof.etherscan_path,
@@ -627,22 +639,34 @@ def upsert_coverage_for_audit(
         return 0
 
     if verify_source_equivalence:
-        matches = _reviewed_commit_upgrades(session, audit_id, matches)
+        matches = _reviewed_commit_upgrades(session, matches)
 
     for match in matches:
         session.add(AuditContractCoverage(**_match_to_row_kwargs(match)))
     return len(matches)
 
 
-def upsert_coverage_for_contract(session: Session, contract_id: int) -> int:
+def upsert_coverage_for_contract(
+    session: Session,
+    contract_id: int,
+    *,
+    verify_source_equivalence: bool = False,
+) -> int:
     """Refresh coverage rows whose ``contract_id`` points at this contract.
 
     Used when a live upgrade changes the contract's impl windows — any
     existing impl_era rows may have stale block ranges. Delete-then-insert
     keyed on ``contract_id`` keeps the write side simple.
+
+    ``verify_source_equivalence`` piggybacks on the same GitHub + Etherscan
+    cross-check as the audit-centric path. Enabled by the end-of-pipeline
+    coverage worker so proof-grade ``reviewed_commit`` matches get written
+    as a natural part of analyzing a contract.
     """
     session.execute(sql_delete(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract_id))
     matches = match_audits_for_contract(session, contract_id)
+    if verify_source_equivalence and matches:
+        matches = _reviewed_commit_upgrades(session, matches)
     for match in matches:
         session.add(AuditContractCoverage(**_match_to_row_kwargs(match)))
     return len(matches)

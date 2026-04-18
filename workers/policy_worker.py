@@ -27,7 +27,7 @@ RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
 class PolicyWorker(BaseWorker):
     stage = JobStage.policy
-    next_stage = JobStage.done
+    next_stage = JobStage.coverage
 
     def process(self, session: Session, job: Job) -> None:
         logger.info(

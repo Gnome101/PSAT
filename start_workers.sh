@@ -44,6 +44,8 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.policy_worker &
 PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.coverage_worker &
+PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.dapp_crawl_worker &
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.defillama_worker &

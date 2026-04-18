@@ -1387,6 +1387,7 @@ def test_worker_stage_chain_is_complete():
     from workers.discovery import DiscoveryWorker
     from workers.policy_worker import PolicyWorker
     from workers.resolution_worker import ResolutionWorker
+    from workers.coverage_worker import CoverageWorker
     from workers.static_worker import StaticWorker
 
     # Verify the chain
@@ -1400,10 +1401,13 @@ def test_worker_stage_chain_is_complete():
     assert ResolutionWorker.next_stage == JobStage.policy
 
     assert PolicyWorker.stage == JobStage.policy
-    assert PolicyWorker.next_stage == JobStage.done
+    assert PolicyWorker.next_stage == JobStage.coverage
+
+    assert CoverageWorker.stage == JobStage.coverage
+    assert CoverageWorker.next_stage == JobStage.done
 
     # Verify the chain links: each worker's next_stage matches the next worker's stage
-    chain = [DiscoveryWorker, StaticWorker, ResolutionWorker, PolicyWorker]
+    chain = [DiscoveryWorker, StaticWorker, ResolutionWorker, PolicyWorker, CoverageWorker]
     for i in range(len(chain) - 1):
         assert chain[i].next_stage == chain[i + 1].stage, (
             f"{chain[i].__name__}.next_stage ({chain[i].next_stage}) != "
