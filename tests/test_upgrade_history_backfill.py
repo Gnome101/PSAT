@@ -593,9 +593,7 @@ def test_coverage_matcher_links_audit_to_backfilled_impl(db_session, seed_protoc
 # ---------------------------------------------------------------------------
 
 
-def test_backfill_triggers_coverage_refresh_for_created_rows(
-    db_session, seed_protocol, worker, stub_etherscan
-):
+def test_backfill_triggers_coverage_refresh_for_created_rows(db_session, seed_protocol, worker, stub_etherscan):
     """Regression for the "RoleRegistry shows unaudited" bug: when
     ``_backfill_historical_impls`` creates a new historical-impl Contract
     row, coverage for every existing audit whose scope names that impl
@@ -661,12 +659,7 @@ def test_backfill_triggers_coverage_refresh_for_created_rows(
     inserted = upsert_coverage_for_audit(db_session, audit.id)
     db_session.commit()
     assert inserted == 0
-    assert (
-        db_session.query(AuditContractCoverage)
-        .filter_by(protocol_id=protocol_id)
-        .count()
-        == 0
-    )
+    assert db_session.query(AuditContractCoverage).filter_by(protocol_id=protocol_id).count() == 0
 
     # 4. Backfill happens — late. Stub Etherscan to return the name the
     # audit scope is looking for, so the match is possible once the row
@@ -680,25 +673,16 @@ def test_backfill_triggers_coverage_refresh_for_created_rows(
     )
     db_session.commit()
 
-    created = (
-        db_session.query(Contract)
-        .filter_by(protocol_id=protocol_id, address=impl_addr)
-        .one()
-    )
+    created = db_session.query(Contract).filter_by(protocol_id=protocol_id, address=impl_addr).one()
     assert created.contract_name == "HistoricalImpl"
     assert created.discovery_source == "upgrade_history"
 
     # 5. The regression check: after backfill, a coverage row linking
     # the audit to the newly-created impl must exist. Before the fix
     # this count was 0 and the "audited?" UI pulled "no".
-    rows = (
-        db_session.query(AuditContractCoverage)
-        .filter_by(protocol_id=protocol_id, contract_id=created.id)
-        .all()
-    )
+    rows = db_session.query(AuditContractCoverage).filter_by(protocol_id=protocol_id, contract_id=created.id).all()
     assert len(rows) == 1, (
-        "backfill created the Contract row but did not refresh coverage — "
-        "audit ↔ historical-impl link is missing"
+        "backfill created the Contract row but did not refresh coverage — audit ↔ historical-impl link is missing"
     )
     r = rows[0]
     assert r.audit_report_id == audit.id
@@ -712,14 +696,12 @@ def test_backfill_triggers_coverage_refresh_for_created_rows(
     assert r.covered_to_block is None
 
 
-def test_backfill_coverage_refresh_covers_adopted_rows_too(
-    db_session, seed_protocol, worker, stub_etherscan
-):
+def test_backfill_coverage_refresh_covers_adopted_rows_too(db_session, seed_protocol, worker, stub_etherscan):
     """The adoption branch (pre-existing orphan row adopted into the
     protocol) must also trigger a coverage refresh. Without the refresh
     the row would join the protocol but stay unlinked to matching audits.
     """
-    from db.models import AuditContractCoverage, AuditReport, Contract, UpgradeEvent
+    from db.models import AuditContractCoverage, AuditReport, UpgradeEvent
     from services.audits.coverage import upsert_coverage_for_audit
 
     protocol_id, _ = seed_protocol
@@ -785,11 +767,7 @@ def test_backfill_coverage_refresh_covers_adopted_rows_too(
     assert orphan.discovery_source == "upgrade_history"
 
     # Adoption must pull coverage through too.
-    rows = (
-        db_session.query(AuditContractCoverage)
-        .filter_by(protocol_id=protocol_id, contract_id=orphan.id)
-        .all()
-    )
+    rows = db_session.query(AuditContractCoverage).filter_by(protocol_id=protocol_id, contract_id=orphan.id).all()
     assert len(rows) == 1, (
         "adoption path didn't refresh coverage — orphan was pulled into "
         "the protocol but the audit link was not materialized"

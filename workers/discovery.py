@@ -265,8 +265,7 @@ class DiscoveryWorker(BaseWorker):
             complete_job(
                 session,
                 job.id,
-                f"Discovery complete for {company}: no inventory contracts; "
-                "parallel discovery spawned",
+                f"Discovery complete for {company}: no inventory contracts; parallel discovery spawned",
             )
         raise JobHandledDirectly()
 
