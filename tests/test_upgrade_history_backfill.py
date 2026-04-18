@@ -253,14 +253,10 @@ def test_backfill_is_idempotent(db_session, seed_protocol, worker, stub_ethersca
     protocol_id, _ = seed_protocol
     addrs = {_addr(0xE5), _addr(0xF6)}
 
-    worker._backfill_historical_impls(
-        db_session, protocol_id=protocol_id, chain="ethereum", impl_addrs=addrs
-    )
+    worker._backfill_historical_impls(db_session, protocol_id=protocol_id, chain="ethereum", impl_addrs=addrs)
     count_after_first = db_session.query(Contract).filter_by(protocol_id=protocol_id).count()
 
-    worker._backfill_historical_impls(
-        db_session, protocol_id=protocol_id, chain="ethereum", impl_addrs=addrs
-    )
+    worker._backfill_historical_impls(db_session, protocol_id=protocol_id, chain="ethereum", impl_addrs=addrs)
     count_after_second = db_session.query(Contract).filter_by(protocol_id=protocol_id).count()
 
     assert count_after_first == count_after_second == 2
@@ -304,17 +300,13 @@ def test_backfill_treats_cross_chain_same_address_as_distinct(db_session, seed_p
         )
 
         # Polygon row untouched.
-        polygon_row = (
-            db_session.query(Contract).filter_by(address=addr, chain="polygon").one()
-        )
+        polygon_row = db_session.query(Contract).filter_by(address=addr, chain="polygon").one()
         assert polygon_row.protocol_id == other_id
         assert polygon_row.contract_name == "PolygonDeployment"
         assert polygon_row.discovery_source == "inventory"
 
         # Fresh ethereum row created for our protocol.
-        ethereum_row = (
-            db_session.query(Contract).filter_by(address=addr, chain="ethereum").one()
-        )
+        ethereum_row = db_session.query(Contract).filter_by(address=addr, chain="ethereum").one()
         assert ethereum_row.protocol_id == our_protocol_id
         assert ethereum_row.contract_name == "EthereumImpl"
         assert ethereum_row.discovery_source == "upgrade_history"
@@ -428,11 +420,7 @@ def test_run_upgrade_history_writes_events_and_backfills_impls(
     assert len(events) == 2
     assert {e.new_impl for e in events} == {impl_a, impl_b}
 
-    impl_rows = (
-        db_session.query(Contract)
-        .filter(Contract.address.in_({impl_a, impl_b}))
-        .all()
-    )
+    impl_rows = db_session.query(Contract).filter(Contract.address.in_({impl_a, impl_b})).all()
     assert len(impl_rows) == 2
     for row in impl_rows:
         assert row.discovery_source == "upgrade_history"
@@ -465,7 +453,9 @@ def test_run_upgrade_history_skips_when_job_has_no_contract(db_session, seed_pro
         rw_mod,
         "get_artifact",
         lambda *_a, **_k: {
-            "proxies": {"0x1": {"proxy_address": "0x1", "events": [{"event_type": "upgraded", "implementation": _addr(0x2)}]}}
+            "proxies": {
+                "0x1": {"proxy_address": "0x1", "events": [{"event_type": "upgraded", "implementation": _addr(0x2)}]}
+            }
         },
     )
 
@@ -483,9 +473,7 @@ def test_run_upgrade_history_skips_when_job_has_no_contract(db_session, seed_pro
 # ---------------------------------------------------------------------------
 
 
-def test_analyze_remaining_skips_backfilled_historical_impls(
-    api_client, db_session, seed_protocol, stub_etherscan
-):
+def test_analyze_remaining_skips_backfilled_historical_impls(api_client, db_session, seed_protocol, stub_etherscan):
     """Seed protocol with one normal unanalyzed Contract and one
     backfilled historical-impl Contract. The analyze-remaining endpoint
     must enqueue a job only for the normal one.

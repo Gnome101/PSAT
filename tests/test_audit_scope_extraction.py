@@ -145,8 +145,7 @@ def test_merged_section_preserves_text_from_later_match():
         _page(3, "Files in scope:\n- SubAContract.sol"),
         _page(
             4,
-            "Additional scope for SubProject B\n"
-            "The following contracts are in scope:\n- SubBContract.sol",
+            "Additional scope for SubProject B\nThe following contracts are in scope:\n- SubBContract.sol",
         ),
         _page(5, "Findings"),
     )
@@ -547,9 +546,7 @@ def test_build_artifact_payload_preserves_scope_section_text():
         raw_response='["Pool"]',
         scope_section_text="The following contracts were audited:\nsrc/Pool.sol",
     )
-    assert payload["scope_section_text"] == (
-        "The following contracts were audited:\nsrc/Pool.sol"
-    )
+    assert payload["scope_section_text"] == ("The following contracts were audited:\nsrc/Pool.sol")
 
 
 def test_build_artifact_payload_caps_scope_section_text_at_20k():
@@ -563,8 +560,9 @@ def test_build_artifact_payload_caps_scope_section_text_at_20k():
         scope_section_text=huge,
     )
     # Capped at 20k so the artifact stays manageable.
-    assert payload["scope_section_text"] is not None
-    assert len(payload["scope_section_text"]) <= 20_000
+    sliced = payload["scope_section_text"]
+    assert isinstance(sliced, str)
+    assert len(sliced) <= 20_000
 
 
 # ---------------------------------------------------------------------------
@@ -605,8 +603,7 @@ def test_locate_scope_section_matches_body_prose_contract_list():
         _page(1, "Cover\nProject Overview"),
         _page(
             2,
-            "The following contract list is included in the scope of this audit:\n"
-            "- src/Pool.sol\n- src/Vault.sol",
+            "The following contract list is included in the scope of this audit:\n- src/Pool.sol\n- src/Vault.sol",
         ),
     )
     sections = locate_scope_section(text)
@@ -701,20 +698,13 @@ def test_chunk_scan_stops_at_first_hit(tmp_path, monkeypatch):
             return '["Pool", "Vault"]', "stub"
         return "[]", "stub"
 
-    monkeypatch.setattr(
-        "services.audits.scope_extraction._llm._call_llm", fake_call
-    )
+    monkeypatch.setattr("services.audits.scope_extraction._llm._call_llm", fake_call)
 
     text = _doc(
         *(_page(i, "boilerplate " * 30) for i in range(1, 6)),
-        *(
-            _page(i, "Pool.sol Vault.sol UNIQUE_SCOPE_MARKER_XYZ reviewed")
-            for i in range(6, 11)
-        ),
+        *(_page(i, "Pool.sol Vault.sol UNIQUE_SCOPE_MARKER_XYZ reviewed") for i in range(6, 11)),
     )
-    names, response, model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(
-        text, "Title", "Auditor"
-    )
+    names, response, model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "Title", "Auditor")
     assert names == ["Pool", "Vault"]
     assert chunks_used == 2
     assert model == "stub"
@@ -726,20 +716,14 @@ def test_chunk_scan_stops_at_first_hit(tmp_path, monkeypatch):
     assert len(prompts_seen) == 2
 
 
-def test_chunk_scan_returns_empty_when_no_chunk_has_scope(
-    tmp_path, monkeypatch
-):
+def test_chunk_scan_returns_empty_when_no_chunk_has_scope(tmp_path, monkeypatch):
     def fake_call(prompt):
         return "[]", "stub"
 
-    monkeypatch.setattr(
-        "services.audits.scope_extraction._llm._call_llm", fake_call
-    )
+    monkeypatch.setattr("services.audits.scope_extraction._llm._call_llm", fake_call)
 
     text = _doc(*(_page(i, "no scope anywhere " * 20) for i in range(1, 11)))
-    names, response, model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(
-        text, "T", "A"
-    )
+    names, response, model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
     assert names == []
     # Every chunk got consulted because none hit.
     assert chunks_used >= 1
@@ -752,9 +736,7 @@ def test_chunk_scan_raises_only_when_every_call_fails(monkeypatch):
     def fake_call(prompt):
         raise LLMUnavailableError("network down")
 
-    monkeypatch.setattr(
-        "services.audits.scope_extraction._llm._call_llm", fake_call
-    )
+    monkeypatch.setattr("services.audits.scope_extraction._llm._call_llm", fake_call)
     text = _doc(*(_page(i, "x") for i in range(1, 6)))
     with pytest.raises(LLMUnavailableError):
         extract_scope_via_chunk_scan(text, "T", "A")
@@ -769,9 +751,7 @@ def test_chunk_scan_rejects_findings_only_chunks_without_scope_signal(
     def fake_call(prompt):
         return '["Pool", "Vault"]', "stub"
 
-    monkeypatch.setattr(
-        "services.audits.scope_extraction._llm._call_llm", fake_call
-    )
+    monkeypatch.setattr("services.audits.scope_extraction._llm._call_llm", fake_call)
 
     # Each contract name appears exactly once — classic findings-title
     # extraction artifact.
@@ -790,16 +770,12 @@ def test_chunk_scan_accepts_chunk_with_scope_signal(monkeypatch):
     def fake_call(prompt):
         return '["Pool", "Vault"]', "stub"
 
-    monkeypatch.setattr(
-        "services.audits.scope_extraction._llm._call_llm", fake_call
-    )
+    monkeypatch.setattr("services.audits.scope_extraction._llm._call_llm", fake_call)
 
     text = _doc(
         _page(
             1,
-            "Audited Files:\n"
-            "src/Pool.sol (420 nSLOC)\n"
-            "src/Vault.sol (310 nSLOC)\n",
+            "Audited Files:\nsrc/Pool.sol (420 nSLOC)\nsrc/Vault.sol (310 nSLOC)\n",
         ),
         _page(2, "Findings"),
     )
@@ -841,17 +817,14 @@ def test_chunk_scan_merges_across_multiple_passing_chunks(monkeypatch):
         _page(5, "boilerplate " * 10),
         _page(
             6,
-            "Files in scope MAIN_SCOPE_MARKER:\n"
-            "src/Pool.sol\nsrc/Vault.sol\nsrc/Strategy.sol",
+            "Files in scope MAIN_SCOPE_MARKER:\nsrc/Pool.sol\nsrc/Vault.sol\nsrc/Strategy.sol",
         ),
         _page(7, "body"),
         _page(8, "body"),
         _page(9, "body"),
         _page(10, "body"),
     )
-    names, _, _, chunks_used, winning_chunk = extract_scope_via_chunk_scan(
-        text, "T", "A"
-    )
+    names, _, _, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
     # Merged across both chunks; dedupes, preserves first-seen order.
     assert "TitleContract" in names
     assert "Pool" in names
@@ -872,9 +845,7 @@ def test_chunk_scan_accepts_single_focus_audit_via_frequency(monkeypatch):
     def fake_call(prompt):
         return '["WeETHWithdrawAdapter"]', "stub"
 
-    monkeypatch.setattr(
-        "services.audits.scope_extraction._llm._call_llm", fake_call
-    )
+    monkeypatch.setattr("services.audits.scope_extraction._llm._call_llm", fake_call)
 
     text = _doc(
         _page(
@@ -885,8 +856,7 @@ def test_chunk_scan_accepts_single_focus_audit_via_frequency(monkeypatch):
         ),
         _page(
             2,
-            "L-02: WeETHWithdrawAdapter rate limit issue\n"
-            "Additional analysis of WeETHWithdrawAdapter.",
+            "L-02: WeETHWithdrawAdapter rate limit issue\nAdditional analysis of WeETHWithdrawAdapter.",
         ),
     )
     names, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")

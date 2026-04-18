@@ -267,9 +267,7 @@ def test_content_hash_cache_copies_scope_to_sibling(
     assert {a.id for a in claimed} == {id_b}
     b_row = next(a for a in claimed if a.id == id_b)
     _, result_b = worker._process_row(b_row)
-    assert isinstance(result_b, _CacheCopyOutcome), (
-        f"expected cache copy, got {result_b!r}"
-    )
+    assert isinstance(result_b, _CacheCopyOutcome), f"expected cache copy, got {result_b!r}"
     assert result_b.sibling_id == id_a
     worker._persist_outcome(id_b, result_b)
 
@@ -726,9 +724,7 @@ def test_terminal_status_rows_not_reclaimed_across_worker_restart(
     processed_w2 = _drive(w2, db_session)
 
     all_processed = processed_w1 + processed_w2
-    assert all_processed == [pending_id], (
-        f"only the pending row should be processed, got {all_processed}"
-    )
+    assert all_processed == [pending_id], f"only the pending row should be processed, got {all_processed}"
 
     # Confirm the terminal rows were not touched.
     db_session.expire_all()
@@ -770,9 +766,7 @@ def test_llm_not_called_again_for_already_scoped_row(
     # and make no LLM calls.
     w2 = make_fresh_worker()
     assert _drive(w2, db_session) == []
-    assert llm_call_counter["calls"] == 1, (
-        "LLM was called a second time on an already-scoped row"
-    )
+    assert llm_call_counter["calls"] == 1, "LLM was called a second time on an already-scoped row"
 
 
 def test_content_hash_cache_survives_worker_restart(
@@ -818,21 +812,15 @@ def test_content_hash_cache_survives_worker_restart(
     )
     w2 = make_fresh_worker()
     claimed = w2._claim_batch(db_session)
-    assert {a.id for a in claimed} == {id_b}, (
-        f"W2 should claim only the new row; got {[a.id for a in claimed]}"
-    )
+    assert {a.id for a in claimed} == {id_b}, f"W2 should claim only the new row; got {[a.id for a in claimed]}"
     b_row = next(a for a in claimed if a.id == id_b)
     _, result_b = w2._process_row(b_row)
-    assert isinstance(result_b, _CacheCopyOutcome), (
-        "Expected cache-copy outcome when a sibling's sha matches"
-    )
+    assert isinstance(result_b, _CacheCopyOutcome), "Expected cache-copy outcome when a sibling's sha matches"
     assert result_b.sibling_id == id_a
     w2._persist_outcome(id_b, result_b)
 
     # LLM count unchanged — cache did its job across the restart.
-    assert llm_call_counter["calls"] == 1, (
-        "Cache-copy should not trigger an LLM call"
-    )
+    assert llm_call_counter["calls"] == 1, "Cache-copy should not trigger an LLM call"
 
     db_session.expire_all()
     row_a = db_session.get(AuditReport, id_a)
@@ -886,8 +874,6 @@ def test_reextract_endpoint_makes_row_eligible_again(
 
     w2 = make_fresh_worker()
     assert _drive(w2, db_session) == [audit_id]
-    assert llm_call_counter["calls"] == 2, (
-        "Re-extract should trigger a fresh LLM call"
-    )
+    assert llm_call_counter["calls"] == 2, "Re-extract should trigger a fresh LLM call"
     db_session.expire_all()
     assert db_session.get(AuditReport, audit_id).scope_extraction_status == "success"

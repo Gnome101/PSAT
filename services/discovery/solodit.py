@@ -158,10 +158,7 @@ def _fetch_page(keyword: str, page: int) -> dict[str, Any] | None:
     errors. 4xx errors fail immediately — those are programming bugs in
     the input we're sending, not infrastructure issues.
     """
-    url = (
-        f"{_SOLODIT_TRPC_URL}?batch=1&input="
-        + urllib.parse.quote(_build_input(keyword, page))
-    )
+    url = f"{_SOLODIT_TRPC_URL}?batch=1&input=" + urllib.parse.quote(_build_input(keyword, page))
 
     last_status: int | str = "no-attempt"
     for attempt in range(_MAX_RETRIES + 1):
@@ -178,7 +175,7 @@ def _fetch_page(keyword: str, page: int) -> dict[str, Any] | None:
         except requests.RequestException as exc:
             last_status = f"transport: {exc}"
             if attempt < _MAX_RETRIES:
-                time.sleep(_BACKOFF_BASE * (2 ** attempt))
+                time.sleep(_BACKOFF_BASE * (2**attempt))
                 continue
             break
 
@@ -188,7 +185,8 @@ def _fetch_page(keyword: str, page: int) -> dict[str, Any] | None:
             except ValueError:
                 logger.warning(
                     "Solodit returned non-JSON envelope for keyword=%r page=%d",
-                    keyword, page,
+                    keyword,
+                    page,
                 )
                 return None
             if not isinstance(body, list) or not body:
@@ -198,7 +196,8 @@ def _fetch_page(keyword: str, page: int) -> dict[str, Any] | None:
             except (KeyError, TypeError, IndexError):
                 logger.warning(
                     "Solodit envelope missing result.data for keyword=%r page=%d",
-                    keyword, page,
+                    keyword,
+                    page,
                 )
                 return None
             if not isinstance(payload, str):
@@ -209,12 +208,15 @@ def _fetch_page(keyword: str, page: int) -> dict[str, Any] | None:
         # Retry on 5xx (server-side / soft rate limit) and 429. Bail on 4xx.
         if resp.status_code >= 500 or resp.status_code == 429:
             if attempt < _MAX_RETRIES:
-                wait = _BACKOFF_BASE * (2 ** attempt)
+                wait = _BACKOFF_BASE * (2**attempt)
                 logger.info(
-                    "Solodit %s for keyword=%r page=%d (attempt %d/%d), "
-                    "backing off %.1fs",
-                    resp.status_code, keyword, page, attempt + 1,
-                    _MAX_RETRIES + 1, wait,
+                    "Solodit %s for keyword=%r page=%d (attempt %d/%d), backing off %.1fs",
+                    resp.status_code,
+                    keyword,
+                    page,
+                    attempt + 1,
+                    _MAX_RETRIES + 1,
+                    wait,
                 )
                 time.sleep(wait)
                 continue
@@ -222,7 +224,10 @@ def _fetch_page(keyword: str, page: int) -> dict[str, Any] | None:
 
     logger.warning(
         "Solodit gave up after %d attempts for keyword=%r page=%d (last=%s)",
-        _MAX_RETRIES + 1, keyword, page, last_status,
+        _MAX_RETRIES + 1,
+        keyword,
+        page,
+        last_status,
     )
     return None
 
@@ -318,7 +323,9 @@ def search(
             if debug:
                 logger.info(
                     "Solodit: keyword=%r → %s findings across %s page(s)",
-                    clean, body.get("count"), total_pages_known,
+                    clean,
+                    body.get("count"),
+                    total_pages_known,
                 )
 
         before = len(seen_urls)
@@ -347,17 +354,19 @@ def search(
             date = date_iso[:10] if date_iso else None  # ISO → YYYY-MM-DD
             pdf_link = (finding.get("pdf_link") or "").strip() or None
 
-            out.append({
-                "url": url,
-                "pdf_url": pdf_link if pdf_link and pdf_link.lower().endswith(".pdf") else (
-                    url if url.lower().endswith(".pdf") else None
-                ),
-                "auditor": firm_name,
-                "title": _derive_title(firm_name, protocol_name or clean, finding),
-                "date": date,
-                "source_url": "https://solodit.cyfrin.io/",
-                "confidence": 0.95,
-            })
+            out.append(
+                {
+                    "url": url,
+                    "pdf_url": pdf_link
+                    if pdf_link and pdf_link.lower().endswith(".pdf")
+                    else (url if url.lower().endswith(".pdf") else None),
+                    "auditor": firm_name,
+                    "title": _derive_title(firm_name, protocol_name or clean, finding),
+                    "date": date,
+                    "source_url": "https://solodit.cyfrin.io/",
+                    "confidence": 0.95,
+                }
+            )
 
         added = len(seen_urls) - before
         if added == 0:
@@ -366,7 +375,8 @@ def search(
                 if debug:
                     logger.info(
                         "Solodit: stopping after %d barren page(s) (have %d audit(s))",
-                        barren, len(out),
+                        barren,
+                        len(out),
                     )
                 break
         else:

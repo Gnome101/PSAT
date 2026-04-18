@@ -1384,10 +1384,10 @@ def test_worker_stage_chain_is_complete():
     -> policy -> done. If any next_stage doesn't match the following
     worker's stage, jobs will get stuck."""
     from db.models import JobStage
+    from workers.coverage_worker import CoverageWorker
     from workers.discovery import DiscoveryWorker
     from workers.policy_worker import PolicyWorker
     from workers.resolution_worker import ResolutionWorker
-    from workers.coverage_worker import CoverageWorker
     from workers.static_worker import StaticWorker
 
     # Verify the chain

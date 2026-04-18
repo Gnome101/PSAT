@@ -126,12 +126,18 @@ when it is unambiguous.
 
 Reply with ONLY a JSON array. Each element must have:
 - "url": the exact URL from the search result
-- "is_audit": true ONLY if this is an audit report or listing page specifically for {company}
-- "type": "report" for a single audit report, "listing" for a page that links to multiple audits, "pdf" for a direct PDF link, null if not an audit
-- "auditor": name of the auditing firm if identifiable from the title, snippet, OR url filename — null only when no signal is available
-- "title": short clean human-readable title for the audit (drop boilerplate like "[PDF]" prefixes), null if not applicable
-- "date": audit date as YYYY-MM-DD if visible in the title, snippet or URL (or YYYY-MM / YYYY), null if not present
-- "confidence": 0.0 to 1.0 how confident you are this is a real {company} audit page"""
+- "is_audit": true ONLY if this is an audit report or listing page \
+specifically for {company}
+- "type": "report" for a single audit report, "listing" for a page that \
+links to multiple audits, "pdf" for a direct PDF link, null if not an audit
+- "auditor": name of the auditing firm if identifiable from the title, \
+snippet, OR url filename — null only when no signal is available
+- "title": short clean human-readable title for the audit (drop \
+boilerplate like "[PDF]" prefixes), null if not applicable
+- "date": audit date as YYYY-MM-DD if visible in the title, snippet or \
+URL (or YYYY-MM / YYYY), null if not present
+- "confidence": 0.0 to 1.0 how confident you are this is a real \
+{company} audit page"""
 
 _EXTRACTION_PROMPT = """\
 Identify third-party security audits of the **{company}** smart-contract protocol \
@@ -195,10 +201,7 @@ def generate_followup_query(
     if not initial_results:
         return f'"{company}" security audit report findings'
 
-    formatted = "\n".join(
-        f"- {r.get('title', '(untitled)')}: {r.get('url', '')}"
-        for r in initial_results[:15]
-    )
+    formatted = "\n".join(f"- {r.get('title', '(untitled)')}: {r.get('url', '')}" for r in initial_results[:15])
 
     prompt = _FOLLOWUP_QUERY_PROMPT.format(company=company, results=formatted)
 
@@ -243,7 +246,9 @@ def classify_search_results(
     )
 
     prompt = _CLASSIFICATION_PROMPT.format(
-        company=company, results=formatted, auditors=_KNOWN_AUDITORS,
+        company=company,
+        results=formatted,
+        auditors=_KNOWN_AUDITORS,
     )
 
     try:
@@ -261,7 +266,7 @@ def classify_search_results(
 
     parsed = _parse_json_array(response)
     if parsed is None:
-        _debug_log(debug, f"Audit classification: could not parse LLM response as JSON array")
+        _debug_log(debug, "Audit classification: could not parse LLM response as JSON array")
         return []
 
     confirmed: list[dict[str, Any]] = []
@@ -276,14 +281,16 @@ def classify_search_results(
         url = str(item.get("url", "")).strip()
         if not url:
             continue
-        confirmed.append({
-            "url": url,
-            "auditor": item.get("auditor"),
-            "title": item.get("title"),
-            "date": item.get("date"),
-            "type": item.get("type"),
-            "confidence": confidence,
-        })
+        confirmed.append(
+            {
+                "url": url,
+                "auditor": item.get("auditor"),
+                "title": item.get("title"),
+                "date": item.get("date"),
+                "type": item.get("type"),
+                "confidence": confidence,
+            }
+        )
 
     _debug_log(debug, f"Audit classification: {len(confirmed)} confirmed from {len(results)} results")
     return confirmed
@@ -314,7 +321,10 @@ def _chunked_text(text: str) -> list[str]:
 
 
 def _extract_one_chunk(
-    url: str, chunk: str, company: str, debug: bool = False,
+    url: str,
+    chunk: str,
+    company: str,
+    debug: bool = False,
 ) -> dict[str, Any] | None:
     """Run the extraction prompt over a single text chunk and parse the
     JSON response. Returns ``None`` on LLM failure or unparseable output."""
@@ -389,14 +399,17 @@ def extract_report_details(
         pdf_url_raw = str(raw["pdf_url"]).strip() if raw.get("pdf_url") else None
         if pdf_url_raw and not pdf_url_raw.startswith(("http://", "https://")):
             from urllib.parse import urljoin
+
             pdf_url_raw = urljoin(url, pdf_url_raw)
 
-        reports.append({
-            "auditor": auditor,
-            "title": title,
-            "date": str(raw["date"]).strip() if raw.get("date") else None,
-            "pdf_url": pdf_url_raw,
-        })
+        reports.append(
+            {
+                "auditor": auditor,
+                "title": title,
+                "date": str(raw["date"]).strip() if raw.get("date") else None,
+                "pdf_url": pdf_url_raw,
+            }
+        )
 
     # Normalize linked URLs — resolve relative paths against the source page URL
     from urllib.parse import urljoin

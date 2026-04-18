@@ -448,9 +448,7 @@ class ResolutionWorker(BaseWorker):
         chain_filter = Contract.chain == chain if chain is not None else Contract.chain.is_(None)
         existing_rows = {
             row.address.lower(): row
-            for row in session.execute(
-                select(Contract).where(Contract.address.in_(impl_addrs), chain_filter)
-            )
+            for row in session.execute(select(Contract).where(Contract.address.in_(impl_addrs), chain_filter))
             .scalars()
             .all()
         }
@@ -501,8 +499,7 @@ class ResolutionWorker(BaseWorker):
         if created or adopted:
             session.commit()
             logger.info(
-                "Protocol %s: backfilled %d historical impl Contract row(s) "
-                "(%d created, %d adopted)",
+                "Protocol %s: backfilled %d historical impl Contract row(s) (%d created, %d adopted)",
                 protocol_id,
                 created + adopted,
                 created,

@@ -473,9 +473,11 @@ def test_coverage_worker_claims_job_with_null_protocol(db_session, worker):
         worker.process(db_session, claimed)
         db_session.commit()
 
-        rows = db_session.execute(
-            select(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract.id)
-        ).scalars().all()
+        rows = (
+            db_session.execute(select(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract.id))
+            .scalars()
+            .all()
+        )
         assert rows == []
     finally:
         db_session.query(Contract).filter_by(id=contract.id).delete()
@@ -491,7 +493,7 @@ def test_coverage_worker_handles_job_without_contract(db_session, seed_protocol,
     from db.models import JobStage, JobStatus
 
     protocol_id, _ = seed_protocol
-    job = _add_job(
+    _add_job(
         db_session,
         protocol_id=protocol_id,
         stage=JobStage.coverage,

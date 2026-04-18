@@ -39,22 +39,13 @@ pytestmark = [requires_postgres, requires_storage]
 
 
 def _minimal_pdf_with_text(text: str) -> bytes:
-    escaped = (
-        text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-    )
-    content_stream = (
-        f"BT\n/F1 12 Tf\n50 750 Td\n({escaped}) Tj\nET\n".encode("ascii")
-    )
+    escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    content_stream = f"BT\n/F1 12 Tf\n50 750 Td\n({escaped}) Tj\nET\n".encode("ascii")
     objects: list[bytes] = [
         b"<</Type/Catalog/Pages 2 0 R>>",
         b"<</Type/Pages/Count 1/Kids[3 0 R]>>",
-        b"<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R"
-        b"/Resources<</Font<</F1 5 0 R>>>>>>",
-        (
-            f"<</Length {len(content_stream)}>>\nstream\n".encode("ascii")
-            + content_stream
-            + b"endstream"
-        ),
+        b"<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
+        (f"<</Length {len(content_stream)}>>\nstream\n".encode("ascii") + content_stream + b"endstream"),
         b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
     ]
     buf = bytearray(b"%PDF-1.4\n")
@@ -67,19 +58,13 @@ def _minimal_pdf_with_text(text: str) -> bytes:
     buf += b"0000000000 65535 f \n"
     for offset in xref_offsets:
         buf += f"{offset:010d} 00000 n \n".encode("ascii")
-    buf += (
-        b"trailer\n<</Size "
-        + str(len(objects) + 1).encode("ascii")
-        + b"/Root 1 0 R>>\n"
-    )
+    buf += b"trailer\n<</Size " + str(len(objects) + 1).encode("ascii") + b"/Root 1 0 R>>\n"
     buf += b"startxref\n" + str(xref_start).encode("ascii") + b"\n%%EOF\n"
     return bytes(buf)
 
 
 # Text long enough to clear the 500-char min-useful-text threshold.
-_PADDED_SCOPE = (
-    "Audits covering Pool.sol Vault.sol Strategy.sol Registry.sol. " * 15
-)
+_PADDED_SCOPE = "Audits covering Pool.sol Vault.sol Strategy.sol Registry.sol. " * 15
 
 
 # ---------------------------------------------------------------------------
@@ -139,11 +124,10 @@ def worker(monkeypatch):
     that uses ``TEST_DATABASE_URL`` so ``_persist_outcome``'s internal
     session doesn't accidentally write to the developer's real DB.
     """
-    import workers.audit_text_extraction as worker_mod
-
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
+    import workers.audit_text_extraction as worker_mod
     from tests.conftest import DATABASE_URL
 
     test_engine = create_engine(DATABASE_URL)
@@ -174,9 +158,7 @@ def _mock_download(monkeypatch, mapping: dict[str, bytes | Exception]):
             raise PdfDownloadError(f"test: no mock for url {url!r}")
         return entry
 
-    monkeypatch.setattr(
-        "services.audits.text_extraction.download_pdf", fake_download
-    )
+    monkeypatch.setattr("services.audits.text_extraction.download_pdf", fake_download)
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +166,7 @@ def _mock_download(monkeypatch, mapping: dict[str, bytes | Exception]):
 # ---------------------------------------------------------------------------
 
 
-def test_worker_processes_pending_rows_end_to_end(
-    db_session, storage_bucket, seed_protocol, worker, monkeypatch
-):
+def test_worker_processes_pending_rows_end_to_end(db_session, storage_bucket, seed_protocol, worker, monkeypatch):
     """A pending row is claimed, downloaded, extracted, stored, and persisted
     with every text-extraction column populated correctly."""
     from db.models import AuditReport
@@ -200,9 +180,7 @@ def test_worker_processes_pending_rows_end_to_end(
     # an infinite poll loop.
     claimed = worker._claim_batch(db_session)
     claimed_ids = {a.id for a in claimed}
-    assert audit_id in claimed_ids, (
-        f"worker failed to claim the seeded row; claimed={claimed_ids}"
-    )
+    assert audit_id in claimed_ids, f"worker failed to claim the seeded row; claimed={claimed_ids}"
 
     audit_obj = next(a for a in claimed if a.id == audit_id)
     returned_id, outcome = worker._process_row(audit_obj)
@@ -273,9 +251,7 @@ def test_worker_records_http_failure_without_touching_storage(
 # ---------------------------------------------------------------------------
 
 
-def test_worker_skips_short_text_pdfs(
-    db_session, storage_bucket, seed_protocol, worker, monkeypatch
-):
+def test_worker_skips_short_text_pdfs(db_session, storage_bucket, seed_protocol, worker, monkeypatch):
     """PDFs that yield less than the min-useful-text threshold are marked
     skipped (OCR required) rather than stored as empty text."""
     from db.models import AuditReport
@@ -303,9 +279,7 @@ def test_worker_skips_short_text_pdfs(
 # ---------------------------------------------------------------------------
 
 
-def test_claim_batch_flips_status_to_processing(
-    db_session, storage_bucket, seed_protocol, worker
-):
+def test_claim_batch_flips_status_to_processing(db_session, storage_bucket, seed_protocol, worker):
     """Once claimed, a row is tagged with ``processing`` + this worker's id
     + a started_at timestamp — a second claim sees no eligible rows."""
     _seed_audit(db_session, seed_protocol, url="https://example.com/a.pdf")
@@ -329,17 +303,13 @@ def test_claim_batch_flips_status_to_processing(
 # ---------------------------------------------------------------------------
 
 
-def test_stale_processing_rows_are_recovered(
-    db_session, storage_bucket, seed_protocol, worker, monkeypatch
-):
+def test_stale_processing_rows_are_recovered(db_session, storage_bucket, seed_protocol, worker, monkeypatch):
     """A row stuck in ``processing`` past the stale timeout is reset to
     NULL so a fresh claim can pick it up, and its processing metadata is
     cleared so error state doesn't leak across workers."""
     from db.models import AuditReport
 
-    audit_id = _seed_audit(
-        db_session, seed_protocol, url="https://example.com/stale.pdf"
-    )
+    audit_id = _seed_audit(db_session, seed_protocol, url="https://example.com/stale.pdf")
 
     # Manually park the row in 'processing' with a timestamp older than the
     # stale-recovery threshold (default 600s).
@@ -391,8 +361,13 @@ def test_api_get_audit_returns_full_metadata(
     pdf_bytes = _minimal_pdf_with_text(_PADDED_SCOPE)
     url = "https://example.com/for-api.pdf"
     audit_id = _seed_audit(
-        db_session, seed_protocol, url=url, pdf_url=url,
-        auditor="APITestFirm", title="API Test Audit", date="2025-03-14",
+        db_session,
+        seed_protocol,
+        url=url,
+        pdf_url=url,
+        auditor="APITestFirm",
+        title="API Test Audit",
+        date="2025-03-14",
     )
     _mock_download(monkeypatch, {url: pdf_bytes})
 
@@ -445,7 +420,9 @@ def test_api_audit_text_returns_409_when_extraction_not_ready(
     """A pending / never-extracted audit returns 409 with structured detail
     (status + reason) so callers can distinguish from 404s."""
     audit_id = _seed_audit(
-        db_session, seed_protocol, url="https://example.com/pending.pdf",
+        db_session,
+        seed_protocol,
+        url="https://example.com/pending.pdf",
     )
     r = api_with_storage.get(f"/api/audits/{audit_id}/text")
     assert r.status_code == 409
@@ -485,9 +462,7 @@ def test_api_audit_not_found_returns_404(api_with_storage):
     assert r.status_code == 404
 
 
-def test_api_company_audits_surfaces_has_text_per_entry(
-    db_session, storage_bucket, seed_protocol, api_with_storage
-):
+def test_api_company_audits_surfaces_has_text_per_entry(db_session, storage_bucket, seed_protocol, api_with_storage):
     """The existing /api/company/{name}/audits list endpoint now includes
     ``has_text`` per entry so the UI can tag processed vs. pending audits.
 
@@ -495,19 +470,26 @@ def test_api_company_audits_surfaces_has_text_per_entry(
     paths are covered by the earlier tests; here we're verifying the
     API-layer serialization only.
     """
-    from datetime import datetime, timezone as _tz
+    from datetime import datetime
+    from datetime import timezone as _tz
 
     from db.models import AuditReport, Protocol
 
     aid_ok = _seed_audit(
-        db_session, seed_protocol, url="https://example.com/list-ok.pdf",
+        db_session,
+        seed_protocol,
+        url="https://example.com/list-ok.pdf",
         pdf_url="https://example.com/list-ok.pdf",
-        auditor="FirmOK", title="OK",
+        auditor="FirmOK",
+        title="OK",
     )
     _seed_audit(
-        db_session, seed_protocol, url="https://example.com/list-pending.pdf",
+        db_session,
+        seed_protocol,
+        url="https://example.com/list-pending.pdf",
         pdf_url="https://example.com/list-pending.pdf",
-        auditor="FirmPending", title="Pending",
+        auditor="FirmPending",
+        title="Pending",
     )
 
     # Mark the OK row as successfully extracted.
@@ -520,9 +502,7 @@ def test_api_company_audits_surfaces_has_text_per_entry(
     ok_row.text_extracted_at = datetime.now(_tz.utc)
     db_session.commit()
 
-    protocol = db_session.execute(
-        select(Protocol).where(Protocol.id == seed_protocol)
-    ).scalar_one()
+    protocol = db_session.execute(select(Protocol).where(Protocol.id == seed_protocol)).scalar_one()
 
     r = api_with_storage.get(f"/api/company/{protocol.name}/audits")
     assert r.status_code == 200
