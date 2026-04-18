@@ -51,31 +51,19 @@ def _stub_source_equivalence_network(monkeypatch):
 
 
 @pytest.fixture()
-def worker(monkeypatch):
-    """CoverageWorker with SessionLocal pointed at the test DB.
+def worker():
+    """CoverageWorker with signals patched so pytest's handlers aren't touched.
 
-    Signals are patched out so the worker fixture doesn't fight pytest's
-    own signal handlers. We never run ``run_loop``; tests call claim /
-    process methods directly for determinism.
+    Tests call ``_claim_next_job``, ``_claim_stuck_job``, and ``process``
+    directly against ``db_session``; the inherited ``run_loop`` (which
+    opens its own ``SessionLocal``) is never exercised here.
     """
     from unittest.mock import patch
 
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-
-    import workers.coverage_worker as worker_mod
-    from tests.conftest import DATABASE_URL
-
-    test_engine = create_engine(DATABASE_URL)
-    test_factory = sessionmaker(bind=test_engine, expire_on_commit=False)
-    monkeypatch.setattr(worker_mod, "SessionLocal", test_factory)
+    from workers.coverage_worker import CoverageWorker
 
     with patch("signal.signal"):
-        w = worker_mod.CoverageWorker()
-    try:
-        yield w
-    finally:
-        test_engine.dispose()
+        yield CoverageWorker()
 
 
 @pytest.fixture()

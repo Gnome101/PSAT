@@ -31,21 +31,24 @@ Jobs with ``protocol_id=NULL`` (direct address submissions without a
 parent company) bypass the readiness wait naturally — ``NULL = NULL``
 evaluates to UNKNOWN, so the NOT EXISTS subquery returns true and claim
 succeeds immediately.
+
+The full claim/run scaffolding (stale recovery, advance-vs-complete,
+error isolation) lives in ``BaseWorker``. This worker plugs into the
+``_claim_job`` hook with its two-phase pattern and defines its own
+``process`` — that's the entire deviation from the default pipeline
+worker shape.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import time
-import traceback
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from db.models import Contract, Job, JobStage, JobStatus, SessionLocal
-from db.queue import advance_job, complete_job, fail_job
-from workers.base import BaseWorker, JobHandledDirectly
+from db.models import Contract, Job, JobStage, JobStatus
+from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.coverage_worker")
 
@@ -57,11 +60,25 @@ _STUCK_COVERAGE_TIMEOUT = int(os.getenv("PSAT_COVERAGE_STUCK_TIMEOUT", "3600"))
 
 
 class CoverageWorker(BaseWorker):
-    """Drains the ``coverage`` stage with a custom readiness-gated claim."""
+    """Drains the ``coverage`` stage with a readiness-gated two-phase claim."""
 
     stage = JobStage.coverage
     next_stage = JobStage.done
     poll_interval = 5.0
+
+    # -- Claim ------------------------------------------------------------
+
+    def _claim_job(self, session: Session) -> Job | None:
+        """Primary readiness-gated claim OR stuck-job fallback.
+
+        The ``or`` short-circuits so a normal-path claim always wins
+        when available. Only when the readiness predicate is holding
+        every job back do we escalate to the stuck-job path — this
+        bounds how long a single wedged audit can block downstream
+        coverage without hiding the wedge from ops (every stuck claim
+        logs a warning).
+        """
+        return self._claim_next_job(session) or self._claim_stuck_job(session)
 
     def _claim_next_job(self, session: Session) -> Job | None:
         """Claim a coverage job whose protocol's audit side has settled.
@@ -148,6 +165,8 @@ class CoverageWorker(BaseWorker):
         session.refresh(job)
         return job
 
+    # -- Process ----------------------------------------------------------
+
     def process(self, session: Session, job: Job) -> None:
         """Refresh coverage for this job's Contract with source-equivalence on.
 
@@ -183,74 +202,6 @@ class CoverageWorker(BaseWorker):
             contract.id,
             inserted,
         )
-
-    # -- Loop --------------------------------------------------------------
-
-    def run_loop(self) -> None:
-        """Custom run loop — readiness-gated claim + stuck-job escape hatch.
-
-        Mirrors ``BaseWorker.run_loop`` structure (stale recovery, error
-        isolation, session-per-tick) but swaps the claim step for our
-        two-phase claim. Order: readiness-gated first, then stuck-job
-        fallback, so a normal-path claim always wins when available.
-        """
-        logger.info("Worker %s starting (stage=%s)", self.worker_id, self.stage.value)
-        recovery_counter = 0
-        while self._running:
-            session = SessionLocal()
-            try:
-                recovery_counter += 1
-                if recovery_counter >= 30:
-                    recovery_counter = 0
-                    self._recover_stale_jobs(session)
-
-                job = self._claim_next_job(session) or self._claim_stuck_job(session)
-                if job is None:
-                    session.close()
-                    time.sleep(self.poll_interval)
-                    continue
-
-                logger.info("Worker %s claimed job %s", self.worker_id, job.id)
-                t0 = time.monotonic()
-                try:
-                    self.process(session, job)
-                    if self.next_stage == JobStage.done:
-                        complete_job(session, job.id)
-                    else:
-                        advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
-                    logger.info(
-                        "Worker %s completed job %s in %.1fs",
-                        self.worker_id,
-                        job.id,
-                        time.monotonic() - t0,
-                    )
-                except JobHandledDirectly:
-                    logger.info("Worker %s: job %s handled directly by process()", self.worker_id, job.id)
-                except Exception:
-                    error = traceback.format_exc()
-                    logger.error(
-                        "Coverage worker failed on job %s (address=%s):\n%s",
-                        job.id,
-                        getattr(job, "address", "?"),
-                        error,
-                    )
-                    try:
-                        session.rollback()
-                        fail_job(session, job.id, error)
-                    except Exception:
-                        logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
-                        try:
-                            fresh = SessionLocal()
-                            fail_job(fresh, job.id, error[-4000:])
-                            fresh.close()
-                        except Exception:
-                            logger.exception("Could not mark job %s as failed even with fresh session", job.id)
-            except Exception:
-                logger.exception("Worker %s encountered error in main loop", self.worker_id)
-            finally:
-                session.close()
-
-        logger.info("Worker %s shut down", self.worker_id)
 
 
 def main() -> None:

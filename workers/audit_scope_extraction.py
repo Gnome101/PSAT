@@ -4,9 +4,6 @@ Runs after ``workers.audit_text_extraction`` has stored the extracted PDF
 text in object storage. Eligible rows satisfy
 ``text_extraction_status='success' AND scope_extraction_status IS NULL``.
 
-Scales horizontally via ``FOR UPDATE SKIP LOCKED`` like its text-extraction
-sibling — many processes safe, each thread runs one LLM call at a time.
-
 State model on ``audit_reports``:
 
     scope_extraction_status:
@@ -21,23 +18,27 @@ AuditReport with the same ``text_sha256`` that has already been scoped —
 clone its ``scope_contracts`` and ``scope_storage_key`` instead of paying
 for the LLM call again. Covers the common "Solodit copy + GitHub copy of
 the same PDF" case at zero cost.
+
+Shared scaffolding (signal handling, batch claim, stale recovery, thread
+pool, run loop) lives in ``workers.audit_row_worker.AuditRowWorker``.
+This file holds scope-phase specifics: the eligibility query, the
+content-hash cache lookup, the LLM call dispatch, the cache-copy vs.
+fresh-extract persistence paths, and the inline coverage refresh.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import signal
-import time
-import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select, Update
 
 from db.models import AuditReport, SessionLocal
 from services.audits import ScopeExtractionOutcome, process_audit_scope
+from workers.audit_row_worker import AuditRowWorker
 
 logger = logging.getLogger("workers.audit_scope_extraction")
 
@@ -47,17 +48,13 @@ logger = logging.getLogger("workers.audit_scope_extraction")
 # LLM calls dominate latency; keep batches small so individual workers
 # don't sit on many rows when the pool is slow.
 _BATCH_SIZE = int(os.getenv("PSAT_AUDIT_SCOPE_BATCH_SIZE", "4"))
-
 _MAX_CONCURRENT = int(os.getenv("PSAT_AUDIT_SCOPE_CONCURRENCY", "4"))
-
 _IDLE_POLL_INTERVAL = float(os.getenv("PSAT_AUDIT_SCOPE_POLL_INTERVAL", "15.0"))
 
 # Generous — an LLM call can take 60s+ on a slow day, and the worker
 # reads a large-ish object from storage before calling. 15 min leaves
 # margin for retries inside one process.
 _STALE_PROCESSING_SECONDS = int(os.getenv("PSAT_AUDIT_SCOPE_STALE_TIMEOUT", "900"))
-
-_STALE_RECOVERY_EVERY_N_POLLS = 20
 
 
 # --- Cache-copy sentinel --------------------------------------------------
@@ -81,33 +78,25 @@ _ProcessResult = ScopeExtractionOutcome | _CacheCopyOutcome
 # --- Worker --------------------------------------------------------------
 
 
-class AuditScopeExtractionWorker:
-    """Drains the ``audit_reports`` scope-extraction queue."""
+class AuditScopeExtractionWorker(AuditRowWorker):
+    """Drain rows where text extraction succeeded but scope isn't extracted yet."""
 
-    def __init__(self) -> None:
-        self.worker_id = f"AuditScopeExtraction-{os.getpid()}-{uuid.uuid4().hex[:8]}"
-        self._running = True
-        signal.signal(signal.SIGTERM, self._handle_signal)
-        signal.signal(signal.SIGINT, self._handle_signal)
+    worker_name = "AuditScopeExtraction"
+    batch_size = _BATCH_SIZE
+    max_concurrent = _MAX_CONCURRENT
+    idle_poll_interval = _IDLE_POLL_INTERVAL
+    stale_processing_seconds = _STALE_PROCESSING_SECONDS
+    thread_name_prefix = "audit-scope"
+    log = logger
 
-    def _handle_signal(self, signum: int, _frame: object) -> None:
-        logger.info(
-            "Worker %s received signal %s, shutting down",
-            self.worker_id,
-            signum,
-        )
-        self._running = False
+    # -- Claim predicates -------------------------------------------------
 
-    # --- Claim ----------------------------------------------------------
-
-    def _claim_batch(self, session: Session) -> list[AuditReport]:
-        """Atomically claim up to ``_BATCH_SIZE`` pending rows.
-
-        Eligibility: text extraction has already succeeded AND scope
-        extraction hasn't been attempted. Newest-first ordering so a
-        freshly-discovered audit isn't blocked behind a big backlog.
+    def _pending_rows_query(self) -> Select:
+        """Eligibility: text extraction has already succeeded AND scope
+        extraction hasn't been attempted. Newest-first so a freshly-
+        discovered audit isn't blocked behind a big backlog.
         """
-        stmt = (
+        return (
             select(AuditReport)
             .where(
                 AuditReport.text_extraction_status == "success",
@@ -117,30 +106,18 @@ class AuditScopeExtractionWorker:
                 AuditReport.text_extracted_at.desc().nullslast(),
                 AuditReport.id.asc(),
             )
-            .limit(_BATCH_SIZE)
+            .limit(self.batch_size)
             .with_for_update(skip_locked=True)
         )
-        rows = list(session.execute(stmt).scalars().all())
-        if not rows:
-            return []
 
-        now = datetime.now(timezone.utc)
-        for row in rows:
-            row.scope_extraction_status = "processing"
-            row.scope_extraction_worker = self.worker_id
-            row.scope_extraction_started_at = now
-            row.scope_extraction_error = None
-        session.commit()
-        for row in rows:
-            session.expunge(row)
-        return rows
+    def _mark_processing(self, row: AuditReport, now: datetime) -> None:
+        row.scope_extraction_status = "processing"
+        row.scope_extraction_worker = self.worker_id
+        row.scope_extraction_started_at = now
+        row.scope_extraction_error = None
 
-    # --- Recover --------------------------------------------------------
-
-    def _recover_stale_rows(self, session: Session) -> None:
-        """Reset rows stuck in ``processing`` past the stale timeout."""
-        cutoff = datetime.now(timezone.utc) - timedelta(seconds=_STALE_PROCESSING_SECONDS)
-        result = session.execute(
+    def _stale_recovery_query(self, cutoff: datetime) -> Update:
+        return (
             update(AuditReport)
             .where(
                 AuditReport.scope_extraction_status == "processing",
@@ -153,19 +130,8 @@ class AuditScopeExtractionWorker:
             )
             .returning(AuditReport.id)
         )
-        ids = [row.id for row in result]
-        if ids:
-            logger.warning(
-                "Worker %s: reset %d stale scope row(s) back to pending: %s",
-                self.worker_id,
-                len(ids),
-                ids,
-            )
-            session.commit()
-        else:
-            session.rollback()
 
-    # --- Cache lookup ---------------------------------------------------
+    # -- Cache lookup ---------------------------------------------------
 
     def _find_cache_sibling(self, session: Session, audit_id: int, text_sha256: str | None) -> int | None:
         """Return the id of an already-scoped audit with matching text_sha256.
@@ -188,7 +154,7 @@ class AuditScopeExtractionWorker:
         ).scalar_one_or_none()
         return int(row) if row is not None else None
 
-    # --- Per-row processing --------------------------------------------
+    # -- Per-row work ----------------------------------------------------
 
     def _process_row(self, audit: AuditReport) -> tuple[int, _ProcessResult]:
         """Run the scope pipeline for a single claimed row.
@@ -227,7 +193,7 @@ class AuditScopeExtractionWorker:
         )
         return audit.id, outcome
 
-    # --- Persistence ---------------------------------------------------
+    # -- Persistence ---------------------------------------------------
 
     def _persist_outcome(self, audit_id: int, result: _ProcessResult) -> None:
         """Write the outcome back to the row in a dedicated session."""
@@ -295,6 +261,22 @@ class AuditScopeExtractionWorker:
         finally:
             session.close()
 
+    def _log_outcome(self, audit_id: int, result: _ProcessResult) -> None:
+        """Scope-specific log — cache-copy path is already logged inside
+        ``_persist_outcome`` so we skip it here; only the fresh-extract
+        path logs one line with method + contract count for ops visibility.
+        """
+        if isinstance(result, _CacheCopyOutcome):
+            return
+        self.log.info(
+            "Audit %s → %s (method=%s, contracts=%d)%s",
+            audit_id,
+            result.status,
+            result.method,
+            len(result.contracts),
+            f" [{result.error}]" if result.error else "",
+        )
+
     @staticmethod
     def _refresh_coverage(session: Session, audit_id: int) -> None:
         """Rebuild ``audit_contract_coverage`` rows for this audit.
@@ -333,68 +315,6 @@ class AuditScopeExtractionWorker:
         existing = audit.date or ""
         if not existing or existing.endswith("-00") or len(existing) < 10:
             audit.date = candidate
-
-    # --- Main loop ------------------------------------------------------
-
-    def run_loop(self) -> None:
-        logger.info(
-            "AuditScopeExtraction worker %s starting (batch=%d, pool=%d, idle=%ss, stale=%ss)",
-            self.worker_id,
-            _BATCH_SIZE,
-            _MAX_CONCURRENT,
-            _IDLE_POLL_INTERVAL,
-            _STALE_PROCESSING_SECONDS,
-        )
-
-        executor = ThreadPoolExecutor(
-            max_workers=_MAX_CONCURRENT,
-            thread_name_prefix="audit-scope",
-        )
-
-        poll_counter = 0
-        try:
-            while self._running:
-                poll_counter += 1
-
-                session = SessionLocal()
-                try:
-                    if poll_counter % _STALE_RECOVERY_EVERY_N_POLLS == 0:
-                        self._recover_stale_rows(session)
-                    claimed = self._claim_batch(session)
-                finally:
-                    session.close()
-
-                if not claimed:
-                    time.sleep(_IDLE_POLL_INTERVAL)
-                    continue
-
-                logger.info(
-                    "Worker %s claimed %d audit(s) for scope extraction",
-                    self.worker_id,
-                    len(claimed),
-                )
-
-                futures = {executor.submit(self._process_row, row): row.id for row in claimed}
-                for future in as_completed(futures):
-                    try:
-                        audit_id, result = future.result()
-                    except Exception:
-                        logger.exception("Unexpected error in audit scope thread")
-                        continue
-                    self._persist_outcome(audit_id, result)
-                    if isinstance(result, _CacheCopyOutcome):
-                        continue
-                    logger.info(
-                        "Audit %s → %s (method=%s, contracts=%d)%s",
-                        audit_id,
-                        result.status,
-                        result.method,
-                        len(result.contracts),
-                        f" [{result.error}]" if result.error else "",
-                    )
-        finally:
-            executor.shutdown(wait=True)
-            logger.info("Worker %s shut down", self.worker_id)
 
 
 def main() -> None:

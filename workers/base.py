@@ -48,6 +48,17 @@ class BaseWorker:
         """Subclasses implement this to run their pipeline stage."""
         raise NotImplementedError
 
+    def _claim_job(self, session: Session) -> Job | None:
+        """Claim the next job for this stage. Default: stage + status match.
+
+        Override in subclasses that need a readiness-gated claim (e.g.
+        ``CoverageWorker`` waits for all audits in the protocol to settle)
+        or a multi-phase claim pattern (primary claim OR a stuck-job
+        escape hatch). Keeping this as a hook means the subclass never
+        needs to copy-paste the run loop just to swap one line.
+        """
+        return claim_job(session, self.stage, self.worker_id)
+
     def _recover_stale_jobs(self, session: Session) -> None:
         """Requeue jobs stuck in 'processing' for longer than STALE_JOB_TIMEOUT."""
         from datetime import datetime, timedelta, timezone
@@ -90,7 +101,7 @@ class BaseWorker:
                     recovery_counter = 0
                     self._recover_stale_jobs(session)
 
-                job = claim_job(session, self.stage, self.worker_id)
+                job = self._claim_job(session)
                 if job is None:
                     session.close()
                     time.sleep(self.poll_interval)
