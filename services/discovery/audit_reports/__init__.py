@@ -619,7 +619,7 @@ def merge_audit_reports(prev: dict[str, Any], new: dict[str, Any]) -> dict[str, 
 # --- CLI entry point ------------------------------------------------------
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover - dev-only CLI
     parser = argparse.ArgumentParser(description="Discover audit reports for a protocol")
     parser.add_argument("company", help="Company or protocol name")
     parser.add_argument("--domain", default=None, help="Official domain hint")

@@ -293,7 +293,7 @@ def process_audit_report(
 # --- CLI ------------------------------------------------------------------
 
 
-def _cli() -> None:
+def _cli() -> None:  # pragma: no cover - dev-only entrypoint
     """Dry-run the download+extract pipeline against a URL.
 
     Usage: ``python -m services.audits.text_extraction <url> [--save PATH]``
