@@ -119,8 +119,16 @@ def solodit_stub(monkeypatch):
 
 
 @pytest.fixture()
-def http_stubs():
-    """Activate ``responses`` around each test so no outbound HTTP escapes."""
+def http_stubs(monkeypatch):
+    """Activate ``responses`` around each test so no outbound HTTP escapes.
+
+    Also forces ``TAVILY_API_KEY`` to a dummy value: ``utils.tavily.search``
+    raises ``TavilyError`` when the env var is missing *before* any HTTP
+    call is made, which would bypass our ``responses`` stubs entirely —
+    the pipeline would see zero Tavily results and the tests would fail
+    opaquely on CI machines that don't have a real key in their env.
+    """
+    monkeypatch.setenv("TAVILY_API_KEY", "test-tavily-stub-key")
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
         yield rsps
 
