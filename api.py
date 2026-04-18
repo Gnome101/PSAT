@@ -466,6 +466,11 @@ def analyze_remaining(company_name: str) -> dict[str, Any]:
                 select(Contract).where(
                     Contract.protocol_id == protocol_row.id,
                     Contract.job_id.is_(None),
+                    # Exclude backfilled historical impls — these rows exist
+                    # only to anchor audit-coverage matching, not to be
+                    # re-analyzed. Analyzing them would waste pipeline cycles
+                    # on bytecode nobody's using anymore.
+                    (Contract.discovery_source != "upgrade_history") | Contract.discovery_source.is_(None),
                 )
             )
             .scalars()
