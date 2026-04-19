@@ -153,85 +153,120 @@ def _end_of_month(year: int, month: int) -> datetime:
 # --- Impl window computation --------------------------------------------
 
 
-def _compute_impl_windows_for_contract(session: Session, contract: Contract) -> list[ImplWindow]:
-    """Return windows during which ``contract.address`` was an active impl.
+def _compute_impl_windows_batch(session: Session, contracts: list[Contract]) -> dict[int, list[ImplWindow]]:
+    """Return impl windows for each input contract, keyed by Contract.id.
 
-    The upper bound of each window is the next event on the same proxy;
-    NULL means the impl is still current. A contract used on multiple
-    proxies gets one window per proxy so the UI can distinguish them.
-    Address comparison is lowercase-case (Etherscan vs EVM checksum drift).
+    Batched replacement for per-contract ``_compute_impl_windows_for_contract``:
+    fires ONE proxy-lookup and ONE event-history query regardless of how
+    many candidate contracts are passed. Callers iterating over large
+    candidate lists (e.g. ``match_contracts_for_audit`` on a protocol
+    with many scope-name matches) see O(1) queries instead of O(N*K).
     """
-    if not contract.address:
-        return []
-    addr_lower = contract.address.lower()
+    addr_to_ids: dict[str, list[int]] = {}
+    for c in contracts:
+        if c.address:
+            addr_to_ids.setdefault(c.address.lower(), []).append(c.id)
+    result: dict[int, list[ImplWindow]] = {c.id: [] for c in contracts}
+    if not addr_to_ids:
+        return result
 
-    # Pull every proxy (via its UpgradeEvent.contract_id) that ever pointed
-    # at this address. We need the FULL event history for those proxies
-    # below — not just the ones naming this address — because the window's
-    # end is defined by the NEXT event on the same proxy, whatever its
-    # new_impl was.
-    proxy_ids = set(
+    # One query: every (proxy_contract_id, new_impl) where new_impl is in
+    # the candidate address set. ``new_impl`` may be mixed-case, so we
+    # lowercase on both sides and project it back for the addr→impl map.
+    proxy_rows = session.execute(
+        select(
+            UpgradeEvent.contract_id,
+            func.lower(UpgradeEvent.new_impl).label("new_impl_lc"),
+        )
+        .where(func.lower(UpgradeEvent.new_impl).in_(list(addr_to_ids.keys())))
+        .distinct()
+    ).all()
+    if not proxy_rows:
+        return result
+
+    proxy_ids = {row[0] for row in proxy_rows}
+    # addr → set of proxy contract_ids that ever pointed at this address.
+    addr_to_proxies: dict[str, set[int]] = {}
+    for pid, impl_addr in proxy_rows:
+        addr_to_proxies.setdefault(impl_addr, set()).add(pid)
+
+    # One query: full event history for all relevant proxies, ordered
+    # canonically. Events with NULL block_number sink so a hand-crafted
+    # (test) event without blocks doesn't corrupt ordering.
+    events_by_proxy: dict[int, list[UpgradeEvent]] = {pid: [] for pid in proxy_ids}
+    events = (
         session.execute(
-            select(UpgradeEvent.contract_id).where(func.lower(UpgradeEvent.new_impl) == addr_lower).distinct()
+            select(UpgradeEvent)
+            .where(UpgradeEvent.contract_id.in_(proxy_ids))
+            .order_by(
+                UpgradeEvent.contract_id.asc(),
+                UpgradeEvent.block_number.asc().nullslast(),
+                UpgradeEvent.id.asc(),
+            )
         )
         .scalars()
         .all()
     )
-    if not proxy_ids:
-        return []
+    for ev in events:
+        events_by_proxy.setdefault(ev.contract_id, []).append(ev)
 
-    windows: list[ImplWindow] = []
+    # One query: Contract rows for every relevant proxy, for the
+    # ``proxy_address`` display field on ImplWindow.
+    proxy_addr_by_id: dict[int, str] = {}
+    if proxy_ids:
+        rows = session.execute(select(Contract.id, Contract.address).where(Contract.id.in_(proxy_ids))).all()
+        for pid, addr in rows:
+            proxy_addr_by_id[pid] = addr or ""
 
-    for proxy_id in proxy_ids:
-        proxy = session.get(Contract, proxy_id)
-        if proxy is None:
-            continue
-
-        # Ordered full history for this proxy. Events with NULL block_number
-        # sink to the bottom so a hand-crafted (test) event without blocks
-        # doesn't corrupt the ordering.
-        events = (
-            session.execute(
-                select(UpgradeEvent)
-                .where(UpgradeEvent.contract_id == proxy_id)
-                .order_by(
-                    UpgradeEvent.block_number.asc().nullslast(),
-                    UpgradeEvent.id.asc(),
+    # Build a window list per (lowercase address) once; then distribute to
+    # every Contract.id whose address matches (identical impl addresses on
+    # different rows is rare, but the invariant costs nothing).
+    windows_by_addr: dict[str, list[ImplWindow]] = {}
+    for addr_lower, proxy_id_set in addr_to_proxies.items():
+        windows: list[ImplWindow] = []
+        for pid in proxy_id_set:
+            proxy_events = events_by_proxy.get(pid) or []
+            for i, ev in enumerate(proxy_events):
+                if not ev.new_impl or ev.new_impl.lower() != addr_lower:
+                    continue
+                from_block = ev.block_number or 0
+                from_ts = ev.timestamp
+                to_block: int | None = None
+                to_ts: datetime | None = None
+                if i + 1 < len(proxy_events):
+                    nxt = proxy_events[i + 1]
+                    to_block = nxt.block_number
+                    to_ts = nxt.timestamp
+                windows.append(
+                    ImplWindow(
+                        proxy_contract_id=pid,
+                        proxy_address=proxy_addr_by_id.get(pid, ""),
+                        from_block=from_block,
+                        to_block=to_block,
+                        from_ts=from_ts,
+                        to_ts=to_ts,
+                    )
                 )
-            )
-            .scalars()
-            .all()
-        )
-        if not events:
-            continue
+        # Deterministic order so callers (and tests) can rely on it.
+        windows.sort(key=lambda w: (w.from_block, w.proxy_contract_id))
+        windows_by_addr[addr_lower] = windows
 
-        # For each occurrence where this address was introduced as the new
-        # impl, the window ends at the next event on the same proxy.
-        for i, ev in enumerate(events):
-            if not ev.new_impl or ev.new_impl.lower() != addr_lower:
-                continue
-            from_block = ev.block_number or 0
-            from_ts = ev.timestamp
-            to_block: int | None = None
-            to_ts: datetime | None = None
-            if i + 1 < len(events):
-                nxt = events[i + 1]
-                to_block = nxt.block_number
-                to_ts = nxt.timestamp
-            windows.append(
-                ImplWindow(
-                    proxy_contract_id=proxy_id,
-                    proxy_address=proxy.address or "",
-                    from_block=from_block,
-                    to_block=to_block,
-                    from_ts=from_ts,
-                    to_ts=to_ts,
-                )
-            )
+    for addr_lower, contract_ids in addr_to_ids.items():
+        ws = windows_by_addr.get(addr_lower, [])
+        for cid in contract_ids:
+            # Copy so distinct list identity per contract_id, cheap for small lists.
+            result[cid] = list(ws)
+    return result
 
-    # Deterministic order so callers (and tests) can rely on it.
-    windows.sort(key=lambda w: (w.from_block, w.proxy_contract_id))
-    return windows
+
+def _compute_impl_windows_for_contract(session: Session, contract: Contract) -> list[ImplWindow]:
+    """Return windows during which ``contract.address`` was an active impl.
+
+    Thin wrapper around :func:`_compute_impl_windows_batch` for the
+    single-contract ``match_audits_for_contract`` entry point. Kept for
+    callers that only need one contract's windows.
+    """
+    return _compute_impl_windows_batch(session, [contract]).get(contract.id, [])
 
 
 # --- Confidence scoring -------------------------------------------------
@@ -370,6 +405,12 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
 
     audit_ts = _audit_effective_ts(audit.date)
 
+    # Batch impl-window computation: one query for the proxy lookup and
+    # one for the event history across every candidate, instead of N+K per
+    # candidate. For protocols with a wide scope, this is the difference
+    # between a single rebuild lasting seconds vs. minutes.
+    windows_by_id = _compute_impl_windows_batch(session, list(candidates))
+
     # Per-contract: pick the best match. When a contract has impl windows,
     # we emit impl_era; otherwise direct.
     by_contract: dict[int, CoverageMatch] = {}
@@ -377,7 +418,7 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
         matched_name = scope_lookup.get(_normalize_name(c.contract_name))
         if not matched_name:
             continue
-        windows = _compute_impl_windows_for_contract(session, c)
+        windows = windows_by_id.get(c.id, [])
         if windows:
             confidence, window = _confidence_for_impl_era(audit_ts, windows)
             match = CoverageMatch(
@@ -502,38 +543,115 @@ def _match_to_row_kwargs(match: CoverageMatch) -> dict:
     }
 
 
-def _reviewed_commit_upgrades(
-    session: Session,
-    matches: list[CoverageMatch],
-) -> list[CoverageMatch]:
-    """Upgrade matches to ``reviewed_commit`` when source-equivalence proves them.
+@dataclass(frozen=True)
+class _EquivalenceInputs:
+    """Inputs to run ``check_audit_covers_impl`` without holding a session.
 
-    When the audit has ``reviewed_commits`` + ``source_repo``, cross-checks
-    GitHub vs Etherscan for each candidate. Hit → ``match_type='reviewed_commit'``,
-    ``confidence='high'``; miss → the temporal match stands unchanged.
-    Audit rows are cached per call so a batch on one audit hits the DB once.
-    Non-destructive (returns a fresh list) and per-match failures are swallowed.
+    Materialized in the DB phase so the HTTP phase can run with no open
+    transaction: the GitHub fetches inside ``check_audit_covers_impl`` are
+    pure HTTP and need no session.
+    """
+
+    audit_report_id: int
+    contract_id: int
+    contract_address: str | None
+    reviewed_commits: tuple[str, ...]
+    scope_contracts: tuple[str, ...]
+    source_repo: str | None
+    # DB-resolved impl source, if Contract.job_id had SourceFile rows.
+    # None means the HTTP phase should call Etherscan as a fallback.
+    db_impl_source: "object | None"
+
+
+def _preload_equivalence_inputs(
+    session: Session, matches: list[CoverageMatch]
+) -> dict[tuple[int, int], _EquivalenceInputs]:
+    """Pull the data needed for source-equivalence into plain Python objects.
+
+    Runs inside the caller's DB phase so the subsequent HTTP phase can
+    execute with the transaction released. Each match gets one entry keyed
+    by ``(audit_id, contract_id)``. Matches whose audit lacks
+    ``reviewed_commits``/``source_repo`` are still recorded (with empty
+    tuples) so the HTTP phase can cheaply skip them.
+    """
+    from services.audits.source_equivalence import fetch_db_source_files
+
+    out: dict[tuple[int, int], _EquivalenceInputs] = {}
+    audit_cache: dict[int, AuditReport | None] = {}
+    contract_cache: dict[int, Contract | None] = {}
+    for m in matches:
+        audit = audit_cache.get(m.audit_report_id)
+        if m.audit_report_id not in audit_cache:
+            audit = session.get(AuditReport, m.audit_report_id)
+            audit_cache[m.audit_report_id] = audit
+        contract = contract_cache.get(m.contract_id)
+        if m.contract_id not in contract_cache:
+            contract = session.get(Contract, m.contract_id)
+            contract_cache[m.contract_id] = contract
+        if audit is None or contract is None:
+            continue
+        db_source = fetch_db_source_files(session, m.contract_id)
+        out[(m.audit_report_id, m.contract_id)] = _EquivalenceInputs(
+            audit_report_id=m.audit_report_id,
+            contract_id=m.contract_id,
+            contract_address=contract.address,
+            reviewed_commits=tuple(audit.reviewed_commits or ()),
+            scope_contracts=tuple(audit.scope_contracts or ()),
+            source_repo=audit.source_repo,
+            db_impl_source=db_source,
+        )
+    return out
+
+
+def _apply_equivalence_http(
+    matches: list[CoverageMatch],
+    inputs: dict[tuple[int, int], _EquivalenceInputs],
+) -> list[CoverageMatch]:
+    """HTTP phase: upgrade matches to ``reviewed_commit`` via source-equivalence.
+
+    No session involvement. Per-match: if DB impl source was preloaded we
+    use it; otherwise we fall back to Etherscan (pure HTTP). Then GitHub
+    raw fetches decide equivalence. Failures are swallowed and the
+    temporal match stands.
     """
     import os
 
-    from services.audits.source_equivalence import check_audit_row_covers_contract
+    from services.audits.source_equivalence import (
+        check_audit_covers_impl,
+        fetch_etherscan_source_files,
+    )
 
     gh_token = os.environ.get("GITHUB_TOKEN") or None
-    audit_cache: dict[int, AuditReport | None] = {}
-
-    def _audit(audit_id: int) -> AuditReport | None:
-        if audit_id not in audit_cache:
-            audit_cache[audit_id] = session.get(AuditReport, audit_id)
-        return audit_cache[audit_id]
+    etherscan_cache: dict[str, object | None] = {}
 
     upgraded: list[CoverageMatch] = []
     for m in matches:
-        audit = _audit(m.audit_report_id)
-        if audit is None or not (audit.reviewed_commits and audit.source_repo):
+        key = (m.audit_report_id, m.contract_id)
+        data = inputs.get(key)
+        if data is None or not (data.reviewed_commits and data.source_repo and data.scope_contracts):
+            upgraded.append(m)
+            continue
+        impl_source = data.db_impl_source
+        if impl_source is None and data.contract_address:
+            addr_key = data.contract_address.lower()
+            if addr_key not in etherscan_cache:
+                try:
+                    etherscan_cache[addr_key] = fetch_etherscan_source_files(data.contract_address)
+                except Exception:
+                    logger.exception("source-equivalence Etherscan fetch crashed for contract %s", m.contract_id)
+                    etherscan_cache[addr_key] = None
+            impl_source = etherscan_cache[addr_key]
+        if impl_source is None:
             upgraded.append(m)
             continue
         try:
-            proofs = check_audit_row_covers_contract(session, m.audit_report_id, m.contract_id, github_token=gh_token)
+            proofs = check_audit_covers_impl(
+                reviewed_commits=list(data.reviewed_commits),
+                scope_contracts=list(data.scope_contracts),
+                impl_source=impl_source,  # type: ignore[arg-type]
+                source_repo=data.source_repo,
+                github_token=gh_token,
+            )
         except Exception:
             logger.exception(
                 "source-equivalence check crashed for audit %s / contract %s",
@@ -568,6 +686,22 @@ def _reviewed_commit_upgrades(
     return upgraded
 
 
+def _persist_coverage_for_audit(session: Session, audit_id: int, matches: list[CoverageMatch]) -> int:
+    """Delete-then-insert coverage rows for one audit in a short tx."""
+    session.execute(sql_delete(AuditContractCoverage).where(AuditContractCoverage.audit_report_id == audit_id))
+    for match in matches:
+        session.add(AuditContractCoverage(**_match_to_row_kwargs(match)))
+    return len(matches)
+
+
+def _persist_coverage_for_contract(session: Session, contract_id: int, matches: list[CoverageMatch]) -> int:
+    """Delete-then-insert coverage rows for one contract in a short tx."""
+    session.execute(sql_delete(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract_id))
+    for match in matches:
+        session.add(AuditContractCoverage(**_match_to_row_kwargs(match)))
+    return len(matches)
+
+
 def upsert_coverage_for_audit(
     session: Session,
     audit_id: int,
@@ -576,19 +710,23 @@ def upsert_coverage_for_audit(
 ) -> int:
     """Replace all coverage rows for ``audit_id`` with a fresh match.
 
-    Delete-then-insert in the caller's transaction — free invalidation on
-    scope re-extraction. Returns inserted row count; caller commits.
-    ``verify_source_equivalence`` is opt-in (~2 HTTP/pair); upgrades
-    matches to ``reviewed_commit``/``high`` when proof succeeds.
+    Two-phase when ``verify_source_equivalence`` is true: a DB phase
+    computes the base temporal matches and pre-loads the inputs for
+    source-equivalence, commits, runs GitHub + Etherscan HTTP with the
+    transaction released, and finally opens a fresh transaction for the
+    delete-then-insert. This keeps long-running HTTP (hundreds of seconds
+    on a wide audit) out of the Postgres row locks that would otherwise
+    wedge concurrent writers. Returns inserted row count; caller commits.
     """
     audit = session.get(AuditReport, audit_id)
     if audit is None:
+        # Nothing to rebuild — ensure no stale coverage rows linger.
+        _persist_coverage_for_audit(session, audit_id, [])
         return 0
-
-    session.execute(sql_delete(AuditContractCoverage).where(AuditContractCoverage.audit_report_id == audit_id))
 
     if audit.scope_extraction_status != "success":
         # Nothing to insert — either not yet extracted or explicitly skipped.
+        _persist_coverage_for_audit(session, audit_id, [])
         return 0
 
     matches = match_contracts_for_audit(session, audit_id)
@@ -598,14 +736,18 @@ def upsert_coverage_for_audit(
             audit_id,
             audit.protocol_id,
         )
+        _persist_coverage_for_audit(session, audit_id, [])
         return 0
 
     if verify_source_equivalence:
-        matches = _reviewed_commit_upgrades(session, matches)
+        # Phase A2: pre-load source-equivalence inputs while still holding
+        # the session, then commit so HTTP runs with no tx open.
+        equiv_inputs = _preload_equivalence_inputs(session, matches)
+        session.commit()
+        matches = _apply_equivalence_http(matches, equiv_inputs)
 
-    for match in matches:
-        session.add(AuditContractCoverage(**_match_to_row_kwargs(match)))
-    return len(matches)
+    # Phase B: fresh transaction for the delete-then-insert.
+    return _persist_coverage_for_audit(session, audit_id, matches)
 
 
 def upsert_coverage_for_contract(
@@ -617,15 +759,16 @@ def upsert_coverage_for_contract(
     """Refresh coverage rows for one contract (delete-then-insert by contract_id).
 
     Called after a live upgrade changes the contract's impl windows.
-    ``verify_source_equivalence`` forwards to the source-equivalence pass.
+    ``verify_source_equivalence`` forwards to the source-equivalence pass
+    with the same two-phase tx-release-during-HTTP pattern as
+    :func:`upsert_coverage_for_audit`.
     """
-    session.execute(sql_delete(AuditContractCoverage).where(AuditContractCoverage.contract_id == contract_id))
     matches = match_audits_for_contract(session, contract_id)
     if verify_source_equivalence and matches:
-        matches = _reviewed_commit_upgrades(session, matches)
-    for match in matches:
-        session.add(AuditContractCoverage(**_match_to_row_kwargs(match)))
-    return len(matches)
+        equiv_inputs = _preload_equivalence_inputs(session, matches)
+        session.commit()
+        matches = _apply_equivalence_http(matches, equiv_inputs)
+    return _persist_coverage_for_contract(session, contract_id, matches)
 
 
 def upsert_coverage_for_protocol(

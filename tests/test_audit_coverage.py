@@ -1083,3 +1083,76 @@ def test_verify_source_equivalence_off_by_default(db_session, seed_protocol, mon
     upsert_coverage_for_audit(db_session, audit.id)
     db_session.commit()
     assert called == {"etherscan": 0, "github": 0}
+
+
+# ---------------------------------------------------------------------------
+# 9. Perf: N+1 query explosion in the matcher is avoided
+# ---------------------------------------------------------------------------
+
+
+def test_match_contracts_for_audit_is_not_n_plus_one(db_session, seed_protocol):
+    """With N scope-name candidate Contracts × K proxies each, the old
+    implementation fired (K+1) queries per candidate inside
+    ``_compute_impl_windows_for_contract``. The batched path must keep the
+    count bounded regardless of N, proving we don't scale queries with
+    candidate count.
+    """
+    from sqlalchemy import event
+
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+
+    # Seed a handful of impl candidates (all sharing the same scope name)
+    # and a proxy history per impl. The more candidates, the more the
+    # per-candidate helper would amplify the query count.
+    n_candidates = 8
+    scope_name = "SharedImpl"
+    for i in range(n_candidates):
+        impl = _add_contract(
+            db_session,
+            protocol_id,
+            address="0x" + f"{i:02x}" + "a" * 38,
+            name=scope_name,
+        )
+        proxy = _add_contract(
+            db_session,
+            protocol_id,
+            address="0x" + f"{i:02x}" + "1" * 38,
+            name="Proxy",
+            is_proxy=True,
+            implementation=impl.address,
+        )
+        _add_upgrade_event(
+            db_session,
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            new_impl=impl.address,
+            block_number=100 + i,
+            timestamp=_ts(2024, 1, 1),
+        )
+
+    audit = _add_audit(db_session, protocol_id, scope=[scope_name], date="2024-03-01")
+
+    # Count real SQL statements emitted during the call (filter out SAVEPOINT /
+    # BEGIN / COMMIT noise). We only care about proxy-window lookups — but
+    # counting all SELECTs is a conservative upper bound.
+    queries: list[str] = []
+
+    def before_cursor_execute(conn, cursor, statement, params, context, executemany):
+        s = statement.strip().lower()
+        if s.startswith("select"):
+            queries.append(statement)
+
+    event.listen(db_session.bind, "before_cursor_execute", before_cursor_execute)
+    try:
+        matches = match_contracts_for_audit(db_session, audit.id)
+    finally:
+        event.remove(db_session.bind, "before_cursor_execute", before_cursor_execute)
+
+    assert len(matches) == n_candidates
+    # Without batching: ~1 audit lookup + 1 candidate query + N*(1+1) window
+    # queries = N=8 -> ~18+ SELECTs. With batching we expect ≤ 5.
+    assert len(queries) <= 5, f"expected ≤ 5 SELECTs for {n_candidates} candidates, got {len(queries)}:\n" + "\n".join(
+        queries
+    )

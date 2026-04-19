@@ -1165,15 +1165,16 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
     db_session.add(audit)
     db_session.commit()
 
-    # Monkeypatch source-equivalence at the import site used by
-    # _reviewed_commit_upgrades in services.audits.coverage. The promoted
-    # match_type/confidence on AuditContractCoverage is the observable
-    # signal — we just need check_audit_row_covers_contract to return a
-    # truthy list so the upgrade path fires.
-    import services.audits.coverage as coverage_mod
+    # Monkeypatch source-equivalence at the HTTP-phase seam used by the
+    # new two-phase coverage upsert. ``check_audit_covers_impl`` takes
+    # pre-loaded ``VerifiedSource`` so the stub can return a truthy list
+    # without touching the DB. ``fetch_etherscan_source_files`` is the
+    # fallback path used when DB sources are absent; stubbing it avoids
+    # real Etherscan traffic and provides the ``VerifiedSource`` the
+    # preload step hands to the HTTP phase.
     import services.audits.source_equivalence as se_mod
 
-    def fake_check(session, audit_id, contract_id, *, github_token=None):
+    def fake_check(*, reviewed_commits, scope_contracts, impl_source, source_repo, github_token=None):
         return [
             SimpleNamespace(
                 commit="3b6b81b",
@@ -1183,11 +1184,16 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
             )
         ]
 
-    # Patch both the source module symbol AND the name imported inside
-    # the function (import happens at call time, so patching the source
-    # is sufficient — but do both for defense in depth).
-    monkeypatch.setattr(se_mod, "check_audit_row_covers_contract", fake_check)
-    monkeypatch.setattr(coverage_mod, "_reviewed_commit_upgrades", coverage_mod._reviewed_commit_upgrades)
+    monkeypatch.setattr(se_mod, "check_audit_covers_impl", fake_check)
+    monkeypatch.setattr(
+        se_mod,
+        "fetch_etherscan_source_files",
+        lambda _addr: se_mod.VerifiedSource(
+            contract_name="LiquidityPool",
+            compiler_version="0.8",
+            files={"src/LiquidityPool.sol": "stubhash"},
+        ),
+    )
 
     worker._backfill_historical_impls(
         db_session,

@@ -507,3 +507,111 @@ def test_coverage_worker_handles_job_without_contract(db_session, seed_protocol,
     # Should not raise.
     worker.process(db_session, claimed)
     db_session.commit()
+
+
+# ---------------------------------------------------------------------------
+# 5. Perf: HTTP calls must not run inside an open DB transaction
+# ---------------------------------------------------------------------------
+
+
+def test_coverage_worker_does_not_hold_transaction_during_http(db_session, seed_protocol, worker, monkeypatch):
+    """S5: the coverage worker must not keep a Postgres transaction open
+    while running GitHub / Etherscan HTTP calls. A held row-lock during a
+    15s HTTP timeout blocks every other writer touching the same rows.
+
+    We track the "is a transaction currently open?" flag via SQLAlchemy
+    engine events, and assert the flag is False every time the stubbed
+    source-equivalence HTTP helper is invoked.
+    """
+    from sqlalchemy import event
+
+    from db.models import JobStage, JobStatus
+    from services.audits import source_equivalence
+
+    protocol_id, _ = seed_protocol
+    job = _add_job(
+        db_session,
+        protocol_id=protocol_id,
+        stage=JobStage.coverage,
+        status=JobStatus.queued,
+    )
+    _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        name="Pool",
+        address="0x" + "a" * 40,
+        job_id=job.id,
+    )
+    audit = _add_audit(
+        db_session,
+        protocol_id=protocol_id,
+        text_status="success",
+        scope_status="success",
+        scope=["Pool"],
+    )
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = "some/repo"
+    db_session.commit()
+
+    # Flush the fixture's own transaction so the "begin" events below fire
+    # for the worker's writes, not pre-existing test setup.
+    db_session.close()
+
+    # Track active transactions on the engine. begin/commit events fire for
+    # every implicit-begin in SQLAlchemy 2.x.
+    tx_depth = {"value": 0}
+
+    def on_begin(conn):
+        tx_depth["value"] += 1
+
+    def on_commit(conn):
+        tx_depth["value"] = max(0, tx_depth["value"] - 1)
+
+    def on_rollback(conn):
+        tx_depth["value"] = max(0, tx_depth["value"] - 1)
+
+    engine = db_session.bind
+    event.listen(engine, "begin", on_begin)
+    event.listen(engine, "commit", on_commit)
+    event.listen(engine, "rollback", on_rollback)
+
+    # Record tx_depth at the moment each HTTP helper is called.
+    http_tx_depths: list[tuple[str, int]] = []
+
+    def record_github(repo, commit, path, *, token=None):
+        http_tx_depths.append(("github", tx_depth["value"]))
+        return None
+
+    def record_etherscan(address):
+        http_tx_depths.append(("etherscan", tx_depth["value"]))
+        return source_equivalence.VerifiedSource(
+            contract_name="Pool",
+            compiler_version="0.8",
+            files={"src/Pool.sol": "deadbeef"},
+        )
+
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", record_github)
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", record_etherscan)
+
+    # Use a fresh session (the worker does too) so fixture tx state is
+    # isolated from the worker's transaction activity.
+    from sqlalchemy.orm import Session as _Session
+
+    session = _Session(engine, expire_on_commit=False)
+    try:
+        claimed = worker._claim_next_job(session)
+        assert claimed is not None
+
+        worker.process(session, claimed)
+        session.commit()
+    finally:
+        session.close()
+        event.remove(engine, "begin", on_begin)
+        event.remove(engine, "commit", on_commit)
+        event.remove(engine, "rollback", on_rollback)
+
+    # At least one HTTP call must have been made (via scope-name "Pool" +
+    # reviewed_commits populated).
+    assert http_tx_depths, "expected source-equivalence HTTP helpers to be invoked"
+    for label, depth in http_tx_depths:
+        assert depth == 0, f"{label} HTTP call happened inside an open transaction (depth={depth})"

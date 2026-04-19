@@ -945,16 +945,16 @@ def test_scope_worker_refresh_coverage_runs_source_equivalence(
     audit.source_repo = "example/protocol"
     db_session.commit()
 
-    # Stub source-equivalence to return a proof for the impl/audit pair.
-    # If verify_source_equivalence=False (the pre-fix default at the
-    # scope-worker call site), this stub is never invoked and the
-    # coverage row lands at match_type='direct' / match_confidence='high'
+    # Stub source-equivalence at the HTTP-phase seam used by the two-phase
+    # coverage upsert. If verify_source_equivalence=False (the pre-fix
+    # default at the scope-worker call site), this stub is never invoked
+    # and the coverage row lands at match_type='direct' / match_confidence='high'
     # — the regression assertion below pins match_type='reviewed_commit',
     # which is reachable only when the worker passes
     # verify_source_equivalence=True to upsert_coverage_for_audit.
     import services.audits.source_equivalence as se_mod
 
-    def fake_check(session, audit_id_, contract_id_, *, github_token=None):
+    def fake_check(*, reviewed_commits, scope_contracts, impl_source, source_repo, github_token=None):
         return [
             SimpleNamespace(
                 commit="abc123def456",
@@ -964,7 +964,16 @@ def test_scope_worker_refresh_coverage_runs_source_equivalence(
             )
         ]
 
-    monkeypatch.setattr(se_mod, "check_audit_row_covers_contract", fake_check)
+    monkeypatch.setattr(se_mod, "check_audit_covers_impl", fake_check)
+    monkeypatch.setattr(
+        se_mod,
+        "fetch_etherscan_source_files",
+        lambda _addr: se_mod.VerifiedSource(
+            contract_name="Pool",
+            compiler_version="0.8",
+            files={"src/Pool.sol": "stubhash"},
+        ),
+    )
 
     # Drive the scope worker the same way the existing tests do.
     claimed = worker._claim_batch(db_session)
