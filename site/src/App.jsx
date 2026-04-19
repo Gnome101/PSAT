@@ -15,6 +15,7 @@ import DependencyGraphTab from "./DependencyGraphTab.jsx";
 import ProtocolGraph from "./ProtocolGraph.jsx";
 import RiskSurface from "./RiskSurface.jsx";
 import ProtocolSurface from "./ProtocolSurface.jsx";
+import { matchesEra } from "./auditMatching.js";
 import AuditsTab from "./AuditsTab.jsx";
 import AuditExtractionShelf from "./AuditExtractionShelf.jsx";
 import { api } from "./api/client.js";
@@ -334,37 +335,6 @@ function UpgradesTab({ detail }) {
 
   const coverageRows = auditTimeline?.coverage || [];
   const currentStatus = auditTimeline?.current_status || null;
-
-  function parseAuditTs(date) {
-    if (!date) return null;
-    const t = Date.parse(date);
-    return Number.isNaN(t) ? null : t;
-  }
-  function matchesEra(cov, impl) {
-    // Source-equivalence proof is keyed to a specific impl Contract;
-    // attach only to that impl's era.
-    if (cov.impl_address && impl?.address) {
-      return cov.impl_address.toLowerCase() === impl.address.toLowerCase();
-    }
-    const covFrom = cov.covered_from_block;
-    const covTo = cov.covered_to_block;
-    const hasBlocks = covFrom != null || covTo != null;
-    if (hasBlocks) {
-      const eraFrom = impl?.block_introduced ?? -Infinity;
-      const eraTo = impl?.block_replaced ?? Infinity;
-      const cFrom = covFrom ?? -Infinity;
-      const cTo = covTo ?? Infinity;
-      return cFrom < eraTo && cTo > eraFrom;
-    }
-    // Null block range → audit date vs impl-era timestamps, else the
-    // same audit would show under every era.
-    const auditTs = parseAuditTs(cov.date);
-    if (auditTs == null) return false;
-    // impl timestamps are unix seconds; Date.parse returns ms.
-    const eraFromTs = impl?.timestamp_introduced != null ? impl.timestamp_introduced * 1000 : -Infinity;
-    const eraToTs = impl?.timestamp_replaced != null ? impl.timestamp_replaced * 1000 : Infinity;
-    return auditTs >= eraFromTs && auditTs < eraToTs;
-  }
 
   function frontendCurrentImplAudited() {
     if (!auditTimeline || !history?.proxies) return false;
@@ -2888,14 +2858,19 @@ export default function App() {
   const [companyName, setCompanyName] = useState(() => { const r = parseLocationPath(window.location.pathname); return r.mode === "company" ? r.value : null; });
   const [companyTab, setCompanyTab] = useState(() => parseLocationPath(window.location.pathname).companyTab || "overview");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("summary");
+  // Initialize activeTab from the URL so /address/<addr>/upgrades loads
+  // the upgrades tab directly on refresh — otherwise activeTab starts as
+  // "summary" and only flips once loadAnalysis resolves, which means
+  // UpgradesTab briefly doesn't mount and any URL-dependent tab content
+  // can race with loadAnalysis' state batch.
+  const [activeTab, setActiveTab] = useState(() => parseLocationPath(window.location.pathname).tab);
   const [job, setJob] = useState(null);
   const [activeJobs, setActiveJobs] = useState([]);
   const [form, setForm] = useState({ target: "", name: "", chain: "", analyzeLimit: "5" });
   const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const analysesRef = useRef([]);
-  const activeTabRef = useRef("summary");
+  const activeTabRef = useRef(parseLocationPath(window.location.pathname).tab);
   const doneTimerRef = useRef(null);
 
   useEffect(() => { analysesRef.current = analyses; }, [analyses]);
