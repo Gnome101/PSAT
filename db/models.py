@@ -503,6 +503,7 @@ class ControlGraphEdge(Base):
 
 class UpgradeEvent(Base):
     __tablename__ = "upgrade_events"
+    __table_args__ = (Index("ix_upgrade_events_contract_id", "contract_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
@@ -856,6 +857,10 @@ def apply_storage_migrations(target_engine=None) -> None:
                 "ON audit_contract_coverage (protocol_id)"
             )
         )
+        # upgrade_events.contract_id — Postgres FKs don't auto-create an index,
+        # and this column is scanned on every per-impl window computation in
+        # services/audits/coverage.py + contract_audit_timeline.
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_upgrade_events_contract_id ON upgrade_events (contract_id)"))
         conn.commit()
 
 
