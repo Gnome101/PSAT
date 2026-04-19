@@ -2152,16 +2152,19 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
 
         # Dedupe: multiple impl rows can produce rows against the same
         # audit_id (the audit's scope name matched several historical
-        # impls). Keep the one with highest confidence, then widest
-        # window, then lowest contract_id as tiebreaker.
-        confidence_rank = {"low": 0, "medium": 1, "high": 2}
+        # impls). Rank by (confidence, match_type) so cryptographic
+        # source-equivalence proofs always beat heuristic temporal
+        # matches at equal confidence. Without the type tiebreaker,
+        # two ``high`` rows fell through to first-iterated-wins (no SQL
+        # ORDER BY on cov_rows), which silently flipped audits off the
+        # current impl in the UI even when the DB had a reviewed_commit
+        # row pinning them there.
+        from services.audits.coverage import _row_score
+
         best_by_audit: dict[int, Any] = {}
         for r in cov_rows:
             prev = best_by_audit.get(r.audit_report_id)
-            if prev is None:
-                best_by_audit[r.audit_report_id] = r
-                continue
-            if confidence_rank.get(r.match_confidence, 0) > confidence_rank.get(prev.match_confidence, 0):
+            if prev is None or _row_score(r) > _row_score(prev):
                 best_by_audit[r.audit_report_id] = r
 
         # Address-by-contract_id lookup so the UI can attribute each

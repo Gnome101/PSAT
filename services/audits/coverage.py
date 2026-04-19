@@ -451,17 +451,38 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
                 match_confidence=confidence,
             )
         prev = by_contract.get(c.id)
-        if prev is None or _confidence_rank(match.match_confidence) > _confidence_rank(prev.match_confidence):
+        if prev is None or _row_score(match) > _row_score(prev):
             by_contract[c.id] = match
 
     return list(by_contract.values())
 
 
 _CONFIDENCE_ORDER: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2}
+# Match-type strength as a tiebreaker WITHIN equal confidence:
+# reviewed_commit (cryptographic source-hash proof) beats impl_era
+# (temporal-window heuristic) beats direct (pure name match). Confidence
+# always dominates — a low-confidence reviewed_commit still loses to a
+# high-confidence direct.
+_MATCH_TYPE_ORDER: Final[dict[str, int]] = {"direct": 0, "impl_era": 1, "reviewed_commit": 2}
 
 
 def _confidence_rank(conf: str) -> int:
     return _CONFIDENCE_ORDER.get(conf, 0)
+
+
+def _row_score(row) -> tuple[int, int]:
+    """Composite rank: ``(confidence, match_type)`` — higher is better.
+
+    Used by both the per-contract dedupe in ``match_contracts_for_audit``
+    and the per-audit dedupe in ``api.contract_audit_timeline`` so the
+    two paths agree on which row wins. Accepts anything with
+    ``.match_confidence`` and ``.match_type`` attributes (CoverageMatch
+    dataclass + the AuditContractCoverage ORM row both qualify).
+    """
+    return (
+        _CONFIDENCE_ORDER.get(row.match_confidence, 0),
+        _MATCH_TYPE_ORDER.get(row.match_type, 0),
+    )
 
 
 def match_audits_for_contract(session: Session, contract_id: int) -> list[CoverageMatch]:

@@ -1211,3 +1211,262 @@ def test_match_contracts_for_audit_is_not_n_plus_one(db_session, seed_protocol):
     assert len(queries) <= 5, f"expected ≤ 5 SELECTs for {n_candidates} candidates, got {len(queries)}:\n" + "\n".join(
         queries
     )
+
+
+# ---------------------------------------------------------------------------
+# 8. /api/contracts/{id}/audit_timeline dedupe — match_type-aware ranking
+# ---------------------------------------------------------------------------
+
+
+def test_audit_timeline_dedupe_prefers_reviewed_commit_over_impl_era(db_session, seed_protocol):
+    """``best_by_audit`` in api.contract_audit_timeline must prefer a
+    ``reviewed_commit`` row over an ``impl_era`` row when the audit
+    matched both at the same confidence. Source-equivalence is
+    cryptographic proof; impl_era is a temporal heuristic — the proof
+    should always win.
+
+    Regression: pre-fix, the dedupe ranked only on ``match_confidence``,
+    so two rows tied at 'high' fell through to first-iterated-wins (no
+    SQL ORDER BY). On EtherFi's LiquidityPool that flipped audits like
+    Certora "Priority Queue" off the current impl in the UI even though
+    the DB had a reviewed_commit row pinning it there — top banner said
+    "audited", per-impl chip said "no audit coverage" for the current
+    impl.
+    """
+    from fastapi.testclient import TestClient
+
+    import api as api_module
+    from db.models import AuditContractCoverage, UpgradeEvent
+    from tests.conftest import SessionFactory
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "1" * 40,
+        name="Proxy",
+        is_proxy=True,
+        implementation="0x" + "a" * 40,
+    )
+    impl_a = _add_contract(db_session, protocol_id, address="0x" + "a" * 40, name="Pool")
+    impl_b = _add_contract(db_session, protocol_id, address="0x" + "b" * 40, name="Pool")
+    # Two upgrade events: impl_b first, then upgraded to impl_a (current).
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            old_impl=None,
+            new_impl=impl_b.address,
+            block_number=100,
+            timestamp=_ts(2024, 1, 1),
+            tx_hash="0x" + "1" * 64,
+        )
+    )
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            old_impl=impl_b.address,
+            new_impl=impl_a.address,
+            block_number=200,
+            timestamp=_ts(2024, 6, 1),
+            tx_hash="0x" + "2" * 64,
+        )
+    )
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-08-01")
+
+    # Two coverage rows at SAME confidence. With the buggy ranker, whichever
+    # row hits the cov_rows iteration first wins. We insert impl_b's
+    # impl_era row FIRST so the bug pins the chip to impl_b — the fix must
+    # still pick impl_a's reviewed_commit despite iteration order.
+    db_session.add(
+        AuditContractCoverage(
+            contract_id=impl_b.id,
+            audit_report_id=audit.id,
+            protocol_id=protocol_id,
+            matched_name="Pool",
+            match_type="impl_era",
+            match_confidence="high",
+            covered_from_block=100,
+            covered_to_block=200,
+        )
+    )
+    db_session.add(
+        AuditContractCoverage(
+            contract_id=impl_a.id,
+            audit_report_id=audit.id,
+            protocol_id=protocol_id,
+            matched_name="Pool",
+            match_type="reviewed_commit",
+            match_confidence="high",
+        )
+    )
+    db_session.commit()
+
+    # Hit the API on the proxy — it unions coverage from proxy + impls.
+    SessionLocal_orig = api_module.SessionLocal
+    api_module.SessionLocal = SessionFactory(db_session)
+    try:
+        client = TestClient(api_module.app)
+        r = client.get(f"/api/contracts/{proxy.id}/audit_timeline")
+    finally:
+        api_module.SessionLocal = SessionLocal_orig
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rows_for_audit = [c for c in body["coverage"] if c["audit_id"] == audit.id]
+    assert len(rows_for_audit) == 1, f"audit must dedupe to one row, got {rows_for_audit}"
+    chosen = rows_for_audit[0]
+    assert chosen["match_type"] == "reviewed_commit", (
+        f"Source-equivalence proof must beat impl_era at equal confidence; got {chosen['match_type']!r}. "
+        f"Full row: {chosen!r}"
+    )
+    assert chosen["impl_address"].lower() == impl_a.address.lower(), (
+        f"Chip must point to current impl (reviewed_commit target), got {chosen['impl_address']!r}"
+    )
+
+
+def test_audit_timeline_dedupe_prefers_impl_era_over_direct(db_session, seed_protocol):
+    """At equal confidence, ``impl_era`` (temporal window) beats
+    ``direct`` (pure name match) — impl_era carries strictly more
+    information. Defense-in-depth so the type-aware ranker remains
+    consistent across all three match types.
+    """
+    from fastapi.testclient import TestClient
+
+    import api as api_module
+    from db.models import AuditContractCoverage, UpgradeEvent
+    from tests.conftest import SessionFactory
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "3" * 40,
+        name="Proxy2",
+        is_proxy=True,
+        implementation="0x" + "c" * 40,
+    )
+    impl_c = _add_contract(db_session, protocol_id, address="0x" + "c" * 40, name="Pool")
+    impl_d = _add_contract(db_session, protocol_id, address="0x" + "d" * 40, name="Pool")
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            old_impl=None,
+            new_impl=impl_d.address,
+            block_number=300,
+            timestamp=_ts(2024, 1, 1),
+            tx_hash="0x" + "3" * 64,
+        )
+    )
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            old_impl=impl_d.address,
+            new_impl=impl_c.address,
+            block_number=400,
+            timestamp=_ts(2024, 6, 1),
+            tx_hash="0x" + "4" * 64,
+        )
+    )
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-04-01")
+
+    # direct on current impl (no temporal info), impl_era on past impl
+    # (window match). impl_era should win.
+    db_session.add(
+        AuditContractCoverage(
+            contract_id=impl_c.id,
+            audit_report_id=audit.id,
+            protocol_id=protocol_id,
+            matched_name="Pool",
+            match_type="direct",
+            match_confidence="high",
+        )
+    )
+    db_session.add(
+        AuditContractCoverage(
+            contract_id=impl_d.id,
+            audit_report_id=audit.id,
+            protocol_id=protocol_id,
+            matched_name="Pool",
+            match_type="impl_era",
+            match_confidence="high",
+            covered_from_block=300,
+            covered_to_block=400,
+        )
+    )
+    db_session.commit()
+
+    SessionLocal_orig = api_module.SessionLocal
+    api_module.SessionLocal = SessionFactory(db_session)
+    try:
+        client = TestClient(api_module.app)
+        r = client.get(f"/api/contracts/{proxy.id}/audit_timeline")
+    finally:
+        api_module.SessionLocal = SessionLocal_orig
+
+    assert r.status_code == 200, r.text
+    rows_for_audit = [c for c in r.json()["coverage"] if c["audit_id"] == audit.id]
+    assert len(rows_for_audit) == 1
+    assert rows_for_audit[0]["match_type"] == "impl_era"
+
+
+def test_match_contracts_for_audit_per_contract_dedupe_prefers_reviewed_commit(db_session, seed_protocol):
+    """Symmetric ranking inside the matcher: ``by_contract`` in
+    match_contracts_for_audit must use the same (confidence, match_type)
+    ranking. Same audit + same contract from two scope-name matches
+    should keep the ``reviewed_commit`` candidate, not whichever
+    spelling iterated first.
+    """
+    # NOTE: ``match_contracts_for_audit`` itself only emits one match
+    # type per (audit, contract) — it picks impl_era when windows exist
+    # and direct otherwise, never both. The (confidence, match_type)
+    # rank applies when two scope-name spellings produce candidates of
+    # different match types... which can't happen in current code (the
+    # branch is per-contract, not per-name). But we still want the
+    # ranker future-proofed against a refactor that could mix types.
+    # This test seeds two CoverageMatch outputs directly via the dedup
+    # helper to confirm the ranking semantics.
+    from services.audits.coverage import CoverageMatch, _row_score
+
+    impl_era_high = CoverageMatch(
+        audit_report_id=1,
+        contract_id=1,
+        protocol_id=1,
+        matched_name="Pool",
+        match_type="impl_era",
+        match_confidence="high",
+    )
+    reviewed_high = CoverageMatch(
+        audit_report_id=1,
+        contract_id=1,
+        protocol_id=1,
+        matched_name="Pool",
+        match_type="reviewed_commit",
+        match_confidence="high",
+    )
+    direct_high = CoverageMatch(
+        audit_report_id=1,
+        contract_id=1,
+        protocol_id=1,
+        matched_name="Pool",
+        match_type="direct",
+        match_confidence="high",
+    )
+    # Reviewed_commit must outrank both.
+    assert _row_score(reviewed_high) > _row_score(impl_era_high)
+    assert _row_score(reviewed_high) > _row_score(direct_high)
+    # impl_era beats direct.
+    assert _row_score(impl_era_high) > _row_score(direct_high)
+    # Confidence still dominates: reviewed_commit/low loses to direct/high.
+    reviewed_low = CoverageMatch(
+        audit_report_id=1,
+        contract_id=1,
+        protocol_id=1,
+        matched_name="Pool",
+        match_type="reviewed_commit",
+        match_confidence="low",
+    )
+    assert _row_score(direct_high) > _row_score(reviewed_low)
