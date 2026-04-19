@@ -215,12 +215,65 @@ def download_text(url: str, session: requests.Session | None = None) -> bytes:
 # --- Extract -------------------------------------------------------------
 
 
+def _extract_link_annotation_uris(page) -> list[str]:
+    """Pull ``/URI`` values out of a page's ``/Link`` annotations.
+
+    Modern audit PDFs (Certora V3+) hyperlink the word "commit" instead
+    of spelling SHAs inline — ``page.extract_text()`` only sees the
+    display text ("commit"), losing the URL. Without this pass,
+    ``extract_reviewed_commits`` returns ``[]`` and the whole source-
+    equivalence path stays dark, collapsing audit coverage onto heuristic
+    grace-zone matching.
+
+    Only ``/Subtype == /Link`` annotations with a ``/A/URI`` field are
+    collected — highlights, comments, form fields, etc. are ignored.
+    pypdf's annotation graph is messy in the wild (indirect references,
+    malformed dicts, missing subtypes) so every access is try-wrapped
+    defensively; a broken annotation should degrade to "missed this one
+    URI" not "crashed the whole extractor".
+    """
+    annots = page.get("/Annots")
+    if annots is None:
+        return []
+    try:
+        annots = annots.get_object() if hasattr(annots, "get_object") else annots
+    except Exception:
+        return []
+
+    uris: list[str] = []
+    for a in annots or []:
+        try:
+            obj = a.get_object() if hasattr(a, "get_object") else a
+            if obj.get("/Subtype") != "/Link":
+                continue
+            action = obj.get("/A")
+            if action is None:
+                continue
+            action_obj = action.get_object() if hasattr(action, "get_object") else action
+            uri = action_obj.get("/URI")
+            if not uri:
+                continue
+            uri_str = str(uri).strip()
+            if uri_str:
+                uris.append(uri_str)
+        except Exception:
+            # Malformed annotation — skip it, keep extracting the rest.
+            continue
+    return uris
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     """Parse a PDF page-by-page with ``\\f\\n--- page {n} ---\\n\\f`` separators.
 
     Scope extraction uses the markers to recover page boundaries without
     re-parsing. Empty/short output is the caller's call to skip. Raises
     ``PdfParseError`` when pypdf rejects the body outright.
+
+    Each page's output is the visible text followed by any URIs from
+    ``/Link`` annotations (one per line, under a ``[links]`` marker).
+    Downstream ``extract_reviewed_commits`` picks commit SHAs straight
+    out of those URL strings — GitHub's ``/commit/<40-hex>`` and
+    ``/pull/*/commits/<40-hex>`` both contain the SHA as plain hex.
     """
     try:
         from pypdf import PdfReader
@@ -250,7 +303,11 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         except Exception as exc:
             logger.warning("pypdf page %d extract_text raised: %s", idx, exc)
             text = ""
-        parts.append(f"\f\n--- page {idx} ---\n\f\n{text}")
+        link_uris = _extract_link_annotation_uris(page)
+        body = text
+        if link_uris:
+            body = f"{text}\n[links]\n" + "\n".join(link_uris)
+        parts.append(f"\f\n--- page {idx} ---\n\f\n{body}")
 
     return "".join(parts).strip()
 

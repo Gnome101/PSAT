@@ -91,6 +91,179 @@ class TestExtractTextFromPdf:
         with pytest.raises(PdfParseError):
             extract_text_from_pdf(b"")
 
+    def test_link_annotation_uris_are_included_in_extracted_text(self):
+        """Certora's audit PDFs embed commit SHAs as hyperlinks
+        ("Fixed in [commit](https://github.com/x/y/commit/<sha>)") rather
+        than inline text. pypdf's ``extract_text()`` drops the URI. Without
+        the annotation-scraping path, the scope extractor's hex regex sees
+        the body as "Fixed in commit" with no SHA following, and
+        ``reviewed_commits`` stays empty — which kills source-equivalence
+        and strands the audit in heuristic grace-zone matching.
+        """
+        import io
+
+        from pypdf import PdfWriter
+        from pypdf.annotations import Link
+        from pypdf.generic import RectangleObject
+
+        sha = "353765993b40e3c2bddcdcdf7adc6f2f6ec080c9"  # 40 hex chars with letters
+        url = f"https://github.com/etherfi-protocol/smart-contracts/commit/{sha}"
+
+        w = PdfWriter()
+        w.add_blank_page(width=612, height=792)
+        w.add_annotation(
+            page_number=0,
+            annotation=Link(rect=RectangleObject([100, 700, 300, 720]), url=url),
+        )
+        buf = io.BytesIO()
+        w.write(buf)
+
+        text = extract_text_from_pdf(buf.getvalue())
+
+        # The full URL (or at least the SHA) must appear somewhere in the
+        # extracted text so downstream regex can see it. We assert on the
+        # SHA rather than the URL so we don't pin the impl to a specific
+        # formatting choice (raw URL vs bracketed vs prefixed line).
+        assert sha in text, f"commit SHA from link annotation lost in extraction. Extracted text: {text!r}"
+
+    def test_multiple_link_annotations_all_extracted(self):
+        """A real PDF has many commit links — we can't drop any of them."""
+        import io
+
+        from pypdf import PdfWriter
+        from pypdf.annotations import Link
+        from pypdf.generic import RectangleObject
+
+        shas = [
+            "3e9f54ec" + "0" * 32,
+            "abc96405" + "1" * 32,
+            "b7a8d04d" + "2" * 32,
+        ]
+        w = PdfWriter()
+        w.add_blank_page(width=612, height=792)
+        for i, sha in enumerate(shas):
+            w.add_annotation(
+                page_number=0,
+                annotation=Link(
+                    rect=RectangleObject([100, 700 - i * 30, 300, 720 - i * 30]),
+                    url=f"https://github.com/etherfi-protocol/smart-contracts/commit/{sha}",
+                ),
+            )
+        buf = io.BytesIO()
+        w.write(buf)
+
+        text = extract_text_from_pdf(buf.getvalue())
+        for sha in shas:
+            assert sha in text, f"SHA {sha} missing from extraction"
+
+    def test_link_annotations_across_multiple_pages(self):
+        """URIs on page 2 must show up alongside (or after) page 2's body
+        text, not get collapsed into page 1."""
+        import io
+
+        from pypdf import PdfWriter
+        from pypdf.annotations import Link
+        from pypdf.generic import RectangleObject
+
+        sha_p1 = "aaaaaaa" + "0" * 33
+        sha_p2 = "bbbbbbb" + "1" * 33
+        w = PdfWriter()
+        w.add_blank_page(width=612, height=792)
+        w.add_blank_page(width=612, height=792)
+        w.add_annotation(
+            page_number=0,
+            annotation=Link(
+                rect=RectangleObject([100, 700, 300, 720]),
+                url=f"https://github.com/x/y/commit/{sha_p1}",
+            ),
+        )
+        w.add_annotation(
+            page_number=1,
+            annotation=Link(
+                rect=RectangleObject([100, 700, 300, 720]),
+                url=f"https://github.com/x/y/commit/{sha_p2}",
+            ),
+        )
+        buf = io.BytesIO()
+        w.write(buf)
+
+        text = extract_text_from_pdf(buf.getvalue())
+        assert sha_p1 in text
+        assert sha_p2 in text
+        # Both page markers must still be there.
+        assert "--- page 1 ---" in text
+        assert "--- page 2 ---" in text
+
+    def test_non_link_annotations_do_not_leak_garbage(self):
+        """We only want ``/Subtype == /Link`` with ``/A/URI``. Highlight
+        annotations, form fields, comments etc. must not pollute the text.
+        """
+        import io
+
+        from pypdf import PdfWriter
+        from pypdf.annotations import FreeText
+        from pypdf.generic import RectangleObject
+
+        w = PdfWriter()
+        w.add_blank_page(width=612, height=792)
+        w.add_annotation(
+            page_number=0,
+            annotation=FreeText(
+                text="annotator's private note — should not appear",
+                rect=RectangleObject([100, 700, 400, 720]),
+                font_size="12pt",
+            ),
+        )
+        buf = io.BytesIO()
+        w.write(buf)
+
+        text = extract_text_from_pdf(buf.getvalue())
+        assert "annotator's private note" not in text
+
+    def test_pdf_without_any_annotations_still_extracts_cleanly(self):
+        """Regression guard: the new path must be a pure addition and
+        leave annotation-free PDFs byte-identical to the old behaviour."""
+        body = _minimal_pdf_with_text("No links here, just scope contracts.")
+        text = extract_text_from_pdf(body)
+        assert "No links here" in text
+        # No stray URI placeholders, empty sections, or duplicated markers.
+        assert text.count("--- page 1 ---") == 1
+
+    def test_end_to_end_link_sha_reaches_reviewed_commits_extractor(self):
+        """The real reason we care about link URIs: downstream,
+        ``extract_reviewed_commits`` must pick up the SHA out of the
+        extracted text. This test locks the end-to-end behaviour —
+        extract_text_from_pdf → extract_reviewed_commits — so a future
+        change to either side won't silently re-break the
+        Certora-V3.Prelude-1 case (hyperlinked "commit" with no inline
+        SHA) that motivated this fix.
+        """
+        import io
+
+        from pypdf import PdfWriter
+        from pypdf.annotations import Link
+        from pypdf.generic import RectangleObject
+
+        from services.audits.source_equivalence import extract_reviewed_commits
+
+        sha = "c820841928a25ac270e5b31058e858e6804ed9b1"  # 40 hex, has letters
+        url = f"https://github.com/etherfi-protocol/smart-contracts/commit/{sha}"
+
+        w = PdfWriter()
+        w.add_blank_page(width=612, height=792)
+        w.add_annotation(
+            page_number=0,
+            annotation=Link(rect=RectangleObject([100, 700, 300, 720]), url=url),
+        )
+        buf = io.BytesIO()
+        w.write(buf)
+
+        text = extract_text_from_pdf(buf.getvalue())
+        commits = extract_reviewed_commits(text)
+        assert sha in commits, (
+            f"End-to-end path broken: link-annotation SHA {sha} didn't reach extract_reviewed_commits. Got: {commits!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # download_pdf — boundary conditions around HTTP behaviour.
