@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
@@ -398,6 +399,12 @@ class ResolutionWorker(BaseWorker):
                     if evt.get("event_type") != "upgraded":
                         continue
                     impl = evt.get("implementation")
+                    # Artifact carries ``timestamp`` as unix seconds (int | None);
+                    # the DB column is DateTime(timezone=True). Dropping this
+                    # was the root cause of ImplWindow.from_ts=None downstream,
+                    # which collapsed every post-upgrade audit to low confidence.
+                    ts_raw = evt.get("timestamp")
+                    ts_val = datetime.fromtimestamp(ts_raw, tz=timezone.utc) if ts_raw is not None else None
                     session.add(
                         UpgradeEvent(
                             contract_id=proxy_contract.id,
@@ -405,6 +412,7 @@ class ResolutionWorker(BaseWorker):
                             old_impl=None,
                             new_impl=impl,
                             block_number=evt.get("block_number"),
+                            timestamp=ts_val,
                             tx_hash=evt.get("tx_hash"),
                         )
                     )
@@ -546,7 +554,16 @@ class ResolutionWorker(BaseWorker):
             refreshed = 0
             for contract_id in refresh_ids:
                 try:
-                    refreshed += upsert_coverage_for_contract(session, contract_id)
+                    # Source-equivalence ON: historical impls have no Job,
+                    # so the coverage_worker path never runs for them. This
+                    # inline call is the only chance to promote matches to
+                    # reviewed_commit/high when an audit's reviewed_commits
+                    # byte-equal the deployed impl's Etherscan source.
+                    refreshed += upsert_coverage_for_contract(
+                        session,
+                        contract_id,
+                        verify_source_equivalence=True,
+                    )
                 except Exception:
                     # One flaky match shouldn't poison the rest; admin
                     # refresh_coverage can fill in what we missed.

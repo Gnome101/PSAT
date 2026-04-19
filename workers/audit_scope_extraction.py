@@ -290,7 +290,13 @@ class AuditScopeExtractionWorker(AuditRowWorker):
         from services.audits.coverage import upsert_coverage_for_audit
 
         try:
-            inserted = upsert_coverage_for_audit(session, audit_id)
+            # Source-equivalence ON at the trigger site: audits that land
+            # with reviewed_commits + source_repo populated should resolve
+            # to reviewed_commit/high at scope-completion time, without
+            # waiting for an admin refresh_coverage call. The opt-in kwarg
+            # default stays False for the admin endpoint that explicitly
+            # forwards a bool.
+            inserted = upsert_coverage_for_audit(session, audit_id, verify_source_equivalence=True)
             logger.info(
                 "Audit %s → coverage refreshed (%d row(s))",
                 audit_id,

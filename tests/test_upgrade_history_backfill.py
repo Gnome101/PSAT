@@ -943,3 +943,274 @@ def test_backfill_coverage_refresh_covers_adopted_rows_too(db_session, seed_prot
     )
     assert rows[0].audit_report_id == audit.id
     assert rows[0].matched_name == "OrphanImpl"
+
+
+# ---------------------------------------------------------------------------
+# 6. Regression — UpgradeEvent.timestamp must be persisted from the artifact
+# ---------------------------------------------------------------------------
+
+
+def test_run_upgrade_history_persists_event_timestamp(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
+    """Regression for the "LiquidityPool shows no audit coverage" bug:
+    the artifact carries a unix-seconds timestamp per event, and
+    ``UpgradeEvent.timestamp`` is ``DateTime(timezone=True)``. The worker
+    must convert and persist it — downstream
+    ``_compute_impl_windows_for_contract`` surfaces it as
+    ``ImplWindow.from_ts``, and ``_confidence_for_impl_era`` skips every
+    window with ``from_ts=None`` when evaluating grace-zone fit, which
+    collapses every post-upgrade audit to ``low`` with NULL block bounds.
+    """
+    from db.models import Contract, Job, JobStage, JobStatus, UpgradeEvent
+
+    protocol_id, _ = seed_protocol
+
+    proxy_job = Job(
+        id=uuid.uuid4(),
+        address=_addr(0x1111),
+        status=JobStatus.processing,
+        stage=JobStage.resolution,
+        protocol_id=protocol_id,
+    )
+    db_session.add(proxy_job)
+    db_session.commit()
+    proxy = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0x1111),
+        chain="ethereum",
+        contract_name="ProxyShell",
+        is_proxy=True,
+        job_id=proxy_job.id,
+    )
+
+    impl_addr = _addr(0xFEE1)
+    stub_etherscan.names[impl_addr] = "LiquidityPool"
+
+    # Known unix-seconds timestamp → datetime(2023, 11, 14, 22, 13, 20, tzinfo=UTC).
+    unix_ts = 1700000000
+    expected_dt = datetime(2023, 11, 14, 22, 13, 20, tzinfo=timezone.utc)
+
+    artifact = {
+        "proxies": {
+            proxy.address: {
+                "proxy_address": proxy.address,
+                "events": [
+                    {
+                        "event_type": "upgraded",
+                        "implementation": impl_addr,
+                        "block_number": 24671560,
+                        "timestamp": unix_ts,
+                        "tx_hash": "0x" + "a" * 64,
+                    },
+                ],
+            }
+        }
+    }
+
+    import workers.resolution_worker as rw_mod
+
+    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
+
+    worker._run_upgrade_history(db_session, proxy_job, project_dir=Path("/tmp"))
+
+    events = db_session.query(UpgradeEvent).filter_by(contract_id=proxy.id).all()
+    assert len(events) == 1
+    evt = events[0]
+    # The primary assertion — before the fix this is None because
+    # _run_upgrade_history drops the timestamp on write.
+    assert evt.timestamp is not None, (
+        "UpgradeEvent.timestamp was not persisted — the artifact carries "
+        "timestamp (unix seconds) but the worker writes only block_number + tx_hash"
+    )
+    assert evt.timestamp == expected_dt
+
+    # Downstream signal the coverage matcher actually cares about:
+    # ImplWindow.from_ts must be non-None so
+    # _confidence_for_impl_era's grace-zone branch can fire.
+    impl_contract = db_session.query(Contract).filter_by(address=impl_addr).one()
+    from services.audits.coverage import _compute_impl_windows_for_contract
+
+    windows = _compute_impl_windows_for_contract(db_session, impl_contract)
+    assert len(windows) == 1
+    assert windows[0].from_ts is not None
+    assert windows[0].from_ts == expected_dt
+
+
+def test_run_upgrade_history_handles_missing_timestamp(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
+    """Defensive: if the artifact omits the timestamp (older artifact, RPC
+    returned None, etc.), the write must still succeed with a NULL
+    timestamp — not raise on a ``fromtimestamp(None)``.
+    """
+    from db.models import Job, JobStage, JobStatus, UpgradeEvent
+
+    protocol_id, _ = seed_protocol
+
+    proxy_job = Job(
+        id=uuid.uuid4(),
+        address=_addr(0x2222),
+        status=JobStatus.processing,
+        stage=JobStage.resolution,
+        protocol_id=protocol_id,
+    )
+    db_session.add(proxy_job)
+    db_session.commit()
+    proxy = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0x2222),
+        chain="ethereum",
+        contract_name="ProxyShell",
+        is_proxy=True,
+        job_id=proxy_job.id,
+    )
+
+    impl_addr = _addr(0xFEE2)
+    stub_etherscan.names[impl_addr] = "LiquidityPool"
+
+    artifact = {
+        "proxies": {
+            proxy.address: {
+                "proxy_address": proxy.address,
+                "events": [
+                    {
+                        "event_type": "upgraded",
+                        "implementation": impl_addr,
+                        "block_number": 100,
+                        # no timestamp key at all
+                        "tx_hash": "0x" + "c" * 64,
+                    },
+                ],
+            }
+        }
+    }
+
+    import workers.resolution_worker as rw_mod
+
+    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
+
+    worker._run_upgrade_history(db_session, proxy_job, project_dir=Path("/tmp"))
+
+    events = db_session.query(UpgradeEvent).filter_by(contract_id=proxy.id).all()
+    assert len(events) == 1
+    # NULL timestamp is allowed; the column is nullable.
+    assert events[0].timestamp is None
+
+
+# ---------------------------------------------------------------------------
+# 7. Regression — backfill's coverage refresh must run source-equivalence
+# ---------------------------------------------------------------------------
+
+
+def test_backfill_coverage_refresh_runs_source_equivalence(
+    db_session, seed_protocol, worker, stub_etherscan, monkeypatch
+):
+    """Regression for the "LiquidityPool shows no audit coverage" bug —
+    the source-equivalence half.
+
+    When ``_backfill_historical_impls`` creates a Contract row for a
+    historical impl, there's no downstream Job for this impl (it's
+    ``job_id=None``), so ``workers.coverage_worker`` never runs for it.
+    The backfill's inline ``upsert_coverage_for_contract`` call is the
+    only coverage path for these rows — and it must invoke source-
+    equivalence, so audits whose ``reviewed_commits`` + ``source_repo``
+    can prove byte-equality with the impl's Etherscan source are promoted
+    to ``reviewed_commit`` / ``high`` at creation time.
+    """
+    from types import SimpleNamespace
+
+    from db.models import (
+        AuditContractCoverage,
+        AuditReport,
+        Contract,
+        UpgradeEvent,
+    )
+
+    protocol_id, _ = seed_protocol
+
+    proxy = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0x3001),
+        chain="ethereum",
+        contract_name="ProxyShell",
+        is_proxy=True,
+    )
+    impl_addr = _addr(0xF001)
+    stub_etherscan.names[impl_addr] = "LiquidityPool"
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy.id,
+            proxy_address=proxy.address,
+            new_impl=impl_addr,
+            block_number=24671560,
+            timestamp=datetime(2026, 3, 16, tzinfo=timezone.utc),
+            tx_hash="0x" + "a" * 64,
+        )
+    )
+    # Audit published BEFORE the upgrade — normal workflow: auditor
+    # reviewed a commit, protocol deployed that commit days later.
+    # Temporal matching alone would land this at 'medium' or 'low'; the
+    # source-equivalence proof is what drives it to 'reviewed_commit'/'high'.
+    audit = AuditReport(
+        protocol_id=protocol_id,
+        url=f"https://example.com/{uuid.uuid4().hex}.pdf",
+        auditor="Cantina",
+        title="LiquidityPool Pre-Deployment Review",
+        date="2026-02-01",
+        scope_extraction_status="success",
+        scope_contracts=["LiquidityPool"],
+        reviewed_commits=["3b6b81b", "7fc5100"],
+        source_repo="etherfi-protocol/smart-contracts",
+    )
+    db_session.add(audit)
+    db_session.commit()
+
+    # Monkeypatch source-equivalence at the import site used by
+    # _reviewed_commit_upgrades in services.audits.coverage. The promoted
+    # match_type/confidence on AuditContractCoverage is the observable
+    # signal — we just need check_audit_row_covers_contract to return a
+    # truthy list so the upgrade path fires.
+    import services.audits.coverage as coverage_mod
+    import services.audits.source_equivalence as se_mod
+
+    def fake_check(session, audit_id, contract_id, *, github_token=None):
+        return [
+            SimpleNamespace(
+                commit="3b6b81b",
+                scope_name="LiquidityPool",
+                etherscan_path="src/LiquidityPool.sol",
+                source_sha256="c3a3c06f00000000000000000000000000000000000000000000000000006ebd39",
+            )
+        ]
+
+    # Patch both the source module symbol AND the name imported inside
+    # the function (import happens at call time, so patching the source
+    # is sufficient — but do both for defense in depth).
+    monkeypatch.setattr(se_mod, "check_audit_row_covers_contract", fake_check)
+    monkeypatch.setattr(coverage_mod, "_reviewed_commit_upgrades", coverage_mod._reviewed_commit_upgrades)
+
+    worker._backfill_historical_impls(
+        db_session,
+        protocol_id=protocol_id,
+        chain="ethereum",
+        impl_addrs={impl_addr},
+    )
+    db_session.commit()
+
+    impl_row = db_session.query(Contract).filter_by(address=impl_addr).one()
+    rows = (
+        db_session.query(AuditContractCoverage)
+        .filter_by(protocol_id=protocol_id, contract_id=impl_row.id, audit_report_id=audit.id)
+        .all()
+    )
+    assert len(rows) == 1, (
+        "backfill created the Contract row but did not upgrade coverage to "
+        "reviewed_commit/high via source-equivalence — the proof path "
+        "exists in the code but isn't triggered automatically"
+    )
+    r = rows[0]
+    # The key assertions — before the fix, verify_source_equivalence defaults
+    # to False at the backfill call site, so the match stays at impl_era/low
+    # or impl_era/medium instead of reviewed_commit/high.
+    assert r.match_type == "reviewed_commit"
+    assert r.match_confidence == "high"

@@ -538,8 +538,15 @@ def test_audit_coverage_endpoint_uses_coverage_table(
     assert by_name["NotAudited"]["audit_count"] == 0
     assert by_name["NotAudited"]["last_audit"] is None
 
-    # Proxy row itself — name doesn't match any scope entry.
-    assert by_name["PoolProxy"]["audit_count"] == 0
+    # Proxy row inherits its current implementation's coverage — the
+    # company view is "is the code this address runs audited?", so a
+    # proxy whose impl's name matched the audit's scope reports as
+    # covered. The generic proxy name ("PoolProxy") isn't what drives
+    # this; it's Contract.implementation pointing at impl_a (Pool).
+    proxy_row = by_name["PoolProxy"]
+    assert proxy_row["audit_count"] == 1
+    assert proxy_row["last_audit"]["auditor"] == "Spearbit"
+    assert proxy_row["last_audit"]["match_type"] == "impl_era"
 
 
 # ---------------------------------------------------------------------------

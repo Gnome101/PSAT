@@ -33,10 +33,12 @@ function confidenceChip(confidence) {
 
 function formatAuditDate(date) {
   if (!date) return "—";
-  // date column is YYYY-MM-DD-ish but can also be free-text from extraction.
+  // "YYYY-MM-DD" parses as UTC midnight; rendering in local time shifts
+  // the display to the previous day for anyone west of UTC. Pin to UTC
+  // so the displayed day matches the auditor-published day.
   const parsed = new Date(date);
   if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+    return parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
   }
   return String(date);
 }

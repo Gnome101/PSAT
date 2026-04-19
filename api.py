@@ -2007,9 +2007,24 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
             date = (audit.date if audit else None) or ""
             return (date, row.audit_report_id)
 
+        # Proxy rows don't hold their own coverage rows — the scope
+        # matcher writes against the impl Contract row. For the
+        # company-level "is this contract audited?" view the user really
+        # means "is the code this address is running audited?", so union
+        # the proxy's entries with its current implementation's.
+        contracts_by_addr = {c.address.lower(): c for c in contracts if c.address}
+
         coverage: list[dict[str, Any]] = []
         for c in contracts:
-            entries = coverage_by_contract.get(c.id, [])
+            entries = list(coverage_by_contract.get(c.id, []))
+            seen_audit_ids = {e.audit_report_id for e in entries}
+            if c.is_proxy and c.implementation:
+                impl = contracts_by_addr.get(c.implementation.lower())
+                if impl:
+                    for e in coverage_by_contract.get(impl.id, []):
+                        if e.audit_report_id not in seen_audit_ids:
+                            entries.append(e)
+                            seen_audit_ids.add(e.audit_report_id)
             entries = sorted(entries, key=_sort_key, reverse=True)
             matching = [
                 _audit_brief(audits_by_id[e.audit_report_id], e) for e in entries if e.audit_report_id in audits_by_id
@@ -2092,8 +2107,19 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
         #   - for proxies, rows keyed to every historical-impl Contract.id
         #     resolved from UpgradeEvent.new_impl
         scope_contract_ids = {contract.id}
-        if contract.is_proxy and upgrade_rows:
-            impl_addrs = {ev.new_impl.lower() for ev in upgrade_rows if ev.new_impl}
+        if contract.is_proxy:
+            # Union coverage from every impl this proxy has referenced:
+            # historical impls via UpgradeEvent.new_impl plus the current
+            # pointer in Contract.implementation. The current-impl branch
+            # matters for proxies whose UpgradeEvent rows haven't been
+            # projected into the DB yet — without it, coverage for those
+            # proxies stays empty even though _current_status can see it
+            # via the separate Contract.implementation lookup.
+            impl_addrs: set[str] = set()
+            if upgrade_rows:
+                impl_addrs.update(ev.new_impl.lower() for ev in upgrade_rows if ev.new_impl)
+            if contract.implementation:
+                impl_addrs.add(contract.implementation.lower())
             if impl_addrs:
                 impl_contract_ids = (
                     session.execute(
@@ -2138,12 +2164,25 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
             if confidence_rank.get(r.match_confidence, 0) > confidence_rank.get(prev.match_confidence, 0):
                 best_by_audit[r.audit_report_id] = r
 
+        # Address-by-contract_id lookup so the UI can attribute each
+        # coverage row to a specific impl-era in the timeline (critical
+        # for reviewed_commit matches, which carry no block range but
+        # are proven against one specific Contract row's on-chain code).
+        addr_by_cid: dict[int, str] = {
+            cid: addr
+            for cid, addr in session.execute(
+                select(Contract.id, Contract.address).where(Contract.id.in_(scope_contract_ids))
+            ).all()
+        }
+
         coverage_out: list[dict[str, Any]] = []
         for r in best_by_audit.values():
             audit = audits_by_id.get(r.audit_report_id)
             if not audit:
                 continue
-            coverage_out.append(_audit_brief(audit, r))
+            brief = _audit_brief(audit, r)
+            brief["impl_address"] = addr_by_cid.get(r.contract_id)
+            coverage_out.append(brief)
         # Newest first by audit date (nulls last, id desc to break ties).
         coverage_out.sort(key=lambda e: (e.get("date") or "", e["audit_id"]), reverse=True)
 

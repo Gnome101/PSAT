@@ -877,3 +877,111 @@ def test_reextract_endpoint_makes_row_eligible_again(
     assert llm_call_counter["calls"] == 2, "Re-extract should trigger a fresh LLM call"
     db_session.expire_all()
     assert db_session.get(AuditReport, audit_id).scope_extraction_status == "success"
+
+
+# ---------------------------------------------------------------------------
+# 9. Regression — scope worker's inline coverage refresh runs source-equivalence
+# ---------------------------------------------------------------------------
+
+
+def test_scope_worker_refresh_coverage_runs_source_equivalence(
+    db_session,
+    storage_bucket,
+    seed_protocol,
+    worker,
+    llm_stub_dir,
+    monkeypatch,
+):
+    """Regression for the "LiquidityPool shows no audit coverage" bug —
+    the scope-side half.
+
+    When scope extraction completes for an audit that already has
+    ``reviewed_commits`` + ``source_repo`` populated (discovery-time
+    values, or a re-extraction of an audit that was already through the
+    pipeline), the worker's inline ``_refresh_coverage`` must invoke
+    ``upsert_coverage_for_audit`` with ``verify_source_equivalence=True``.
+    Otherwise an audit that cryptographically covers the deployed impl
+    (byte-equal source) lands at ``impl_era`` / temporal-only confidence
+    and the UI "audited?" check fails despite the proof existing.
+    """
+    from types import SimpleNamespace
+
+    from db.models import AuditContractCoverage, AuditReport, Contract
+
+    protocol_id, _ = seed_protocol
+
+    # Seed a concrete, non-proxy impl Contract whose name the fixture's
+    # scope will match. Direct match (no UpgradeEvent history) keeps the
+    # test focused on source-equivalence promotion vs. the temporal path.
+    impl = Contract(
+        protocol_id=protocol_id,
+        address="0x" + "d" * 40,
+        contract_name="Pool",
+        chain="ethereum",
+        is_proxy=False,
+    )
+    db_session.add(impl)
+    db_session.commit()
+
+    audit_id = _seed_scoped_row(
+        db_session,
+        storage_bucket,
+        protocol_id,
+        fixture="spearbit_table.txt",
+        auditor="Spearbit",
+        title="Pre-Deployment Review",
+        # Audit dated BEFORE a hypothetical deployment — temporal alone
+        # would not promote to 'high' for this impl, but source-equivalence
+        # is date-agnostic when hashes match.
+        date="2026-02-01",
+        text_sha256="sha-scope-se",
+    )
+
+    # Pre-populate reviewed_commits + source_repo on the audit row (the
+    # scope extractor normally fills reviewed_commits from PDF text; we
+    # shortcut that here because the fixture's own commits are fine).
+    audit = db_session.get(AuditReport, audit_id)
+    audit.reviewed_commits = ["abc123def456"]
+    audit.source_repo = "example/protocol"
+    db_session.commit()
+
+    # Stub source-equivalence to return a proof for the impl/audit pair.
+    # If verify_source_equivalence=False (the pre-fix default at the
+    # scope-worker call site), this stub is never invoked and the
+    # coverage row lands at match_type='direct' / match_confidence='high'
+    # — the regression assertion below pins match_type='reviewed_commit',
+    # which is reachable only when the worker passes
+    # verify_source_equivalence=True to upsert_coverage_for_audit.
+    import services.audits.source_equivalence as se_mod
+
+    def fake_check(session, audit_id_, contract_id_, *, github_token=None):
+        return [
+            SimpleNamespace(
+                commit="abc123def456",
+                scope_name="Pool",
+                etherscan_path="src/Pool.sol",
+                source_sha256="deadbeef" * 8,
+            )
+        ]
+
+    monkeypatch.setattr(se_mod, "check_audit_row_covers_contract", fake_check)
+
+    # Drive the scope worker the same way the existing tests do.
+    claimed = worker._claim_batch(db_session)
+    audit_obj = next(a for a in claimed if a.id == audit_id)
+    _, outcome = worker._process_row(audit_obj)
+    worker._persist_outcome(audit_id, outcome)
+
+    db_session.expire_all()
+    row = db_session.get(AuditReport, audit_id)
+    assert row.scope_extraction_status == "success", (
+        f"scope extraction didn't complete: err={row.scope_extraction_error!r}"
+    )
+
+    cov = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit_id, contract_id=impl.id).one()
+    # The assertions that fail before the fix: without
+    # verify_source_equivalence=True at the scope-worker refresh site,
+    # the proof path never fires and the row stays at 'direct' (direct
+    # name match, no impl history).
+    assert cov.match_type == "reviewed_commit"
+    assert cov.match_confidence == "high"

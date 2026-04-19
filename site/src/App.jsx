@@ -335,14 +335,17 @@ function UpgradesTab({ detail }) {
   const coverageRows = auditTimeline?.coverage || [];
   const currentStatus = auditTimeline?.current_status || null;
 
-  // Null block range on a coverage row → fall back to audit date vs
-  // impl-era timestamps, else the same audit shows under every era.
   function parseAuditTs(date) {
     if (!date) return null;
     const t = Date.parse(date);
     return Number.isNaN(t) ? null : t;
   }
   function matchesEra(cov, impl) {
+    // Source-equivalence proof is keyed to a specific impl Contract;
+    // attach only to that impl's era.
+    if (cov.impl_address && impl?.address) {
+      return cov.impl_address.toLowerCase() === impl.address.toLowerCase();
+    }
     const covFrom = cov.covered_from_block;
     const covTo = cov.covered_to_block;
     const hasBlocks = covFrom != null || covTo != null;
@@ -353,6 +356,8 @@ function UpgradesTab({ detail }) {
       const cTo = covTo ?? Infinity;
       return cFrom < eraTo && cTo > eraFrom;
     }
+    // Null block range → audit date vs impl-era timestamps, else the
+    // same audit would show under every era.
     const auditTs = parseAuditTs(cov.date);
     if (auditTs == null) return false;
     // impl timestamps are unix seconds; Date.parse returns ms.
@@ -582,7 +587,7 @@ function UpgradesTab({ detail }) {
                                 <>
                                   {cov.auditor || "Unknown"}
                                   <span style={{ marginLeft: 4, opacity: 0.8 }}>
-                                    {cov.date ? new Date(cov.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : ""}
+                                    {cov.date ? new Date(cov.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" }) : ""}
                                   </span>
                                 </>
                               );
