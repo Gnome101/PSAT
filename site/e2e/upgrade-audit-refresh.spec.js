@@ -102,14 +102,21 @@ const AUDIT_TIMELINE = {
  * later, more-specific mocks take precedence (Playwright runs routes
  * in reverse registration order).
  */
-async function mockApis(page, { analyses = [ANALYSIS_ROW], detail = DETAIL_PAYLOAD, timeline = AUDIT_TIMELINE } = {}) {
+async function mockApis(page, { analyses = [ANALYSIS_ROW], detail = DETAIL_PAYLOAD, timeline = AUDIT_TIMELINE, detailAddress = TARGET_ADDR } = {}) {
   await page.route(/127\.0\.0\.1:5173\/api\//, (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
   );
   await page.route("**/api/analyses", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(analyses) }),
   );
+  // The App now loads detail via /api/analyses/<URL-address> directly
+  // (bypassing the merged /api/analyses list that hides proxy runs behind
+  // impl runs). Serve the detail payload at both the URL address and the
+  // explicit run id so tests exercising either path work.
   await page.route(`**/api/analyses/${encodeURIComponent(RUN_ID)}`, (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(detail) }),
+  );
+  await page.route(`**/api/analyses/${encodeURIComponent(detailAddress)}`, (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(detail) }),
   );
   await page.route(`**/api/contracts/${CONTRACT_ID}/audit_timeline`, (route) =>
@@ -164,50 +171,72 @@ test.describe("Bug S3: /address/.../upgrades refresh", () => {
     await expect(page.locator(".tab.active", { hasText: "Upgrades" })).toBeVisible();
   });
 
-  test("proxy URL resolves to proxy run even when /api/analyses merges impl behind proxy", async ({ page }) => {
-    // Real regression: /api/analyses merges impl runs behind their proxy,
-    // producing a single row where `address` is the IMPL's and
-    // `proxy_address` is the URL-visible proxy. The previous findRunByAddress
-    // matched the merged row via proxy_address and loaded the IMPL's detail
-    // — but that detail's `address` is the impl, so UpgradesTab's
-    // targetAddr defaulted to the impl and `isTarget()` failed for every
-    // proxy entry in the timeline. Chips silently disappeared on refresh.
+  test("proxy URL loads proxy run's detail (not the merged impl row)", async ({ page }) => {
+    // Real regression: /api/analyses merges proxy+impl into a single row
+    // whose `address` is the IMPL's — so a list-based lookup (the old
+    // findRunByAddress flow) would load the impl's detail on refresh of
+    // /address/<proxy>/upgrades. The impl detail's upgrade_history is
+    // keyed to the impl and does NOT include the impl's own proxy chain,
+    // so the Upgrades tab shows random dependency proxies first and the
+    // target contract's own history disappears.
     //
-    // Fix has two parts:
-    //   (1) findRunByAddress prefers a row whose `address` matches (this
-    //       test doesn't hit that — merged row has no matching `address`).
-    //   (2) UpgradesTab prefers history.target_address over detail.address
-    //       when determining which proxy is the "target" — that's the
-    //       path exercised here.
+    // Fix: for /address/<addr> URLs, the App passes <addr> directly to
+    // /api/analyses/<name>, which falls back to a by-address lookup and
+    // returns the proxy run (with full history). This test proves the
+    // proxy run's detail is fetched by asserting the chip count that
+    // only the proxy's upgrade_history (2 impls) can produce.
     const MERGED_ROW = {
       job_id: "impl-run-id",
-      // Note: .address is the IMPL, not the URL's proxy — that's the
-      // shape /api/analyses returns for a merged proxy+impl pair.
+      // Merged row: address = IMPL, proxy_address = URL target
       address: IMPL_V2,
       proxy_address: TARGET_ADDR,
       run_name: "TestProxy",
       contract_name: "Impl V2",
     };
+    // Impl detail: its upgrade_history doesn't include its own proxy.
     const IMPL_DETAIL = {
-      address: IMPL_V2, // impl's address, NOT the URL's target
-      run_name: "TestProxy",
+      address: IMPL_V2,
+      run_name: "TestProxy: (impl)",
       contract_name: "Impl V2",
       contract_id: CONTRACT_ID,
       company: "TestCo",
-      upgrade_history: DETAIL_PAYLOAD.upgrade_history, // target_address = TARGET_ADDR (the proxy)
+      upgrade_history: {
+        target_address: IMPL_V2,
+        total_upgrades: 0,
+        proxies: {}, // no proxies — impl's view
+      },
     };
-    await mockApis(page, { analyses: [MERGED_ROW], detail: IMPL_DETAIL });
-    // Override the per-run detail mock for this different run id.
-    await page.route(`**/api/analyses/${encodeURIComponent("impl-run-id")}`, (route) =>
+    // Proxy detail: full history with the proxy's 2 impls.
+    const PROXY_DETAIL = DETAIL_PAYLOAD;
+
+    // /api/analyses (list) → merged row only, as prod does today.
+    await page.route(/127\.0\.0\.1:5173\/api\//, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: "[]" }),
+    );
+    await page.route("**/api/analyses", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([MERGED_ROW]) }),
+    );
+    // By-address lookup: proxy address → proxy detail (what the
+    // backend's Job.address fallback returns).
+    await page.route(`**/api/analyses/${encodeURIComponent(TARGET_ADDR)}`, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(PROXY_DETAIL) }),
+    );
+    // Guard: if anything accidentally fetches by the merged row's job_id,
+    // it would get the impl detail and the test would fail the chip count.
+    await page.route(`**/api/analyses/impl-run-id`, (route) =>
       route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(IMPL_DETAIL) }),
+    );
+    await page.route(`**/api/contracts/${CONTRACT_ID}/audit_timeline`, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(AUDIT_TIMELINE) }),
     );
 
     await page.goto(`/address/${TARGET_ADDR}/upgrades`);
     await page.waitForSelector(".timeline", { timeout: 10000 });
     await page.waitForSelector(".timeline .chip", { timeout: 10000 });
 
-    // Audit chips should still render per era — the merged-entry quirk
-    // must not leave every impl showing "no audit coverage".
+    // If we loaded the impl detail (impl_history has no proxies), the
+    // timeline would be empty and this count would be 0. Proxy detail
+    // yields V1 Solidified + V2 Trail of Bits → 2 chips.
     const auditorChips = page.locator(".timeline .chip", { hasText: /Solidified|Trail of Bits/ });
     await expect(auditorChips).toHaveCount(2, { timeout: 5000 });
   });

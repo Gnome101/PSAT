@@ -16,7 +16,6 @@ import ProtocolGraph from "./ProtocolGraph.jsx";
 import RiskSurface from "./RiskSurface.jsx";
 import ProtocolSurface from "./ProtocolSurface.jsx";
 import { matchesEra } from "./auditMatching.js";
-import { findRunByAddress } from "./runLookup.js";
 import AuditsTab from "./AuditsTab.jsx";
 import AuditExtractionShelf from "./AuditExtractionShelf.jsx";
 import { api } from "./api/client.js";
@@ -2935,24 +2934,26 @@ export default function App() {
         setCompanyTab(route.companyTab || "overview");
       } else if (route.mode === "run" || route.mode === "address") {
         setCompanyName(null);
-        const list = analysesRef.current;
-        let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
-        if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
+        // For /address/<x> we pass the address directly: /api/analyses/<name>
+        // falls back to a by-address lookup and returns the run whose primary
+        // address is <x>. This bypasses the merged /api/analyses list — which
+        // hides the proxy run behind the impl run and would otherwise cause
+        // /address/<proxy>/upgrades to load the impl's detail (where the
+        // impl run's upgrade_history doesn't include its own proxy chain).
+        loadAnalysis(route.value, { tab: route.tab, history: "replace" });
       } else {
         setCompanyName(null);
       }
     }
 
-    refreshAnalyses().then((list) => {
-      const route = parseLocationPath(window.location.pathname);
-      if (route.mode === "company") {
-        setCompanyName(route.value);
-        setCompanyTab(route.companyTab || "overview");
-      } else if (route.mode === "run" || route.mode === "address") {
-        let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
-        if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
-      }
-    }).catch(() => null);
+    refreshAnalyses().catch(() => null);
+    const route = parseLocationPath(window.location.pathname);
+    if (route.mode === "company") {
+      setCompanyName(route.value);
+      setCompanyTab(route.companyTab || "overview");
+    } else if (route.mode === "run" || route.mode === "address") {
+      loadAnalysis(route.value, { tab: route.tab, history: "replace" });
+    }
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
