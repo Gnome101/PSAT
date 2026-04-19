@@ -58,6 +58,7 @@ from ._github import (
     _llm_extract_filename_metadata,
     _parse_github_url,
     _resolve_branch_commit,
+    github_blob_to_raw,
 )
 from ._urls import (
     _augment_filename_metadata,
@@ -685,6 +686,7 @@ __all__ = [
     "_richness_score",
     # GitHub (re-exported for tests)
     "_parse_github_url",
+    "github_blob_to_raw",
     "_github_api_headers",
     "_resolve_branch_commit",
     "_BRANCH_SHA_CACHE",

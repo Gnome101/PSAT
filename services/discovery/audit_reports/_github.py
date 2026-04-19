@@ -93,6 +93,25 @@ def _parse_github_url(url: str) -> dict[str, str] | None:
     return None
 
 
+def github_blob_to_raw(url: str) -> str:
+    """Convert a GitHub ``/blob/`` URL to its ``raw.githubusercontent.com``
+    equivalent so the text-extraction worker gets the file body instead of
+    the HTML code-view page.
+
+    ``https://github.com/<org>/<repo>/blob/<ref>/<path>`` →
+    ``https://raw.githubusercontent.com/<org>/<repo>/<ref>/<path>``
+
+    URL-encoded characters (``%20`` etc.) in ``<path>`` survive verbatim.
+    Non-GitHub URLs, already-raw URLs, and ``/tree/`` URLs pass through
+    unchanged — making this safe to call indiscriminately.
+    """
+    m = _GITHUB_BLOB_RE.match(url)
+    if not m:
+        return url
+    owner, repo, ref, path = m.group(1), m.group(2), m.group(3), m.group(4)
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
+
+
 def _github_api_headers() -> dict[str, str]:
     """Standard headers. GITHUB_TOKEN bumps rate limit 60→5000/hr."""
     headers = {
@@ -511,8 +530,12 @@ def _fetch_github_tree_as_reports(
             is_pdf = name.lower().endswith(".pdf")
             # ``report_url`` keeps each file's own GitHub link so multiple
             # .md files in the same directory don't collapse onto the tree
-            # URL during URL-keyed dedup.
+            # URL during URL-keyed dedup. For non-PDF files the html_url is
+            # a /blob/ link that serves HTML — normalize to raw so the text
+            # extraction worker gets the file body.
             report_url = f.get("html_url") or f.get("download_url")
+            if not is_pdf and report_url:
+                report_url = github_blob_to_raw(report_url)
             reports.append(
                 {
                     "auditor": auditor,
@@ -660,13 +683,16 @@ def _expand_blob_to_directory(
         title = str(meta.get("title") or "").strip() or base_name
         date = str(meta.get("date") or "").strip() or None
         is_pdf = name.lower().endswith(".pdf")
+        report_url = f.get("html_url") or f.get("download_url")
+        if not is_pdf and report_url:
+            report_url = github_blob_to_raw(report_url)
         reports.append(
             {
                 "auditor": auditor,
                 "title": title,
                 "date": date,
                 "pdf_url": f["download_url"] if is_pdf else None,
-                "report_url": f.get("html_url") or f.get("download_url"),
+                "report_url": report_url,
                 "source_commit": source_commit,
                 "source_repo": f"{owner}/{repo}",
                 "source_path": f"{parent}/{name}" if parent else name,
@@ -767,13 +793,16 @@ def _list_repo_root_for_company(
         title = str(meta.get("title") or "").strip() or base_name
         date = str(meta.get("date") or "").strip() or None
         is_pdf = name.lower().endswith(".pdf")
+        report_url = f.get("html_url") or f.get("download_url")
+        if not is_pdf and report_url:
+            report_url = github_blob_to_raw(report_url)
         reports.append(
             {
                 "auditor": auditor,
                 "title": title,
                 "date": date,
                 "pdf_url": f["download_url"] if is_pdf else None,
-                "report_url": f.get("html_url") or f.get("download_url"),
+                "report_url": report_url,
                 "source_commit": source_commit,
                 "source_repo": f"{owner}/{repo}",
                 "source_path": f["path"],

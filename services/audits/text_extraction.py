@@ -4,9 +4,9 @@ I/O-only at this layer — orchestration (claiming rows, DB state, rate
 limiting) lives in ``workers.audit_text_extraction``. Importable and
 testable without DB or S3.
 
-``process_audit_report`` chains ``download_pdf`` → ``extract_text_from_pdf``
-→ ``store_audit_text`` and returns an ``ExtractionOutcome`` the worker
-persists.
+``process_audit_report`` chains ``download_audit_body`` → extract (pypdf
+for PDFs, UTF-8 decode for markdown/text) → ``store_audit_text`` and
+returns an ``ExtractionOutcome`` the worker persists.
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ import hashlib
 import io
 import logging
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
+from urllib.parse import urlparse
 
 import requests
 
@@ -42,6 +43,23 @@ _ACCEPTED_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
         "application/x-pdf",
     }
 )
+
+# Plain-text / markdown audit reports. raw.githubusercontent.com serves
+# markdown as ``text/plain``; other hosts use ``text/markdown`` or
+# ``text/x-markdown``. ``text/html`` is deliberately excluded — GitHub's
+# /blob/ URLs return HTML code-view pages, not the raw file body.
+_ACCEPTED_TEXT_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
+    {
+        "text/plain",
+        "text/markdown",
+        "text/x-markdown",
+        "text/x-rst",
+    }
+)
+
+# File extensions whose URLs route through the plain-text path instead of
+# pypdf. Lowercase-matched against the URL's path component.
+_TEXT_URL_SUFFIXES: Final[tuple[str, ...]] = (".md", ".markdown", ".txt", ".rst")
 
 AUDIT_TEXT_CONTENT_TYPE: Final[str] = "text/plain; charset=utf-8"
 
@@ -98,12 +116,36 @@ def audit_text_key(audit_report_id: int) -> str:
 # --- Download ------------------------------------------------------------
 
 
-def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
-    """Fetch a PDF by URL. Streams to memory with a hard size cap.
+def _url_looks_text(url: str) -> bool:
+    """True when the URL's path ends in a markdown/text suffix.
+
+    Keyed off extension, not content-type — the worker decides which
+    download mode to use *before* making the request so the content-type
+    check can reject mismatches (e.g. a .pdf URL returning text/html).
+    """
+    try:
+        path = urlparse(url).path.lower()
+    except Exception:
+        return False
+    return path.endswith(_TEXT_URL_SUFFIXES)
+
+
+def download_audit_body(
+    url: str,
+    session: requests.Session | None = None,
+    *,
+    kind: Literal["pdf", "text"] = "pdf",
+) -> bytes:
+    """Fetch an audit body by URL. Streams to memory with a hard size cap.
+
+    ``kind="pdf"`` accepts PDF / octet-stream content-types; ``kind="text"``
+    accepts text/plain / text/markdown / text/x-markdown / text/x-rst.
+    ``text/html`` is rejected in both modes — GitHub's ``/blob/`` URLs
+    serve HTML code-view pages, not the raw file body, so landing on HTML
+    in either mode signals a wrong URL was captured at discovery time.
 
     Raises ``PdfDownloadError`` for network / HTTP failures and
-    ``PdfTooLargeError`` when the body exceeds ``_MAX_PDF_BYTES``. Rejects
-    responses whose Content-Type is clearly not a PDF.
+    ``PdfTooLargeError`` when the body exceeds ``_MAX_PDF_BYTES``.
     """
     sess = session or requests
     try:
@@ -122,10 +164,11 @@ def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
             raise PdfDownloadError(f"HTTP {resp.status_code}")
 
         content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+        accepted = _ACCEPTED_TEXT_CONTENT_TYPES if kind == "text" else _ACCEPTED_CONTENT_TYPES
         # GitHub serves raw PDFs with content-type application/pdf; gitbook
         # CDNs often use octet-stream. Reject text/html / application/json
         # etc. — we've been redirected to an error page.
-        if content_type and content_type not in _ACCEPTED_CONTENT_TYPES:
+        if content_type and content_type not in accepted:
             raise PdfDownloadError(f"unexpected content-type {content_type!r}")
 
         # Server-reported size check — saves us the round trip if we can
@@ -147,6 +190,26 @@ def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
         return b"".join(chunks)
     finally:
         resp.close()
+
+
+def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
+    """Fetch a PDF by URL. Thin wrapper around ``download_audit_body``.
+
+    Kept so existing callers (CLI dry-run, tests that monkeypatch this
+    symbol) continue to work.
+    """
+    return download_audit_body(url, session=session, kind="pdf")
+
+
+def download_text(url: str, session: requests.Session | None = None) -> bytes:
+    """Fetch a markdown / plain-text audit body by URL.
+
+    Accepts ``text/plain`` / ``text/markdown`` / ``text/x-markdown`` /
+    ``text/x-rst`` content-types. Rejects ``text/html`` — GitHub ``/blob/``
+    URLs serve the HTML code-view page, not the raw markdown, so landing
+    on HTML means discovery captured the wrong URL.
+    """
+    return download_audit_body(url, session=session, kind="text")
 
 
 # --- Extract -------------------------------------------------------------
@@ -245,8 +308,12 @@ def process_audit_report(
     if not url:
         return ExtractionOutcome(status="failed", error="no URL on audit row")
 
+    is_text_url = _url_looks_text(url)
+
     try:
-        body = download_pdf(url, session=session)
+        # Call the module-level helpers so callers that monkeypatch
+        # ``download_pdf`` (existing unit tests) still hit the mock.
+        body = download_text(url, session=session) if is_text_url else download_pdf(url, session=session)
     except PdfTooLargeError as exc:
         return ExtractionOutcome(status="skipped", error=f"pdf too large: {exc}")
     except PdfDownloadError as exc:
@@ -257,13 +324,19 @@ def process_audit_report(
         logger.exception("unexpected download error for %s", url)
         return ExtractionOutcome(status="failed", error=f"download: {exc!r}")
 
-    try:
-        text = extract_text_from_pdf(body)
-    except PdfParseError as exc:
-        return ExtractionOutcome(status="failed", error=f"parse: {exc}")
-    except Exception as exc:
-        logger.exception("unexpected parse error for %s", url)
-        return ExtractionOutcome(status="failed", error=f"parse: {exc!r}")
+    if is_text_url:
+        # Markdown / plain-text reports go straight through — no pypdf.
+        # Bytes → UTF-8 with replacement so a stray non-UTF8 byte in an
+        # otherwise-valid markdown file doesn't wedge the pipeline.
+        text = body.decode("utf-8", errors="replace")
+    else:
+        try:
+            text = extract_text_from_pdf(body)
+        except PdfParseError as exc:
+            return ExtractionOutcome(status="failed", error=f"parse: {exc}")
+        except Exception as exc:
+            logger.exception("unexpected parse error for %s", url)
+            return ExtractionOutcome(status="failed", error=f"parse: {exc!r}")
 
     if len(text) < _MIN_USEFUL_TEXT_LENGTH:
         return ExtractionOutcome(

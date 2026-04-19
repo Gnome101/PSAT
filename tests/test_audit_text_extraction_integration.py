@@ -143,10 +143,12 @@ def worker(monkeypatch):
 
 
 def _mock_download(monkeypatch, mapping: dict[str, bytes | Exception]):
-    """Replace services.audits.text_extraction.download_pdf with a URL→body lookup.
+    """Replace services.audits.text_extraction.download_pdf / download_text.
 
     The key is the exact URL. Values: bytes → returned; Exception → raised.
     Unmapped URLs raise PdfDownloadError so tests fail loudly on typos.
+    Both ``download_pdf`` and ``download_text`` consult the same mapping so
+    a test can mix .pdf and .md fixtures in one stub.
     """
     from services.audits.text_extraction import PdfDownloadError
 
@@ -159,6 +161,7 @@ def _mock_download(monkeypatch, mapping: dict[str, bytes | Exception]):
         return entry
 
     monkeypatch.setattr("services.audits.text_extraction.download_pdf", fake_download)
+    monkeypatch.setattr("services.audits.text_extraction.download_text", fake_download)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +212,50 @@ def test_worker_processes_pending_rows_end_to_end(db_session, storage_bucket, se
     assert len(body) == outcome.text_size_bytes
     assert "Pool.sol" in body.decode("utf-8")
     assert "--- page 1 ---" in body.decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# 1b. Markdown audit files — raw.githubusercontent.com URLs go through the
+# text-decode path instead of pypdf, and the stored text is the markdown
+# body verbatim.
+# ---------------------------------------------------------------------------
+
+
+def test_worker_processes_markdown_audit_rows_end_to_end(
+    db_session, storage_bucket, seed_protocol, worker, monkeypatch
+):
+    """A .md URL is claimed, downloaded as text, decoded (no pypdf), and the
+    markdown body is stored verbatim. No --- page N --- markers — those come
+    from pypdf and must not appear for markdown inputs."""
+    from db.models import AuditReport
+
+    md_body = (
+        "# Hats Finance — EtherFi Audit\n\n"
+        "## Scope\n\n"
+        "The following contracts were reviewed:\n\n"
+        "- Pool.sol\n- Vault.sol\n- Strategy.sol\n- Registry.sol\n\n"
+        + ("Finding N: description that pads the body above the 500-char gate. " * 20)
+    )
+    url = "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/audits/Hats.md"
+    audit_id = _seed_audit(db_session, seed_protocol, url=url, pdf_url=None)
+    _mock_download(monkeypatch, {url: md_body.encode("utf-8")})
+
+    claimed = worker._claim_batch(db_session)
+    audit_obj = next(a for a in claimed if a.id == audit_id)
+    _, outcome = worker._process_row(audit_obj)
+    assert outcome.status == "success", f"outcome={outcome}"
+    worker._persist_outcome(audit_id, outcome)
+
+    db_session.expire_all()
+    row = db_session.get(AuditReport, audit_id)
+    assert row.text_extraction_status == "success"
+    assert row.text_storage_key == f"audits/text/{audit_id}.txt"
+
+    body = storage_bucket.get(outcome.storage_key)
+    stored = body.decode("utf-8")
+    assert stored == md_body
+    # Sanity: pypdf markers are a pdf-only artifact; they must not appear.
+    assert "--- page 1 ---" not in stored
 
 
 # ---------------------------------------------------------------------------

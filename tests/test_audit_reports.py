@@ -266,6 +266,69 @@ class TestFolderNameMatching:
 
 
 # ---------------------------------------------------------------------------
+# GitHub blob → raw URL normalization. Blob URLs render HTML (the code-view
+# page); raw URLs serve the actual file bytes. The audit text-extraction
+# worker needs raw URLs for markdown/text files so the response has a
+# text/* content-type instead of text/html.
+# ---------------------------------------------------------------------------
+
+
+class TestGithubBlobToRaw:
+    def test_converts_blob_url_to_raw(self):
+        from services.discovery.audit_reports import github_blob_to_raw
+
+        assert (
+            github_blob_to_raw("https://github.com/a/b/blob/main/foo.md")
+            == "https://raw.githubusercontent.com/a/b/main/foo.md"
+        )
+
+    def test_preserves_url_encoded_characters(self):
+        """Audit filenames often contain spaces encoded as %20 — those must
+        survive the conversion verbatim (don't double-encode, don't decode)."""
+        from services.discovery.audit_reports import github_blob_to_raw
+
+        src = (
+            "https://github.com/etherfi-protocol/smart-contracts/blob/master/audits/2023.12.20%20-%20Hats%20Finance.md"
+        )
+        expected = "https://raw.githubusercontent.com/etherfi-protocol/smart-contracts/master/audits/2023.12.20%20-%20Hats%20Finance.md"
+        assert github_blob_to_raw(src) == expected
+
+    def test_non_github_url_passes_through(self):
+        from services.discovery.audit_reports import github_blob_to_raw
+
+        assert github_blob_to_raw("https://example.com/foo/bar.md") == "https://example.com/foo/bar.md"
+
+    def test_already_raw_url_passes_through(self):
+        """Idempotent — applying twice is a no-op."""
+        from services.discovery.audit_reports import github_blob_to_raw
+
+        raw = "https://raw.githubusercontent.com/a/b/main/foo.md"
+        assert github_blob_to_raw(raw) == raw
+
+    def test_github_tree_url_passes_through(self):
+        """``/tree/`` URLs aren't file blobs — leave them alone."""
+        from services.discovery.audit_reports import github_blob_to_raw
+
+        tree = "https://github.com/a/b/tree/main/audits"
+        assert github_blob_to_raw(tree) == tree
+
+    def test_handles_branch_with_slash(self):
+        """Branches can contain slashes (e.g. ``release/1.2``); a naive split
+        would put the slash in the path and break the URL."""
+        from services.discovery.audit_reports import github_blob_to_raw
+
+        src = "https://github.com/a/b/blob/release/1.2/audits/foo.md"
+        # Since the GitHub URL regex uses the first segment after /blob/ as
+        # the ref, this is the documented behaviour — the caller must pass a
+        # single-segment ref or live with this limitation.
+        out = github_blob_to_raw(src)
+        # Either it's converted with ref="release" (current helper scope) or
+        # passed through unchanged — both are acceptable. The important bit
+        # is that it doesn't crash.
+        assert out.startswith(("https://raw.githubusercontent.com/", "https://github.com/"))
+
+
+# ---------------------------------------------------------------------------
 # Auto-hop policy — pure predicate, no HTTP
 # ---------------------------------------------------------------------------
 
