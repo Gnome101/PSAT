@@ -629,6 +629,174 @@ def test_sync_upserts_on_duplicate_url(db_session):
 # ---------------------------------------------------------------------------
 
 
+def test_stage3_linked_url_triggers_org_auto_hop(solodit_stub, http_stubs, llm_router):
+    """Three-hop GitHub-org auto-hop: Tavily → Stage 2 page → Stage 3
+    follow → linked URL pointing at the protocol's own GitHub org. Stage 3
+    must auto-hop on the URLs FOUND IN PAGES IT FETCHES, not just the
+    URLs it was handed via discovered_links.
+
+    Real-world chain (etherfi case): Halborn case-study (classified by
+    Tavily) → ether.fi homepage (extracted as linked_url, becomes Stage 3
+    target) → github.com/etherfi-protocol/smart-contracts/tree/master/
+    audits (extracted from the ether.fi page). Pre-fix: Stage 3 only
+    acted on the URL handed to it (the ether.fi homepage); the github
+    URL extracted FROM ether.fi was silently dropped, the org never
+    enumerated, and the entire audits/ directory was missed.
+
+    Assert: the org's audits/ folder is enumerated, even though no Tavily
+    result and no Stage-2-extracted link points directly at the github
+    org — it's only reachable via a 3-hop chain.
+    """
+    from services.discovery.audit_reports import search_audit_reports
+
+    # No Solodit hit.
+
+    # Tavily returns a single non-github page (the auditor case study).
+    tavily_returns(
+        http_stubs,
+        {
+            '"Acme" smart contract security audit report': [
+                {
+                    "title": "Halborn — Acme case study",
+                    "url": "https://halborn.com/case-studies/acme",
+                    "content": "Halborn's work on Acme protocol",
+                },
+            ],
+        },
+    )
+
+    # Stage 2 fetches the case study; the LLM extracts 0 reports + 1
+    # linked URL pointing at the protocol's homepage.
+    http_stubs.get(
+        "https://halborn.com/case-studies/acme",
+        body=(
+            '<html><body><h1>Acme Case Study</h1><p>See <a href="https://acme.xyz">Acme protocol</a>.</p></body></html>'
+        ),
+        status=200,
+        content_type="text/html",
+    )
+    # Stage 3 follows the homepage link; the homepage page in turn links
+    # to the github audits dir. Pre-fix this URL is silently dropped.
+    http_stubs.get(
+        "https://acme.xyz",
+        body=(
+            "<html><body>"
+            "<p>Audit reports live in our GitHub: "
+            '<a href="https://github.com/acme-labs/acme-protocol/tree/main/audits">audits/</a>'
+            "</p>"
+            "</body></html>"
+        ),
+        status=200,
+        content_type="text/html",
+    )
+
+    # GitHub stubs for the org enumeration that auto-hop should trigger.
+    github_org_repos(http_stubs, "acme-labs", ["acme-protocol", "frontend"])
+    # ``frontend`` has no audits/; ``acme-protocol`` does.
+    github_repo_meta(http_stubs, "acme-labs", "acme-protocol", default_branch="main")
+    github_tree(
+        http_stubs,
+        "acme-labs",
+        "acme-protocol",
+        "main",
+        [{"path": "audits", "type": "tree"}],
+    )
+    github_dir_contents(
+        http_stubs,
+        "acme-labs",
+        "acme-protocol",
+        "audits",
+        files=["2024-06-01-Halborn-Acme.pdf", "2024-09-15-Spearbit-Acme.pdf"],
+        ref="main",
+    )
+    github_branch_sha(http_stubs, "acme-labs", "acme-protocol", "main", "b" * 40)
+    # ``frontend`` repo: no audits/.
+    github_repo_meta(http_stubs, "acme-labs", "frontend", default_branch="main")
+    github_tree(http_stubs, "acme-labs", "frontend", "main", [])
+
+    # LLM stubs.
+    llm_router.on_prompt_contains(
+        "Generate a follow-up search query",
+        lambda _: "",  # skip the second Tavily call
+    )
+    llm_router.on_prompt_contains(
+        "You are analyzing web search results",
+        lambda _: json.dumps(
+            [
+                {
+                    "url": "https://halborn.com/case-studies/acme",
+                    "is_audit": True,
+                    "type": "listing",
+                    "auditor": "Halborn",
+                    "title": "Acme case study",
+                    "date": None,
+                    "confidence": 0.85,
+                }
+            ]
+        ),
+    )
+
+    # Page-level extraction stub: dispatches per-URL on prompt content
+    # (page_text is in the prompt). Halborn page yields the homepage
+    # link (Stage 3 input); homepage page yields the github audits link
+    # (currently dropped → the bug).
+    def _extract(prompt: str) -> str:
+        if "Acme Case Study" in prompt:
+            return json.dumps({"reports": [], "linked_urls": ["https://acme.xyz"]})
+        if "Audit reports live in our GitHub" in prompt:
+            return json.dumps(
+                {
+                    "reports": [],
+                    "linked_urls": ["https://github.com/acme-labs/acme-protocol/tree/main/audits"],
+                }
+            )
+        return json.dumps({"reports": [], "linked_urls": []})
+
+    llm_router.on_prompt_contains("Identify third-party security audits", _extract)
+    llm_router.on_prompt_contains(
+        "Below are file names",
+        lambda _: json.dumps(
+            [
+                {
+                    "filename": "2024-06-01-Halborn-Acme.pdf",
+                    "auditor": "Halborn",
+                    "title": "Acme Protocol Audit",
+                    "date": "2024-06-01",
+                },
+                {
+                    "filename": "2024-09-15-Spearbit-Acme.pdf",
+                    "auditor": "Spearbit",
+                    "title": "Acme Periphery Audit",
+                    "date": "2024-09-15",
+                },
+            ]
+        ),
+    )
+    llm_router.on_prompt_contains(
+        "You are reviewing",
+        lambda _: json.dumps(
+            {
+                "entries": [
+                    {"i": 0, "valid": True, "cluster": 1},
+                    {"i": 1, "valid": True, "cluster": 2},
+                ]
+            }
+        ),
+    )
+
+    result = search_audit_reports("Acme", official_domain="acme.xyz")
+
+    auditors = [r.get("auditor") for r in result["reports"]]
+    # Both PDFs from the org's audits/ directory must show up. Pre-fix,
+    # auditors == [] (or only the docs page itself as a fallback) because
+    # the org auto-hop never fired.
+    assert "Halborn" in auditors, f"Two-hop auto-hop did not enumerate the org. Reports: {result['reports']!r}"
+    assert "Spearbit" in auditors
+    # Provenance carried through.
+    halborn = next(r for r in result["reports"] if r.get("auditor") == "Halborn")
+    assert halborn.get("source_repo") == "acme-labs/acme-protocol"
+
+
 def test_sync_skips_entries_missing_required_fields(db_session):
     """Entries without url / auditor / title are dropped silently — the
     orchestrator's output sometimes contains placeholder entries that

@@ -457,6 +457,17 @@ def search_audit_reports(
         for report in extracted.get("reports", []):
             reports.append(_build_report_entry(report, url, parent_confidence, now_iso))
 
+        for linked_url in extracted.get("linked_urls", []):
+            _maybe_auto_hop_to_org(
+                linked_url,
+                clean_company,
+                auto_hopped_orgs,
+                parent_confidence,
+                now_iso,
+                reports,
+                debug=debug,
+            )
+
     stage3_count = len(reports) - stage2_count
     if stage3_count:
         _debug_log(debug, f"Stage 3: {stage3_count} additional report(s) from {links_followed} linked page(s)")
