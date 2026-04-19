@@ -439,12 +439,6 @@ def find_completed_static_cache(session: Session, address: str, chain: str | Non
         if not src_count:
             continue
 
-        analysis_art = session.execute(
-            select(Artifact).where(Artifact.job_id == candidate.id, Artifact.name == "contract_analysis").limit(1)
-        ).scalar_one_or_none()
-        if not analysis_art:
-            continue
-
         # Look up contract by (address, chain) — not by job_id, because a
         # prior copy_static_cache may have reassigned the row.
         contract_stmt = select(Contract).where(
@@ -454,6 +448,20 @@ def find_completed_static_cache(session: Session, address: str, chain: str | Non
             contract_stmt = contract_stmt.where(Contract.chain == chain)
         contract_row = session.execute(contract_stmt.limit(1)).scalar_one_or_none()
         if not contract_row:
+            continue
+
+        # Static-stage-finished check. For non-proxy contracts the canonical
+        # indicator is ``contract_analysis`` (slither output + summary).
+        # Proxies never produce ``contract_analysis`` on their own job —
+        # it lives on the impl child — so require ``contract_flags`` instead,
+        # which proxies do write (is_proxy + proxy_type). Without this
+        # branch, re-discovered proxies would miss the cache and do a full
+        # fresh Etherscan fetch + slither run every time.
+        required_artifact = "contract_flags" if contract_row.is_proxy else "contract_analysis"
+        has_required = session.execute(
+            select(Artifact).where(Artifact.job_id == candidate.id, Artifact.name == required_artifact).limit(1)
+        ).scalar_one_or_none()
+        if not has_required:
             continue
 
         summary = session.execute(

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { listAudits, getCoverage, getScope } from "./api/audits.js";
+import { listAudits, getScope } from "./api/audits.js";
 
 // Status → chip colors. These are semantic: the in-repo .chip.alt / .chip.warn
 // don't map cleanly to green/amber/red, so we set inline backgrounds for
@@ -29,13 +29,6 @@ function confidenceChip(confidence) {
   if (n >= 0.8) return { label: pct, style: CHIP_GREEN };
   if (n >= 0.5) return { label: pct, style: CHIP_AMBER };
   return { label: pct, style: CHIP_RED };
-}
-
-function matchConfidenceStyle(conf) {
-  if (conf === "high") return CHIP_GREEN;
-  if (conf === "medium") return CHIP_AMBER;
-  if (conf === "low") return CHIP_RED;
-  return CHIP_GRAY;
 }
 
 function formatAuditDate(date) {
@@ -179,23 +172,15 @@ function AuditCard({ audit, highlight, onRegisterRef }) {
 
 export default function AuditsTab({ companyName, focusAuditId }) {
   const [audits, setAudits] = useState(null);
-  const [coverage, setCoverage] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     setAudits(null);
-    setCoverage(null);
     setError(null);
-    Promise.all([listAudits(companyName), getCoverage(companyName)])
-      .then(([a, c]) => {
-        if (cancelled) return;
-        setAudits(a);
-        setCoverage(c);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message || String(err));
-      });
+    listAudits(companyName)
+      .then((a) => { if (!cancelled) setAudits(a); })
+      .catch((err) => { if (!cancelled) setError(err.message || String(err)); });
     return () => { cancelled = true; };
   }, [companyName]);
 
@@ -219,7 +204,7 @@ export default function AuditsTab({ companyName, focusAuditId }) {
     );
   }
 
-  if (!audits || !coverage) {
+  if (!audits) {
     return (
       <div className="page">
         <section className="panel"><p className="empty">Loading audits…</p></section>
@@ -258,73 +243,6 @@ export default function AuditsTab({ companyName, focusAuditId }) {
         )}
       </section>
 
-      <section className="panel">
-        <h3 style={{ marginBottom: 12 }}>Contract Coverage</h3>
-        {coverage.coverage.length === 0 ? (
-          <p className="empty">No contracts in this protocol yet.</p>
-        ) : (
-          <div className="runs-table">
-            <div className="runs-table-header">
-              <span style={{ flex: 2 }}>Contract</span>
-              <span style={{ flex: 3 }}>Address</span>
-              <span style={{ flex: 1 }}>Status</span>
-              <span style={{ flex: 2 }}>Latest audit</span>
-            </div>
-            {[...coverage.coverage].sort((a, b) => {
-              // Analyzed (named) contracts first so the useful part of
-              // the table is at the top. Within each bucket keep the
-              // server's order.
-              const aNamed = !!(a.contract_name && String(a.contract_name).trim());
-              const bNamed = !!(b.contract_name && String(b.contract_name).trim());
-              if (aNamed !== bNamed) return aNamed ? -1 : 1;
-              // Within named, audits-having first, then alphabetical by name.
-              if (aNamed) {
-                if (!!a.audit_count !== !!b.audit_count) return a.audit_count ? -1 : 1;
-                return String(a.contract_name).localeCompare(String(b.contract_name));
-              }
-              return 0;
-            }).map((row) => {
-              const last = row.last_audit;
-              const hasName = !!(row.contract_name && String(row.contract_name).trim());
-              const hasOpen = (row.audits || []).some(
-                (a) => a.covered_to_block == null && (a.match_confidence === "high" || a.match_type === "reviewed_commit"),
-              );
-              const status = !hasName
-                ? { label: "pending analysis", style: CHIP_GRAY }
-                : !row.audit_count
-                  ? { label: "no audit", style: CHIP_RED }
-                  : hasOpen
-                    ? { label: "covered", style: CHIP_GREEN }
-                    : { label: "before upgrade", style: CHIP_AMBER };
-              return (
-                <div key={row.address} className="runs-table-row" style={{ cursor: "default" }}>
-                  <span className="runs-cell-name" style={{ flex: 2 }}>{row.contract_name || <span className="muted">—</span>}</span>
-                  <span className="mono runs-cell-addr" style={{ flex: 3 }}>{row.address}</span>
-                  <span style={{ flex: 1 }}>
-                    <span className="chip" style={status.style}>{status.label}</span>
-                  </span>
-                  <span style={{ flex: 2 }}>
-                    {last ? (
-                      <>
-                        <strong>{last.auditor || "—"}</strong>
-                        <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>{formatAuditDate(last.date)}</span>
-                        <span
-                          className="chip"
-                          style={{ ...matchConfidenceStyle(last.match_confidence), marginLeft: 6, fontSize: 10, padding: "2px 6px" }}
-                        >
-                          {last.match_type} · {last.match_confidence}
-                        </span>
-                      </>
-                    ) : (
-                      <span className="muted" style={{ fontSize: 12 }}>—</span>
-                    )}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
     </div>
   );
 }

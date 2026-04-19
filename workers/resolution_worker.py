@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from db.models import (
@@ -366,17 +366,41 @@ class ResolutionWorker(BaseWorker):
             if contract_row is None:
                 return
 
+            # Legacy cleanup: older versions of this worker keyed every
+            # event to the subject's id regardless of which proxy the
+            # event described. Drop those so re-run is idempotent for
+            # non-proxy subjects.
             session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == contract_row.id).delete()
+
             impl_addrs: set[str] = set()
             for proxy_info in uh_data["proxies"].values():
                 proxy_addr = proxy_info.get("proxy_address", "")
+                if not proxy_addr:
+                    continue
+                # UpgradeEvent.contract_id must point at the PROXY's row,
+                # not the subject's — the artifact can describe any proxy
+                # in the dependency graph, not just the subject's own.
+                chain_filter = (
+                    Contract.chain == contract_row.chain if contract_row.chain is not None else Contract.chain.is_(None)
+                )
+                proxy_contract = session.execute(
+                    select(Contract).where(
+                        func.lower(Contract.address) == proxy_addr.lower(),
+                        chain_filter,
+                    )
+                ).scalar_one_or_none()
+                if proxy_contract is None:
+                    # Proxy not yet in inventory — skip. It'll get picked
+                    # up on a later run once discovery surfaces the address.
+                    continue
+                session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == proxy_contract.id).delete()
                 for evt in proxy_info.get("events", []):
                     if evt.get("event_type") != "upgraded":
                         continue
                     impl = evt.get("implementation")
                     session.add(
                         UpgradeEvent(
-                            contract_id=contract_row.id,
+                            contract_id=proxy_contract.id,
                             proxy_address=proxy_addr,
                             old_impl=None,
                             new_impl=impl,

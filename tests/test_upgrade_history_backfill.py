@@ -430,6 +430,175 @@ def test_run_upgrade_history_writes_events_and_backfills_impls(
     assert {r.contract_name for r in impl_rows} == {"ImplA", "ImplB"}
 
 
+def test_run_upgrade_history_keys_events_to_proxy_not_subject(
+    db_session, seed_protocol, worker, stub_etherscan, monkeypatch
+):
+    """Regression: when the subject Contract isn't itself the proxy
+    described in the artifact, ``UpgradeEvent.contract_id`` must point
+    at the PROXY's Contract row, not the subject's.
+
+    Before the fix, every event was keyed to the subject's ``contract_id``,
+    which meant a non-proxy subject (e.g., EtherFiRewardsRouter) ended
+    up with 20+ phantom UpgradeEvent rows describing unrelated proxies
+    (LiquidityPool, eETH, etc.). That in turn made
+    ``/api/contracts/{id}/audit_timeline`` emit bogus ``impl_windows``
+    for non-proxy contracts, and the Audits tab rendered eras that
+    didn't exist.
+    """
+    from db.models import Contract, Job, JobStage, JobStatus, UpgradeEvent
+
+    protocol_id, _ = seed_protocol
+
+    # Subject of the job: a regular, non-proxy contract. Its upgrade_history
+    # artifact happens to include proxies that belong to other contracts
+    # (matches the static-worker behavior of snapshotting dependencies).
+    subject_job = Job(
+        id=uuid.uuid4(),
+        address=_addr(0xAAA),
+        status=JobStatus.processing,
+        stage=JobStage.resolution,
+        protocol_id=protocol_id,
+    )
+    db_session.add(subject_job)
+    db_session.commit()
+    subject = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0xAAA),
+        chain="ethereum",
+        contract_name="RewardsRouter",
+        is_proxy=False,
+        job_id=subject_job.id,
+    )
+
+    # Two pre-existing proxy Contract rows in the same protocol.
+    proxy_a = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0xB01),
+        chain="ethereum",
+        contract_name="LiquidityPoolProxy",
+        is_proxy=True,
+    )
+    proxy_b = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0xB02),
+        chain="ethereum",
+        contract_name="EethProxy",
+        is_proxy=True,
+    )
+
+    impl_1 = _addr(0xC01)
+    impl_2 = _addr(0xC02)
+    stub_etherscan.names[impl_1] = "Impl1"
+    stub_etherscan.names[impl_2] = "Impl2"
+
+    artifact = {
+        "proxies": {
+            proxy_a.address: {
+                "proxy_address": proxy_a.address,
+                "events": [
+                    {
+                        "event_type": "upgraded",
+                        "implementation": impl_1,
+                        "block_number": 100,
+                        "tx_hash": "0x" + "1" * 64,
+                    },
+                ],
+            },
+            proxy_b.address: {
+                "proxy_address": proxy_b.address,
+                "events": [
+                    {
+                        "event_type": "upgraded",
+                        "implementation": impl_2,
+                        "block_number": 200,
+                        "tx_hash": "0x" + "2" * 64,
+                    },
+                ],
+            },
+        }
+    }
+
+    import workers.resolution_worker as rw_mod
+
+    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
+
+    worker._run_upgrade_history(db_session, subject_job, project_dir=Path("/tmp"))
+
+    # The subject is not a proxy — it must end up with zero UpgradeEvent
+    # rows. Before the fix, it would have 2 (one per proxy in the
+    # artifact, mis-keyed to the subject).
+    subject_events = db_session.query(UpgradeEvent).filter_by(contract_id=subject.id).all()
+    assert subject_events == []
+
+    # Events must land under each proxy's own contract_id.
+    events_a = db_session.query(UpgradeEvent).filter_by(contract_id=proxy_a.id).all()
+    events_b = db_session.query(UpgradeEvent).filter_by(contract_id=proxy_b.id).all()
+    assert len(events_a) == 1 and events_a[0].new_impl == impl_1
+    assert len(events_b) == 1 and events_b[0].new_impl == impl_2
+
+    # Impls still get backfilled as usual (regardless of keying).
+    impls = db_session.query(Contract).filter(Contract.address.in_({impl_1, impl_2})).all()
+    assert {r.contract_name for r in impls} == {"Impl1", "Impl2"}
+
+
+def test_run_upgrade_history_skips_proxies_not_in_inventory(
+    db_session, seed_protocol, worker, stub_etherscan, monkeypatch
+):
+    """If the artifact mentions a proxy whose Contract row doesn't exist,
+    silently skip those events — nothing to key them to, and writing
+    with a NULL contract_id would violate the NOT NULL constraint. The
+    next run after the proxy is discovered will pick them up.
+    """
+    from db.models import Job, JobStage, JobStatus, UpgradeEvent
+
+    protocol_id, _ = seed_protocol
+    subject_job = Job(
+        id=uuid.uuid4(),
+        address=_addr(0xDDD),
+        status=JobStatus.processing,
+        stage=JobStage.resolution,
+        protocol_id=protocol_id,
+    )
+    db_session.add(subject_job)
+    db_session.commit()
+    subject = _add_contract(
+        db_session,
+        protocol_id=protocol_id,
+        address=_addr(0xDDD),
+        chain="ethereum",
+        contract_name="Subject",
+        is_proxy=False,
+        job_id=subject_job.id,
+    )
+
+    unknown_proxy = _addr(0xBEEF)  # no Contract row for this address
+    impl = _addr(0xFACE)
+    stub_etherscan.names[impl] = "SomeImpl"
+
+    artifact = {
+        "proxies": {
+            unknown_proxy: {
+                "proxy_address": unknown_proxy,
+                "events": [
+                    {"event_type": "upgraded", "implementation": impl, "block_number": 50, "tx_hash": "0x" + "e" * 64},
+                ],
+            }
+        }
+    }
+    import workers.resolution_worker as rw_mod
+
+    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
+
+    worker._run_upgrade_history(db_session, subject_job, project_dir=Path("/tmp"))
+
+    # No events written anywhere — the proxy isn't resolvable and we
+    # don't have a meaningful Contract.id to key them to.
+    assert db_session.query(UpgradeEvent).filter_by(contract_id=subject.id).count() == 0
+
+
 def test_run_upgrade_history_skips_when_job_has_no_contract(db_session, seed_protocol, worker, monkeypatch):
     """Defensive: a job without a Contract row (shouldn't happen post-
     discovery, but we don't want to crash) → no-op with no writes.

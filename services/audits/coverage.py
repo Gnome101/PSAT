@@ -391,6 +391,13 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
                 covered_to_block=window.to_block if window else None,
             )
         else:
+            # is_proxy=True direct matches are almost always false positives:
+            # scope names a generic library (UUPSProxy, ERC1967Proxy, etc.),
+            # the proxy's contract_name happens to be that string, but the
+            # audit didn't actually review what sits behind this proxy.
+            # Real coverage flows via the impl's own Contract row.
+            if c.is_proxy:
+                continue
             confidence = _confidence_for_direct(audit_ts, c)
             match = CoverageMatch(
                 audit_report_id=audit.id,
@@ -461,6 +468,10 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
                 )
             )
         else:
+            # See match_contracts_for_audit: is_proxy direct-name matches
+            # are the false-positive class we drop.
+            if contract.is_proxy:
+                continue
             confidence = _confidence_for_direct(audit_ts, contract)
             out.append(
                 CoverageMatch(

@@ -470,9 +470,13 @@ def test_impl_era_picks_correct_window_across_multiple_upgrades(db_session, seed
 # ---------------------------------------------------------------------------
 
 
-def test_proxy_and_impl_both_matched_when_both_named(db_session, seed_protocol):
-    """Proxy row and impl row both carry the scope name — both get
-    coverage rows. UI dedups, matcher doesn't."""
+def test_proxy_and_impl_share_name_only_impl_gets_row(db_session, seed_protocol):
+    """Proxy and impl share a scope name. Under is_proxy-aware matching,
+    only the impl gets a coverage row — the proxy's direct match on its
+    own name is dropped regardless of the spelling. The proxy view still
+    shows coverage through ``audit_timeline``'s union over historical
+    impls.
+    """
     from services.audits.coverage import match_contracts_for_audit
 
     protocol_id, _ = seed_protocol
@@ -495,11 +499,160 @@ def test_proxy_and_impl_both_matched_when_both_named(db_session, seed_protocol):
     audit = _add_audit(db_session, protocol_id, scope=["SharedName"], date="2024-03-01")
     matches = match_contracts_for_audit(db_session, audit.id)
     by_id = {m.contract_id: m for m in matches}
-    assert set(by_id) == {proxy.id, impl.id}
-    # Proxy has no impl history of its own — direct match.
-    assert by_id[proxy.id].match_type == "direct"
-    # Impl was active from block 100 — impl_era.
+    assert set(by_id) == {impl.id}
     assert by_id[impl.id].match_type == "impl_era"
+
+
+# ---------------------------------------------------------------------------
+# 4b. Proxy-aware matching — generic proxy names shouldn't create coverage
+# ---------------------------------------------------------------------------
+
+
+def test_proxy_direct_match_on_own_name_skipped(db_session, seed_protocol):
+    """A Contract whose ``is_proxy`` is True shouldn't get a direct
+    coverage row on its own scope-name match. Scope like "UUPSProxy"
+    matches generic proxy Contract rows verbatim, and attributing audit
+    coverage on that alone is the false-positive class we want gone.
+    Coverage for the proxy, when legitimate, flows via the impl's own
+    Contract row + audit_timeline's union, not via a direct match on the
+    proxy name.
+    """
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    # Proxy whose DB name is a generic OZ pattern. Impl name is NOT in
+    # the audit scope — mirrors the KING Distributor / CumulativeMerkleDrop
+    # shape where the audit reviewed core etherfi contracts but not the
+    # distributor's impl.
+    _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "a" * 40,
+        name="UUPSProxy",
+        is_proxy=True,
+        implementation="0x" + "b" * 40,
+    )
+    _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "b" * 40,
+        name="Distributor",
+    )
+    audit = _add_audit(
+        db_session,
+        protocol_id,
+        scope=["UUPSProxy", "SomeOtherContract"],
+        date="2024-06-01",
+    )
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    # Proxy row must not emit a coverage row — its ``is_proxy`` tells us
+    # the meaningful name is the impl's, and the impl's name isn't in
+    # scope here. Impl row's own name ("Distributor") also isn't in
+    # scope, so no coverage anywhere. Before the fix this returned a
+    # direct/high row for the proxy.
+    assert matches == []
+
+
+def test_proxy_direct_match_skipped_but_impl_still_matches(db_session, seed_protocol):
+    """The etherfi-style case: proxy named generically, impl has the
+    protocol-specific name the audit actually scopes. The impl gets a
+    direct coverage row on its own name; the proxy still appears
+    covered in audit_timeline through the impl_era union, but the
+    matcher doesn't emit a redundant direct row on the proxy's generic
+    name.
+    """
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "1" * 40,
+        name="UUPSProxy",
+        is_proxy=True,
+        implementation="0x" + "2" * 40,
+    )
+    impl = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "2" * 40,
+        name="LiquidityPool",
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    audit = _add_audit(
+        db_session,
+        protocol_id,
+        scope=["UUPSProxy", "LiquidityPool"],
+        date="2024-06-01",
+    )
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    by_id = {m.contract_id: m for m in matches}
+    # Only the impl gets a coverage row; the proxy's generic-name match
+    # is dropped in favor of the impl-sourced signal.
+    assert set(by_id) == {impl.id}
+    assert by_id[impl.id].match_type == "impl_era"
+    assert by_id[impl.id].matched_name == "LiquidityPool"
+
+
+def test_non_proxy_contract_named_proxy_still_matches_directly(db_session, seed_protocol):
+    """Defensive: skipping only triggers on ``is_proxy=True``. A
+    protocol could have a Contract legitimately named "Proxy" or
+    "UUPSProxy" that isn't actually a delegator (``is_proxy=False`` per
+    the static analyzer). Those must still get a direct match — the
+    rule is about the behavior flag, not the string.
+    """
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    # Named "UUPSProxy" but classifier said is_proxy=False — treat as a
+    # regular contract.
+    c = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "c" * 40,
+        name="UUPSProxy",
+        is_proxy=False,
+    )
+    audit = _add_audit(db_session, protocol_id, scope=["UUPSProxy"], date="2024-06-01")
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == c.id
+    assert matches[0].match_type == "direct"
+
+
+def test_match_audits_for_contract_skips_proxies_own_name(db_session, seed_protocol):
+    """Symmetric: querying by proxy_id must not surface audits that only
+    matched on the proxy's own generic name. The audit_timeline endpoint
+    will still show coverage for the proxy through impl-era rows on
+    historical impls — that path is separate.
+    """
+    from services.audits.coverage import match_audits_for_contract
+
+    protocol_id, _ = seed_protocol
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "a" * 40,
+        name="UUPSProxy",
+        is_proxy=True,
+        implementation="0x" + "b" * 40,
+    )
+    _add_audit(
+        db_session,
+        protocol_id,
+        scope=["UUPSProxy"],
+        date="2024-06-01",
+    )
+    assert match_audits_for_contract(db_session, proxy.id) == []
 
 
 # ---------------------------------------------------------------------------
