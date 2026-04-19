@@ -16,7 +16,6 @@ import ProtocolGraph from "./ProtocolGraph.jsx";
 import RiskSurface from "./RiskSurface.jsx";
 import ProtocolSurface from "./ProtocolSurface.jsx";
 import AuditsTab from "./AuditsTab.jsx";
-import AuditTimelineView from "./AuditTimelineView.jsx";
 import AuditExtractionShelf from "./AuditExtractionShelf.jsx";
 import { api } from "./api/client.js";
 
@@ -31,7 +30,7 @@ import { api } from "./api/client.js";
 // sitting in every admin's browser, with no per-user audit log and no
 // revocation story beyond rotating the key and logging everyone out.
 
-const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "audits", "raw"];
+const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "raw"];
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 function StatCard({ label, value }) {
@@ -3084,15 +3083,6 @@ export default function App() {
     graph: <GraphTab detail={selectedDetail} />,
     dependencies: <DependencyGraphTab data={selectedDetail?.dependency_graph_viz} runName={selectedRun} />,
     upgrades: <UpgradesTab detail={selectedDetail} />,
-    audits: (
-      <div className="stack">
-        <AuditTimelineView
-          contractId={selectedDetail?.contract_id}
-          companyName={selectedDetail?.company}
-          upgradeHistory={selectedDetail?.upgrade_history}
-        />
-      </div>
-    ),
     raw: <RawTab detail={selectedDetail} />,
   } : {};
 
