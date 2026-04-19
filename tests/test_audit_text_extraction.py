@@ -113,7 +113,7 @@ class TestExtractTextFromPdf:
         w.add_blank_page(width=612, height=792)
         w.add_annotation(
             page_number=0,
-            annotation=Link(rect=RectangleObject([100, 700, 300, 720]), url=url),
+            annotation=Link(rect=RectangleObject((100, 700, 300, 720)), url=url),
         )
         buf = io.BytesIO()
         w.write(buf)
@@ -145,7 +145,7 @@ class TestExtractTextFromPdf:
             w.add_annotation(
                 page_number=0,
                 annotation=Link(
-                    rect=RectangleObject([100, 700 - i * 30, 300, 720 - i * 30]),
+                    rect=RectangleObject((100, 700 - i * 30, 300, 720 - i * 30)),
                     url=f"https://github.com/etherfi-protocol/smart-contracts/commit/{sha}",
                 ),
             )
@@ -173,14 +173,14 @@ class TestExtractTextFromPdf:
         w.add_annotation(
             page_number=0,
             annotation=Link(
-                rect=RectangleObject([100, 700, 300, 720]),
+                rect=RectangleObject((100, 700, 300, 720)),
                 url=f"https://github.com/x/y/commit/{sha_p1}",
             ),
         )
         w.add_annotation(
             page_number=1,
             annotation=Link(
-                rect=RectangleObject([100, 700, 300, 720]),
+                rect=RectangleObject((100, 700, 300, 720)),
                 url=f"https://github.com/x/y/commit/{sha_p2}",
             ),
         )
@@ -210,7 +210,7 @@ class TestExtractTextFromPdf:
             page_number=0,
             annotation=FreeText(
                 text="annotator's private note — should not appear",
-                rect=RectangleObject([100, 700, 400, 720]),
+                rect=RectangleObject((100, 700, 400, 720)),
                 font_size="12pt",
             ),
         )
@@ -253,7 +253,7 @@ class TestExtractTextFromPdf:
         w.add_blank_page(width=612, height=792)
         w.add_annotation(
             page_number=0,
-            annotation=Link(rect=RectangleObject([100, 700, 300, 720]), url=url),
+            annotation=Link(rect=RectangleObject((100, 700, 300, 720)), url=url),
         )
         buf = io.BytesIO()
         w.write(buf)
