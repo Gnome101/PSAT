@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage, JobStatus, SessionLocal
-from db.queue import advance_job, claim_job, fail_job, update_job_detail
+from db.queue import advance_job, claim_job, fail_job, reclaim_stuck_jobs, update_job_detail
 
 logger = logging.getLogger(__name__)
 
@@ -51,12 +51,19 @@ class BaseWorker:
     def _claim_job(self, session: Session) -> Job | None:
         """Claim the next job for this stage. Default: stage + status match.
 
+        Sweeps cross-stage stuck ``processing`` rows back to ``queued``
+        before claiming. That keeps worker-crash recovery cheap (a single
+        UPDATE per poll) and global — no single worker's stage is a
+        bottleneck on recovery — so a crashed discovery worker's job can
+        be picked up by any pollable peer on the very next tick.
+
         Override in subclasses that need a readiness-gated claim (e.g.
         ``CoverageWorker`` waits for all audits in the protocol to settle)
         or a multi-phase claim pattern (primary claim OR a stuck-job
         escape hatch). Keeping this as a hook means the subclass never
         needs to copy-paste the run loop just to swap one line.
         """
+        reclaim_stuck_jobs(session)
         return claim_job(session, self.stage, self.worker_id)
 
     def _recover_stale_jobs(self, session: Session) -> None:

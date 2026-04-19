@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,60 @@ from .storage import (
 )
 
 logger = logging.getLogger(__name__)
+
+# How long a job can sit in ``status='processing'`` before we assume the
+# worker holding it crashed and return the row to the queue. ``updated_at``
+# is our implicit heartbeat — every status/detail write stamps NOW(), so a
+# stale row reliably means nobody is touching it.
+DEFAULT_JOB_STALE_TIMEOUT = int(os.getenv("PSAT_JOB_STALE_TIMEOUT", "900"))
+
+
+def reclaim_stuck_jobs(session: Session, stale_timeout_seconds: int = DEFAULT_JOB_STALE_TIMEOUT) -> list[str]:
+    """Sweep jobs stuck in ``processing`` past the threshold back to ``queued``.
+
+    Uses ``updated_at`` as a heartbeat: any status or detail write bumps it,
+    so a row that hasn't moved in ``stale_timeout_seconds`` seconds indicates
+    the claiming worker crashed before it could advance, fail, or update
+    progress. Flips status back to ``queued`` and clears ``worker_id`` so a
+    live worker can claim it on the next poll.
+
+    Runs one ``UPDATE ... RETURNING id`` so the sweep is atomic and we can
+    log which rows were rescued. ``SKIP LOCKED`` keeps us from blocking on a
+    row whose FOR UPDATE is currently held by another process (including the
+    happy-path claim happening concurrently).
+
+    Returns the list of rescued job IDs so callers can log them — operators
+    can then correlate these IDs against a worker's last known heartbeat to
+    identify which instance crashed.
+    """
+    result = session.execute(
+        text(
+            """
+            UPDATE jobs
+            SET status = 'queued', worker_id = NULL
+            WHERE id IN (
+                SELECT id FROM jobs
+                WHERE status = 'processing'
+                  AND updated_at < NOW() - (:timeout * INTERVAL '1 second')
+                FOR UPDATE SKIP LOCKED
+            )
+            RETURNING id
+            """
+        ),
+        {"timeout": stale_timeout_seconds},
+    )
+    rescued = [str(row_id) for (row_id,) in result]
+    if rescued:
+        session.commit()
+        for job_id in rescued:
+            logger.warning(
+                "reclaim_stuck_jobs: reset job %s (stuck in processing for > %ss)",
+                job_id,
+                stale_timeout_seconds,
+            )
+    else:
+        session.rollback()
+    return rescued
 
 
 def create_job(
