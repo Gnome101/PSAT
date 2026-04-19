@@ -389,12 +389,21 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
 
     # Protocol contracts whose contract_name matches a scope entry, case-
     # insensitively. Parameter binding makes LLM-sourced strings safe to
-    # pass through IN_.
+    # pass through IN_. Proxies are excluded at the query boundary: scope
+    # names like ``UUPSProxy`` match generic proxy rows verbatim but the
+    # audit reviewed the impl's code, not the proxy glue — real coverage
+    # flows via the impl's own Contract row + audit_timeline's union.
+    # Filtering here (instead of later in the loop) makes the invariant
+    # architectural: proxies can't reach the impl_era or direct branches,
+    # the source-equivalence pass, or the coverage-insert path. A DB
+    # trigger on ``audit_contract_coverage`` enforces the same invariant
+    # against raw SQL writes.
     candidates = (
         session.execute(
             select(Contract).where(
                 Contract.protocol_id == audit.protocol_id,
                 func.lower(Contract.contract_name).in_(list(scope_lookup.keys())),
+                Contract.is_proxy.is_(False),
             )
         )
         .scalars()
@@ -432,13 +441,6 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
                 covered_to_block=window.to_block if window else None,
             )
         else:
-            # is_proxy=True direct matches are almost always false positives:
-            # scope names a generic library (UUPSProxy, ERC1967Proxy, etc.),
-            # the proxy's contract_name happens to be that string, but the
-            # audit didn't actually review what sits behind this proxy.
-            # Real coverage flows via the impl's own Contract row.
-            if c.is_proxy:
-                continue
             confidence = _confidence_for_direct(audit_ts, c)
             match = CoverageMatch(
                 audit_report_id=audit.id,
@@ -466,9 +468,16 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
     """Dual entry. For each audit in the contract's protocol whose scope
     mentions the contract's name, emit a match. Same rules as
     ``match_contracts_for_audit``.
+
+    Proxies are excluded unconditionally — see the candidate filter in
+    ``match_contracts_for_audit`` for the rationale. Short-circuiting here
+    keeps ``audit_timeline`` from surfacing a redundant direct row on the
+    proxy's generic name when the impl already has the legitimate match.
     """
     contract = session.get(Contract, contract_id)
     if contract is None or contract.protocol_id is None:
+        return []
+    if contract.is_proxy:
         return []
     name_key = _normalize_name(contract.contract_name)
     if not name_key:
@@ -509,10 +518,6 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
                 )
             )
         else:
-            # See match_contracts_for_audit: is_proxy direct-name matches
-            # are the false-positive class we drop.
-            if contract.is_proxy:
-                continue
             confidence = _confidence_for_direct(audit_ts, contract)
             out.append(
                 CoverageMatch(

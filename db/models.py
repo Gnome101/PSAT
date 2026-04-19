@@ -861,6 +861,53 @@ def apply_storage_migrations(target_engine=None) -> None:
         # and this column is scanned on every per-impl window computation in
         # services/audits/coverage.py + contract_audit_timeline.
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_upgrade_events_contract_id ON upgrade_events (contract_id)"))
+        # audit_contract_coverage ↔ proxy invariant. Scope names like
+        # ``UUPSProxy`` match generic proxy Contract rows verbatim, but the
+        # audit didn't review the proxy's code — it reviewed the impl's.
+        # ``services.audits.coverage`` filters proxies out at the candidate
+        # query; this trigger is the data-layer enforcement so a raw SQL
+        # INSERT (migration, manual backfill, a future bug) cannot create
+        # false-positive coverage rows. CREATE OR REPLACE on the function
+        # makes it idempotent across repeated migration runs.
+        conn.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION _reject_proxy_coverage() RETURNS TRIGGER AS $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM contracts WHERE id = NEW.contract_id AND is_proxy = TRUE) THEN
+                        RAISE EXCEPTION
+                            'audit_contract_coverage.contract_id=% references a proxy contract; '
+                            'coverage rows must target implementations (is_proxy=FALSE)',
+                            NEW.contract_id;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                """
+            )
+        )
+        # DROP + CREATE the trigger so a schema change to the function
+        # propagates on the next migration run. DROP IF EXISTS keeps this
+        # idempotent.
+        conn.execute(text("DROP TRIGGER IF EXISTS audit_contract_coverage_no_proxy ON audit_contract_coverage"))
+        conn.execute(
+            text(
+                "CREATE TRIGGER audit_contract_coverage_no_proxy "
+                "BEFORE INSERT OR UPDATE ON audit_contract_coverage "
+                "FOR EACH ROW EXECUTE FUNCTION _reject_proxy_coverage()"
+            )
+        )
+        # One-shot cleanup of stale proxy coverage rows that predate the
+        # trigger. DELETE doesn't fire the trigger (only INSERT/UPDATE
+        # do), so the cleanup runs even when the trigger is already
+        # armed. Idempotent: a no-op on subsequent migration runs
+        # because the trigger prevents regression.
+        conn.execute(
+            text(
+                "DELETE FROM audit_contract_coverage "
+                "WHERE contract_id IN (SELECT id FROM contracts WHERE is_proxy = TRUE)"
+            )
+        )
         conn.commit()
 
 

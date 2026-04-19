@@ -629,6 +629,61 @@ def test_non_proxy_contract_named_proxy_still_matches_directly(db_session, seed_
     assert matches[0].match_type == "direct"
 
 
+def test_proxy_with_windows_is_still_excluded_from_matching(db_session, seed_protocol):
+    """Regression for the pre-architectural-filter shape: a proxy that
+    has impl windows (because another proxy was upgraded to point at it
+    — a proxy-behind-proxy chain) could previously slip through the
+    ``else: if c.is_proxy: continue`` guard, since that guard only
+    applies in the no-windows branch. The architectural filter at the
+    candidate query must exclude is_proxy=True rows regardless of
+    window status.
+    """
+    from db.models import Contract
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    # Inner proxy (target of the audit scope name) that has is_proxy=True.
+    inner_proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "a" * 40,
+        name="UUPSProxy",
+        is_proxy=True,
+        implementation="0x" + "b" * 40,
+    )
+    # Outer proxy that was once upgraded to point at the inner_proxy —
+    # which gives the inner_proxy a "window" despite being a proxy itself.
+    outer_proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address="0x" + "c" * 40,
+        name="OuterProxy",
+        is_proxy=True,
+        implementation=inner_proxy.address,
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=outer_proxy.id,
+        proxy_address=outer_proxy.address,
+        new_impl=inner_proxy.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    audit = _add_audit(db_session, protocol_id, scope=["UUPSProxy"], date="2024-06-01")
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    # Neither proxy should appear. Pre-fix: inner_proxy would have slipped
+    # through as an impl_era match because it has a window.
+    by_id = {m.contract_id: m for m in matches}
+    assert inner_proxy.id not in by_id, (
+        "Proxy with windows must be excluded from coverage candidates even "
+        "though the impl_era path would have matched it"
+    )
+    assert outer_proxy.id not in by_id
+    # Sanity: confirm is_proxy really is True on the DB side.
+    assert db_session.get(Contract, inner_proxy.id).is_proxy is True
+
+
 def test_match_audits_for_contract_skips_proxies_own_name(db_session, seed_protocol):
     """Symmetric: querying by proxy_id must not surface audits that only
     matched on the proxy's own generic name. The audit_timeline endpoint
