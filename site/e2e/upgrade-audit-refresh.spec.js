@@ -137,10 +137,11 @@ test.describe("Bug S3: /address/.../upgrades refresh", () => {
 
     // Per-era chips:
     //   V1 (past)    — Solidified only (impl_era, date in V1 era)
-    //   V2 (current) — Solidified (address) + Trail of Bits (reviewed_commit)
-    // Total 3 auditor chips across the timeline.
+    //   V2 (current) — Trail of Bits only (reviewed_commit binds by address)
+    // Solidified's 2023-11-15 date is >14 days outside V2's era even with
+    // grace, so matchesEra correctly keeps it off the current impl.
     const auditorChips = page.locator(".timeline .chip", { hasText: /Solidified|Trail of Bits/ });
-    await expect(auditorChips).toHaveCount(3, { timeout: 5000 });
+    await expect(auditorChips).toHaveCount(2, { timeout: 5000 });
   });
 
   test("audit chips persist across a real page reload()", async ({ page }) => {
@@ -150,17 +151,65 @@ test.describe("Bug S3: /address/.../upgrades refresh", () => {
     await page.goto(`/address/${TARGET_ADDR}/upgrades`);
     await page.waitForSelector(".timeline .chip", { timeout: 10000 });
     const before = page.locator(".timeline .chip", { hasText: /Solidified|Trail of Bits/ });
-    await expect(before).toHaveCount(3, { timeout: 5000 });
+    await expect(before).toHaveCount(2, { timeout: 5000 });
 
     // Browser refresh — chips must come back on the same URL.
     await page.reload();
     await page.waitForSelector(".timeline .chip", { timeout: 10000 });
     const after = page.locator(".timeline .chip", { hasText: /Solidified|Trail of Bits/ });
-    await expect(after).toHaveCount(3, { timeout: 5000 });
+    await expect(after).toHaveCount(2, { timeout: 5000 });
 
     // Upgrades tab is still the active tab — the tab shouldn't silently
     // default to Summary after refresh.
     await expect(page.locator(".tab.active", { hasText: "Upgrades" })).toBeVisible();
+  });
+
+  test("proxy URL resolves to proxy run even when /api/analyses merges impl behind proxy", async ({ page }) => {
+    // Real regression: /api/analyses merges impl runs behind their proxy,
+    // producing a single row where `address` is the IMPL's and
+    // `proxy_address` is the URL-visible proxy. The previous findRunByAddress
+    // matched the merged row via proxy_address and loaded the IMPL's detail
+    // — but that detail's `address` is the impl, so UpgradesTab's
+    // targetAddr defaulted to the impl and `isTarget()` failed for every
+    // proxy entry in the timeline. Chips silently disappeared on refresh.
+    //
+    // Fix has two parts:
+    //   (1) findRunByAddress prefers a row whose `address` matches (this
+    //       test doesn't hit that — merged row has no matching `address`).
+    //   (2) UpgradesTab prefers history.target_address over detail.address
+    //       when determining which proxy is the "target" — that's the
+    //       path exercised here.
+    const MERGED_ROW = {
+      job_id: "impl-run-id",
+      // Note: .address is the IMPL, not the URL's proxy — that's the
+      // shape /api/analyses returns for a merged proxy+impl pair.
+      address: IMPL_V2,
+      proxy_address: TARGET_ADDR,
+      run_name: "TestProxy",
+      contract_name: "Impl V2",
+    };
+    const IMPL_DETAIL = {
+      address: IMPL_V2, // impl's address, NOT the URL's target
+      run_name: "TestProxy",
+      contract_name: "Impl V2",
+      contract_id: CONTRACT_ID,
+      company: "TestCo",
+      upgrade_history: DETAIL_PAYLOAD.upgrade_history, // target_address = TARGET_ADDR (the proxy)
+    };
+    await mockApis(page, { analyses: [MERGED_ROW], detail: IMPL_DETAIL });
+    // Override the per-run detail mock for this different run id.
+    await page.route(`**/api/analyses/${encodeURIComponent("impl-run-id")}`, (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(IMPL_DETAIL) }),
+    );
+
+    await page.goto(`/address/${TARGET_ADDR}/upgrades`);
+    await page.waitForSelector(".timeline", { timeout: 10000 });
+    await page.waitForSelector(".timeline .chip", { timeout: 10000 });
+
+    // Audit chips should still render per era — the merged-entry quirk
+    // must not leave every impl showing "no audit coverage".
+    const auditorChips = page.locator(".timeline .chip", { hasText: /Solidified|Trail of Bits/ });
+    await expect(auditorChips).toHaveCount(2, { timeout: 5000 });
   });
 });
 

@@ -8,11 +8,19 @@
 // Backend note: the `contracts` table only has a row for the CURRENT
 // implementation of each proxy, so every coverage row's
 // `impl_address` points at the current impl — even for audits that
-// cover past impls. The frontend must fall through to temporal
-// (block/date) matching for those rows, except when the match is a
-// source-equivalence proof (`match_type === "reviewed_commit"`),
-// which is binding to a specific impl's source hash and should not
-// spread across other eras.
+// cover past impls. The frontend has richer context via the static-
+// pipeline upgrade_history artifact, so for name-based matches
+// (`direct` / `impl_era`) it does its own temporal placement with
+// a grace zone, and only source-equivalence proofs
+// (`match_type === "reviewed_commit"`) stay strictly bound to the
+// impl_address the backend matched.
+
+// Days of slack on either side of an impl's active window. An audit
+// finalized within two weeks of an impl going live (or being replaced)
+// is almost certainly reviewing *that* impl — engagement ends and the
+// PDF ships just before the upgrade, or review continues just after it.
+// Mirrors the backend's GRACE_DAYS in services/audits/coverage.py.
+const GRACE_MS = 14 * 24 * 3600 * 1000;
 
 export function parseAuditTs(date) {
   if (!date) return null;
@@ -27,21 +35,18 @@ export function matchesEra(cov, impl) {
     cov.impl_address.toLowerCase() === impl.address.toLowerCase()
   );
 
+  // Source-equivalence is a cryptographic proof the audit reviewed
+  // one specific impl's source — don't let temporal logic spread it
+  // across other eras.
   if (cov?.match_type === "reviewed_commit") {
-    // Source-equivalence is binding to one impl — don't fall through.
     return addrMatch;
   }
 
-  if (addrMatch) return true;
-
-  // Fall through to block/date temporal logic. `direct` and `impl_era`
-  // matches arrive with cov.impl_address set to the CURRENT impl
-  // (backend has no Contract row for past impls), so address equality
-  // alone would pin every such audit to the current era.
+  // Block-range constraint from the backend (populated when impl_era
+  // match has a window). Hard constraint: overlap required.
   const covFrom = cov?.covered_from_block;
   const covTo = cov?.covered_to_block;
-  const hasBlocks = covFrom != null || covTo != null;
-  if (hasBlocks) {
+  if (covFrom != null || covTo != null) {
     const eraFrom = impl?.block_introduced ?? -Infinity;
     const eraTo = impl?.block_replaced ?? Infinity;
     const cFrom = covFrom ?? -Infinity;
@@ -49,14 +54,19 @@ export function matchesEra(cov, impl) {
     return cFrom < eraTo && cTo > eraFrom;
   }
 
-  // Null block range → compare audit date against impl-era timestamps,
-  // else the same audit would surface under every era.
+  // Temporal match: audit date vs impl-era timestamps, with 14-day grace
+  // on both sides. We do NOT short-circuit on addrMatch here — for
+  // `direct` matches the backend pins impl_address to the CURRENT impl
+  // regardless of when the audit was published, so short-circuiting
+  // would drag e.g. a 2024-10-08 Certora audit onto the 2026 impl.
   const auditTs = parseAuditTs(cov?.date);
-  if (auditTs == null) return false;
-  // impl timestamps are unix seconds; Date.parse returns ms.
+  if (auditTs == null) {
+    // No audit date → only signal we have is addrMatch.
+    return addrMatch;
+  }
   const eraFromTs =
     impl?.timestamp_introduced != null ? impl.timestamp_introduced * 1000 : -Infinity;
   const eraToTs =
     impl?.timestamp_replaced != null ? impl.timestamp_replaced * 1000 : Infinity;
-  return auditTs >= eraFromTs && auditTs < eraToTs;
+  return auditTs >= eraFromTs - GRACE_MS && auditTs < eraToTs + GRACE_MS;
 }

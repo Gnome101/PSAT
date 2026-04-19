@@ -16,6 +16,7 @@ import ProtocolGraph from "./ProtocolGraph.jsx";
 import RiskSurface from "./RiskSurface.jsx";
 import ProtocolSurface from "./ProtocolSurface.jsx";
 import { matchesEra } from "./auditMatching.js";
+import { findRunByAddress } from "./runLookup.js";
 import AuditsTab from "./AuditsTab.jsx";
 import AuditExtractionShelf from "./AuditExtractionShelf.jsx";
 import { api } from "./api/client.js";
@@ -117,14 +118,6 @@ function buildLocationPath(runId, address, tab) {
   return "/";
 }
 
-function findRunByAddress(analyses, address) {
-  const target = String(address || "").toLowerCase();
-  return analyses.find((analysis) => {
-    const subjectAddress = String(analysis.address || "").toLowerCase();
-    const proxyAddress = String(analysis.proxy_address || analysis.proxy_address_display || "").toLowerCase();
-    return subjectAddress === target || proxyAddress === target;
-  })?.job_id || null;
-}
 
 function renderNodeBody(node) {
   const titleLines = wrapText(node.title, node.shape === "rect" ? 30 : 18, node.shape === "rect" ? 3 : 3);
@@ -339,7 +332,7 @@ function UpgradesTab({ detail }) {
   function frontendCurrentImplAudited() {
     if (!auditTimeline || !history?.proxies) return false;
     const targetProxy = Object.entries(history.proxies).find(
-      ([addr]) => addr.toLowerCase() === (detail?.address || history.target_address || "").toLowerCase(),
+      ([addr]) => addr.toLowerCase() === (history.target_address || detail?.address || "").toLowerCase(),
     );
     if (!targetProxy) return false;
     const impls = targetProxy[1]?.implementations || [];
@@ -389,7 +382,13 @@ function UpgradesTab({ detail }) {
   }
 
   const deps = detail?.dependencies?.dependencies || {};
-  const targetAddr = (detail?.address || history.target_address || "").toLowerCase();
+  // history.target_address is always the proxy whose upgrade history this
+  // artifact describes. detail.address can diverge on merged /api/analyses
+  // rows — when an impl run is merged behind its proxy, detail.address is
+  // the IMPL but the upgrade_history is keyed to the proxy. Preferring
+  // target_address here keeps isTarget() matching the proxy's row in the
+  // timeline, so audit chips attach instead of silently disappearing.
+  const targetAddr = (history.target_address || detail?.address || "").toLowerCase();
 
   function proxyLabel(addr) {
     if (addr.toLowerCase() === targetAddr) {
@@ -431,7 +430,7 @@ function UpgradesTab({ detail }) {
             // the proxy via a generic scope name (e.g. "UUPSProxy").
             const proxy = history?.proxies
               ? Object.entries(history.proxies).find(
-                  ([addr]) => addr.toLowerCase() === (detail?.address || history.target_address || "").toLowerCase(),
+                  ([addr]) => addr.toLowerCase() === (history.target_address || detail?.address || "").toLowerCase(),
                 )?.[1]
               : null;
             const impls = proxy?.implementations || [];
