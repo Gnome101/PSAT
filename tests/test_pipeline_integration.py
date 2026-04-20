@@ -1013,14 +1013,16 @@ def test_tracking_plan_preserves_policy_tracking_fields():
 
 
 # ===================================================================
-# 16. Discovery company mode creates child jobs with correct request fields
+# 16. Discovery company mode writes contracts and advances to selection
 # ===================================================================
 
 
-def test_discovery_company_mode_creates_child_jobs(monkeypatch):
-    """When DiscoveryWorker processes a company job, it creates child jobs
-    with address, name, chain, rpc_url, and parent_job_id in the request.
-    The static worker depends on these fields being present."""
+def test_discovery_company_mode_advances_to_selection(monkeypatch):
+    """DiscoveryWorker company mode now writes discovered contracts to the
+    ``contracts`` table and hands off to the ``selection`` stage instead of
+    creating analysis child jobs inline. Child creation happens later in
+    the SelectionWorker, once DApp/DefiLlama siblings have also landed."""
+    from db.models import JobStage
     from workers.base import JobHandledDirectly
     from workers.discovery import DiscoveryWorker
 
@@ -1035,56 +1037,42 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
         protocol_id=None,
         request={"company": "TestProtocol", "chain": "ethereum", "rpc_url": "https://rpc.example", "analyze_limit": 2},
     )
-    # Mock session.commit and session.flush to avoid DB calls
     session.commit = MagicMock()
     session.flush = MagicMock()
     session.add = MagicMock()
-    # Mock session.execute to return None for Protocol lookup and Contract lookups
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = None
     session.execute = MagicMock(return_value=mock_result)
 
     stored_artifacts: dict[str, Any] = {}
-    created_jobs: list[dict] = []
+    advance_calls: list[tuple] = []
 
     monkeypatch.setattr(
         "workers.discovery.store_artifact",
         lambda _s, _j, name, data=None, text_data=None: stored_artifacts.update({name: data or text_data}),
     )
+
+    def fail_create_job(*_a, **_kw):
+        raise AssertionError("create_job should not be called from DiscoveryWorker company mode")
+
+    monkeypatch.setattr("workers.discovery.create_job", fail_create_job)
     monkeypatch.setattr(
-        "workers.discovery.create_job",
-        lambda _s, req, initial_stage=None: (
-            created_jobs.append(req) or SimpleNamespace(id=f"child-{len(created_jobs)}", company=None, protocol_id=None)
-        ),
+        "workers.discovery.advance_job",
+        lambda _s, job_id, next_stage, detail="": advance_calls.append((job_id, next_stage, detail)),
     )
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
 
-    # Mock count_analysis_children (now called before selecting contracts)
-    monkeypatch.setattr(
-        "workers.discovery.count_analysis_children",
-        lambda _s, _root_id: 0,
-    )
-
-    # Mock get_artifact (no previous inventory)
     monkeypatch.setattr(
         "workers.discovery.get_artifact",
         lambda _s, _j, _name: None,
     )
-
-    # Mock cache lookup and dedup functions (no previous inventory, no existing jobs)
     monkeypatch.setattr(
         "workers.discovery.find_previous_company_inventory",
         lambda _s, _company, exclude_job_id=None, chain=None: None,
     )
     monkeypatch.setattr(
-        "workers.discovery.find_existing_job_for_address",
-        lambda _s, _addr, chain=None: None,
-    )
-
-    # Mock inventory search to return 2 contracts
-    monkeypatch.setattr(
         "workers.discovery.search_protocol_inventory",
-        lambda company, chain=None, limit=25: {
+        lambda *_a, **_kw: {
             "contracts": [
                 {"address": "0xaaaa" + "a" * 36, "name": "TokenA", "chains": ["ethereum"], "confidence": 0.9},
                 {"address": "0xbbbb" + "b" * 36, "name": "TokenB", "chains": ["ethereum"], "confidence": 0.8},
@@ -1092,36 +1080,29 @@ def test_discovery_company_mode_creates_child_jobs(monkeypatch):
             "official_domain": "testprotocol.io",
         },
     )
-
-    # Mock complete_job
-    monkeypatch.setattr("db.queue.complete_job", lambda _s, _j, detail="": None)
-
-    # Mock _spawn_parallel_discovery (calls external services)
     monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *_a, **_kw: None)
 
     try:
         worker.process(session, job)  # type: ignore[arg-type]
     except JobHandledDirectly:
-        pass  # Expected for company jobs
+        pass  # expected hand-off signal
 
-    # Verify child jobs have required fields for static worker
-    assert len(created_jobs) == 2
-    for child_req in created_jobs:
-        assert "address" in child_req
-        assert "name" in child_req
-        assert "parent_job_id" in child_req
-        assert child_req["parent_job_id"] == "parent-1"
-        assert child_req["rpc_url"] == "https://rpc.example"
+    # Advance to the selection stage instead of queueing children here
+    assert len(advance_calls) == 1
+    job_id, next_stage, _detail = advance_calls[0]
+    assert job_id == "parent-1"
+    assert next_stage == JobStage.selection
 
-    # Verify discovery_summary artifact was stored
+    # discovery_summary now reports only what was discovered; ranking/queueing
+    # runs later in SelectionWorker
     assert "discovery_summary" in stored_artifacts
     summary = stored_artifacts["discovery_summary"]
     assert summary["mode"] == "company"
     assert summary["company"] == "TestProtocol"
-    assert summary["analyzed_count"] == 2
-    assert len(summary["child_jobs"]) == 2
+    assert summary["discovered_count"] == 2
+    assert "analyzed_count" not in summary
+    assert "child_jobs" not in summary
 
-    # Verify contract_inventory artifact was stored
     assert "contract_inventory" in stored_artifacts
 
 

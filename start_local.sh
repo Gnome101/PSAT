@@ -12,7 +12,7 @@ set -a
 source .env
 set +a
 
-WORKER_PATTERN='workers\.(discovery|static_worker|resolution_worker|policy_worker|dapp_crawl_worker|defillama_worker)'
+WORKER_PATTERN='workers\.(discovery|static_worker|resolution_worker|policy_worker|coverage_worker|selection_worker|dapp_crawl_worker|defillama_worker|audit_text_extraction|audit_scope_extraction)'
 API_PID=""
 WORKERS_PID=""
 PROXY_SCANNER_PID=""

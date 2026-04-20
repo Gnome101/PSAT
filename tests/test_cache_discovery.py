@@ -278,44 +278,6 @@ def _mock_inventory(contracts, **extra):
     return inv
 
 
-def test_child_job_dedup(db_session, monkeypatch):
-    """When a job already exists for address A, only address B gets a child job."""
-    from sqlalchemy import select
-
-    from db.models import Job
-    from db.queue import create_job
-    from workers.base import JobHandledDirectly
-    from workers.discovery import DiscoveryWorker
-
-    # Pre-existing job for ADDR_A
-    create_job(db_session, {"address": ADDR_A, "name": "existing"})
-
-    inventory = _mock_inventory(
-        [
-            {"address": ADDR_A, "name": "A", "confidence": 0.9},
-            {"address": ADDR_B, "name": "B", "confidence": 0.8},
-        ]
-    )
-    monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
-
-    job = _make_company_job(db_session)
-
-    worker = DiscoveryWorker()
-    worker.update_detail = MagicMock()
-    monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *a, **kw: None)
-
-    with pytest.raises(JobHandledDirectly):
-        worker._process_company(db_session, job)
-
-    # Count child jobs created by this company job (via root_job_id in request)
-    all_jobs = db_session.execute(select(Job).where(Job.address.isnot(None))).scalars().all()
-    child_addrs = [j.address for j in all_jobs if (j.request or {}).get("root_job_id") == str(job.id)]
-
-    # Only B should have been created
-    assert ADDR_B in child_addrs
-    assert ADDR_A not in child_addrs
-
-
 def test_first_run_no_previous_inventory(db_session, monkeypatch):
     """First run with no prior company job stores inventory normally."""
     from db.queue import get_artifact
@@ -401,36 +363,12 @@ def test_rerun_merges_with_previous_inventory(db_session, monkeypatch):
     assert contracts_by_addr[ADDR_C.lower()]["confidence"] == 0.85
 
 
-def test_low_confidence_contracts_not_analyzed(db_session, monkeypatch):
-    """Contracts below the confidence threshold do not get child jobs."""
-    from sqlalchemy import select
-
-    from db.models import Job
-    from workers.base import JobHandledDirectly
-    from workers.discovery import DiscoveryWorker
-
-    inventory = _mock_inventory(
-        [
-            {"address": ADDR_A, "name": "A", "confidence": 0.9},
-            {"address": ADDR_B, "name": "B", "confidence": 0.1},  # below threshold
-        ]
-    )
-    monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
-
-    job = _make_company_job(db_session)
-
-    worker = DiscoveryWorker()
-    worker.update_detail = MagicMock()
-    monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *a, **kw: None)
-
-    with pytest.raises(JobHandledDirectly):
-        worker._process_company(db_session, job)
-
-    all_jobs = db_session.execute(select(Job).where(Job.address.isnot(None))).scalars().all()
-    child_addrs = [j.address for j in all_jobs if (j.request or {}).get("root_job_id") == str(job.id)]
-
-    assert ADDR_A in child_addrs
-    assert ADDR_B not in child_addrs
+# ---------------------------------------------------------------------------
+# Child-job dedup and confidence-threshold filtering used to be tested here
+# against DiscoveryWorker._process_company. That logic now lives in the
+# SelectionWorker, where it runs once over the unified contract set; see
+# tests/test_selection_worker.py for the equivalent coverage.
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -529,108 +467,9 @@ def test_is_known_proxy_case_insensitive(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Company-mode proxy dedup tests
+# Company-mode proxy dedup used to live here against DiscoveryWorker.
+# The logic now runs in SelectionWorker — see
+# tests/test_selection_worker.py::test_existing_non_proxy_job_skips_address
+# and ::test_proxy_with_existing_job_is_re_queued for the replacement
+# coverage.
 # ---------------------------------------------------------------------------
-
-
-def test_company_dedup_skips_regular_contracts(db_session, monkeypatch):
-    """Existing completed job for a regular (non-proxy) contract: child job NOT created."""
-    from sqlalchemy import select
-
-    from db.models import Contract, Job
-    from db.queue import create_job
-    from workers.base import JobHandledDirectly
-    from workers.discovery import DiscoveryWorker
-
-    # Pre-existing job for ADDR_A with a non-proxy contract
-    existing_job = create_job(db_session, {"address": ADDR_A, "name": "existing"})
-    db_session.add(
-        Contract(
-            job_id=existing_job.id,
-            address=ADDR_A,
-            contract_name="Regular",
-            compiler_version="v0.8.24",
-            language="solidity",
-            evm_version="shanghai",
-            optimization=True,
-            optimization_runs=200,
-            source_format="flat",
-            source_file_count=1,
-            remappings=[],
-            is_proxy=False,
-        )
-    )
-    db_session.commit()
-
-    inventory = _mock_inventory(
-        [
-            {"address": ADDR_A, "name": "A", "confidence": 0.9},
-        ]
-    )
-    monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
-
-    job = _make_company_job(db_session)
-
-    worker = DiscoveryWorker()
-    worker.update_detail = MagicMock()
-    monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *a, **kw: None)
-
-    with pytest.raises(JobHandledDirectly):
-        worker._process_company(db_session, job)
-
-    all_jobs = db_session.execute(select(Job).where(Job.address.isnot(None))).scalars().all()
-    child_addrs = [j.address for j in all_jobs if (j.request or {}).get("root_job_id") == str(job.id)]
-
-    assert ADDR_A not in child_addrs
-
-
-def test_company_dedup_requeues_proxy_contracts(db_session, monkeypatch):
-    """Existing completed job for a proxy contract: child job IS created (re-queued)."""
-    from sqlalchemy import select
-
-    from db.models import Contract, Job
-    from db.queue import create_job
-    from workers.base import JobHandledDirectly
-    from workers.discovery import DiscoveryWorker
-
-    # Pre-existing job for ADDR_A with a proxy contract
-    existing_job = create_job(db_session, {"address": ADDR_A, "name": "existing"})
-    db_session.add(
-        Contract(
-            job_id=existing_job.id,
-            address=ADDR_A,
-            contract_name="ProxyContract",
-            compiler_version="v0.8.24",
-            language="solidity",
-            evm_version="shanghai",
-            optimization=True,
-            optimization_runs=200,
-            source_format="flat",
-            source_file_count=1,
-            remappings=[],
-            is_proxy=True,
-            proxy_type="eip1967",
-        )
-    )
-    db_session.commit()
-
-    inventory = _mock_inventory(
-        [
-            {"address": ADDR_A, "name": "A", "confidence": 0.9},
-        ]
-    )
-    monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
-
-    job = _make_company_job(db_session)
-
-    worker = DiscoveryWorker()
-    worker.update_detail = MagicMock()
-    monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *a, **kw: None)
-
-    with pytest.raises(JobHandledDirectly):
-        worker._process_company(db_session, job)
-
-    all_jobs = db_session.execute(select(Job).where(Job.address.isnot(None))).scalars().all()
-    child_addrs = [j.address for j in all_jobs if (j.request or {}).get("root_job_id") == str(job.id)]
-
-    assert ADDR_A in child_addrs

@@ -329,85 +329,82 @@ class TestCopyCachePreservesSource:
 
 class TestAnalyzeLimitFilling:
     def test_skipped_entries_dont_consume_limit(self, db_session, monkeypatch):
-        """When some top-ranked entries are skipped (existing jobs), the
-        remaining slots should be filled from lower-ranked eligible entries."""
-        from unittest.mock import MagicMock
+        """When top-ranked entries are skipped (existing jobs), the remaining
+        slots should be filled from lower-ranked eligible entries.
 
+        This invariant used to live in ``DiscoveryWorker._process_company``.
+        It now lives in ``SelectionWorker._queue_top_n`` — the test was moved
+        here wholesale rather than duplicated so the exact failure signal
+        (``n >= 3`` children despite 3 dupes) still guards the same code path.
+        """
+        from sqlalchemy import select
+
+        from db.models import Contract, Job, JobStage, JobStatus, Protocol
         from db.queue import create_job
-        from workers.discovery import DiscoveryWorker
+        from workers.selection_worker import SelectionWorker
 
-        # Pre-create jobs for the top 3 addresses so they'll be skipped
+        # Stub Etherscan activity so enrich_with_activity doesn't hit the network.
+        monkeypatch.setattr(
+            "services.discovery.activity.etherscan.get",
+            lambda *a, **kw: {"result": []},
+        )
+
+        protocol = Protocol(name=f"fill-test-{uuid.uuid4().hex[:8]}")
+        db_session.add(protocol)
+        db_session.commit()
+
+        # Pre-create live jobs for the top 3 addresses so SelectionWorker
+        # has to skip them.
         for i in range(3):
             addr = f"0x{str(i).zfill(40)}"
             create_job(db_session, {"address": addr, "chain": "ethereum"})
 
-        # Build inventory with 6 addresses: top 3 already have jobs, bottom 3 don't
-        contracts = []
+        # Seed 6 contracts under this protocol with descending confidence —
+        # top 3 addresses overlap with the pre-created jobs above.
         for i in range(6):
             addr = f"0x{str(i).zfill(40)}"
-            contracts.append(
-                {
-                    "address": addr,
-                    "chain": "ethereum",
-                    "name": f"Contract{i}",
-                    "confidence": 0.9 - (i * 0.05),
-                    "rank_score": 1.0 - (i * 0.1),
-                }
+            db_session.add(
+                Contract(
+                    protocol_id=protocol.id,
+                    address=addr,
+                    chain="ethereum",
+                    contract_name=f"Contract{i}",
+                    confidence=0.9 - (i * 0.05),
+                    discovery_sources=["inventory"],
+                )
             )
+        db_session.commit()
 
-        inventory = {
-            "contracts": contracts,
-            "official_domain": "test.com",
-        }
-
-        monkeypatch.setattr(
-            "workers.discovery.search_protocol_inventory",
-            lambda *a, **kw: inventory,
-        )
-        monkeypatch.setattr(
-            "workers.discovery._batch_get_creators",
-            lambda *a, **kw: {},
-        )
-
-        job = create_job(
-            db_session,
-            {
+        parent = Job(
+            company="TestProtocol",
+            protocol_id=protocol.id,
+            stage=JobStage.selection,
+            status=JobStatus.queued,
+            request={
                 "company": "TestProtocol",
                 "chain": "ethereum",
                 "analyze_limit": 5,
+                "protocol_id": protocol.id,
             },
         )
+        db_session.add(parent)
+        db_session.commit()
 
-        worker = DiscoveryWorker()
-        worker.update_detail = MagicMock()
-
-        from workers.discovery import JobHandledDirectly
+        worker = SelectionWorker()
+        from workers.base import JobHandledDirectly
 
         try:
-            worker._process_company(db_session, job)
+            worker.process(db_session, parent)
         except JobHandledDirectly:
             pass
 
-        # Count child jobs created (jobs with parent_job_id pointing to our job)
-        from sqlalchemy import select
-
-        from db.models import Job
-
-        children = (
+        child_jobs = (
             db_session.execute(
-                select(Job).where(
-                    Job.address.isnot(None),
-                    Job.id != job.id,
-                )
+                select(Job).where(Job.request["parent_job_id"].as_string() == str(parent.id))
             )
             .scalars()
             .all()
         )
-
-        # Filter to children of this job (created by _process_company)
-        child_jobs = [
-            j for j in children if isinstance(j.request, dict) and j.request.get("root_job_id") == str(job.id)
-        ]
 
         # With the bug: top 5 eligible are selected, 3 are skipped, only 2 jobs created
         # With the fix: we iterate eligible, skip the 3 dupes, pick the next 3 → 3 jobs

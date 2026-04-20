@@ -450,6 +450,17 @@ def run_protocol_analysis(
 
     update("discovery", f"Discovering official contracts for {clean_company}")
     inventory = search_protocol_inventory(clean_company, chain=chain, limit=discover_limit)
+
+    # Activity ranking used to live inside ``search_protocol_inventory``
+    # but moved to a single pass in the worker pipeline's selection
+    # stage. This synchronous demo runner doesn't go through the worker
+    # pipeline, so it ranks here to preserve ``rank_score`` / ``activity``
+    # in the per-contract output downstream.
+    from services.discovery.activity import enrich_with_activity
+
+    rankable = [c for c in inventory.get("contracts", []) if c.get("address")]
+    if rankable:
+        enrich_with_activity(rankable)
     inventory_path = _protocol_inventory_path(clean_company)
     inventory_path.write_text(json.dumps(inventory, indent=2) + "\n")
 

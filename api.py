@@ -462,16 +462,20 @@ def analyze_remaining(company_name: str) -> dict[str, Any]:
         if protocol_row is None:
             raise HTTPException(status_code=404, detail="Company not found")
 
+        # Exclude backfilled historical impls — these rows exist only to
+        # anchor audit-coverage matching, not to be re-analyzed. Analyzing
+        # them would waste pipeline cycles on bytecode nobody's using.
+        # ``discovery_sources.contains(['upgrade_history'])`` emits
+        # Postgres ``@>``; NULL guard covers pre-array legacy rows.
+        from sqlalchemy import not_ as sa_not_
+
         unanalyzed = (
             session.execute(
                 select(Contract).where(
                     Contract.protocol_id == protocol_row.id,
                     Contract.job_id.is_(None),
-                    # Exclude backfilled historical impls — these rows exist
-                    # only to anchor audit-coverage matching, not to be
-                    # re-analyzed. Analyzing them would waste pipeline cycles
-                    # on bytecode nobody's using anymore.
-                    (Contract.discovery_source != "upgrade_history") | Contract.discovery_source.is_(None),
+                    Contract.discovery_sources.is_(None)
+                    | sa_not_(Contract.discovery_sources.contains(["upgrade_history"])),
                 )
             )
             .scalars()
@@ -523,28 +527,23 @@ def analyses() -> list[dict]:
 
         jobs_by_id = {str(job.id): job for job in jobs}
 
-        # Build lookups for company names and inventory rank scores
-        rank_scores: dict[str, float] = {}  # address -> rank_score
-        chains_by_address: dict[str, str] = {}  # address -> chain
-        for job in jobs:
-            if job.company:
-                inventory = get_artifact(session, job.id, "contract_inventory")
-                if isinstance(inventory, dict):
-                    contracts = inventory.get("contracts", [])
-                    if not isinstance(contracts, list):
-                        continue
-                    for contract in contracts:
-                        if not isinstance(contract, dict):
-                            continue
-                        addr = (contract.get("address") or "").lower()
-                        if addr and "rank_score" in contract:
-                            rank_scores[addr] = contract["rank_score"]
-                        chains = contract.get("chains")
-                        chain = contract.get("chain")
-                        if addr and isinstance(chains, list) and chains:
-                            chains_by_address[addr] = str(chains[0])
-                        elif addr and chain:
-                            chains_by_address[addr] = str(chain)
+        # Rank scores + chains come from the ``contracts`` table, populated
+        # by the selection stage (the single authoritative ranking pass
+        # across inventory / DApp crawl / DefiLlama). Reading from the
+        # inventory artifact is a legacy path that misses DApp and DefiLlama
+        # rows and shows pre-selection scores.
+        rank_scores: dict[str, float] = {}
+        chains_by_address: dict[str, str] = {}
+        for row in session.execute(
+            select(Contract.address, Contract.chain, Contract.rank_score)
+        ).all():
+            addr_lower = (row.address or "").lower()
+            if not addr_lower:
+                continue
+            if row.rank_score is not None:
+                rank_scores[addr_lower] = float(row.rank_score)
+            if row.chain:
+                chains_by_address[addr_lower] = row.chain
 
         def company_for_job(job: Job) -> str | None:
             seen: set[str] = set()
@@ -1587,7 +1586,7 @@ def company_overview(company_name: str) -> dict:
                     "source_verified": cr.source_verified,
                     "is_proxy": cr.is_proxy,
                     "analyzed": cr.job_id is not None,
-                    "discovery_source": cr.discovery_source,
+                    "discovery_sources": list(cr.discovery_sources or []),
                     "discovery_url": cr.discovery_url,
                     "chain": cr.chain,
                 }

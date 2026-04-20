@@ -1526,7 +1526,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
                 </span>
                 <span className="mono runs-cell-addr" style={{ flex: 3 }}>{a.address}</span>
                 <span>{a.source_verified === true ? <span style={{ color: "#22c55e" }}>Yes</span> : a.source_verified === false ? <span style={{ color: "#ef4444" }}>No</span> : <span style={{ color: "#94a3b8" }}>N/A</span>}</span>
-                <span style={{ fontSize: 11 }}>{a.discovery_source || <span style={{ color: "#94a3b8" }}>-</span>}</span>
+                <span style={{ fontSize: 11 }}>{a.discovery_sources && a.discovery_sources.length > 0 ? a.discovery_sources.join(", ") : <span style={{ color: "#94a3b8" }}>-</span>}</span>
                 <span>{a.analyzed ? <span className="chip" style={{ fontSize: 10, padding: "2px 8px" }}>Analyzed</span> : <span style={{ color: "#94a3b8", fontSize: 11 }}>Not analyzed</span>}</span>
               </div>
             ))}

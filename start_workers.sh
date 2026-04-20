@@ -50,6 +50,8 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.defillama_worker &
 PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.selection_worker &
+PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.audit_text_extraction &
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.audit_scope_extraction &

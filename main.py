@@ -233,14 +233,26 @@ def process(
 
 def run_discovery(args) -> None:
     """Run contract inventory discovery and print JSON results."""
+    from services.discovery.activity import enrich_with_activity
+
     chain = getattr(args, "discover_chain", None)
     limit = getattr(args, "discover_limit", None) or 100
     run_activity = not getattr(args, "no_activity_ranking", False)
     debug = getattr(args, "debug", False)
 
     result = search_protocol_inventory(
-        args.discover_inventory, chain=chain, limit=limit, run_activity_ranking=run_activity, debug=debug
+        args.discover_inventory, chain=chain, limit=limit, debug=debug
     )
+
+    # The service no longer runs activity ranking itself — the worker
+    # pipeline ranks later in the selection stage. Standalone CLI
+    # output still opts in via the default (overridable with
+    # ``--no-activity-ranking``). Group-rows (multi-chain) don't have a
+    # per-address shape, so rank only the ungrouped entries.
+    if run_activity:
+        rankable = [c for c in result.get("contracts", []) if c.get("address")]
+        if rankable:
+            enrich_with_activity(rankable, debug=debug)
 
     output = json.dumps(result, indent=2)
 

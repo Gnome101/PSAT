@@ -21,7 +21,6 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from .activity import enrich_with_activity  # noqa: E402
 from .chain_resolver import resolve_unknown_chains  # noqa: E402
 from .deployer import expand_from_deployers  # noqa: E402
 from .inventory_domain import (  # noqa: E402
@@ -34,6 +33,7 @@ from .inventory_domain import (  # noqa: E402
     _tavily_search,
 )
 from .inventory_extract import extract_inventory_entries_from_pages  # noqa: E402
+from .ranking import score_inventory_evidence  # noqa: E402
 
 
 def _collect_source_urls(evidence: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
@@ -116,50 +116,6 @@ def _select_name(evidence: list[dict[str, Any]]) -> tuple[str | None, list[str]]
     return primary, aliases
 
 
-def _score_inventory_item(chain: str, evidence: list[dict[str, Any]]) -> tuple[float, dict[str, Any]]:
-    page_count = len({str(item.get("url", "")) for item in evidence if item.get("url")})
-    named_count = sum(1 for item in evidence if item.get("name"))
-    table_count = sum(1 for item in evidence if item.get("kind") == "official_inventory_table")
-    link_count = sum(1 for item in evidence if item.get("kind") == "official_inventory_link")
-    text_count = sum(1 for item in evidence if item.get("kind") == "official_inventory_text")
-    deployer_count = sum(1 for item in evidence if item.get("kind") == "deployer_expansion")
-    explorer_count = sum(1 for item in evidence if item.get("explorer_url"))
-
-    confidence = 0.35
-    if named_count:
-        confidence += 0.20
-    if table_count:
-        confidence += 0.18
-    if link_count:
-        confidence += 0.12
-    if text_count and not table_count and not link_count:
-        confidence += 0.05
-    if deployer_count:
-        confidence += 0.15
-    confidence += min(0.12, max(0, page_count - 1) * 0.06)
-    if explorer_count:
-        confidence += 0.06
-    if chain != "unknown":
-        confidence += 0.05
-    confidence = min(confidence, 0.99)
-
-    evidence_counts: dict[str, Any] = {"official": page_count, "named": named_count}
-    if table_count:
-        evidence_counts["table"] = table_count
-    if link_count:
-        evidence_counts["link"] = link_count
-    if text_count and not table_count:
-        evidence_counts["text"] = text_count
-    if deployer_count:
-        evidence_counts["deployer"] = deployer_count
-    if explorer_count:
-        evidence_counts["explorer"] = explorer_count
-    if any(item.get("chain_from_hint") for item in evidence):
-        evidence_counts["chain_hinted"] = True
-
-    return round(confidence, 4), evidence_counts
-
-
 def _determine_sources(evidence: list[dict[str, Any]]) -> list[str]:
     """Derive the source list from evidence kinds present for an address."""
     _KIND_TO_SOURCE = {
@@ -190,7 +146,7 @@ def _build_contracts(entries: list[dict[str, Any]], limit: int) -> tuple[list[di
     for address, evidence in grouped.items():
         _chain, chains = _select_chain_summary(evidence)
         name, aliases = _select_name(evidence)
-        confidence, evidence_counts = _score_inventory_item(_chain, evidence)
+        confidence, evidence_counts = score_inventory_evidence(_chain, evidence)
         page_urls, explorer_urls = _collect_source_urls(evidence)
         if not page_urls and not explorer_urls:
             continue
@@ -313,7 +269,6 @@ def search_protocol_inventory(
     limit: int = 100,
     max_queries: int = 4,
     run_deployer: bool = True,
-    run_activity_ranking: bool = True,
     debug: bool = False,
 ) -> dict[str, Any]:
     clean_company = company.strip()
@@ -428,14 +383,15 @@ def search_protocol_inventory(
             _debug_log(debug, f"Chain resolution failed: {exc!r}")
             notes.append(f"Chain resolution failed: {exc}")
 
-    if run_activity_ranking and contracts:
-        _debug_log(debug, "Running on-chain activity ranking")
-        try:
-            contracts = enrich_with_activity(contracts, debug=debug)
-            notes.append(f"Activity ranking: enriched {len(contracts)} contract(s)")
-        except Exception as exc:
-            _debug_log(debug, f"Activity ranking failed: {exc!r}")
-            notes.append(f"Activity ranking failed: {exc}")
+    # Activity ranking intentionally does NOT run here. The worker
+    # pipeline runs the single authoritative ranking in the selection
+    # stage (see ``services/discovery/ranking.rank_contract_rows``),
+    # which sees contracts from every source — inventory, DApp crawl,
+    # DefiLlama — on equal footing. Callers outside that pipeline
+    # (``main.py --discover-inventory``, ``services/demo/runner``) can
+    # call ``enrich_with_activity`` themselves if they want ranked
+    # output; doing it here would re-rank inventory contracts the
+    # selection stage is about to rank again.
 
     # Group multi-chain deployments of the same contract.
     contracts = _group_multi_deployments(contracts)
