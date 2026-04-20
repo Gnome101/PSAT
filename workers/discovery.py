@@ -25,6 +25,7 @@ from db.queue import (
     store_artifact,
     store_source_files,
 )
+from services.discovery.audit_reports import merge_audit_reports, search_audit_reports
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import merge_inventory, search_protocol_inventory
@@ -34,6 +35,47 @@ logger = logging.getLogger("workers.discovery")
 
 # Minimum confidence threshold for creating child analysis jobs.
 _MIN_CONFIDENCE_THRESHOLD = 0.3
+
+
+def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[dict]) -> None:
+    """Upsert audit report rows into the relational table."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from db.models import AuditReport
+
+    for report in reports:
+        auditor = str(report.get("auditor") or "").strip()
+        title = str(report.get("title") or "").strip()
+        url = str(report.get("url") or "").strip()
+        if not url or not auditor or not title:
+            continue
+
+        stmt = pg_insert(AuditReport).values(
+            protocol_id=protocol_id,
+            url=url,
+            pdf_url=report.get("pdf_url"),
+            auditor=auditor,
+            title=title,
+            date=report.get("date"),
+            confidence=report.get("confidence"),
+            source_url=report.get("source_url"),
+            # Needed by services/audits/source_equivalence for GitHub lookup.
+            source_repo=report.get("source_repo"),
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_audit_report_protocol_url",
+            set_={
+                "pdf_url": stmt.excluded.pdf_url,
+                "auditor": stmt.excluded.auditor,
+                "title": stmt.excluded.title,
+                "date": stmt.excluded.date,
+                "confidence": stmt.excluded.confidence,
+                "source_url": stmt.excluded.source_url,
+                "source_repo": stmt.excluded.source_repo,
+            },
+        )
+        session.execute(stmt)
+    session.commit()
 
 
 class DiscoveryWorker(BaseWorker):
@@ -79,6 +121,29 @@ class DiscoveryWorker(BaseWorker):
         protocol_row = get_or_create_protocol(session, company, official_domain=inventory.get("official_domain"))
         job.protocol_id = protocol_row.id
         session.commit()
+
+        # --- Audit report discovery ---
+        self.update_detail(session, job, f"Discovering audit reports for {company}")
+        prev_audits: dict | None = None
+        if prev_job:
+            _raw_audits = get_artifact(session, prev_job.id, "audit_reports")
+            if isinstance(_raw_audits, dict):
+                prev_audits = _raw_audits
+
+        try:
+            audit_result = search_audit_reports(
+                company,
+                official_domain=inventory.get("official_domain"),
+            )
+            if prev_audits:
+                audit_result = merge_audit_reports(prev_audits, audit_result)
+            store_artifact(session, job.id, "audit_reports", data=audit_result)
+            _sync_audit_reports_to_db(session, protocol_row.id, audit_result.get("reports", []))
+            audit_count = len(audit_result.get("reports", []))
+            if audit_count:
+                logger.info("Job %s: found %d audit report(s) for %s", job.id, audit_count, company)
+        except Exception as exc:
+            logger.warning("Job %s: audit report discovery failed: %s", job.id, exc)
 
         discovered = [e for e in inventory.get("contracts", []) if e.get("address")]
 
@@ -134,24 +199,6 @@ class DiscoveryWorker(BaseWorker):
                 )
             selected.append(entry)
 
-        if not selected:
-            self.update_detail(session, job, "No contracts found to analyze")
-            store_artifact(
-                session,
-                job.id,
-                "discovery_summary",
-                data={
-                    "mode": "company",
-                    "company": company,
-                    "discovered_count": len(discovered),
-                    "analyzed_count": 0,
-                },
-            )
-            from db.queue import complete_job
-
-            complete_job(session, job.id, f"Discovery complete for {company}: no contracts found")
-            raise JobHandledDirectly()
-
         child_ids = []
         for contract in selected:
             addr = str(contract["address"])
@@ -193,18 +240,33 @@ class DiscoveryWorker(BaseWorker):
             job.name = company
             session.commit()
 
+        # Run unconditionally: DApp crawl + DefiLlama scans are independent
+        # sources, and empty primary inventory is the case that most needs them.
         self._spawn_parallel_discovery(session, job, company, request, root_job_id)
 
-        self.update_detail(
-            session,
-            job,
-            f"Discovered {len(discovered)} contracts, queued {len(child_ids)} for analysis",
-        )
+        if child_ids:
+            self.update_detail(
+                session,
+                job,
+                f"Discovered {len(discovered)} contracts, queued {len(child_ids)} for analysis",
+            )
+        else:
+            self.update_detail(
+                session,
+                job,
+                f"No inventory contracts; parallel discovery spawned for {company}",
+            )
 
-        # Complete the parent job — children will run through the pipeline independently
         from db.queue import complete_job
 
-        complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
+        if child_ids:
+            complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
+        else:
+            complete_job(
+                session,
+                job.id,
+                f"Discovery complete for {company}: no inventory contracts; parallel discovery spawned",
+            )
         raise JobHandledDirectly()
 
     def _spawn_parallel_discovery(

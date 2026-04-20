@@ -48,6 +48,7 @@ class JobStage(str, enum.Enum):
     static = "static"
     resolution = "resolution"
     policy = "policy"
+    coverage = "coverage"
     done = "done"
 
 
@@ -207,7 +208,119 @@ class Protocol(Base):
     )
     official_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    audit_reports: Mapped[list["AuditReport"]] = relationship(
+        "AuditReport", backref="protocol", cascade="all, delete-orphan"
+    )
+
     __table_args__ = (UniqueConstraint("name", name="uq_protocol_name"),)
+
+
+class AuditReport(Base):
+    __tablename__ = "audit_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    pdf_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auditor: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    date: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
+
+    # Text-extraction pipeline state. Populated by workers.audit_text_extraction.
+    # status values: NULL (not yet attempted), "processing", "success",
+    # "failed", "skipped" (e.g. image-only PDFs that need OCR).
+    text_extraction_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    text_extraction_worker: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    text_extraction_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    text_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    text_extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    text_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    text_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # Scope-extraction pipeline state. Populated by workers.audit_scope_extraction
+    # once text_extraction_status='success'. Mirrors the text_* state machine:
+    # NULL (eligible) -> "processing" -> "success"/"failed"/"skipped".
+    # "skipped" means no scope-section header was found in the PDF text.
+    scope_extraction_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    scope_extraction_worker: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    scope_extraction_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scope_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scope_extraction_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scope_contracts: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+
+    # Commit SHAs mentioned in the PDF as the reviewed revision. Extracted
+    # by regex over the scope-section text (see
+    # ``services.audits.source_equivalence.extract_reviewed_commits``).
+    # Populated after scope extraction; ``source_repo`` on the same row
+    # locates where on GitHub to resolve them.
+    reviewed_commits: Mapped[list[str] | None] = mapped_column(ARRAY(String(40)), nullable=True)
+
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # GitHub repo the PDF was discovered in — used by the source-equivalence
+    # matcher to fetch reviewed files and compare against Etherscan's
+    # verified source for a deployed impl.
+    source_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("protocol_id", "url", name="uq_audit_report_protocol_url"),
+        Index("ix_audit_reports_protocol_id", "protocol_id"),
+        Index(
+            "ix_audit_reports_text_extraction_status",
+            "text_extraction_status",
+        ),
+        Index(
+            "ix_audit_reports_scope_extraction_status",
+            "scope_extraction_status",
+        ),
+    )
+
+
+class AuditContractCoverage(Base):
+    """Link between an ``AuditReport`` and a ``Contract`` that was in scope.
+
+    Persisted so "which audits cover this impl?" is a plain join, not a
+    query-time scan of ``scope_contracts[]``. Proxy-aware: the row links
+    the implementation-era ``Contract`` the audit actually reviewed, not
+    the proxy. See ``services.audits.coverage`` for the matcher.
+    """
+
+    __tablename__ = "audit_contract_coverage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
+    audit_report_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("audit_reports.id", ondelete="CASCADE"), nullable=False
+    )
+    # Denormalized FK so per-protocol queries don't need to join through
+    # audit_reports or contracts every time.
+    protocol_id: Mapped[int] = mapped_column(Integer, ForeignKey("protocols.id", ondelete="CASCADE"), nullable=False)
+    # The scope_contracts[] entry that matched — a debug trail so a mismatch
+    # between what the LLM extracted and how we interpreted it is traceable.
+    matched_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # How we matched. See services/audits/coverage.py for the full taxonomy.
+    # 'direct' — name match, contract has no proxy-impl history
+    # 'impl_era' — name match, contract was an active impl at audit time
+    # 'reviewed_commit' — reserved for a future bytecode/commit anchor
+    match_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # 'high' | 'medium' | 'low' — string enum, not a float, to avoid
+    # false precision when downstream filters come calling.
+    match_confidence: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Impl active window the audit applies to. NULL on both when the
+    # match has no proxy history (direct match).
+    covered_from_block: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    covered_to_block: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("contract_id", "audit_report_id", name="uq_audit_contract_coverage_pair"),
+        Index("ix_audit_contract_coverage_contract_id", "contract_id"),
+        Index("ix_audit_contract_coverage_audit_report_id", "audit_report_id"),
+        Index("ix_audit_contract_coverage_protocol_id", "protocol_id"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +503,7 @@ class ControlGraphEdge(Base):
 
 class UpgradeEvent(Base):
     __tablename__ = "upgrade_events"
+    __table_args__ = (Index("ix_upgrade_events_contract_id", "contract_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
@@ -640,12 +754,160 @@ def apply_storage_migrations(target_engine=None) -> None:
     from sqlalchemy import text
 
     target = target_engine if target_engine is not None else engine
+    # ``ALTER TYPE ... ADD VALUE`` cannot run inside a transaction block on
+    # Postgres, so run it on a dedicated AUTOCOMMIT connection. ``IF NOT
+    # EXISTS`` keeps it idempotent across restarts and test-DB reuse.
+    with target.connect().execution_options(isolation_level="AUTOCOMMIT") as ac_conn:
+        ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'coverage' BEFORE 'done'"))
     with target.connect() as conn:
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS size_bytes BIGINT"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS content_type VARCHAR(64)"))
         conn.execute(text("ALTER TABLE source_files ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
         conn.execute(text("ALTER TABLE source_files ALTER COLUMN content DROP NOT NULL"))
+        # Text-extraction columns added to audit_reports after the first release
+        # of that table. Older test DBs miss these; create_all() is a no-op
+        # once the table exists, so apply them here idempotently.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extraction_status VARCHAR(20)"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extraction_worker VARCHAR(128)"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extraction_started_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extracted_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_extraction_error TEXT"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_storage_key TEXT"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_size_bytes INTEGER"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS text_sha256 VARCHAR(64)"))
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_reports_text_extraction_status "
+                "ON audit_reports (text_extraction_status)"
+            )
+        )
+        # Scope-extraction columns — added after text-extraction landed. Same
+        # state-machine shape (status/worker/started_at/extracted_at/error)
+        # plus a storage key for the per-audit JSON artifact and a denormalized
+        # array of contract names that powers the /audit_coverage endpoint.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extraction_status VARCHAR(20)"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extraction_worker VARCHAR(128)"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extraction_started_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extracted_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_extraction_error TEXT"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_storage_key TEXT"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_contracts TEXT[]"))
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_reports_scope_extraction_status "
+                "ON audit_reports (scope_extraction_status)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_reports_scope_contracts "
+                "ON audit_reports USING GIN (scope_contracts)"
+            )
+        )
+        # Partial index on text_sha256 for rows already scoped — powers the
+        # content-hash cache lookup in the scope-extraction worker.
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_reports_text_sha256_scoped "
+                "ON audit_reports (text_sha256) WHERE scope_extraction_status = 'success'"
+            )
+        )
+        # reviewed_commits + source_repo support the source-equivalence
+        # matcher — added idempotently so existing test DBs pick them up.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS reviewed_commits TEXT[]"))
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS source_repo VARCHAR(255)"))
+        # audit_contract_coverage — persistent contract↔audit link. Created
+        # idempotently here so long-lived test DBs (and prod) pick it up
+        # without an Alembic run. Base.metadata.create_all handles fresh
+        # databases; this block handles upgrades.
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS audit_contract_coverage ("
+                "  id SERIAL PRIMARY KEY,"
+                "  contract_id INTEGER NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,"
+                "  audit_report_id INTEGER NOT NULL REFERENCES audit_reports(id) ON DELETE CASCADE,"
+                "  protocol_id INTEGER NOT NULL REFERENCES protocols(id) ON DELETE CASCADE,"
+                "  matched_name VARCHAR(255) NOT NULL,"
+                "  match_type VARCHAR(32) NOT NULL,"
+                "  match_confidence VARCHAR(10) NOT NULL,"
+                "  covered_from_block BIGINT,"
+                "  covered_to_block BIGINT,"
+                "  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+                "  CONSTRAINT uq_audit_contract_coverage_pair "
+                "    UNIQUE (contract_id, audit_report_id)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_contract_coverage_contract_id "
+                "ON audit_contract_coverage (contract_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_contract_coverage_audit_report_id "
+                "ON audit_contract_coverage (audit_report_id)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_audit_contract_coverage_protocol_id "
+                "ON audit_contract_coverage (protocol_id)"
+            )
+        )
+        # upgrade_events.contract_id — Postgres FKs don't auto-create an index,
+        # and this column is scanned on every per-impl window computation in
+        # services/audits/coverage.py + contract_audit_timeline.
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_upgrade_events_contract_id ON upgrade_events (contract_id)"))
+        # audit_contract_coverage ↔ proxy invariant. Scope names like
+        # ``UUPSProxy`` match generic proxy Contract rows verbatim, but the
+        # audit didn't review the proxy's code — it reviewed the impl's.
+        # ``services.audits.coverage`` filters proxies out at the candidate
+        # query; this trigger is the data-layer enforcement so a raw SQL
+        # INSERT (migration, manual backfill, a future bug) cannot create
+        # false-positive coverage rows. CREATE OR REPLACE on the function
+        # makes it idempotent across repeated migration runs.
+        conn.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION _reject_proxy_coverage() RETURNS TRIGGER AS $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM contracts WHERE id = NEW.contract_id AND is_proxy = TRUE) THEN
+                        RAISE EXCEPTION
+                            'audit_contract_coverage.contract_id=% references a proxy contract; '
+                            'coverage rows must target implementations (is_proxy=FALSE)',
+                            NEW.contract_id;
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql;
+                """
+            )
+        )
+        # DROP + CREATE the trigger so a schema change to the function
+        # propagates on the next migration run. DROP IF EXISTS keeps this
+        # idempotent.
+        conn.execute(text("DROP TRIGGER IF EXISTS audit_contract_coverage_no_proxy ON audit_contract_coverage"))
+        conn.execute(
+            text(
+                "CREATE TRIGGER audit_contract_coverage_no_proxy "
+                "BEFORE INSERT OR UPDATE ON audit_contract_coverage "
+                "FOR EACH ROW EXECUTE FUNCTION _reject_proxy_coverage()"
+            )
+        )
+        # One-shot cleanup of stale proxy coverage rows that predate the
+        # trigger. DELETE doesn't fire the trigger (only INSERT/UPDATE
+        # do), so the cleanup runs even when the trigger is already
+        # armed. Idempotent: a no-op on subsequent migration runs
+        # because the trigger prevents regression.
+        conn.execute(
+            text(
+                "DELETE FROM audit_contract_coverage "
+                "WHERE contract_id IN (SELECT id FROM contracts WHERE is_proxy = TRUE)"
+            )
+        )
         conn.commit()
 
 
@@ -662,12 +924,21 @@ def create_tables() -> None:
                     "THEN CREATE TYPE jobstatus AS ENUM ('queued','processing','completed','failed'); END IF; END $$;"
                 )
             )
-        for enum_val in ("discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy", "done"):
+        for enum_val in (
+            "discovery",
+            "dapp_crawl",
+            "defillama_scan",
+            "static",
+            "resolution",
+            "policy",
+            "coverage",
+            "done",
+        ):
             conn.execute(
                 text(
                     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'jobstage') "
                     "THEN CREATE TYPE jobstage AS ENUM ("
-                    "'discovery','dapp_crawl','defillama_scan','static','resolution','policy','done'"
+                    "'discovery','dapp_crawl','defillama_scan','static','resolution','policy','coverage','done'"
                     "); END IF; END $$;"
                 )
             )

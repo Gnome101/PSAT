@@ -633,7 +633,10 @@ class TestRunUpgradeHistoryNonFatal:
     def test_upgrade_history_writes_events(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         worker = ResolutionWorker()
         session = MagicMock()
-        fake_contract = SimpleNamespace(id=99)
+        # Mock stands in for BOTH the subject lookup (first scalar_one_or_none
+        # call) and the per-proxy lookup (second call) — the worker reads
+        # .chain on the subject to build its proxy-chain filter.
+        fake_contract = SimpleNamespace(id=99, address="0xproxy", chain=None)
         session.execute.return_value.scalar_one_or_none.return_value = fake_contract
         job = _job()
 

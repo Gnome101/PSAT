@@ -8,6 +8,7 @@ import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -466,6 +467,11 @@ def analyze_remaining(company_name: str) -> dict[str, Any]:
                 select(Contract).where(
                     Contract.protocol_id == protocol_row.id,
                     Contract.job_id.is_(None),
+                    # Exclude backfilled historical impls — these rows exist
+                    # only to anchor audit-coverage matching, not to be
+                    # re-analyzed. Analyzing them would waste pipeline cycles
+                    # on bytecode nobody's using anymore.
+                    (Contract.discovery_source != "upgrade_history") | Contract.discovery_source.is_(None),
                 )
             )
             .scalars()
@@ -684,10 +690,27 @@ def analysis_detail(run_name: str) -> dict:
                 select(Contract).where(Contract.address == job.address.lower()).limit(1)
             ).scalar_one_or_none()
 
+        # Walk the job tree — mirrors analyses().
+        def _company_for(j: Job) -> str | None:
+            seen: set[str] = set()
+            current: Job | None = j
+            while current is not None:
+                if current.company:
+                    return current.company
+                request = current.request if isinstance(current.request, dict) else {}
+                parent_id = request.get("parent_job_id")
+                if not isinstance(parent_id, str) or parent_id in seen:
+                    return None
+                seen.add(parent_id)
+                current = session.get(Job, parent_id)
+            return None
+
         payload: dict[str, Any] = {
             "run_name": job.name or str(job.id),
             "job_id": str(job.id),
             "address": job.address,
+            "contract_id": contract_row.id if contract_row else None,
+            "company": _company_for(job),
             "deployer": contract_row.deployer if contract_row else None,
             "available_artifacts": sorted(all_artifacts.keys()),
         }
@@ -1285,6 +1308,7 @@ def company_overview(company_name: str) -> dict:
             entry = {
                 "address": job.address,
                 "name": contract_name,
+                "contract_id": contract_row.id if contract_row else None,
                 "job_id": str(job.id),
                 "impl_job_id": impl_job_id,
                 "is_proxy": is_proxy,
@@ -1590,17 +1614,727 @@ def company_overview(company_name: str) -> dict:
                     "timestamp": latest_tvl.timestamp.isoformat(),
                 }
 
+        # Audit reports from relational table
+        from db.models import AuditReport
+
+        audit_reports_list: list[dict[str, Any]] = []
+        if protocol_row:
+            audit_rows = (
+                session.execute(
+                    select(AuditReport)
+                    .where(AuditReport.protocol_id == protocol_row.id)
+                    .order_by(AuditReport.date.desc().nullslast())
+                )
+                .scalars()
+                .all()
+            )
+            audit_reports_list = [
+                {
+                    "url": ar.url,
+                    "pdf_url": ar.pdf_url,
+                    "auditor": ar.auditor,
+                    "title": ar.title,
+                    "date": ar.date,
+                    "confidence": float(ar.confidence) if ar.confidence is not None else None,
+                }
+                for ar in audit_rows
+            ]
+
         return {
             "company": company_name,
             "protocol_id": protocol_row.id if protocol_row else None,
             "contract_count": len(contracts),
             "tvl": tvl_data,
+            "audit_reports": audit_reports_list,
             "contracts": contracts,
             "principals": principals,
             "ownership_hierarchy": hierarchy,
             "fund_flows": fund_flows,
             "all_addresses": all_addresses,
         }
+
+
+def _audit_report_to_dict(ar: Any) -> dict[str, Any]:
+    """Serialize an AuditReport row, including text- and scope-extraction state."""
+    scope_contracts = list(ar.scope_contracts or [])
+    return {
+        "id": ar.id,
+        "url": ar.url,
+        "pdf_url": ar.pdf_url,
+        "auditor": ar.auditor,
+        "title": ar.title,
+        "date": ar.date,
+        "confidence": float(ar.confidence) if ar.confidence is not None else None,
+        "text_extraction_status": ar.text_extraction_status,
+        "text_extracted_at": (ar.text_extracted_at.isoformat() if ar.text_extracted_at else None),
+        "text_size_bytes": ar.text_size_bytes,
+        "has_text": ar.text_extraction_status == "success",
+        "scope_extraction_status": ar.scope_extraction_status,
+        "scope_extracted_at": (ar.scope_extracted_at.isoformat() if ar.scope_extracted_at else None),
+        "scope_contract_count": len(scope_contracts),
+        "has_scope": ar.scope_extraction_status == "success",
+    }
+
+
+@app.get("/api/company/{company_name}/audits")
+def company_audits(company_name: str) -> dict[str, Any]:
+    """List all known audit reports for a company."""
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        audit_rows = (
+            session.execute(
+                select(AuditReport)
+                .where(AuditReport.protocol_id == protocol_row.id)
+                .order_by(AuditReport.date.desc().nullslast())
+            )
+            .scalars()
+            .all()
+        )
+        return {
+            "company": company_name,
+            "protocol_id": protocol_row.id,
+            "audit_count": len(audit_rows),
+            "audits": [_audit_report_to_dict(ar) for ar in audit_rows],
+        }
+
+
+# Failed-status lookback window for the pipeline endpoint. Keeps the
+# "recent failures" panel from growing unbounded while still surfacing
+# anything an on-call dev would want to see.
+_PIPELINE_FAILED_LOOKBACK_HOURS = 24
+
+# Hard cap per bucket so a pathological backlog can't wedge the monitor.
+_PIPELINE_BUCKET_LIMIT = 50
+
+
+def _pipeline_item(ar: Any, protocol_name: str | None, now: datetime) -> dict[str, Any]:
+    """Shape one audit row for the monitor page's worker-card list."""
+    started = ar.text_extraction_started_at or ar.scope_extraction_started_at
+    elapsed = int((now - started).total_seconds()) if started else None
+    return {
+        "audit_id": ar.id,
+        "protocol_id": ar.protocol_id,
+        "company": protocol_name,
+        "auditor": ar.auditor,
+        "title": ar.title,
+        "worker_id": (
+            ar.text_extraction_worker if ar.text_extraction_status == "processing" else ar.scope_extraction_worker
+        ),
+        "started_at": started.isoformat() if started else None,
+        "elapsed_seconds": elapsed,
+        "error": (
+            ar.text_extraction_error
+            if ar.text_extraction_status == "failed"
+            else ar.scope_extraction_error
+            if ar.scope_extraction_status == "failed"
+            else None
+        ),
+    }
+
+
+@app.get("/api/audits/pipeline")
+def audits_pipeline() -> dict[str, Any]:
+    """In-flight audit text + scope extraction, grouped by bucket.
+
+    Feeds the monitor page's "Audit Extraction" shelf (parallel to
+    ``/api/jobs`` for the job pipeline). Text and scope workers drive a
+    column state machine on ``audit_reports`` rather than the ``jobs``
+    queue, so they need their own endpoint.
+
+    Response shape per worker:
+        {
+          "processing": [item, ...],  # currently being worked
+          "pending":    [item, ...],  # ready to claim, not yet picked up
+          "failed":     [item, ...],  # terminal failures in the last 24h
+        }
+
+    The scope ``pending`` list only includes rows whose text extraction has
+    already succeeded — otherwise they aren't actually claimable.
+
+    Each list is capped at ``_PIPELINE_BUCKET_LIMIT`` entries; callers
+    should surface an overflow indicator when counts hit the cap.
+
+    Route MUST stay registered before ``/api/audits/{audit_id}`` — FastAPI
+    matches in declaration order and the param route would otherwise try to
+    parse ``"pipeline"`` as an int and 422.
+    """
+    from db.models import AuditReport
+
+    now = datetime.now(timezone.utc)
+    failed_cutoff = now - timedelta(hours=_PIPELINE_FAILED_LOOKBACK_HOURS)
+
+    with SessionLocal() as session:
+        # Pre-load protocol names in one query so every row can be decorated
+        # without N+1 lookups.
+        protocol_names: dict[int, str] = {
+            row.id: row.name for row in session.execute(select(Protocol.id, Protocol.name)).all()
+        }
+
+        def _fetch(stmt) -> list[Any]:
+            return list(session.execute(stmt).scalars().all())
+
+        text_processing = _fetch(
+            select(AuditReport)
+            .where(AuditReport.text_extraction_status == "processing")
+            .order_by(AuditReport.text_extraction_started_at.asc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+        text_pending = _fetch(
+            select(AuditReport)
+            .where(AuditReport.text_extraction_status.is_(None))
+            .order_by(AuditReport.discovered_at.asc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+        text_failed = _fetch(
+            select(AuditReport)
+            .where(
+                AuditReport.text_extraction_status == "failed",
+                AuditReport.text_extracted_at >= failed_cutoff,
+            )
+            .order_by(AuditReport.text_extracted_at.desc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+
+        # Scope is only reachable once text extraction succeeded. Filter on
+        # that so the "pending" count reflects actually-claimable work.
+        scope_processing = _fetch(
+            select(AuditReport)
+            .where(AuditReport.scope_extraction_status == "processing")
+            .order_by(AuditReport.scope_extraction_started_at.asc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+        scope_pending = _fetch(
+            select(AuditReport)
+            .where(
+                AuditReport.scope_extraction_status.is_(None),
+                AuditReport.text_extraction_status == "success",
+            )
+            .order_by(AuditReport.text_extracted_at.asc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+        scope_failed = _fetch(
+            select(AuditReport)
+            .where(
+                AuditReport.scope_extraction_status == "failed",
+                AuditReport.scope_extracted_at >= failed_cutoff,
+            )
+            .order_by(AuditReport.scope_extracted_at.desc().nullslast())
+            .limit(_PIPELINE_BUCKET_LIMIT)
+        )
+
+        def _shape(rows: list[Any]) -> list[dict[str, Any]]:
+            return [_pipeline_item(ar, protocol_names.get(ar.protocol_id), now) for ar in rows]
+
+        return {
+            "text_extraction": {
+                "processing": _shape(text_processing),
+                "pending": _shape(text_pending),
+                "failed": _shape(text_failed),
+            },
+            "scope_extraction": {
+                "processing": _shape(scope_processing),
+                "pending": _shape(scope_pending),
+                "failed": _shape(scope_failed),
+            },
+            "generated_at": now.isoformat(),
+        }
+
+
+@app.get("/api/audits/{audit_id}")
+def get_audit(audit_id: int) -> dict[str, Any]:
+    """Fetch a single audit report's metadata, including text-extraction state."""
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        return _audit_report_to_dict(ar)
+
+
+@app.get("/api/audits/{audit_id}/text", response_class=PlainTextResponse)
+def get_audit_text(audit_id: int) -> str:
+    """Return the extracted plain-text body of an audit report.
+
+    Streams the text directly from object storage. Returns 404 for an
+    unknown audit, 409 if extraction hasn't completed successfully yet
+    (so the caller knows to retry later), and 503 if object storage is
+    unreachable.
+    """
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+
+        if ar.text_extraction_status != "success" or not ar.text_storage_key:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "text not available",
+                    "status": ar.text_extraction_status,
+                    "reason": ar.text_extraction_error,
+                },
+            )
+
+        storage_key = ar.text_storage_key
+
+    client = get_storage_client()
+    if client is None:
+        raise HTTPException(status_code=503, detail="object storage not configured")
+    try:
+        body = client.get(storage_key)
+    except StorageUnavailable as exc:
+        raise HTTPException(status_code=503, detail=f"storage error: {exc}") from exc
+    except StorageError as exc:
+        # Covers StorageKeyMissing — DB says text is available but the object
+        # got deleted. Inconsistent state; surface as 500 so ops notice.
+        raise HTTPException(
+            status_code=500,
+            detail=f"text record missing from storage: {exc}",
+        ) from exc
+    return body.decode("utf-8")
+
+
+@app.get("/api/audits/{audit_id}/scope")
+def get_audit_scope(audit_id: int) -> dict[str, Any]:
+    """Return the list of in-scope contracts + date for a completed audit.
+
+    Reads from the denormalized ``scope_contracts`` column — the JSON
+    artifact in object storage is source-of-truth but not served here
+    (that would be a debug-only endpoint). 404 for unknown audit, 409 if
+    scope extraction hasn't completed successfully.
+    """
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        if ar.scope_extraction_status != "success":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "scope not available",
+                    "status": ar.scope_extraction_status,
+                    "reason": ar.scope_extraction_error,
+                },
+            )
+        return {
+            "audit_id": audit_id,
+            "auditor": ar.auditor,
+            "title": ar.title,
+            "date": ar.date,
+            "contracts": list(ar.scope_contracts or []),
+            "scope_extracted_at": (ar.scope_extracted_at.isoformat() if ar.scope_extracted_at else None),
+        }
+
+
+def _audit_brief(audit: Any, match: Any | None = None) -> dict[str, Any]:
+    """Compact audit-report dict for the coverage/timeline endpoints."""
+    out: dict[str, Any] = {
+        "audit_id": audit.id,
+        "auditor": audit.auditor,
+        "title": audit.title,
+        "date": audit.date,
+    }
+    if match is not None:
+        out["match_type"] = match.match_type
+        out["match_confidence"] = match.match_confidence
+        out["covered_from_block"] = match.covered_from_block
+        out["covered_to_block"] = match.covered_to_block
+    return out
+
+
+@app.get("/api/company/{company_name}/audit_coverage")
+def company_audit_coverage(company_name: str) -> dict[str, Any]:
+    """For each contract in the company's inventory, list audits covering it.
+
+    Reads from the persisted ``audit_contract_coverage`` join table — rows
+    are written proxy-aware by ``services.audits.coverage`` when scope
+    extraction completes or a live upgrade event is detected. The
+    ``last_audit`` pointer is the most recent matching audit by ``date``
+    (nulls last, then id desc to break ties). Each audit entry carries
+    ``match_type`` + ``match_confidence`` so the UI can flag low-confidence
+    links differently.
+    """
+    from db.models import AuditContractCoverage, AuditReport
+
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        contracts = session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
+
+        audit_rows = (
+            session.execute(
+                select(AuditReport)
+                .where(
+                    AuditReport.protocol_id == protocol_row.id,
+                    AuditReport.scope_extraction_status == "success",
+                )
+                .order_by(AuditReport.date.desc().nullslast(), AuditReport.id.desc())
+            )
+            .scalars()
+            .all()
+        )
+        audits_by_id = {a.id: a for a in audit_rows}
+
+        # Pull every coverage row for the protocol in one query, then
+        # bucket in Python — cheaper than N queries for N contracts.
+        coverage_rows = (
+            session.execute(
+                select(AuditContractCoverage).where(
+                    AuditContractCoverage.protocol_id == protocol_row.id,
+                )
+            )
+            .scalars()
+            .all()
+        )
+        coverage_by_contract: dict[int, list[Any]] = {}
+        for row in coverage_rows:
+            coverage_by_contract.setdefault(row.contract_id, []).append(row)
+
+        def _sort_key(row: Any) -> tuple:
+            audit = audits_by_id.get(row.audit_report_id)
+            date = (audit.date if audit else None) or ""
+            return (date, row.audit_report_id)
+
+        # Proxy rows don't hold their own coverage rows — the scope
+        # matcher writes against the impl Contract row. For the
+        # company-level "is this contract audited?" view the user really
+        # means "is the code this address is running audited?", so union
+        # the proxy's entries with its current implementation's.
+        contracts_by_addr = {c.address.lower(): c for c in contracts if c.address}
+
+        coverage: list[dict[str, Any]] = []
+        for c in contracts:
+            entries = list(coverage_by_contract.get(c.id, []))
+            seen_audit_ids = {e.audit_report_id for e in entries}
+            if c.is_proxy and c.implementation:
+                impl = contracts_by_addr.get(c.implementation.lower())
+                if impl:
+                    for e in coverage_by_contract.get(impl.id, []):
+                        if e.audit_report_id not in seen_audit_ids:
+                            entries.append(e)
+                            seen_audit_ids.add(e.audit_report_id)
+            entries = sorted(entries, key=_sort_key, reverse=True)
+            matching = [
+                _audit_brief(audits_by_id[e.audit_report_id], e) for e in entries if e.audit_report_id in audits_by_id
+            ]
+            coverage.append(
+                {
+                    "address": c.address,
+                    "chain": c.chain,
+                    "contract_name": c.contract_name,
+                    "audit_count": len(matching),
+                    "last_audit": matching[0] if matching else None,
+                    "audits": matching,
+                }
+            )
+        return {
+            "company": company_name,
+            "protocol_id": protocol_row.id,
+            "contract_count": len(contracts),
+            "audit_count": len(audit_rows),
+            "coverage": coverage,
+        }
+
+
+@app.get("/api/contracts/{contract_id}/audit_timeline")
+def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
+    """Per-impl audit timeline for a single contract, annotated with coverage.
+
+    Response shape:
+      - ``contract``: address, name, is_proxy, current_implementation
+      - ``impl_windows``: list of (from_block, to_block, impl_address, ...)
+        gathered from ``UpgradeEvent`` history; empty for non-proxies and
+        for proxies whose first impl never emitted an upgrade event
+      - ``coverage``: list of coverage rows with the audit + range
+      - ``current_status``: one of
+        ``'audited'`` — current impl is covered by ≥1 high/medium audit
+        ``'unaudited_since_upgrade'`` — some prior impl was covered but
+          the current impl isn't
+        ``'never_audited'`` — proxy with impls, no coverage anywhere
+        ``'non_proxy_audited'`` / ``'non_proxy_unaudited'`` — plain contracts
+    """
+    from db.models import AuditContractCoverage, AuditReport
+
+    with SessionLocal() as session:
+        contract = session.get(Contract, contract_id)
+        if contract is None:
+            raise HTTPException(status_code=404, detail="Contract not found")
+
+        # Historical upgrade windows on this contract if it's a proxy.
+        upgrade_rows = (
+            session.execute(
+                select(UpgradeEvent)
+                .where(UpgradeEvent.contract_id == contract.id)
+                .order_by(
+                    UpgradeEvent.block_number.asc().nullslast(),
+                    UpgradeEvent.id.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        impl_windows: list[dict[str, Any]] = []
+        for i, ev in enumerate(upgrade_rows):
+            nxt = upgrade_rows[i + 1] if i + 1 < len(upgrade_rows) else None
+            impl_windows.append(
+                {
+                    "impl_address": ev.new_impl,
+                    "from_block": ev.block_number,
+                    "to_block": nxt.block_number if nxt is not None else None,
+                    "from_ts": ev.timestamp.isoformat() if ev.timestamp else None,
+                    "to_ts": nxt.timestamp.isoformat() if (nxt and nxt.timestamp) else None,
+                    "tx_hash": ev.tx_hash,
+                }
+            )
+
+        # Coverage rows. For a proxy the timeline should show every audit
+        # that covered ANY impl in its history — not just direct name
+        # matches on the proxy row. We union:
+        #   - rows keyed to the contract itself (direct matches OR, when
+        #     the contract is an impl, its own impl_era coverage)
+        #   - for proxies, rows keyed to every historical-impl Contract.id
+        #     resolved from UpgradeEvent.new_impl
+        scope_contract_ids = {contract.id}
+        if contract.is_proxy:
+            # Union coverage from every impl this proxy has referenced:
+            # historical impls via UpgradeEvent.new_impl plus the current
+            # pointer in Contract.implementation. The current-impl branch
+            # matters for proxies whose UpgradeEvent rows haven't been
+            # projected into the DB yet — without it, coverage for those
+            # proxies stays empty even though _current_status can see it
+            # via the separate Contract.implementation lookup.
+            impl_addrs: set[str] = set()
+            if upgrade_rows:
+                impl_addrs.update(ev.new_impl.lower() for ev in upgrade_rows if ev.new_impl)
+            if contract.implementation:
+                impl_addrs.add(contract.implementation.lower())
+            if impl_addrs:
+                impl_contract_ids = (
+                    session.execute(
+                        select(Contract.id).where(
+                            Contract.protocol_id == contract.protocol_id,
+                            Contract.address.in_(impl_addrs),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                scope_contract_ids.update(impl_contract_ids)
+
+        cov_rows = (
+            session.execute(
+                select(AuditContractCoverage).where(
+                    AuditContractCoverage.contract_id.in_(scope_contract_ids),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        audit_ids = [r.audit_report_id for r in cov_rows]
+        audits_by_id: dict[int, Any] = {}
+        if audit_ids:
+            audits_by_id = {
+                a.id: a
+                for a in session.execute(select(AuditReport).where(AuditReport.id.in_(audit_ids))).scalars().all()
+            }
+
+        # Dedupe: multiple impl rows can produce rows against the same
+        # audit_id (the audit's scope name matched several historical
+        # impls). Rank by (confidence, match_type) so cryptographic
+        # source-equivalence proofs always beat heuristic temporal
+        # matches at equal confidence. Without the type tiebreaker,
+        # two ``high`` rows fell through to first-iterated-wins (no SQL
+        # ORDER BY on cov_rows), which silently flipped audits off the
+        # current impl in the UI even when the DB had a reviewed_commit
+        # row pinning them there.
+        from services.audits.coverage import _row_score
+
+        best_by_audit: dict[int, Any] = {}
+        for r in cov_rows:
+            prev = best_by_audit.get(r.audit_report_id)
+            if prev is None or _row_score(r) > _row_score(prev):
+                best_by_audit[r.audit_report_id] = r
+
+        # Address-by-contract_id lookup so the UI can attribute each
+        # coverage row to a specific impl-era in the timeline (critical
+        # for reviewed_commit matches, which carry no block range but
+        # are proven against one specific Contract row's on-chain code).
+        addr_by_cid: dict[int, str] = {
+            cid: addr
+            for cid, addr in session.execute(
+                select(Contract.id, Contract.address).where(Contract.id.in_(scope_contract_ids))
+            ).all()
+        }
+
+        coverage_out: list[dict[str, Any]] = []
+        for r in best_by_audit.values():
+            audit = audits_by_id.get(r.audit_report_id)
+            if not audit:
+                continue
+            brief = _audit_brief(audit, r)
+            brief["impl_address"] = addr_by_cid.get(r.contract_id)
+            coverage_out.append(brief)
+        # Newest first by audit date (nulls last, id desc to break ties).
+        coverage_out.sort(key=lambda e: (e.get("date") or "", e["audit_id"]), reverse=True)
+
+        # --- current_status computation ---
+        #
+        # "audited" is a strong claim we only grant when the current impl
+        # has a HIGH-confidence open-ended coverage row (audit dated inside
+        # the impl's active window). A 'medium' match means the audit sits
+        # in the grace zone on either side of the window boundary — e.g.
+        # "audit published 10 days before this impl went live, so it might
+        # have reviewed the new code, but also might have reviewed the
+        # previous impl and been finalized right before the upgrade." Those
+        # audits still appear in the ``coverage`` array; the UI can surface
+        # them without the contract being badged as audited on their
+        # strength alone.
+        def _current_status(c: Contract) -> str:
+            if not c.is_proxy:
+                return "non_proxy_audited" if cov_rows else "non_proxy_unaudited"
+
+            # Proxy: need to know if the current impl has live coverage.
+            current_impl = c.implementation
+            if not current_impl:
+                return "never_audited" if not cov_rows else "unaudited_since_upgrade"
+
+            impl_contract = session.execute(
+                select(Contract).where(
+                    Contract.address == current_impl.lower(),
+                    Contract.protocol_id == c.protocol_id,
+                )
+            ).scalar_one_or_none()
+            if impl_contract is None:
+                # Current impl isn't in inventory. We can't tell.
+                return "unaudited_since_upgrade" if cov_rows else "never_audited"
+
+            current_cov = (
+                session.execute(
+                    select(AuditContractCoverage).where(
+                        AuditContractCoverage.contract_id == impl_contract.id,
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            # 'audited' requires definitive coverage of the currently-open
+            # impl window:
+            #   - match_type='reviewed_commit' (source-equivalence proof —
+            #     PDF referenced a commit whose source file sha matches
+            #     Etherscan-verified source), OR
+            #   - high-confidence temporal match (audit date lands inside
+            #     the open window).
+            # Grace-medium temporal matches are intentionally NOT enough —
+            # an audit 10 days before the impl went live is suggestive
+            # but not proof the reviewed code is what shipped.
+            has_current = any(
+                (r.match_type == "reviewed_commit") or (r.match_confidence == "high" and r.covered_to_block is None)
+                for r in current_cov
+            )
+            if has_current:
+                return "audited"
+            if current_cov or cov_rows:
+                return "unaudited_since_upgrade"
+            return "never_audited"
+
+        return {
+            "contract": {
+                "contract_id": contract.id,
+                "address": contract.address,
+                "chain": contract.chain,
+                "contract_name": contract.contract_name,
+                "is_proxy": contract.is_proxy,
+                "current_implementation": contract.implementation,
+            },
+            "impl_windows": impl_windows,
+            "coverage": coverage_out,
+            "current_status": _current_status(contract),
+        }
+
+
+@app.post(
+    "/api/company/{company_name}/refresh_coverage",
+    dependencies=[Depends(require_admin_key)],
+)
+def refresh_company_coverage(
+    company_name: str,
+    verify_source_equivalence: bool = False,
+) -> dict[str, Any]:
+    """Rebuild ``audit_contract_coverage`` rows for every scoped audit in a protocol.
+
+    Idempotent backfill. Useful when inventory is updated after audits are
+    scoped (new Contract rows match pre-existing audit scope) or when a
+    bulk data migration needs to re-seat links without waiting for the
+    next scope re-extraction.
+
+    ``verify_source_equivalence=true`` runs the GitHub + Etherscan
+    cross-check: for each audit with reviewed_commits + source_repo,
+    compare the byte content of each scope file against Etherscan's
+    verified source for matching impls. Hits upgrade to
+    ``match_type='reviewed_commit'`` / ``match_confidence='high'`` and
+    flip ``current_status`` to ``'audited'`` even when the temporal
+    window doesn't line up. Network-bound; off by default.
+    """
+    from services.audits.coverage import upsert_coverage_for_protocol
+
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+        inserted = upsert_coverage_for_protocol(
+            session,
+            protocol_row.id,
+            verify_source_equivalence=verify_source_equivalence,
+        )
+        session.commit()
+        return {
+            "company": company_name,
+            "protocol_id": protocol_row.id,
+            "coverage_rows": inserted,
+            "verify_source_equivalence": verify_source_equivalence,
+        }
+
+
+@app.post(
+    "/api/audits/{audit_id}/reextract_scope",
+    dependencies=[Depends(require_admin_key)],
+)
+def reextract_audit_scope(audit_id: int) -> dict[str, Any]:
+    """Reset scope-extraction state so the worker picks the row up again.
+
+    Requires that text extraction already succeeded — without the stored
+    text body there's nothing to re-scope. Idempotent: a fresh row with
+    NULL status is a no-op reset.
+    """
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        if ar.text_extraction_status != "success":
+            raise HTTPException(
+                status_code=409,
+                detail="text extraction has not succeeded for this audit",
+            )
+        ar.scope_extraction_status = None
+        ar.scope_extraction_error = None
+        ar.scope_extraction_worker = None
+        ar.scope_extraction_started_at = None
+        session.commit()
+    return {"audit_id": audit_id, "reset": True}
 
 
 def _watched_proxy_to_dict(proxy: WatchedProxy) -> dict[str, Any]:
@@ -2090,8 +2824,6 @@ def list_monitored_events(
 @app.get("/api/protocols/{protocol_id}/tvl")
 def protocol_tvl(protocol_id: int, days: int = 30) -> dict[str, Any]:
     """Current TVL and historical snapshots for a protocol."""
-    from datetime import datetime, timedelta, timezone
-
     days = min(days, MAX_TVL_HISTORY_DAYS)
 
     with SessionLocal() as session:

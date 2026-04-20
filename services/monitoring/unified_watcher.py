@@ -387,6 +387,11 @@ def _sync_relational_tables(
                 tx_hash=parsed.get("tx_hash"),
             )
         )
+        # Coverage windows are derived from UpgradeEvent history, so a
+        # new upgrade can change which audits apply to the previous impl
+        # (it's now bounded) and the new one (newly current). Rebuild
+        # coverage for every audit in the protocol — it's idempotent.
+        _refresh_coverage_after_upgrade(session, contract.protocol_id)
 
     # --- AdminChanged → Contract.admin ---
     elif event_type == "admin_changed":
@@ -416,6 +421,30 @@ def _sync_relational_tables(
             cv.value = new_owner
 
 
+def _refresh_coverage_after_upgrade(session: Session, protocol_id: int | None) -> None:
+    """Rebuild ``audit_contract_coverage`` for a protocol after an upgrade.
+
+    Called from the event- and poll-sync paths so impl_era windows stay in
+    sync with the live upgrade history. Swallows exceptions so a coverage
+    bug can never block a detected upgrade from being recorded.
+    """
+    if not protocol_id:
+        return
+    # Local import keeps the coverage module off the hot path at
+    # module-load time and avoids the import cycle
+    # unified_watcher → audits.coverage → db.models (which is fine) but
+    # keeps the surface clean.
+    from services.audits.coverage import upsert_coverage_for_protocol
+
+    try:
+        upsert_coverage_for_protocol(session, protocol_id)
+    except Exception:
+        logger.exception(
+            "Failed to refresh audit coverage for protocol %s after upgrade",
+            protocol_id,
+        )
+
+
 def _sync_relational_from_poll(
     session: Session,
     mc: MonitoredContract,
@@ -441,6 +470,7 @@ def _sync_relational_from_poll(
                     tx_hash="",
                 )
             )
+            _refresh_coverage_after_upgrade(session, contract.protocol_id)
 
     elif field_name == "owner":
         cv_rows = (

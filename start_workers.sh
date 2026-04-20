@@ -44,9 +44,15 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.policy_worker &
 PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.coverage_worker &
+PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.dapp_crawl_worker &
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.defillama_worker &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.audit_text_extraction &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.audit_scope_extraction &
 PIDS+=($!)
 
 echo "All workers started: ${PIDS[*]}"

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any
 
 import requests
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 REQUEST_TIMEOUT_SECONDS = 20
@@ -72,6 +75,7 @@ def _build_payload(
         "topic": topic,
         "search_depth": search_depth,
         "include_raw_content": include_raw_content,
+        "include_usage": True,
     }
 
 
@@ -119,6 +123,15 @@ def search(
                 )
 
             data = response.json()
+            usage = data.get("usage")
+            if isinstance(usage, dict):
+                logger.info(
+                    "tavily search billed: credits=%s attempt=%d/%d query=%r",
+                    usage.get("credits", "?"),
+                    attempt + 1,
+                    MAX_RETRIES + 1,
+                    clean_query[:80],
+                )
             results = data.get("results", [])
             if not isinstance(results, list):
                 raise TavilyError(
@@ -156,8 +169,13 @@ def search(
         except TavilyError as exc:
             last_error = exc
 
-        if not last_error:
-            continue
+        logger.warning(
+            "tavily search attempt %d/%d failed (retryable=%s): %s",
+            attempt + 1,
+            MAX_RETRIES + 1,
+            bool(last_error.error.get("retryable")),
+            last_error.error.get("error"),
+        )
         if attempt >= MAX_RETRIES or not bool(last_error.error.get("retryable")):
             raise last_error
         time.sleep(BACKOFF_BASE_SECONDS * (2**attempt))

@@ -248,7 +248,9 @@ def test_run_loop_process_exception_calls_fail_job(mock_fail, mock_claim, mock_s
     assert args[0] is mock_session  # session
     assert args[1] == job.id  # job_id
     assert "boom" in args[2]  # error traceback contains "boom"
-    mock_session.rollback.assert_called_once()
+    # rollback fires at least once from the exception handler; the empty-
+    # sweep branch of ``reclaim_stuck_jobs`` may also call it.
+    mock_session.rollback.assert_called()
 
 
 @patch("workers.base.signal.signal")
@@ -343,6 +345,29 @@ def test_run_loop_stale_recovery_every_30_cycles(mock_sleep, mock_claim, mock_se
     with patch.object(w, "_recover_stale_jobs") as mock_recover:
         w.run_loop()
         mock_recover.assert_called_once_with(mock_session)
+
+
+# ---------------------------------------------------------------------------
+# Tests: _claim_job sweeps stuck processing rows before claiming
+# ---------------------------------------------------------------------------
+
+
+@patch("workers.base.signal.signal")
+@patch("workers.base.reclaim_stuck_jobs")
+@patch("workers.base.claim_job")
+def test_claim_job_sweeps_stuck_rows_before_claiming(mock_claim, mock_reclaim, mock_signal):
+    """``_claim_job`` invokes ``reclaim_stuck_jobs`` first so crashed workers'
+    jobs can be picked up on the very next poll instead of waiting 30 cycles
+    for the stage-filtered recovery sweep."""
+    w = _TestWorker()
+    mock_session = MagicMock()
+    mock_reclaim.return_value = []
+    mock_claim.return_value = None
+
+    w._claim_job(mock_session)
+
+    mock_reclaim.assert_called_once_with(mock_session)
+    mock_claim.assert_called_once_with(mock_session, JobStage.discovery, w.worker_id)
 
 
 # ---------------------------------------------------------------------------

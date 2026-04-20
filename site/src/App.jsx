@@ -15,9 +15,10 @@ import DependencyGraphTab from "./DependencyGraphTab.jsx";
 import ProtocolGraph from "./ProtocolGraph.jsx";
 import RiskSurface from "./RiskSurface.jsx";
 import ProtocolSurface from "./ProtocolSurface.jsx";
-
-const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "raw"];
-const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+import { matchesEra } from "./auditMatching.js";
+import AuditsTab from "./AuditsTab.jsx";
+import AuditExtractionShelf from "./AuditExtractionShelf.jsx";
+import { api } from "./api/client.js";
 
 // TODO: replace this with a real sign-in page + session-based auth. Options
 // that fit our Fly deployment: (a) an identity-aware proxy sidecar such as
@@ -25,59 +26,13 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 // and injects X-PSAT-Admin-Key server-side so the key never touches a browser,
 // or (b) an app-level user system with per-user login + roles (fastapi-users,
 // a managed provider like WorkOS/Clerk, etc.). The window.prompt +
-// localStorage pattern below is a stopgap so admins can click buttons during
-// local dev and early prod — it's a shared-secret bearer token sitting in
-// every admin's browser, with no per-user audit log and no revocation story
-// beyond rotating the key and logging everyone out.
-const ADMIN_KEY_STORAGE = "psat_admin_key";
+// localStorage pattern in api/client.js is a stopgap so admins can click
+// buttons during local dev and early prod — a shared-secret bearer token
+// sitting in every admin's browser, with no per-user audit log and no
+// revocation story beyond rotating the key and logging everyone out.
 
-function getAdminKey() {
-  try {
-    return window.localStorage.getItem(ADMIN_KEY_STORAGE) || "";
-  } catch {
-    return "";
-  }
-}
-
-function setAdminKey(key) {
-  try {
-    if (key) window.localStorage.setItem(ADMIN_KEY_STORAGE, key);
-    else window.localStorage.removeItem(ADMIN_KEY_STORAGE);
-  } catch {
-    // localStorage unavailable (private mode, etc.) — admin actions will
-    // require re-entering the key on every request.
-  }
-}
-
-function buildHeadersWithKey(options, key) {
-  const headers = new Headers(options.headers || {});
-  if (key && !headers.has("X-PSAT-Admin-Key")) {
-    headers.set("X-PSAT-Admin-Key", key);
-  }
-  return headers;
-}
-
-async function api(path, options = {}) {
-  let response = await fetch(path, { ...options, headers: buildHeadersWithKey(options, getAdminKey()) });
-  if (response.status === 401) {
-    const entered = window.prompt(
-      "Admin key required for this action.\nPaste your PSAT admin key:",
-      getAdminKey(),
-    );
-    if (entered) {
-      setAdminKey(entered);
-      response = await fetch(path, { ...options, headers: buildHeadersWithKey(options, entered) });
-    }
-  }
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
-  const type = response.headers.get("content-type") || "";
-  if (type.includes("application/json")) {
-    return response.json();
-  }
-  return response.text();
-}
+const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "raw"];
+const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 function StatCard({ label, value }) {
   return (
@@ -115,7 +70,7 @@ function parseLocationPath(pathname) {
   }
 
   if (segments[0] === "company" && segments[1]) {
-    const validCompanyTabs = ["overview", "surface", "graph", "risk", "monitoring"];
+    const validCompanyTabs = ["overview", "surface", "graph", "risk", "monitoring", "audits"];
     const companyTab = validCompanyTabs.includes(segments[2]) ? segments[2] : "overview";
     return { mode: "company", value: segments[1], tab: "summary", companyTab };
   }
@@ -162,14 +117,6 @@ function buildLocationPath(runId, address, tab) {
   return "/";
 }
 
-function findRunByAddress(analyses, address) {
-  const target = String(address || "").toLowerCase();
-  return analyses.find((analysis) => {
-    const subjectAddress = String(analysis.address || "").toLowerCase();
-    const proxyAddress = String(analysis.proxy_address || analysis.proxy_address_display || "").toLowerCase();
-    return subjectAddress === target || proxyAddress === target;
-  })?.job_id || null;
-}
 
 function renderNodeBody(node) {
   const titleLines = wrapText(node.title, node.shape === "rect" ? 30 : 18, node.shape === "rect" ? 3 : 3);
@@ -358,12 +305,89 @@ function PrincipalsTab({ detail }) {
 
 function UpgradesTab({ detail }) {
   const history = detail?.upgrade_history;
+  const contractId = detail?.contract_id ?? null;
+  const companyName = detail?.company || null;
+
+  const [auditTimeline, setAuditTimeline] = useState(null);
+  const [auditTimelineError, setAuditTimelineError] = useState(null);
+  useEffect(() => {
+    if (!contractId) {
+      setAuditTimeline(null);
+      setAuditTimelineError(null);
+      return;
+    }
+    let cancelled = false;
+    setAuditTimeline(null);
+    setAuditTimelineError(null);
+    api(`/api/contracts/${encodeURIComponent(contractId)}/audit_timeline`)
+      .then((t) => { if (!cancelled) setAuditTimeline(t); })
+      .catch((e) => { if (!cancelled) setAuditTimelineError(e.message || String(e)); });
+    return () => { cancelled = true; };
+  }, [contractId]);
+
+  const coverageRows = auditTimeline?.coverage || [];
+  const currentStatus = auditTimeline?.current_status || null;
+
+  function frontendCurrentImplAudited() {
+    if (!auditTimeline || !history?.proxies) return false;
+    const targetProxy = Object.entries(history.proxies).find(
+      ([addr]) => addr.toLowerCase() === (history.target_address || detail?.address || "").toLowerCase(),
+    );
+    if (!targetProxy) return false;
+    const impls = targetProxy[1]?.implementations || [];
+    if (!impls.length) return false;
+    const current = impls[impls.length - 1];
+    return coverageRows.some((c) => matchesEra(c, current));
+  }
+
+  function auditStatusBanner() {
+    if (!contractId) return null;
+    if (auditTimelineError) {
+      return <span className="chip" style={{ background: "#fee2e2", color: "#991b1b" }}>audit lookup failed: {auditTimelineError}</span>;
+    }
+    if (!auditTimeline) {
+      return <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>loading audits…</span>;
+    }
+    // Backend is block-range strict; relax to "audited" when date alignment
+    // on the current impl-era has evidence the backend couldn't see.
+    if (currentStatus === "unaudited_since_upgrade" && frontendCurrentImplAudited()) {
+      return <span className="chip" style={{ background: "#dcfce7", color: "#166534" }}>Current impl audited</span>;
+    }
+    switch (currentStatus) {
+      case "audited":
+        return <span className="chip" style={{ background: "#dcfce7", color: "#166534" }}>Current impl audited</span>;
+      case "non_proxy_audited":
+        return <span className="chip" style={{ background: "#dcfce7", color: "#166534" }}>Audited</span>;
+      case "unaudited_since_upgrade":
+        return <span className="chip" style={{ background: "#fef3c7", color: "#92400e" }}>Unaudited since last upgrade</span>;
+      case "never_audited":
+        return <span className="chip" style={{ background: "#fee2e2", color: "#991b1b" }}>Never audited</span>;
+      case "non_proxy_unaudited":
+        return <span className="chip" style={{ background: "#fee2e2", color: "#991b1b" }}>Unaudited</span>;
+      default:
+        return null;
+    }
+  }
+
   if (!history || !Object.keys(history.proxies || {}).length) {
-    return <p className="empty">No proxy upgrade history available.</p>;
+    return (
+      <div className="stack">
+        {contractId ? (
+          <div className="chips">{auditStatusBanner()}</div>
+        ) : null}
+        <p className="empty">No proxy upgrade history available.</p>
+      </div>
+    );
   }
 
   const deps = detail?.dependencies?.dependencies || {};
-  const targetAddr = (detail?.address || history.target_address || "").toLowerCase();
+  // history.target_address is always the proxy whose upgrade history this
+  // artifact describes. detail.address can diverge on merged /api/analyses
+  // rows — when an impl run is merged behind its proxy, detail.address is
+  // the IMPL but the upgrade_history is keyed to the proxy. Preferring
+  // target_address here keeps isTarget() matching the proxy's row in the
+  // timeline, so audit chips attach instead of silently disappearing.
+  const targetAddr = (history.target_address || detail?.address || "").toLowerCase();
 
   function proxyLabel(addr) {
     if (addr.toLowerCase() === targetAddr) {
@@ -397,6 +421,37 @@ function UpgradesTab({ detail }) {
 
   return (
     <div className="stack">
+      {contractId ? (
+        <div className="chips">
+          {auditStatusBanner()}
+          {auditTimeline && coverageRows.length ? (() => {
+            // Raw coverageRows.length over-counts when audits linked to
+            // the proxy via a generic scope name (e.g. "UUPSProxy").
+            const proxy = history?.proxies
+              ? Object.entries(history.proxies).find(
+                  ([addr]) => addr.toLowerCase() === (history.target_address || detail?.address || "").toLowerCase(),
+                )?.[1]
+              : null;
+            const impls = proxy?.implementations || [];
+            const placed = new Set();
+            for (const cov of coverageRows) {
+              for (const impl of impls) {
+                if (matchesEra(cov, impl)) {
+                  placed.add(cov.audit_id);
+                  break;
+                }
+              }
+            }
+            const n = placed.size;
+            if (n === 0) return null;
+            return (
+              <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>
+                {n} audit{n === 1 ? "" : "s"} in history
+              </span>
+            );
+          })() : null}
+        </div>
+      ) : null}
       <div className="summary-grid">
         <StatCard label="Proxies" value={Object.keys(history.proxies).length} />
         <StatCard label="Total Upgrades" value={history.total_upgrades} />
@@ -438,7 +493,12 @@ function UpgradesTab({ detail }) {
             <div className="subsection">
               <div className="subsection-title">Implementation Timeline</div>
               <div className="timeline">
-                {proxy.implementations.map((impl, idx) => (
+                {proxy.implementations.map((impl, idx) => {
+                  // Other proxies would need their own timeline fetch.
+                  const coverageForEra = isTarget(addr)
+                    ? coverageRows.filter((c) => matchesEra(c, impl))
+                    : [];
+                  return (
                   <div className={`timeline-entry ${idx === proxy.implementations.length - 1 ? "current" : "past"}`} key={impl.address + idx}>
                     <div className="timeline-marker" />
                     <div className="timeline-content">
@@ -473,9 +533,60 @@ function UpgradesTab({ detail }) {
                           </div>
                         ) : null}
                       </div>
+                      {isTarget(addr) && auditTimeline ? (
+                        <div className="chips" style={{ marginTop: 8 }}>
+                          {coverageForEra.length === 0 ? (
+                            <span className="chip" style={{ background: "#fee2e2", color: "#991b1b", fontSize: 10, padding: "2px 8px" }}>
+                              no audit coverage
+                            </span>
+                          ) : (
+                            coverageForEra.map((cov) => {
+                              const baseStyle = cov.match_confidence === "high"
+                                ? { background: "#dcfce7", color: "#166534" }
+                                : cov.match_confidence === "medium"
+                                  ? { background: "#fef3c7", color: "#92400e" }
+                                  : cov.match_confidence === "low"
+                                    ? { background: "#fee2e2", color: "#991b1b" }
+                                    : { background: "#f1f5f9", color: "#475569" };
+                              const href = companyName
+                                ? `/company/${encodeURIComponent(companyName)}/audits?audit=${cov.audit_id}`
+                                : null;
+                              const body = (
+                                <>
+                                  {cov.auditor || "Unknown"}
+                                  <span style={{ marginLeft: 4, opacity: 0.8 }}>
+                                    {cov.date ? new Date(cov.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" }) : ""}
+                                  </span>
+                                </>
+                              );
+                              return href ? (
+                                <a
+                                  key={cov.audit_id}
+                                  href={href}
+                                  className="chip"
+                                  style={{ ...baseStyle, fontSize: 10, padding: "2px 8px", textDecoration: "none" }}
+                                  title={`${cov.match_type} · ${cov.match_confidence}${cov.title ? ` — ${cov.title}` : ""}`}
+                                >
+                                  {body}
+                                </a>
+                              ) : (
+                                <span
+                                  key={cov.audit_id}
+                                  className="chip"
+                                  style={{ ...baseStyle, fontSize: 10, padding: "2px 8px" }}
+                                  title={`${cov.match_type} · ${cov.match_confidence}${cov.title ? ` — ${cov.title}` : ""}`}
+                                >
+                                  {body}
+                                </span>
+                              );
+                            })
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ) : null}
@@ -1147,18 +1258,26 @@ function GraphTab({ detail }) {
 // Company overview
 // ---------------------------------------------------------------------------
 
-function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, onNavigateToGraph, onNavigateToRisk, onNavigateToMonitoring }) {
+function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, onNavigateToGraph, onNavigateToRisk, onNavigateToMonitoring, onNavigateToAudits }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeResult, setAnalyzeResult] = useState(null);
   const [newAddress, setNewAddress] = useState("");
+  const [auditCoverage, setAuditCoverage] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     api(`/api/company/${encodeURIComponent(companyName)}`)
       .then((d) => { if (!cancelled) setData(d); })
       .catch((e) => { if (!cancelled) setError(e.message); });
+    // Audit coverage is a separate concern — fetching it in parallel means
+    // the overview still renders even if the audits pipeline hasn't been
+    // wired up yet for this protocol. 404 / 500 / network errors are
+    // swallowed; the audit column just stays empty.
+    api(`/api/company/${encodeURIComponent(companyName)}/audit_coverage`)
+      .then((c) => { if (!cancelled) setAuditCoverage(c); })
+      .catch(() => { /* audits optional — keep the page usable */ });
     return () => { cancelled = true; };
   }, [companyName]);
 
@@ -1167,6 +1286,41 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
 
   const { contracts, ownership_hierarchy: hierarchy, all_addresses: allAddresses } = data;
   const riskColor = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e", unknown: "#94a3b8" };
+
+  // Index audit coverage by (lowercase) address so the hierarchy rows can
+  // render a compact per-contract audit chip without another request.
+  const coverageByAddr = (() => {
+    const map = {};
+    for (const row of auditCoverage?.coverage || []) {
+      if (row.address) map[row.address.toLowerCase()] = row;
+    }
+    return map;
+  })();
+  function auditChipFor(addr) {
+    const row = coverageByAddr[(addr || "").toLowerCase()];
+    if (!row) return null;  // no coverage data loaded yet or unknown
+    if (!row.audit_count) {
+      return {
+        label: "no audit",
+        tooltip: "No matching audit",
+        style: { background: "#fee2e2", color: "#991b1b" },
+      };
+    }
+    const last = row.last_audit;
+    const hasOpen = (row.audits || []).some(
+      (a) => a.covered_to_block == null && (a.match_confidence === "high" || a.match_type === "reviewed_commit"),
+    );
+    const style = hasOpen
+      ? { background: "#dcfce7", color: "#166534" }
+      : { background: "#fef3c7", color: "#92400e" };
+    const label = hasOpen ? "audited" : "before upgrade";
+    const dateStr = last?.date ? ` · ${last.date}` : "";
+    return {
+      label,
+      tooltip: `${last?.auditor || "Unknown"}${dateStr} — ${last?.match_type || "?"} / ${last?.match_confidence || "?"}`,
+      style,
+    };
+  }
 
   return (
     <div className="page">
@@ -1191,6 +1345,14 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
           <button className="company-nav-card" onClick={onNavigateToRisk}>
             <span className="company-nav-card-title">Risk Matrix</span>
             <span className="company-nav-card-desc">Contract risk assessment</span>
+          </button>
+          <button className="company-nav-card" onClick={onNavigateToAudits}>
+            <span className="company-nav-card-title">Audits</span>
+            <span className="company-nav-card-desc">
+              {auditCoverage?.audit_count != null
+                ? `${auditCoverage.audit_count} discovered · ${Object.values(coverageByAddr).filter((r) => r.audit_count > 0).length} covered contracts`
+                : "Discovered reports & per-contract coverage"}
+            </span>
           </button>
           <button className="company-nav-card" onClick={onNavigateToMonitoring}>
             <span className="company-nav-card-title">Monitoring</span>
@@ -1219,6 +1381,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {group.contracts.map((c) => {
                   const full = contracts.find((x) => x.address === c.address);
+                  const auditChip = auditChipFor(c.address);
                   return (
                     <button
                       key={c.address}
@@ -1237,6 +1400,15 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
                         {full?.risk_level || ""}
                       </span>
                       <span style={{ flex: 1 }}>{full?.upgrade_count != null ? `${full.upgrade_count} upgrades` : ""}</span>
+                      <span style={{ flex: 1 }} onClick={(e) => { if (auditChip) { e.stopPropagation(); onNavigateToAudits && onNavigateToAudits(); } }}>
+                        {auditChip ? (
+                          <span className="chip" style={{ ...auditChip.style, fontSize: 10, padding: "2px 8px" }} title={auditChip.tooltip}>
+                            {auditChip.label}
+                          </span>
+                        ) : auditCoverage ? (
+                          <span className="muted" style={{ fontSize: 11 }}>—</span>
+                        ) : null}
+                      </span>
                     </button>
                   );
                 })}
@@ -1365,7 +1537,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
   );
 }
 
-const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy"];
+const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy", "coverage"];
 const ALL_STAGES = [...PIPELINE_STAGES, "done"];
 const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
 
@@ -2322,7 +2494,7 @@ function PipelineDashboard() {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
   }
 
-  const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", done: "#16a34a" };
+  const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", coverage: "#059669", done: "#16a34a" };
   const statusColors = { queued: "#94a3b8", processing: "#f59e0b", completed: "#22c55e", failed: "#ef4444" };
   const colW = 160, gapW = 80, headerH = 64, dotR = 6;
   const totalW = ALL_STAGES.length * colW + (ALL_STAGES.length - 1) * gapW;
@@ -2438,6 +2610,8 @@ function PipelineDashboard() {
           </div>
         </section>
       )}
+
+      <AuditExtractionShelf />
 
       {/* Active / Recent jobs table */}
       <section className="panel" style={{ marginTop: 16 }}>
@@ -2661,6 +2835,7 @@ function HamburgerMenu({ onClose, viewMode, companyName, companyTab, onNavigate,
             <button className={`hamburger-link ${viewMode === "company" && companyTab === "surface" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("surface"); onClose(); }}>Surface</button>
             <button className={`hamburger-link ${viewMode === "company" && companyTab === "graph" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("graph"); onClose(); }}>Ownership</button>
             <button className={`hamburger-link ${viewMode === "company" && companyTab === "risk" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("risk"); onClose(); }}>Risk Matrix</button>
+            <button className={`hamburger-link ${viewMode === "company" && companyTab === "audits" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("audits"); onClose(); }}>Audits</button>
             <button className={`hamburger-link ${viewMode === "company" && companyTab === "monitoring" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("monitoring"); onClose(); }}>Monitoring</button>
           </nav>
         )}
@@ -2681,14 +2856,19 @@ export default function App() {
   const [companyName, setCompanyName] = useState(() => { const r = parseLocationPath(window.location.pathname); return r.mode === "company" ? r.value : null; });
   const [companyTab, setCompanyTab] = useState(() => parseLocationPath(window.location.pathname).companyTab || "overview");
   const [menuOpen, setMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("summary");
+  // Initialize activeTab from the URL so /address/<addr>/upgrades loads
+  // the upgrades tab directly on refresh — otherwise activeTab starts as
+  // "summary" and only flips once loadAnalysis resolves, which means
+  // UpgradesTab briefly doesn't mount and any URL-dependent tab content
+  // can race with loadAnalysis' state batch.
+  const [activeTab, setActiveTab] = useState(() => parseLocationPath(window.location.pathname).tab);
   const [job, setJob] = useState(null);
   const [activeJobs, setActiveJobs] = useState([]);
   const [form, setForm] = useState({ target: "", name: "", chain: "", analyzeLimit: "5" });
   const [formOpen, setFormOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const analysesRef = useRef([]);
-  const activeTabRef = useRef("summary");
+  const activeTabRef = useRef(parseLocationPath(window.location.pathname).tab);
   const doneTimerRef = useRef(null);
 
   useEffect(() => { analysesRef.current = analyses; }, [analyses]);
@@ -2754,24 +2934,26 @@ export default function App() {
         setCompanyTab(route.companyTab || "overview");
       } else if (route.mode === "run" || route.mode === "address") {
         setCompanyName(null);
-        const list = analysesRef.current;
-        let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
-        if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
+        // For /address/<x> we pass the address directly: /api/analyses/<name>
+        // falls back to a by-address lookup and returns the run whose primary
+        // address is <x>. This bypasses the merged /api/analyses list — which
+        // hides the proxy run behind the impl run and would otherwise cause
+        // /address/<proxy>/upgrades to load the impl's detail (where the
+        // impl run's upgrade_history doesn't include its own proxy chain).
+        loadAnalysis(route.value, { tab: route.tab, history: "replace" });
       } else {
         setCompanyName(null);
       }
     }
 
-    refreshAnalyses().then((list) => {
-      const route = parseLocationPath(window.location.pathname);
-      if (route.mode === "company") {
-        setCompanyName(route.value);
-        setCompanyTab(route.companyTab || "overview");
-      } else if (route.mode === "run" || route.mode === "address") {
-        let run = route.mode === "run" ? route.value : findRunByAddress(list, route.value);
-        if (run) loadAnalysis(run, { tab: route.tab, history: "replace" });
-      }
-    }).catch(() => null);
+    refreshAnalyses().catch(() => null);
+    const route = parseLocationPath(window.location.pathname);
+    if (route.mode === "company") {
+      setCompanyName(route.value);
+      setCompanyTab(route.companyTab || "overview");
+    } else if (route.mode === "run" || route.mode === "address") {
+      loadAnalysis(route.value, { tab: route.tab, history: "replace" });
+    }
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
@@ -2973,6 +3155,7 @@ export default function App() {
           onNavigateToGraph={() => navigateCompanyTab("graph")}
           onNavigateToRisk={() => navigateCompanyTab("risk")}
           onNavigateToMonitoring={() => navigateCompanyTab("monitoring")}
+          onNavigateToAudits={() => navigateCompanyTab("audits")}
         />
       )}
       {isCompany && companyName && companyTab === "surface" && (
@@ -2994,6 +3177,12 @@ export default function App() {
       )}
       {isCompany && companyName && companyTab === "monitoring" && (
         <ProtocolMonitoringPage companyName={companyName} />
+      )}
+      {isCompany && companyName && companyTab === "audits" && (
+        <AuditsTab
+          companyName={companyName}
+          focusAuditId={new URLSearchParams(window.location.search).get("audit")}
+        />
       )}
 
       {!isDetail && !isMonitor && !isCompany && !isProxies && (

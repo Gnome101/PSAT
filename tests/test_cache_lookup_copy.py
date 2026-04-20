@@ -80,6 +80,48 @@ def test_find_completed_static_cache_miss_no_analysis(db_session):
     assert find_completed_static_cache(db_session, ADDR_A) is None
 
 
+def test_find_completed_static_cache_hit_for_proxy_without_contract_analysis(db_session):
+    """Regression: proxies never produce ``contract_analysis`` on their
+    own job — that artifact only shows up on the impl child. The cache
+    lookup must still return the proxy's completed job so the next
+    company-discovery run can reuse its static data instead of re-
+    fetching source from Etherscan and re-running slither for every
+    proxy it sees.
+
+    Before the fix, proxies required ``contract_analysis`` to be served
+    from cache; none of them met that bar, so every re-discovery of a
+    protocol did a full fresh fetch for every proxy row.
+    """
+    from db.models import Contract, ContractSummary, JobStage, JobStatus
+    from db.queue import create_job, find_completed_static_cache, store_artifact, store_source_files
+
+    job = create_job(db_session, {"address": ADDR_A})
+    job.status = JobStatus.completed
+    job.stage = JobStage.done
+    db_session.commit()
+
+    contract = Contract(
+        job_id=job.id,
+        address=ADDR_A,
+        contract_name="UUPSProxy",
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation="0x" + "b" * 40,
+    )
+    db_session.add(contract)
+    db_session.flush()
+    db_session.add(ContractSummary(contract_id=contract.id))
+    db_session.commit()
+    store_source_files(db_session, job.id, {"src/Proxy.sol": "contract P {}"})
+    # Proxy jobs write contract_flags (is_proxy=True + proxy_type) instead
+    # of contract_analysis — the latter lives on the impl child's job.
+    store_artifact(db_session, job.id, "contract_flags", data={"is_proxy": True, "proxy_type": "eip1967"})
+
+    found = find_completed_static_cache(db_session, ADDR_A)
+    assert found is not None
+    assert found.id == job.id
+
+
 def test_find_completed_static_cache_miss_no_summary(db_session):
     """Completed job without contract_summaries row is not returned."""
     from db.models import Contract, JobStage, JobStatus

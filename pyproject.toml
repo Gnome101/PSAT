@@ -12,6 +12,7 @@ dependencies = [
   "hypersync>=0.8.5",
   "playwright>=1.58.0",
   "psycopg2-binary>=2.9",
+  "pypdf>=5.0",
   "python-dotenv>=1.0.1",
   "requests>=2.32.0",
   "slither-analyzer>=0.11.0",
@@ -35,6 +36,7 @@ dev = [
   "ruff>=0.9.0",
   "httpx>=0.28.1",
   "pytest-cov>=7.1.0",
+  "responses>=0.25.0",
 ]
 
 [tool.uv]

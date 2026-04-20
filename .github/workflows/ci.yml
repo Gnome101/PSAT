@@ -16,6 +16,23 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
 
+  frontend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -46,6 +63,10 @@ jobs:
       TEST_ARTIFACT_STORAGE_BUCKET: psat-artifacts-test
       TEST_ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
       TEST_ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
+      # Routes services.audits.scope_extraction._call_llm through fixture
+      # files instead of OpenRouter. Integration tests depend on this
+      # being set — without it they would attempt a real LLM call.
+      PSAT_LLM_STUB_DIR: tests/fixtures/scope_extraction/llm_responses
     steps:
       - uses: actions/checkout@v4
       - uses: foundry-rs/foundry-toolchain@v1
@@ -98,6 +119,7 @@ jobs:
       TEST_ARTIFACT_STORAGE_BUCKET: psat-artifacts-test
       TEST_ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
       TEST_ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
+      PSAT_LLM_STUB_DIR: tests/fixtures/scope_extraction/llm_responses
     steps:
       - uses: actions/checkout@v4
         with:
