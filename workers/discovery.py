@@ -113,6 +113,7 @@ class DiscoveryWorker(BaseWorker):
                 prev_inventory = _raw
 
         self.update_detail(session, job, f"Discovering contracts for {company}")
+        logger.info("Discovery started for job %s: company=%s, chain=%s", job.id, company, chain)
         inventory = search_protocol_inventory(company, chain=chain)
 
         # Merge with previous inventory if available

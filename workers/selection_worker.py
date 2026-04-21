@@ -144,6 +144,9 @@ class SelectionWorker(BaseWorker):
         analyze_limit = int(request.get("analyze_limit", 5))
         root_job_id = request.get("root_job_id", str(job.id))
 
+        self.update_detail(session, job, f"Preparing selection for {job.company or 'protocol'}")
+        logger.info("Selection started for job %s: protocol_id=%s, analyze_limit=%d", job.id, job.protocol_id, analyze_limit)
+
         # Row passes when none of the excluded sources are present. For a
         # single-element excluded set this is ``NOT @> ['upgrade_history']``;
         # for future multi-element sets it's "no tag overlaps", which is

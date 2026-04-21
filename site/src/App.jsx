@@ -1537,7 +1537,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
   );
 }
 
-const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy", "coverage"];
+const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "selection", "static", "resolution", "policy", "coverage"];
 const ALL_STAGES = [...PIPELINE_STAGES, "done"];
 const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
 
@@ -2406,6 +2406,10 @@ function monitorJobScope(job) {
     return `protocol ${request.defillama_protocol}`;
   }
 
+  if (job.stage === "selection" && job.company) {
+    return `ranking ${job.company}`;
+  }
+
   if (job.company) return job.company;
   if (job.address) return shortenAddress(job.address);
   return job.job_id?.slice(0, 8) || "job";
@@ -2494,7 +2498,7 @@ function PipelineDashboard() {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
   }
 
-  const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", coverage: "#059669", done: "#16a34a" };
+  const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", selection: "#6366f1", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", coverage: "#059669", done: "#16a34a" };
   const statusColors = { queued: "#94a3b8", processing: "#f59e0b", completed: "#22c55e", failed: "#ef4444" };
   const colW = 160, gapW = 80, headerH = 64, dotR = 6;
   const totalW = ALL_STAGES.length * colW + (ALL_STAGES.length - 1) * gapW;
