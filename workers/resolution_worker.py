@@ -500,9 +500,7 @@ class ResolutionWorker(BaseWorker):
                     if was_orphan:
                         existing.protocol_id = protocol_id
                     if had_no_tag:
-                        existing.discovery_sources = list(existing.discovery_sources or []) + [
-                            "upgrade_history"
-                        ]
+                        existing.discovery_sources = list(existing.discovery_sources or []) + ["upgrade_history"]
                     adopted += 1
                     # No-op adoption (same protocol, tag already set) wouldn't
                     # change matcher output — skip the refresh.

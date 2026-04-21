@@ -121,8 +121,7 @@ class SelectionWorker(BaseWorker):
         if job is None:
             return None
         logger.warning(
-            "Worker %s: claiming stuck selection job %s past %ss timeout — "
-            "DApp/DefiLlama sibling(s) did not settle",
+            "Worker %s: claiming stuck selection job %s past %ss timeout — DApp/DefiLlama sibling(s) did not settle",
             self.worker_id,
             job.id,
             _STUCK_SELECTION_TIMEOUT,
@@ -145,7 +144,12 @@ class SelectionWorker(BaseWorker):
         root_job_id = request.get("root_job_id", str(job.id))
 
         self.update_detail(session, job, f"Preparing selection for {job.company or 'protocol'}")
-        logger.info("Selection started for job %s: protocol_id=%s, analyze_limit=%d", job.id, job.protocol_id, analyze_limit)
+        logger.info(
+            "Selection started for job %s: protocol_id=%s, analyze_limit=%d",
+            job.id,
+            job.protocol_id,
+            analyze_limit,
+        )
 
         # Row passes when none of the excluded sources are present. For a
         # single-element excluded set this is ``NOT @> ['upgrade_history']``;
@@ -210,9 +214,7 @@ class SelectionWorker(BaseWorker):
         # chose. enrich_with_activity (called inside rank_contract_rows)
         # mutates its inputs, so the rank_score / activity values live
         # on the dicts we passed in.
-        by_key: dict[tuple[str, str | None], dict] = {
-            (d["__row_address"], d["__row_chain"]): d for d in ranked_dicts
-        }
+        by_key: dict[tuple[str, str | None], dict] = {(d["__row_address"], d["__row_chain"]): d for d in ranked_dicts}
         for row in eligible_rows:
             entry = by_key.get((row.address, row.chain))
             if entry is None:

@@ -23,7 +23,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select, update as sa_update
+from sqlalchemy import select
+from sqlalchemy import update as sa_update
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -107,11 +108,7 @@ def seed_protocol(db_session):
         yield protocol_id, name, address_factory
     finally:
         db_session.rollback()
-        child_jobs = (
-            db_session.query(Job)
-            .filter(Job.request["protocol_id"].as_integer() == protocol_id)
-            .all()
-        )
+        child_jobs = db_session.query(Job).filter(Job.request["protocol_id"].as_integer() == protocol_id).all()
         for job in child_jobs:
             db_session.delete(job)
         db_session.query(Contract).filter_by(protocol_id=protocol_id).delete()
@@ -247,7 +244,9 @@ def test_selection_ranks_across_sources_and_queues_top_n(db_session, worker, see
     inv_stale = addr()
 
     _add_contract(db_session, protocol_id=protocol_id, address=inv_top, discovery_sources="inventory", confidence=0.9)
-    _add_contract(db_session, protocol_id=protocol_id, address=dapp_top, discovery_sources="dapp_crawl", confidence=None)
+    _add_contract(
+        db_session, protocol_id=protocol_id, address=dapp_top, discovery_sources="dapp_crawl", confidence=None
+    )
     _add_contract(db_session, protocol_id=protocol_id, address=defi_mid, discovery_sources="defillama", confidence=None)
     _add_contract(
         db_session,
@@ -279,11 +278,7 @@ def test_selection_ranks_across_sources_and_queues_top_n(db_session, worker, see
 
     # 3 child analysis jobs created
     children = (
-        db_session.execute(
-            select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))
-        )
-        .scalars()
-        .all()
+        db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))).scalars().all()
     )
     assert len(children) == 3
     child_addresses = {child.address for child in children}
@@ -351,11 +346,7 @@ def test_selection_filters_below_confidence_threshold(db_session, worker, seed_p
 
     assert job.status.value == "completed"
     children = (
-        db_session.execute(
-            select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))
-        )
-        .scalars()
-        .all()
+        db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))).scalars().all()
     )
     assert children == []
 
@@ -385,11 +376,7 @@ def test_null_confidence_dapp_and_defillama_rows_participate(db_session, worker,
     db_session.refresh(job)
 
     children = (
-        db_session.execute(
-            select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))
-        )
-        .scalars()
-        .all()
+        db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))).scalars().all()
     )
     assert [c.address for c in children] == [target]
 
@@ -416,11 +403,7 @@ def test_upgrade_history_rows_are_excluded(db_session, worker, seed_protocol):
         worker.process(db_session, job)
 
     children = (
-        db_session.execute(
-            select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))
-        )
-        .scalars()
-        .all()
+        db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))).scalars().all()
     )
     assert children == []
 
@@ -459,11 +442,7 @@ def test_existing_non_proxy_job_skips_address(db_session, worker, seed_protocol)
         worker.process(db_session, job)
 
     new_children = (
-        db_session.execute(
-            select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))
-        )
-        .scalars()
-        .all()
+        db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))).scalars().all()
     )
     assert new_children == []
 
@@ -502,11 +481,7 @@ def test_proxy_with_existing_job_is_re_queued(db_session, worker, seed_protocol)
         worker.process(db_session, job)
 
     new_children = (
-        db_session.execute(
-            select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))
-        )
-        .scalars()
-        .all()
+        db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))).scalars().all()
     )
     assert [c.address for c in new_children] == [target]
 
@@ -598,22 +573,14 @@ def test_corroborated_contract_outranks_single_source_peer(db_session, worker, s
         worker.process(db_session, job)
 
     children = (
-        db_session.execute(
-            select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))
-        )
-        .scalars()
-        .all()
+        db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(job.id))).scalars().all()
     )
     assert [c.address for c in children] == [triple]
 
     # Persisted rank_score reflects the boost (triple-source > solo).
     rows = {
         row.address: row
-        for row in db_session.execute(
-            select(Contract).where(Contract.address.in_([solo, triple]))
-        )
-        .scalars()
-        .all()
+        for row in db_session.execute(select(Contract).where(Contract.address.in_([solo, triple]))).scalars().all()
     }
     assert rows[triple].rank_score > rows[solo].rank_score
 

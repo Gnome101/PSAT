@@ -240,9 +240,7 @@ def run_discovery(args) -> None:
     run_activity = not getattr(args, "no_activity_ranking", False)
     debug = getattr(args, "debug", False)
 
-    result = search_protocol_inventory(
-        args.discover_inventory, chain=chain, limit=limit, debug=debug
-    )
+    result = search_protocol_inventory(args.discover_inventory, chain=chain, limit=limit, debug=debug)
 
     # The service no longer runs activity ranking itself — the worker
     # pipeline ranks later in the selection stage. Standalone CLI

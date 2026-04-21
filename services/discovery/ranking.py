@@ -94,9 +94,7 @@ def default_confidence_for_source(sources: list[str] | tuple[str, ...] | None) -
     """
     if not sources:
         return DEFAULT_CONFIDENCE_FALLBACK
-    return max(
-        DEFAULT_CONFIDENCE_BY_SOURCE.get(s, DEFAULT_CONFIDENCE_FALLBACK) for s in sources
-    )
+    return max(DEFAULT_CONFIDENCE_BY_SOURCE.get(s, DEFAULT_CONFIDENCE_FALLBACK) for s in sources)
 
 
 def effective_confidence(

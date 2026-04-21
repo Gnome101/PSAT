@@ -534,9 +534,7 @@ def analyses() -> list[dict]:
         # rows and shows pre-selection scores.
         rank_scores: dict[str, float] = {}
         chains_by_address: dict[str, str] = {}
-        for row in session.execute(
-            select(Contract.address, Contract.chain, Contract.rank_score)
-        ).all():
+        for row in session.execute(select(Contract.address, Contract.chain, Contract.rank_score)).all():
             addr_lower = (row.address or "").lower()
             if not addr_lower:
                 continue

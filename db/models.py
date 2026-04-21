@@ -771,9 +771,7 @@ def apply_storage_migrations(target_engine=None) -> None:
         # scalar still exists before trying to backfill from it — on
         # fresh databases or on second-run migrations the column is
         # already gone and referencing it in the UPDATE would raise.
-        ac_conn.execute(
-            text("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS discovery_sources VARCHAR(100)[]")
-        )
+        ac_conn.execute(text("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS discovery_sources VARCHAR(100)[]"))
         has_legacy_column = ac_conn.execute(
             text(
                 "SELECT 1 FROM information_schema.columns "

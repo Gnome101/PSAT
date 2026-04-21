@@ -399,9 +399,7 @@ class TestAnalyzeLimitFilling:
             pass
 
         child_jobs = (
-            db_session.execute(
-                select(Job).where(Job.request["parent_job_id"].as_string() == str(parent.id))
-            )
+            db_session.execute(select(Job).where(Job.request["parent_job_id"].as_string() == str(parent.id)))
             .scalars()
             .all()
         )
