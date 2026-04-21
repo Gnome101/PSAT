@@ -496,11 +496,11 @@ class ResolutionWorker(BaseWorker):
             if existing is not None:
                 if existing.protocol_id is None or existing.protocol_id == protocol_id:
                     was_orphan = existing.protocol_id is None
-                    had_no_tag = not existing.discovery_source
+                    had_no_tag = "upgrade_history" not in (existing.discovery_sources or [])
                     if was_orphan:
                         existing.protocol_id = protocol_id
                     if had_no_tag:
-                        existing.discovery_source = "upgrade_history"
+                        existing.discovery_sources = list(existing.discovery_sources or []) + ["upgrade_history"]
                     adopted += 1
                     # No-op adoption (same protocol, tag already set) wouldn't
                     # change matcher output — skip the refresh.
@@ -529,7 +529,7 @@ class ResolutionWorker(BaseWorker):
                 contract_name=name or "UnknownImpl",
                 is_proxy=False,
                 job_id=None,
-                discovery_source="upgrade_history",
+                discovery_sources=["upgrade_history"],
                 source_verified=bool(name),
             )
             session.add(new_row)

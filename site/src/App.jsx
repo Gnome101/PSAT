@@ -1526,7 +1526,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
                 </span>
                 <span className="mono runs-cell-addr" style={{ flex: 3 }}>{a.address}</span>
                 <span>{a.source_verified === true ? <span style={{ color: "#22c55e" }}>Yes</span> : a.source_verified === false ? <span style={{ color: "#ef4444" }}>No</span> : <span style={{ color: "#94a3b8" }}>N/A</span>}</span>
-                <span style={{ fontSize: 11 }}>{a.discovery_source || <span style={{ color: "#94a3b8" }}>-</span>}</span>
+                <span style={{ fontSize: 11 }}>{a.discovery_sources && a.discovery_sources.length > 0 ? a.discovery_sources.join(", ") : <span style={{ color: "#94a3b8" }}>-</span>}</span>
                 <span>{a.analyzed ? <span className="chip" style={{ fontSize: 10, padding: "2px 8px" }}>Analyzed</span> : <span style={{ color: "#94a3b8", fontSize: 11 }}>Not analyzed</span>}</span>
               </div>
             ))}
@@ -1537,7 +1537,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
   );
 }
 
-const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "static", "resolution", "policy", "coverage"];
+const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "selection", "static", "resolution", "policy", "coverage"];
 const ALL_STAGES = [...PIPELINE_STAGES, "done"];
 const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
 
@@ -2406,6 +2406,10 @@ function monitorJobScope(job) {
     return `protocol ${request.defillama_protocol}`;
   }
 
+  if (job.stage === "selection" && job.company) {
+    return `ranking ${job.company}`;
+  }
+
   if (job.company) return job.company;
   if (job.address) return shortenAddress(job.address);
   return job.job_id?.slice(0, 8) || "job";
@@ -2494,7 +2498,7 @@ function PipelineDashboard() {
     return <div className="page"><section className="panel empty-state"><p className="empty">No jobs yet. Submit an analysis to get started.</p></section></div>;
   }
 
-  const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", coverage: "#059669", done: "#16a34a" };
+  const stageColors = { discovery: "#0f766e", dapp_crawl: "#0e7490", defillama_scan: "#0891b2", selection: "#6366f1", static: "#d97706", resolution: "#2563eb", policy: "#7c3aed", coverage: "#059669", done: "#16a34a" };
   const statusColors = { queued: "#94a3b8", processing: "#f59e0b", completed: "#22c55e", failed: "#ef4444" };
   const colW = 160, gapW = 80, headerH = 64, dotR = 6;
   const totalW = ALL_STAGES.length * colW + (ALL_STAGES.length - 1) * gapW;

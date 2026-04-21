@@ -1,0 +1,383 @@
+"""Selection worker — ranks all discovered contracts for a protocol and queues the top N.
+
+Runs after the three contract-discovery workers (``DiscoveryWorker``
+company mode, ``DAppCrawlWorker``, ``DefiLlamaWorker``) have each
+written their discoveries to the ``contracts`` table. Those workers no
+longer create analysis child jobs themselves; that responsibility lives
+here so a single ranked pass sees every source's contributions and the
+``analyze_limit`` budget is spent on the top-scoring contracts across
+inventory, DApp-crawl, and DefiLlama evidence together.
+
+Readiness gating mirrors ``CoverageWorker``: a claim fires only when no
+sibling ``dapp_crawl`` or ``defillama_scan`` job under the same root is
+still queued or processing. A stuck-sibling escape hatch unblocks the
+job after a timeout so one wedged crawl can't strand the whole protocol.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+
+from sqlalchemy import and_, not_, select, text
+from sqlalchemy.orm import Session
+
+from db.models import Contract, Job, JobStage, JobStatus
+from db.queue import (
+    complete_job,
+    count_analysis_children,
+    create_job,
+    find_existing_job_for_address,
+    is_known_proxy,
+    store_artifact,
+)
+from services.discovery.ranking import (
+    EXCLUDED_DISCOVERY_SOURCES,
+    MIN_CONFIDENCE_THRESHOLD,
+    effective_confidence,
+    rank_contract_rows,
+)
+from workers.base import BaseWorker, JobHandledDirectly
+
+logger = logging.getLogger("workers.selection_worker")
+
+# How long a selection job can sit queued before we bypass the readiness
+# predicate. Siblings (DApp crawl, DefiLlama scan) finish in minutes
+# under normal conditions; 30 min is long enough for a slow crawl
+# without leaving the protocol's analysis stranded on a wedge.
+_STUCK_SELECTION_TIMEOUT = int(os.getenv("PSAT_SELECTION_STUCK_TIMEOUT", "1800"))
+
+
+class SelectionWorker(BaseWorker):
+    """Drains the ``selection`` stage with a readiness-gated two-phase claim."""
+
+    stage = JobStage.selection
+    next_stage = JobStage.done
+    poll_interval = 5.0
+
+    # -- Claim ------------------------------------------------------------
+
+    def _claim_job(self, session: Session) -> Job | None:
+        """Primary readiness-gated claim OR stuck-sibling fallback."""
+        return self._claim_ready_job(session) or self._claim_stuck_job(session)
+
+    def _claim_ready_job(self, session: Session) -> Job | None:
+        """Claim a selection job whose DApp/DefiLlama siblings have finished.
+
+        Siblings are matched by ``request->>'root_job_id'`` because
+        ``_spawn_parallel_discovery`` stamps the company job's id there
+        on every DApp/DefiLlama job it creates. A sibling in
+        ``queued`` or ``processing`` holds the claim back; anything
+        ``completed`` or ``failed`` counts as settled.
+        """
+        claim_id = session.execute(
+            text(
+                """
+                SELECT j.id
+                FROM jobs j
+                WHERE j.stage = 'selection' AND j.status = 'queued'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM jobs sib
+                    WHERE sib.stage IN ('dapp_crawl', 'defillama_scan')
+                      AND sib.request->>'root_job_id' = j.id::text
+                      AND sib.status IN ('queued', 'processing')
+                  )
+                ORDER BY j.updated_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                """
+            )
+        ).scalar_one_or_none()
+        if claim_id is None:
+            return None
+        job = session.get(Job, claim_id)
+        if job is None:
+            return None
+        job.status = JobStatus.processing
+        job.worker_id = self.worker_id
+        session.commit()
+        session.refresh(job)
+        return job
+
+    def _claim_stuck_job(self, session: Session) -> Job | None:
+        """Bypass readiness and claim a job that's been queued too long."""
+        claim_id = session.execute(
+            text(
+                """
+                SELECT j.id
+                FROM jobs j
+                WHERE j.stage = 'selection' AND j.status = 'queued'
+                  AND j.updated_at < (NOW() - (:timeout * INTERVAL '1 second'))
+                ORDER BY j.updated_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+                """
+            ),
+            {"timeout": _STUCK_SELECTION_TIMEOUT},
+        ).scalar_one_or_none()
+        if claim_id is None:
+            return None
+        job = session.get(Job, claim_id)
+        if job is None:
+            return None
+        logger.warning(
+            "Worker %s: claiming stuck selection job %s past %ss timeout — DApp/DefiLlama sibling(s) did not settle",
+            self.worker_id,
+            job.id,
+            _STUCK_SELECTION_TIMEOUT,
+        )
+        job.status = JobStatus.processing
+        job.worker_id = self.worker_id
+        session.commit()
+        session.refresh(job)
+        return job
+
+    # -- Process ----------------------------------------------------------
+
+    def process(self, session: Session, job: Job) -> None:
+        """Rank all unanalyzed contracts for the protocol and queue the top N."""
+        if job.protocol_id is None:
+            raise ValueError(f"Selection job {job.id} has no protocol_id")
+
+        request = job.request if isinstance(job.request, dict) else {}
+        analyze_limit = int(request.get("analyze_limit", 5))
+        root_job_id = request.get("root_job_id", str(job.id))
+
+        self.update_detail(session, job, f"Preparing selection for {job.company or 'protocol'}")
+        logger.info(
+            "Selection started for job %s: protocol_id=%s, analyze_limit=%d",
+            job.id,
+            job.protocol_id,
+            analyze_limit,
+        )
+
+        # Row passes when none of the excluded sources are present. For a
+        # single-element excluded set this is ``NOT @> ['upgrade_history']``;
+        # for future multi-element sets it's "no tag overlaps", which is
+        # logically ``AND`` of per-tag NOT-contains (De Morgan on the
+        # overlap operator). NULL guard keeps pre-array legacy rows.
+        no_excluded_tag = and_(
+            *[not_(Contract.discovery_sources.contains([src])) for src in EXCLUDED_DISCOVERY_SOURCES]
+        )
+        candidates = (
+            session.execute(
+                select(Contract).where(
+                    Contract.protocol_id == job.protocol_id,
+                    Contract.job_id.is_(None),
+                    Contract.discovery_sources.is_(None) | no_excluded_tag,
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        if not candidates:
+            logger.info("Selection job %s: no unanalyzed candidates", job.id)
+            self._finish(session, job, ranked=[], child_ids=[])
+            return
+
+        self.update_detail(
+            session,
+            job,
+            f"Ranking {len(candidates)} discovered contracts",
+        )
+
+        # Apply the corroboration-aware effective confidence up front so
+        # the MIN_CONFIDENCE_THRESHOLD filter sees the same number the
+        # ranker will use. Rows with raw ``confidence=NULL`` pick up a
+        # source-based default; rows with multiple ``discovery_sources``
+        # pick up the corroboration boost.
+        eligible_rows = [
+            row
+            for row in candidates
+            if effective_confidence(
+                float(row.confidence) if row.confidence is not None else None,
+                list(row.discovery_sources or []),
+            )
+            >= MIN_CONFIDENCE_THRESHOLD
+        ]
+        if not eligible_rows:
+            logger.info(
+                "Selection job %s: %d candidates, none cleared confidence threshold %.2f",
+                job.id,
+                len(candidates),
+                MIN_CONFIDENCE_THRESHOLD,
+            )
+            session.commit()
+            self._finish(session, job, ranked=[], child_ids=[])
+            return
+
+        ranked_dicts = rank_contract_rows(eligible_rows)
+
+        # Persist the rank score onto the row so UI listings and the
+        # analyze-remaining override see the ordering the selector
+        # chose. enrich_with_activity (called inside rank_contract_rows)
+        # mutates its inputs, so the rank_score / activity values live
+        # on the dicts we passed in.
+        by_key: dict[tuple[str, str | None], dict] = {(d["__row_address"], d["__row_chain"]): d for d in ranked_dicts}
+        for row in eligible_rows:
+            entry = by_key.get((row.address, row.chain))
+            if entry is None:
+                continue
+            rank = entry.get("rank_score")
+            if rank is not None:
+                row.rank_score = rank
+        session.commit()
+
+        child_ids = self._queue_top_n(
+            session=session,
+            job=job,
+            ranked=ranked_dicts,
+            analyze_limit=analyze_limit,
+            root_job_id=root_job_id,
+            request=request,
+        )
+
+        self._finish(session, job, ranked=ranked_dicts, child_ids=child_ids)
+
+    def _queue_top_n(
+        self,
+        *,
+        session: Session,
+        job: Job,
+        ranked: list[dict],
+        analyze_limit: int,
+        root_job_id: str,
+        request: dict,
+    ) -> list[dict]:
+        """Create child analysis jobs for the highest-ranked ``analyze_limit`` candidates.
+
+        Dedup + proxy re-queue mirror the logic the discovery worker
+        previously used inline — keeping both here means every
+        source's contracts compete under the same rules.
+        """
+        already_used = count_analysis_children(session, root_job_id)
+        remaining = max(0, analyze_limit - already_used)
+        if remaining == 0:
+            logger.info(
+                "Selection job %s: analyze_limit %d already filled (%d existing children)",
+                job.id,
+                analyze_limit,
+                already_used,
+            )
+            return []
+
+        selected: list[dict] = []
+        for entry in ranked:
+            if len(selected) >= remaining:
+                break
+            addr = entry["__row_address"]
+            chain = entry["__row_chain"]
+            existing = find_existing_job_for_address(session, addr, chain=chain)
+            if existing is not None:
+                if not is_known_proxy(session, addr, chain=chain):
+                    logger.info(
+                        "Selection job %s: address %s already has job %s, skipping",
+                        job.id,
+                        addr,
+                        existing.id,
+                    )
+                    continue
+                logger.info(
+                    "Selection job %s: proxy %s has existing job %s but re-queuing for upgrade check",
+                    job.id,
+                    addr,
+                    existing.id,
+                )
+            selected.append(entry)
+
+        child_ids: list[dict] = []
+        company = job.company
+        for entry in selected:
+            addr = entry["__row_address"]
+            chain = entry["__row_chain"]
+            name = entry.get("name") or (f"{company}_{addr[2:10]}" if company else f"sel_{addr[2:10]}")
+            sources = entry.get("discovery_sources") or []
+            child_request = {
+                "address": addr,
+                "name": name,
+                "chain": chain,
+                "rpc_url": request.get("rpc_url"),
+                "parent_job_id": str(job.id),
+                "root_job_id": root_job_id,
+                "rank_score": entry.get("rank_score"),
+                "confidence": entry.get("confidence"),
+                "discovery_sources": list(sources),
+                "chains": entry.get("chains"),
+                "protocol_id": job.protocol_id,
+            }
+            if company:
+                child_request["company"] = company
+            child_job = create_job(session, child_request)
+            child_ids.append(
+                {
+                    "job_id": str(child_job.id),
+                    "address": addr,
+                    "chain": chain,
+                    "name": name,
+                    "rank_score": entry.get("rank_score"),
+                    "discovery_sources": list(sources),
+                }
+            )
+            logger.info(
+                "Selection job %s: queued %s (%s, sources=%s, rank=%.4f)",
+                job.id,
+                addr,
+                name,
+                ",".join(sources) if sources else "unknown",
+                entry.get("rank_score") or 0.0,
+            )
+        return child_ids
+
+    def _finish(
+        self,
+        session: Session,
+        job: Job,
+        *,
+        ranked: list[dict],
+        child_ids: list[dict],
+    ) -> None:
+        summary_ranked = [
+            {
+                "address": entry["__row_address"],
+                "chain": entry["__row_chain"],
+                "name": entry.get("name"),
+                "discovery_sources": entry.get("discovery_sources"),
+                "confidence": entry.get("confidence"),
+                "activity": entry.get("activity"),
+                "rank_score": entry.get("rank_score"),
+            }
+            for entry in ranked
+        ]
+        store_artifact(
+            session,
+            job.id,
+            "selection_summary",
+            data={
+                "ranked_count": len(ranked),
+                "analyzed_count": len(child_ids),
+                "child_jobs": child_ids,
+                "ranked": summary_ranked,
+            },
+        )
+        if child_ids:
+            detail = f"Selection complete: queued {len(child_ids)} of {len(ranked)} ranked candidates"
+        elif ranked:
+            detail = f"Selection complete: {len(ranked)} candidates, none queued (budget full or all deduped)"
+        else:
+            detail = "Selection complete: no eligible candidates"
+        complete_job(session, job.id, detail)
+        raise JobHandledDirectly()
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
+    SelectionWorker().run_loop()
+
+
+if __name__ == "__main__":
+    main()

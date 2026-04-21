@@ -724,8 +724,16 @@ class TestEnrichWithActivity:
 
 
 class TestOrchestratorIntegration:
-    def test_pipeline_with_chain_resolution_and_activity(self, monkeypatch):
-        """End-to-end: entries → build → chain resolve → activity → group → output."""
+    def test_pipeline_with_chain_resolution(self, monkeypatch):
+        """End-to-end: entries → build → chain resolve → group → output.
+
+        Activity ranking is no longer part of this orchestrator — the
+        worker pipeline runs the single authoritative ranking in the
+        selection stage, and standalone callers apply
+        ``enrich_with_activity`` themselves. This test asserts the new
+        shape: chain resolution lands, contracts are returned without
+        an ``activity`` / ``rank_score`` payload.
+        """
         addr_known = "0x" + "a" * 40
         addr_unknown = "0x" + "b" * 40
         fake_entries = [
@@ -758,16 +766,6 @@ class TestOrchestratorIntegration:
 
         monkeypatch.setattr("services.discovery.chain_resolver._batch_get_code", fake_batch)
 
-        # Activity: both active recently
-        import time as _time
-
-        now_ts = _time.time()
-
-        def fake_etherscan(module, action, **params):
-            return {"result": [{"timeStamp": str(int(now_ts))}]}
-
-        monkeypatch.setattr("services.discovery.activity.etherscan.get", fake_etherscan)
-
         result = search_protocol_inventory("docs.example.com", limit=10)
 
         contracts = result["contracts"]
@@ -779,12 +777,12 @@ class TestOrchestratorIntegration:
         assert "arbitrum" in by_name["Bridge"]["chains"]
         assert "unknown" not in by_name["Bridge"]["chains"]
 
-        # Activity enrichment worked
+        # Activity ranking is no longer part of the orchestrator.
         for c in contracts:
-            assert "activity" in c
-            assert "rank_score" in c
+            assert "activity" not in c
+            assert "rank_score" not in c
 
-        # Notes track both stages
+        # Chain resolution note still fires; activity ranking note is gone.
         notes = " ".join(result["notes"])
         assert "Chain resolution" in notes
-        assert "Activity ranking" in notes
+        assert "Activity ranking" not in notes

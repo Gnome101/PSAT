@@ -1,7 +1,12 @@
 """DefiLlama worker — discovers contract addresses from DefiLlama adapter source code.
 
 Calls the integrated defillama crawler directly (no subprocess) to scan
-adapter source for contract addresses, then creates child jobs for each.
+adapter source for contract addresses and writes every discovered
+address into the ``contracts`` table tagged
+``discovery_source='defillama'``. Analysis child jobs are created
+later by the ``SelectionWorker`` so this scan's discoveries can
+compete with inventory and DApp-crawl hits for the shared
+``analyze_limit`` budget on equal footing.
 """
 
 from __future__ import annotations
@@ -10,16 +15,14 @@ import logging
 import os
 from pathlib import Path
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Contract, Job, JobStage
+from db.models import Job, JobStage
 from db.queue import (
     complete_job,
-    count_analysis_children,
-    create_job,
     get_or_create_protocol,
     store_artifact,
+    upsert_discovered_contract,
 )
 from services.crawlers.defillama.scan import scan_protocol
 from workers.base import BaseWorker, JobHandledDirectly
@@ -40,7 +43,6 @@ class DefiLlamaWorker(BaseWorker):
         if not protocol:
             raise ValueError("defillama_scan job missing defillama_protocol in request")
 
-        analyze_limit = request.get("analyze_limit", 5)
         no_clone = os.getenv("DEFILLAMA_NO_CLONE", "").lower() in ("1", "true", "yes")
 
         # Derive / create Protocol row from company or slug
@@ -105,67 +107,14 @@ class DefiLlamaWorker(BaseWorker):
         for addr in addresses:
             normalized = addr.lower()
             chain = chain_by_address.get(normalized)
-            existing_contract = session.execute(
-                select(Contract).where(Contract.address == normalized, Contract.chain == chain)
-            ).scalar_one_or_none()
-            if existing_contract is None:
-                session.add(
-                    Contract(
-                        address=normalized,
-                        chain=chain,
-                        protocol_id=protocol_id,
-                        discovery_source="defillama",
-                    )
-                )
-            elif existing_contract.protocol_id is None and protocol_id:
-                existing_contract.protocol_id = protocol_id
+            upsert_discovered_contract(
+                session,
+                address=normalized,
+                chain=chain,
+                protocol_id=protocol_id,
+                new_sources=["defillama"],
+            )
         session.commit()
-
-        # Deduplicate against existing jobs and create children (shared global cap)
-        root_job_id = request.get("root_job_id", str(job.id))
-        already_used = count_analysis_children(session, root_job_id)
-        remaining = max(0, analyze_limit - already_used)
-        child_ids = []
-        seen_addresses: set[str] = set()
-        for addr in addresses:
-            if len(child_ids) >= remaining:
-                break
-
-            normalized = addr.lower()
-            if normalized in seen_addresses:
-                logger.info("Job %s: address %s already seen in scan results, skipping", job.id, addr)
-                continue
-            seen_addresses.add(normalized)
-
-            existing = session.execute(
-                select(Job)
-                .where(
-                    Job.address == addr,
-                    Job.request["root_job_id"].as_string() == root_job_id,
-                )
-                .limit(1)
-            ).scalar_one_or_none()
-            if existing:
-                logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
-                continue
-
-            child_request = {
-                "address": addr,
-                "name": f"{protocol}_{addr[2:10]}",
-                "company": protocol_row.name,
-                "parent_job_id": str(job.id),
-                "root_job_id": root_job_id,
-                "rpc_url": request.get("rpc_url"),
-                "discovery_source": "defillama",
-                "protocol_id": protocol_id,
-            }
-            chain = chain_by_address.get(addr.lower()) or request.get("chain")
-            if chain:
-                child_request["chain"] = chain
-
-            child_job = create_job(session, child_request)
-            child_ids.append({"job_id": str(child_job.id), "address": addr, "chain": chain})
-            logger.info("Created child job %s for %s (chain=%s)", child_job.id, addr, chain)
 
         store_artifact(
             session,
@@ -175,8 +124,6 @@ class DefiLlamaWorker(BaseWorker):
                 "mode": "defillama_scan",
                 "protocol": protocol,
                 "discovered_count": len(addresses),
-                "analyzed_count": len(child_ids),
-                "child_jobs": child_ids,
             },
         )
 
@@ -187,7 +134,7 @@ class DefiLlamaWorker(BaseWorker):
         complete_job(
             session,
             job.id,
-            f"DefiLlama scan complete for {protocol}: {len(addresses)} addresses found, {len(child_ids)} queued",
+            f"DefiLlama scan complete for {protocol}: {len(addresses)} addresses written to contracts table",
         )
         raise JobHandledDirectly()
 

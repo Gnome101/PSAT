@@ -110,6 +110,83 @@ def create_job(
     return job
 
 
+def upsert_discovered_contract(
+    session: Session,
+    *,
+    address: str,
+    chain: str | None,
+    protocol_id: int | None,
+    new_sources: list[str],
+    contract_name: str | None = None,
+    confidence: float | None = None,
+    chains: list[str] | None = None,
+    discovery_url: str | None = None,
+) -> Contract:
+    """Insert or update a discovered contract, unioning ``discovery_sources``.
+
+    Every discovery worker — inventory, DApp crawl, DefiLlama scan,
+    upgrade-history backfill — funnels through here so "three sources
+    agree" shows up in the data as a three-element array, not as
+    whichever writer landed first. The ranking module reads the union
+    and applies a corroboration boost.
+
+    When the row exists already:
+        - ``discovery_sources`` is unioned (new entries appended, dedup
+          preserves order so the first discoverer stays first).
+        - ``protocol_id`` is backfilled if null (orphan adoption).
+        - ``contract_name`` / ``confidence`` / ``chains`` /
+          ``discovery_url`` are first-writer-wins: later writers only
+          fill them if the stored value is missing, so a later
+          lower-quality source doesn't stomp a better one.
+
+    Commit is the caller's responsibility — callers usually batch many
+    upserts into one transaction.
+    """
+    normalized = address.lower()
+    existing = session.execute(
+        select(Contract).where(
+            Contract.address == normalized,
+            Contract.chain == chain,
+        )
+    ).scalar_one_or_none()
+
+    clean_sources = [s for s in new_sources if s]
+
+    if existing is None:
+        row = Contract(
+            address=normalized,
+            chain=chain,
+            protocol_id=protocol_id,
+            contract_name=contract_name,
+            confidence=confidence,
+            discovery_sources=list(clean_sources) or None,
+            chains=chains,
+            discovery_url=discovery_url,
+        )
+        session.add(row)
+        return row
+
+    merged = list(existing.discovery_sources or [])
+    for src in clean_sources:
+        if src not in merged:
+            merged.append(src)
+    if merged:
+        existing.discovery_sources = merged
+
+    if existing.protocol_id is None and protocol_id is not None:
+        existing.protocol_id = protocol_id
+    if not existing.contract_name and contract_name:
+        existing.contract_name = contract_name
+    if existing.confidence is None and confidence is not None:
+        existing.confidence = confidence
+    if not existing.chains and chains:
+        existing.chains = chains
+    if not existing.discovery_url and discovery_url:
+        existing.discovery_url = discovery_url
+
+    return existing
+
+
 def get_or_create_protocol(
     session: Session,
     name: str,

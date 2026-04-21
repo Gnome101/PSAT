@@ -158,7 +158,7 @@ def test_backfill_creates_rows_with_upgrade_history_tag(db_session, seed_protoco
     assert len(rows) == 2
     for row in rows:
         assert row.protocol_id == protocol_id
-        assert row.discovery_source == "upgrade_history"
+        assert "upgrade_history" in (row.discovery_sources or [])
         assert row.is_proxy is False
         assert row.job_id is None
         assert row.chain == "ethereum"
@@ -192,7 +192,7 @@ def test_backfill_adopts_orphan_row(db_session, seed_protocol, worker, stub_ethe
 
     row = db_session.query(Contract).filter_by(address=addr).one()
     assert row.protocol_id == protocol_id
-    assert row.discovery_source == "upgrade_history"
+    assert "upgrade_history" in (row.discovery_sources or [])
     # Existing name must not be overwritten.
     assert row.contract_name == "ExistingName"
     # No duplicate created.
@@ -223,7 +223,7 @@ def test_backfill_does_not_stomp_foreign_protocol_row(db_session, seed_protocol,
             chain="ethereum",
             contract_name="ForeignImpl",
             is_proxy=False,
-            discovery_source="inventory",  # explicitly not upgrade_history
+            discovery_sources=["inventory"],  # explicitly not upgrade_history
         )
 
         worker._backfill_historical_impls(
@@ -236,7 +236,7 @@ def test_backfill_does_not_stomp_foreign_protocol_row(db_session, seed_protocol,
         row = db_session.query(Contract).filter_by(address=addr).one()
         # Untouched.
         assert row.protocol_id == foreign_id
-        assert row.discovery_source == "inventory"
+        assert "inventory" in (row.discovery_sources or [])
         assert row.contract_name == "ForeignImpl"
         # No new row for our protocol (would fail uniqueness anyway).
         assert db_session.query(Contract).filter_by(address=addr).count() == 1
@@ -288,7 +288,7 @@ def test_backfill_treats_cross_chain_same_address_as_distinct(db_session, seed_p
             chain="polygon",
             contract_name="PolygonDeployment",
             is_proxy=False,
-            discovery_source="inventory",
+            discovery_sources=["inventory"],
         )
         stub_etherscan.names[addr] = "EthereumImpl"
 
@@ -303,13 +303,13 @@ def test_backfill_treats_cross_chain_same_address_as_distinct(db_session, seed_p
         polygon_row = db_session.query(Contract).filter_by(address=addr, chain="polygon").one()
         assert polygon_row.protocol_id == other_id
         assert polygon_row.contract_name == "PolygonDeployment"
-        assert polygon_row.discovery_source == "inventory"
+        assert "inventory" in (polygon_row.discovery_sources or [])
 
         # Fresh ethereum row created for our protocol.
         ethereum_row = db_session.query(Contract).filter_by(address=addr, chain="ethereum").one()
         assert ethereum_row.protocol_id == our_protocol_id
         assert ethereum_row.contract_name == "EthereumImpl"
-        assert ethereum_row.discovery_source == "upgrade_history"
+        assert "upgrade_history" in (ethereum_row.discovery_sources or [])
     finally:
         db_session.query(Contract).filter_by(address=addr, chain="polygon").delete()
         db_session.query(Protocol).filter_by(id=other_id).delete()
@@ -344,7 +344,7 @@ def test_backfill_degrades_gracefully_on_etherscan_failure(db_session, seed_prot
     assert bad.contract_name == "UnknownImpl"
     assert bad.source_verified is False
     # Still tagged so it's filter-outable.
-    assert bad.discovery_source == "upgrade_history"
+    assert "upgrade_history" in (bad.discovery_sources or [])
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +423,7 @@ def test_run_upgrade_history_writes_events_and_backfills_impls(
     impl_rows = db_session.query(Contract).filter(Contract.address.in_({impl_a, impl_b})).all()
     assert len(impl_rows) == 2
     for row in impl_rows:
-        assert row.discovery_source == "upgrade_history"
+        assert "upgrade_history" in (row.discovery_sources or [])
         assert row.protocol_id == protocol_id
         assert row.job_id is None
         assert row.is_proxy is False
@@ -659,7 +659,7 @@ def test_analyze_remaining_skips_backfilled_historical_impls(api_client, db_sess
         chain="ethereum",
         contract_name="Normal",
         is_proxy=False,
-        discovery_source="inventory",
+        discovery_sources=["inventory"],
     )
     # Backfilled historical impl — should be filtered out.
     _add_contract(
@@ -669,7 +669,7 @@ def test_analyze_remaining_skips_backfilled_historical_impls(api_client, db_sess
         chain="ethereum",
         contract_name="OldImpl",
         is_proxy=False,
-        discovery_source="upgrade_history",
+        discovery_sources=["upgrade_history"],
     )
 
     r = api_client.post(f"/api/company/{name}/analyze-remaining")
@@ -719,7 +719,7 @@ def test_coverage_matcher_links_audit_to_backfilled_impl(db_session, seed_protoc
         chain="ethereum",
         contract_name="HistoricalImpl",
         is_proxy=False,
-        discovery_source="upgrade_history",
+        discovery_sources=["upgrade_history"],
     )
     # One upgrade event placing HistoricalImpl at block 100 of the proxy.
     db_session.add(
@@ -844,7 +844,7 @@ def test_backfill_triggers_coverage_refresh_for_created_rows(db_session, seed_pr
 
     created = db_session.query(Contract).filter_by(protocol_id=protocol_id, address=impl_addr).one()
     assert created.contract_name == "HistoricalImpl"
-    assert created.discovery_source == "upgrade_history"
+    assert "upgrade_history" in (created.discovery_sources or [])
 
     # 5. The regression check: after backfill, a coverage row linking
     # the audit to the newly-created impl must exist. Before the fix
@@ -933,7 +933,7 @@ def test_backfill_coverage_refresh_covers_adopted_rows_too(db_session, seed_prot
 
     db_session.refresh(orphan)
     assert orphan.protocol_id == protocol_id  # adopted
-    assert orphan.discovery_source == "upgrade_history"
+    assert "upgrade_history" in (orphan.discovery_sources or [])
 
     # Adoption must pull coverage through too.
     rows = db_session.query(AuditContractCoverage).filter_by(protocol_id=protocol_id, contract_id=orphan.id).all()

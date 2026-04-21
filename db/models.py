@@ -45,6 +45,7 @@ class JobStage(str, enum.Enum):
     discovery = "discovery"
     dapp_crawl = "dapp_crawl"
     defillama_scan = "defillama_scan"
+    selection = "selection"
     static = "static"
     resolution = "resolution"
     policy = "policy"
@@ -359,7 +360,11 @@ class Contract(Base):
     remappings: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
     rank_score: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Numeric(10, 4), nullable=True)
-    discovery_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Every source that has independently confirmed this contract for the
+    # protocol. Writers union their tag in instead of overwriting, so
+    # ranking can boost contracts corroborated by multiple discovery
+    # pipelines (e.g. shown on the docs page AND called by the DApp).
+    discovery_sources: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
     discovery_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     chains: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -759,6 +764,28 @@ def apply_storage_migrations(target_engine=None) -> None:
     # EXISTS`` keeps it idempotent across restarts and test-DB reuse.
     with target.connect().execution_options(isolation_level="AUTOCOMMIT") as ac_conn:
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'coverage' BEFORE 'done'"))
+        ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'selection' BEFORE 'static'"))
+        # Contracts.discovery_source → discovery_sources (array): writers
+        # now union their tag in so ranking can boost contracts
+        # corroborated by multiple pipelines. Check whether the legacy
+        # scalar still exists before trying to backfill from it — on
+        # fresh databases or on second-run migrations the column is
+        # already gone and referencing it in the UPDATE would raise.
+        ac_conn.execute(text("ALTER TABLE contracts ADD COLUMN IF NOT EXISTS discovery_sources VARCHAR(100)[]"))
+        has_legacy_column = ac_conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'contracts' AND column_name = 'discovery_source'"
+            )
+        ).scalar()
+        if has_legacy_column:
+            ac_conn.execute(
+                text(
+                    "UPDATE contracts SET discovery_sources = ARRAY[discovery_source] "
+                    "WHERE discovery_sources IS NULL AND discovery_source IS NOT NULL"
+                )
+            )
+            ac_conn.execute(text("ALTER TABLE contracts DROP COLUMN discovery_source"))
     with target.connect() as conn:
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS size_bytes BIGINT"))
@@ -928,6 +955,7 @@ def create_tables() -> None:
             "discovery",
             "dapp_crawl",
             "defillama_scan",
+            "selection",
             "static",
             "resolution",
             "policy",
@@ -938,7 +966,8 @@ def create_tables() -> None:
                 text(
                     "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'jobstage') "
                     "THEN CREATE TYPE jobstage AS ENUM ("
-                    "'discovery','dapp_crawl','defillama_scan','static','resolution','policy','coverage','done'"
+                    "'discovery','dapp_crawl','defillama_scan','selection',"
+                    "'static','resolution','policy','coverage','done'"
                     "); END IF; END $$;"
                 )
             )

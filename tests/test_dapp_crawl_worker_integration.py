@@ -178,14 +178,6 @@ def test_process_runs_against_real_queue_and_fake_dapp(
     monkeypatch.setattr(dapp_worker_module, "crawl_dapp", fake_crawl)
 
     root_job_id = str(uuid.uuid4())
-    create_job(
-        db_session,
-        {
-            "address": ADDR_A,
-            "name": "existing_analysis_job",
-            "root_job_id": root_job_id,
-        },
-    )
     job = create_job(
         db_session,
         {
@@ -209,7 +201,7 @@ def test_process_runs_against_real_queue_and_fake_dapp(
     assert job.stage == JobStage.done
     assert job.status == JobStatus.completed
     assert job.name == "DApp crawl (1 URLs)"
-    assert job.detail == "DApp crawl complete: 4 addresses found, 2 queued"
+    assert job.detail == "DApp crawl complete: 4 addresses written to contracts table"
 
     crawl_results = get_artifact(db_session, job.id, "dapp_crawl_results")
     assert isinstance(crawl_results, dict)
@@ -222,31 +214,25 @@ def test_process_runs_against_real_queue_and_fake_dapp(
     assert isinstance(summary, dict)
     assert summary["mode"] == "dapp_crawl"
     assert summary["discovered_count"] == 4
-    assert summary["analyzed_count"] == 2
-    assert [entry["address"] for entry in summary["child_jobs"]] == [ADDR_B, ADDR_C]
+    # DAppCrawlWorker no longer creates analysis child jobs — SelectionWorker
+    # ranks across all discovery sources after they've settled, so the
+    # crawl summary is intentionally address-only.
+    assert "analyzed_count" not in summary
+    assert "child_jobs" not in summary
 
+    # No analysis child jobs created from this stage — ranking/queueing
+    # moved to SelectionWorker.
     child_jobs = (
         db_session.execute(
-            select(Job)
-            .where(
+            select(Job).where(
                 Job.address.isnot(None),
                 Job.request["parent_job_id"].as_string() == str(job.id),
             )
-            .order_by(Job.created_at, Job.id)
         )
         .scalars()
         .all()
     )
-    assert [child.address for child in child_jobs] == [ADDR_B, ADDR_C]
-    assert all(child.stage == JobStage.discovery for child in child_jobs)
-    assert all(child.status == JobStatus.queued for child in child_jobs)
-    req0 = child_jobs[0].request
-    assert isinstance(req0, dict)
-    assert req0["root_job_id"] == root_job_id
-    assert req0["parent_job_id"] == str(job.id)
-    assert req0["rpc_url"] == "https://rpc.example"
-    assert req0["chain"] == "polygon"
-    assert req0["company"] == "127.0.0.1"
+    assert child_jobs == []
 
     # Protocol row created from hostname, job tagged with its id
     assert job.protocol_id is not None
@@ -259,7 +245,7 @@ def test_process_runs_against_real_queue_and_fake_dapp(
     contracts = db_session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
     contract_addrs = {c.address for c in contracts}
     assert {ADDR_A, ADDR_B, ADDR_C}.issubset(contract_addrs)
-    assert all(c.discovery_source == "dapp_crawl" for c in contracts)
+    assert all("dapp_crawl" in (c.discovery_sources or []) for c in contracts)
 
 
 @requires_postgres

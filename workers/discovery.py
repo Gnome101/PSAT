@@ -1,7 +1,10 @@
 """Discovery worker — fetches verified source from Etherscan and stores in DB.
 
 For address-mode jobs: fetches source, stores files + metadata, advances to static.
-For company-mode jobs: discovers contracts via protocol inventory, creates child jobs for each.
+For company-mode jobs: discovers contracts via protocol inventory, writes them
+to the ``contracts`` table, spawns DApp / DefiLlama sibling jobs, then advances
+to the ``selection`` stage. The ``SelectionWorker`` ranks the unified contract
+set and creates the top-N analysis child jobs once the siblings settle.
 """
 
 from __future__ import annotations
@@ -13,17 +16,16 @@ from sqlalchemy.orm import Session
 
 from db.models import Contract, Job, JobStage
 from db.queue import (
+    advance_job,
     copy_static_cache,
-    count_analysis_children,
     create_job,
     find_completed_static_cache,
-    find_existing_job_for_address,
     find_previous_company_inventory,
     get_artifact,
     get_or_create_protocol,
-    is_known_proxy,
     store_artifact,
     store_source_files,
+    upsert_discovered_contract,
 )
 from services.discovery.audit_reports import merge_audit_reports, search_audit_reports
 from services.discovery.deployer import _batch_get_creators
@@ -32,9 +34,6 @@ from services.discovery.inventory import merge_inventory, search_protocol_invent
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.discovery")
-
-# Minimum confidence threshold for creating child analysis jobs.
-_MIN_CONFIDENCE_THRESHOLD = 0.3
 
 
 def _sync_audit_reports_to_db(session: Session, protocol_id: int, reports: list[dict]) -> None:
@@ -91,13 +90,18 @@ class DiscoveryWorker(BaseWorker):
             raise ValueError("Job has neither address nor company")
 
     def _process_company(self, session: Session, job: Job) -> None:
-        """Discover contracts for a company and create child jobs for each."""
+        """Discover contracts for a company and advance to the selection stage.
+
+        All three discovery sources (this inventory pass, plus the DApp
+        and DefiLlama siblings spawned below) write into ``contracts``
+        without queuing analysis jobs. The ``SelectionWorker`` ranks the
+        unified set and spends the ``analyze_limit`` budget in one pass.
+        """
         company = job.company
         if company is None:
             raise ValueError("Company job missing company name")
         request = job.request if isinstance(job.request, dict) else {}
         chain = request.get("chain")
-        analyze_limit = request.get("analyze_limit", 5)
         root_job_id = str(job.id)
 
         # Load previous inventory from a prior completed company job (same chain)
@@ -109,6 +113,7 @@ class DiscoveryWorker(BaseWorker):
                 prev_inventory = _raw
 
         self.update_detail(session, job, f"Discovering contracts for {company}")
+        logger.info("Discovery started for job %s: company=%s, chain=%s", job.id, company, chain)
         inventory = search_protocol_inventory(company, chain=chain)
 
         # Merge with previous inventory if available
@@ -147,80 +152,37 @@ class DiscoveryWorker(BaseWorker):
 
         discovered = [e for e in inventory.get("contracts", []) if e.get("address")]
 
-        # Write ALL discovered addresses to contracts table
+        # Write ALL discovered addresses to contracts table. Ranking and
+        # job creation happen later in the selection stage, once DApp
+        # crawl and DefiLlama results are also in the table — that way
+        # every source competes for the analyze_limit budget on equal
+        # footing instead of the first-to-arrive claiming everything.
+        # The upsert unions ``discovery_sources`` so a contract that's
+        # already in the table from a prior source gains this one as
+        # corroboration rather than being dropped.
         for entry in discovered:
-            addr = str(entry["address"]).lower()
             entry_chains = entry.get("chains")
             entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
-            existing = session.execute(
-                select(Contract).where(Contract.address == addr, Contract.chain == entry_chain)
-            ).scalar_one_or_none()
-            if existing is None:
-                session.add(
-                    Contract(
-                        address=addr,
-                        chain=entry_chain,
-                        protocol_id=protocol_row.id,
-                        contract_name=entry.get("name"),
-                        rank_score=entry.get("rank_score"),
-                        confidence=entry.get("confidence"),
-                        discovery_source=entry.get("discovery_source") or "inventory",
-                        chains=entry.get("chains"),
-                    )
-                )
-            elif existing.protocol_id is None:
-                existing.protocol_id = protocol_row.id
+            # Inventory entries carry their own ``source`` list (e.g.
+            # ``["tavily_ai_inventory", "deployer_expansion"]``) when
+            # multiple inventory signals agreed. Preserve that granularity
+            # so ranking sees the richer corroboration story; fall back
+            # to the generic ``inventory`` tag when the entry didn't
+            # expose one (legacy cached entries).
+            entry_sources = entry.get("source") or ["inventory"]
+            if not isinstance(entry_sources, list):
+                entry_sources = [str(entry_sources)]
+            upsert_discovered_contract(
+                session,
+                address=str(entry["address"]),
+                chain=entry_chain,
+                protocol_id=protocol_row.id,
+                new_sources=entry_sources,
+                contract_name=entry.get("name"),
+                confidence=entry.get("confidence"),
+                chains=entry.get("chains"),
+            )
         session.commit()
-
-        already_used = count_analysis_children(session, root_job_id)
-        remaining = max(0, analyze_limit - already_used)
-        # Filter by minimum confidence threshold
-        eligible = [e for e in discovered if (e.get("confidence") or 0) >= _MIN_CONFIDENCE_THRESHOLD]
-
-        # Select entries, deduplicating as we go so skipped entries don't
-        # consume slots — the limit is filled from further down the list.
-        selected = []
-        for entry in eligible:
-            if len(selected) >= remaining:
-                break
-            addr = str(entry["address"])
-            entry_chains = entry.get("chains")
-            entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
-            existing = find_existing_job_for_address(session, addr, chain=entry_chain)
-            if existing:
-                if not is_known_proxy(session, addr, chain=entry_chain):
-                    logger.info("Job %s: address %s already has job %s, skipping", job.id, addr, existing.id)
-                    continue
-                logger.info(
-                    "Job %s: proxy %s has existing job %s but re-queuing for upgrade check",
-                    job.id,
-                    addr,
-                    existing.id,
-                )
-            selected.append(entry)
-
-        child_ids = []
-        for contract in selected:
-            addr = str(contract["address"])
-            child_name = str(contract.get("name") or f"{company}_{addr[2:10]}")
-            child_chains = contract.get("chains")
-            child_chain = child_chains[0] if isinstance(child_chains, list) and child_chains else contract.get("chain")
-            child_request = {
-                "address": addr,
-                "name": child_name,
-                "chain": child_chain,
-                "rpc_url": request.get("rpc_url"),
-                "parent_job_id": root_job_id,
-                "root_job_id": root_job_id,
-                "rank_score": contract.get("rank_score"),
-                "confidence": contract.get("confidence"),
-                "discovery_source": contract.get("discovery_source") or "inventory",
-                "chains": contract.get("chains"),
-                "protocol_id": protocol_row.id,
-            }
-            child_job = create_job(session, child_request)
-            child_ids.append({"job_id": str(child_job.id), "address": addr, "name": child_name, "chain": child_chain})
-            logger.info("Created child job %s for %s (%s)", child_job.id, addr, child_name)
 
         store_artifact(
             session,
@@ -231,8 +193,6 @@ class DiscoveryWorker(BaseWorker):
                 "company": company,
                 "official_domain": inventory.get("official_domain"),
                 "discovered_count": len(discovered),
-                "analyzed_count": len(child_ids),
-                "child_jobs": child_ids,
             },
         )
 
@@ -244,29 +204,22 @@ class DiscoveryWorker(BaseWorker):
         # sources, and empty primary inventory is the case that most needs them.
         self._spawn_parallel_discovery(session, job, company, request, root_job_id)
 
-        if child_ids:
-            self.update_detail(
-                session,
-                job,
-                f"Discovered {len(discovered)} contracts, queued {len(child_ids)} for analysis",
-            )
-        else:
-            self.update_detail(
-                session,
-                job,
-                f"No inventory contracts; parallel discovery spawned for {company}",
-            )
+        self.update_detail(
+            session,
+            job,
+            f"Discovered {len(discovered)} contracts; awaiting parallel discovery before ranking",
+        )
 
-        from db.queue import complete_job
-
-        if child_ids:
-            complete_job(session, job.id, f"Discovery complete: {len(child_ids)} contracts queued")
-        else:
-            complete_job(
-                session,
-                job.id,
-                f"Discovery complete for {company}: no inventory contracts; parallel discovery spawned",
-            )
+        # Hand off to the selection stage. The SelectionWorker waits for
+        # DApp/DefiLlama siblings to settle, then ranks the full set of
+        # unanalyzed contracts for this protocol and creates the top-N
+        # analysis child jobs under the shared analyze_limit budget.
+        advance_job(
+            session,
+            job.id,
+            JobStage.selection,
+            f"Discovery complete for {company}: {len(discovered)} contracts; ranking pending",
+        )
         raise JobHandledDirectly()
 
     def _spawn_parallel_discovery(
@@ -438,7 +391,7 @@ class DiscoveryWorker(BaseWorker):
                 remappings=remappings or [],
                 rank_score=request.get("rank_score"),
                 confidence=request.get("confidence"),
-                discovery_source=request.get("discovery_source"),
+                discovery_sources=request.get("discovery_sources"),
                 chains=request.get("chains"),
                 source_verified=True,
             )

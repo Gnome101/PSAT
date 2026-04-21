@@ -19,6 +19,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -946,14 +947,15 @@ def test_analysis_detail_analysis_report_inline(mock_session_cls, mock_get_all_a
 
 
 # ============================================================================
-# 8. GET /api/analyses - rank_scores and chain from inventory
+# 8. GET /api/analyses - rank_scores and chain come from the contracts table
 # ============================================================================
 
 
 @patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_list_rank_scores_from_inventory(mock_session_cls, mock_get_artifact):
-    """Company jobs with contract_inventory should populate rank_scores and chains."""
+def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls, mock_get_artifact):
+    """rank_score + chain come from the ``contracts`` table (selection's single
+    authoritative ranking pass), not from the legacy inventory artifact."""
     client = _make_client()
     company_job = _fake_job(
         name="company_disc",
@@ -966,7 +968,6 @@ def test_analyses_list_rank_scores_from_inventory(mock_session_cls, mock_get_art
         address="0xcccc",
         request={"parent_job_id": str(company_job.id)},
     )
-    company_job.status = MagicMock(value="completed")
 
     from db.models import JobStatus
 
@@ -976,14 +977,23 @@ def test_analyses_list_rank_scores_from_inventory(mock_session_cls, mock_get_art
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
+    # Contract-row row tuple stand-in — api.py reads .address / .chain /
+    # .rank_score attributes off each row.
+    contract_row = SimpleNamespace(address="0xcccc", chain="ethereum", rank_score=8.5)
+
     call_count = {"n": 0}
 
     def route_execute(stmt, *args, **kwargs):
         call_count["n"] += 1
         result = MagicMock()
         if call_count["n"] == 1:
+            # First query: completed jobs
             result.scalars.return_value.all.return_value = [company_job, child_job]
+        elif call_count["n"] == 2:
+            # Second query: contract rows for rank/chain lookup
+            result.all.return_value = [contract_row]
         else:
+            # Per-job artifact listing queries
             result.scalars.return_value.all.return_value = ["contract_analysis"]
             result.scalar_one_or_none.return_value = None
         return result
@@ -991,22 +1001,8 @@ def test_analyses_list_rank_scores_from_inventory(mock_session_cls, mock_get_art
     mock_session.execute.side_effect = route_execute
 
     def fake_get_artifact(session, jid, name):
-        if str(jid) == str(company_job.id) and name == "contract_inventory":
-            return {
-                "contracts": [
-                    {
-                        "address": "0xcccc",
-                        "rank_score": 8.5,
-                        "chains": ["ethereum"],
-                    }
-                ]
-            }
         if name == "contract_analysis":
             return {"subject": {"name": "ContractX"}, "summary": {}}
-        if name == "contract_flags":
-            return None
-        if name == "contract_inventory":
-            return None
         return None
 
     mock_get_artifact.side_effect = fake_get_artifact
@@ -1014,7 +1010,6 @@ def test_analyses_list_rank_scores_from_inventory(mock_session_cls, mock_get_art
     response = client.get("/api/analyses")
     assert response.status_code == 200
     entries = response.json()
-    # Find the child entry
     child = next((e for e in entries if e.get("address") == "0xcccc"), None)
     assert child is not None
     assert child["rank_score"] == 8.5
@@ -1377,9 +1372,12 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls, mock_ge
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job]
         elif call_count["n"] == 2:
+            # Contract rows for rank/chain lookup — empty is fine for this test
+            result.all.return_value = []
+        elif call_count["n"] == 3:
             # Artifact names
             result.scalars.return_value.all.return_value = ["contract_flags", "contract_analysis"]
-        elif call_count["n"] == 3:
+        elif call_count["n"] == 4:
             # impl job lookup
             result.scalar_one_or_none.return_value = incomplete_impl
         else:
@@ -1860,8 +1858,10 @@ def test_company_overview_with_proxy_and_effects(mock_session_cls):
 
 @patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_chain_from_single_chain_field(mock_session_cls, mock_get_artifact):
-    """When inventory uses 'chain' (singular) instead of 'chains', it should still populate."""
+def test_analyses_chain_populated_from_contracts_table(mock_session_cls, mock_get_artifact):
+    """Chain comes from the ``contracts`` table (same pass that sets
+    rank_score) regardless of how the discovery worker wrote it —
+    a row with ``chain='arbitrum'`` surfaces in the analyses listing."""
     client = _make_client()
     company_job = _fake_job(
         name="chain_disc",
@@ -1881,6 +1881,8 @@ def test_analyses_chain_from_single_chain_field(mock_session_cls, mock_get_artif
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
+    contract_row = SimpleNamespace(address="0xdddd", chain="arbitrum", rank_score=5.0)
+
     call_count = {"n": 0}
 
     def route_execute(stmt, *args, **kwargs):
@@ -1888,6 +1890,8 @@ def test_analyses_chain_from_single_chain_field(mock_session_cls, mock_get_artif
         result = MagicMock()
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [company_job, child_job]
+        elif call_count["n"] == 2:
+            result.all.return_value = [contract_row]
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
@@ -1896,8 +1900,6 @@ def test_analyses_chain_from_single_chain_field(mock_session_cls, mock_get_artif
     mock_session.execute.side_effect = route_execute
 
     def fake_artifact(session, jid, name):
-        if str(jid) == str(company_job.id) and name == "contract_inventory":
-            return {"contracts": [{"address": "0xdddd", "rank_score": 5, "chain": "arbitrum"}]}
         if name == "contract_analysis":
             return {"subject": {"name": "ChainTest"}, "summary": {}}
         return None
@@ -2001,7 +2003,10 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls,
         result = MagicMock()
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
-        elif call_count["n"] <= 3:
+        elif call_count["n"] == 2:
+            # Contract-row lookup for rank/chain — empty for this test
+            result.all.return_value = []
+        elif call_count["n"] <= 4:
             result.scalars.return_value.all.return_value = ["contract_flags"]
             result.scalar_one_or_none.return_value = impl_job
         else:
