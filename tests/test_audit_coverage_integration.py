@@ -689,6 +689,55 @@ def test_audit_timeline_grace_match_is_not_audited(
     assert body["current_status"] == "unaudited_since_upgrade"
 
 
+def test_audit_timeline_cited_only_proof_is_not_audited(
+    db_session,
+    seed_protocol_with_history,
+    api_with_storage,
+):
+    """A proven row with proof_kind='cited_only' is too weak to make the
+    proxy's current impl count as audited."""
+    from db.models import AuditContractCoverage, AuditReport
+
+    proto = seed_protocol_with_history
+    audit = AuditReport(
+        protocol_id=proto["protocol_id"],
+        url=f"https://example.com/{uuid.uuid4().hex}.pdf",
+        pdf_url=f"https://example.com/{uuid.uuid4().hex}.pdf",
+        auditor="WeakProof",
+        title="Context-only commit mention",
+        date="2025-01-01",
+        confidence=0.9,
+        scope_extraction_status="success",
+        scope_contracts=["Pool"],
+    )
+    db_session.add(audit)
+    db_session.commit()
+
+    db_session.add(
+        AuditContractCoverage(
+            contract_id=proto["impl_a"].id,
+            audit_report_id=audit.id,
+            protocol_id=proto["protocol_id"],
+            matched_name="Pool",
+            match_type="reviewed_commit",
+            match_confidence="high",
+            covered_from_block=300,
+            covered_to_block=None,
+            equivalence_status="proven",
+            equivalence_reason="matched only a cited commit",
+            proof_kind="cited_only",
+        )
+    )
+    db_session.commit()
+
+    r = api_with_storage.get(f"/api/contracts/{proto['proxy'].id}/audit_timeline")
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["coverage"]) == 1
+    assert body["coverage"][0]["proof_kind"] == "cited_only"
+    assert body["current_status"] == "unaudited_since_upgrade"
+
+
 def test_audit_timeline_for_non_proxy(
     db_session,
     storage_bucket,

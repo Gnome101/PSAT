@@ -2315,20 +2315,32 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
             # 'audited' requires definitive coverage of the currently-open
             # impl window. Two paths:
             #   (a) any row on this impl has a cryptographic proof
-            #       (equivalence_status='proven') — strongest evidence,
-            #       overrides everything else on the impl;
+            #       (equivalence_status='proven') with a non-coincidental
+            #       proof kind — strongest evidence, overrides everything
+            #       else on the impl;
             #   (b) a high-confidence open-ended temporal match AND no
             #       hash_mismatch anywhere on the impl. hash_mismatch
             #       is strong negative evidence — deployed code differs
             #       from what the auditor reviewed — so we don't let a
             #       heuristic temporal match paper over cryptographic
-            #       disproof from a different audit.
+            #       disproof from a different audit. Weak
+            #       ``proof_kind='cited_only'`` rows don't qualify here
+            #       either just because their coverage row is
+            #       ``reviewed_commit/high``.
+            # Rows proven only via a 'cited_only' commit don't qualify:
+            # the deployed code matched a SHA the PDF mentioned only for
+            # context, not one the auditor actually reviewed.
             # Grace-medium temporal matches are intentionally NOT enough —
             # an audit 10 days before the impl went live is suggestive
             # but not proof the reviewed code is what shipped.
-            has_proven = any(r.equivalence_status == "proven" for r in current_cov)
+            has_proven = any(
+                r.equivalence_status == "proven" and r.proof_kind != "cited_only"
+                for r in current_cov
+            )
             has_temporal_high = any(
-                r.match_confidence == "high" and r.covered_to_block is None
+                r.match_confidence == "high"
+                and r.covered_to_block is None
+                and not (r.equivalence_status == "proven" and r.proof_kind == "cited_only")
                 for r in current_cov
             )
             has_hash_mismatch = any(r.equivalence_status == "hash_mismatch" for r in current_cov)

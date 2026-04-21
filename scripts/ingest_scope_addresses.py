@@ -29,7 +29,6 @@ from sqlalchemy import select
 
 from db.models import Contract, SessionLocal
 
-
 _GENERIC_PROXY_NAMES: frozenset[str] = frozenset(
     {"uupsproxy", "upgradeableproxy", "upgradeablebeacon", "beaconproxy", "transparentupgradeableproxy"}
 )

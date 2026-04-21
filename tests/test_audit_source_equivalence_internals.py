@@ -805,6 +805,14 @@ class TestExtractReferencedRepos:
         # Single dedupe to one entry.
         assert got == ["etherfi-protocol/smart-contracts"]
 
+    def test_skips_github_system_repo_names_in_repo_slot(self):
+        text = """
+        Bad: github.com/etherfi-protocol/issues/42
+        Good: github.com/etherfi-protocol/smart-contracts/issues/42
+        """
+        got = source_equivalence.extract_referenced_repos(text)
+        assert got == ["etherfi-protocol/smart-contracts"]
+
     def test_empty_and_none_text(self):
         assert source_equivalence.extract_referenced_repos("") == []
         assert source_equivalence.extract_referenced_repos(None) == []  # type: ignore[arg-type]

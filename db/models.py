@@ -982,14 +982,29 @@ def apply_storage_migrations(target_engine=None) -> None:
         # API can diff against live eth_getCode and flag drift (rare but real:
         # CREATE2 re-deploy at same address). NULL == "drift unknown", not
         # "drift detected".
-        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS bytecode_keccak_at_match VARCHAR(66)"))
+        conn.execute(
+            text(
+                "ALTER TABLE audit_contract_coverage "
+                "ADD COLUMN IF NOT EXISTS bytecode_keccak_at_match VARCHAR(66)"
+            )
+        )
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ"))
         # Source-equivalence verdict + reason + last-checked timestamp. NULL
         # on existing rows until the next verify-enabled refresh populates
         # them (the worker sites already pass verify_source_equivalence=True).
-        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS equivalence_status VARCHAR(40)"))
+        conn.execute(
+            text(
+                "ALTER TABLE audit_contract_coverage "
+                "ADD COLUMN IF NOT EXISTS equivalence_status VARCHAR(40)"
+            )
+        )
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS equivalence_reason TEXT"))
-        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS equivalence_checked_at TIMESTAMPTZ"))
+        conn.execute(
+            text(
+                "ALTER TABLE audit_contract_coverage "
+                "ADD COLUMN IF NOT EXISTS equivalence_checked_at TIMESTAMPTZ"
+            )
+        )
         # proof_kind (Phase C): strength subtype for proven rows. See the
         # model comment for the full vocabulary.
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS proof_kind VARCHAR(30)"))

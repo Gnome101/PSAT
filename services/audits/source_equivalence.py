@@ -91,6 +91,24 @@ _GITHUB_NON_REPO_OWNERS = frozenset(
     }
 )
 
+_GITHUB_NON_REPO_REPOS = frozenset(
+    {
+        "issues",
+        "pulls",
+        "wiki",
+        "actions",
+        "discussions",
+        "releases",
+        "tags",
+        "commits",
+        "blob",
+        "tree",
+        "raw",
+        "compare",
+        "branches",
+    }
+)
+
 
 def extract_referenced_repos(text: str) -> list[str]:
     """Pull every ``github.com/<owner>/<repo>`` reference from audit text.
@@ -115,6 +133,8 @@ def extract_referenced_repos(text: str) -> list[str]:
         if not repo:
             continue
         if owner in _GITHUB_NON_REPO_OWNERS:
+            continue
+        if repo in _GITHUB_NON_REPO_REPOS:
             continue
         key = f"{owner}/{repo}"
         if key in seen:
@@ -169,7 +189,9 @@ class GithubFetch:
     """
 
     content: str | None
-    status: str   # "ok" | "http_404" | "http_5xx" | "http_other" | "transport_error" | "content_type_rejected" | "size_cap_exceeded"
+    # "ok" | "http_404" | "http_5xx" | "http_other" | "transport_error"
+    # | "content_type_rejected" | "size_cap_exceeded"
+    status: str
     detail: str
 
 
@@ -184,7 +206,8 @@ class EtherscanFetch:
     """
 
     source: VerifiedSource | None
-    status: str   # "ok" | "unverified" | "fetch_failed"
+    # "ok" | "unverified" | "fetch_failed"
+    status: str
     detail: str
 
 
@@ -363,6 +386,22 @@ class GithubHashResult:
     sha256: str | None
     status: str   # mirrors GithubFetch.status
     detail: str
+
+
+def _coerce_github_hash_result(result: Any) -> GithubHashResult:
+    """Backward-compat for legacy test stubs that return bare hashes/None."""
+    if isinstance(result, GithubHashResult):
+        return result
+    if isinstance(result, str):
+        return GithubHashResult(sha256=result, status="ok", detail="")
+    if result is None:
+        return GithubHashResult(sha256=None, status="http_404", detail="not found")
+    status = getattr(result, "status", None)
+    detail = getattr(result, "detail", "")
+    sha256 = getattr(result, "sha256", None)
+    if status is not None:
+        return GithubHashResult(sha256=sha256, status=str(status), detail=str(detail))
+    raise TypeError(f"unsupported github hash result type: {type(result).__name__}")
 
 
 def fetch_github_source_hash(
@@ -600,7 +639,9 @@ def _verify_single_repo(
                 # Path isn't in Etherscan's bundle — not a GitHub-side failure.
                 # Record so ``candidate_path_missing`` stays accurate.
                 continue
-            gh = fetch_github_source_hash(source_repo, commit, path, token=github_token)
+            gh = _coerce_github_hash_result(
+                fetch_github_source_hash(source_repo, commit, path, token=github_token)
+            )
             if gh.status == "ok" and gh.sha256 is not None:
                 commit_hit_anything = True
                 if gh.sha256 == etherscan_hash:
