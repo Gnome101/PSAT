@@ -170,7 +170,7 @@ class TestChunkScanPath:
         )
         monkeypatch.setattr(
             "services.audits.scope_extraction.extract_scope_via_chunk_scan",
-            lambda *_a, **_k: (["LiquidityPool", "Vault"], '["LiquidityPool","Vault"]', "stub:m", 1, fake_chunk),
+            lambda *_a, **_k: (["LiquidityPool", "Vault"], [], [], '["LiquidityPool","Vault"]', "stub:m", 1, fake_chunk),
         )
         # Intercept artifact write so we don't need a real bucket.
         stored: dict = {}

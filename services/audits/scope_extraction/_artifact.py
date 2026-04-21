@@ -25,16 +25,23 @@ def build_artifact_payload(
     extracted_date: str | None,
     raw_response: str | None,
     scope_section_text: str | None = None,
+    scope_entries: list[dict] | None = None,
+    classified_commits: list[dict] | None = None,
 ) -> dict[str, object]:
     """Build the JSON body stored at ``scope_artifact_key``.
 
     ``scope_section_text`` is what the LLM actually saw — the merged
     header/content-pattern slice, or the winning chunk for chunk-scan.
-    Capped at 20k chars.
+    Capped at 20k chars. ``scope_entries`` (Phase F) is the structured
+    per-entry (name, address, commit, chain) list when the PDF had a
+    scope table with addresses; empty otherwise. ``classified_commits``
+    (Phase C) is the LLM-labeled commit list with roles.
     """
     sliced = scope_section_text[:20_000] if scope_section_text else None
     return {
         "contracts": list(contracts),
+        "scope_entries": list(scope_entries or []),
+        "classified_commits": list(classified_commits or []),
         "extracted_date": extracted_date,
         "method": method,
         "model": model,
