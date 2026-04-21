@@ -44,7 +44,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Final
+from typing import Any, Final
 
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
@@ -89,10 +89,33 @@ class CoverageMatch:
     contract_id: int
     protocol_id: int
     matched_name: str
-    match_type: str  # 'direct' | 'impl_era'
+    match_type: str  # 'direct' | 'impl_era' | 'reviewed_address' | 'reviewed_commit'
     match_confidence: str  # 'high' | 'medium' | 'low'
     covered_from_block: int | None = None
     covered_to_block: int | None = None
+    # Runtime bytecode keccak256 of the impl at the moment this match was
+    # resolved. Populated by ``_apply_bytecode_anchor`` during HTTP phase.
+    # NULL propagates when the RPC call failed — the UI treats NULL as
+    # "drift unknown" rather than "drift detected".
+    bytecode_keccak_at_match: str | None = None
+    verified_at: datetime | None = None
+    # Source-equivalence verdict for this specific (audit × matched_name)
+    # pair. See services.audits.source_equivalence.EQUIVALENCE_STATUSES.
+    # None means verification never ran — should only happen on legacy
+    # rows predating the rollout.
+    equivalence_status: str | None = None
+    equivalence_reason: str | None = None
+    equivalence_checked_at: datetime | None = None
+    # Phase F: the specific commit the auditor tied to THIS contract in
+    # the scope table, when available. Sourced from
+    # ``AuditReport.scope_entries[*].commit``. When non-null, source-
+    # equivalence uses only this commit instead of treating every SHA in
+    # the audit text as a candidate. Not persisted to the DB — it's a
+    # runtime hint from matcher to verifier inside one upsert cycle.
+    pinned_commit: str | None = None
+    # Phase C: strength kind for ``equivalence_status='proven'`` rows.
+    # See db.models.AuditContractCoverage.proof_kind for the vocabulary.
+    proof_kind: str | None = None
 
 
 # --- Date parsing -------------------------------------------------------
@@ -361,19 +384,128 @@ def _normalize_name(name: str | None) -> str:
     return (name or "").strip().lower()
 
 
+def _resolve_impl_for_address(session: Session, protocol_id: int, row: Contract) -> Contract | None:
+    """Return the impl Contract row that should carry a coverage insert.
+
+    When ``row`` is a proxy, resolves to its current ``implementation``
+    (the db trigger rejects coverage rows targeting proxies). Returns
+    ``None`` when the proxy's impl isn't in our inventory — caller skips
+    emission in that case.
+    """
+    if not row.is_proxy:
+        return row
+    impl_addr = (row.implementation or "").lower() if row.implementation else ""
+    if not impl_addr:
+        return None
+    return session.execute(
+        select(Contract).where(
+            Contract.protocol_id == protocol_id,
+            func.lower(Contract.address) == impl_addr,
+            Contract.is_proxy.is_(False),
+        )
+    ).scalar_one_or_none()
+
+
+def _address_anchored_matches(
+    session: Session, audit: AuditReport, scope_entries: list
+) -> tuple[dict[int, CoverageMatch], set[str]]:
+    """Build address-anchored CoverageMatch rows from ``audit.scope_entries``.
+
+    Returns ``(by_contract, matched_names)`` where ``by_contract`` maps
+    ``contract_id → CoverageMatch`` keyed by the impl row (proxies resolved
+    to their implementation before keying). ``matched_names`` is the set
+    of name spellings already covered — the caller uses it to suppress
+    a duplicate weaker name-match on the same contract.
+    """
+    by_contract: dict[int, CoverageMatch] = {}
+    matched_names: set[str] = set()
+    entry_addrs = [
+        e.get("address", "").lower()
+        for e in scope_entries
+        if isinstance(e, dict) and e.get("address")
+    ]
+    if not entry_addrs:
+        return by_contract, matched_names
+
+    addr_rows = (
+        session.execute(
+            select(Contract).where(
+                Contract.protocol_id == audit.protocol_id,
+                func.lower(Contract.address).in_(entry_addrs),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Address → Contract. Prefer non-proxy when both rows exist at the
+    # same address (shouldn't happen under uq_contract_address_chain,
+    # but be defensive).
+    by_addr: dict[str, Contract] = {}
+    for c in addr_rows:
+        key = (c.address or "").lower()
+        existing = by_addr.get(key)
+        if existing is None or (existing.is_proxy and not c.is_proxy):
+            by_addr[key] = c
+
+    for entry in scope_entries:
+        if not isinstance(entry, dict):
+            continue
+        addr = (entry.get("address") or "").lower()
+        if not addr:
+            continue
+        c = by_addr.get(addr)
+        if c is None:
+            continue
+        target = _resolve_impl_for_address(session, audit.protocol_id, c)
+        if target is None:
+            continue
+
+        matched_name = str(entry.get("name") or target.contract_name or "")
+        match = CoverageMatch(
+            audit_report_id=audit.id,
+            contract_id=target.id,
+            protocol_id=audit.protocol_id,
+            matched_name=matched_name,
+            match_type="reviewed_address",
+            match_confidence="high",
+            pinned_commit=entry.get("commit") or None,
+        )
+        prev = by_contract.get(target.id)
+        if prev is None or _row_score(match) > _row_score(prev):
+            by_contract[target.id] = match
+        matched_names.add(_normalize_name(matched_name))
+        if target.contract_name:
+            matched_names.add(_normalize_name(target.contract_name))
+
+    return by_contract, matched_names
+
+
 def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageMatch]:
-    """Find every Contract in the audit's protocol that matches a scope name.
+    """Find every Contract in the audit's protocol that matches a scope entry.
+
+    Two paths:
+      1. **Address-anchored** (Phase F): when the audit has
+         ``scope_entries`` with explicit addresses, each entry maps to a
+         single ``Contract`` row at that ``(address, chain)`` in the
+         protocol — unambiguous. Emits ``match_type='reviewed_address'``.
+         Handles proxies by resolving to their current impl before the
+         final insert (the ``_reject_proxy_coverage`` trigger enforces
+         this at the DB layer too).
+      2. **Name-anchored** (legacy): falls through for scope names NOT
+         covered by an address-anchored entry. Uses case-insensitive
+         name equality against ``Contract.contract_name``; emits
+         ``'direct'`` or ``'impl_era'`` depending on proxy history.
 
     Returns at most one CoverageMatch per ``(contract_id, audit_id)`` pair
-    — when multiple scope names collapse onto the same Contract (e.g.
-    auditor shipped both ``EtherFiNodesManager`` and ``EtherFiNodeManager``),
-    the highest-confidence match wins.
+    — when multiple scope names/addresses collapse onto the same Contract,
+    the highest-``_row_score`` match wins.
     """
     audit = session.get(AuditReport, audit_id)
     if audit is None:
         return []
     scope_names = audit.scope_contracts or []
-    if not scope_names:
+    scope_entries = audit.scope_entries or []
+    if not scope_names and not scope_entries:
         return []
 
     scope_lookup: dict[str, str] = {}
@@ -384,8 +516,16 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
         # Preserve the first raw spelling for the matched_name column.
         scope_lookup.setdefault(key, name)
 
+    # Address-anchored pass: authoritative when the audit has scope_entries.
+    by_contract, addr_matched_names = _address_anchored_matches(session, audit, scope_entries)
+
+    # Trim the name-match candidate pool so a weaker ``direct`` / ``impl_era``
+    # row doesn't get emitted for the same contract.
+    for n in addr_matched_names:
+        scope_lookup.pop(n, None)
+
     if not scope_lookup:
-        return []
+        return list(by_contract.values())
 
     # Protocol contracts whose contract_name matches a scope entry, case-
     # insensitively. Parameter binding makes LLM-sourced strings safe to
@@ -421,8 +561,9 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
     windows_by_id = _compute_impl_windows_batch(session, list(candidates))
 
     # Per-contract: pick the best match. When a contract has impl windows,
-    # we emit impl_era; otherwise direct.
-    by_contract: dict[int, CoverageMatch] = {}
+    # we emit impl_era; otherwise direct. ``by_contract`` may already
+    # contain address-anchored wins from Phase F above — _row_score
+    # decides which survives when a name-match collides.
     for c in candidates:
         matched_name = scope_lookup.get(_normalize_name(c.contract_name))
         if not matched_name:
@@ -463,11 +604,15 @@ _CONFIDENCE_ORDER: Final[dict[str, int]] = {"low": 0, "medium": 1, "high": 2}
 # (temporal-window heuristic) beats direct (pure name match). Confidence
 # always dominates — a low-confidence reviewed_commit still loses to a
 # high-confidence direct.
-_MATCH_TYPE_ORDER: Final[dict[str, int]] = {"direct": 0, "impl_era": 1, "reviewed_commit": 2}
-
-
-def _confidence_rank(conf: str) -> int:
-    return _CONFIDENCE_ORDER.get(conf, 0)
+_MATCH_TYPE_ORDER: Final[dict[str, int]] = {
+    "direct": 0,
+    "impl_era": 1,
+    # Phase F: audit's scope table named THIS address. Authoritative over
+    # name-overlap heuristics (direct / impl_era) but weaker than a
+    # reviewed_commit proof, which additionally verifies the source bytes.
+    "reviewed_address": 2,
+    "reviewed_commit": 3,
+}
 
 
 def _row_score(row) -> tuple[int, int]:
@@ -487,13 +632,13 @@ def _row_score(row) -> tuple[int, int]:
 
 def match_audits_for_contract(session: Session, contract_id: int) -> list[CoverageMatch]:
     """Dual entry. For each audit in the contract's protocol whose scope
-    mentions the contract's name, emit a match. Same rules as
-    ``match_contracts_for_audit``.
+    matches this contract (by explicit address in ``scope_entries`` OR by
+    name in ``scope_contracts``), emit one CoverageMatch per audit.
 
-    Proxies are excluded unconditionally — see the candidate filter in
-    ``match_contracts_for_audit`` for the rationale. Short-circuiting here
-    keeps ``audit_timeline`` from surfacing a redundant direct row on the
-    proxy's generic name when the impl already has the legitimate match.
+    Proxies are excluded unconditionally — the coverage matcher targets
+    impl rows only. Short-circuiting here keeps ``audit_timeline`` from
+    surfacing a redundant direct row on the proxy's generic name when the
+    impl already has the legitimate match.
     """
     contract = session.get(Contract, contract_id)
     if contract is None or contract.protocol_id is None:
@@ -517,8 +662,59 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
     )
     windows = _compute_impl_windows_for_contract(session, contract)
 
-    out: list[CoverageMatch] = []
+    # Pre-resolve the proxy whose current impl is this contract (if any).
+    # Used by the address-anchored branch: audit lists the proxy address
+    # in its scope table, but we write coverage against the impl row.
+    contract_addr_lower = (contract.address or "").lower()
+    proxy_rows = (
+        session.execute(
+            select(Contract).where(
+                Contract.protocol_id == contract.protocol_id,
+                Contract.is_proxy.is_(True),
+                func.lower(Contract.implementation) == contract_addr_lower,
+            )
+        )
+        .scalars()
+        .all()
+    ) if contract_addr_lower else []
+    proxy_addrs = {(p.address or "").lower() for p in proxy_rows if p.address}
+
+    # Track per-audit best match so one audit doesn't emit both an
+    # address-anchored row AND a name-match row for the same contract.
+    best_by_audit: dict[int, CoverageMatch] = {}
+
     for audit in audits:
+        # --- Address-anchored pass (Phase F) ---
+        for entry in audit.scope_entries or []:
+            if not isinstance(entry, dict):
+                continue
+            addr = (entry.get("address") or "").lower()
+            if not addr:
+                continue
+            # Entry points at this contract directly OR at a proxy whose
+            # current impl is this contract.
+            if addr != contract_addr_lower and addr not in proxy_addrs:
+                continue
+            matched_name = str(entry.get("name") or contract.contract_name or "")
+            commit_hint = entry.get("commit") or None
+            match = CoverageMatch(
+                audit_report_id=audit.id,
+                contract_id=contract.id,
+                protocol_id=contract.protocol_id,
+                matched_name=matched_name,
+                match_type="reviewed_address",
+                match_confidence="high",
+                pinned_commit=commit_hint,
+            )
+            prev = best_by_audit.get(audit.id)
+            if prev is None or _row_score(match) > _row_score(prev):
+                best_by_audit[audit.id] = match
+
+        # --- Name-anchored pass (legacy) ---
+        if audit.id in best_by_audit:
+            # Already covered by address-anchor on this audit — don't
+            # emit a weaker name-only row.
+            continue
         scope_names = audit.scope_contracts or []
         matched_name = next((n for n in scope_names if _normalize_name(n) == name_key), None)
         if not matched_name:
@@ -526,31 +722,28 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
         audit_ts = _audit_effective_ts(audit.date)
         if windows:
             confidence, window = _confidence_for_impl_era(audit_ts, windows)
-            out.append(
-                CoverageMatch(
-                    audit_report_id=audit.id,
-                    contract_id=contract.id,
-                    protocol_id=contract.protocol_id,
-                    matched_name=matched_name,
-                    match_type="impl_era",
-                    match_confidence=confidence,
-                    covered_from_block=window.from_block if window else None,
-                    covered_to_block=window.to_block if window else None,
-                )
+            best_by_audit[audit.id] = CoverageMatch(
+                audit_report_id=audit.id,
+                contract_id=contract.id,
+                protocol_id=contract.protocol_id,
+                matched_name=matched_name,
+                match_type="impl_era",
+                match_confidence=confidence,
+                covered_from_block=window.from_block if window else None,
+                covered_to_block=window.to_block if window else None,
             )
         else:
             confidence = _confidence_for_direct(audit_ts, contract)
-            out.append(
-                CoverageMatch(
-                    audit_report_id=audit.id,
-                    contract_id=contract.id,
-                    protocol_id=contract.protocol_id,
-                    matched_name=matched_name,
-                    match_type="direct",
-                    match_confidence=confidence,
-                )
+            best_by_audit[audit.id] = CoverageMatch(
+                audit_report_id=audit.id,
+                contract_id=contract.id,
+                protocol_id=contract.protocol_id,
+                matched_name=matched_name,
+                match_type="direct",
+                match_confidence=confidence,
             )
-    return out
+
+    return list(best_by_audit.values())
 
 
 # --- Upsert helpers -----------------------------------------------------
@@ -566,7 +759,107 @@ def _match_to_row_kwargs(match: CoverageMatch) -> dict:
         "match_confidence": match.match_confidence,
         "covered_from_block": match.covered_from_block,
         "covered_to_block": match.covered_to_block,
+        "bytecode_keccak_at_match": match.bytecode_keccak_at_match,
+        "verified_at": match.verified_at,
+        "equivalence_status": match.equivalence_status,
+        "equivalence_reason": match.equivalence_reason,
+        "equivalence_checked_at": match.equivalence_checked_at,
+        "proof_kind": match.proof_kind,
     }
+
+
+# --- Bytecode anchor ----------------------------------------------------
+
+# Env-keyed so prod + tests can point at different RPC providers. Default
+# matches policy_worker / protocol_monitor conventions.
+_DEFAULT_RPC_URL: Final[str] = "https://ethereum-rpc.publicnode.com"
+
+
+def _rpc_url() -> str:
+    import os
+
+    return os.environ.get("ETH_RPC") or _DEFAULT_RPC_URL
+
+
+def _fetch_bytecode_keccak(address: str) -> str | None:
+    """Runtime bytecode keccak256 at ``address`` via ``eth_getCode``.
+
+    Returns ``"0x" + 64hex`` on success, ``None`` when the RPC call fails
+    or the address has no code (EOA / selfdestructed). ``None`` propagates
+    to ``AuditContractCoverage.bytecode_keccak_at_match`` meaning "drift
+    unknown" — safer than fabricating a zero-bytecode hash.
+    """
+    from eth_utils.crypto import keccak
+
+    from utils.rpc import get_code
+
+    if not address:
+        return None
+    try:
+        code_hex = get_code(_rpc_url(), address)
+    except Exception as exc:
+        logger.warning("bytecode anchor: eth_getCode failed for %s: %s", address, exc)
+        return None
+    if not code_hex or code_hex == "0x":
+        return None
+    try:
+        raw = bytes.fromhex(code_hex[2:]) if code_hex.startswith("0x") else bytes.fromhex(code_hex)
+    except ValueError:
+        logger.warning("bytecode anchor: malformed hex from RPC for %s: %r", address, code_hex[:40])
+        return None
+    return "0x" + keccak(raw).hex()
+
+
+def _apply_bytecode_anchor(
+    session: Session,
+    matches: list[CoverageMatch],
+) -> list[CoverageMatch]:
+    """Stamp each match with the current runtime-bytecode keccak of its impl.
+
+    One RPC per distinct contract_id — results reused when multiple audits
+    hit the same impl. Called during the HTTP phase of the upsert so the
+    tx is released while RPC is in flight.
+    """
+    if not matches:
+        return matches
+    addr_by_cid: dict[int, str] = {
+        cid: addr
+        for cid, addr in session.execute(
+            select(Contract.id, Contract.address).where(Contract.id.in_({m.contract_id for m in matches}))
+        ).all()
+    }
+
+    keccak_by_cid: dict[int, str | None] = {}
+    for cid in addr_by_cid:
+        keccak_by_cid[cid] = _fetch_bytecode_keccak(addr_by_cid[cid])
+
+    now = datetime.now(timezone.utc)
+    stamped: list[CoverageMatch] = []
+    for m in matches:
+        kk = keccak_by_cid.get(m.contract_id)
+        stamped.append(
+            CoverageMatch(
+                audit_report_id=m.audit_report_id,
+                contract_id=m.contract_id,
+                protocol_id=m.protocol_id,
+                matched_name=m.matched_name,
+                match_type=m.match_type,
+                match_confidence=m.match_confidence,
+                covered_from_block=m.covered_from_block,
+                covered_to_block=m.covered_to_block,
+                bytecode_keccak_at_match=kk,
+                # Only stamp verified_at when we actually got a keccak —
+                # a NULL keccak with a fresh timestamp is a misleading signal.
+                verified_at=now if kk is not None else m.verified_at,
+                # Preserve equivalence stamps from _apply_equivalence_http.
+                equivalence_status=m.equivalence_status,
+                equivalence_reason=m.equivalence_reason,
+                equivalence_checked_at=m.equivalence_checked_at,
+                pinned_commit=m.pinned_commit,
+                proof_kind=m.proof_kind,
+            )
+        )
+    return stamped
 
 
 @dataclass(frozen=True)
@@ -584,9 +877,19 @@ class _EquivalenceInputs:
     reviewed_commits: tuple[str, ...]
     scope_contracts: tuple[str, ...]
     source_repo: str | None
+    # Phase D: every github.com/<owner>/<repo> the audit PDF mentions.
+    # Fallback candidates tried after ``source_repo`` when it doesn't
+    # contain the reviewed commit.
+    referenced_repos: tuple[str, ...]
+    # Phase C: LLM-labeled commits with {sha, label, context}. Used to
+    # derive ``proof_kind`` on proven rows.
+    classified_commits: tuple[dict, ...]
     # DB-resolved impl source, if Contract.job_id had SourceFile rows.
     # None means the HTTP phase should call Etherscan as a fallback.
-    db_impl_source: "object | None"
+    # Typed as Any so we don't force import of VerifiedSource at module
+    # load (keeps the coverage module importable without the source_eq
+    # dep chain resolved).
+    db_impl_source: Any
 
 
 def _preload_equivalence_inputs(
@@ -624,92 +927,241 @@ def _preload_equivalence_inputs(
             reviewed_commits=tuple(audit.reviewed_commits or ()),
             scope_contracts=tuple(audit.scope_contracts or ()),
             source_repo=audit.source_repo,
+            referenced_repos=tuple(audit.referenced_repos or ()),
+            classified_commits=tuple(audit.classified_commits or ()),
             db_impl_source=db_source,
         )
     return out
+
+
+def _compute_proof_kind(
+    matched_commits: set[str],
+    classified_commits: list[dict] | None,
+) -> str:
+    """Map a proven (matched, labeled) pair to a ``proof_kind``.
+
+    Rules (see ``db.models.AuditContractCoverage.proof_kind`` for the
+    vocabulary):
+
+    - ``unclassified`` when the audit has no classification data
+    - ``clean`` when we matched a ``reviewed`` commit AND (no ``fix``
+      commits exist OR we also matched a ``fix`` commit)
+    - ``pre_fix_unpatched`` when we matched a ``reviewed`` commit AND
+      ``fix`` commits exist but we didn't match any — DANGER: audit's
+      findings are present in the deployed code
+    - ``post_fix`` when we matched a ``fix`` commit only (no reviewed match)
+    - ``cited_only`` when our match hit only commits labeled ``cited``
+      or ``unclear`` — coincidental, suspicious
+    """
+    if not classified_commits:
+        return "unclassified"
+
+    reviewed_shas: set[str] = set()
+    fix_shas: set[str] = set()
+    for entry in classified_commits:
+        if not isinstance(entry, dict):
+            continue
+        sha = (entry.get("sha") or "").lower()
+        label = (entry.get("label") or "").lower()
+        if not sha:
+            continue
+        if label == "reviewed":
+            reviewed_shas.add(sha)
+        elif label == "fix":
+            fix_shas.add(sha)
+
+    # Match SHAs using prefix comparison: our matched commits come from
+    # the audit's ``reviewed_commits`` list (may be full 40-char), the
+    # classified_commits come from LLM (variable length). Compare on
+    # shared prefix at 7 chars (git's default abbrev) to be safe.
+    def _matches_any(prefix_set: set[str]) -> bool:
+        if not prefix_set:
+            return False
+        for mc in matched_commits:
+            mc_short = mc[:7]
+            for cs in prefix_set:
+                if mc.startswith(cs) or cs.startswith(mc_short):
+                    return True
+        return False
+
+    matched_reviewed = _matches_any(reviewed_shas)
+    matched_fix = _matches_any(fix_shas)
+
+    if matched_reviewed and not matched_fix and fix_shas:
+        # Deployed == reviewed; a fix was known but never shipped.
+        return "pre_fix_unpatched"
+    if matched_reviewed:
+        # Either no fix exists, or we also matched a fix.
+        return "clean"
+    if matched_fix:
+        return "post_fix"
+    # Matched something, but not a labeled commit.
+    return "cited_only"
 
 
 def _apply_equivalence_http(
     matches: list[CoverageMatch],
     inputs: dict[tuple[int, int], _EquivalenceInputs],
 ) -> list[CoverageMatch]:
-    """HTTP phase: upgrade matches to ``reviewed_commit`` via source-equivalence.
+    """HTTP phase: stamp every match with a verification verdict.
 
-    No session involvement. Per-match: if DB impl source was preloaded we
-    use it; otherwise we fall back to Etherscan (pure HTTP). Then GitHub
-    raw fetches decide equivalence. Failures are swallowed and the
-    temporal match stands.
+    For each match, runs ``verify_audit_covers_impl`` against the row's
+    own ``matched_name`` (not the full audit scope — otherwise failure
+    reasons describe the wrong contract). Every row gets an
+    ``equivalence_status`` + ``equivalence_reason`` + ``equivalence_checked_at``
+    stamp regardless of outcome, so the DB reflects whether verification
+    ran and why it did/didn't succeed.
+
+    When ``status='proven'``, also upgrades ``match_type`` →
+    ``'reviewed_commit'`` and ``match_confidence`` → ``'high'``. Other
+    statuses leave the heuristic temporal match intact — a failed
+    verification annotates but doesn't delete.
     """
     import os
 
     from services.audits.source_equivalence import (
-        check_audit_covers_impl,
         fetch_etherscan_source_files,
+        verify_audit_covers_impl,
     )
 
     gh_token = os.environ.get("GITHUB_TOKEN") or None
-    etherscan_cache: dict[str, object | None] = {}
+    # Per-address cache so two audit rows pointing at the same impl only
+    # pay one Etherscan round-trip. Stores EtherscanFetch (the new envelope
+    # that carries status + detail, not just source).
+    etherscan_cache: dict[str, Any] = {}
+    now = datetime.now(timezone.utc)
 
-    upgraded: list[CoverageMatch] = []
+    def _stamp(
+        base: CoverageMatch,
+        *,
+        status: str,
+        reason: str,
+        proven: bool = False,
+        proof_kind: str | None = None,
+    ) -> CoverageMatch:
+        return CoverageMatch(
+            audit_report_id=base.audit_report_id,
+            contract_id=base.contract_id,
+            protocol_id=base.protocol_id,
+            matched_name=base.matched_name,
+            match_type="reviewed_commit" if proven else base.match_type,
+            match_confidence="high" if proven else base.match_confidence,
+            covered_from_block=base.covered_from_block,
+            covered_to_block=base.covered_to_block,
+            bytecode_keccak_at_match=base.bytecode_keccak_at_match,
+            verified_at=base.verified_at,
+            equivalence_status=status,
+            equivalence_reason=reason[:1000] if reason else None,
+            equivalence_checked_at=now,
+            pinned_commit=base.pinned_commit,
+            proof_kind=proof_kind if proven else None,
+        )
+
+    stamped: list[CoverageMatch] = []
     for m in matches:
         key = (m.audit_report_id, m.contract_id)
         data = inputs.get(key)
-        if data is None or not (data.reviewed_commits and data.source_repo and data.scope_contracts):
-            upgraded.append(m)
+        if data is None:
+            stamped.append(_stamp(m, status="not_attempted", reason="no preload inputs"))
             continue
+        if not data.reviewed_commits:
+            stamped.append(_stamp(m, status="no_reviewed_commit", reason="audit has no reviewed_commits"))
+            continue
+        if not data.source_repo:
+            stamped.append(_stamp(m, status="no_source_repo", reason="audit has no source_repo"))
+            continue
+
+        # Resolve impl source: DB preload first, Etherscan (cached) next.
         impl_source = data.db_impl_source
+        fetch_status = "ok"
+        fetch_detail = ""
         if impl_source is None and data.contract_address:
             addr_key = data.contract_address.lower()
             if addr_key not in etherscan_cache:
                 try:
                     etherscan_cache[addr_key] = fetch_etherscan_source_files(data.contract_address)
-                except Exception:
-                    logger.exception("source-equivalence Etherscan fetch crashed for contract %s", m.contract_id)
-                    etherscan_cache[addr_key] = None
-            impl_source = etherscan_cache[addr_key]
+                except Exception as exc:
+                    logger.exception(
+                        "source-equivalence Etherscan fetch crashed for contract %s",
+                        m.contract_id,
+                    )
+                    # Synthesize a fetch_failed envelope so the branches below
+                    # treat this uniformly with API-returned errors.
+                    from services.audits.source_equivalence import EtherscanFetch
+
+                    etherscan_cache[addr_key] = EtherscanFetch(
+                        source=None, status="fetch_failed", detail=f"crash: {exc}"
+                    )
+            fetch = etherscan_cache[addr_key]
+            impl_source = fetch.source
+            fetch_status = fetch.status
+            fetch_detail = fetch.detail
+
         if impl_source is None:
-            upgraded.append(m)
+            # Map Etherscan envelope into the row's equivalence status.
+            if fetch_status == "unverified":
+                stamped.append(_stamp(m, status="etherscan_unverified", reason=fetch_detail or "no verified source"))
+            else:
+                stamped.append(
+                    _stamp(
+                        m,
+                        status="etherscan_fetch_failed",
+                        reason=fetch_detail or "etherscan fetch failed",
+                    )
+                )
             continue
+
+        # Verify scoped to THIS row's matched_name — critical: the reason
+        # must describe the right contract. When the match came from an
+        # address-anchored scope_entry with a pinned commit, pass it as
+        # ``specific_commit`` so verification targets exactly that SHA
+        # instead of every SHA in the PDF text (Phase F tightening).
+        # Phase D: pass the audit's full ``referenced_repos`` list as
+        # fallback candidates — if the primary ``source_repo`` doesn't
+        # contain the commit, verification retries against each
+        # PDF-mentioned repo.
         try:
-            proofs = check_audit_covers_impl(
+            outcome = verify_audit_covers_impl(
                 reviewed_commits=list(data.reviewed_commits),
-                scope_contracts=list(data.scope_contracts),
-                impl_source=impl_source,  # type: ignore[arg-type]
+                scope_name=m.matched_name,
+                impl_source=impl_source,
                 source_repo=data.source_repo,
                 github_token=gh_token,
+                specific_commit=m.pinned_commit,
+                fallback_repos=list(data.referenced_repos),
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
                 "source-equivalence check crashed for audit %s / contract %s",
                 m.audit_report_id,
                 m.contract_id,
             )
-            upgraded.append(m)
+            stamped.append(_stamp(m, status="github_fetch_failed", reason=f"crash: {exc}"))
             continue
-        if proofs:
-            proof = proofs[0]
-            upgraded.append(
-                CoverageMatch(
-                    audit_report_id=m.audit_report_id,
-                    contract_id=m.contract_id,
-                    protocol_id=m.protocol_id,
-                    matched_name=m.matched_name,
-                    match_type="reviewed_commit",
-                    match_confidence="high",
-                    covered_from_block=m.covered_from_block,
-                    covered_to_block=m.covered_to_block,
-                )
-            )
+
+        proven = outcome.status == "proven"
+        proof_kind: str | None = None
+        if proven:
+            matched_commits = {em.commit.lower() for em in outcome.matches}
+            proof_kind = _compute_proof_kind(matched_commits, list(data.classified_commits))
             logger.info(
-                "coverage: audit %s proven to cover contract %s via source-equivalence at commit %s / path %s",
+                "coverage: audit %s proven to cover contract %s (%s) kind=%s — %s",
                 m.audit_report_id,
                 m.contract_id,
-                proof.commit,
-                proof.etherscan_path,
+                m.matched_name,
+                proof_kind,
+                outcome.reason,
             )
-        else:
-            upgraded.append(m)
-    return upgraded
+        stamped.append(
+            _stamp(
+                m,
+                status=outcome.status,
+                reason=outcome.reason,
+                proven=proven,
+                proof_kind=proof_kind,
+            )
+        )
+    return stamped
 
 
 def _persist_coverage_for_audit(session: Session, audit_id: int, matches: list[CoverageMatch]) -> int:
@@ -765,12 +1217,18 @@ def upsert_coverage_for_audit(
         _persist_coverage_for_audit(session, audit_id, [])
         return 0
 
-    if verify_source_equivalence:
-        # Phase A2: pre-load source-equivalence inputs while still holding
-        # the session, then commit so HTTP runs with no tx open.
-        equiv_inputs = _preload_equivalence_inputs(session, matches)
-        session.commit()
+    # Phase A2: pre-load anything the HTTP phase needs, then commit to
+    # release the tx so network I/O isn't holding row locks.
+    equiv_inputs = _preload_equivalence_inputs(session, matches) if verify_source_equivalence else None
+    session.commit()
+
+    if verify_source_equivalence and equiv_inputs is not None:
         matches = _apply_equivalence_http(matches, equiv_inputs)
+
+    # Bytecode anchor — one eth_getCode per distinct impl. Runs outside
+    # the tx; keccak stays NULL on RPC failure (drift-unknown, not
+    # drift-detected).
+    matches = _apply_bytecode_anchor(session, matches)
 
     # Phase B: fresh transaction for the delete-then-insert.
     return _persist_coverage_for_audit(session, audit_id, matches)
@@ -790,10 +1248,12 @@ def upsert_coverage_for_contract(
     :func:`upsert_coverage_for_audit`.
     """
     matches = match_audits_for_contract(session, contract_id)
-    if verify_source_equivalence and matches:
-        equiv_inputs = _preload_equivalence_inputs(session, matches)
+    if matches:
+        equiv_inputs = _preload_equivalence_inputs(session, matches) if verify_source_equivalence else None
         session.commit()
-        matches = _apply_equivalence_http(matches, equiv_inputs)
+        if verify_source_equivalence and equiv_inputs is not None:
+            matches = _apply_equivalence_http(matches, equiv_inputs)
+        matches = _apply_bytecode_anchor(session, matches)
     return _persist_coverage_for_contract(session, contract_id, matches)
 
 

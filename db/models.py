@@ -258,12 +258,48 @@ class AuditReport(Base):
     # Populated after scope extraction; ``source_repo`` on the same row
     # locates where on GitHub to resolve them.
     reviewed_commits: Mapped[list[str] | None] = mapped_column(ARRAY(String(40)), nullable=True)
+    # GitHub repos mentioned anywhere in the PDF text (Phase D). ``source_repo``
+    # is a single best-guess populated at discovery time; ``referenced_repos``
+    # is the exhaustive list pulled by regex scanning the full audit body.
+    # Used as fallback candidates by source-equivalence when ``source_repo``
+    # returns ``commit_not_found_in_repo`` — common when discovery recorded
+    # the auditor's publication repo (e.g. ``Cyfrin/cyfrin-audit-reports``)
+    # but the audit actually reviewed commits in the protocol's own repo.
+    # Format: ``"owner/repo"`` lowercase, deduped.
+    referenced_repos: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
+    # Phase C: LLM-labeled commits from the audit text. Each entry is
+    # ``{"sha": "abc1234...", "label": "reviewed|fix|cited|unclear",
+    # "context": "one-line explanation"}``. Drives proof_kind computation
+    # on coverage rows: a deployed-code match against a ``fix`` commit is
+    # semantically different from a match against the ``reviewed`` commit
+    # (shipped-fix vs pre-fix-unpatched). NULL when classification wasn't
+    # available or the LLM didn't run it.
+    classified_commits: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
 
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # GitHub repo the PDF was discovered in — used by the source-equivalence
     # matcher to fetch reviewed files and compare against Etherscan's
     # verified source for a deployed impl.
     source_repo: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Findings from the audit. Populated by scope extraction (Phase 3b) or
+    # seeded manually (Phase 3a). Each element:
+    #   {"title": str, "severity": "info|low|medium|high|critical",
+    #    "status": "fixed|partially_fixed|acknowledged|mitigated|wont_fix",
+    #    "contract_hint": str | null}
+    # Stored as JSONB so the shape can evolve without a schema migration.
+    # The API filters to non-'fixed' statuses when surfacing live findings.
+    findings: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    # Structured scope entries: one per row when the PDF has an explicit
+    # Contract / Address / Commit table in its scope section. Each element:
+    #   {"name": str, "address": "0x<40hex>" | null,
+    #    "commit": "<7-40 hex>" | null, "chain": "ethereum" | null}
+    # Populated by scope extraction (Phase F) in addition to ``scope_contracts``
+    # — a flat list of names stays the primary output for audits whose scope
+    # is prose-only. When ``address`` is non-null, the coverage matcher
+    # prefers this over name matching (``match_type='reviewed_address'``).
+    # When ``commit`` is non-null it pins source-equivalence to that exact
+    # SHA instead of treating every SHA in the PDF text as a candidate.
+    scope_entries: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -314,6 +350,48 @@ class AuditContractCoverage(Base):
     # match has no proxy history (direct match).
     covered_from_block: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     covered_to_block: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Runtime bytecode keccak256 of the impl at the moment this coverage row
+    # was written. Lets the API compare against the live eth_getCode result
+    # and surface drift — catches code that changed at the same impl address
+    # (CREATE2 re-deploy, rare but real) which the UpgradeEvent-based impl
+    # history wouldn't detect. NULL when the RPC call failed at match time;
+    # absence is treated as "drift unknown", not "drift detected".
+    bytecode_keccak_at_match: Mapped[str | None] = mapped_column(String(66), nullable=True)
+    # Wall-clock time the bytecode_keccak_at_match sample was taken. Used
+    # so the UI can show "last verified N days ago" when no drift is detected.
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Source-equivalence verdict for this (audit, contract) pair. Populated
+    # during ``_apply_equivalence_http`` whenever verification runs (which is
+    # every upsert path that passes ``verify_source_equivalence=True``).
+    # Distinguishes proven-ness from various failure modes so the UI can
+    # surface *why* verification couldn't be granted rather than silently
+    # falling back to the heuristic ``direct``/``impl_era`` label.
+    # Values: see services.audits.source_equivalence.EQUIVALENCE_STATUSES.
+    equivalence_status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # Human-readable detail on the above status — e.g. a specific path that
+    # didn't match, which commit 404'd. Short string, UI puts it in a
+    # tooltip on hover.
+    equivalence_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Wall-clock time verification was last attempted. Lets a retry sweep
+    # distinguish "never tried" from "tried N seconds ago and failed
+    # transiently". Distinct from ``verified_at`` which only marks the
+    # bytecode anchor sample.
+    equivalence_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Phase C: strength kind for ``equivalence_status='proven'`` rows.
+    # One of:
+    #   'clean'              — matched a reviewed commit; fix commits, if
+    #                          any, also matched. Strongest.
+    #   'post_fix'           — matched a fix commit only. Audit's findings
+    #                          were addressed and shipped.
+    #   'pre_fix_unpatched'  — matched the reviewed commit; fix commits
+    #                          exist but deployed code doesn't match any.
+    #                          DANGER: audit's findings are still present.
+    #   'cited_only'         — matched only a 'cited'/'unclear' commit.
+    #                          Coincidental; weak signal.
+    #   'unclassified'       — matched but no classification available
+    #                          (legacy row or LLM didn't label).
+    # NULL on non-proven rows.
+    proof_kind: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -844,6 +922,22 @@ def apply_storage_migrations(target_engine=None) -> None:
         # matcher — added idempotently so existing test DBs pick them up.
         conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS reviewed_commits TEXT[]"))
         conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS source_repo VARCHAR(255)"))
+        # referenced_repos (Phase D): every github.com/<owner>/<repo> URL
+        # the PDF mentions. Fallback candidates for source-equivalence
+        # when source_repo points at the wrong repo.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS referenced_repos TEXT[]"))
+        # classified_commits (Phase C): LLM-labeled commits with roles
+        # (reviewed / fix / cited / unclear) — drives ``proof_kind``
+        # computation on coverage rows.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS classified_commits JSONB"))
+        # findings jsonb — surfaces acknowledged/mitigated issues on the
+        # current impl; Phase 3a seeds this manually, Phase 3b fills it from
+        # scope extraction.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS findings JSONB"))
+        # scope_entries jsonb — Phase F structured scope table: per-entry
+        # (name, address, commit, chain) tuples for audits whose PDFs list
+        # explicit addresses. Authoritative for the coverage matcher.
+        conn.execute(text("ALTER TABLE audit_reports ADD COLUMN IF NOT EXISTS scope_entries JSONB"))
         # audit_contract_coverage — persistent contract↔audit link. Created
         # idempotently here so long-lived test DBs (and prod) pick it up
         # without an Alembic run. Base.metadata.create_all handles fresh
@@ -884,6 +978,21 @@ def apply_storage_migrations(target_engine=None) -> None:
                 "ON audit_contract_coverage (protocol_id)"
             )
         )
+        # Bytecode anchor — runtime keccak of the impl at match time, so the
+        # API can diff against live eth_getCode and flag drift (rare but real:
+        # CREATE2 re-deploy at same address). NULL == "drift unknown", not
+        # "drift detected".
+        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS bytecode_keccak_at_match VARCHAR(66)"))
+        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ"))
+        # Source-equivalence verdict + reason + last-checked timestamp. NULL
+        # on existing rows until the next verify-enabled refresh populates
+        # them (the worker sites already pass verify_source_equivalence=True).
+        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS equivalence_status VARCHAR(40)"))
+        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS equivalence_reason TEXT"))
+        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS equivalence_checked_at TIMESTAMPTZ"))
+        # proof_kind (Phase C): strength subtype for proven rows. See the
+        # model comment for the full vocabulary.
+        conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS proof_kind VARCHAR(30)"))
         # upgrade_events.contract_id — Postgres FKs don't auto-create an index,
         # and this column is scanned on every per-impl window computation in
         # services/audits/coverage.py + contract_audit_timeline.

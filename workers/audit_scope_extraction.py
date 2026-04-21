@@ -228,9 +228,18 @@ class AuditScopeExtractionWorker(AuditRowWorker):
                 audit.scope_extracted_at = now
                 audit.scope_storage_key = sibling.scope_storage_key
                 audit.scope_contracts = list(sibling.scope_contracts or [])
-                # Same PDF → same reviewed_commits; clone from sibling.
+                # Same PDF → same reviewed_commits + referenced_repos;
+                # clone from sibling.
                 if sibling.reviewed_commits:
                     audit.reviewed_commits = list(sibling.reviewed_commits)
+                if sibling.referenced_repos:
+                    audit.referenced_repos = list(sibling.referenced_repos)
+                # Clone structured scope_entries when the sibling has them.
+                if sibling.scope_entries:
+                    audit.scope_entries = list(sibling.scope_entries)
+                # Clone classified_commits too (Phase C).
+                if sibling.classified_commits:
+                    audit.classified_commits = list(sibling.classified_commits)
                 self._maybe_backfill_date(audit, sibling.date)
                 self._refresh_coverage(session, audit_id)
                 session.commit()
@@ -252,6 +261,19 @@ class AuditScopeExtractionWorker(AuditRowWorker):
                 audit.scope_contracts = list(outcome.contracts)
                 if outcome.reviewed_commits:
                     audit.reviewed_commits = list(outcome.reviewed_commits)
+                # Phase D: always clobber — empty list is a valid state
+                # that should replace a stale prior extraction.
+                audit.referenced_repos = (
+                    list(outcome.referenced_repos) if outcome.referenced_repos else None
+                )
+                # Structured scope entries (Phase F). Always write — empty
+                # list is a valid "no scope table in this audit" state and
+                # should clobber a stale non-empty value from a prior extract.
+                audit.scope_entries = list(outcome.scope_entries) if outcome.scope_entries else None
+                # Classified commits (Phase C). Same clobbering semantic.
+                audit.classified_commits = (
+                    list(outcome.classified_commits) if outcome.classified_commits else None
+                )
                 self._maybe_backfill_date(audit, outcome.extracted_date)
                 self._refresh_coverage(session, audit_id)
             session.commit()

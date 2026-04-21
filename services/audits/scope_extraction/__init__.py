@@ -53,6 +53,12 @@ class ScopeExtractionOutcome:
     ``regex_fallback`` / ``cache_copy``). ``reviewed_commits`` carries git
     SHAs pulled from the PDF text so the source-equivalence matcher can
     prove coverage by diffing reviewed code against Etherscan source.
+
+    ``scope_entries`` (Phase F) carries structured ``{name, address,
+    commit, chain}`` tuples for audits whose scope section has an explicit
+    address column. Empty tuple for prose-only scopes. The coverage
+    matcher treats non-empty ``scope_entries`` as authoritative over the
+    flat ``contracts`` name list.
     """
 
     status: str
@@ -60,6 +66,9 @@ class ScopeExtractionOutcome:
     storage_key: str | None = None
     extracted_date: str | None = None
     reviewed_commits: tuple[str, ...] = ()
+    referenced_repos: tuple[str, ...] = ()
+    scope_entries: tuple[dict, ...] = ()
+    classified_commits: tuple[dict, ...] = ()
     error: str | None = None
     method: str = "llm"
     raw_response: str | None = field(default=None, repr=False)
@@ -106,9 +115,13 @@ def process_audit_scope(
     extracted_date = extract_date_from_pdf_text(raw_text)
     # Commits pulled from the full text so ``source_equivalence`` can later
     # cross-reference reviewed code against Etherscan-verified impl source.
-    from services.audits.source_equivalence import extract_reviewed_commits
+    # Referenced repos (Phase D) are fallback candidates for source-
+    # equivalence when ``source_repo`` misses — common when discovery
+    # recorded the auditor's publication repo instead of the protocol's.
+    from services.audits.source_equivalence import extract_referenced_repos, extract_reviewed_commits
 
     reviewed_commits = tuple(extract_reviewed_commits(raw_text))
+    referenced_repos = tuple(extract_referenced_repos(raw_text))
 
     sections = locate_scope_section(raw_text)
 
@@ -116,6 +129,8 @@ def process_audit_scope(
     raw_response: str | None = None
     model: str | None = None
     names: list[str] = []
+    scope_entries: list[dict] = []
+    classified_commits: list[dict] = []
     # Text the LLM actually saw — persisted on the artifact so debugging
     # can answer "why did the model extract what it extracted?".
     llm_input_text: str | None = None
@@ -123,7 +138,9 @@ def process_audit_scope(
     if sections:
         llm_input_text = "\n\n===\n\n".join(s.text_slice for s in sections)
         try:
-            names, raw_response, model = extract_scope_with_llm(sections, audit_title, auditor)
+            names, scope_entries, classified_commits, raw_response, model = extract_scope_with_llm(
+                sections, audit_title, auditor
+            )
         except LLMUnavailableError as exc:
             logger.warning(
                 "scope: LLM unavailable for audit %s (%s); falling back to regex",
@@ -132,6 +149,8 @@ def process_audit_scope(
             )
             combined = "\n".join(s.text_slice for s in sections)
             names = extract_contracts_regex_fallback(combined)
+            scope_entries = []
+            classified_commits = []
             method = "regex_fallback"
             raw_response = json.dumps(
                 {"_fallback": "regex", "error": str(exc)},
@@ -146,16 +165,24 @@ def process_audit_scope(
     # keep findings-page extractions out.
     if not validated:
         try:
-            cs_names, cs_response, cs_model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(
-                raw_text, audit_title, auditor
-            )
+            (
+                cs_names,
+                cs_entries,
+                cs_commits,
+                cs_response,
+                cs_model,
+                chunks_used,
+                winning_chunk,
+            ) = extract_scope_via_chunk_scan(raw_text, audit_title, auditor)
         except LLMUnavailableError as exc:
             logger.warning(
                 "scope: chunk-scan unavailable for audit %s: %s",
                 audit_report_id,
                 exc,
             )
-            cs_names, cs_response, cs_model, chunks_used, winning_chunk = (
+            cs_names, cs_entries, cs_commits, cs_response, cs_model, chunks_used, winning_chunk = (
+                [],
+                [],
                 [],
                 "",
                 None,
@@ -168,14 +195,34 @@ def process_audit_scope(
                 method = "llm_chunk_scan"
                 raw_response = cs_response
                 model = cs_model
+                scope_entries = cs_entries
+                classified_commits = cs_commits
                 if winning_chunk is not None:
                     llm_input_text = winning_chunk.text_slice
                 logger.info(
-                    "scope: audit %s recovered via chunk-scan (%d chunks, %d names)",
+                    "scope: audit %s recovered via chunk-scan (%d chunks, %d names, %d entries, %d commits)",
                     audit_report_id,
                     chunks_used,
                     len(validated),
+                    len(cs_entries),
+                    len(cs_commits),
                 )
+
+    # Hallucination filter on scope_entries: the entry's name must survive
+    # the same raw-text-substring check we apply to plain names. Drops
+    # entries whose name is a model confabulation. The address + commit
+    # fields already passed format-level validation in ``_parse_scope_entry``.
+    validated_lower = {n.lower() for n in validated}
+    scope_entries = [e for e in scope_entries if e["name"].lower() in validated_lower]
+
+    # Hallucination filter on classified_commits: the SHA (as prefix-match
+    # at 7 chars) must appear in the raw PDF text. The LLM sometimes emits
+    # SHAs it constructed from context rather than ones actually present;
+    # drop those to keep only real citations.
+    raw_text_lower = raw_text.lower()
+    classified_commits = [
+        c for c in classified_commits if c["sha"][:7] in raw_text_lower
+    ]
 
     if not validated:
         return ScopeExtractionOutcome(
@@ -190,6 +237,7 @@ def process_audit_scope(
             model=model,
             extracted_date=extracted_date,
             reviewed_commits=reviewed_commits,
+            referenced_repos=referenced_repos,
         )
 
     payload = build_artifact_payload(
@@ -199,6 +247,8 @@ def process_audit_scope(
         extracted_date=extracted_date,
         raw_response=raw_response,
         scope_section_text=llm_input_text,
+        scope_entries=scope_entries,
+        classified_commits=classified_commits,
     )
     storage_key = _store_artifact(audit_report_id, payload)
 
@@ -208,6 +258,9 @@ def process_audit_scope(
         storage_key=storage_key,
         extracted_date=extracted_date,
         reviewed_commits=reviewed_commits,
+        referenced_repos=referenced_repos,
+        scope_entries=tuple(scope_entries),
+        classified_commits=tuple(classified_commits),
         method=method,
         raw_response=raw_response,
         model=model,

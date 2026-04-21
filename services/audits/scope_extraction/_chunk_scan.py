@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Final
+from typing import Any, Final
 
 from ._errors import LLMUnavailableError
 from ._llm import extract_scope_with_llm
@@ -110,14 +110,18 @@ def _has_scope_signal(text: str, extracted_names: list[str]) -> bool:
 
 def extract_scope_via_chunk_scan(
     text: str, title: str, auditor: str
-) -> tuple[list[str], str, str, int, ScopeSection | None]:
+) -> tuple[list[str], list[dict[str, Any]], list[dict[str, Any]], str, str, int, ScopeSection | None]:
     """Walk chunks, merge accepted results.
 
-    Returns ``(names, raw_response, model, chunks_consumed, winning_chunk)``
-    where ``winning_chunk`` is the first accepted chunk (used for artifact
-    provenance). Merges across chunks rather than stopping at first hit:
-    short multi-section audits list one contract on the title page and
-    the full scope on a later page. The ``_has_scope_signal`` gate keeps
+    Returns ``(names, scope_entries, classified_commits, raw_response,
+    model, chunks_consumed, winning_chunk)``. ``winning_chunk`` is the
+    first accepted chunk (used for artifact provenance). ``scope_entries``
+    merges by ``(name_lower, address)``; ``classified_commits`` merges by
+    SHA, keeping the strongest label seen across chunks.
+
+    Merges across chunks rather than stopping at first hit: short
+    multi-section audits list one contract on the title page and the full
+    scope on a later page. The ``_has_scope_signal`` gate keeps
     findings-only chunks out. Raises ``LLMUnavailableError`` only if every
     chunk call fails.
     """
@@ -127,6 +131,11 @@ def extract_scope_via_chunk_scan(
 
     merged_names: list[str] = []
     seen: set[str] = set()
+    merged_entries: list[dict[str, Any]] = []
+    seen_entries: set[tuple[str, str]] = set()
+    # Merge classified commits across chunks, preferring stronger labels.
+    merged_commits_by_sha: dict[str, dict[str, Any]] = {}
+    label_rank = {"reviewed": 3, "fix": 2, "cited": 1, "unclear": 0}
     first_winning_chunk: ScopeSection | None = None
     first_response: str = ""
     first_model: str = ""
@@ -136,12 +145,14 @@ def extract_scope_via_chunk_scan(
 
     for idx, chunk in enumerate(chunks, start=1):
         try:
-            names, response, model = extract_scope_with_llm([chunk], title, auditor)
+            names, scope_entries, classified_commits, response, model = extract_scope_with_llm(
+                [chunk], title, auditor
+            )
         except LLMUnavailableError as exc:
             last_error = exc
             failure_count += 1
             continue
-        if not names:
+        if not names and not scope_entries and not classified_commits:
             continue
         if not _has_scope_signal(chunk.text_slice, names):
             logger.info(
@@ -154,8 +165,10 @@ def extract_scope_via_chunk_scan(
             )
             continue
         logger.info(
-            "scope: chunk-scan accepting %d name(s) from chunk %d/%d (pages %d-%d)",
+            "scope: chunk-scan accepting %d name(s) + %d entry(ies) + %d commit(s) from chunk %d/%d (pages %d-%d)",
             len(names),
+            len(scope_entries),
+            len(classified_commits),
             idx,
             len(chunks),
             chunk.start_page,
@@ -172,15 +185,29 @@ def extract_scope_via_chunk_scan(
                 continue
             seen.add(key)
             merged_names.append(n)
+        for entry in scope_entries:
+            entry_key = (entry["name"].lower(), entry["address"])
+            if entry_key in seen_entries:
+                continue
+            seen_entries.add(entry_key)
+            merged_entries.append(entry)
+        for commit_entry in classified_commits:
+            existing = merged_commits_by_sha.get(commit_entry["sha"])
+            if existing is None or label_rank[commit_entry["label"]] > label_rank[existing["label"]]:
+                merged_commits_by_sha[commit_entry["sha"]] = commit_entry
 
-    if not merged_names:
+    merged_commits = list(merged_commits_by_sha.values())
+
+    if not merged_names and not merged_entries and not merged_commits:
         if failure_count == len(chunks) and last_error is not None:
             raise LLMUnavailableError(f"chunk-scan: all {len(chunks)} chunks failed; last: {last_error}")
-        return [], "", "", len(chunks), None
+        return [], [], [], "", "", len(chunks), None
 
     logger.info(
-        "scope: chunk-scan merged %d name(s) across %d accepted chunk(s)",
+        "scope: chunk-scan merged %d name(s) + %d entry(ies) + %d commit(s) across %d accepted chunk(s)",
         len(merged_names),
+        len(merged_entries),
+        len(merged_commits),
         accepted_count,
     )
-    return merged_names, first_response, first_model, len(chunks), first_winning_chunk
+    return merged_names, merged_entries, merged_commits, first_response, first_model, len(chunks), first_winning_chunk

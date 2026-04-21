@@ -18,6 +18,8 @@ import hourglassIcon from "./assets/hourglass-empty.svg";
 import questionMarkIcon from "./assets/question-mark.svg";
 import vaultIcon from "./assets/vault.svg";
 
+import { getCoverage, getTimeline } from "./api/audits.js";
+
 const CONTROL_EFFECTS = new Set([
   "implementation_update",
   "delegatecall_execution",
@@ -637,9 +639,10 @@ const MACHINE_TABS = [
   { key: "inflows", label: "Inflows" },
   { key: "outflows", label: "Outflows" },
   { key: "balances", label: "Balances" },
+  { key: "audits", label: "Audits" },
 ];
 
-function ContractMachine({ machine, onSelectGuard, onNavigate }) {
+function ContractMachine({ machine, onSelectGuard, onNavigate, companyName }) {
   const [activeTab, setActiveTab] = useState("control");
   const usdLabel = formatUsd(machine.total_usd);
 
@@ -692,7 +695,353 @@ function ContractMachine({ machine, onSelectGuard, onNavigate }) {
       {activeTab === "balances" && (
         <BalanceTable machine={machine} />
       )}
+      {activeTab === "audits" && (
+        <AuditsPanel machine={machine} companyName={companyName} />
+      )}
     </article>
+  );
+}
+
+// Audit status → color. 'audited' is only granted by the backend when the
+// current impl has a reviewed_commit proof or an open-ended high-confidence
+// temporal match — see api.py `_current_status`. Medium/grace matches show
+// up in the coverage list but don't earn the green pill.
+const AUDIT_STATUS_META = {
+  audited: { label: "Audited", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
+  non_proxy_audited: { label: "Audited", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
+  unaudited_since_upgrade: { label: "Unaudited since upgrade", color: "#92400e", bg: "#fef3c7", border: "#fde68a" },
+  non_proxy_unaudited: { label: "No audits", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  never_audited: { label: "Never audited", color: "#991b1b", bg: "#fee2e2", border: "#fecaca" },
+};
+
+// reviewed_commit is the source-equivalence proof (Etherscan verified source
+// SHA matches the GitHub commit the audit named). Rank it above temporal
+// matches so the UI can show a 'verified' shield.
+// reviewed_address (Phase F) is the audit's scope table explicitly naming
+// this address — authoritative over name matches but weaker than a
+// byte-level source proof.
+const MATCH_TYPE_META = {
+  reviewed_commit: { label: "SHA verified", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
+  reviewed_address: { label: "📍 address pinned", color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
+  direct: { label: "name match", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  impl_era: { label: "impl-era", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+};
+
+// equivalence_status → badge. Mirrors services/audits/source_equivalence.py
+// EQUIVALENCE_STATUSES. The "proven" case is covered by MATCH_TYPE_META's
+// reviewed_commit pill (stronger signal). These describe the *reasons*
+// verification couldn't be granted.
+const EQUIVALENCE_META = {
+  proven: { label: "✓ proof", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
+  hash_mismatch: { label: "⚠ source differs", color: "#991b1b", bg: "#fee2e2", border: "#fecaca" },
+  commit_not_found_in_repo: { label: "⚠ commit missing", color: "#991b1b", bg: "#fee2e2", border: "#fecaca" },
+  candidate_path_missing: { label: "path unknown", color: "#92400e", bg: "#fef3c7", border: "#fde68a" },
+  etherscan_unverified: { label: "no verified source", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  no_reviewed_commit: { label: "no commit in PDF", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  no_source_repo: { label: "no repo recorded", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  etherscan_fetch_failed: { label: "etherscan error", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  github_fetch_failed: { label: "github error", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  not_attempted: { label: "not verified yet", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+};
+
+// proof_kind → badge (Phase C). Only rendered on rows whose
+// equivalence_status is 'proven'. Mirrors db.models.proof_kind vocabulary.
+// 'clean' is the normal green; 'pre_fix_unpatched' is the red-flag case
+// where deployed code matches the reviewed commit but a known fix was
+// never shipped.
+const PROOF_KIND_META = {
+  clean: { label: "✓ reviewed", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
+  post_fix: { label: "✓ fix deployed", color: "#065f46", bg: "#ccfbf1", border: "#99f6e4" },
+  pre_fix_unpatched: { label: "🚨 FIX NOT SHIPPED", color: "#7f1d1d", bg: "#fecaca", border: "#f87171" },
+  cited_only: { label: "? coincidental", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  unclassified: { label: "unclassified", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+};
+
+// severity label → color. Matches AuditsTab's CHIP conventions.
+const SEVERITY_META = {
+  critical: { color: "#7f1d1d", bg: "#fee2e2", border: "#fca5a5" },
+  high: { color: "#991b1b", bg: "#fee2e2", border: "#fecaca" },
+  medium: { color: "#92400e", bg: "#fef3c7", border: "#fde68a" },
+  low: { color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  info: { color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
+};
+
+// resolution status → human label. "fixed" never shows in live_findings
+// because the backend filters it out, but keep the label in case API
+// semantics change.
+const STATUS_LABELS = {
+  fixed: "fixed",
+  partially_fixed: "partially fixed",
+  acknowledged: "acknowledged",
+  mitigated: "mitigated",
+  wont_fix: "won't fix",
+};
+
+function formatAuditDate(date) {
+  if (!date) return "—";
+  const parsed = new Date(date);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+  }
+  return String(date);
+}
+
+// Small chip rendered from a ``{color, bg, border}`` meta object. Used by
+// every audit-related pill in the surface panel — match_type, confidence,
+// equivalence status, severity. Kept inline + presentational so the parent
+// components don't accumulate repeated <span className="ps-badge"> blocks.
+function MetaBadge({ meta, label, title }) {
+  return (
+    <span
+      className="ps-badge"
+      title={title || undefined}
+      style={{
+        "--badge-accent": meta.color,
+        background: meta.bg,
+        color: meta.color,
+        border: `1px solid ${meta.border}`,
+        fontSize: 10,
+      }}
+    >
+      {label ?? meta.label}
+    </span>
+  );
+}
+
+// Shared meta for the ±drift badges on an audit chip. Inlined as constants
+// so the chip renderer doesn't carry an if/else ladder of hex codes.
+const DRIFT_TRUE_META = { color: "#991b1b", bg: "#fee2e2", border: "#fecaca" };
+const DRIFT_FALSE_META = { color: "#166534", bg: "#dcfce7", border: "#bbf7d0" };
+
+function AuditsPanel({ machine, companyName }) {
+  const [timeline, setTimeline] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const contractId = machine.contract_id;
+
+  useEffect(() => {
+    if (!contractId) {
+      setTimeline(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    getTimeline(contractId)
+      .then((data) => {
+        if (cancelled) return;
+        setTimeline(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err?.message || "Failed to load audits");
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [contractId]);
+
+  if (!contractId) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">Contract not yet indexed for audit coverage.</div>
+      </section>
+    );
+  }
+  if (loading) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">Loading audits…</div>
+      </section>
+    );
+  }
+  if (error) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">Failed to load audits: {error}</div>
+      </section>
+    );
+  }
+  if (!timeline) return null;
+
+  const statusMeta = AUDIT_STATUS_META[timeline.current_status] || AUDIT_STATUS_META.non_proxy_unaudited;
+  const coverage = timeline.coverage || [];
+  const topAudits = coverage.slice(0, 5);
+
+  const handleAuditClick = (auditId) => {
+    const url = `/company/${encodeURIComponent(companyName)}/audits?audit=${encodeURIComponent(auditId)}`;
+    window.location.href = url;
+  };
+
+  return (
+    <section className="ps-principal-section">
+      <div className="ps-principal-section-hdr">Audit coverage</div>
+
+      <div style={{ marginBottom: 12 }}>
+        <MetaBadge meta={statusMeta} />
+        <span style={{ marginLeft: 8, color: "#6b7590", fontSize: 12 }}>
+          {coverage.length} audit{coverage.length === 1 ? "" : "s"}
+          {coverage.length > topAudits.length ? ` (showing ${topAudits.length} most recent)` : ""}
+        </span>
+      </div>
+
+      {topAudits.length === 0 ? (
+        <div className="ps-inspector-empty">No audits cover this contract yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {topAudits.map((a) => {
+            const matchMeta = MATCH_TYPE_META[a.match_type] || MATCH_TYPE_META.direct;
+            // drift === true means the bytecode at the impl address changed
+            // since this audit was matched. drift === null/undefined means
+            // we couldn't determine (missing keccak on either side) — show
+            // no badge rather than a misleading one.
+            const driftKnown = a.bytecode_drift === true || a.bytecode_drift === false;
+            return (
+              <button
+                key={a.audit_id}
+                onClick={() => handleAuditClick(a.audit_id)}
+                style={{
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #e2e8f0",
+                  background: "#fafafa",
+                  cursor: "pointer",
+                  font: "inherit",
+                  color: "inherit",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{a.auditor || "Unknown"}</div>
+                  <div style={{ fontSize: 11, color: "#6b7590", whiteSpace: "nowrap" }}>{formatAuditDate(a.date)}</div>
+                </div>
+                <div style={{ fontSize: 12, color: "#334155", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {a.title || ""}
+                </div>
+                <div style={{ marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  <MetaBadge meta={matchMeta} />
+                  {a.match_confidence && (
+                    <span className="ps-badge" style={{ "--badge-accent": "#6b7590", fontSize: 10 }}>
+                      {a.match_confidence}
+                    </span>
+                  )}
+                  {a.equivalence_status && a.equivalence_status !== "proven" && EQUIVALENCE_META[a.equivalence_status] && (
+                    <MetaBadge
+                      meta={EQUIVALENCE_META[a.equivalence_status]}
+                      title={a.equivalence_reason || ""}
+                    />
+                  )}
+                  {a.equivalence_status === "proven" && a.proof_kind && PROOF_KIND_META[a.proof_kind] && (
+                    <MetaBadge
+                      meta={PROOF_KIND_META[a.proof_kind]}
+                      title={
+                        a.proof_kind === "pre_fix_unpatched"
+                          ? "Audit reviewed THIS code; fix commits exist in the audit text but deployed code doesn't match any — the fix was never shipped"
+                          : a.proof_kind === "post_fix"
+                          ? "Deployed code matches a fix commit the audit referenced; the audit's findings were addressed"
+                          : a.proof_kind === "cited_only"
+                          ? "Matched a commit that the audit cited for context only (not reviewed, not a fix)"
+                          : undefined
+                      }
+                    />
+                  )}
+                  {a.bytecode_drift === true && (
+                    <MetaBadge
+                      meta={DRIFT_TRUE_META}
+                      label="⚠ code changed"
+                      title="Runtime bytecode at this impl changed since the audit was matched"
+                    />
+                  )}
+                  {a.bytecode_drift === false && (
+                    <MetaBadge
+                      meta={DRIFT_FALSE_META}
+                      label="✓ bytecode stable"
+                      title="Runtime bytecode hash matches the hash captured at audit match time"
+                    />
+                  )}
+                  {!driftKnown && a.bytecode_keccak_now && !a.bytecode_keccak_at_match && (
+                    <span
+                      className="ps-badge"
+                      title="Anchor not set — refresh coverage to stamp runtime bytecode hash"
+                      style={{
+                        "--badge-accent": "#6b7590",
+                        fontSize: 10,
+                      }}
+                    >
+                      drift unverified
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <LiveFindingsSection coverage={coverage} />
+    </section>
+  );
+}
+
+function LiveFindingsSection({ coverage }) {
+  // Collect every live finding across covering audits, tagged with its
+  // originating auditor/title so the user can see which audit raised it.
+  const entries = [];
+  for (const a of coverage) {
+    const lf = a.live_findings || [];
+    for (const f of lf) {
+      entries.push({ finding: f, audit: a });
+    }
+  }
+
+  if (entries.length === 0) return null;
+
+  // Sort: severity descending (critical first), stable within.
+  const severityRank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+  entries.sort((x, y) => {
+    const rx = severityRank[x.finding.severity] ?? 5;
+    const ry = severityRank[y.finding.severity] ?? 5;
+    return rx - ry;
+  });
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="ps-principal-section-hdr">Live findings on current code</div>
+      <div style={{ fontSize: 11, color: "#6b7590", marginBottom: 8 }}>
+        Issues that were not marked "fixed" in the audit. May still be active.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {entries.map((e, i) => {
+          const sevMeta = SEVERITY_META[e.finding.severity] || SEVERITY_META.info;
+          const statusLabel = STATUS_LABELS[e.finding.status] || e.finding.status || "?";
+          return (
+            <div
+              key={i}
+              style={{
+                padding: "6px 8px",
+                borderRadius: 5,
+                border: "1px solid #e2e8f0",
+                background: "#fff",
+              }}
+            >
+              <div style={{ display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
+                <MetaBadge meta={sevMeta} label={e.finding.severity || "info"} />
+                <span className="ps-badge" style={{ "--badge-accent": "#6b7590", fontSize: 10 }}>
+                  {statusLabel}
+                </span>
+                <span style={{ fontSize: 11, color: "#6b7590" }}>
+                  {e.audit.auditor || "Unknown"}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: "#334155", marginTop: 4 }}>
+                {e.finding.title || "(untitled)"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -1377,7 +1726,7 @@ function FocusOnNode({ address, focusKey }) {
   return null;
 }
 
-function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, onSelectMachine, principalTour, onTourGo, onTourBack }) {
+function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, highlightedAddresses, onSelectMachine, principalTour, onTourGo, onTourBack }) {
   const [initNodes, setInitNodes] = useState([]);
   const [initEdges, setInitEdges] = useState([]);
 
@@ -1411,15 +1760,27 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
       }
     }
 
+    // Audit-coverage highlight takes precedence when active: non-covered
+    // nodes dim, covered ones get a green ring so the user sees exactly
+    // which contracts an audit touched. Falls back to the connected-node
+    // dimming when no audit is selected.
+    const hiActive = highlightedAddresses && highlightedAddresses.size > 0;
+
     const foc = focusedAddress?.toLowerCase();
     setNodes(
       initNodes.map((n) => {
         const nid = n.id?.toLowerCase();
-        const dimmed = sel && !connectedNodes.has(nid);
+        const inAudit = hiActive && highlightedAddresses.has(nid);
+        const dimmed = hiActive ? !inAudit : (sel && !connectedNodes.has(nid));
         const focused = foc && nid === foc;
+        const style = dimmed
+          ? { opacity: 0.2 }
+          : inAudit
+          ? { boxShadow: "0 0 0 2px #22c55e, 0 0 12px rgba(34,197,94,0.55)", borderRadius: 6 }
+          : {};
         return {
           ...n,
-          style: dimmed ? { opacity: 0.25 } : {},
+          style,
           data: {
             ...n.data,
             selected: n.id === selectedAddress,
@@ -1434,7 +1795,10 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
       initEdges.map((e) => {
         const src = e.source?.toLowerCase();
         const tgt = e.target?.toLowerCase();
-        const related = !sel || src === sel || tgt === sel;
+        // When audit highlight is active, fade edges that touch a
+        // non-covered endpoint so the covered subgraph reads clearly.
+        const edgeInAudit = hiActive && highlightedAddresses.has(src) && highlightedAddresses.has(tgt);
+        const related = hiActive ? edgeInAudit : (!sel || src === sel || tgt === sel);
         const showLabel = sel && related;
         const caps = e.data?.capabilities || [];
         const labelText = showLabel ? (caps.join(", ") || e.data?.flowType || "") : "";
@@ -1453,7 +1817,7 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
         };
       })
     );
-  }, [initNodes, initEdges, selectedAddress, focusedAddress, onSelectMachine]);
+  }, [initNodes, initEdges, selectedAddress, focusedAddress, highlightedAddresses, onSelectMachine]);
 
   return (
     <div className="ps-canvas-wrap">
@@ -1479,6 +1843,118 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
         )}
       </ReactFlow>
     </div>
+  );
+}
+
+function SidebarTabs({ mode, onSetMode, auditCount }) {
+  return (
+    <div style={{ display: "flex", gap: 4, padding: "8px 8px 0 8px", borderBottom: "1px solid #e2e8f0" }}>
+      <button
+        onClick={() => onSetMode("detail")}
+        style={{
+          flex: 1, padding: "8px 10px", borderRadius: "6px 6px 0 0",
+          border: "1px solid #e2e8f0", borderBottom: "none",
+          background: mode === "detail" ? "#fafafa" : "transparent",
+          fontWeight: mode === "detail" ? 600 : 400,
+          cursor: "pointer", font: "inherit", color: "inherit",
+        }}
+      >
+        Detail
+      </button>
+      <button
+        onClick={() => onSetMode("audits")}
+        style={{
+          flex: 1, padding: "8px 10px", borderRadius: "6px 6px 0 0",
+          border: "1px solid #e2e8f0", borderBottom: "none",
+          background: mode === "audits" ? "#fafafa" : "transparent",
+          fontWeight: mode === "audits" ? 600 : 400,
+          cursor: "pointer", font: "inherit", color: "inherit",
+        }}
+      >
+        Audits{auditCount != null ? ` (${auditCount})` : ""}
+      </button>
+    </div>
+  );
+}
+
+function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, error }) {
+  if (loading) return <section className="ps-principal-section"><div className="ps-inspector-empty">Loading audits…</div></section>;
+  if (error) return <section className="ps-principal-section"><div className="ps-inspector-empty">Failed: {error}</div></section>;
+  if (!coverageData) return null;
+
+  // Invert: audit_id → { audit, addresses: Set<lowercase string> }
+  const byAudit = new Map();
+  for (const entry of coverageData.coverage || []) {
+    const addr = (entry.address || "").toLowerCase();
+    if (!addr) continue;
+    for (const a of entry.audits || []) {
+      const id = a.audit_id;
+      if (!byAudit.has(id)) {
+        byAudit.set(id, { audit: a, addresses: new Set() });
+      }
+      byAudit.get(id).addresses.add(addr);
+    }
+  }
+
+  // Sort audits: active first, then by date desc (nulls last), then id desc
+  const entries = [...byAudit.values()].sort((x, y) => {
+    const dx = x.audit.date || "";
+    const dy = y.audit.date || "";
+    if (dx !== dy) return dx < dy ? 1 : -1;
+    return (y.audit.audit_id || 0) - (x.audit.audit_id || 0);
+  });
+
+  return (
+    <section className="ps-principal-section">
+      <div className="ps-principal-section-hdr">All audits ({entries.length})</div>
+      <div style={{ fontSize: 11, color: "#6b7590", marginBottom: 8 }}>
+        Click an audit to highlight its covered contracts on the canvas.
+      </div>
+      {activeAuditId != null && (
+        <button
+          onClick={() => onPickAudit(null)}
+          style={{
+            marginBottom: 8, padding: "4px 10px", borderRadius: 4,
+            border: "1px solid #cbd5e1", background: "#fff",
+            cursor: "pointer", fontSize: 11, color: "inherit", font: "inherit",
+          }}
+        >
+          ✕ Clear highlight
+        </button>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {entries.map(({ audit, addresses }) => {
+          const isActive = activeAuditId === audit.audit_id;
+          return (
+            <button
+              key={audit.audit_id}
+              onClick={() => onPickAudit(isActive ? null : audit.audit_id)}
+              style={{
+                textAlign: "left",
+                padding: "8px 10px",
+                borderRadius: 6,
+                border: isActive ? "2px solid #22c55e" : "1px solid #e2e8f0",
+                background: isActive ? "#f0fdf4" : "#fff",
+                cursor: "pointer",
+                font: "inherit", color: "inherit",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{audit.auditor || "Unknown"}</div>
+                <div style={{ fontSize: 11, color: "#6b7590", whiteSpace: "nowrap" }}>{formatAuditDate(audit.date)}</div>
+              </div>
+              <div style={{ fontSize: 12, color: "#334155", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {audit.title || ""}
+              </div>
+              <div style={{ fontSize: 11, color: "#6b7590", marginTop: 4 }}>
+                covers {addresses.size} contract{addresses.size === 1 ? "" : "s"}
+                {audit.match_type ? ` · ${audit.match_type}` : ""}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -1738,6 +2214,47 @@ export default function ProtocolSurface({ companyName }) {
   const [principalTour, setPrincipalTour] = useState(null);
   const [error, setError] = useState(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
+
+  // Right sidebar mode: "detail" (machine/principal inspector) vs "audits"
+  // (flat audit list). "audits" mode keeps the list visible while the user
+  // clicks different audits and watches the canvas highlight update.
+  const [sidebarMode, setSidebarMode] = useState("detail");
+
+  // Coverage payload — one call, cached locally. Used to build the audits
+  // list + the audit_id → address-set map for highlight propagation.
+  const [coverageData, setCoverageData] = useState(null);
+  const [coverageError, setCoverageError] = useState(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
+
+  // Active audit: when non-null, its covered contracts get a green ring
+  // and everything else dims on the canvas.
+  const [activeAuditId, setActiveAuditId] = useState(null);
+
+  useEffect(() => {
+    if (!companyName) return undefined;
+    let cancelled = false;
+    setCoverageLoading(true);
+    setCoverageError(null);
+    getCoverage(companyName)
+      .then((d) => { if (!cancelled) { setCoverageData(d); setCoverageLoading(false); } })
+      .catch((e) => { if (!cancelled) { setCoverageError(e?.message || "Failed"); setCoverageLoading(false); } });
+    return () => { cancelled = true; };
+  }, [companyName]);
+
+  // Highlighted addresses for the active audit — lowercased Set so the
+  // canvas comparison is O(1). null if no audit selected.
+  const highlightedAddresses = useMemo(() => {
+    if (activeAuditId == null || !coverageData) return null;
+    const out = new Set();
+    for (const entry of coverageData.coverage || []) {
+      const addr = (entry.address || "").toLowerCase();
+      if (!addr) continue;
+      if ((entry.audits || []).some((a) => a.audit_id === activeAuditId)) {
+        out.add(addr);
+      }
+    }
+    return out;
+  }, [activeAuditId, coverageData]);
   const [enabledRoles, setEnabledRoles] = useState(() => {
     const initial = new Set();
     for (const [role, meta] of Object.entries(ROLE_META)) {
@@ -2034,6 +2551,7 @@ export default function ProtocolSurface({ companyName }) {
             selectedAddress={selectedMachine?.address}
             focusAddress={focusAddress}
             focusedAddress={focusedAddress}
+            highlightedAddresses={highlightedAddresses}
             onSelectMachine={handleSelectMachine}
             principalTour={principalTour}
             onTourGo={(nextIndex) => {
@@ -2061,8 +2579,24 @@ export default function ProtocolSurface({ companyName }) {
           />
         </ReactFlowProvider>
         <DraggableSidebar>
-          <Breadcrumbs items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
-          {selectedPrincipal && (
+          <SidebarTabs
+            mode={sidebarMode}
+            onSetMode={setSidebarMode}
+            auditCount={coverageData?.audit_count}
+          />
+          {sidebarMode === "audits" && (
+            <AuditsListPanel
+              coverageData={coverageData}
+              activeAuditId={activeAuditId}
+              onPickAudit={setActiveAuditId}
+              loading={coverageLoading}
+              error={coverageError}
+            />
+          )}
+          {sidebarMode === "detail" && (
+            <Breadcrumbs items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
+          )}
+          {sidebarMode === "detail" && selectedPrincipal && (
             <PrincipalDetail
               key={selectedPrincipal.address}
               principal={selectedPrincipal}
@@ -2071,15 +2605,16 @@ export default function ProtocolSurface({ companyName }) {
               onFocusContract={(addr) => triggerFocus(addr)}
             />
           )}
-          {selectedMachine && !selectedPrincipal && (
+          {sidebarMode === "detail" && selectedMachine && !selectedPrincipal && (
             <ContractMachine
               key={selectedMachine.address}
               machine={selectedMachine}
               onSelectGuard={setSelectedGuard}
               onNavigate={handleNavigate}
+              companyName={companyName}
             />
           )}
-          {!selectedPrincipal && <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />}
+          {sidebarMode === "detail" && !selectedPrincipal && <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />}
         </DraggableSidebar>
       </div>
     </div>
