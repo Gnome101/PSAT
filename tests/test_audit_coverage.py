@@ -1734,9 +1734,7 @@ def test_scope_entry_address_produces_reviewed_address_match(db_session, seed_pr
     addr = "0x" + "a" * 40
     c = _add_contract(db_session, protocol_id, address=addr, name="Pool")
     audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
-    audit.scope_entries = [
-        {"name": "Pool", "address": addr, "commit": "abc1234", "chain": "ethereum"}
-    ]
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": "abc1234", "chain": "ethereum"}]
     db_session.commit()
 
     matches = match_contracts_for_audit(db_session, audit.id)
@@ -1757,15 +1755,17 @@ def test_scope_entry_proxy_address_resolves_to_impl(db_session, seed_protocol):
     proxy_addr = "0x" + "b" * 40
     impl_addr = "0x" + "c" * 40
     _add_contract(
-        db_session, protocol_id, address=proxy_addr, name="WeETHProxy",
-        is_proxy=True, implementation=impl_addr,
+        db_session,
+        protocol_id,
+        address=proxy_addr,
+        name="WeETHProxy",
+        is_proxy=True,
+        implementation=impl_addr,
     )
     impl = _add_contract(db_session, protocol_id, address=impl_addr, name="WeETH")
     audit = _add_audit(db_session, protocol_id, scope=["WeETH"], date="2024-06-01")
     # Audit lists the PROXY address (user-facing), not the impl.
-    audit.scope_entries = [
-        {"name": "WeETH", "address": proxy_addr, "commit": None, "chain": None}
-    ]
+    audit.scope_entries = [{"name": "WeETH", "address": proxy_addr, "commit": None, "chain": None}]
     db_session.commit()
 
     matches = match_contracts_for_audit(db_session, audit.id)
@@ -1880,9 +1880,7 @@ def test_match_audits_for_contract_finds_address_anchored(db_session, seed_proto
     addr = "0x" + "e" * 40
     c = _add_contract(db_session, protocol_id, address=addr, name="SomeContract")
     audit = _add_audit(db_session, protocol_id, scope=[], date="2024-06-01")
-    audit.scope_entries = [
-        {"name": "OtherNameInAudit", "address": addr, "commit": "cafebab", "chain": None}
-    ]
+    audit.scope_entries = [{"name": "OtherNameInAudit", "address": addr, "commit": "cafebab", "chain": None}]
     db_session.commit()
 
     matches = match_audits_for_contract(db_session, c.id)

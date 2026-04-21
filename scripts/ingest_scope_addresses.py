@@ -121,10 +121,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    paths = [Path(p) for p in args.input] if args.input else [
-        Path("/tmp/agent1_addresses.json"),
-        Path("/tmp/agent2_addresses.json"),
-    ]
+    paths = (
+        [Path(p) for p in args.input]
+        if args.input
+        else [
+            Path("/tmp/agent1_addresses.json"),
+            Path("/tmp/agent2_addresses.json"),
+        ]
+    )
     entries = _load(paths)
 
     with SessionLocal() as session:

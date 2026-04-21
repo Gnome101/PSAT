@@ -571,9 +571,7 @@ class TestCheckAuditRowCoversContractShortCircuits:
         monkeypatch.setattr(
             source_equivalence,
             "fetch_contract_source",
-            lambda *_a, **_k: source_equivalence.EtherscanFetch(
-                source=None, status="fetch_failed", detail="no source"
-            ),
+            lambda *_a, **_k: source_equivalence.EtherscanFetch(source=None, status="fetch_failed", detail="no source"),
         )
         assert check_audit_row_covers_contract(session, 1, 2) == []
 
@@ -742,9 +740,7 @@ class TestVerifyAuditCoversImplStatuses:
         github_fetch_failed so a retry sweep knows to re-run this row."""
 
         def fake_github(repo, commit, path, *, token=None):
-            return source_equivalence.GithubHashResult(
-                sha256=None, status="http_5xx", detail=f"{path} 503"
-            )
+            return source_equivalence.GithubHashResult(sha256=None, status="http_5xx", detail=f"{path} 503")
 
         monkeypatch.setattr("services.audits.source_equivalence.fetch_github_source_hash", fake_github)
         out = source_equivalence.verify_audit_covers_impl(

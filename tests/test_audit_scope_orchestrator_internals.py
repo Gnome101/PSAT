@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -263,7 +264,8 @@ class TestClassifiedCommitFiltering:
             },
         )
         assert stored["aid"] == 7
-        assert stored["payload"]["classified_commits"] == [
+        payload = cast(dict[str, Any], stored["payload"])
+        assert payload["classified_commits"] == [
             {
                 "sha": "abc1234deadbeef",
                 "label": "reviewed",

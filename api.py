@@ -1995,9 +1995,7 @@ def _audit_brief(audit: Any, match: Any | None = None) -> dict[str, Any]:
         out["equivalence_status"] = getattr(match, "equivalence_status", None)
         out["equivalence_reason"] = getattr(match, "equivalence_reason", None)
         equivalence_checked_at = getattr(match, "equivalence_checked_at", None)
-        out["equivalence_checked_at"] = (
-            equivalence_checked_at.isoformat() if equivalence_checked_at else None
-        )
+        out["equivalence_checked_at"] = equivalence_checked_at.isoformat() if equivalence_checked_at else None
         # Phase C: proof_kind is the strength subtype of ``proven`` rows.
         # 'pre_fix_unpatched' gets special treatment in the UI as a RED
         # FLAG — the audit reviewed exactly this code AND the protocol
@@ -2265,8 +2263,7 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
             # from scope extraction. None/missing → empty list, not an error.
             findings = audit.findings or []
             brief["live_findings"] = [
-                f for f in findings
-                if isinstance(f, dict) and (f.get("status") or "").lower() != "fixed"
+                f for f in findings if isinstance(f, dict) and (f.get("status") or "").lower() != "fixed"
             ]
             coverage_out.append(brief)
         # Newest first by audit date (nulls last, id desc to break ties).
@@ -2333,10 +2330,7 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
             # Grace-medium temporal matches are intentionally NOT enough —
             # an audit 10 days before the impl went live is suggestive
             # but not proof the reviewed code is what shipped.
-            has_proven = any(
-                r.equivalence_status == "proven" and r.proof_kind != "cited_only"
-                for r in current_cov
-            )
+            has_proven = any(r.equivalence_status == "proven" and r.proof_kind != "cited_only" for r in current_cov)
             has_temporal_high = any(
                 r.match_confidence == "high"
                 and r.covered_to_block is None

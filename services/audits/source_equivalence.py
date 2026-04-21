@@ -39,16 +39,16 @@ logger = logging.getLogger(__name__)
 # with the UI badge mapping in the frontend (ProtocolSurface.jsx).
 EQUIVALENCE_STATUSES = frozenset(
     {
-        "proven",                      # ✓ files match byte-for-byte
-        "hash_mismatch",               # ✗ files fetched on both sides, content differs
-        "commit_not_found_in_repo",    # audit's commit doesn't exist in source_repo
-        "candidate_path_missing",      # commit exists; our path guess missed (may be flattened source)
-        "etherscan_unverified",        # deployed contract has no verified source
-        "etherscan_fetch_failed",      # transient — Etherscan returned 5xx / timeout
-        "github_fetch_failed",         # transient — GitHub returned 5xx / timeout
-        "no_reviewed_commit",          # audit text had no commit SHA — cannot verify
-        "no_source_repo",              # audit.source_repo is NULL — can't look it up
-        "not_attempted",               # row predates verification rollout; needs backfill
+        "proven",  # ✓ files match byte-for-byte
+        "hash_mismatch",  # ✗ files fetched on both sides, content differs
+        "commit_not_found_in_repo",  # audit's commit doesn't exist in source_repo
+        "candidate_path_missing",  # commit exists; our path guess missed (may be flattened source)
+        "etherscan_unverified",  # deployed contract has no verified source
+        "etherscan_fetch_failed",  # transient — Etherscan returned 5xx / timeout
+        "github_fetch_failed",  # transient — GitHub returned 5xx / timeout
+        "no_reviewed_commit",  # audit text had no commit SHA — cannot verify
+        "no_source_repo",  # audit.source_repo is NULL — can't look it up
+        "not_attempted",  # row predates verification rollout; needs backfill
     }
 )
 
@@ -83,11 +83,35 @@ _GITHUB_REPO_MENTION_RE = re.compile(
 # a URL like ``github.com/etherfi-protocol/issues/42`` as repo ``issues``.
 _GITHUB_NON_REPO_OWNERS = frozenset(
     {
-        "orgs", "users", "settings", "marketplace", "topics", "search",
-        "sponsors", "explore", "about", "pricing", "enterprise", "trending",
-        "collections", "events", "features", "notifications", "issues",
-        "pulls", "watching", "stars", "codespaces", "login", "join", "new",
-        "organizations", "site", "team", "contact", "customer-stories",
+        "orgs",
+        "users",
+        "settings",
+        "marketplace",
+        "topics",
+        "search",
+        "sponsors",
+        "explore",
+        "about",
+        "pricing",
+        "enterprise",
+        "trending",
+        "collections",
+        "events",
+        "features",
+        "notifications",
+        "issues",
+        "pulls",
+        "watching",
+        "stars",
+        "codespaces",
+        "login",
+        "join",
+        "new",
+        "organizations",
+        "site",
+        "team",
+        "contact",
+        "customer-stories",
     }
 )
 
@@ -384,7 +408,7 @@ class GithubHashResult:
     """Hash of a file at a specific (repo, commit, path), or a failure detail."""
 
     sha256: str | None
-    status: str   # mirrors GithubFetch.status
+    status: str  # mirrors GithubFetch.status
     detail: str
 
 
@@ -404,9 +428,7 @@ def _coerce_github_hash_result(result: Any) -> GithubHashResult:
     raise TypeError(f"unsupported github hash result type: {type(result).__name__}")
 
 
-def fetch_github_source_hash(
-    repo: str, commit: str, path: str, *, token: str | None = None
-) -> GithubHashResult:
+def fetch_github_source_hash(repo: str, commit: str, path: str, *, token: str | None = None) -> GithubHashResult:
     """Hash the file at ``github.com/<repo>/<commit>/<path>``.
 
     Returns a ``GithubHashResult``: ``sha256`` is set on ``status='ok'``,
@@ -624,9 +646,9 @@ def _verify_single_repo(
     # the first match and short-circuit; otherwise we need to summarize
     # the most diagnostic failure.
     matches: list[EquivalenceMatch] = []
-    any_commit_resolved = False      # at least one commit had *anything* resolve → not commit_not_found_overall
-    any_hash_mismatch = False        # files on both sides, content differs
-    any_transient = False            # saw a 5xx / transport err → retry later
+    any_commit_resolved = False  # at least one commit had *anything* resolve → not commit_not_found_overall
+    any_hash_mismatch = False  # files on both sides, content differs
+    any_transient = False  # saw a 5xx / transport err → retry later
     details: list[str] = []
 
     for commit in reviewed_commits:
@@ -639,9 +661,7 @@ def _verify_single_repo(
                 # Path isn't in Etherscan's bundle — not a GitHub-side failure.
                 # Record so ``candidate_path_missing`` stays accurate.
                 continue
-            gh = _coerce_github_hash_result(
-                fetch_github_source_hash(source_repo, commit, path, token=github_token)
-            )
+            gh = _coerce_github_hash_result(fetch_github_source_hash(source_repo, commit, path, token=github_token))
             if gh.status == "ok" and gh.sha256 is not None:
                 commit_hit_anything = True
                 if gh.sha256 == etherscan_hash:

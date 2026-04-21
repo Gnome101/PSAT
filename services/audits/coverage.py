@@ -450,19 +450,17 @@ def _resolve_impl_for_address(
         return row
     proxy_events = proxy_events_cache.get(row.id)
     if proxy_events is None:
-        proxy_events = (
-            list(
-                session.execute(
-                    select(UpgradeEvent)
-                    .where(UpgradeEvent.contract_id == row.id)
-                    .order_by(
-                        UpgradeEvent.block_number.asc().nullslast(),
-                        UpgradeEvent.id.asc(),
-                    )
+        proxy_events = list(
+            session.execute(
+                select(UpgradeEvent)
+                .where(UpgradeEvent.contract_id == row.id)
+                .order_by(
+                    UpgradeEvent.block_number.asc().nullslast(),
+                    UpgradeEvent.id.asc(),
                 )
-                .scalars()
-                .all()
             )
+            .scalars()
+            .all()
         )
         proxy_events_cache[row.id] = proxy_events
 
@@ -1188,8 +1186,7 @@ def _apply_equivalence_http(
                         )
                     else:
                         raise TypeError(
-                            "fetch_etherscan_source_files returned "
-                            f"{type(raw_fetch).__name__}, expected EtherscanFetch"
+                            f"fetch_etherscan_source_files returned {type(raw_fetch).__name__}, expected EtherscanFetch"
                         )
                 except Exception as exc:
                     logger.exception(
