@@ -55,11 +55,17 @@ def _insert_audit(
     text_extracted_at: datetime | None = None,
     text_error: str | None = None,
     text_worker: str | None = None,
+    text_size_bytes: int | None = None,
     scope_status: str | None = None,
     scope_started_at: datetime | None = None,
     scope_extracted_at: datetime | None = None,
     scope_error: str | None = None,
     scope_worker: str | None = None,
+    scope_contracts: list[str] | None = None,
+    reviewed_commits: list[str] | None = None,
+    referenced_repos: list[str] | None = None,
+    scope_entries: list[dict[str, object]] | None = None,
+    classified_commits: list[dict[str, object]] | None = None,
     auditor: str = "Spearbit",
     title: str = "Test Audit",
     discovered_at: datetime | None = None,
@@ -79,12 +85,18 @@ def _insert_audit(
         text_extracted_at=text_extracted_at,
         text_extraction_error=text_error,
         text_extraction_worker=text_worker,
+        text_size_bytes=text_size_bytes,
         text_storage_key=(f"audits/text/placeholder-{uuid.uuid4().hex[:8]}.txt" if text_status == "success" else None),
         scope_extraction_status=scope_status,
         scope_extraction_started_at=scope_started_at,
         scope_extracted_at=scope_extracted_at,
         scope_extraction_error=scope_error,
         scope_extraction_worker=scope_worker,
+        scope_contracts=scope_contracts,
+        reviewed_commits=reviewed_commits,
+        referenced_repos=referenced_repos,
+        scope_entries=scope_entries,
+        classified_commits=classified_commits,
     )
     if discovered_at is not None:
         ar.discovered_at = discovered_at
@@ -155,6 +167,15 @@ def test_pipeline_places_rows_in_correct_buckets(db_session, api_client, seed_pr
     assert proc["worker_id"] == "worker-a"
     assert proc["started_at"] is not None
     assert isinstance(proc["elapsed_seconds"], int) and proc["elapsed_seconds"] >= 30
+    assert proc["text_extraction_status"] == "processing"
+    assert proc["scope_extraction_status"] is None
+    assert proc["text_extracted_at"] is None
+    assert proc["text_size_bytes"] is None
+    assert proc["scope_contract_count"] == 0
+    assert proc["reviewed_commit_count"] == 0
+    assert proc["referenced_repo_count"] == 0
+    assert proc["scope_entry_count"] == 0
+    assert proc["classified_commit_count"] == 0
 
     # Failed row carries its error string so the monitor can show "why".
     failed = next(a for a in te["failed"] if a["audit_id"] == failed_tid)
@@ -291,6 +312,47 @@ def test_scope_bucket_routing(db_session, api_client, seed_protocol):
     # Failed row's error is the scope error, not the text error.
     fail = next(a for a in scope["failed"] if a["audit_id"] == failed)
     assert fail["error"] == "LLM timeout"
+
+
+def test_pipeline_item_exposes_stage_metadata(db_session, api_client, seed_protocol):
+    """Rows carry enough additive metadata for the timeline UI to explain
+    what already succeeded and what comes next."""
+    pid, _ = seed_protocol
+    now = datetime.now(timezone.utc)
+
+    processing = _insert_audit(
+        db_session,
+        pid,
+        text_status="success",
+        text_extracted_at=now - timedelta(minutes=4),
+        text_size_bytes=182_432,
+        scope_status="processing",
+        scope_started_at=now - timedelta(seconds=50),
+        scope_worker="scope-worker-c",
+        scope_contracts=["Vault", "Router"],
+        reviewed_commits=["abc1234", "def5678"],
+        referenced_repos=["owner/protocol"],
+        scope_entries=[
+            {"name": "Vault", "address": "0x1111111111111111111111111111111111111111", "chain": "ethereum"}
+        ],
+        classified_commits=[{"sha": "abc1234", "label": "reviewed", "context": "scope table"}],
+        auditor="Metadata",
+    )
+
+    r = api_client.get("/api/audits/pipeline")
+    scope_rows = {a["audit_id"]: a for a in r.json()["scope_extraction"]["processing"]}
+    item = scope_rows[processing]
+
+    assert item["worker_id"] == "scope-worker-c"
+    assert item["text_extraction_status"] == "success"
+    assert item["text_size_bytes"] == 182_432
+    assert item["text_extracted_at"] is not None
+    assert item["scope_extraction_status"] == "processing"
+    assert item["scope_contract_count"] == 2
+    assert item["reviewed_commit_count"] == 2
+    assert item["referenced_repo_count"] == 1
+    assert item["scope_entry_count"] == 1
+    assert item["classified_commit_count"] == 1
 
 
 # ---------------------------------------------------------------------------

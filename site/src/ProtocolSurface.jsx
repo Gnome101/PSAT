@@ -19,6 +19,19 @@ import questionMarkIcon from "./assets/question-mark.svg";
 import vaultIcon from "./assets/vault.svg";
 
 import { getCoverage, getTimeline } from "./api/audits.js";
+import {
+  AUDIT_STATUS_META,
+  DRIFT_FALSE_META,
+  DRIFT_TRUE_META,
+  EQUIVALENCE_META,
+  formatAuditDate,
+  MATCH_TYPE_META,
+  MetaBadge,
+  proofKindTitle,
+  PROOF_KIND_META,
+  SEVERITY_META,
+  STATUS_LABELS,
+} from "./auditUi.jsx";
 
 const CONTROL_EFFECTS = new Set([
   "implementation_update",
@@ -702,117 +715,6 @@ function ContractMachine({ machine, onSelectGuard, onNavigate, companyName }) {
   );
 }
 
-// Audit status → color. 'audited' is only granted by the backend when the
-// current impl has a reviewed_commit proof or an open-ended high-confidence
-// temporal match — see api.py `_current_status`. Medium/grace matches show
-// up in the coverage list but don't earn the green pill.
-const AUDIT_STATUS_META = {
-  audited: { label: "Audited", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
-  non_proxy_audited: { label: "Audited", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
-  unaudited_since_upgrade: { label: "Unaudited since upgrade", color: "#92400e", bg: "#fef3c7", border: "#fde68a" },
-  non_proxy_unaudited: { label: "No audits", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  never_audited: { label: "Never audited", color: "#991b1b", bg: "#fee2e2", border: "#fecaca" },
-};
-
-// reviewed_commit is the source-equivalence proof (Etherscan verified source
-// SHA matches the GitHub commit the audit named). Rank it above temporal
-// matches so the UI can show a 'verified' shield.
-// reviewed_address (Phase F) is the audit's scope table explicitly naming
-// this address — authoritative over name matches but weaker than a
-// byte-level source proof.
-const MATCH_TYPE_META = {
-  reviewed_commit: { label: "SHA verified", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
-  reviewed_address: { label: "📍 address pinned", color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
-  direct: { label: "name match", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  impl_era: { label: "impl-era", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-};
-
-// equivalence_status → badge. Mirrors services/audits/source_equivalence.py
-// EQUIVALENCE_STATUSES. The "proven" case is covered by MATCH_TYPE_META's
-// reviewed_commit pill (stronger signal). These describe the *reasons*
-// verification couldn't be granted.
-const EQUIVALENCE_META = {
-  proven: { label: "✓ proof", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
-  hash_mismatch: { label: "⚠ source differs", color: "#991b1b", bg: "#fee2e2", border: "#fecaca" },
-  commit_not_found_in_repo: { label: "⚠ commit missing", color: "#991b1b", bg: "#fee2e2", border: "#fecaca" },
-  candidate_path_missing: { label: "path unknown", color: "#92400e", bg: "#fef3c7", border: "#fde68a" },
-  etherscan_unverified: { label: "no verified source", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  no_reviewed_commit: { label: "no commit in PDF", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  no_source_repo: { label: "no repo recorded", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  etherscan_fetch_failed: { label: "etherscan error", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  github_fetch_failed: { label: "github error", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  not_attempted: { label: "not verified yet", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-};
-
-// proof_kind → badge (Phase C). Only rendered on rows whose
-// equivalence_status is 'proven'. Mirrors db.models.proof_kind vocabulary.
-// 'clean' is the normal green; 'pre_fix_unpatched' is the red-flag case
-// where deployed code matches the reviewed commit but a known fix was
-// never shipped.
-const PROOF_KIND_META = {
-  clean: { label: "✓ reviewed", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
-  post_fix: { label: "✓ fix deployed", color: "#065f46", bg: "#ccfbf1", border: "#99f6e4" },
-  pre_fix_unpatched: { label: "🚨 FIX NOT SHIPPED", color: "#7f1d1d", bg: "#fecaca", border: "#f87171" },
-  cited_only: { label: "? coincidental", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  unclassified: { label: "unclassified", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-};
-
-// severity label → color. Matches AuditsTab's CHIP conventions.
-const SEVERITY_META = {
-  critical: { color: "#7f1d1d", bg: "#fee2e2", border: "#fca5a5" },
-  high: { color: "#991b1b", bg: "#fee2e2", border: "#fecaca" },
-  medium: { color: "#92400e", bg: "#fef3c7", border: "#fde68a" },
-  low: { color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  info: { color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
-};
-
-// resolution status → human label. "fixed" never shows in live_findings
-// because the backend filters it out, but keep the label in case API
-// semantics change.
-const STATUS_LABELS = {
-  fixed: "fixed",
-  partially_fixed: "partially fixed",
-  acknowledged: "acknowledged",
-  mitigated: "mitigated",
-  wont_fix: "won't fix",
-};
-
-function formatAuditDate(date) {
-  if (!date) return "—";
-  const parsed = new Date(date);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
-  }
-  return String(date);
-}
-
-// Small chip rendered from a ``{color, bg, border}`` meta object. Used by
-// every audit-related pill in the surface panel — match_type, confidence,
-// equivalence status, severity. Kept inline + presentational so the parent
-// components don't accumulate repeated <span className="ps-badge"> blocks.
-function MetaBadge({ meta, label, title }) {
-  return (
-    <span
-      className="ps-badge"
-      title={title || undefined}
-      style={{
-        "--badge-accent": meta.color,
-        background: meta.bg,
-        color: meta.color,
-        border: `1px solid ${meta.border}`,
-        fontSize: 10,
-      }}
-    >
-      {label ?? meta.label}
-    </span>
-  );
-}
-
-// Shared meta for the ±drift badges on an audit chip. Inlined as constants
-// so the chip renderer doesn't carry an if/else ladder of hex codes.
-const DRIFT_TRUE_META = { color: "#991b1b", bg: "#fee2e2", border: "#fecaca" };
-const DRIFT_FALSE_META = { color: "#166534", bg: "#dcfce7", border: "#bbf7d0" };
-
 function AuditsPanel({ machine, companyName }) {
   const [timeline, setTimeline] = useState(null);
   const [error, setError] = useState(null);
@@ -935,15 +837,7 @@ function AuditsPanel({ machine, companyName }) {
                   {a.equivalence_status === "proven" && a.proof_kind && PROOF_KIND_META[a.proof_kind] && (
                     <MetaBadge
                       meta={PROOF_KIND_META[a.proof_kind]}
-                      title={
-                        a.proof_kind === "pre_fix_unpatched"
-                          ? "Audit reviewed THIS code; fix commits exist in the audit text but deployed code doesn't match any — the fix was never shipped"
-                          : a.proof_kind === "post_fix"
-                          ? "Deployed code matches a fix commit the audit referenced; the audit's findings were addressed"
-                          : a.proof_kind === "cited_only"
-                          ? "Matched a commit that the audit cited for context only (not reviewed, not a fix)"
-                          : undefined
-                      }
+                      title={proofKindTitle(a.proof_kind)}
                     />
                   )}
                   {a.bytecode_drift === true && (
