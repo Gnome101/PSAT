@@ -483,6 +483,10 @@ def test_full_data_flow_unified_through_graph_and_upgrade_history(monkeypatch, t
     assert any(e["op"] == "STATIC_REF" and e["to"] == f"addr:{DEP_B}" for e in viz["edges"])
 
     # -- upgrade history (mock Etherscan boundary) --
+    # Upgrade history only runs for the target. DEP_A is a dependency proxy
+    # and will get its own upgrade_history when it's analyzed as its own
+    # target in a later job, so it should NOT appear here even though it's
+    # classified as a proxy.
     monkeypatch.setattr("services.discovery.upgrade_history._fetch_logs_etherscan", lambda _a, _t, from_block=0: [])
     from utils import etherscan
 
@@ -490,8 +494,9 @@ def test_full_data_flow_unified_through_graph_and_upgrade_history(monkeypatch, t
 
     deps_path = tmp_path / "dependencies.json"
     uh = build_upgrade_history(deps_path)
-    assert DEP_A in uh["proxies"]
-    assert uh["proxies"][DEP_A]["current_implementation"] == IMPL
+    assert DEP_A not in uh["proxies"]
+    assert uh["proxies"] == {}
+    assert uh["total_upgrades"] == 0
 
 
 # ===================================================================

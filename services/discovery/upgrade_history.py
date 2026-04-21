@@ -340,9 +340,16 @@ def _enrich_implementations(implementations: list[dict], known_names: dict[str, 
 def _extract_proxies_from_dependencies(
     dependencies_path: Path,
 ) -> tuple[str, dict[str, tuple[str, str | None]], dict[str, str]]:
-    """Read dependencies.json and extract proxy addresses with their metadata.
+    """Read dependencies.json and extract proxy metadata for the TARGET only.
+
+    Dependency proxies are intentionally ignored — each dependency gets its
+    own analysis job later, and the upgrade history for that dependency is
+    built when it's the target of its own run. Processing dependency proxies
+    here would duplicate work and conflate unrelated contracts' histories.
 
     Returns (target_address, {proxy_addr: (proxy_type, current_impl)}, {addr: name}).
+    The proxy_meta dict contains at most one entry — the target itself, if
+    it's classified as a proxy.
     """
     deps = json.loads(dependencies_path.read_text())
     target = normalize_address(deps["address"])
@@ -350,7 +357,7 @@ def _extract_proxies_from_dependencies(
     proxy_meta: dict[str, tuple[str, str | None]] = {}
     known_names: dict[str, str] = {}
 
-    # Check if the target contract itself is a proxy
+    # Only the target contract's upgrade history is built here.
     target_cls = deps.get("target_classification", {})
     if target_cls.get("type") == "proxy":
         proxy_type = target_cls.get("proxy_type", "unknown")
@@ -363,21 +370,11 @@ def _extract_proxies_from_dependencies(
             current_impl = None
         proxy_meta[target] = (proxy_type, current_impl)
 
-    # Collect known names and proxy metadata from dependencies.
+    # Still harvest known names from dependencies so historical impl
+    # enrichment can reuse them without extra Etherscan calls.
     for addr, info in deps.get("dependencies", {}).items():
         if info.get("contract_name"):
             known_names[normalize_address(addr)] = info["contract_name"]
-        # Also extract proxies from the dependencies dict
-        if info.get("type") == "proxy":
-            dep_proxy_type = info.get("proxy_type", "unknown")
-            dep_impl = info.get("implementation")
-            if isinstance(dep_impl, dict):
-                dep_current_impl = dep_impl.get("address")
-            elif isinstance(dep_impl, str):
-                dep_current_impl = dep_impl
-            else:
-                dep_current_impl = None
-            proxy_meta[normalize_address(addr)] = (dep_proxy_type, dep_current_impl)
         impl = info.get("implementation")
         if isinstance(impl, dict) and impl.get("contract_name"):
             known_names[normalize_address(impl["address"])] = impl["contract_name"]
