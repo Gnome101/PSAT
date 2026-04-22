@@ -1,8 +1,7 @@
 """
 Callable entry point for DApp crawling.
 
-Extracts the core logic from the CLI main.py into an importable function
-that the PSAT worker can call directly.
+Importable function used by ``workers.dapp_crawl_worker``.
 """
 
 from __future__ import annotations

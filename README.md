@@ -17,20 +17,11 @@ The codebase now lives under the split service packages in `services/`.
 
 ## Main Outputs
 
-Each run is written under `contracts/` and typically includes:
-
-- `contract_analysis.json`
-- `control_tracking_plan.json`
-- `control_snapshot.json`
-- `resolved_control_graph.json`
-- `effective_permissions.json`
-- `principal_labels.json`
-- `analysis_report.txt`
-
-Some contracts also produce:
-
-- `policy_state.json`
-- `policy_event_history.jsonl`
+Pipeline results are written to Postgres (contract, summary, permission,
+graph, and upgrade tables) with artifact bodies stored in object storage
+(MinIO locally, Fly Tigris in prod). Scaffolded source trees are staged
+under `contracts/<name>/` while a job is running so that Slither has
+files on disk, but the DB is the authoritative store.
 
 ## Local Development
 
@@ -52,7 +43,6 @@ Common env vars:
 - `ETH_RPC` — Ethereum JSON-RPC endpoint
 - `ENVIO_API_TOKEN` — for HyperSync policy backfill
 - `DATABASE_URL` — PostgreSQL connection string
-- `NVIDIA_API_KEY`
 - `TAVILY_API_KEY`
 - `OPEN_ROUTER_KEY`
 
@@ -114,42 +104,22 @@ Tabs:
 - `graph`
 - `raw`
 
-## Running The Pipeline Manually
+## Running The Pipeline
 
-The CLI entrypoint is:
+Submit an address via the API (`POST /api/analyze` with `{"address": "0x..."}`)
+or a protocol via `POST /api/protocols/{name}/discover`. The API enqueues
+a job in Postgres; the worker pool (see `start_workers.sh`) advances it
+through the stages defined in `db.models.JobStage`:
 
-```bash
-uv run python main.py --help
-```
+1. `discovery` — fetch verified source, scaffold Foundry project, seed dependency graph
+2. `static` — Slither + `contract_analysis.json` structured analysis
+3. `resolution` — `control_tracking_plan.json`, `control_snapshot.json`, `resolved_control_graph.json`
+4. `policy` — HyperSync policy backfill, `effective_permissions.json`, `principal_labels.json`
+5. `coverage` — link contracts to their audit reports
+6. `done`
 
-Typical run:
-
-```bash
-uv run python main.py 0x08c6F91e2B681FaF5e17227F2a44C307b3C1364C --name BoringVault_08c6F91e --no-llm --no-deps
-```
-
-Then build the live control artifacts:
-
-```bash
-uv run python services/resolution/tracking.py contracts/BoringVault_08c6F91e/control_tracking_plan.json --rpc https://ethereum-rpc.publicnode.com --snapshot-out contracts/BoringVault_08c6F91e/control_snapshot.json --changes-out contracts/BoringVault_08c6F91e/control_change_events.jsonl --once
-```
-
-## Demo Site Flow
-
-The FastAPI demo runner does this for a submitted address:
-
-1. fetches verified source
-2. scaffolds a local project under `contracts/<run_name>`
-3. runs Slither/static analysis
-4. builds `contract_analysis.json`
-5. builds `control_tracking_plan.json`
-6. resolves `control_snapshot.json`
-7. builds `resolved_control_graph.json`
-8. optionally backfills authority policy via HyperSync
-9. writes `effective_permissions.json`
-10. writes `principal_labels.json`
-
-The implementation is in `services/demo/runner.py`.
+The unified protocol monitor (`workers.protocol_monitor`) runs separately
+and drives live upgrade / event / TVL tracking.
 
 ## Docker
 
@@ -160,23 +130,6 @@ docker compose up --build api site
 ```
 
 See `docs/docker-backend.md`.
-
-## Examples
-
-Real generated frontend artifacts are copied into `examples/`.
-
-Each example contains the same JSON files the site reads:
-
-- `contract_analysis.json`
-- `control_snapshot.json`
-- `effective_permissions.json`
-- `principal_labels.json`
-- `resolved_control_graph.json`
-
-Current examples:
-
-- `examples/boringvault_08c6f91e`
-- `examples/morpho_bbbbbbbb`
 
 ## Tests
 

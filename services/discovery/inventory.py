@@ -387,11 +387,8 @@ def search_protocol_inventory(
     # pipeline runs the single authoritative ranking in the selection
     # stage (see ``services/discovery/ranking.rank_contract_rows``),
     # which sees contracts from every source — inventory, DApp crawl,
-    # DefiLlama — on equal footing. Callers outside that pipeline
-    # (``main.py --discover-inventory``, ``services/demo/runner``) can
-    # call ``enrich_with_activity`` themselves if they want ranked
-    # output; doing it here would re-rank inventory contracts the
-    # selection stage is about to rank again.
+    # DefiLlama — on equal footing. Doing it here would re-rank
+    # inventory contracts the selection stage is about to rank again.
 
     # Group multi-chain deployments of the same contract.
     contracts = _group_multi_deployments(contracts)

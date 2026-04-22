@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Build a visualization-ready dependency graph from pipeline outputs.
 
-Reads the unified ``dependencies.json`` produced by ``_build_unified_deps()``
-in ``main.py`` and converts it into a graph structure suitable for the
-frontend visualization layer.
+Reads the unified ``dependencies.json`` produced by
+``services.discovery.unified_dependencies.build_unified_dependencies`` and
+converts it into a graph structure suitable for the frontend visualization
+layer.
 
 Output: ``dependency_graph_viz.json`` written to the contract directory.
 """

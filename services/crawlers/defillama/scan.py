@@ -1,8 +1,7 @@
 """
 Callable entry point for DefiLlama adapter scanning.
 
-Extracts the core logic from the CLI main.py into importable functions
-that the PSAT worker can call directly.
+Importable functions used by ``workers.defillama_worker``.
 """
 
 from __future__ import annotations
