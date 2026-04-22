@@ -1,4 +1,7 @@
 #!/bin/bash
+# `workers` process group: queue consumers only. Scaled as a group via
+# `fly scale count --process-group workers N`.
+# dapp_crawl_worker lives in `browser`; protocol_monitor in `monitor`.
 set -e
 
 cd "$(dirname "$0")"
@@ -46,8 +49,6 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.coverage_worker &
 PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.dapp_crawl_worker &
-PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.defillama_worker &
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.selection_worker &
@@ -56,12 +57,8 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.audit_scope_extraction &
 PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.protocol_monitor &
-PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.protocol_monitor --poll &
-PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.protocol_monitor --tvl &
-PIDS+=($!)
 
 echo "All workers started: ${PIDS[*]}"
-wait "${PIDS[@]}"
+# Exit on first death — Fly restarts the machine so every worker
+# relaunches. Silent-dead-worker is worse than a 30s restart.
+wait -n

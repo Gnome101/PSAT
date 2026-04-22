@@ -13,14 +13,30 @@ kill_timeout = 30
   PORT = "8000"
   PYTHONUNBUFFERED = "1"
 
+# One-shot schema migration in a temporary machine. Runs once per
+# deploy, before any long-lived machine boots — so the four process
+# groups don't race on the enum AccessExclusiveLock during rolling
+# deploys.
+[deploy]
+  release_command = "uv run --no-sync python -c 'from db.models import create_tables; create_tables()'"
+
+# Each group scales independently. `fly scale count --process-group <name> N`.
+# monitor runs chain-scan singletons — DO NOT scale above 1.
+[processes]
+  web     = "./start_web.sh"
+  workers = "./start_workers.sh"
+  browser = "./start_browser.sh"
+  monitor = "./start_monitor.sh"
+
+# HTTP routing + health checks only apply to the API group.
 [http_service]
   internal_port = 8000
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  # Keep >=1 machine alive so background workers survive idle periods.
-  # Auto-stop is moot while min=1; it only kicks in if we scale out later.
+  # Keep >=1 web machine so cold-starts don't slow the first request.
   min_machines_running = 1
+  processes = ["web"]
 
   [http_service.concurrency]
     type = "connections"
@@ -34,6 +50,25 @@ kill_timeout = 30
     timeout = "5s"
     grace_period = "60s"
 
+# Per-group VM sizing. Tune with `fly scale vm <size> --process-group <name>`.
+
 [[vm]]
+  processes = ["web"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[[vm]]
+  processes = ["workers"]
   size = "shared-cpu-2x"
-  memory = "1gb"
+  memory = "2gb"
+
+# Playwright Chromium is RAM-heavy; give it its own headroom.
+[[vm]]
+  processes = ["browser"]
+  size = "shared-cpu-2x"
+  memory = "2gb"
+
+[[vm]]
+  processes = ["monitor"]
+  size = "shared-cpu-1x"
+  memory = "512mb"
