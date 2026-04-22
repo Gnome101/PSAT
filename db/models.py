@@ -752,7 +752,15 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=2,
+    max_overflow=3,
+    # psycopg2 defaults connect_timeout to infinity — would block every
+    # session acquisition during a Neon cold-start.
+    connect_args={"connect_timeout": 10},
+)
 SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
 
 
@@ -770,6 +778,11 @@ def apply_storage_migrations(target_engine=None) -> None:
     # Postgres, so run it on a dedicated AUTOCOMMIT connection. ``IF NOT
     # EXISTS`` keeps it idempotent across restarts and test-DB reuse.
     with target.connect().execution_options(isolation_level="AUTOCOMMIT") as ac_conn:
+        # Fail fast instead of waiting forever for the enum's
+        # AccessExclusiveLock held by the draining machine during a
+        # rolling deploy.
+        ac_conn.execute(text("SET lock_timeout = '10s'"))
+        ac_conn.execute(text("SET statement_timeout = '30s'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'coverage' BEFORE 'done'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'selection' BEFORE 'static'"))
         # Contracts.discovery_source → discovery_sources (array): writers

@@ -1,7 +1,10 @@
 app = "psat"
 primary_region = "iad"
 kill_signal = "SIGTERM"
-kill_timeout = 300
+# Slither/Playwright subprocesses don't honor SIGTERM, so a longer
+# grace period just delays deploys. reclaim_stuck_jobs picks up
+# interrupted work after SIGKILL.
+kill_timeout = 30
 
 [build]
   dockerfile = "Dockerfile"
