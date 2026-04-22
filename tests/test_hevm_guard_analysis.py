@@ -338,13 +338,16 @@ def test_prove_role_and_target_role_membership_branches(monkeypatch):
     monkeypatch.setattr(hevm.tempfile, "mkdtemp", lambda prefix: "/tmp/psat_hevm_role_helper_test")
     monkeypatch.setattr(hevm.shutil, "rmtree", lambda *_args, **_kwargs: None)
 
-    assert hevm._prove_role_helper(
-        authority_address="0x1111111111111111111111111111111111111111",
-        helper_name="z",
-        members=[],
-        rpc_url="https://rpc.example",
-        hevm_bin=Path("/tmp/hevm"),
-    )["reason"] == "no_role_members"
+    assert (
+        hevm._prove_role_helper(
+            authority_address="0x1111111111111111111111111111111111111111",
+            helper_name="z",
+            members=[],
+            rpc_url="https://rpc.example",
+            hevm_bin=Path("/tmp/hevm"),
+        )["reason"]
+        == "no_role_members"
+    )
 
     outputs = [
         subprocess.CompletedProcess(["forge"], 0, stdout="build ok", stderr=""),
@@ -365,13 +368,16 @@ def test_prove_role_and_target_role_membership_branches(monkeypatch):
     )
     assert proved["status"] == "proved"
 
-    assert hevm._prove_target_role_membership(
-        target_address="0x1111111111111111111111111111111111111111",
-        function_signature="upgradeTo(address)",
-        members=["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
-        rpc_url="https://rpc.example",
-        hevm_bin=Path("/tmp/hevm"),
-    )["reason"] == "non_zero_arg_function_unsupported"
+    assert (
+        hevm._prove_target_role_membership(
+            target_address="0x1111111111111111111111111111111111111111",
+            function_signature="upgradeTo(address)",
+            members=["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            rpc_url="https://rpc.example",
+            hevm_bin=Path("/tmp/hevm"),
+        )["reason"]
+        == "non_zero_arg_function_unsupported"
+    )
 
     outputs = [
         subprocess.CompletedProcess(["forge"], 0, stdout="build ok", stderr=""),
