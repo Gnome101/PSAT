@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -29,7 +30,7 @@ from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.defillama")
 
-DEFAULT_REPO_PATH = Path(__file__).resolve().parents[1] / "repo" / "DefiLlama-Adapters"
+DEFAULT_REPO_PATH = Path(tempfile.gettempdir()) / "defillama-adapters"
 REPO_PATH = Path(os.getenv("DEFILLAMA_REPO_PATH", str(DEFAULT_REPO_PATH)))
 
 

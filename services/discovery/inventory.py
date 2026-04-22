@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Orchestrator for protocol contract inventory discovery.
 
 Given a company/protocol name or domain, this module:
@@ -10,20 +9,12 @@ Given a company/protocol name or domain, this module:
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
 from collections import Counter, defaultdict
-from pathlib import Path
 from typing import Any
 
-_ROOT = Path(__file__).resolve().parents[2]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from .chain_resolver import resolve_unknown_chains  # noqa: E402
-from .deployer import expand_from_deployers  # noqa: E402
-from .inventory_domain import (  # noqa: E402
+from .chain_resolver import resolve_unknown_chains
+from .deployer import expand_from_deployers
+from .inventory_domain import (
     CHAIN_SORT_ORDER,
     _debug_log,
     _discover_contract_inventory_pages,
@@ -32,8 +23,8 @@ from .inventory_domain import (  # noqa: E402
     _maybe_domain,
     _tavily_search,
 )
-from .inventory_extract import extract_inventory_entries_from_pages  # noqa: E402
-from .ranking import score_inventory_evidence  # noqa: E402
+from .inventory_extract import extract_inventory_entries_from_pages
+from .ranking import score_inventory_evidence
 
 
 def _collect_source_urls(evidence: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
@@ -522,29 +513,3 @@ def merge_inventory(prev: dict, new: dict) -> dict:
         result["sources"] = new_sources or prev_sources
 
     return result
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Discover protocol contract inventories")
-    parser.add_argument("company", help="Company, protocol name, or official domain")
-    parser.add_argument("--chain", default=None, help="Optional chain filter")
-    parser.add_argument("--limit", type=int, default=500, help="Max contracts to return")
-    parser.add_argument("--max-queries", type=int, default=4, help="Tavily query cap (default: 4)")
-    parser.add_argument("--debug", action="store_true", help="Print debug logs to stderr")
-    args = parser.parse_args()
-
-    try:
-        result = search_protocol_inventory(
-            args.company,
-            chain=args.chain,
-            limit=args.limit,
-            max_queries=args.max_queries,
-            debug=args.debug,
-        )
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
-    print(json.dumps(result, indent=2))
-
-
-if __name__ == "__main__":
-    main()

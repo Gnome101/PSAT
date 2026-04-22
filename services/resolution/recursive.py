@@ -23,15 +23,9 @@ from .tracking import (
     build_control_snapshot,
     classify_resolved_address,
 )
-from .tracking import (
-    load_control_tracking_plan as _load_control_tracking_plan,  # kept for standalone callers
-)
 from .tracking_plan import build_control_tracking_plan
 
 logger = logging.getLogger(__name__)
-
-# Silences unused-import warning for the re-export above without changing behavior.
-_ = _load_control_tracking_plan
 
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
 DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))

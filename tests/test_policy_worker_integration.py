@@ -150,6 +150,88 @@ class TestResolveAuthorityWithSnapshot:
         assert result["principal_resolution"]["status"] == "missing_policy_state"
 
 
+class TestResolveAuthorityCachedPolicyState:
+    """Authority bundle declares policy_tracking and a cached policy_state exists — reuse it."""
+
+    def test_returns_cached_policy_state_without_backfill(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = PolicyWorker()
+        session = MagicMock()
+        job = _job()
+
+        snapshot = _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}})
+        graph = _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {"data_key": f"recursive:{AUTH_ADDRESS}"}}])
+        nested = cast(Any, {AUTH_ADDRESS: _authority_bundle(policy_tracking=True)})
+
+        cached_policy_state = {"schema_version": "0.1", "event_count": 7, "user_roles": []}
+
+        monkeypatch.setattr(
+            "workers.policy_worker.get_artifact",
+            lambda _session, _job_id, _name: cached_policy_state,
+        )
+        # If the backfill path is (incorrectly) taken, force a loud failure.
+        monkeypatch.setattr(
+            "workers.policy_worker.run_hypersync_policy_backfill",
+            lambda *_a, **_kw: pytest.fail("backfill should not run when cached policy_state exists"),
+        )
+
+        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, nested)
+
+        assert result["policy_state"] is cached_policy_state
+        assert result["authority_snapshot"] == nested[AUTH_ADDRESS]["snapshot"]
+        assert result["principal_resolution"]["status"] == "complete"
+        assert "Existing" in result["principal_resolution"]["reason"]
+
+
+class TestResolveAuthorityHypersyncBackfill:
+    """Authority has policy_tracking, no cached state, ENVIO_API_TOKEN set — run backfill + persist."""
+
+    def test_runs_backfill_and_persists_events_and_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = PolicyWorker()
+        session = MagicMock()
+        job = _job()
+
+        snapshot = _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}})
+        graph = _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {"data_key": f"recursive:{AUTH_ADDRESS}"}}])
+        nested = cast(Any, {AUTH_ADDRESS: _authority_bundle(policy_tracking=True)})
+
+        # No cached policy_state — forces the backfill path.
+        monkeypatch.setattr("workers.policy_worker.get_artifact", lambda *_a, **_kw: None)
+        monkeypatch.setenv("ENVIO_API_TOKEN", "test-token")
+
+        backfill_events = [{"schema_version": "0.1", "block_number": 42}]
+        backfill_state = {"schema_version": "0.1", "event_count": 1, "source": "hypersync"}
+        backfill_calls: list[Any] = []
+
+        def fake_backfill(plan: Any, **_kw: Any) -> tuple[list, dict]:
+            backfill_calls.append(plan)
+            return backfill_events, backfill_state
+
+        monkeypatch.setattr("workers.policy_worker.run_hypersync_policy_backfill", fake_backfill)
+
+        store_calls: list[tuple[str, Any]] = []
+
+        def fake_store(_session: Any, _job_id: Any, name: str, data: Any = None, text_data: Any = None) -> None:
+            store_calls.append((name, data))
+
+        monkeypatch.setattr("workers.policy_worker.store_artifact", fake_store)
+
+        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, nested)
+
+        # Backfill ran exactly once with the authority's tracking plan.
+        assert len(backfill_calls) == 1
+        assert backfill_calls[0] == nested[AUTH_ADDRESS]["tracking_plan"]
+
+        # Both events and state were persisted under the authority's address-scoped keys.
+        stored = dict(store_calls)
+        assert stored[f"recursive.{AUTH_ADDRESS}.policy_event_history"] == backfill_events
+        assert stored[f"recursive.{AUTH_ADDRESS}.policy_state"] == backfill_state
+
+        assert result["policy_state"] is backfill_state
+        assert result["authority_snapshot"] == nested[AUTH_ADDRESS]["snapshot"]
+        assert result["principal_resolution"]["status"] == "complete"
+        assert "backfill" in result["principal_resolution"]["reason"].lower()
+
+
 # ---------------------------------------------------------------------------
 # process() integration tests
 # ---------------------------------------------------------------------------

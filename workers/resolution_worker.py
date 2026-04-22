@@ -21,27 +21,12 @@ from db.models import (
     JobStage,
     UpgradeEvent,
 )
+from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
 from workers.base import DEBUG_TIMING, BaseWorker
-
-RECURSIVE_ARTIFACT_KINDS: tuple[str, ...] = ("analysis", "tracking_plan", "snapshot", "effective_permissions")
-
-
-def _recursive_artifact_key(address: str, kind: str) -> str:
-    return f"recursive:{address.lower()}:{kind}"
-
-
-def _store_nested_artifacts(session: Session, job_id, nested: dict[str, LoadedArtifacts]) -> None:
-    for address, bundle in nested.items():
-        for kind in RECURSIVE_ARTIFACT_KINDS:
-            payload = bundle.get(kind)
-            if payload is None:
-                continue
-            store_artifact(session, job_id, _recursive_artifact_key(address, kind), data=payload)
-
 
 logger = logging.getLogger("workers.resolution_worker")
 
@@ -157,7 +142,7 @@ class ResolutionWorker(BaseWorker):
         if resolved_graph:
             # Persist each nested contract's artifacts so the policy stage can
             # read them back by address (no local filesystem).
-            _store_nested_artifacts(session, job.id, nested_artifacts)
+            store_nested_artifacts(session, job.id, nested_artifacts)
             # Keep as artifact — policy stage reads it as JSON
             store_artifact(session, job.id, "resolved_control_graph", data=resolved_graph)
             logger.info(

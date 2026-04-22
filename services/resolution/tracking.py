@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 from eth_abi.abi import decode
@@ -21,10 +19,6 @@ from utils.rpc import (
 )
 
 from .controller_adapters import expand_role_identifier_principals, type_authority_contract
-
-
-def load_control_tracking_plan(path: Path) -> ControlTrackingPlan:
-    return json.loads(path.read_text())
 
 
 def _decode_controller_value(raw_value: Any, controller_kind: str) -> str:

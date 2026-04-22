@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Contract, EffectiveFunction, FunctionPrincipal, Job, JobStage, JobStatus, PrincipalLabel
+from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, artifact_key, parse_key
+from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from schemas.effective_permissions import PrincipalResolution
@@ -17,7 +19,6 @@ from services.policy import build_effective_permissions, build_principal_labels
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from workers.base import BaseWorker
-from workers.resolution_worker import RECURSIVE_ARTIFACT_KINDS, _recursive_artifact_key
 
 logger = logging.getLogger("workers.policy_worker")
 
@@ -39,10 +40,10 @@ def _root_artifacts(
 
 
 def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifacts]:
-    """Hydrate recursive:* artifacts written by the resolution stage."""
+    """Hydrate ``recursive.*`` artifacts written by the resolution stage."""
     from db.models import Artifact
 
-    prefix = "recursive:"
+    prefix = f"{KEY_PREFIX}."
     rows = (
         session.execute(select(Artifact).where(Artifact.job_id == job_id, Artifact.name.like(f"{prefix}%")))
         .scalars()
@@ -50,11 +51,11 @@ def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifact
     )
     bundles: dict[str, dict] = {}
     for row in rows:
-        try:
-            _, address, kind = row.name.split(":", 2)
-        except ValueError:
+        parsed = parse_key(row.name)
+        if parsed is None:
             continue
-        if kind not in RECURSIVE_ARTIFACT_KINDS:
+        address, kind = parsed
+        if kind not in ARTIFACT_KINDS:
             continue
         payload = get_artifact(session, job_id, row.name)
         if payload is None:
@@ -229,9 +230,7 @@ class PolicyWorker(BaseWorker):
             # from resolution stage already).
             new_addresses = set(refreshed_nested) - set(nested_artifacts)
             if new_addresses:
-                from workers.resolution_worker import _store_nested_artifacts
-
-                _store_nested_artifacts(
+                store_nested_artifacts(
                     session,
                     job.id,
                     {addr: refreshed_nested[addr] for addr in new_addresses},
@@ -473,7 +472,7 @@ class PolicyWorker(BaseWorker):
         authority_snapshot = cast(dict, authority_bundle["snapshot"])
         authority_analysis = authority_bundle.get("analysis")
         authority_plan = authority_bundle.get("tracking_plan")
-        policy_state = get_artifact(session, job.id, _recursive_artifact_key(authority_address, "policy_state"))
+        policy_state = get_artifact(session, job.id, artifact_key(authority_address, "policy_state"))
         if policy_state is not None and not isinstance(policy_state, dict):
             policy_state = None
 
@@ -499,13 +498,13 @@ class PolicyWorker(BaseWorker):
                 store_artifact(
                     session,
                     job.id,
-                    _recursive_artifact_key(authority_address, "policy_event_history"),
+                    artifact_key(authority_address, "policy_event_history"),
                     data=events,
                 )
                 store_artifact(
                     session,
                     job.id,
-                    _recursive_artifact_key(authority_address, "policy_state"),
+                    artifact_key(authority_address, "policy_state"),
                     data=state,
                 )
                 return {

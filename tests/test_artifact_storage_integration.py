@@ -149,6 +149,36 @@ def test_legacy_inline_artifact_still_reads(db_session, storage_bucket):
 # ---------------------------------------------------------------------------
 
 
+def test_nested_artifact_keys_round_trip_through_storage(db_session, storage_bucket):
+    """Regression: nested recursive.* artifact names must pass ``_safe_name``.
+
+    The storage layer's name validator rejects colons. A prior key format
+    used ``recursive:<addr>:<kind>`` which passed unit tests (those stub
+    ``store_artifact``) but failed at runtime whenever S3-compatible storage
+    was active. This test hits the real client to make sure the current
+    naming stays compatible.
+    """
+    from db.nested_artifacts import ARTIFACT_KINDS, artifact_key, parse_key, store_bundle
+    from db.queue import create_job, get_artifact
+
+    job = create_job(db_session, {"address": "0xab", "name": "nested-keys"})
+    address = "0x3994741a5b29c60d0ab318de1024f9256fe959dc"
+    bundle = {
+        "analysis": {"subject": {"address": address, "name": "ETHFIStaking"}},
+        "tracking_plan": {"contract_address": address, "tracked_controllers": []},
+        "snapshot": {"contract_address": address, "controller_values": {}},
+        "effective_permissions": {"contract_address": address, "functions": []},
+    }
+
+    store_bundle(db_session, job.id, {address: bundle})
+
+    # Round-trip each kind back.
+    for kind in ARTIFACT_KINDS:
+        name = artifact_key(address, kind)
+        assert parse_key(name) == (address, kind)
+        assert get_artifact(db_session, job.id, name) == bundle[kind]
+
+
 def test_repeat_store_overwrites_same_key(db_session, storage_bucket):
     from db.models import Artifact
     from db.queue import create_job, get_artifact, store_artifact
