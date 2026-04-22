@@ -2,6 +2,9 @@ name: PR cleanup
 
 on:
   pull_request:
+    # Mirror pr-preview.yml: only previews for main-targeted PRs exist,
+    # so only main-targeted PRs need teardown.
+    branches: [main]
     types: [closed]
 
 # Let cleanup finish even if a duplicate event is queued; destructive ops

@@ -2,6 +2,9 @@ name: PR preview
 
 on:
   pull_request:
+    # Base-branch filter: only spin up previews for PRs targeting main.
+    # PRs to intermediate branches (feat/*, ci/*, etc.) skip preview.
+    branches: [main]
     types: [opened, synchronize, reopened]
 
 # One deploy per PR at a time. A rapid-fire push cancels the previous run
