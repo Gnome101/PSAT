@@ -487,6 +487,114 @@ def test_extract_scope_with_llm_accepts_object_entries(tmp_path, monkeypatch):
     assert names == ["Pool", "Vault", "Strategy"]
 
 
+def test_extract_scope_with_llm_parses_classified_commits_from_object(tmp_path, monkeypatch):
+    _setup_stub(
+        tmp_path,
+        monkeypatch,
+        json.dumps(
+            {
+                "contracts": ["Vault"],
+                "scope_entries": [
+                    {
+                        "name": "Pool",
+                        "address": "0x1234567890abcdef1234567890abcdef12345678",
+                        "commit": "ABC1234",
+                        "chain": "Ethereum",
+                    }
+                ],
+                "classified_commits": [
+                    {
+                        "sha": "ABC1234",
+                        "label": "reviewed",
+                        "context": "Audited at commit abc1234",
+                    },
+                    {
+                        "sha": "def5678",
+                        "label": "fix",
+                        "context": "Resolved in def5678",
+                    },
+                ],
+            }
+        ),
+    )
+    sections = [ScopeSection(1, 1, "scope", "Pool.sol Vault.sol abc1234 def5678")]
+    names, scope_entries, classified_commits, _, _ = extract_scope_with_llm(sections, "T", "A")
+    assert names == ["Vault", "Pool"]
+    assert scope_entries == [
+        {
+            "name": "Pool",
+            "address": "0x1234567890abcdef1234567890abcdef12345678",
+            "commit": "abc1234",
+            "chain": "ethereum",
+        }
+    ]
+    assert classified_commits == [
+        {
+            "sha": "abc1234",
+            "label": "reviewed",
+            "context": "Audited at commit abc1234",
+        },
+        {
+            "sha": "def5678",
+            "label": "fix",
+            "context": "Resolved in def5678",
+        },
+    ]
+
+
+def test_extract_scope_with_llm_dedupes_classified_commits_preferring_stronger_label(tmp_path, monkeypatch):
+    _setup_stub(
+        tmp_path,
+        monkeypatch,
+        json.dumps(
+            {
+                "contracts": ["Pool"],
+                "classified_commits": [
+                    {"sha": "abc1234", "label": "cited", "context": "Mentioned in appendix"},
+                    {"sha": "ABC1234", "label": "reviewed", "context": "Audited at abc1234"},
+                ],
+            }
+        ),
+    )
+    sections = [ScopeSection(1, 1, "scope", "Pool.sol abc1234")]
+    _, _, classified_commits, _, _ = extract_scope_with_llm(sections, "T", "A")
+    assert classified_commits == [
+        {
+            "sha": "abc1234",
+            "label": "reviewed",
+            "context": "Audited at abc1234",
+        }
+    ]
+
+
+def test_extract_scope_with_llm_normalizes_unknown_commit_labels_to_unclear(tmp_path, monkeypatch):
+    _setup_stub(
+        tmp_path,
+        monkeypatch,
+        json.dumps(
+            {
+                "contracts": ["Pool"],
+                "classified_commits": [
+                    {
+                        "sha": "abc1234",
+                        "label": "baseline",
+                        "context": "x" * 500,
+                    }
+                ],
+            }
+        ),
+    )
+    sections = [ScopeSection(1, 1, "scope", "Pool.sol abc1234")]
+    _, _, classified_commits, _, _ = extract_scope_with_llm(sections, "T", "A")
+    assert classified_commits == [
+        {
+            "sha": "abc1234",
+            "label": "unclear",
+            "context": "x" * 400,
+        }
+    ]
+
+
 def test_extract_scope_with_llm_raises_on_unparseable(tmp_path, monkeypatch):
     _setup_stub(tmp_path, monkeypatch, "this is not JSON at all")
     sections = [ScopeSection(1, 1, "scope", "anything")]

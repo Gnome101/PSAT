@@ -15,6 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from eth_utils.crypto import keccak
 from slither.slither import Slither
 
 from services.discovery.fetch import fetch, parse_remappings, parse_sources
@@ -82,6 +83,10 @@ def _run(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 def _canonical_function_name(signature: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]+", "_", signature).strip("_") or "function"
+
+
+def _selector(signature: str) -> str:
+    return "0x" + keccak(text=signature).hex()[:8]
 
 
 def _owner_helper_test_source(authority_address: str, helper_name: str) -> str:
@@ -166,6 +171,56 @@ contract HevmRoleHelperTest {{
         try AUTHORITY.{helper_name}(caller) {{
             assertTrue(false);
         }} catch {{}}
+    }}
+
+{member_tests}
+}}
+"""
+
+
+def _target_role_membership_test_source(target_address: str, function_signature: str, members: list[str]) -> str:
+    target_literal = f"address(uint160({int(target_address, 16)}))"
+    member_literals = [f"address(uint160({int(member, 16)}))" for member in members]
+    outsider = "address(uint160(0xdead))"
+    member_tests = "\n".join(
+        textwrap
+        .dedent(
+            f"""\
+            function prove_member_{index}_accepted() public {{
+                VM.prank({member});
+                (bool ok,) = TARGET.call(hex"{_selector(function_signature)[2:]}");
+                assertTrue(ok);
+            }}
+            """
+        )
+        .rstrip()
+        for index, member in enumerate(member_literals)
+    )
+    return f"""// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.19;
+
+interface Vm {{
+    function assume(bool) external;
+    function prank(address) external;
+}}
+
+contract HevmTargetRoleHelperTest {{
+    bool public IS_TEST = true;
+    Vm internal constant VM = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    address internal constant TARGET = {target_literal};
+
+    function assertTrue(bool condition) internal pure {{
+        require(condition, "assertTrue failed");
+    }}
+
+    function assertFalse(bool condition) internal pure {{
+        require(!condition, "assertFalse failed");
+    }}
+
+    function prove_fixed_non_member_rejected() public {{
+        VM.prank({outsider});
+        (bool ok,) = TARGET.call(hex"{_selector(function_signature)[2:]}");
+        assertFalse(ok);
     }}
 
 {member_tests}
@@ -495,6 +550,76 @@ def _prove_role_helper(
         shutil.rmtree(project_dir, ignore_errors=True)
 
 
+def _prove_target_role_membership(
+    *,
+    target_address: str,
+    function_signature: str,
+    members: list[str],
+    rpc_url: str,
+    hevm_bin: Path,
+) -> dict[str, Any]:
+    if not members:
+        return {"status": "skipped", "reason": "no_role_members"}
+    if not function_signature.endswith("()"):
+        return {"status": "skipped", "reason": "non_zero_arg_function_unsupported"}
+
+    project_dir = Path(tempfile.mkdtemp(prefix="psat_hevm_target_role_"))
+    try:
+        (project_dir / "test").mkdir(parents=True, exist_ok=True)
+        (project_dir / "foundry.toml").write_text(
+            '[profile.default]\nsrc = "src"\ntest = "test"\nout = "out"\nlibs = []\nsolc_version = "0.8.19"\n'
+        )
+        (project_dir / "test" / "HevmTargetRoleHelper.t.sol").write_text(
+            _target_role_membership_test_source(target_address, function_signature, members)
+        )
+
+        build = _run(["forge", "build", "--ast"], cwd=project_dir)
+        if build.returncode != 0:
+            return {
+                "status": "error",
+                "reason": "forge_build_failed",
+                "stdout": build.stdout,
+                "stderr": build.stderr,
+            }
+
+        run = _run(
+            [
+                str(hevm_bin),
+                "test",
+                "--root",
+                str(project_dir),
+                "--rpc",
+                rpc_url,
+                "--solver",
+                _SOLVER,
+                "--verb",
+                "2",
+            ],
+            cwd=project_dir,
+        )
+        output = "\n".join(part for part in [run.stdout, run.stderr] if part)
+        normalized_output = _ANSI_ESCAPE_RE.sub("", output)
+        reject_ok = "[PASS] prove_fixed_non_member_rejected" in normalized_output
+        members_ok = all(
+            f"[PASS] prove_member_{index}_accepted" in normalized_output for index in range(len(members))
+        )
+        if run.returncode == 0 and reject_ok and members_ok:
+            return {
+                "status": "proved",
+                "proof": "target_role_membership_finite",
+                "stdout": run.stdout,
+                "stderr": run.stderr,
+            }
+        return {
+            "status": "failed",
+            "reason": "proof_not_established",
+            "stdout": run.stdout,
+            "stderr": run.stderr,
+        }
+    finally:
+        shutil.rmtree(project_dir, ignore_errors=True)
+
+
 def _deepcopy_jsonish(value: Any) -> Any:
     return json.loads(json.dumps(value))
 
@@ -641,6 +766,14 @@ def refine_semantic_guards_with_hevm(
                     rpc_url=rpc_url,
                     hevm_bin=resolved_hevm_bin,
                 )
+                if role_proof["status"] != "proved":
+                    role_proof = _prove_target_role_membership(
+                        target_address=str(semantic_guards.get("contract_address", "")),
+                        function_signature=function["function"],
+                        members=members,
+                        rpc_url=rpc_url,
+                        hevm_bin=resolved_hevm_bin,
+                    )
                 role_attempts.append(
                     {
                         "role_source": role_source,

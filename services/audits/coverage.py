@@ -46,8 +46,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Final
 
+from sqlalchemy import case, func, or_, select
 from sqlalchemy import delete as sql_delete
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from db.models import (
@@ -389,26 +389,132 @@ def _normalize_name(name: str | None) -> str:
     return (name or "").strip().lower()
 
 
-def _resolve_impl_for_address(session: Session, protocol_id: int, row: Contract) -> Contract | None:
+def _normalize_chain(chain: str | None) -> str:
+    normalized = (chain or "").strip().lower()
+    return normalized or "ethereum"
+
+
+def _lookup_contract_by_address_chain(
+    session: Session,
+    protocol_id: int,
+    address: str,
+    chain_key: str,
+    row_cache: dict[tuple[int, str, str], Contract | None],
+) -> Contract | None:
+    """Return the best Contract row for ``(protocol, address, chain)``.
+
+    Historical data may contain legacy ``chain=NULL`` rows for Ethereum.
+    Treat those as Ethereum-compatible, but prefer an explicit
+    ``chain='ethereum'`` row when both exist.
+    """
+    cache_key = (protocol_id, address, chain_key)
+    if cache_key not in row_cache:
+        exact_chain = func.lower(Contract.chain) == chain_key
+        if chain_key == "ethereum":
+            chain_filter = or_(exact_chain, Contract.chain.is_(None))
+        else:
+            chain_filter = exact_chain
+        row_cache[cache_key] = (
+            session.execute(
+                select(Contract)
+                .where(
+                    Contract.protocol_id == protocol_id,
+                    func.lower(Contract.address) == address,
+                    chain_filter,
+                )
+                .order_by(
+                    case((exact_chain, 0), else_=1).asc(),
+                    Contract.id.asc(),
+                )
+            )
+            .scalars()
+            .first()
+        )
+    return row_cache[cache_key]
+
+
+def _resolve_impl_for_address(
+    session: Session,
+    protocol_id: int,
+    row: Contract,
+    *,
+    audit_ts: datetime | None,
+    row_cache: dict[tuple[int, str, str], Contract | None],
+    proxy_events_cache: dict[int, list[UpgradeEvent]],
+) -> Contract | None:
     """Return the impl Contract row that should carry a coverage insert.
 
-    When ``row`` is a proxy, resolves to its current ``implementation``
-    (the db trigger rejects coverage rows targeting proxies). Returns
-    ``None`` when the proxy's impl isn't in our inventory — caller skips
-    emission in that case.
+    When ``row`` is a proxy, resolve to the impl active at the audit's
+    timestamp. If the proxy has no recorded upgrade history we fall back
+    to its current ``implementation`` pointer; if it does have history
+    but the audit can't be placed inside a specific impl window, return
+    ``None`` rather than rebinding the audit to today's impl.
     """
+    chain_key = _normalize_chain(row.chain)
     if not row.is_proxy:
         return row
-    impl_addr = (row.implementation or "").lower() if row.implementation else ""
+    proxy_events = proxy_events_cache.get(row.id)
+    if proxy_events is None:
+        proxy_events = list(
+            session.execute(
+                select(UpgradeEvent)
+                .where(UpgradeEvent.contract_id == row.id)
+                .order_by(
+                    UpgradeEvent.block_number.asc().nullslast(),
+                    UpgradeEvent.id.asc(),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        proxy_events_cache[row.id] = proxy_events
+
+    impl_addr = ""
+    if not proxy_events:
+        impl_addr = (row.implementation or "").lower() if row.implementation else ""
+    else:
+        if audit_ts is None or any(ev.timestamp is None for ev in proxy_events):
+            return None
+        for i, ev in enumerate(proxy_events):
+            if not ev.new_impl or ev.timestamp is None:
+                continue
+            next_ts = proxy_events[i + 1].timestamp if i + 1 < len(proxy_events) else None
+            if audit_ts >= ev.timestamp and (next_ts is None or audit_ts < next_ts):
+                impl_addr = ev.new_impl.lower()
+                break
     if not impl_addr:
         return None
-    return session.execute(
-        select(Contract).where(
-            Contract.protocol_id == protocol_id,
-            func.lower(Contract.address) == impl_addr,
-            Contract.is_proxy.is_(False),
-        )
-    ).scalar_one_or_none()
+    target = _lookup_contract_by_address_chain(session, protocol_id, impl_addr, chain_key, row_cache)
+    if target is None or target.is_proxy:
+        return None
+    return target
+
+
+def _resolve_scope_entry_target(
+    session: Session,
+    protocol_id: int,
+    entry: dict,
+    *,
+    audit_ts: datetime | None,
+    row_cache: dict[tuple[int, str, str], Contract | None],
+    proxy_events_cache: dict[int, list[UpgradeEvent]],
+) -> Contract | None:
+    """Resolve one scope entry to the impl Contract row it actually pins."""
+    addr = (entry.get("address") or "").lower()
+    if not addr:
+        return None
+    chain_key = _normalize_chain(entry.get("chain"))
+    row = _lookup_contract_by_address_chain(session, protocol_id, addr, chain_key, row_cache)
+    if row is None:
+        return None
+    return _resolve_impl_for_address(
+        session,
+        protocol_id,
+        row,
+        audit_ts=audit_ts,
+        row_cache=row_cache,
+        proxy_events_cache=proxy_events_cache,
+    )
 
 
 def _address_anchored_matches(
@@ -424,44 +530,24 @@ def _address_anchored_matches(
     """
     by_contract: dict[int, CoverageMatch] = {}
     matched_names: set[str] = set()
-    entry_addrs = [
-        e.get("address", "").lower()
-        for e in scope_entries
-        if isinstance(e, dict) and e.get("address")
-    ]
-    if not entry_addrs:
+    if not any(isinstance(e, dict) and e.get("address") for e in scope_entries):
         return by_contract, matched_names
 
-    addr_rows = (
-        session.execute(
-            select(Contract).where(
-                Contract.protocol_id == audit.protocol_id,
-                func.lower(Contract.address).in_(entry_addrs),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    # Address → Contract. Prefer non-proxy when both rows exist at the
-    # same address (shouldn't happen under uq_contract_address_chain,
-    # but be defensive).
-    by_addr: dict[str, Contract] = {}
-    for c in addr_rows:
-        key = (c.address or "").lower()
-        existing = by_addr.get(key)
-        if existing is None or (existing.is_proxy and not c.is_proxy):
-            by_addr[key] = c
+    audit_ts = _audit_effective_ts(audit.date)
+    row_cache: dict[tuple[int, str, str], Contract | None] = {}
+    proxy_events_cache: dict[int, list[UpgradeEvent]] = {}
 
     for entry in scope_entries:
         if not isinstance(entry, dict):
             continue
-        addr = (entry.get("address") or "").lower()
-        if not addr:
-            continue
-        c = by_addr.get(addr)
-        if c is None:
-            continue
-        target = _resolve_impl_for_address(session, audit.protocol_id, c)
+        target = _resolve_scope_entry_target(
+            session,
+            audit.protocol_id,
+            entry,
+            audit_ts=audit_ts,
+            row_cache=row_cache,
+            proxy_events_cache=proxy_events_cache,
+        )
         if target is None:
             continue
 
@@ -493,9 +579,10 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
          ``scope_entries`` with explicit addresses, each entry maps to a
          single ``Contract`` row at that ``(address, chain)`` in the
          protocol — unambiguous. Emits ``match_type='reviewed_address'``.
-         Handles proxies by resolving to their current impl before the
-         final insert (the ``_reject_proxy_coverage`` trigger enforces
-         this at the DB layer too).
+         Handles proxies by resolving to the impl active at the audit's
+         timestamp before the final insert (the
+         ``_reject_proxy_coverage`` trigger enforces this at the DB
+         layer too). Ambiguous proxy entries are skipped.
       2. **Name-anchored** (legacy): falls through for scope names NOT
          covered by an address-anchored entry. Uses case-insensitive
          name equality against ``Contract.contract_name``; emits
@@ -555,7 +642,7 @@ def match_contracts_for_audit(session: Session, audit_id: int) -> list[CoverageM
         .all()
     )
     if not candidates:
-        return []
+        return list(by_contract.values())
 
     audit_ts = _audit_effective_ts(audit.date)
 
@@ -651,38 +738,26 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
     if contract.is_proxy:
         return []
     name_key = _normalize_name(contract.contract_name)
-    if not name_key:
-        return []
+    contract_chain = _normalize_chain(contract.chain)
 
     audits = (
         session.execute(
             select(AuditReport).where(
                 AuditReport.protocol_id == contract.protocol_id,
                 AuditReport.scope_extraction_status == "success",
-                AuditReport.scope_contracts.isnot(None),
+                or_(
+                    AuditReport.scope_contracts.isnot(None),
+                    AuditReport.scope_entries.isnot(None),
+                ),
             )
         )
         .scalars()
         .all()
     )
     windows = _compute_impl_windows_for_contract(session, contract)
-
-    # Pre-resolve the proxy whose current impl is this contract (if any).
-    # Used by the address-anchored branch: audit lists the proxy address
-    # in its scope table, but we write coverage against the impl row.
     contract_addr_lower = (contract.address or "").lower()
-    proxy_rows = (
-        session.execute(
-            select(Contract).where(
-                Contract.protocol_id == contract.protocol_id,
-                Contract.is_proxy.is_(True),
-                func.lower(Contract.implementation) == contract_addr_lower,
-            )
-        )
-        .scalars()
-        .all()
-    ) if contract_addr_lower else []
-    proxy_addrs = {(p.address or "").lower() for p in proxy_rows if p.address}
+    row_cache: dict[tuple[int, str, str], Contract | None] = {}
+    proxy_events_cache: dict[int, list[UpgradeEvent]] = {}
 
     # Track per-audit best match so one audit doesn't emit both an
     # address-anchored row AND a name-match row for the same contract.
@@ -690,15 +765,27 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
 
     for audit in audits:
         # --- Address-anchored pass (Phase F) ---
+        audit_ts = _audit_effective_ts(audit.date)
         for entry in audit.scope_entries or []:
             if not isinstance(entry, dict):
                 continue
             addr = (entry.get("address") or "").lower()
             if not addr:
                 continue
-            # Entry points at this contract directly OR at a proxy whose
-            # current impl is this contract.
-            if addr != contract_addr_lower and addr not in proxy_addrs:
+            if _normalize_chain(entry.get("chain")) != contract_chain:
+                continue
+            if addr == contract_addr_lower:
+                target = contract
+            else:
+                target = _resolve_scope_entry_target(
+                    session,
+                    audit.protocol_id,
+                    entry,
+                    audit_ts=audit_ts,
+                    row_cache=row_cache,
+                    proxy_events_cache=proxy_events_cache,
+                )
+            if target is None or target.id != contract.id:
                 continue
             matched_name = str(entry.get("name") or contract.contract_name or "")
             commit_hint = entry.get("commit") or None
@@ -724,7 +811,6 @@ def match_audits_for_contract(session: Session, contract_id: int) -> list[Covera
         matched_name = next((n for n in scope_names if _normalize_name(n) == name_key), None)
         if not matched_name:
             continue
-        audit_ts = _audit_effective_ts(audit.date)
         if windows:
             confidence, window = _confidence_for_impl_era(audit_ts, windows)
             best_by_audit[audit.id] = CoverageMatch(
@@ -1027,6 +1113,8 @@ def _apply_equivalence_http(
     import os
 
     from services.audits.source_equivalence import (
+        EtherscanFetch,
+        VerifiedSource,
         fetch_etherscan_source_files,
         verify_audit_covers_impl,
     )
@@ -1076,8 +1164,14 @@ def _apply_equivalence_http(
         if not data.reviewed_commits:
             stamped.append(_stamp(m, status="no_reviewed_commit", reason="audit has no reviewed_commits"))
             continue
-        if not data.source_repo:
-            stamped.append(_stamp(m, status="no_source_repo", reason="audit has no source_repo"))
+        if not data.source_repo and not data.referenced_repos:
+            stamped.append(
+                _stamp(
+                    m,
+                    status="no_source_repo",
+                    reason="audit has no source_repo or referenced_repos",
+                )
+            )
             continue
 
         # Resolve impl source: DB preload first, Etherscan (cached) next.
@@ -1088,7 +1182,21 @@ def _apply_equivalence_http(
             addr_key = data.contract_address.lower()
             if addr_key not in etherscan_cache:
                 try:
-                    etherscan_cache[addr_key] = fetch_etherscan_source_files(data.contract_address)
+                    raw_fetch = fetch_etherscan_source_files(data.contract_address)
+                    if isinstance(raw_fetch, EtherscanFetch):
+                        etherscan_cache[addr_key] = raw_fetch
+                    elif isinstance(raw_fetch, VerifiedSource):
+                        # Backward compatibility for older tests/callers
+                        # that still stub the pre-envelope return type.
+                        etherscan_cache[addr_key] = EtherscanFetch(
+                            source=raw_fetch,
+                            status="ok",
+                            detail="",
+                        )
+                    else:
+                        raise TypeError(
+                            f"fetch_etherscan_source_files returned {type(raw_fetch).__name__}, expected EtherscanFetch"
+                        )
                 except Exception as exc:
                     logger.exception(
                         "source-equivalence Etherscan fetch crashed for contract %s",

@@ -1873,20 +1873,37 @@ _PIPELINE_BUCKET_LIMIT = 50
 
 
 def _pipeline_item(ar: Any, protocol_name: str | None, now: datetime) -> dict[str, Any]:
-    """Shape one audit row for the monitor page's worker-card list."""
+    """Shape one audit row for the monitor page's live timeline."""
     started = ar.text_extraction_started_at or ar.scope_extraction_started_at
     elapsed = int((now - started).total_seconds()) if started else None
+    scope_contracts = list(ar.scope_contracts or [])
+    reviewed_commits = list(ar.reviewed_commits or [])
+    referenced_repos = list(ar.referenced_repos or [])
+    scope_entries = list(ar.scope_entries or [])
+    classified_commits = list(ar.classified_commits or [])
     return {
         "audit_id": ar.id,
         "protocol_id": ar.protocol_id,
         "company": protocol_name,
         "auditor": ar.auditor,
         "title": ar.title,
+        "date": ar.date,
+        "pdf_url": ar.pdf_url,
         "worker_id": (
             ar.text_extraction_worker if ar.text_extraction_status == "processing" else ar.scope_extraction_worker
         ),
         "started_at": started.isoformat() if started else None,
         "elapsed_seconds": elapsed,
+        "text_extraction_status": ar.text_extraction_status,
+        "text_extracted_at": (ar.text_extracted_at.isoformat() if ar.text_extracted_at else None),
+        "text_size_bytes": ar.text_size_bytes,
+        "scope_extraction_status": ar.scope_extraction_status,
+        "scope_extracted_at": (ar.scope_extracted_at.isoformat() if ar.scope_extracted_at else None),
+        "scope_contract_count": len(scope_contracts),
+        "reviewed_commit_count": len(reviewed_commits),
+        "referenced_repo_count": len(referenced_repos),
+        "scope_entry_count": len(scope_entries),
+        "classified_commit_count": len(classified_commits),
         "error": (
             ar.text_extraction_error
             if ar.text_extraction_status == "failed"
@@ -2202,9 +2219,7 @@ def _audit_brief(audit: Any, match: Any | None = None) -> dict[str, Any]:
         out["equivalence_status"] = getattr(match, "equivalence_status", None)
         out["equivalence_reason"] = getattr(match, "equivalence_reason", None)
         equivalence_checked_at = getattr(match, "equivalence_checked_at", None)
-        out["equivalence_checked_at"] = (
-            equivalence_checked_at.isoformat() if equivalence_checked_at else None
-        )
+        out["equivalence_checked_at"] = equivalence_checked_at.isoformat() if equivalence_checked_at else None
         # Phase C: proof_kind is the strength subtype of ``proven`` rows.
         # 'pre_fix_unpatched' gets special treatment in the UI as a RED
         # FLAG — the audit reviewed exactly this code AND the protocol
@@ -2477,8 +2492,7 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
             # from scope extraction. None/missing → empty list, not an error.
             findings = audit.findings or []
             brief["live_findings"] = [
-                f for f in findings
-                if isinstance(f, dict) and (f.get("status") or "").lower() != "fixed"
+                f for f in findings if isinstance(f, dict) and (f.get("status") or "").lower() != "fixed"
             ]
             coverage_out.append(brief)
         # Newest first by audit date (nulls last, id desc to break ties).
@@ -2527,20 +2541,29 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
             # 'audited' requires definitive coverage of the currently-open
             # impl window. Two paths:
             #   (a) any row on this impl has a cryptographic proof
-            #       (equivalence_status='proven') — strongest evidence,
-            #       overrides everything else on the impl;
+            #       (equivalence_status='proven') with a non-coincidental
+            #       proof kind — strongest evidence, overrides everything
+            #       else on the impl;
             #   (b) a high-confidence open-ended temporal match AND no
             #       hash_mismatch anywhere on the impl. hash_mismatch
             #       is strong negative evidence — deployed code differs
             #       from what the auditor reviewed — so we don't let a
             #       heuristic temporal match paper over cryptographic
-            #       disproof from a different audit.
+            #       disproof from a different audit. Weak
+            #       ``proof_kind='cited_only'`` rows don't qualify here
+            #       either just because their coverage row is
+            #       ``reviewed_commit/high``.
+            # Rows proven only via a 'cited_only' commit don't qualify:
+            # the deployed code matched a SHA the PDF mentioned only for
+            # context, not one the auditor actually reviewed.
             # Grace-medium temporal matches are intentionally NOT enough —
             # an audit 10 days before the impl went live is suggestive
             # but not proof the reviewed code is what shipped.
-            has_proven = any(r.equivalence_status == "proven" for r in current_cov)
+            has_proven = any(r.equivalence_status == "proven" and r.proof_kind != "cited_only" for r in current_cov)
             has_temporal_high = any(
-                r.match_confidence == "high" and r.covered_to_block is None
+                r.match_confidence == "high"
+                and r.covered_to_block is None
+                and not (r.equivalence_status == "proven" and r.proof_kind == "cited_only")
                 for r in current_cov
             )
             has_hash_mismatch = any(r.equivalence_status == "hash_mismatch" for r in current_cov)

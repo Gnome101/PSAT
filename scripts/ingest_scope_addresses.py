@@ -29,7 +29,6 @@ from sqlalchemy import select
 
 from db.models import Contract, SessionLocal
 
-
 _GENERIC_PROXY_NAMES: frozenset[str] = frozenset(
     {"uupsproxy", "upgradeableproxy", "upgradeablebeacon", "beaconproxy", "transparentupgradeableproxy"}
 )
@@ -122,10 +121,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    paths = [Path(p) for p in args.input] if args.input else [
-        Path("/tmp/agent1_addresses.json"),
-        Path("/tmp/agent2_addresses.json"),
-    ]
+    paths = (
+        [Path(p) for p in args.input]
+        if args.input
+        else [
+            Path("/tmp/agent1_addresses.json"),
+            Path("/tmp/agent2_addresses.json"),
+        ]
+    )
     entries = _load(paths)
 
     with SessionLocal() as session:

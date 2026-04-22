@@ -56,7 +56,6 @@ def _deployed_address(output: str) -> str:
 
 
 @pytest.mark.live
-@pytest.mark.xfail(reason="HEVM role-helper proof still hits symbolic SLOAD limits on mapping-backed role checks")
 def test_hevm_role_helper_refines_and_resolves_local_project():
     with tempfile.TemporaryDirectory(prefix="psat_hevm_role_e2e_") as tmp:
         root = Path(tmp)
@@ -211,7 +210,12 @@ contract OpaqueExternalRoleGuard {
                 analysis,
                 target_snapshot=target_snapshot,
                 semantic_guards=merged_semantic,
-                external_snapshots={auth_address.lower(): {"contract_name": "OpaqueRoleAuth", "controller_values": auth_snapshot["controller_values"]}},
+                external_snapshots={
+                    auth_address.lower(): {
+                        "contract_name": "OpaqueRoleAuth",
+                        "controller_values": auth_snapshot["controller_values"],
+                    }
+                },
             )
 
             pause = next(fn for fn in ep["functions"] if fn["function"] == "pause()")
@@ -233,7 +237,11 @@ contract OpaqueExternalRoleGuard {
                 }
             ]
             attempts = artifact["functions"][0]["attempts"]
-            assert any(attempt.get("proof") == "role_helper" and attempt.get("status") == "proved" for attempt in attempts)
+            assert any(
+                attempt.get("proof") in {"role_helper", "target_role_membership_finite"}
+                and attempt.get("status") == "proved"
+                for attempt in attempts
+            )
         finally:
             anvil.terminate()
             try:

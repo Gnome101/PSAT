@@ -33,7 +33,6 @@ from sqlalchemy import select
 
 from db.models import AuditReport, SessionLocal
 
-
 # Mapped to audit ids that have coverage in the etherfi DB after the
 # 2026-04-20 discovery run. If an id isn't present (fresh DB, different
 # protocol), the seeding just skips it.

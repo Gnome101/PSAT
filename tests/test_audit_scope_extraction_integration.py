@@ -904,8 +904,6 @@ def test_scope_worker_refresh_coverage_runs_source_equivalence(
     (byte-equal source) lands at ``impl_era`` / temporal-only confidence
     and the UI "audited?" check fails despite the proof existing.
     """
-    from types import SimpleNamespace
-
     from db.models import AuditContractCoverage, AuditReport, Contract
 
     protocol_id, _ = seed_protocol
@@ -945,33 +943,50 @@ def test_scope_worker_refresh_coverage_runs_source_equivalence(
     audit.source_repo = "example/protocol"
     db_session.commit()
 
-    # Stub source-equivalence at the HTTP-phase seam used by the two-phase
-    # coverage upsert. If verify_source_equivalence=False (the pre-fix
-    # default at the scope-worker call site), this stub is never invoked
-    # and the coverage row lands at match_type='direct' / match_confidence='high'
-    # — the regression assertion below pins match_type='reviewed_commit',
-    # which is reachable only when the worker passes
-    # verify_source_equivalence=True to upsert_coverage_for_audit.
+    # Stub source-equivalence at the current HTTP-phase seam used by the
+    # two-phase coverage upsert. If verify_source_equivalence=False (the
+    # pre-fix default at the scope-worker call site), this stub is never
+    # invoked and the coverage row lands at match_type='direct' /
+    # match_confidence='high' — the regression assertion below pins
+    # match_type='reviewed_commit', which is reachable only when the
+    # worker passes verify_source_equivalence=True.
     import services.audits.source_equivalence as se_mod
 
-    def fake_check(*, reviewed_commits, scope_contracts, impl_source, source_repo, github_token=None):
-        return [
-            SimpleNamespace(
-                commit="abc123def456",
-                scope_name="Pool",
-                etherscan_path="src/Pool.sol",
-                source_sha256="deadbeef" * 8,
-            )
-        ]
+    def fake_verify(
+        *,
+        reviewed_commits,
+        scope_name,
+        impl_source,
+        source_repo,
+        github_token=None,
+        specific_commit=None,
+        fallback_repos=None,
+    ):
+        return se_mod.EquivalenceOutcome(
+            status="proven",
+            reason="test",
+            matches=(
+                se_mod.EquivalenceMatch(
+                    commit="abc123def456",
+                    scope_name=scope_name,
+                    etherscan_path="src/Pool.sol",
+                    source_sha256="deadbeef" * 8,
+                ),
+            ),
+        )
 
-    monkeypatch.setattr(se_mod, "check_audit_covers_impl", fake_check)
+    monkeypatch.setattr(se_mod, "verify_audit_covers_impl", fake_verify)
     monkeypatch.setattr(
         se_mod,
         "fetch_etherscan_source_files",
-        lambda _addr: se_mod.VerifiedSource(
-            contract_name="Pool",
-            compiler_version="0.8",
-            files={"src/Pool.sol": "stubhash"},
+        lambda _addr: se_mod.EtherscanFetch(
+            source=se_mod.VerifiedSource(
+                contract_name="Pool",
+                compiler_version="0.8",
+                files={"src/Pool.sol": "stubhash"},
+            ),
+            status="ok",
+            detail="",
         ),
     )
 

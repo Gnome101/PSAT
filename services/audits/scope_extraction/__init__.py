@@ -220,9 +220,7 @@ def process_audit_scope(
     # SHAs it constructed from context rather than ones actually present;
     # drop those to keep only real citations.
     raw_text_lower = raw_text.lower()
-    classified_commits = [
-        c for c in classified_commits if c["sha"][:7] in raw_text_lower
-    ]
+    classified_commits = [c for c in classified_commits if c["sha"][:7] in raw_text_lower]
 
     if not validated:
         return ScopeExtractionOutcome(

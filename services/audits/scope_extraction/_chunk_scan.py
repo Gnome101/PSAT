@@ -145,9 +145,7 @@ def extract_scope_via_chunk_scan(
 
     for idx, chunk in enumerate(chunks, start=1):
         try:
-            names, scope_entries, classified_commits, response, model = extract_scope_with_llm(
-                [chunk], title, auditor
-            )
+            names, scope_entries, classified_commits, response, model = extract_scope_with_llm([chunk], title, auditor)
         except LLMUnavailableError as exc:
             last_error = exc
             failure_count += 1

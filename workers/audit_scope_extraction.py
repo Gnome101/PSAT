@@ -263,17 +263,13 @@ class AuditScopeExtractionWorker(AuditRowWorker):
                     audit.reviewed_commits = list(outcome.reviewed_commits)
                 # Phase D: always clobber — empty list is a valid state
                 # that should replace a stale prior extraction.
-                audit.referenced_repos = (
-                    list(outcome.referenced_repos) if outcome.referenced_repos else None
-                )
+                audit.referenced_repos = list(outcome.referenced_repos) if outcome.referenced_repos else None
                 # Structured scope entries (Phase F). Always write — empty
                 # list is a valid "no scope table in this audit" state and
                 # should clobber a stale non-empty value from a prior extract.
                 audit.scope_entries = list(outcome.scope_entries) if outcome.scope_entries else None
                 # Classified commits (Phase C). Same clobbering semantic.
-                audit.classified_commits = (
-                    list(outcome.classified_commits) if outcome.classified_commits else None
-                )
+                audit.classified_commits = list(outcome.classified_commits) if outcome.classified_commits else None
                 self._maybe_backfill_date(audit, outcome.extracted_date)
                 self._refresh_coverage(session, audit_id)
             session.commit()

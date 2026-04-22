@@ -1161,6 +1161,60 @@ def test_verify_source_equivalence_off_by_default(db_session, seed_protocol, mon
     assert called == {"etherscan": 0, "github": 0}
 
 
+def test_source_equivalence_uses_referenced_repos_when_source_repo_missing(
+    db_session,
+    seed_protocol,
+    monkeypatch,
+):
+    """Coverage refresh must still verify rows when source_repo is NULL but
+    referenced_repos contains the real code repo."""
+    import hashlib
+
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "7" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = None
+    audit.referenced_repos = ["etherfi-protocol/smart-contracts"]
+    db_session.commit()
+
+    content = "contract MyPool {}"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    fetched_repos: list[str] = []
+
+    def fake_etherscan(address):
+        return source_equivalence.EtherscanFetch(
+            source=source_equivalence.VerifiedSource(
+                contract_name="MyPool",
+                compiler_version="0.8.27",
+                files={"src/MyPool.sol": content_hash},
+            ),
+            status="ok",
+            detail="",
+        )
+
+    def fake_github(repo, commit, path, *, token=None):
+        fetched_repos.append(repo)
+        if path == "src/MyPool.sol":
+            return source_equivalence.GithubHashResult(sha256=content_hash, status="ok", detail="")
+        return source_equivalence.GithubHashResult(sha256=None, status="http_404", detail="not found")
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", fake_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
+
+    upsert_coverage_for_audit(db_session, audit.id, verify_source_equivalence=True)
+    db_session.commit()
+
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.match_type == "reviewed_commit"
+    assert row.equivalence_status == "proven"
+    assert fetched_repos == ["etherfi-protocol/smart-contracts"]
+
+
 # ---------------------------------------------------------------------------
 # 9. Perf: N+1 query explosion in the matcher is avoided
 # ---------------------------------------------------------------------------
@@ -1519,7 +1573,12 @@ def test_fetch_bytecode_keccak_returns_hex_hash(monkeypatch):
     addr = "0x" + "ab" * 20
     # Known input → known keccak. "0x1234" runtime bytes, keccak256 is
     # deterministic so a stable assert is possible.
-    monkeypatch.setattr(cov, "get_code" if hasattr(cov, "get_code") else "_dummy", lambda *a, **k: "0x1234", raising=False)
+    monkeypatch.setattr(
+        cov,
+        "get_code" if hasattr(cov, "get_code") else "_dummy",
+        lambda *a, **k: "0x1234",
+        raising=False,
+    )
     # Patch through the import site (utils.rpc.get_code) since that's what
     # _fetch_bytecode_keccak imports at call time.
     from utils import rpc
@@ -1607,7 +1666,7 @@ def test_upsert_coverage_keccak_null_when_rpc_fails(db_session, seed_protocol, m
 
 def test_live_findings_filters_fixed_status(db_session, seed_protocol, monkeypatch):
     """Timeline endpoint exposes non-'fixed' findings, hides 'fixed' ones."""
-    from db.models import AuditReport, Contract
+    from db.models import AuditReport
 
     protocol_id, _ = seed_protocol
     addr = "0x" + "cc" * 20
@@ -1675,9 +1734,7 @@ def test_scope_entry_address_produces_reviewed_address_match(db_session, seed_pr
     addr = "0x" + "a" * 40
     c = _add_contract(db_session, protocol_id, address=addr, name="Pool")
     audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
-    audit.scope_entries = [
-        {"name": "Pool", "address": addr, "commit": "abc1234", "chain": "ethereum"}
-    ]
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": "abc1234", "chain": "ethereum"}]
     db_session.commit()
 
     matches = match_contracts_for_audit(db_session, audit.id)
@@ -1698,20 +1755,66 @@ def test_scope_entry_proxy_address_resolves_to_impl(db_session, seed_protocol):
     proxy_addr = "0x" + "b" * 40
     impl_addr = "0x" + "c" * 40
     _add_contract(
-        db_session, protocol_id, address=proxy_addr, name="WeETHProxy",
-        is_proxy=True, implementation=impl_addr,
+        db_session,
+        protocol_id,
+        address=proxy_addr,
+        name="WeETHProxy",
+        is_proxy=True,
+        implementation=impl_addr,
     )
     impl = _add_contract(db_session, protocol_id, address=impl_addr, name="WeETH")
     audit = _add_audit(db_session, protocol_id, scope=["WeETH"], date="2024-06-01")
     # Audit lists the PROXY address (user-facing), not the impl.
-    audit.scope_entries = [
-        {"name": "WeETH", "address": proxy_addr, "commit": None, "chain": None}
-    ]
+    audit.scope_entries = [{"name": "WeETH", "address": proxy_addr, "commit": None, "chain": None}]
     db_session.commit()
 
     matches = match_contracts_for_audit(db_session, audit.id)
     assert len(matches) == 1
     assert matches[0].contract_id == impl.id  # impl, not proxy
+    assert matches[0].match_type == "reviewed_address"
+
+
+def test_scope_entry_proxy_address_uses_impl_active_at_audit_date(db_session, seed_protocol):
+    """A proxy-address scope entry must resolve to the impl active when the
+    audit happened, not the proxy's current implementation pointer."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy_addr = "0x" + "d" * 40
+    impl_a = _add_contract(db_session, protocol_id, address="0x" + "e" * 40, name="ImplA")
+    impl_b = _add_contract(db_session, protocol_id, address="0x" + "f" * 40, name="ImplB")
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address=proxy_addr,
+        name="Proxy",
+        is_proxy=True,
+        implementation=impl_b.address,
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_a.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        old_impl=impl_a.address,
+        new_impl=impl_b.address,
+        block_number=200,
+        timestamp=_ts(2024, 7, 1),
+    )
+    audit = _add_audit(db_session, protocol_id, scope=[], date="2024-03-15")
+    audit.scope_entries = [{"name": "Pool", "address": proxy_addr, "commit": None, "chain": "ethereum"}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == impl_a.id
     assert matches[0].match_type == "reviewed_address"
 
 
@@ -1733,6 +1836,42 @@ def test_scope_entry_suppresses_duplicate_name_match(db_session, seed_protocol):
     assert matches[0].match_type == "reviewed_address"
 
 
+def test_scope_entry_match_survives_unmatched_leftover_scope_names(db_session, seed_protocol):
+    """Address-pinned matches must survive even when leftover scope names
+    don't match any Contract rows."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "1" * 40
+    c = _add_contract(db_session, protocol_id, address=addr, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool", "MadeUpAlias"], date="2024-06-01")
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": None, "chain": None}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == c.id
+    assert matches[0].match_type == "reviewed_address"
+
+
+def test_scope_entry_address_honors_chain(db_session, seed_protocol):
+    """Same-address contracts on different chains must not collide."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "2" * 40
+    _add_contract(db_session, protocol_id, address=addr, name="PoolEth", chain="ethereum")
+    arb = _add_contract(db_session, protocol_id, address=addr, name="PoolArb", chain="arbitrum")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": None, "chain": "arbitrum"}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == arb.id
+    assert matches[0].match_type == "reviewed_address"
+
+
 def test_match_audits_for_contract_finds_address_anchored(db_session, seed_protocol):
     """Dual-entry contract→audits matcher honors scope_entries by address."""
     from services.audits.coverage import match_audits_for_contract
@@ -1741,9 +1880,7 @@ def test_match_audits_for_contract_finds_address_anchored(db_session, seed_proto
     addr = "0x" + "e" * 40
     c = _add_contract(db_session, protocol_id, address=addr, name="SomeContract")
     audit = _add_audit(db_session, protocol_id, scope=[], date="2024-06-01")
-    audit.scope_entries = [
-        {"name": "OtherNameInAudit", "address": addr, "commit": "cafebab", "chain": None}
-    ]
+    audit.scope_entries = [{"name": "OtherNameInAudit", "address": addr, "commit": "cafebab", "chain": None}]
     db_session.commit()
 
     matches = match_audits_for_contract(db_session, c.id)
@@ -1753,6 +1890,71 @@ def test_match_audits_for_contract_finds_address_anchored(db_session, seed_proto
     # matched_name comes from the audit entry's name, not our contract_name
     assert m.matched_name == "OtherNameInAudit"
     assert m.pinned_commit == "cafebab"
+
+
+def test_match_audits_for_contract_proxy_scope_entry_uses_historical_impl(db_session, seed_protocol):
+    """Reverse lookup must not rebind a historical proxy-address audit to
+    the proxy's current impl after an upgrade."""
+    from services.audits.coverage import match_audits_for_contract
+
+    protocol_id, _ = seed_protocol
+    proxy_addr = "0x" + "3" * 40
+    impl_a = _add_contract(db_session, protocol_id, address="0x" + "4" * 40, name="ImplA")
+    impl_b = _add_contract(db_session, protocol_id, address="0x" + "5" * 40, name="ImplB")
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address=proxy_addr,
+        name="Proxy",
+        is_proxy=True,
+        implementation=impl_b.address,
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_a.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        old_impl=impl_a.address,
+        new_impl=impl_b.address,
+        block_number=200,
+        timestamp=_ts(2024, 7, 1),
+    )
+    audit = _add_audit(db_session, protocol_id, scope=[], date="2024-03-15")
+    audit.scope_entries = [{"name": "Pool", "address": proxy_addr, "commit": None, "chain": "ethereum"}]
+    db_session.commit()
+
+    old_matches = match_audits_for_contract(db_session, impl_a.id)
+    new_matches = match_audits_for_contract(db_session, impl_b.id)
+    assert len(old_matches) == 1
+    assert old_matches[0].audit_report_id == audit.id
+    assert old_matches[0].match_type == "reviewed_address"
+    assert new_matches == []
+
+
+def test_match_audits_for_contract_address_anchor_honors_chain(db_session, seed_protocol):
+    """Reverse address-anchored matching must respect chain as well as address."""
+    from services.audits.coverage import match_audits_for_contract
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "6" * 40
+    eth = _add_contract(db_session, protocol_id, address=addr, name="Pool", chain="ethereum")
+    arb = _add_contract(db_session, protocol_id, address=addr, name="Pool", chain="arbitrum")
+    audit = _add_audit(db_session, protocol_id, scope=[], date="2024-06-01")
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": None, "chain": "arbitrum"}]
+    db_session.commit()
+
+    assert match_audits_for_contract(db_session, eth.id) == []
+    matches = match_audits_for_contract(db_session, arb.id)
+    assert len(matches) == 1
+    assert matches[0].audit_report_id == audit.id
+    assert matches[0].match_type == "reviewed_address"
 
 
 def test_pinned_commit_overrides_reviewed_commits_in_verification(monkeypatch):
