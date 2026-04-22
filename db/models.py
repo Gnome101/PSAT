@@ -968,6 +968,9 @@ def apply_storage_migrations(target_engine=None) -> None:
         # proof_kind (Phase C): strength subtype for proven rows. See the
         # model comment for the full vocabulary.
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS proof_kind VARCHAR(30)"))
+        conn.execute(
+            text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS matched_commit_sha VARCHAR(66)")
+        )
         # upgrade_events.contract_id — Postgres FKs don't auto-create an index,
         # and this column is scanned on every per-impl window computation in
         # services/audits/coverage.py + contract_audit_timeline.
