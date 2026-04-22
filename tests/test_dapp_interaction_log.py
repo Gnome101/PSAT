@@ -1,8 +1,5 @@
 """Tests for the interaction capture log."""
 
-import tempfile
-from pathlib import Path
-
 from services.crawlers.dapp.interaction_log import InteractionLog
 
 
@@ -42,16 +39,3 @@ def test_get_permits():
 
     permits = log.get_permits()
     assert len(permits) == 1
-
-
-def test_save_and_load():
-    log = InteractionLog()
-    log.add({"type": "sendTransaction", "url": "x", "timestamp": 1, "to": "0xDEAD"})
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "interactions.json"
-        log.save(path)
-
-        loaded = InteractionLog.load(path)
-        assert len(loaded.interactions) == 1
-        assert loaded.interactions[0].to == "0xDEAD"

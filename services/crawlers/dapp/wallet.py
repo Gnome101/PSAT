@@ -1,13 +1,12 @@
 """
 Honeypot wallet management.
 
-Generates or loads a throwaway private key used to legitimately sign
-auth messages. The wallet never holds real funds - balances are spoofed
-at the RPC level.
+Generates a throwaway private key used to legitimately sign auth messages
+during DApp crawls. The wallet never holds real funds - balances are spoofed
+at the RPC level. A fresh key is generated per crawl session (in-memory only).
 """
 
 import json
-from pathlib import Path
 
 from eth_account import Account
 from eth_account.messages import encode_defunct
@@ -46,30 +45,3 @@ class HoneypotWallet:
             data.get("message", {}),
         )
         return signed.signature.hex()
-
-    def save(self, path: str | Path):
-        """Persist wallet to disk for reuse across sessions."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {"address": self.address, "private_key": self.private_key},
-                indent=2,
-            )
-        )
-
-    @classmethod
-    def load(cls, path: str | Path) -> "HoneypotWallet":
-        """Load a previously saved wallet."""
-        data = json.loads(Path(path).read_text())
-        return cls(private_key=data["private_key"])
-
-    @classmethod
-    def load_or_create(cls, path: str | Path) -> "HoneypotWallet":
-        """Load existing wallet or create and save a new one."""
-        path = Path(path)
-        if path.exists():
-            return cls.load(path)
-        wallet = cls()
-        wallet.save(path)
-        return wallet

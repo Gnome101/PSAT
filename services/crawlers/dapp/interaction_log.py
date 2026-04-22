@@ -3,10 +3,8 @@ Stores and manages captured DApp interactions (transactions, signatures,
 contract addresses) discovered during crawling.
 """
 
-import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 
 
 @dataclass
@@ -116,25 +114,3 @@ class InteractionLog:
     def get_transactions(self) -> list[CapturedInteraction]:
         """Get all sendTransaction captures."""
         return [i for i in self.interactions if i.type == "sendTransaction"]
-
-    def save(self, path: str | Path):
-        """Save the interaction log to JSON."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "session_start": self.session_start,
-            "total_interactions": len(self.interactions),
-            "unique_contracts": self.get_contract_addresses(),
-            "interactions": [asdict(i) for i in self.interactions],
-        }
-        path.write_text(json.dumps(data, indent=2))
-
-    @classmethod
-    def load(cls, path: str | Path) -> "InteractionLog":
-        """Load a previously saved interaction log."""
-        data = json.loads(Path(path).read_text())
-        log = cls(session_start=data.get("session_start", ""))
-        for entry in data.get("interactions", []):
-            interaction = CapturedInteraction(**entry)
-            log.interactions.append(interaction)
-        return log

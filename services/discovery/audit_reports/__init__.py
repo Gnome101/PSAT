@@ -23,8 +23,6 @@ Submodules:
 
 from __future__ import annotations
 
-import argparse
-import json
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -626,49 +624,6 @@ def merge_audit_reports(prev: dict[str, Any], new: dict[str, Any]) -> dict[str, 
         "errors": new.get("errors"),
         "notes": new.get("notes"),
     }
-
-
-# --- CLI entry point ------------------------------------------------------
-
-
-def main() -> None:  # pragma: no cover - dev-only CLI
-    parser = argparse.ArgumentParser(description="Discover audit reports for a protocol")
-    parser.add_argument("company", help="Company or protocol name")
-    parser.add_argument("--domain", default=None, help="Official domain hint")
-    parser.add_argument("--max-queries", type=int, default=2, help="Tavily query cap")
-    parser.add_argument("--debug", action="store_true", help="Print debug logs to stderr")
-    parser.add_argument("--no-save", action="store_true", help="Print to stdout only")
-    args = parser.parse_args()
-
-    try:
-        result = search_audit_reports(
-            args.company,
-            official_domain=args.domain,
-            max_queries=args.max_queries,
-            debug=args.debug,
-        )
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
-
-    output = json.dumps(result, indent=2)
-
-    if args.no_save:
-        print(output)
-        return
-
-    from pathlib import Path
-
-    safe_name = args.company.replace("/", "_").replace(" ", "_")
-    out_dir = Path("protocols") / safe_name
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "audit_reports.json"
-    out_path.write_text(output + "\n")
-    print(f"\nSaved to {out_path}")
-    print(f"Found {len(result.get('reports', []))} audit report(s)")
-
-
-if __name__ == "__main__":
-    main()
 
 
 __all__ = [
