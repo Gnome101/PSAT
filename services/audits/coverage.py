@@ -116,6 +116,11 @@ class CoverageMatch:
     # Phase C: strength kind for ``equivalence_status='proven'`` rows.
     # See db.models.AuditContractCoverage.proof_kind for the vocabulary.
     proof_kind: str | None = None
+    # The specific commit SHA from ``classified_commits`` that this row's
+    # bytecode matched, when verification resolved to one. Preference is
+    # for commits labeled ``reviewed`` so the UI can link to the commit the
+    # auditor actually reviewed. None on heuristic-only matches.
+    matched_commit_sha: str | None = None
 
 
 # --- Date parsing -------------------------------------------------------
@@ -851,6 +856,7 @@ def _match_to_row_kwargs(match: CoverageMatch) -> dict:
         "equivalence_reason": match.equivalence_reason,
         "equivalence_checked_at": match.equivalence_checked_at,
         "proof_kind": match.proof_kind,
+        "matched_commit_sha": match.matched_commit_sha,
     }
 
 
@@ -943,6 +949,7 @@ def _apply_bytecode_anchor(
                 equivalence_checked_at=m.equivalence_checked_at,
                 pinned_commit=m.pinned_commit,
                 proof_kind=m.proof_kind,
+                matched_commit_sha=m.matched_commit_sha,
             )
         )
     return stamped
@@ -1126,6 +1133,7 @@ def _apply_equivalence_http(
         reason: str,
         proven: bool = False,
         proof_kind: str | None = None,
+        matched_commit_sha: str | None = None,
     ) -> CoverageMatch:
         return CoverageMatch(
             audit_report_id=base.audit_report_id,
@@ -1143,6 +1151,7 @@ def _apply_equivalence_http(
             equivalence_checked_at=now,
             pinned_commit=base.pinned_commit,
             proof_kind=proof_kind if proven else None,
+            matched_commit_sha=matched_commit_sha if proven else None,
         )
 
     stamped: list[CoverageMatch] = []
@@ -1249,15 +1258,28 @@ def _apply_equivalence_http(
 
         proven = outcome.status == "proven"
         proof_kind: str | None = None
+        matched_commit_sha: str | None = None
         if proven:
             matched_commits = {em.commit.lower() for em in outcome.matches}
             proof_kind = _compute_proof_kind(matched_commits, list(data.classified_commits))
+            # Pick a representative SHA for this (audit, contract) pair.
+            # Prefer a commit the auditor labelled ``reviewed`` so the UI
+            # links to the SHA that was actually audited rather than a fix
+            # or cited reference. Fall back to any matched commit.
+            for entry in data.classified_commits or ():
+                sha = str(entry.get("sha") or "").lower()
+                if sha and sha in matched_commits and entry.get("label") == "reviewed":
+                    matched_commit_sha = sha
+                    break
+            if matched_commit_sha is None and matched_commits:
+                matched_commit_sha = next(iter(matched_commits))
             logger.info(
-                "coverage: audit %s proven to cover contract %s (%s) kind=%s — %s",
+                "coverage: audit %s proven to cover contract %s (%s) kind=%s sha=%s — %s",
                 m.audit_report_id,
                 m.contract_id,
                 m.matched_name,
                 proof_kind,
+                (matched_commit_sha or "")[:12],
                 outcome.reason,
             )
         stamped.append(
@@ -1267,6 +1289,7 @@ def _apply_equivalence_http(
                 reason=outcome.reason,
                 proven=proven,
                 proof_kind=proof_kind,
+                matched_commit_sha=matched_commit_sha,
             )
         )
     return stamped

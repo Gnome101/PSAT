@@ -30,6 +30,7 @@ from services.audits.text_extraction import (
     PdfDownloadError,
     PdfParseError,
     PdfTooLargeError,
+    _normalize_download_url,
     audit_text_key,
     download_audit_body,
     download_pdf,
@@ -435,6 +436,27 @@ _MD_BODY = "# Hats Finance Audit\n\n" + ("\n## Scope\n\nPool.sol, Vault.sol, Str
 
 
 class TestProcessAuditReportTextFiles:
+    def test_normalizes_github_blob_markdown_url_before_download(self, monkeypatch):
+        captured: dict[str, str] = {}
+
+        def fake_download_text(url, session=None):
+            captured["url"] = url
+            return _MD_BODY.encode("utf-8")
+
+        monkeypatch.setattr("services.audits.text_extraction.download_text", fake_download_text)
+        monkeypatch.setattr(
+            "services.audits.text_extraction.store_audit_text",
+            lambda aid, text: (f"audits/text/{aid}.txt", len(text.encode("utf-8")), "e" * 64),
+        )
+
+        out = process_audit_report(
+            audit_report_id=9,
+            url="https://github.com/x/y/blob/main/audits/report.md",
+        )
+
+        assert out.status == "success"
+        assert captured["url"] == "https://raw.githubusercontent.com/x/y/main/audits/report.md"
+
     def test_markdown_url_success_stores_text_unchanged(self, monkeypatch):
         """URL ending in .md should succeed, skip pypdf entirely, and store
         the decoded text verbatim (no page markers inserted)."""
@@ -528,3 +550,32 @@ class TestProcessAuditReportTextFiles:
         assert out.status == "success"
         # pypdf path preserves the --- page N --- markers.
         assert "--- page 1 ---" in captured_text["text"]
+
+    def test_normalizes_github_blob_pdf_url_before_download(self, monkeypatch):
+        captured: dict[str, str] = {}
+
+        monkeypatch.setattr(
+            "services.audits.text_extraction.download_pdf",
+            lambda url, session=None: (
+                captured.setdefault("url", url),
+                _minimal_pdf_with_text("Audits covering Pool.sol Vault.sol Strategy.sol Registry.sol. " * 20),
+            )[1],
+        )
+        monkeypatch.setattr(
+            "services.audits.text_extraction.store_audit_text",
+            lambda aid, text: (f"audits/text/{aid}.txt", len(text.encode("utf-8")), "f" * 64),
+        )
+
+        out = process_audit_report(
+            audit_report_id=43,
+            url="https://github.com/x/y/blob/main/audits/report.pdf",
+        )
+
+        assert out.status == "success"
+        assert captured["url"] == "https://raw.githubusercontent.com/x/y/main/audits/report.pdf"
+
+
+def test_normalize_download_url_rewrites_github_blob_files():
+    assert _normalize_download_url("https://github.com/a/b/blob/main/foo.pdf") == (
+        "https://raw.githubusercontent.com/a/b/main/foo.pdf"
+    )

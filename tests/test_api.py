@@ -4,6 +4,8 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -55,6 +57,68 @@ def make_client() -> TestClient:
     import api
 
     return TestClient(api.app)
+
+
+def test_build_company_function_entry_filters_generic_authority_contract_when_specific_principals_exist() -> None:
+    import api
+
+    ef = SimpleNamespace(
+        abi_signature="pauseContract()",
+        function_name="pauseContract",
+        selector="0x439766ce",
+        effect_labels=["pause_toggle"],
+        effect_targets=["paused"],
+        action_summary="Changes the contract pause state.",
+        authority_public=False,
+        authority_roles=[],
+    )
+    principals = [
+        SimpleNamespace(
+            address="0xrole",
+            resolved_type="contract",
+            origin="roleRegistry",
+            principal_type="controller",
+            details={"authority_kind": "access_control_like"},
+        ),
+        SimpleNamespace(
+            address="0xsafe",
+            resolved_type="safe",
+            origin="PROTOCOL_PAUSER",
+            principal_type="controller",
+            details={"threshold": 4, "owners": ["0x1", "0x2", "0x3", "0x4"]},
+        ),
+        SimpleNamespace(
+            address="0xeoa",
+            resolved_type="eoa",
+            origin="PROTOCOL_PAUSER",
+            principal_type="controller",
+            details={},
+        ),
+    ]
+
+    result = api._build_company_function_entry(cast(Any, ef), cast(Any, principals))
+
+    assert result["controllers"] == [
+        {
+            "label": "PROTOCOL_PAUSER",
+            "controller_id": "PROTOCOL_PAUSER",
+            "source": "PROTOCOL_PAUSER",
+            "principals": [
+                {
+                    "address": "0xsafe",
+                    "resolved_type": "safe",
+                    "source_controller_id": "PROTOCOL_PAUSER",
+                    "details": {"threshold": 4, "owners": ["0x1", "0x2", "0x3", "0x4"]},
+                },
+                {
+                    "address": "0xeoa",
+                    "resolved_type": "eoa",
+                    "source_controller_id": "PROTOCOL_PAUSER",
+                    "details": {},
+                },
+            ],
+        }
+    ]
 
 
 def test_index_serves_html() -> None:

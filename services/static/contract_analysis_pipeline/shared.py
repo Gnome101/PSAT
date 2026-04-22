@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,28 @@ from slither.slither import Slither
 from schemas.contract_analysis import Evidence
 
 from .constants import ROLE_CONSTANT_PATTERN, ROLE_NAME_PATTERNS
+
+_UPPER_SNAKE_IDENTIFIER = re.compile(r"\b[A-Z][A-Z0-9_]*\b")
+_AUTHISH_ROLE_IDENTIFIER_KEYWORDS = (
+    "owner",
+    "admin",
+    "guardian",
+    "govern",
+    "governor",
+    "governance",
+    "operator",
+    "manager",
+    "authority",
+    "timelock",
+    "upgrader",
+    "pauser",
+    "unpauser",
+    "minter",
+    "burner",
+    "executor",
+    "canceller",
+    "committee",
+)
 
 
 def _load_json(path: Path, default: Any) -> Any:
@@ -112,9 +135,26 @@ def _is_mapping_variable(variable) -> bool:
     return type(getattr(variable, "type", None)).__name__ == "MappingType"
 
 
+def _looks_like_role_identifier_name(name: str) -> bool:
+    if not name:
+        return False
+    if ROLE_CONSTANT_PATTERN.fullmatch(name) or any(pattern.match(name) for pattern in ROLE_NAME_PATTERNS):
+        return True
+    if not _UPPER_SNAKE_IDENTIFIER.fullmatch(name):
+        return False
+    lowered = name.lower()
+    return any(keyword in lowered for keyword in _AUTHISH_ROLE_IDENTIFIER_KEYWORDS)
+
+
+def _role_identifier_tokens(text: str) -> list[str]:
+    return sorted(
+        {token for token in _UPPER_SNAKE_IDENTIFIER.findall(text or "") if _looks_like_role_identifier_name(token)}
+    )
+
+
 def _is_role_identifier(variable) -> bool:
     name = getattr(variable, "name", "")
-    return bool(ROLE_CONSTANT_PATTERN.fullmatch(name)) or any(pattern.match(name) for pattern in ROLE_NAME_PATTERNS)
+    return _looks_like_role_identifier_name(name)
 
 
 def _source_evidence(item, project_dir: Path, detail: str | None = None) -> Evidence:

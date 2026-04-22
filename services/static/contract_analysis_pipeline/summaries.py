@@ -26,8 +26,6 @@ from .constants import (
     ADMIN_VAR_KEYWORDS,
     FACTORY_NAME_KEYWORDS,
     PAUSE_MODIFIER_KEYWORDS,
-    ROLE_CONSTANT_PATTERN,
-    ROLE_NAME_PATTERNS,
     SEVERITY_ORDER,
     STANDARD_EVENTS,
     STANDARD_SIGNATURES,
@@ -44,7 +42,9 @@ from .shared import (
     _dedupe_strings,
     _entry_points,
     _function_effects,
+    _looks_like_role_identifier_name,
     _node_contains_require_or_assert,
+    _role_identifier_tokens,
     _source_evidence,
     _source_fragment,
 )
@@ -78,17 +78,17 @@ def _normalize_guard_label(name: str) -> str:
 
 
 def _role_constants_from_function(function, project_dir: Path) -> list[str]:
-    roles = set(ROLE_CONSTANT_PATTERN.findall(_source_fragment(function, project_dir)))
+    roles = set(_role_identifier_tokens(_source_fragment(function, project_dir)))
 
     for variable in _call_or_value(function, "all_state_variables_read"):
         name = getattr(variable, "name", "")
-        if ROLE_CONSTANT_PATTERN.fullmatch(name):
+        if _looks_like_role_identifier_name(name):
             roles.add(name)
 
     for call in _call_or_value(function, "all_internal_calls"):
         for argument in getattr(call, "arguments", []) or []:
             name = getattr(argument, "name", "")
-            if ROLE_CONSTANT_PATTERN.fullmatch(name):
+            if _looks_like_role_identifier_name(name):
                 roles.add(name)
 
     return sorted(roles)
@@ -162,7 +162,7 @@ def _infer_function_guards(function, project_dir: Path) -> list[str]:
         node_state_reads = [getattr(variable, "name", "") for variable in getattr(node, "state_variables_read", [])]
         if "msg.sender" in node_solidity_reads:
             guards.extend(name for name in node_state_reads if _state_variable_looks_like_auth(name))
-        guards.extend(ROLE_CONSTANT_PATTERN.findall(str(getattr(node, "expression", "") or "")))
+        guards.extend(_role_identifier_tokens(str(getattr(node, "expression", "") or "")))
 
     return _dedupe_strings(guards)
 
@@ -171,7 +171,7 @@ def _is_access_control_guard_label(label: str) -> bool:
     return (
         _looks_like_access_guard(label)
         or _state_variable_looks_like_auth(label)
-        or ROLE_CONSTANT_PATTERN.fullmatch(label) is not None
+        or _looks_like_role_identifier_name(label)
         or label == "role"
     )
 
@@ -752,7 +752,7 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
             owner_variables.append(name)
         if any(keyword in lowered for keyword in ADMIN_VAR_KEYWORDS):
             admin_variables.append(name)
-        if any(pattern.match(name) for pattern in ROLE_NAME_PATTERNS):
+        if _looks_like_role_identifier_name(name):
             role_definitions.append(
                 {
                     "role": name,
@@ -818,7 +818,7 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
     if (
         any("accesscontrol" in name for name in lower_inheritance_names)
         or any("onlyrole" in name for name in modifier_names)
-        or any(item["role"].endswith("_ROLE") for item in role_definitions)
+        or any(_looks_like_role_identifier_name(item["role"]) for item in role_definitions)
     ):
         pattern = "access_control"
     elif any("ownable" in name for name in lower_inheritance_names) or "onlyowner" in modifier_names or owner_variables:

@@ -7,7 +7,7 @@ from typing import Any
 from eth_abi.abi import decode
 
 from schemas.contract_analysis import AssociatedEvent, ControllerReadSpec
-from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
+from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan, TrackedController
 from utils.rpc import (
     normalize_hex as _normalize_hex,
 )
@@ -158,9 +158,22 @@ def _read_polling_source(
     return _decode_controller_value(raw, controller_kind)
 
 
+def _controller_address_from_value(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = _normalize_hex(value)
+    if len(normalized) != 42 or normalized == "0x0000000000000000000000000000000000000000":
+        return None
+    return normalized
+
+
 def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: str = "latest") -> ControlSnapshot:
     block_number = _current_block_number(rpc_url) if block_tag == "latest" else int(block_tag, 16)
     controller_values = {}
+    controllers_by_source: dict[str, list[TrackedController]] = {}
+    for controller in plan["tracked_controllers"]:
+        controllers_by_source.setdefault(controller["source"], []).append(controller)
+    in_progress: set[str] = set()
     # Cache classify_resolved_address results to avoid duplicate RPC calls
     # when multiple controllers resolve to the same address.
     _classification_cache: dict[str, tuple[str, dict[str, object]]] = {}
@@ -171,13 +184,31 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
             _classification_cache[key] = classify_resolved_address(rpc_url, address, block_tag)
         return _classification_cache[key]
 
-    for controller in plan["tracked_controllers"]:
+    def _resolve_read_contract_address(controller: TrackedController) -> str:
+        read_spec = controller.get("read_spec")
+        if isinstance(read_spec, dict):
+            contract_source = read_spec.get("contract_source")
+            if isinstance(contract_source, str) and contract_source:
+                for dependency in controllers_by_source.get(contract_source, []):
+                    _read_controller_value(dependency)
+                    value = controller_values.get(dependency["controller_id"], {}).get("value")
+                    resolved = _controller_address_from_value(value)
+                    if resolved:
+                        return resolved
+        return plan["contract_address"]
+
+    def _read_controller_value(controller: TrackedController) -> None:
+        controller_id = controller["controller_id"]
+        if controller_id in controller_values or controller_id in in_progress:
+            return
+        in_progress.add(controller_id)
         source = controller["source"]
         read_spec = controller.get("read_spec")
         try:
+            read_contract_address = _resolve_read_contract_address(controller)
             value = _read_polling_source(
                 rpc_url,
-                plan["contract_address"],
+                read_contract_address,
                 source,
                 controller["kind"],
                 block_tag,
@@ -186,7 +217,7 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
             if controller["kind"] == "role_identifier":
                 member_addresses, adapter_meta = expand_role_identifier_principals(
                     rpc_url,
-                    plan["contract_address"],
+                    read_contract_address,
                     value,
                     block_tag,
                 )
@@ -209,22 +240,23 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
                     "details": {
                         "source": source,
                         "role_id": value,
+                        "authority_contract": read_contract_address,
                         **adapter_meta,
                         "resolved_principals": resolved_principals,
                     },
                 }
-                continue
-            controller_values[controller["controller_id"]] = {
+                return
+            controller_values[controller_id] = {
                 "source": source,
                 "value": value,
                 "block_number": block_number,
                 "observed_via": "eth_call",
             }
             resolved_type, details = _cached_classify(value)
-            controller_values[controller["controller_id"]]["resolved_type"] = resolved_type
-            controller_values[controller["controller_id"]]["details"] = details
+            controller_values[controller_id]["resolved_type"] = resolved_type
+            controller_values[controller_id]["details"] = details
         except Exception as exc:
-            controller_values[controller["controller_id"]] = {
+            controller_values[controller_id] = {
                 "source": source,
                 "value": None,
                 "block_number": block_number,
@@ -235,6 +267,11 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
                     "error": str(exc),
                 },
             }
+        finally:
+            in_progress.discard(controller_id)
+
+    for controller in plan["tracked_controllers"]:
+        _read_controller_value(controller)
     return {
         "schema_version": "0.1",
         "contract_address": plan["contract_address"],

@@ -230,14 +230,116 @@ class TestAnalysisPhaseSuccess:
             "workers.static_worker.collect_contract_analysis",
             lambda project_dir: analysis_data,
         )
+        monkeypatch.setattr(
+            "workers.static_worker.build_semantic_guards",
+            lambda analysis: {"schema_version": "0.1", "contract_name": "TestContract", "functions": []},
+        )
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
 
         assert result == analysis_data
-        assert len(calls) == 1
+        assert len(calls) == 2
         assert calls[0]["name"] == "contract_analysis"
         assert calls[0]["data"] == analysis_data
+        assert calls[1]["name"] == "semantic_guards"
+
+    def test_stores_semantic_guards_side_artifact_when_present(self, monkeypatch, tmp_path):
+        worker = StaticWorker()
+        monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+        monkeypatch.setattr(worker, "_write_analysis_tables", lambda *a, **kw: None)
+        session = MagicMock()
+        job = _job()
+
+        analysis_data = {
+            "schema_version": "0.1",
+            "subject": {"name": "TestContract"},
+            "summary": {"control_model": "ownable"},
+        }
+        semantic_data = {
+            "schema_version": "0.1",
+            "contract_name": "TestContract",
+            "functions": [],
+        }
+        analysis_path = tmp_path / "contract_analysis.json"
+        semantic_path = tmp_path / "semantic_guards.json"
+        analysis_path.write_text(json.dumps(analysis_data))
+        semantic_path.write_text(json.dumps(semantic_data))
+
+        monkeypatch.setattr(
+            "workers.static_worker.collect_contract_analysis",
+            lambda project_dir: analysis_data,
+        )
+        monkeypatch.setattr(
+            "workers.static_worker.build_semantic_guards",
+            lambda analysis: semantic_data,
+        )
+        calls = _capture_store_artifact(monkeypatch)
+
+        result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
+
+        assert result == analysis_data
+        assert [call["name"] for call in calls] == ["contract_analysis", "semantic_guards"]
+        assert calls[1]["data"] == semantic_data
+
+    def test_hevm_semantic_phase_stores_refined_artifacts(self, monkeypatch, tmp_path):
+        worker = StaticWorker()
+        monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+        session = MagicMock()
+        job = _job(request={"rpc_url": "https://rpc.example"})
+
+        analysis_path = tmp_path / "contract_analysis.json"
+        analysis_path.write_text(json.dumps({"schema_version": "0.1"}))
+        semantic_path = tmp_path / "semantic_guards.json"
+        semantic_path.write_text(json.dumps({"functions": [{"function": "upgradeTo(address)", "predicates": []}]}))
+        tracking_path = tmp_path / "control_tracking_plan.json"
+        tracking_path.write_text(json.dumps({"tracked_controllers": []}))
+
+        monkeypatch.setattr(
+            "workers.static_worker.get_artifact",
+            lambda _session, _job_id, name: {"tracked_controllers": []} if name == "control_tracking_plan" else None,
+        )
+        monkeypatch.setattr(
+            "workers.static_worker.refine_semantic_guards_with_hevm",
+            lambda semantic_guards, tracking_plan, rpc_url, project_dir=None: (
+                {
+                    "functions": [
+                        {
+                            "function": "upgradeTo(address)",
+                            "predicates": [{"kind": "caller_equals_controller"}],
+                        }
+                    ]
+                },
+                {"status": "ok", "functions": []},
+            ),
+        )
+        calls = _capture_store_artifact(monkeypatch)
+
+        worker._run_hevm_semantic_phase(session, job, tmp_path, "TestContract", job.address)
+
+        assert [call["name"] for call in calls] == ["hevm_semantic_guards", "semantic_guards"]
+        assert calls[0]["data"]["status"] == "ok"
+        assert calls[1]["data"]["functions"][0]["predicates"] == [{"kind": "caller_equals_controller"}]
+
+    def test_succeeds_even_when_returned_path_missing(self, monkeypatch, tmp_path):
+        """If analyze_contract returns a path that doesn't exist, phase still returns True
+        (no artifact stored, but no error either)."""
+        worker = StaticWorker()
+        monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+        session = MagicMock()
+        job = _job()
+
+        monkeypatch.setattr(
+            "workers.static_worker.collect_contract_analysis",
+            lambda project_dir: {"schema_version": "0.1"},
+        )
+        monkeypatch.setattr("workers.static_worker.build_semantic_guards", lambda analysis: {"functions": []})
+        calls = _capture_store_artifact(monkeypatch)
+
+        result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
+
+        assert result == {"schema_version": "0.1"}
+        assert [call["name"] for call in calls] == ["contract_analysis", "semantic_guards"]
 
 
 class TestAnalysisPhaseFailure:

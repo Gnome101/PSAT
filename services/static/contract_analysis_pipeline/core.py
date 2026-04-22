@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from slither.slither import Slither
@@ -10,6 +11,7 @@ from schemas.contract_analysis import AuditAlignment, ContractAnalysis, Summary
 from services.static.vyper_analysis import collect_vyper_contract_analysis, is_vyper_project
 
 from .graph import build_permission_graph
+from .semantic_guards import build_semantic_guards
 from .shared import _load_json, _select_subject_contract
 from .summaries import (
     _build_tracking_hints,
@@ -23,6 +25,16 @@ from .summaries import (
     _summarize_slither,
 )
 from .tracking import build_controller_tracking, build_policy_tracking
+
+
+def analyze_contract(project_dir: Path) -> Path:
+    """Generate contract_analysis.json for a scaffolded project."""
+    analysis = collect_contract_analysis(project_dir)
+    output_path = project_dir / "contract_analysis.json"
+    output_path.write_text(json.dumps(analysis, indent=2) + "\n")
+    semantic_guards_path = project_dir / "semantic_guards.json"
+    semantic_guards_path.write_text(json.dumps(build_semantic_guards(analysis), indent=2) + "\n")
+    return output_path
 
 
 def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:

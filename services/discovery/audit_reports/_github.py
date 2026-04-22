@@ -15,6 +15,7 @@ from typing import Any
 import requests as _requests
 
 from utils import llm
+from utils.github_urls import github_blob_to_raw
 
 from ..inventory_domain import _debug_log
 from ._urls import (
@@ -91,25 +92,6 @@ def _parse_github_url(url: str) -> dict[str, str] | None:
             return None
         return {"kind": "org", "owner": owner, "repo": "", "ref": "", "path": ""}
     return None
-
-
-def github_blob_to_raw(url: str) -> str:
-    """Convert a GitHub ``/blob/`` URL to its ``raw.githubusercontent.com``
-    equivalent so the text-extraction worker gets the file body instead of
-    the HTML code-view page.
-
-    ``https://github.com/<org>/<repo>/blob/<ref>/<path>`` →
-    ``https://raw.githubusercontent.com/<org>/<repo>/<ref>/<path>``
-
-    URL-encoded characters (``%20`` etc.) in ``<path>`` survive verbatim.
-    Non-GitHub URLs, already-raw URLs, and ``/tree/`` URLs pass through
-    unchanged — making this safe to call indiscriminately.
-    """
-    m = _GITHUB_BLOB_RE.match(url)
-    if not m:
-        return url
-    owner, repo, ref, path = m.group(1), m.group(2), m.group(3), m.group(4)
-    return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
 
 
 def _github_api_headers() -> dict[str, str]:

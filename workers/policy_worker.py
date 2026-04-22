@@ -88,6 +88,7 @@ class PolicyWorker(BaseWorker):
         contract_analysis = get_artifact(session, job.id, "contract_analysis")
         control_snapshot = get_artifact(session, job.id, "control_snapshot")
         resolved_control_graph = get_artifact(session, job.id, "resolved_control_graph")
+        semantic_guards = get_artifact(session, job.id, "semantic_guards")
         tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
 
         if not isinstance(contract_analysis, dict):
@@ -104,7 +105,6 @@ class PolicyWorker(BaseWorker):
             "status": "no_authority",
             "reason": "Worker-mode authority resolution",
         }
-
         if isinstance(resolved_control_graph, dict):
             authority_result = self._resolve_authority(
                 session,
@@ -126,6 +126,17 @@ class PolicyWorker(BaseWorker):
         # Build effective permissions
         self.update_detail(session, job, "Computing effective permissions")
 
+        external_snapshots = {
+            address: cast(dict, bundle["snapshot"])
+            for address, bundle in nested_artifacts.items()
+            if isinstance(bundle.get("snapshot"), dict)
+        }
+        external_policy_states: dict[str, dict] = {}
+        for address in external_snapshots:
+            nested_policy_state = get_artifact(session, job.id, artifact_key(address, "policy_state"))
+            if isinstance(nested_policy_state, dict):
+                external_policy_states[address] = nested_policy_state
+
         ep_data: dict = cast(
             dict,
             build_effective_permissions(
@@ -133,6 +144,9 @@ class PolicyWorker(BaseWorker):
                 target_snapshot=control_snapshot,
                 authority_snapshot=authority_snapshot,
                 policy_state=policy_state,
+                semantic_guards=semantic_guards if isinstance(semantic_guards, dict) else None,
+                external_snapshots=external_snapshots,
+                external_policy_states=external_policy_states,
                 principal_resolution=principal_resolution,
             ),
         )

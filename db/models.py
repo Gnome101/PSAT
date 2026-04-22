@@ -321,6 +321,13 @@ class AuditContractCoverage(Base):
     equivalence_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # Phase C proof strength for ``equivalence_status='proven'`` rows.
     proof_kind: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # Specific commit SHA from ``AuditReport.classified_commits`` that matched
+    # this contract's bytecode during verification. Populated alongside
+    # ``proof_kind``/``equivalence_status``. NULL for heuristic-only matches
+    # (direct / impl_era) and for rows verified before this field existed.
+    # Stored as the full 40-char hex so downstream can build GitHub tree URLs
+    # without having to look up the audit's commit list again.
+    matched_commit_sha: Mapped[str | None] = mapped_column(String(66), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -580,6 +587,28 @@ class PrincipalLabel(Base):
     graph_context: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="principal_labels")
+
+
+class AddressLabel(Base):
+    """Admin-curated human-readable name for an arbitrary address.
+
+    Exists to give Safe signers and EOA principals — which are just raw
+    addresses with no on-chain metadata — a legible name in the UI. Keyed
+    by the lowercased address so it applies everywhere the address appears
+    (signer list, EOA card, function guard, etc.), independent of any
+    specific contract context. Distinct from ``PrincipalLabel`` which is
+    worker-populated and scoped per-contract.
+    """
+
+    __tablename__ = "address_labels"
+
+    address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class ContractDependency(Base):

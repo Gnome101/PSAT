@@ -832,6 +832,301 @@ def test_effect_target_role_registry_upgrader_preserves_controller_ref(tmp_path)
     assert "roleRegistry" in privileged["controller_refs"]
 
 
+def test_external_has_role_constant_is_tracked_as_role_identifier(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "ExternalRolePause",
+        """
+        pragma solidity ^0.8.19;
+
+        interface IRoleRegistry {
+            function hasRole(bytes32 role, address account) external view returns (bool);
+            function PROTOCOL_PAUSER() external view returns (bytes32);
+        }
+
+        contract ExternalRolePause {
+            IRoleRegistry public roleRegistry;
+            bool public paused;
+
+            constructor(IRoleRegistry registry) {
+                roleRegistry = registry;
+            }
+
+            function pauseContract() external {
+                require(roleRegistry.hasRole(roleRegistry.PROTOCOL_PAUSER(), msg.sender), "bad role");
+                paused = true;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    privileged = _privileged_function(analysis, "pauseContract()")
+
+    assert "PROTOCOL_PAUSER" in privileged["guards"]
+    assert "PROTOCOL_PAUSER" in privileged["controller_refs"]
+    assert "pauser" in privileged["controller_refs"]
+    assert "roleRegistry" in privileged["controller_refs"]
+
+    tracked = _tracked_controller(analysis, "PROTOCOL_PAUSER")
+    assert tracked["controller_id"] == "role_identifier:PROTOCOL_PAUSER"
+    assert tracked["kind"] == "role_identifier"
+
+
+def test_external_has_role_constant_without_authish_name_is_tracked_as_role_identifier(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "OpaqueRolePause",
+        """
+        pragma solidity ^0.8.19;
+
+        interface IRoleRegistry {
+            function hasRole(bytes32 role, address account) external view returns (bool);
+            function BREAK_GLASS() external view returns (bytes32);
+        }
+
+        contract OpaqueRolePause {
+            IRoleRegistry public roleRegistry;
+            bool public paused;
+
+            constructor(IRoleRegistry registry) {
+                roleRegistry = registry;
+            }
+
+            function pauseContract() external {
+                require(roleRegistry.hasRole(roleRegistry.BREAK_GLASS(), msg.sender), "bad role");
+                paused = true;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    privileged = _privileged_function(analysis, "pauseContract()")
+
+    # The robust behavior we want is to preserve the exact role identifier,
+    # even when the constant name doesn't look auth-ish.
+    assert "BREAK_GLASS" in privileged["guards"]
+    assert "BREAK_GLASS" in privileged["controller_refs"]
+
+    tracked = _tracked_controller(analysis, "BREAK_GLASS")
+    assert tracked["controller_id"] == "role_identifier:BREAK_GLASS"
+    assert tracked["kind"] == "role_identifier"
+    assert tracked["read_spec"] == {
+        "strategy": "getter_call",
+        "target": "BREAK_GLASS",
+        "contract_source": "roleRegistry",
+    }
+
+
+def test_modifier_helper_preserves_opaque_role_identifier(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "OpaqueRoleModifierPause",
+        """
+        pragma solidity ^0.8.19;
+
+        interface IAuth {
+            function q(bytes32 role, address who) external view returns (bool);
+        }
+
+        contract OpaqueRoleModifierPause {
+            bytes32 public constant BREAK_GLASS = keccak256("x");
+            IAuth public auth;
+            bool public paused;
+
+            constructor(IAuth auth_) {
+                auth = auth_;
+            }
+
+            modifier gate(bytes32 x) {
+                _check(x);
+                _;
+            }
+
+            function _check(bytes32 x) internal view {
+                require(auth.q(x, msg.sender), "bad");
+            }
+
+            function pause() external gate(BREAK_GLASS) {
+                paused = true;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    privileged = _privileged_function(analysis, "pause()")
+
+    assert "BREAK_GLASS" in privileged["guards"]
+    assert "BREAK_GLASS" in privileged["controller_refs"]
+
+    tracked = _tracked_controller(analysis, "BREAK_GLASS")
+    assert tracked["controller_id"] == "role_identifier:BREAK_GLASS"
+    assert tracked["kind"] == "role_identifier"
+
+
+def test_opaque_external_void_helper_guard_would_need_semantic_execution(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "OpaqueExternalGuard",
+        """
+        pragma solidity ^0.8.19;
+
+        interface IGate {
+            function x(address who) external view;
+        }
+
+        contract OpaqueGate is IGate {
+            address public owner;
+            error Denied();
+
+            constructor(address owner_) {
+                owner = owner_;
+            }
+
+            function x(address who) external view {
+                if (who != owner) revert Denied();
+            }
+        }
+
+        contract OpaqueExternalGuard {
+            IGate public gate;
+            bool public paused;
+
+            constructor(IGate gate_) {
+                gate = gate_;
+            }
+
+            function pause() external {
+                gate.x(msg.sender);
+                paused = true;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    privileged = _privileged_function(analysis, "pause()")
+
+    # Desired semantic outcome:
+    #   gate.x(msg.sender) -> inside OpaqueGate.x(): require(who == owner)
+    # so the direct caller set should reduce to owner(gate).
+    assert "external_authority_check" in privileged["guard_kinds"]
+    assert "gate" in privileged["controller_refs"]
+
+
+@pytest.mark.xfail(reason="opaque external role helpers are not reduced to canonical role-member predicates")
+def test_opaque_external_role_helper_would_need_semantic_execution(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "OpaqueExternalRoleGuard",
+        """
+        pragma solidity ^0.8.19;
+
+        interface IAuth {
+            function z(address who) external view;
+        }
+
+        contract OpaqueRoleAuth is IAuth {
+            bytes32 public constant BREAK_GLASS = keccak256("x");
+            mapping(bytes32 => mapping(address => bool)) internal roles;
+            error Denied();
+
+            constructor(address pauser) {
+                roles[BREAK_GLASS][pauser] = true;
+            }
+
+            function z(address who) external view {
+                if (!roles[BREAK_GLASS][who]) revert Denied();
+            }
+        }
+
+        contract OpaqueExternalRoleGuard {
+            IAuth public auth;
+            bool public paused;
+
+            constructor(IAuth auth_) {
+                auth = auth_;
+            }
+
+            function pause() external {
+                auth.z(msg.sender);
+                paused = true;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    privileged = _privileged_function(analysis, "pause()")
+
+    # Desired semantic outcome:
+    #   auth.z(msg.sender) -> inside OpaqueRoleAuth.z(): caller must be a member
+    #   of BREAK_GLASS on auth.
+    assert "external_authority_check" in privileged["guard_kinds"]
+    assert "auth" in privileged["controller_refs"]
+    assert "BREAK_GLASS" in privileged["controller_refs"]
+
+
+def test_opaque_external_policy_helper_would_need_semantic_execution(tmp_path):
+    project_dir = _write_project(
+        tmp_path,
+        "OpaqueExternalPolicyGuard",
+        """
+        pragma solidity ^0.8.19;
+
+        interface IPolicy {
+            function q(address who, address target, bytes4 sig) external view;
+        }
+
+        contract OpaquePolicy is IPolicy {
+            mapping(address => mapping(bytes4 => mapping(address => bool))) internal can;
+            error Denied();
+
+            constructor(address admin) {
+                can[address(this)][this.guard.selector][admin] = true;
+            }
+
+            function guard() external {}
+
+            function q(address who, address target, bytes4 sig) external view {
+                if (!can[target][sig][who]) revert Denied();
+            }
+        }
+
+        contract OpaqueExternalPolicyGuard {
+            IPolicy public policy;
+            bool public executed;
+
+            constructor(IPolicy policy_) {
+                policy = policy_;
+            }
+
+            function execute() external {
+                policy.q(msg.sender, address(this), this.execute.selector);
+                executed = true;
+            }
+        }
+        """,
+        slither_output={"results": {"detectors": []}},
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+    privileged = _privileged_function(analysis, "execute()")
+
+    # Desired semantic outcome:
+    #   policy.q(msg.sender, address(this), this.execute.selector)
+    #   should reduce to a canonical policy check predicate.
+    assert "external_authority_check" in privileged["guard_kinds"]
+    assert "policy" in privileged["controller_refs"]
+
+
 @pytest.mark.parametrize(
     ("contract_name", "fixture_name", "signature", "expected_guards"),
     [

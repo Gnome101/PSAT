@@ -1,5 +1,6 @@
 """Contract analysis package exports."""
 
-from .core import collect_contract_analysis
+from .core import analyze_contract, collect_contract_analysis
+from .semantic_guards import build_semantic_guards
 
-__all__ = ["collect_contract_analysis"]
+__all__ = ["analyze_contract", "build_semantic_guards", "collect_contract_analysis"]
