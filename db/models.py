@@ -755,8 +755,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=2,
-    max_overflow=3,
     # psycopg2 defaults connect_timeout to infinity — would block every
     # session acquisition during a Neon cold-start.
     connect_args={"connect_timeout": 10},
