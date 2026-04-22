@@ -19,10 +19,8 @@ import questionMarkIcon from "./assets/question-mark.svg";
 import vaultIcon from "./assets/vault.svg";
 
 import { getCoverage, getTimeline } from "./api/audits.js";
-<<<<<<< HEAD
 import { listAddressLabels } from "./api/addressLabels.js";
 import AddressLabelInline from "./AddressLabelInline.jsx";
-=======
 import {
   AUDIT_STATUS_META,
   DRIFT_FALSE_META,
@@ -36,7 +34,6 @@ import {
   SEVERITY_META,
   STATUS_LABELS,
 } from "./auditUi.jsx";
->>>>>>> ab768f72da932ba7ac31f8b62120dbfcd85b7a23
 
 const CONTROL_EFFECTS = new Set([
   "implementation_update",
