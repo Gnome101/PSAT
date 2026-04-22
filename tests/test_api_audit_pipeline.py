@@ -332,9 +332,7 @@ def test_pipeline_item_exposes_stage_metadata(db_session, api_client, seed_proto
         scope_contracts=["Vault", "Router"],
         reviewed_commits=["abc1234", "def5678"],
         referenced_repos=["owner/protocol"],
-        scope_entries=[
-            {"name": "Vault", "address": "0x1111111111111111111111111111111111111111", "chain": "ethereum"}
-        ],
+        scope_entries=[{"name": "Vault", "address": "0x1111111111111111111111111111111111111111", "chain": "ethereum"}],
         classified_commits=[{"sha": "abc1234", "label": "reviewed", "context": "scope table"}],
         auditor="Metadata",
     )
