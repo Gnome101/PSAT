@@ -46,7 +46,7 @@ jobs:
           # WITH (FORCE) terminates any lingering connections (workers that
           # didn't disconnect before the Fly app was destroyed). PG16+, Neon
           # supports it. Fresh psql session — don't reuse any prior one.
-          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=postgres" \
+          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
             -c "DROP DATABASE IF EXISTS \"psat_pr_${PR_NUMBER}\" WITH (FORCE);" || true
 
       - name: Delete Tigris prefix

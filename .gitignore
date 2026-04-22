@@ -1,4 +1,6 @@
 .env
+.env.live
+.env.local
 __pycache__/
 **/__pycache__/
 *.pyc

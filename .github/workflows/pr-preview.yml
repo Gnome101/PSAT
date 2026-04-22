@@ -25,7 +25,7 @@ jobs:
     env:
       PR_NUMBER: ${{ github.event.pull_request.number }}
       FLY_APP_NAME: psat-pr-${{ github.event.pull_request.number }}
-      FLY_ORG: psat
+      FLY_ORG: personal
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       NEON_STAGING_HOST: ${{ secrets.NEON_STAGING_HOST }}
       NEON_STAGING_POOLER_HOST: ${{ secrets.NEON_STAGING_POOLER_HOST }}
@@ -53,7 +53,7 @@ jobs:
           # pooler endpoint runs pgbouncer in transaction mode, which
           # doesn't allow admin commands like CREATE DATABASE. The app
           # itself still uses the pooler (see DATABASE_URL below).
-          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=postgres" \
+          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
             -c "CREATE DATABASE \"psat_pr_${PR_NUMBER}\";" || true
 
       - name: Stage Fly secrets

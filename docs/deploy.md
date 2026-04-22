@@ -55,11 +55,12 @@ default role does.
 # Install flyctl locally if you haven't: https://fly.io/docs/flyctl/install/
 
 # Prod app shell (Dockerfile builds once the first deploy runs).
-fly apps create psat --org psat
+fly apps create psat --org personal
 
-# Tigris buckets — one for prod, one shared by every preview.
-fly storage create --name psat-artifacts --org psat
-fly storage create --name psat-artifacts-staging --org psat
+# Single Tigris bucket shared by prod + every preview. Fly only allows one
+# Tigris bucket per app, so we scope writes with ARTIFACT_STORAGE_PREFIX
+# inside the same bucket (prod writes to the root, previews to pr-<N>/).
+fly storage create --name psat-artifacts --org personal
 ```
 
 `fly storage create` prints an endpoint URL + access/secret keys. Capture
@@ -119,7 +120,7 @@ Populate each with the secrets listed below.
 | `OPEN_ROUTER_KEY`               | OpenRouter LLM token.                                   |
 | `PROTOCOL_GITHUB_TOKEN`         | PAT for GitHub org enumeration. **Renamed** from `GITHUB_TOKEN` so the workflow's built-in `GITHUB_TOKEN` isn't shadowed; the preview workflow copies this into the Fly `GITHUB_TOKEN` secret at deploy time. |
 | `ARTIFACT_STORAGE_ENDPOINT`     | Staging Tigris endpoint URL.                            |
-| `ARTIFACT_STORAGE_BUCKET`       | `psat-artifacts-staging`.                               |
+| `ARTIFACT_STORAGE_BUCKET`       | `psat-artifacts` (same bucket as prod; prefixed per PR). |
 | `ARTIFACT_STORAGE_ACCESS_KEY`   | Staging bucket S3 access key.                           |
 | `ARTIFACT_STORAGE_SECRET_KEY`   | Staging bucket S3 secret key.                           |
 
@@ -223,11 +224,11 @@ Entrypoint is `/app/start_container.sh` inside the image.
 
 ## Tigris gotchas
 
-- **Single shared staging bucket, prefix per PR.** Tigris doesn't make
-  per-PR buckets cheap or pleasant. The app reads `ARTIFACT_STORAGE_PREFIX`
-  (normalized to end in `/`) and prepends it to every storage key; cleanup
-  deletes the prefix recursively.
-- **Prod writes to the bucket root** — no `ARTIFACT_STORAGE_PREFIX` set.
+- **One bucket, prefix per tenant.** Fly attaches a single Tigris bucket per
+  app, so prod + every preview share `psat-artifacts`. Prod writes to the
+  root (no prefix); each preview sets `ARTIFACT_STORAGE_PREFIX=pr-<N>/` and
+  the app prepends it to every storage key. Teardown deletes that prefix
+  recursively, never touching prod.
 
 ---
 
@@ -242,7 +243,7 @@ fly tokens revoke <token-id>
 fly tokens list
 
 # Create replacements.
-fly tokens create org psat --name ci-staging       # staging env
+fly tokens create org personal --name ci-staging   # staging env
 fly tokens create deploy -a psat --name ci-prod    # production env
 ```
 
