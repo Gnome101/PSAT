@@ -504,7 +504,10 @@ def _patch_dep_phase_helpers(monkeypatch, find_dyn_fn):
         lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
     )
     monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
-    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_dependency_visualization",
+        lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
+    )
 
 
 def _patch_static_worker_phases(monkeypatch, worker):

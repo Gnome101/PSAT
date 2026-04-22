@@ -4,7 +4,7 @@ from .activity import enrich_with_activity
 from .audit_reports import merge_audit_reports, search_audit_reports
 from .chain_resolver import resolve_unknown_chains
 from .classifier import classify_contracts
-from .dependency_graph_builder import write_dependency_visualization
+from .dependency_graph_builder import build_dependency_visualization
 from .deployer import expand_from_deployers
 from .dynamic_dependencies import find_dynamic_dependencies
 from .fetch import CONTRACTS_DIR, fetch, parse_remappings, parse_sources, parse_verification_bundle, scaffold
@@ -30,5 +30,5 @@ __all__ = [
     "scaffold",
     "search_audit_reports",
     "search_protocol_inventory",
-    "write_dependency_visualization",
+    "build_dependency_visualization",
 ]

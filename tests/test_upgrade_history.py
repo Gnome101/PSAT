@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 
@@ -36,20 +35,20 @@ def _make_log(
     return log
 
 
-def _write_deps(tmp_path, target, deps_dict):
-    data = {"address": target, "dependencies": deps_dict}
-    p = tmp_path / "dependencies.json"
-    p.write_text(json.dumps(data))
-    return p
+def _write_deps(_tmp_path, target, deps_dict):
+    """Build a unified-dependencies dict (kept as ``_write_deps`` so the
+    existing call sites stay readable — ``build_upgrade_history`` now takes
+    the dict directly and no temp file is written)."""
+    return {"address": target, "dependencies": deps_dict}
 
 
-def _write_deps_target_proxy(tmp_path, target, proxy_type, implementation, deps_dict=None):
-    """Write dependencies.json where the TARGET is classified as a proxy.
+def _write_deps_target_proxy(_tmp_path, target, proxy_type, implementation, deps_dict=None):
+    """Unified-dependencies dict where the TARGET is classified as a proxy.
 
     Upgrade history only processes the target, so tests exercising
     proxy-level behavior set up the target contract as the proxy.
     """
-    data = {
+    return {
         "address": target,
         "target_classification": {
             "type": "proxy",
@@ -58,9 +57,6 @@ def _write_deps_target_proxy(tmp_path, target, proxy_type, implementation, deps_
         },
         "dependencies": deps_dict or {},
     }
-    p = tmp_path / "dependencies.json"
-    p.write_text(json.dumps(data))
-    return p
 
 
 def _mock_no_enrichment(monkeypatch):
@@ -545,8 +541,6 @@ class TestBuildUpgradeHistory:
             },
             "dependencies": {},
         }
-        p = tmp_path / "dependencies.json"
-        p.write_text(json.dumps(deps))
 
         def mock_fetch(address, topic0, from_block=0):
             if address == target and topic0 == uh.UPGRADED_TOPIC0:
@@ -556,7 +550,7 @@ class TestBuildUpgradeHistory:
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
         _mock_no_enrichment(monkeypatch)
 
-        result = uh.build_upgrade_history(p)
+        result = uh.build_upgrade_history(deps)
         assert target in result["proxies"], "Target contract is a proxy and should appear in the proxies output"
         h = result["proxies"][target]
         assert h["proxy_type"] == "eip1967"

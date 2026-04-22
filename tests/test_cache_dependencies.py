@@ -71,8 +71,8 @@ def test_static_deps_stored_on_first_run(db_session, monkeypatch):
         lambda *a, **kw: None,
     )
     monkeypatch.setattr(
-        "workers.static_worker.write_dependency_visualization",
-        lambda *a, **kw: None,
+        "workers.static_worker.build_dependency_visualization",
+        lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
     )
 
     worker = StaticWorker()
@@ -158,8 +158,8 @@ def test_static_deps_reused_on_cache_hit(db_session, monkeypatch):
         lambda *a, **kw: None,
     )
     monkeypatch.setattr(
-        "workers.static_worker.write_dependency_visualization",
-        lambda *a, **kw: None,
+        "workers.static_worker.build_dependency_visualization",
+        lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
     )
 
     worker = StaticWorker()
@@ -233,8 +233,8 @@ def test_dynamic_deps_still_run_on_cache_hit(db_session, monkeypatch):
         lambda *a, **kw: None,
     )
     monkeypatch.setattr(
-        "workers.static_worker.write_dependency_visualization",
-        lambda *a, **kw: None,
+        "workers.static_worker.build_dependency_visualization",
+        lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
     )
 
     worker = StaticWorker()
@@ -521,7 +521,10 @@ def test_classifications_stored_on_first_run(db_session, monkeypatch):
         lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
     )
     monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
-    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_dependency_visualization",
+        lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
+    )
 
     worker = StaticWorker()
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
@@ -571,7 +574,10 @@ def test_classifications_reused_via_pre_classified(db_session, monkeypatch):
         lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
     )
     monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
-    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_dependency_visualization",
+        lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
+    )
 
     worker = StaticWorker()
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: None)
@@ -709,7 +715,10 @@ def test_upgrade_history_append_only_on_rerun(db_session, monkeypatch):
         lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
     )
     monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
-    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_dependency_visualization",
+        lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
+    )
     monkeypatch.setattr(
         "services.discovery.upgrade_history.build_upgrade_history",
         mock_build_uh,
@@ -761,7 +770,10 @@ def test_upgrade_history_no_new_events_uses_previous(db_session, monkeypatch):
         lambda *a, **kw: {"target_address": ADDR_A, "dependencies": {}},
     )
     monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
-    monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "workers.static_worker.build_dependency_visualization",
+        lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
+    )
     monkeypatch.setattr(
         "services.discovery.upgrade_history.build_upgrade_history",
         mock_build_uh,

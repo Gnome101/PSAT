@@ -266,7 +266,7 @@ def _group_multi_deployments(contracts: list[dict[str, Any]]) -> list[dict[str, 
 def search_protocol_inventory(
     company: str,
     chain: str | None = None,
-    limit: int = 100,
+    limit: int = 500,
     max_queries: int = 4,
     run_deployer: bool = True,
     debug: bool = False,
@@ -292,27 +292,42 @@ def search_protocol_inventory(
         ),
     )
 
-    official_domain = _maybe_domain(clean_company)
-    if official_domain:
-        notes.append(f"Using provided company domain: {official_domain}")
-        domain_candidates = [official_domain]
-    else:
-        broad_results = _tavily_search(
-            f'"{clean_company}" protocol smart contract addresses deployments docs',
-            max_results=10,
-            queries_used=queries_used,
-            max_queries=max_queries,
-            errors=errors,
-            debug=debug,
-        )
-        domain_candidates = _domain_candidates_from_results(broad_results)
-        if domain_candidates:
-            notes.append(f"Domain candidates: {', '.join(domain_candidates[:5])}")
-        official_domain, extra_domains = _llm_select_domain(broad_results, clean_company, debug=debug)
-        if not official_domain and len(domain_candidates) == 1:
+    # Always run broad Tavily + LLM domain selection. A domain-shaped input
+    # (e.g. ``"ether.fi"``) is kept as a fallback hint, but we prefer the
+    # LLM's choice so companion docs/github hosts (``etherfi.gitbook.io``,
+    # ``github.com/etherfi-protocol``) can become the primary when they're
+    # the real contract-inventory source.
+    hint_domain = _maybe_domain(clean_company)
+    broad_results = _tavily_search(
+        f'"{clean_company}" protocol smart contract addresses deployments docs',
+        max_results=10,
+        queries_used=queries_used,
+        max_queries=max_queries,
+        errors=errors,
+        debug=debug,
+    )
+    domain_candidates = _domain_candidates_from_results(broad_results)
+    if hint_domain and hint_domain not in domain_candidates:
+        domain_candidates.insert(0, hint_domain)
+    if domain_candidates:
+        notes.append(f"Domain candidates: {', '.join(domain_candidates[:5])}")
+    official_domain, extra_domains = _llm_select_domain(broad_results, clean_company, debug=debug)
+    if not official_domain:
+        if hint_domain:
+            official_domain = hint_domain
+            extra_domains = [d for d in domain_candidates if d != hint_domain][:3]
+            notes.append(f"LLM didn't select a domain; using provided domain: {official_domain}")
+        elif len(domain_candidates) == 1:
             official_domain = domain_candidates[0]
             extra_domains = []
             notes.append(f"Falling back to sole domain candidate: {official_domain}")
+    # Ensure the hint is at least a companion so site-scoped search still
+    # covers the provided domain, even if the LLM preferred a gitbook/github host.
+    if official_domain and hint_domain and hint_domain != official_domain:
+        extras = list(extra_domains or [])
+        if hint_domain not in extras:
+            extras.insert(0, hint_domain)
+        extra_domains = extras
 
     if not official_domain:
         notes.append("Could not identify an official domain")
@@ -513,7 +528,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Discover protocol contract inventories")
     parser.add_argument("company", help="Company, protocol name, or official domain")
     parser.add_argument("--chain", default=None, help="Optional chain filter")
-    parser.add_argument("--limit", type=int, default=100, help="Max contracts to return")
+    parser.add_argument("--limit", type=int, default=500, help="Max contracts to return")
     parser.add_argument("--max-queries", type=int, default=4, help="Tavily query cap (default: 4)")
     parser.add_argument("--debug", action="store_true", help="Print debug logs to stderr")
     args = parser.parse_args()

@@ -1,7 +1,7 @@
 """Integration tests for StaticWorker._run_slither_phase and _run_analysis_phase.
 
 These exercise the real phase methods with mocked external tools (Slither CLI,
-analyze_contract) so they can run in CI without any Solidity toolchain.
+collect_contract_analysis) so they can run in CI without any Solidity toolchain.
 """
 
 from __future__ import annotations
@@ -211,11 +211,12 @@ class TestSlitherPhaseVyperSkip:
 
 
 class TestAnalysisPhaseSuccess:
-    """Mock analyze_contract() to return a path; verify artifact is stored."""
+    """Mock collect_contract_analysis() to return a dict; verify artifact is stored."""
 
     def test_stores_contract_analysis_artifact(self, monkeypatch, tmp_path):
         worker = StaticWorker()
         monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+        monkeypatch.setattr(worker, "_write_analysis_tables", lambda *a, **kw: None)
         session = MagicMock()
         job = _job()
 
@@ -224,45 +225,23 @@ class TestAnalysisPhaseSuccess:
             "subject": {"name": "TestContract"},
             "summary": {"control_model": "ownable"},
         }
-        analysis_path = tmp_path / "contract_analysis.json"
-        analysis_path.write_text(json.dumps(analysis_data))
 
         monkeypatch.setattr(
-            "workers.static_worker.analyze_contract",
-            lambda project_dir: analysis_path,
+            "workers.static_worker.collect_contract_analysis",
+            lambda project_dir: analysis_data,
         )
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
 
-        assert result is True
+        assert result == analysis_data
         assert len(calls) == 1
         assert calls[0]["name"] == "contract_analysis"
         assert calls[0]["data"] == analysis_data
 
-    def test_succeeds_even_when_returned_path_missing(self, monkeypatch, tmp_path):
-        """If analyze_contract returns a path that doesn't exist, phase still returns True
-        (no artifact stored, but no error either)."""
-        worker = StaticWorker()
-        monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
-        session = MagicMock()
-        job = _job()
-
-        missing_path = tmp_path / "nonexistent.json"
-        monkeypatch.setattr(
-            "workers.static_worker.analyze_contract",
-            lambda project_dir: missing_path,
-        )
-        calls = _capture_store_artifact(monkeypatch)
-
-        result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
-
-        assert result is True
-        assert len(calls) == 0, "No artifact should be stored when file does not exist"
-
 
 class TestAnalysisPhaseFailure:
-    """Mock analyze_contract() to raise; verify error artifact and return value."""
+    """Mock collect_contract_analysis() to raise; verify error artifact and return value."""
 
     def test_stores_analysis_error_on_exception(self, monkeypatch, tmp_path):
         worker = StaticWorker()
@@ -273,12 +252,12 @@ class TestAnalysisPhaseFailure:
         def _raise(project_dir):
             raise RuntimeError("LLM analysis timed out")
 
-        monkeypatch.setattr("workers.static_worker.analyze_contract", _raise)
+        monkeypatch.setattr("workers.static_worker.collect_contract_analysis", _raise)
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
 
-        assert result is False
+        assert result is None
         assert len(calls) == 1
         assert calls[0]["name"] == "analysis_error"
         assert "LLM analysis timed out" in calls[0]["data"]["error"]
@@ -292,11 +271,11 @@ class TestAnalysisPhaseFailure:
         def _raise(project_dir):
             raise ValueError("bad json from model")
 
-        monkeypatch.setattr("workers.static_worker.analyze_contract", _raise)
+        monkeypatch.setattr("workers.static_worker.collect_contract_analysis", _raise)
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
 
-        assert result is False
+        assert result is None
         assert calls[0]["name"] == "analysis_error"
         assert "bad json from model" in calls[0]["data"]["error"]

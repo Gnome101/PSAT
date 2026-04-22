@@ -4,12 +4,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from typing import cast
+
+from schemas.contract_analysis import ContractAnalysis
 from schemas.control_tracking import ControlTrackingPlan, TrackedController
-from services.resolution.tracking_plan import (
-    build_control_tracking_plan,
-    build_control_tracking_plan_from_file,
-    write_control_tracking_plan,
-)
+from services.resolution.tracking_plan import build_control_tracking_plan
 from services.static import collect_contract_analysis
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "contracts"
@@ -141,45 +140,29 @@ def test_build_control_tracking_plan_includes_can_call_policy_events(tmp_path):
     }
 
 
-def test_write_control_tracking_plan_writes_json_file(tmp_path):
-    contract_analysis_path = tmp_path / "contract_analysis.json"
-    contract_analysis_path.write_text(
-        json.dumps(
+def test_build_control_tracking_plan_from_dict_matches_fixture():
+    """Analysis dict -> plan produces the documented event_first shape."""
+    analysis = {
+        "schema_version": "0.1",
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Example",
+            "compiler_version": "v0.8.19",
+            "source_verified": True,
+        },
+        "controller_tracking": [
             {
-                "schema_version": "0.1",
-                "subject": {
-                    "address": "0x1111111111111111111111111111111111111111",
-                    "name": "Example",
-                    "compiler_version": "v0.8.19",
-                    "source_verified": True,
-                },
-                "controller_tracking": [
+                "controller_id": "state_variable:owner",
+                "label": "owner",
+                "source": "owner",
+                "kind": "state_variable",
+                "tracking_mode": "event_plus_state",
+                "writer_functions": [
                     {
-                        "controller_id": "state_variable:owner",
-                        "label": "owner",
-                        "source": "owner",
-                        "kind": "state_variable",
-                        "tracking_mode": "event_plus_state",
-                        "writer_functions": [
-                            {
-                                "contract": "OwnableLike",
-                                "function": "transferOwnership(address)",
-                                "visibility": "public",
-                                "writes": ["owner"],
-                                "associated_events": [
-                                    {
-                                        "name": "OwnershipTransferred",
-                                        "signature": "OwnershipTransferred(address,address)",
-                                        "topic0": "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
-                                        "inputs": [
-                                            {"name": "user", "type": "address", "indexed": True},
-                                            {"name": "newOwner", "type": "address", "indexed": True},
-                                        ],
-                                    }
-                                ],
-                                "evidence": [],
-                            }
-                        ],
+                        "contract": "OwnableLike",
+                        "function": "transferOwnership(address)",
+                        "visibility": "public",
+                        "writes": ["owner"],
                         "associated_events": [
                             {
                                 "name": "OwnershipTransferred",
@@ -191,21 +174,31 @@ def test_write_control_tracking_plan_writes_json_file(tmp_path):
                                 ],
                             }
                         ],
-                        "polling_sources": ["owner"],
-                        "notes": ["Monitor associated events for low-latency detection and confirm state via RPC."],
+                        "evidence": [],
                     }
                 ],
-                "policy_tracking": [],
+                "associated_events": [
+                    {
+                        "name": "OwnershipTransferred",
+                        "signature": "OwnershipTransferred(address,address)",
+                        "topic0": "0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0",
+                        "inputs": [
+                            {"name": "user", "type": "address", "indexed": True},
+                            {"name": "newOwner", "type": "address", "indexed": True},
+                        ],
+                    }
+                ],
+                "polling_sources": ["owner"],
+                "notes": ["Monitor associated events for low-latency detection and confirm state via RPC."],
             }
-        )
-        + "\n"
-    )
+        ],
+        "policy_tracking": [],
+    }
 
-    written = write_control_tracking_plan(contract_analysis_path)
+    plan = build_control_tracking_plan(cast(ContractAnalysis, analysis))
 
-    assert written.name == "control_tracking_plan.json"
-    payload = json.loads(written.read_text())
-    assert payload["tracking_strategy"] == "event_first_with_polling_fallback"
-    assert payload["tracked_controllers"][0]["event_watch"]["events"][0]["name"] == "OwnershipTransferred"
-    assert payload["tracked_policies"] == []
-    assert build_control_tracking_plan_from_file(contract_analysis_path) == payload
+    assert plan["tracking_strategy"] == "event_first_with_polling_fallback"
+    event_watch = plan["tracked_controllers"][0]["event_watch"]
+    assert event_watch is not None
+    assert event_watch["events"][0]["name"] == "OwnershipTransferred"
+    assert plan["tracked_policies"] == []

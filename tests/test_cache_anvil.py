@@ -446,7 +446,10 @@ class TestAnvilProxyCache:
             lambda *a, **kw: {"target_address": target_addr, "dependencies": {}},
         )
         monkeypatch.setattr("workers.static_worker.enrich_dependency_metadata", lambda *a, **kw: None)
-        monkeypatch.setattr("workers.static_worker.write_dependency_visualization", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            "workers.static_worker.build_dependency_visualization",
+            lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
+        )
         monkeypatch.setattr("workers.static_worker._resolve_upgrade_history", lambda *a, **kw: None)
 
         # Run the dependency phase

@@ -1,18 +1,12 @@
-#!/usr/bin/env python3
 """Build a visualization-ready dependency graph from pipeline outputs.
 
-Reads the unified ``dependencies.json`` produced by
-``services.discovery.unified_dependencies.build_unified_dependencies`` and
-converts it into a graph structure suitable for the frontend visualization
-layer.
-
-Output: ``dependency_graph_viz.json`` written to the contract directory.
+Converts the unified dependency dict produced by
+``services.discovery.unified_dependencies.build_unified_dependencies`` into
+a graph structure suitable for the frontend visualization layer.
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -20,40 +14,10 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
-def _load_json(path: Path) -> dict | None:
-    if not path.exists():
-        return None
-    with open(path) as fh:
-        return json.load(fh)
-
-
 def _shorten(address: str) -> str:
     if len(address) >= 12:
         return f"{address[:6]}...{address[-4:]}"
     return address
-
-
-_GENERIC_PROXY_NAMES = {
-    "uupsproxy",
-    "erc1967proxy",
-    "transparentupgradeableproxy",
-    "proxy",
-    "beaconproxy",
-    "ossifiableproxy",
-    "upgradeablebeacon",
-}
-
-
-def _contract_label(contract_dir: Path) -> str:
-    """Derive a human label from contract metadata, falling back to directory name."""
-    meta = _load_json(contract_dir / "contract_meta.json")
-    if not meta:
-        return contract_dir.name
-    name = meta.get("contract_name", "")
-    # For generic proxy contracts, prefer the display name (job name)
-    if name.lower().replace("_", "") in _GENERIC_PROXY_NAMES and meta.get("display_name"):
-        return meta["display_name"]
-    return name or contract_dir.name
 
 
 def _derive_discovered(unified: dict) -> list[str]:
@@ -75,7 +39,7 @@ def _derive_discovered(unified: dict) -> list[str]:
 
 def _build_nodes(
     target: str,
-    contract_dir: Path,
+    target_label: str,
     unified: dict,
     proxy_address: str | None = None,
     proxy_name: str | None = None,
@@ -105,7 +69,7 @@ def _build_nodes(
         {
             "id": f"addr:{target}",
             "address": target,
-            "label": _contract_label(contract_dir),
+            "label": target_label or _shorten(target),
             "type": target_cls.get("type", default_type),
             "proxy_type": target_cls.get("proxy_type"),
             "is_target": True,
@@ -258,28 +222,30 @@ def _build_edges(
 
 
 def build_dependency_visualization(
-    contract_dir: str | Path,
+    unified: dict,
+    *,
+    target_label: str = "",
     proxy_address: str | None = None,
     proxy_name: str | None = None,
     proxy_type: str | None = None,
 ) -> dict:
-    """Read the unified dependencies.json and produce a visualization graph.
+    """Build a visualization graph from an in-memory unified dependency dict.
 
     Returns a dict with ``nodes``, ``edges``, and ``metadata`` keys ready for
     the JS visualization layer.
 
     When *proxy_address* is provided, a proxy context node and DELEGATES_TO
     edge are added so the graph shows the proxy → implementation relationship.
-    """
-    contract_dir = Path(contract_dir)
 
-    unified = _load_json(contract_dir / "dependencies.json")
+    When the unified payload contains no dependencies, returns an empty graph
+    dict with an ``error`` key in ``metadata``.
+    """
     if not unified or not unified.get("dependencies"):
         return {"nodes": [], "edges": [], "metadata": {"error": "no dependency data found"}}
 
     target = unified.get("address", "")
 
-    nodes = _build_nodes(target, contract_dir, unified, proxy_address, proxy_name, proxy_type)
+    nodes = _build_nodes(target, target_label, unified, proxy_address, proxy_name, proxy_type)
     node_ids = {n["id"] for n in nodes}
     edges = _build_edges(target, unified, node_ids, proxy_address)
 
@@ -294,23 +260,3 @@ def build_dependency_visualization(
     }
 
     return {"nodes": nodes, "edges": edges, "metadata": metadata}
-
-
-def write_dependency_visualization(
-    contract_dir: str | Path,
-    proxy_address: str | None = None,
-    proxy_name: str | None = None,
-    proxy_type: str | None = None,
-) -> Path | None:
-    """Build the visualization graph and write it to *contract_dir*.
-
-    Returns the output path, or ``None`` if no dependency data was found.
-    """
-    contract_dir = Path(contract_dir)
-    result = build_dependency_visualization(contract_dir, proxy_address, proxy_name, proxy_type)
-    if not result["nodes"]:
-        return None
-
-    out_path = contract_dir / "dependency_graph_viz.json"
-    out_path.write_text(json.dumps(result, indent=2) + "\n")
-    return out_path

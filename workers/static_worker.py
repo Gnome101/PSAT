@@ -11,23 +11,25 @@ import tempfile
 import textwrap
 import time
 from pathlib import Path
+from typing import cast
 
 from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition
 from db.queue import _MUTABLE_CONTRACT_FIELDS, create_job, get_artifact, get_source_files, store_artifact
+from schemas.contract_analysis import ContractAnalysis
 from services.discovery import (
+    build_dependency_visualization,
     build_unified_dependencies,
     classify_contracts,
     enrich_dependency_metadata,
     find_dependencies,
     find_dynamic_dependencies,
-    write_dependency_visualization,
 )
 from services.discovery.dynamic_dependencies import NoNewTransactionsError
 from services.monitoring.proxy_watcher import resolve_current_implementation
-from services.resolution.tracking_plan import build_control_tracking_plan_from_file
-from services.static import analyze, analyze_contract
+from services.resolution.tracking_plan import build_control_tracking_plan
+from services.static import analyze, collect_contract_analysis
 from services.static.vyper_analysis import is_vyper_project
 from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
@@ -59,6 +61,42 @@ def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, 
             error=error,
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Misc helpers
+# ---------------------------------------------------------------------------
+
+
+_GENERIC_PROXY_NAMES = {
+    "uupsproxy",
+    "erc1967proxy",
+    "transparentupgradeableproxy",
+    "proxy",
+    "beaconproxy",
+    "ossifiableproxy",
+    "upgradeablebeacon",
+}
+
+
+def _contract_label_from_meta(project_dir: Path) -> str:
+    """Derive the human-readable contract label for the dependency graph.
+
+    Reads ``contract_meta.json`` written by scaffold/static_worker; falls
+    back to the workspace directory name. Generic proxy contract names are
+    swapped for the job's ``display_name`` when available.
+    """
+    meta_path = project_dir / "contract_meta.json"
+    if not meta_path.exists():
+        return project_dir.name
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return project_dir.name
+    name = meta.get("contract_name", "")
+    if name.lower().replace("_", "") in _GENERIC_PROXY_NAMES and meta.get("display_name"):
+        return meta["display_name"]
+    return name or project_dir.name
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +315,7 @@ def _merge_upgrade_history(prev: dict, new: dict) -> dict:
 def _resolve_upgrade_history(
     session,
     job,
-    dependencies_path,
+    dependencies: dict,
     prev_uh: dict | None,
 ) -> dict | None:
     """Load cached upgrade history, fetch incrementally, merge, and persist.
@@ -298,7 +336,7 @@ def _resolve_upgrade_history(
         if max_block > 0:
             from_block = max_block + 1
 
-    uh = build_upgrade_history(dependencies_path, from_block=from_block)
+    uh = build_upgrade_history(dependencies, from_block=from_block)
 
     if prev_uh and isinstance(prev_uh, dict) and prev_uh.get("proxies"):
         if uh.get("proxies"):
@@ -718,11 +756,11 @@ class StaticWorker(BaseWorker):
 
                 # Phase 2: Contract analysis
                 t0 = time.monotonic()
-                analysis_ok = self._run_analysis_phase(session, job, project_dir, contract_name, address)
+                analysis_data = self._run_analysis_phase(session, job, project_dir, contract_name, address)
                 if DEBUG_TIMING:
                     logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
 
-                if not analysis_ok:
+                if analysis_data is None:
                     raise RuntimeError(
                         f"Contract analysis failed for {contract_name} ({address}). "
                         f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
@@ -730,7 +768,7 @@ class StaticWorker(BaseWorker):
 
                 # Phase 3: Control tracking plan
                 t0 = time.monotonic()
-                self._run_tracking_plan_phase(session, job, project_dir, contract_name, address)
+                self._run_tracking_plan_phase(session, job, analysis_data, contract_name, address)
                 if DEBUG_TIMING:
                     logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
 
@@ -1152,16 +1190,20 @@ class StaticWorker(BaseWorker):
                     )
                 session.commit()
 
-            dependencies_path = project_dir / "dependencies.json"
-            dependencies_path.write_text(json.dumps(unified, indent=2) + "\n")
             store_artifact(session, job.id, "dependencies", data=unified)
 
             proxy_addr = request.get("proxy_address")
             proxy_name = (job.name or "").split(":")[0].strip() if proxy_addr else None
             proxy_type = request.get("proxy_type") if proxy_addr else None
-            viz_path = write_dependency_visualization(project_dir, proxy_addr, proxy_name, proxy_type)
-            if viz_path and viz_path.exists():
-                dependency_graph = json.loads(viz_path.read_text())
+            target_label = _contract_label_from_meta(project_dir)
+            dependency_graph = build_dependency_visualization(
+                unified,
+                target_label=target_label,
+                proxy_address=proxy_addr,
+                proxy_name=proxy_name,
+                proxy_type=proxy_type,
+            )
+            if dependency_graph.get("nodes"):
                 store_artifact(session, job.id, "dependency_graph_viz", data=dependency_graph)
                 logger.info(
                     "Static stage dependency graph complete for job %s address=%s nodes=%d edges=%d",
@@ -1182,7 +1224,7 @@ class StaticWorker(BaseWorker):
                 prev_uh = get_artifact(session, job.id, "upgrade_history")
                 if prev_uh is not None and not isinstance(prev_uh, dict):
                     prev_uh = None
-                uh = _resolve_upgrade_history(session, job, dependencies_path, prev_uh)
+                uh = _resolve_upgrade_history(session, job, unified, prev_uh)
                 if uh:
                     logger.info(
                         "Static stage upgrade history complete for job %s address=%s upgrades=%d",
@@ -1249,30 +1291,30 @@ class StaticWorker(BaseWorker):
         )
         return True
 
-    def _run_analysis_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> bool:
-        """Run structured contract analysis. Returns True on success."""
+    def _run_analysis_phase(
+        self, session, job, project_dir: Path, contract_name: str, address: str
+    ) -> ContractAnalysis | None:
+        """Run structured contract analysis. Returns the analysis dict or None on failure."""
         self.update_detail(session, job, "Building structured contract analysis")
         try:
-            contract_analysis_path = analyze_contract(project_dir)
+            analysis_data = collect_contract_analysis(project_dir)
         except Exception as exc:
             _log_phase_error(str(job.id), address, contract_name, "contract_analysis", str(exc))
             store_artifact(session, job.id, "analysis_error", data={"error": str(exc)})
-            return False
+            return None
 
-        if contract_analysis_path.exists():
-            analysis_data = json.loads(contract_analysis_path.read_text())
-            # Keep as artifact — resolution/policy stages read it as JSON
-            store_artifact(session, job.id, "contract_analysis", data=analysis_data)
-            self._write_analysis_tables(session, job, analysis_data)
+        # Keep as artifact — resolution/policy stages read it as JSON
+        store_artifact(session, job.id, "contract_analysis", data=analysis_data)
+        self._write_analysis_tables(session, job, analysis_data)
         logger.info(
             "Static stage contract analysis complete for job %s address=%s contract=%s",
             job.id,
             address,
             contract_name,
         )
-        return True
+        return analysis_data
 
-    def _write_analysis_tables(self, session, job: Job, analysis: dict) -> None:
+    def _write_analysis_tables(self, session, job: Job, analysis: ContractAnalysis | dict) -> None:
         """Extract structured data from contract_analysis JSON into relational tables."""
         from sqlalchemy import select as sa_select
 
@@ -1341,15 +1383,13 @@ class StaticWorker(BaseWorker):
 
         session.commit()
 
-    def _run_tracking_plan_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
+    def _run_tracking_plan_phase(
+        self, session, job, analysis: ContractAnalysis | dict, contract_name: str, address: str
+    ) -> None:
         """Build control tracking plan. Non-fatal on failure."""
         self.update_detail(session, job, "Building control tracking plan")
-        analysis_path = project_dir / "contract_analysis.json"
-        if not analysis_path.exists():
-            logger.warning("Job %s: skipping tracking plan — no contract_analysis.json", job.id)
-            return
         try:
-            tracking_plan = build_control_tracking_plan_from_file(analysis_path)
+            tracking_plan = build_control_tracking_plan(cast(ContractAnalysis, analysis))
             store_artifact(session, job.id, "control_tracking_plan", data=tracking_plan)
             logger.info(
                 "Static stage tracking plan complete for job %s address=%s contract=%s",

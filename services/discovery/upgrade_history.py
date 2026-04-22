@@ -14,9 +14,6 @@ and returns results in <1s regardless of chain history length.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from services.discovery.static_dependencies import normalize_address
 
 # ---------------------------------------------------------------------------
@@ -338,9 +335,9 @@ def _enrich_implementations(implementations: list[dict], known_names: dict[str, 
 
 
 def _extract_proxies_from_dependencies(
-    dependencies_path: Path,
+    deps: dict,
 ) -> tuple[str, dict[str, tuple[str, str | None]], dict[str, str]]:
-    """Read dependencies.json and extract proxy metadata for the TARGET only.
+    """Extract proxy metadata for the TARGET only from a unified deps dict.
 
     Dependency proxies are intentionally ignored — each dependency gets its
     own analysis job later, and the upgrade history for that dependency is
@@ -351,7 +348,6 @@ def _extract_proxies_from_dependencies(
     The proxy_meta dict contains at most one entry — the target itself, if
     it's classified as a proxy.
     """
-    deps = json.loads(dependencies_path.read_text())
     target = normalize_address(deps["address"])
 
     proxy_meta: dict[str, tuple[str, str | None]] = {}
@@ -392,12 +388,12 @@ def _strip_internal(event: dict) -> dict:
     return {k: v for k, v in event.items() if not k.startswith("_")}
 
 
-def build_upgrade_history(dependencies_path: Path, *, enrich: bool = True, from_block: int = 0) -> dict:
-    """Build upgrade history for all proxy contracts found in dependencies.json.
+def build_upgrade_history(dependencies: dict, *, enrich: bool = True, from_block: int = 0) -> dict:
+    """Build upgrade history for all proxy contracts in a unified deps dict.
 
     Args:
-        dependencies_path: Path to the dependencies.json file written by
-            the dependency pipeline.
+        dependencies: Unified dependency payload as produced by
+            ``services.discovery.unified_dependencies.build_unified_dependencies``.
         enrich: If True (default), resolve contract names for historical
             implementations via Etherscan.  Set to False for faster runs
             when names are not needed.
@@ -408,7 +404,7 @@ def build_upgrade_history(dependencies_path: Path, *, enrich: bool = True, from_
     Returns:
         UpgradeHistoryOutput dict with per-proxy upgrade timelines.
     """
-    target_address, proxy_meta, known_names = _extract_proxies_from_dependencies(dependencies_path)
+    target_address, proxy_meta, known_names = _extract_proxies_from_dependencies(dependencies)
 
     if not proxy_meta:
         return {

@@ -1,36 +1,30 @@
-#!/usr/bin/env python3
 """Recursively resolve contract control chains into a reusable graph artifact."""
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import os
 import re
-import sys
 from collections import deque
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from typing_extensions import NotRequired
 
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
+from schemas.contract_analysis import ContractAnalysis
 from schemas.control_tracking import ControlSnapshot
 from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEdge, ResolvedGraphNode
 from services.discovery.fetch import CONTRACTS_DIR, fetch, scaffold
-from services.policy.effective_permissions import write_effective_permissions_from_files
-from services.static import analyze, analyze_contract
+from services.policy.effective_permissions import build_effective_permissions
+from services.static import analyze, collect_contract_analysis
 
 from .tracking import (
     build_control_snapshot,
     classify_resolved_address,
     load_control_tracking_plan,
-    write_control_snapshot,
 )
-from .tracking_plan import write_control_tracking_plan
+from .tracking_plan import build_control_tracking_plan
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +44,7 @@ class LoadedArtifacts(TypedDict):
 class PendingContract(TypedDict):
     address: str
     depth: int
-    analysis_path: NotRequired[Path]
+    artifacts: NotRequired[LoadedArtifacts]
 
 
 class RolePrincipalAccumulator(TypedDict):
@@ -86,14 +80,26 @@ def _ensure_effective_permissions(
     *,
     force: bool = False,
 ) -> Path:
+    """Write ``effective_permissions.json`` next to an analysis file.
+
+    Sub-contract workspaces under ``contracts/recursive_*/`` still need this
+    file on disk so the policy worker's authority-resolution step can read
+    it back via path lookup.
+    """
     output_path = analysis_path.with_name("effective_permissions.json")
     if force or not output_path.exists():
-        write_effective_permissions_from_files(
-            analysis_path,
-            target_snapshot_path=snapshot_path,
-            output_path=output_path,
+        analysis = _load_json(analysis_path)
+        snapshot = _load_json(snapshot_path) if snapshot_path.exists() else None
+        artifact_paths: dict[str, str] = {"target_analysis": str(analysis_path)}
+        if snapshot_path.exists():
+            artifact_paths["target_snapshot"] = str(snapshot_path)
+        payload = build_effective_permissions(
+            analysis,
+            target_snapshot=snapshot,
+            artifact_paths=artifact_paths,
             principal_resolution={"status": "no_authority", "reason": "No non-zero authority found"},
         )
+        output_path.write_text(json.dumps(payload, indent=2) + "\n")
     return output_path
 
 
@@ -121,6 +127,15 @@ def _workspace_name(contract_name: str, address: str, prefix: str) -> str:
     return f"{_sanitize_name(prefix)}_{_sanitize_name(contract_name)}_{address.lower()[2:10]}"
 
 
+def _write_tracking_plan(analysis: ContractAnalysis | dict[str, Any], plan_path: Path) -> None:
+    plan = build_control_tracking_plan(cast(ContractAnalysis, analysis))
+    plan_path.write_text(json.dumps(plan, indent=2) + "\n")
+
+
+def _write_control_snapshot(snapshot: ControlSnapshot, path: Path) -> None:
+    path.write_text(json.dumps(snapshot, indent=2) + "\n")
+
+
 def _load_or_build_artifacts(
     analysis_path: Path,
     rpc_url: str,
@@ -131,13 +146,13 @@ def _load_or_build_artifacts(
     project_dir = analysis_path.parent
     plan_path = project_dir / "control_tracking_plan.json"
     if not plan_path.exists():
-        write_control_tracking_plan(analysis_path, plan_path)
+        _write_tracking_plan(analysis, plan_path)
 
     snapshot_path = project_dir / "control_snapshot.json"
     if refresh_snapshots or not snapshot_path.exists():
         plan = load_control_tracking_plan(plan_path)
         snapshot = build_control_snapshot(plan, rpc_url)
-        write_control_snapshot(snapshot, snapshot_path)
+        _write_control_snapshot(snapshot, snapshot_path)
     else:
         snapshot = cast(ControlSnapshot, _load_json(snapshot_path))
 
@@ -194,16 +209,15 @@ def _materialize_contract_artifacts(
                     effective_address,
                     exc,
                 )
-        analysis_path = analyze_contract(project_dir)
-        write_control_tracking_plan(analysis_path, project_dir / "control_tracking_plan.json")
+        analysis = collect_contract_analysis(project_dir)
+        analysis_path.write_text(json.dumps(analysis, indent=2) + "\n")
+        _write_tracking_plan(analysis, project_dir / "control_tracking_plan.json")
 
     # If analyzing through a proxy, override the address in the tracking plan so
     # snapshot reads go to the proxy (where storage lives)
     if snapshot_address != effective_address:
         plan_path = project_dir / "control_tracking_plan.json"
         if plan_path.exists():
-            import json
-
             plan = json.loads(plan_path.read_text())
             plan["contract_address"] = snapshot_address
             plan_path.write_text(json.dumps(plan, indent=2) + "\n")
@@ -447,7 +461,7 @@ def _add_nested_principals(
             _maybe_queue_address(queue, queued, nested_address, depth + 1, max_depth)
 
 
-def resolve_control_graph(
+def resolve_control_graph_from_path(
     root_analysis_path: Path,
     *,
     rpc_url: str,
@@ -455,7 +469,38 @@ def resolve_control_graph(
     workspace_prefix: str = "recursive",
     refresh_snapshots: bool = True,
 ) -> ResolvedControlGraph:
+    """Load root artifacts from disk and invoke :func:`resolve_control_graph`.
+
+    Kept as a narrow entrypoint for ad-hoc / test use — workers load the
+    root's artifacts from the DB and call :func:`resolve_control_graph`
+    directly with the in-memory dict.
+    """
     root_artifacts = _load_or_build_artifacts(root_analysis_path, rpc_url, refresh_snapshots=refresh_snapshots)
+    return resolve_control_graph(
+        root_artifacts=root_artifacts,
+        rpc_url=rpc_url,
+        max_depth=max_depth,
+        workspace_prefix=workspace_prefix,
+        refresh_snapshots=refresh_snapshots,
+    )
+
+
+def resolve_control_graph(
+    *,
+    root_artifacts: LoadedArtifacts,
+    rpc_url: str,
+    max_depth: int = DEFAULT_RECURSION_MAX_DEPTH,
+    workspace_prefix: str = "recursive",
+    refresh_snapshots: bool = True,
+) -> ResolvedControlGraph:
+    """Walk the control chain breadth-first starting from a pre-loaded root.
+
+    Sub-contracts discovered along the way are materialized into persistent
+    ``contracts/recursive_*/`` workspaces for Slither / structured analysis.
+    Only the root is kept in-memory; this keeps the worker call site free of
+    temp-file plumbing while still providing on-disk authority artifacts
+    the policy stage can read back.
+    """
     root_analysis = root_artifacts["analysis"]
     root_subject = root_analysis.get("subject", {})
     root_address = str(root_subject.get("address", "")).lower()
@@ -465,7 +510,7 @@ def resolve_control_graph(
             {
                 "address": root_address,
                 "depth": 0,
-                "analysis_path": root_analysis_path,
+                "artifacts": root_artifacts,
             }
         ]
     )
@@ -489,13 +534,9 @@ def resolve_control_graph(
         if address in processed or depth > max_depth:
             continue
 
-        analysis_path = pending.get("analysis_path")
-        if analysis_path is not None:
-            artifacts = _load_or_build_artifacts(
-                analysis_path,
-                rpc_url,
-                refresh_snapshots=False,  # Already built before the loop
-            )
+        preloaded = pending.get("artifacts")
+        if preloaded is not None:
+            artifacts = preloaded
         else:
             try:
                 artifacts = _materialize_contract_artifacts(
@@ -655,63 +696,3 @@ def resolve_control_graph(
         "nodes": sorted(nodes.values(), key=lambda item: item["id"]),
         "edges": sorted(edges.values(), key=lambda item: (item["from_id"], item["relation"], item["to_id"])),
     }
-
-
-def write_resolved_control_graph(
-    root_analysis_path: Path,
-    *,
-    rpc_url: str,
-    output_path: Path | None = None,
-    max_depth: int = DEFAULT_RECURSION_MAX_DEPTH,
-    workspace_prefix: str = "recursive",
-    refresh_snapshots: bool = True,
-) -> Path:
-    graph = resolve_control_graph(
-        root_analysis_path,
-        rpc_url=rpc_url,
-        max_depth=max_depth,
-        workspace_prefix=workspace_prefix,
-        refresh_snapshots=refresh_snapshots,
-    )
-    if output_path is None:
-        output_path = root_analysis_path.with_name("resolved_control_graph.json")
-    output_path.write_text(json.dumps(graph, indent=2) + "\n")
-    return output_path
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Recursively resolve contract control chains into a graph artifact.")
-    parser.add_argument("analysis", help="Path to root contract_analysis.json")
-    parser.add_argument("--rpc", required=True, help="HTTP RPC URL for state reads")
-    parser.add_argument("--out", help="Optional output path for resolved_control_graph.json")
-    parser.add_argument(
-        "--max-depth",
-        type=int,
-        default=DEFAULT_RECURSION_MAX_DEPTH,
-        help=f"Maximum recursion depth (default: {DEFAULT_RECURSION_MAX_DEPTH})",
-    )
-    parser.add_argument(
-        "--workspace-prefix",
-        default="recursive",
-        help="Prefix for auto-materialized recursive contract workspaces (default: recursive)",
-    )
-    parser.add_argument(
-        "--reuse-snapshots",
-        action="store_true",
-        help="Reuse existing control_snapshot.json files when present instead of refreshing them",
-    )
-    args = parser.parse_args()
-
-    output_path = write_resolved_control_graph(
-        Path(args.analysis),
-        rpc_url=args.rpc,
-        output_path=Path(args.out) if args.out else None,
-        max_depth=args.max_depth,
-        workspace_prefix=args.workspace_prefix,
-        refresh_snapshots=not args.reuse_snapshots,
-    )
-    print(f"Resolved control graph: {output_path}")
-
-
-if __name__ == "__main__":
-    main()

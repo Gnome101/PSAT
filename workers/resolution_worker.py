@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import shutil
-import tempfile
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import cast
 
 from sqlalchemy import func, select
@@ -26,8 +22,8 @@ from db.models import (
     UpgradeEvent,
 )
 from db.queue import create_job, get_artifact, store_artifact
-from schemas.control_tracking import ControlTrackingPlan
-from services.resolution.recursive import write_resolved_control_graph
+from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
+from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
 from workers.base import DEBUG_TIMING, BaseWorker
 
@@ -35,6 +31,31 @@ logger = logging.getLogger("workers.resolution_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
+
+
+def _build_root_artifacts(
+    contract_analysis: dict,
+    tracking_plan: dict,
+    snapshot: ControlSnapshot,
+) -> LoadedArtifacts:
+    """Package the root job's in-memory artifacts for the recursive resolver.
+
+    The resolver records these paths in the resolved graph's root node. The
+    root lives only in DB storage (no on-disk workspace), so the paths are
+    placeholders — policy-stage authority lookups use sub-contract artifacts
+    from persistent ``contracts/recursive_*/`` dirs, not the root.
+    """
+    from pathlib import Path as _Path
+
+    placeholder_dir = _Path("/dev/null")
+    return {
+        "project_dir": placeholder_dir,
+        "analysis_path": placeholder_dir / "contract_analysis.json",
+        "plan_path": placeholder_dir / "control_tracking_plan.json",
+        "snapshot_path": placeholder_dir / "control_snapshot.json",
+        "analysis": contract_analysis,
+        "snapshot": snapshot,
+    }
 
 
 class ResolutionWorker(BaseWorker):
@@ -115,91 +136,76 @@ class ResolutionWorker(BaseWorker):
         # Fetch token balances
         self._fetch_balances(session, job, contract_row)
 
-        # For recursive resolution, we need a temp workspace with the contract_analysis.json
-        # because write_resolved_control_graph reads from filesystem
-        tmp_dir = tempfile.mkdtemp(prefix="psat_resolution_")
-        project_dir = Path(tmp_dir)
-        try:
-            analysis_path = project_dir / "contract_analysis.json"
-            analysis_path.write_text(json.dumps(contract_analysis, indent=2) + "\n")
+        root_artifacts = _build_root_artifacts(contract_analysis, tracking_plan, snapshot)
 
-            # Write tracking plan and snapshot so _load_or_build_artifacts finds them
-            (project_dir / "control_tracking_plan.json").write_text(json.dumps(tracking_plan, indent=2) + "\n")
-            (project_dir / "control_snapshot.json").write_text(json.dumps(snapshot, indent=2) + "\n")
+        self.update_detail(session, job, "Resolving recursive control graph")
+        t0 = time.monotonic()
+        resolved_graph = resolve_control_graph(
+            root_artifacts=root_artifacts,
+            rpc_url=rpc_url,
+            max_depth=RECURSION_MAX_DEPTH,
+            workspace_prefix="recursive",
+            refresh_snapshots=True,
+        )
 
-            self.update_detail(session, job, "Resolving recursive control graph")
-            t0 = time.monotonic()
-            resolved_graph_path = write_resolved_control_graph(
-                analysis_path,
-                rpc_url=rpc_url,
-                output_path=project_dir / "resolved_control_graph.json",
-                max_depth=RECURSION_MAX_DEPTH,
-                workspace_prefix="recursive",
-                refresh_snapshots=True,
-            )
+        if DEBUG_TIMING:
+            logger.info("[TIMING] recursive graph: %.1fs", time.monotonic() - t0)
 
-            if DEBUG_TIMING:
-                logger.info("[TIMING] recursive graph: %.1fs", time.monotonic() - t0)
-
-            if resolved_graph_path.exists():
-                resolved_graph = json.loads(resolved_graph_path.read_text())
-                # Keep as artifact — policy stage reads it as JSON
-                store_artifact(session, job.id, "resolved_control_graph", data=resolved_graph)
-                logger.info(
-                    "Resolution stage graph complete for job %s address=%s name=%s",
-                    job.id,
-                    job.address or "0x0",
-                    job.name or "Contract",
-                )
-
-                # Write to control_graph_nodes and control_graph_edges tables
-                if contract_row:
-                    session.query(ControlGraphNode).filter(ControlGraphNode.contract_id == contract_row.id).delete()
-                    session.query(ControlGraphEdge).filter(ControlGraphEdge.contract_id == contract_row.id).delete()
-                    for node in resolved_graph.get("nodes", []):
-                        session.add(
-                            ControlGraphNode(
-                                contract_id=contract_row.id,
-                                address=(node.get("address") or "").lower(),
-                                node_type=node.get("node_type"),
-                                resolved_type=node.get("resolved_type"),
-                                label=node.get("label"),
-                                contract_name=node.get("contract_name"),
-                                depth=node.get("depth"),
-                                analyzed=node.get("analyzed", False),
-                                details=node.get("details"),
-                            )
-                        )
-                    for edge in resolved_graph.get("edges", []):
-                        session.add(
-                            ControlGraphEdge(
-                                contract_id=contract_row.id,
-                                from_node_id=edge.get("from_id", ""),
-                                to_node_id=edge.get("to_id", ""),
-                                relation=edge.get("relation"),
-                                label=edge.get("label"),
-                                source_controller_id=edge.get("source_controller_id"),
-                                notes=edge.get("notes"),
-                            )
-                        )
-                    session.commit()
-
-                # Queue analysis jobs for contracts discovered during resolution
-                self._queue_discovered_contracts(session, job, resolved_graph, rpc_url)
-
-            # Phase: Upgrade history for proxy contracts (non-fatal)
-            self._run_upgrade_history(session, job, project_dir)
-
-            self.update_detail(session, job, "Resolution complete")
+        if resolved_graph:
+            # Keep as artifact — policy stage reads it as JSON
+            store_artifact(session, job.id, "resolved_control_graph", data=resolved_graph)
             logger.info(
-                "Resolution stage complete for job %s address=%s name=%s",
+                "Resolution stage graph complete for job %s address=%s name=%s",
                 job.id,
                 job.address or "0x0",
                 job.name or "Contract",
             )
 
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            # Write to control_graph_nodes and control_graph_edges tables
+            if contract_row:
+                session.query(ControlGraphNode).filter(ControlGraphNode.contract_id == contract_row.id).delete()
+                session.query(ControlGraphEdge).filter(ControlGraphEdge.contract_id == contract_row.id).delete()
+                for node in resolved_graph.get("nodes", []):
+                    session.add(
+                        ControlGraphNode(
+                            contract_id=contract_row.id,
+                            address=(node.get("address") or "").lower(),
+                            node_type=node.get("node_type"),
+                            resolved_type=node.get("resolved_type"),
+                            label=node.get("label"),
+                            contract_name=node.get("contract_name"),
+                            depth=node.get("depth"),
+                            analyzed=node.get("analyzed", False),
+                            details=node.get("details"),
+                        )
+                    )
+                for edge in resolved_graph.get("edges", []):
+                    session.add(
+                        ControlGraphEdge(
+                            contract_id=contract_row.id,
+                            from_node_id=edge.get("from_id", ""),
+                            to_node_id=edge.get("to_id", ""),
+                            relation=edge.get("relation"),
+                            label=edge.get("label"),
+                            source_controller_id=edge.get("source_controller_id"),
+                            notes=edge.get("notes"),
+                        )
+                    )
+                session.commit()
+
+            # Queue analysis jobs for contracts discovered during resolution
+            self._queue_discovered_contracts(session, job, cast(dict, resolved_graph), rpc_url)
+
+        # Phase: Upgrade history for proxy contracts (non-fatal)
+        self._run_upgrade_history(session, job)
+
+        self.update_detail(session, job, "Resolution complete")
+        logger.info(
+            "Resolution stage complete for job %s address=%s name=%s",
+            job.id,
+            job.address or "0x0",
+            job.name or "Contract",
+        )
 
     def _fetch_balances(self, session: Session, job: Job, contract_row: Contract | None) -> None:
         """Fetch ETH + token balances and store in contract_balances table."""
@@ -341,7 +347,7 @@ class ResolutionWorker(BaseWorker):
                 queued_count,
             )
 
-    def _run_upgrade_history(self, session: Session, job: Job, project_dir: Path) -> None:
+    def _run_upgrade_history(self, session: Session, job: Job) -> None:
         """Project the cached ``upgrade_history`` artifact into relational rows.
 
         Two outputs from one artifact read:
