@@ -2,6 +2,11 @@ import { test, expect } from "@playwright/test";
 
 test.describe("home redesign", () => {
   test.beforeEach(async ({ page }) => {
+    await page.route(
+      (url) => url.pathname.startsWith("/api/"),
+      (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+    );
+
     // Fake CoinGecko: one 1×1 PNG for any coin lookup, empty results for search.
     const png1x1 = Buffer.from(
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
@@ -106,8 +111,8 @@ test.describe("home redesign", () => {
     await expect(page.locator(".top-nav-brand")).toBeVisible();
 
     // Hero eyebrow is the distinctive landing marker
-    await expect(page.locator(".home-hero-eyebrow")).toBeVisible();
-    await expect(page.locator(".home-hero-title")).toContainText(/Map the control/);
+    await expect(page.locator(".product-hero-eyebrow")).toBeVisible();
+    await expect(page.locator(".product-hero-title")).toContainText(/Every privileged path/i);
 
     // Protocol list
     await expect(page.locator(".home-protocol-row")).toHaveCount(2);

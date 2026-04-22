@@ -6,6 +6,11 @@ import { test, expect } from "@playwright/test";
 // three endpoints the dashboard polls so it runs offline.
 test.describe("pipeline dashboard", () => {
   test.beforeEach(async ({ page }) => {
+    await page.route(
+      (url) => url.pathname.startsWith("/api/"),
+      (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+    );
+
     const now = Date.now();
     const iso = (msAgo) => new Date(now - msAgo).toISOString();
 

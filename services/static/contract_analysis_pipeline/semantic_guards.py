@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from schemas.contract_analysis import ContractAnalysis, ControllerRef, GuardRecord, SinkRecord
+from schemas.contract_analysis import ContractAnalysis, ControllerRef, GuardRecord, PrivilegedFunction, SinkRecord
 
 
 def _sinks_by_id(analysis: ContractAnalysis) -> dict[str, SinkRecord]:
@@ -41,7 +41,7 @@ def _authority_sources_from_effect_targets(effect_targets: list[str]) -> set[str
 
 
 def _guard_ids_for_privileged_function(
-    privileged: dict[str, Any],
+    privileged: PrivilegedFunction,
     *,
     sinks_by_id: dict[str, SinkRecord],
 ) -> list[str]:
@@ -134,9 +134,7 @@ def build_semantic_guards(analysis: ContractAnalysis) -> dict[str, Any]:
         if not authority_sources:
             inferred_sources = _authority_sources_from_effect_targets(list(privileged.get("effect_targets", [])))
             authority_sources = {
-                source
-                for source in inferred_sources
-                if source in set(privileged.get("controller_refs", []))
+                source for source in inferred_sources if source in set(privileged.get("controller_refs", []))
             }
 
         if authority_sources and not any(

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -172,7 +173,7 @@ contract OpaqueExternalRoleGuard {
 
             merged_semantic, artifact = refine_semantic_guards_with_hevm(
                 semantic,
-                tracking_plan=plan,
+                tracking_plan=cast(Any, plan),
                 rpc_url=rpc_url,
                 project_dir=root,
             )
@@ -207,8 +208,8 @@ contract OpaqueExternalRoleGuard {
             )
 
             ep = build_effective_permissions(
-                analysis,
-                target_snapshot=target_snapshot,
+                cast(Any, analysis),
+                target_snapshot=cast(Any, target_snapshot),
                 semantic_guards=merged_semantic,
                 external_snapshots={
                     auth_address.lower(): {

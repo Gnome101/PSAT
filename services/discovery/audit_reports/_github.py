@@ -93,6 +93,7 @@ def _parse_github_url(url: str) -> dict[str, str] | None:
         return {"kind": "org", "owner": owner, "repo": "", "ref": "", "path": ""}
     return None
 
+
 def _github_api_headers() -> dict[str, str]:
     """Standard headers. GITHUB_TOKEN bumps rate limit 60→5000/hr."""
     headers = {

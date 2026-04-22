@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, cast
 
 from eth_utils.crypto import keccak
 
@@ -11,6 +11,7 @@ from schemas.contract_analysis import (
     AccessControlAnalysis,
     AssociatedEvent,
     AssociatedEventInput,
+    ControllerReadSpec,
     ControllerTrackingTarget,
     ControllerWriterFunction,
     Evidence,
@@ -159,8 +160,10 @@ def _functions_by_signature(contract) -> dict[str, object]:
 
 def _role_identifier_authority_sources(
     permission_graph: PermissionGraph,
-    access_control: AccessControlAnalysis,
+    access_control: AccessControlAnalysis | None,
 ) -> dict[str, str]:
+    if not access_control:
+        return {}
     kinds_by_source: dict[str, set[str]] = {}
     for controller in permission_graph.get("controllers", []):
         source = str(controller.get("source") or "")
@@ -244,7 +247,7 @@ def build_controller_tracking(
 ) -> list[ControllerTrackingTarget]:
     """Build event-first tracking metadata for mutable controllers discovered in the permission graph."""
     event_lookup = _event_index(contract)
-    role_authority_sources = _role_identifier_authority_sources(permission_graph, access_control or {})
+    role_authority_sources = _role_identifier_authority_sources(permission_graph, access_control)
 
     tracking_targets: list[ControllerTrackingTarget] = []
     for controller in permission_graph["controllers"]:
@@ -252,7 +255,7 @@ def build_controller_tracking(
         controller_source = controller["source"]
 
         if controller_kind == "role_identifier":
-            read_spec = {"strategy": "getter_call", "target": controller_source}
+            read_spec: ControllerReadSpec = {"strategy": "getter_call", "target": controller_source}
             authority_source = role_authority_sources.get(controller_source)
             if authority_source:
                 read_spec["contract_source"] = authority_source
@@ -356,19 +359,19 @@ def build_controller_tracking(
                     continue
                 if kind == "state_variable" and "role_identifier" in existing_kinds_by_source.get(ref, set()):
                     continue
-                read_spec = None
+                synthesized_read_spec: ControllerReadSpec | None = None
                 if kind == "role_identifier":
-                    read_spec = {"strategy": "getter_call", "target": ref}
+                    synthesized_read_spec = cast(ControllerReadSpec, {"strategy": "getter_call", "target": ref})
                     authority_source = role_authority_sources.get(ref)
                     if authority_source:
-                        read_spec["contract_source"] = authority_source
+                        synthesized_read_spec["contract_source"] = authority_source
                 tracking_targets.append(
                     {
                         "controller_id": controller_id,
                         "label": ref,
                         "source": ref,
                         "kind": kind,  # type: ignore[typeddict-item]
-                        "read_spec": read_spec,
+                        "read_spec": synthesized_read_spec,
                         "confidence": None,
                         "tracking_mode": "state_only",
                         "writer_functions": [],

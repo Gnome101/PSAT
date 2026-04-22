@@ -383,9 +383,7 @@ def process_audit_report(
         # Call the module-level helpers so callers that monkeypatch
         # ``download_pdf`` (existing unit tests) still hit the mock.
         body = (
-            download_text(download_url, session=session)
-            if is_text_url
-            else download_pdf(download_url, session=session)
+            download_text(download_url, session=session) if is_text_url else download_pdf(download_url, session=session)
         )
     except PdfTooLargeError as exc:
         return ExtractionOutcome(status="skipped", error=f"pdf too large: {exc}")

@@ -43,9 +43,7 @@ sys.path.insert(0, str(ROOT))
 
 from services.static import collect_contract_analysis  # noqa: E402
 
-HEVM_LINUX_X86_64 = (
-    "https://github.com/argotorg/hevm/releases/download/release/0.57.0/hevm-x86_64-linux"
-)
+HEVM_LINUX_X86_64 = "https://github.com/argotorg/hevm/releases/download/release/0.57.0/hevm-x86_64-linux"
 
 CONTRACT_SOURCE = textwrap.dedent(
     """\
@@ -146,8 +144,7 @@ def _ensure_hevm_binary(explicit: str | None) -> Path:
     machine = platform.machine().lower()
     if system != "linux" or machine not in {"x86_64", "amd64"}:
         raise RuntimeError(
-            "Auto-download is only wired for Linux x86_64 right now. "
-            "Pass --hevm-bin explicitly on other platforms."
+            "Auto-download is only wired for Linux x86_64 right now. Pass --hevm-bin explicitly on other platforms."
         )
 
     cache_dir = Path.home() / ".cache" / "psat" / "hevm"
@@ -200,11 +197,7 @@ def _semantic_summary(project_dir: Path) -> dict[str, object]:
         (item for item in analysis["access_control"]["privileged_functions"] if item["function"] == "pause()"),
         None,
     )
-    tracked = [
-        item
-        for item in analysis["controller_tracking"]
-        if item["label"] in {"gate", "owner", "BREAK_GLASS"}
-    ]
+    tracked = [item for item in analysis["controller_tracking"] if item["label"] in {"gate", "owner", "BREAK_GLASS"}]
     if privileged is None:
         return {
             "subject": analysis["subject"]["name"],

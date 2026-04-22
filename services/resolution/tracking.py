@@ -7,7 +7,7 @@ from typing import Any
 from eth_abi.abi import decode
 
 from schemas.contract_analysis import AssociatedEvent, ControllerReadSpec
-from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
+from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan, TrackedController
 from utils.rpc import (
     normalize_hex as _normalize_hex,
 )

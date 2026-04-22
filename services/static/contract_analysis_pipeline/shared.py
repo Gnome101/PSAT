@@ -148,11 +148,7 @@ def _looks_like_role_identifier_name(name: str) -> bool:
 
 def _role_identifier_tokens(text: str) -> list[str]:
     return sorted(
-        {
-            token
-            for token in _UPPER_SNAKE_IDENTIFIER.findall(text or "")
-            if _looks_like_role_identifier_name(token)
-        }
+        {token for token in _UPPER_SNAKE_IDENTIFIER.findall(text or "") if _looks_like_role_identifier_name(token)}
     )
 
 

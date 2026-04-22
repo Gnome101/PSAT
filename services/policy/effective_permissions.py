@@ -1,11 +1,21 @@
+#!/usr/bin/env python3
 """Join protected-contract analysis with authority policy state."""
 
 from __future__ import annotations
 
-from typing import Any, cast
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any, Mapping, cast
 
 from eth_utils.crypto import keccak
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from schemas.contract_analysis import ContractAnalysis
+from schemas.control_tracking import ControlSnapshot
 from schemas.effective_permissions import (
     AuthorityRoleGrant,
     EffectiveFunctionPermission,
@@ -33,6 +43,10 @@ def _lower_string(value: Any) -> str:
     if value is None:
         return ""
     return str(value).lower()
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text())
 
 
 def _normalize_abi_type(type_name: str) -> str:
@@ -115,7 +129,7 @@ def _resolved_principal(
     return payload
 
 
-def _known_principals(*snapshots: dict[str, Any] | None) -> dict[str, ResolvedPrincipal]:
+def _known_principals(*snapshots: Mapping[str, Any] | None) -> dict[str, ResolvedPrincipal]:
     known: dict[str, ResolvedPrincipal] = {}
     for snapshot in snapshots:
         if not snapshot:
@@ -148,7 +162,7 @@ def _principal_for_address(address: str, known: dict[str, ResolvedPrincipal]) ->
     return known.get(normalized) or _resolved_principal(normalized, "unknown", {})
 
 
-def _controller_lookup(snapshot: dict[str, Any] | None) -> dict[str, list[tuple[str, dict[str, Any]]]]:
+def _controller_lookup(snapshot: Mapping[str, Any] | None) -> dict[str, list[tuple[str, dict[str, Any]]]]:
     lookup: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     controller_values = (snapshot or {}).get("controller_values", {})
     if not isinstance(controller_values, dict):
@@ -161,7 +175,7 @@ def _controller_lookup(snapshot: dict[str, Any] | None) -> dict[str, list[tuple[
     return lookup
 
 
-def _snapshot_address(snapshot: dict[str, Any] | None) -> str | None:
+def _snapshot_address(snapshot: Mapping[str, Any] | None) -> str | None:
     if not snapshot:
         return None
     address = _lower_string(snapshot.get("contract_address", ""))
@@ -275,7 +289,7 @@ def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]
     return sorted(set(refs))
 
 
-def _semantic_guards_by_function(semantic_guards: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+def _semantic_guards_by_function(semantic_guards: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
     if not isinstance(semantic_guards, dict):
         return {}
     entries = semantic_guards.get("functions", [])
@@ -295,7 +309,7 @@ def _semantic_controller_grants(
     semantic_entry: dict[str, Any],
     *,
     target_function_selector: str,
-    target_snapshot: dict[str, Any] | None,
+    target_snapshot: Mapping[str, Any] | None,
     controller_lookup: dict[str, list[tuple[str, dict[str, Any]]]],
     external_snapshots: dict[str, dict[str, Any]],
     external_policy_states: dict[str, dict[str, Any]],
@@ -483,12 +497,12 @@ def _semantic_controller_grants(
 
 
 def build_effective_permissions(
-    target_analysis: dict,
+    target_analysis: Mapping[str, Any] | ContractAnalysis,
     *,
-    target_snapshot: dict | None = None,
-    authority_snapshot: dict | None = None,
-    policy_state: dict | None = None,
-    semantic_guards: dict | None = None,
+    target_snapshot: Mapping[str, Any] | ControlSnapshot | None = None,
+    authority_snapshot: Mapping[str, Any] | ControlSnapshot | None = None,
+    policy_state: Mapping[str, Any] | None = None,
+    semantic_guards: Mapping[str, Any] | None = None,
     external_snapshots: dict[str, dict[str, Any]] | None = None,
     external_policy_states: dict[str, dict[str, Any]] | None = None,
     artifact_paths: dict[str, str] | None = None,
@@ -590,11 +604,7 @@ def build_effective_permissions(
         controller_grants = (
             semantic_controller_grants
             if semantic_entry
-            and (
-                semantic_controller_grants
-                or semantic_direct_owner
-                or semantic_entry.get("status") != "unresolved"
-            )
+            and (semantic_controller_grants or semantic_direct_owner or semantic_entry.get("status") != "unresolved")
             else _controller_grants_for_refs(controller_refs, controller_lookup, known)
         )
         if semantic_direct_owner is not None:
@@ -641,6 +651,7 @@ def build_effective_permissions(
         "functions": functions,
     }
 
+
 def write_effective_permissions_from_files(
     target_analysis_path: Path,
     *,
@@ -665,7 +676,8 @@ def write_effective_permissions_from_files(
             if not isinstance(node, dict):
                 continue
             address = _lower_string(node.get("address", ""))
-            artifacts = node.get("artifacts") if isinstance(node.get("artifacts"), dict) else {}
+            artifacts_obj = node.get("artifacts")
+            artifacts: dict[str, Any] = artifacts_obj if isinstance(artifacts_obj, dict) else {}
             snapshot_ref = artifacts.get("snapshot")
             if (
                 address.startswith("0x")

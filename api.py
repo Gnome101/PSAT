@@ -547,9 +547,7 @@ def delete_company_address(company_name: str, address: str) -> dict[str, Any]:
     if not _ADDRESS_RE.match(address):
         raise HTTPException(status_code=400, detail="Invalid address")
     with SessionLocal() as session:
-        protocol_row = session.execute(
-            select(Protocol).where(Protocol.name == company_name)
-        ).scalar_one_or_none()
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
         if protocol_row is None:
             raise HTTPException(status_code=404, detail="Company not found")
         contract = session.execute(
@@ -1713,9 +1711,7 @@ def company_overview(company_name: str) -> dict:
         # (the selection worker writes a Contract row for every discovered
         # impl), so no extra query is needed.
         impl_name_by_addr = {
-            (c.address or "").lower(): c.contract_name
-            for c in all_contract_rows
-            if c.address and c.contract_name
+            (c.address or "").lower(): c.contract_name for c in all_contract_rows if c.address and c.contract_name
         }
         all_addresses = sorted(
             [
@@ -1731,14 +1727,10 @@ def company_overview(company_name: str) -> dict:
                     # Selection-worker rank — lets the Addresses modal sort
                     # highest-ranked first. NULL for rows the selection worker
                     # hasn't scored yet (e.g. freshly discovered).
-                    "rank_score": (
-                        float(cr.rank_score) if cr.rank_score is not None else None
-                    ),
+                    "rank_score": (float(cr.rank_score) if cr.rank_score is not None else None),
                     "implementation_address": cr.implementation if cr.is_proxy else None,
                     "implementation_name": (
-                        impl_name_by_addr.get((cr.implementation or "").lower())
-                        if cr.is_proxy
-                        else None
+                        impl_name_by_addr.get((cr.implementation or "").lower()) if cr.is_proxy else None
                     ),
                 }
                 for cr in all_contract_rows
@@ -2690,9 +2682,7 @@ def add_company_audit(company_name: str, req: AddAuditRequest) -> dict[str, Any]
     from db.models import AuditReport
 
     with SessionLocal() as session:
-        protocol_row = session.execute(
-            select(Protocol).where(Protocol.name == company_name)
-        ).scalar_one_or_none()
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
         if protocol_row is None:
             raise HTTPException(status_code=404, detail="Company not found")
 

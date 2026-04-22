@@ -660,10 +660,16 @@ def _guards_from_internal_call_with_roles(
         if controller.get("source")
     }
     callee_type = type(callee).__name__
-    if role_sources and (
-        callee_type == "Modifier"
-        or any(guard.get("kind") in {"external_authority_check", "role_membership_check"} for guard in nested_guards)
-    ) and not set(role_sources).issubset(nested_role_sources):
+    if (
+        role_sources
+        and (
+            callee_type == "Modifier"
+            or any(
+                guard.get("kind") in {"external_authority_check", "role_membership_check"} for guard in nested_guards
+            )
+        )
+        and not set(role_sources).issubset(nested_role_sources)
+    ):
         guards.append(
             {
                 "kind": "role_membership_check",

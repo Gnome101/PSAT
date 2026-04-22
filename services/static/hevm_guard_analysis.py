@@ -13,18 +13,17 @@ import tempfile
 import textwrap
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, cast
 
 from eth_utils.crypto import keccak
 from slither.slither import Slither
 
+from schemas.control_tracking import ControlSnapshotValue, ControlTrackingPlan, TrackedController
 from services.discovery.fetch import fetch, parse_remappings, parse_sources
 from services.resolution.tracking import build_control_snapshot
 from services.static.contract_analysis_pipeline.shared import _select_subject_contract
 
-HEVM_LINUX_X86_64 = (
-    "https://github.com/argotorg/hevm/releases/download/release/0.57.0/hevm-x86_64-linux"
-)
+HEVM_LINUX_X86_64 = "https://github.com/argotorg/hevm/releases/download/release/0.57.0/hevm-x86_64-linux"
 
 _SOLVER = os.getenv("PSAT_HEVM_SOLVER", "z3")
 _TIMEOUT_SECONDS = int(os.getenv("PSAT_HEVM_TIMEOUT_SECONDS", "120"))
@@ -134,16 +133,14 @@ def _role_helper_test_source(authority_address: str, helper_name: str, members: 
     member_literals = [f"address(uint160({int(member, 16)}))" for member in members]
     assumptions = "\n        ".join(f"VM.assume(caller != {member});" for member in member_literals)
     member_tests = "\n".join(
-        textwrap
-        .dedent(
+        textwrap.dedent(
             f"""\
             function prove_member_{index}_accepted() public {{
                 AUTHORITY.{helper_name}({member});
                 assertTrue(true);
             }}
             """
-        )
-        .rstrip()
+        ).rstrip()
         for index, member in enumerate(member_literals)
     )
     return f"""// SPDX-License-Identifier: MIT
@@ -183,8 +180,7 @@ def _target_role_membership_test_source(target_address: str, function_signature:
     member_literals = [f"address(uint160({int(member, 16)}))" for member in members]
     outsider = "address(uint160(0xdead))"
     member_tests = "\n".join(
-        textwrap
-        .dedent(
+        textwrap.dedent(
             f"""\
             function prove_member_{index}_accepted() public {{
                 VM.prank({member});
@@ -192,8 +188,7 @@ def _target_role_membership_test_source(target_address: str, function_signature:
                 assertTrue(ok);
             }}
             """
-        )
-        .rstrip()
+        ).rstrip()
         for index, member in enumerate(member_literals)
     )
     return f"""// SPDX-License-Identifier: MIT
@@ -229,7 +224,7 @@ contract HevmTargetRoleHelperTest {{
 
 
 def _resolve_authority_address(
-    tracking_plan: dict[str, Any],
+    tracking_plan: Mapping[str, Any],
     rpc_url: str,
     authority_source: str,
 ) -> str | None:
@@ -240,27 +235,31 @@ def _resolve_authority_address(
     ]
     if not candidates:
         return None
-    mini_plan = {
-        "schema_version": tracking_plan["schema_version"],
-        "contract_address": tracking_plan["contract_address"],
-        "contract_name": tracking_plan["contract_name"],
-        "tracking_strategy": tracking_plan["tracking_strategy"],
-        "tracked_controllers": candidates,
-        "tracked_policies": [],
-    }
+    mini_plan = cast(
+        ControlTrackingPlan,
+        {
+            "schema_version": cast(str, tracking_plan["schema_version"]),
+            "contract_address": cast(str, tracking_plan["contract_address"]),
+            "contract_name": cast(str, tracking_plan["contract_name"]),
+            "tracking_strategy": tracking_plan["tracking_strategy"],
+            "tracked_controllers": cast(list[TrackedController], candidates),
+            "tracked_policies": [],
+        },
+    )
     snapshot = build_control_snapshot(mini_plan, rpc_url)
     for controller in candidates:
-        value = snapshot["controller_values"].get(controller["controller_id"], {}).get("value")
+        snapshot_value = snapshot["controller_values"].get(controller["controller_id"])
+        value = snapshot_value.get("value") if snapshot_value else None
         if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
             return value
     return None
 
 
 def _role_candidates_for_authority(
-    tracking_plan: dict[str, Any],
+    tracking_plan: Mapping[str, Any],
     authority_source: str,
-) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
+) -> list[TrackedController]:
+    candidates: list[TrackedController] = []
     for controller in tracking_plan.get("tracked_controllers", []):
         if controller.get("kind") != "role_identifier":
             continue
@@ -269,29 +268,35 @@ def _role_candidates_for_authority(
             continue
         if read_spec.get("contract_source") != authority_source:
             continue
-        candidates.append(controller)
+        candidates.append(cast(TrackedController, controller))
     return candidates
 
 
 def _resolve_role_candidate_snapshot(
-    tracking_plan: dict[str, Any],
+    tracking_plan: Mapping[str, Any],
     rpc_url: str,
     authority_source: str,
-    role_controller: dict[str, Any],
-) -> dict[str, Any] | None:
+    role_controller: TrackedController,
+) -> ControlSnapshotValue | None:
     dependency_controllers = [
         controller
         for controller in tracking_plan.get("tracked_controllers", [])
         if controller.get("source") == authority_source
     ]
-    mini_plan = {
-        "schema_version": tracking_plan["schema_version"],
-        "contract_address": tracking_plan["contract_address"],
-        "contract_name": tracking_plan["contract_name"],
-        "tracking_strategy": tracking_plan["tracking_strategy"],
-        "tracked_controllers": [*dependency_controllers, role_controller],
-        "tracked_policies": [],
-    }
+    mini_plan = cast(
+        ControlTrackingPlan,
+        {
+            "schema_version": cast(str, tracking_plan["schema_version"]),
+            "contract_address": cast(str, tracking_plan["contract_address"]),
+            "contract_name": cast(str, tracking_plan["contract_name"]),
+            "tracking_strategy": tracking_plan["tracking_strategy"],
+            "tracked_controllers": [
+                *cast(list[TrackedController], dependency_controllers),
+                role_controller,
+            ],
+            "tracked_policies": [],
+        },
+    )
     snapshot = build_control_snapshot(mini_plan, rpc_url)
     return snapshot["controller_values"].get(role_controller["controller_id"])
 
@@ -376,9 +381,11 @@ def _candidate_role_sources_from_local_project(project_dir: Path, helper_name: s
             reads = getattr(function, "all_state_variables_read", [])
             if callable(reads):
                 reads = reads()
-            candidates = list(reads or [])
+            candidates: list[Any] = list(reads) if isinstance(reads, list) else []
             for node in getattr(function, "nodes", []) or []:
-                candidates.extend(getattr(node, "state_variables_read", []) or [])
+                node_reads = getattr(node, "state_variables_read", [])
+                if isinstance(node_reads, list):
+                    candidates.extend(node_reads)
             for variable in candidates:
                 name = getattr(variable, "name", "")
                 if name and str(getattr(variable, "type", None) or "") == "bytes32":
@@ -390,8 +397,8 @@ def _role_snapshot_from_source(
     authority_address: str,
     role_source: str,
     rpc_url: str,
-) -> dict[str, Any] | None:
-    mini_plan = {
+) -> ControlSnapshotValue | None:
+    mini_plan: ControlTrackingPlan = {
         "schema_version": "0.1",
         "contract_address": authority_address,
         "contract_name": authority_address,
@@ -530,9 +537,7 @@ def _prove_role_helper(
         output = "\n".join(part for part in [run.stdout, run.stderr] if part)
         normalized_output = _ANSI_ESCAPE_RE.sub("", output)
         reject_ok = "[PASS] prove_non_member_rejected" in normalized_output
-        members_ok = all(
-            f"[PASS] prove_member_{index}_accepted" in normalized_output for index in range(len(members))
-        )
+        members_ok = all(f"[PASS] prove_member_{index}_accepted" in normalized_output for index in range(len(members)))
         if run.returncode == 0 and reject_ok and members_ok:
             return {
                 "status": "proved",
@@ -600,9 +605,7 @@ def _prove_target_role_membership(
         output = "\n".join(part for part in [run.stdout, run.stderr] if part)
         normalized_output = _ANSI_ESCAPE_RE.sub("", output)
         reject_ok = "[PASS] prove_fixed_non_member_rejected" in normalized_output
-        members_ok = all(
-            f"[PASS] prove_member_{index}_accepted" in normalized_output for index in range(len(members))
-        )
+        members_ok = all(f"[PASS] prove_member_{index}_accepted" in normalized_output for index in range(len(members)))
         if run.returncode == 0 and reject_ok and members_ok:
             return {
                 "status": "proved",
@@ -627,7 +630,7 @@ def _deepcopy_jsonish(value: Any) -> Any:
 def refine_semantic_guards_with_hevm(
     semantic_guards: dict[str, Any],
     *,
-    tracking_plan: dict[str, Any],
+    tracking_plan: Mapping[str, Any],
     rpc_url: str,
     project_dir: Path | None = None,
     hevm_bin: str | None = None,
@@ -717,7 +720,7 @@ def refine_semantic_guards_with_hevm(
                 continue
 
             role_attempts = []
-            role_snapshots: list[tuple[str, dict[str, Any] | None]] = []
+            role_snapshots: list[tuple[str, ControlSnapshotValue | None]] = []
             tracked_role_controllers = _role_candidates_for_authority(tracking_plan, authority_source)
             for role_controller in tracked_role_controllers:
                 role_snapshot = _resolve_role_candidate_snapshot(
@@ -743,7 +746,7 @@ def refine_semantic_guards_with_hevm(
                     )
 
             for role_source, role_snapshot in role_snapshots:
-                if not isinstance(role_snapshot, dict):
+                if role_snapshot is None:
                     role_attempts.append(
                         {
                             "role_source": role_source,
@@ -753,7 +756,8 @@ def refine_semantic_guards_with_hevm(
                     )
                     continue
                 details = role_snapshot.get("details", {})
-                resolved_principals = details.get("resolved_principals", []) if isinstance(details, dict) else []
+                resolved_principals_raw = details.get("resolved_principals", [])
+                resolved_principals = resolved_principals_raw if isinstance(resolved_principals_raw, list) else []
                 members = [
                     str(principal.get("address", "")).lower()
                     for principal in resolved_principals

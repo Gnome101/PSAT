@@ -20,9 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from services.static import collect_contract_analysis  # noqa: E402
 
-HEVM_LINUX_X86_64 = (
-    "https://github.com/argotorg/hevm/releases/download/release/0.57.0/hevm-x86_64-linux"
-)
+HEVM_LINUX_X86_64 = "https://github.com/argotorg/hevm/releases/download/release/0.57.0/hevm-x86_64-linux"
 
 CONTRACT_SOURCE = textwrap.dedent(
     """\

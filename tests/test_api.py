@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -95,7 +96,7 @@ def test_build_company_function_entry_filters_generic_authority_contract_when_sp
         ),
     ]
 
-    result = api._build_company_function_entry(ef, principals)
+    result = api._build_company_function_entry(cast(Any, ef), cast(Any, principals))
 
     assert result["controllers"] == [
         {

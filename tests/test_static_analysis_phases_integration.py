@@ -230,14 +230,19 @@ class TestAnalysisPhaseSuccess:
             "workers.static_worker.collect_contract_analysis",
             lambda project_dir: analysis_data,
         )
+        monkeypatch.setattr(
+            "workers.static_worker.build_semantic_guards",
+            lambda analysis: {"schema_version": "0.1", "contract_name": "TestContract", "functions": []},
+        )
         calls = _capture_store_artifact(monkeypatch)
 
         result = worker._run_analysis_phase(session, job, tmp_path, "TestContract", job.address)
 
         assert result == analysis_data
-        assert len(calls) == 1
+        assert len(calls) == 2
         assert calls[0]["name"] == "contract_analysis"
         assert calls[0]["data"] == analysis_data
+        assert calls[1]["name"] == "semantic_guards"
 
     def test_stores_semantic_guards_side_artifact_when_present(self, monkeypatch, tmp_path):
         worker = StaticWorker()
@@ -296,7 +301,7 @@ class TestAnalysisPhaseSuccess:
         )
         monkeypatch.setattr(
             "workers.static_worker.refine_semantic_guards_with_hevm",
-            lambda semantic_guards, tracking_plan, rpc_url: (
+            lambda semantic_guards, tracking_plan, rpc_url, project_dir=None: (
                 {
                     "functions": [
                         {
@@ -335,6 +340,7 @@ class TestAnalysisPhaseSuccess:
 
         assert result == {"schema_version": "0.1"}
         assert [call["name"] for call in calls] == ["contract_analysis", "semantic_guards"]
+
 
 class TestAnalysisPhaseFailure:
     """Mock collect_contract_analysis() to raise; verify error artifact and return value."""

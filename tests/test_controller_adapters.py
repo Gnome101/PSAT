@@ -789,8 +789,10 @@ class TestTryRoleHoldersMembers:
         mock_call.return_value = "0xdeadbeef"
         mock_decode.return_value = [a1, a2]
 
-        members, meta = _try_role_holders_members(RPC, CONTRACT, ROLE)
+        result = _try_role_holders_members(RPC, CONTRACT, ROLE)
 
+        assert result is not None
+        members, meta = result
         assert members == [a1.lower(), a2.lower()]
         assert meta["adapter"] == "role_holders"
         assert meta["member_count"] == 2
