@@ -2,20 +2,22 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import shutil
-import tempfile
-from pathlib import Path
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Contract, EffectiveFunction, FunctionPrincipal, Job, JobStage, JobStatus, PrincipalLabel
+from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, artifact_key, parse_key
+from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import get_artifact, store_artifact
+from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from schemas.effective_permissions import PrincipalResolution
+from services.policy import build_effective_permissions, build_principal_labels
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
+from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.policy_worker")
@@ -23,6 +25,48 @@ logger = logging.getLogger("workers.policy_worker")
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
+
+
+def _root_artifacts(
+    contract_analysis: dict,
+    tracking_plan: dict,
+    snapshot: ControlSnapshot,
+) -> LoadedArtifacts:
+    return {
+        "analysis": contract_analysis,
+        "tracking_plan": tracking_plan,
+        "snapshot": snapshot,
+    }
+
+
+def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifacts]:
+    """Hydrate ``recursive.*`` artifacts written by the resolution stage."""
+    from db.models import Artifact
+
+    prefix = f"{KEY_PREFIX}."
+    rows = (
+        session.execute(select(Artifact).where(Artifact.job_id == job_id, Artifact.name.like(f"{prefix}%")))
+        .scalars()
+        .all()
+    )
+    bundles: dict[str, dict] = {}
+    for row in rows:
+        parsed = parse_key(row.name)
+        if parsed is None:
+            continue
+        address, kind = parsed
+        if kind not in ARTIFACT_KINDS:
+            continue
+        payload = get_artifact(session, job_id, row.name)
+        if payload is None:
+            continue
+        bundles.setdefault(address, {})[kind] = payload
+    # Only keep bundles that have the minimum fields resolve_control_graph needs.
+    return {
+        addr: cast(LoadedArtifacts, bundle)
+        for addr, bundle in bundles.items()
+        if {"analysis", "snapshot"} <= bundle.keys()
+    }
 
 
 class PolicyWorker(BaseWorker):
@@ -45,276 +89,274 @@ class PolicyWorker(BaseWorker):
         control_snapshot = get_artifact(session, job.id, "control_snapshot")
         resolved_control_graph = get_artifact(session, job.id, "resolved_control_graph")
         semantic_guards = get_artifact(session, job.id, "semantic_guards")
+        tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
 
         if not isinstance(contract_analysis, dict):
             raise RuntimeError("contract_analysis artifact not found")
         if not isinstance(control_snapshot, dict):
             raise RuntimeError("control_snapshot artifact not found")
 
-        # We need temp files for functions that read from filesystem
-        tmp_dir = tempfile.mkdtemp(prefix="psat_policy_")
-        project_dir = Path(tmp_dir)
-        try:
-            contract_row = None
-            ep_data: dict | None = None
-            analysis_path = project_dir / "contract_analysis.json"
-            analysis_path.write_text(json.dumps(contract_analysis, indent=2) + "\n")
+        nested_artifacts = _load_nested_artifacts(session, job.id)
 
-            snapshot_path = project_dir / "control_snapshot.json"
-            snapshot_path.write_text(json.dumps(control_snapshot, indent=2) + "\n")
-
-            resolved_graph_path = None
-            if isinstance(resolved_control_graph, dict):
-                resolved_graph_path = project_dir / "resolved_control_graph.json"
-                resolved_graph_path.write_text(json.dumps(resolved_control_graph, indent=2) + "\n")
-            semantic_guards_path = None
-            if isinstance(semantic_guards, dict):
-                semantic_guards_path = project_dir / "semantic_guards.json"
-                semantic_guards_path.write_text(json.dumps(semantic_guards, indent=2) + "\n")
-
-            # Determine authority snapshot and policy state
-            authority_snapshot_path = None
-            policy_state_path = None
-            principal_resolution: PrincipalResolution = {
-                "status": "no_authority",
-                "reason": "Worker-mode authority resolution",
-            }
-
-            if resolved_graph_path:
-                authority_result = self._resolve_authority(
-                    project_dir, resolved_graph_path, snapshot_path, contract_analysis
-                )
-                authority_snapshot_path = authority_result.get("authority_snapshot_path")
-                policy_state_path = authority_result.get("policy_state_path")
-                principal_resolution = authority_result.get("principal_resolution", principal_resolution)
-                logger.info(
-                    "Policy stage authority resolution for job %s address=%s status=%s",
-                    job.id,
-                    job.address or "0x0",
-                    principal_resolution.get("status", "unknown"),
-                )
-
-            # Build effective permissions
-            self.update_detail(session, job, "Computing effective permissions")
-            from services.policy import write_effective_permissions_from_files
-
-            effective_permissions_path = write_effective_permissions_from_files(
-                analysis_path,
-                target_snapshot_path=snapshot_path,
-                authority_snapshot_path=authority_snapshot_path,
-                policy_state_path=policy_state_path,
-                semantic_guards_path=semantic_guards_path,
-                resolved_control_graph_path=resolved_graph_path,
-                output_path=project_dir / "effective_permissions.json",
-                principal_resolution=principal_resolution,
+        # Determine authority snapshot and policy state
+        authority_snapshot: dict | None = None
+        policy_state: dict | None = None
+        principal_resolution: PrincipalResolution = {
+            "status": "no_authority",
+            "reason": "Worker-mode authority resolution",
+        }
+        if isinstance(resolved_control_graph, dict):
+            authority_result = self._resolve_authority(
+                session,
+                job,
+                resolved_control_graph,
+                control_snapshot,
+                nested_artifacts,
+            )
+            authority_snapshot = authority_result.get("authority_snapshot")
+            policy_state = authority_result.get("policy_state")
+            principal_resolution = authority_result.get("principal_resolution", principal_resolution)
+            logger.info(
+                "Policy stage authority resolution for job %s address=%s status=%s",
+                job.id,
+                job.address or "0x0",
+                principal_resolution.get("status", "unknown"),
             )
 
-            if effective_permissions_path.exists():
-                ep_data = json.loads(effective_permissions_path.read_text())
+        # Build effective permissions
+        self.update_detail(session, job, "Computing effective permissions")
 
-                # Write to effective_functions and function_principals tables
-                contract_row = session.execute(
-                    select(Contract).where(Contract.job_id == job.id).limit(1)
-                ).scalar_one_or_none()
-                if contract_row and isinstance(ep_data, dict):
-                    session.query(EffectiveFunction).filter(EffectiveFunction.contract_id == contract_row.id).delete()
-                    for fn in ep_data.get("functions", []):
-                        ef = EffectiveFunction(
-                            contract_id=contract_row.id,
-                            function_name=fn.get("function", "").split("(")[0],
-                            selector=fn.get("selector"),
-                            abi_signature=fn.get("function") or fn.get("abi_signature"),
-                            effect_labels=fn.get("effect_labels", []),
-                            effect_targets=fn.get("effect_targets", []),
-                            action_summary=fn.get("action_summary"),
-                            authority_public=fn.get("authority_public", False),
-                            authority_roles=fn.get("authority_roles"),
+        external_snapshots = {
+            address: cast(dict, bundle["snapshot"])
+            for address, bundle in nested_artifacts.items()
+            if isinstance(bundle.get("snapshot"), dict)
+        }
+        external_policy_states: dict[str, dict] = {}
+        for address in external_snapshots:
+            nested_policy_state = get_artifact(session, job.id, artifact_key(address, "policy_state"))
+            if isinstance(nested_policy_state, dict):
+                external_policy_states[address] = nested_policy_state
+
+        ep_data: dict = cast(
+            dict,
+            build_effective_permissions(
+                contract_analysis,
+                target_snapshot=control_snapshot,
+                authority_snapshot=authority_snapshot,
+                policy_state=policy_state,
+                semantic_guards=semantic_guards if isinstance(semantic_guards, dict) else None,
+                external_snapshots=external_snapshots,
+                external_policy_states=external_policy_states,
+                principal_resolution=principal_resolution,
+            ),
+        )
+
+        # Write to effective_functions and function_principals tables
+        contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+        if contract_row and isinstance(ep_data, dict):
+            session.query(EffectiveFunction).filter(EffectiveFunction.contract_id == contract_row.id).delete()
+            for fn in ep_data.get("functions", []):
+                ef = EffectiveFunction(
+                    contract_id=contract_row.id,
+                    function_name=fn.get("function", "").split("(")[0],
+                    selector=fn.get("selector"),
+                    abi_signature=fn.get("function") or fn.get("abi_signature"),
+                    effect_labels=fn.get("effect_labels", []),
+                    effect_targets=fn.get("effect_targets", []),
+                    action_summary=fn.get("action_summary"),
+                    authority_public=fn.get("authority_public", False),
+                    authority_roles=fn.get("authority_roles"),
+                )
+                session.add(ef)
+                session.flush()
+                # Add principals from all sources
+                do = fn.get("direct_owner")
+                if isinstance(do, dict) and do.get("address"):
+                    session.add(
+                        FunctionPrincipal(
+                            function_id=ef.id,
+                            address=do["address"].lower(),
+                            resolved_type=do.get("resolved_type"),
+                            origin="direct owner",
+                            principal_type="direct_owner",
+                            details=do.get("details"),
                         )
-                        session.add(ef)
-                        session.flush()
-                        # Add principals from all sources
-                        do = fn.get("direct_owner")
-                        if isinstance(do, dict) and do.get("address"):
+                    )
+                for ctrl in fn.get("controllers") or []:
+                    for p in ctrl.get("principals") or []:
+                        if isinstance(p, dict) and p.get("address"):
                             session.add(
                                 FunctionPrincipal(
                                     function_id=ef.id,
-                                    address=do["address"].lower(),
-                                    resolved_type=do.get("resolved_type"),
-                                    origin="direct owner",
-                                    principal_type="direct_owner",
-                                    details=do.get("details"),
-                                )
-                            )
-                        for ctrl in fn.get("controllers") or []:
-                            for p in ctrl.get("principals") or []:
-                                if isinstance(p, dict) and p.get("address"):
-                                    session.add(
-                                        FunctionPrincipal(
-                                            function_id=ef.id,
-                                            address=p["address"].lower(),
-                                            resolved_type=p.get("resolved_type"),
-                                            origin=ctrl.get("label") or ctrl.get("controller_id", "controller"),
-                                            principal_type="controller",
-                                            details=p.get("details"),
-                                        )
-                                    )
-                        for role in fn.get("authority_roles") or []:
-                            for p in role.get("principals") or []:
-                                if isinstance(p, dict) and p.get("address"):
-                                    session.add(
-                                        FunctionPrincipal(
-                                            function_id=ef.id,
-                                            address=p["address"].lower(),
-                                            resolved_type=p.get("resolved_type"),
-                                            origin=f"role {role.get('role', '?')}",
-                                            principal_type="authority_role",
-                                            details=p.get("details"),
-                                        )
-                                    )
-                    session.commit()
-
-                store_artifact(session, job.id, "effective_permissions", data=ep_data)
-
-                logger.info(
-                    "Policy stage effective permissions complete for job %s address=%s name=%s",
-                    job.id,
-                    job.address or "0x0",
-                    job.name or "Contract",
-                )
-
-            # Rebuild the resolved graph now that effective_permissions.json exists,
-            # so semantic role/controller principals can be projected into the graph.
-            self.update_detail(session, job, "Refreshing resolved control graph")
-            from services.resolution.recursive import write_resolved_control_graph
-
-            refreshed_graph_path = write_resolved_control_graph(
-                analysis_path,
-                rpc_url=rpc_url,
-                output_path=project_dir / "resolved_control_graph.json",
-                max_depth=RECURSION_MAX_DEPTH,
-                workspace_prefix="recursive",
-                refresh_snapshots=False,
-            )
-            if refreshed_graph_path.exists():
-                resolved_graph_path = refreshed_graph_path
-                rg_data = json.loads(refreshed_graph_path.read_text())
-                store_artifact(session, job.id, "resolved_control_graph", data=rg_data)
-
-            # Label principals
-            self.update_detail(session, job, "Labeling principals")
-            from services.policy import write_principal_labels_from_files
-
-            principal_labels_path = write_principal_labels_from_files(
-                effective_permissions_path,
-                resolved_control_graph_path=resolved_graph_path,
-                rpc_url=rpc_url,
-                output_path=project_dir / "principal_labels.json",
-            )
-
-            if principal_labels_path.exists():
-                pl_data = json.loads(principal_labels_path.read_text())
-
-                # Write to principal_labels table
-                if contract_row:
-                    session.query(PrincipalLabel).filter(PrincipalLabel.contract_id == contract_row.id).delete()
-                    for p in pl_data.get("principals", []):
-                        if p.get("address"):
-                            session.add(
-                                PrincipalLabel(
-                                    contract_id=contract_row.id,
                                     address=p["address"].lower(),
-                                    label=p.get("display_name"),
-                                    display_name=p.get("display_name"),
                                     resolved_type=p.get("resolved_type"),
-                                    labels=p.get("labels"),
-                                    confidence=p.get("confidence"),
+                                    origin=ctrl.get("label") or ctrl.get("controller_id", "controller"),
+                                    principal_type="controller",
                                     details=p.get("details"),
-                                    graph_context=p.get("graph_context"),
                                 )
                             )
-                    session.commit()
+                for role in fn.get("authority_roles") or []:
+                    for p in role.get("principals") or []:
+                        if isinstance(p, dict) and p.get("address"):
+                            session.add(
+                                FunctionPrincipal(
+                                    function_id=ef.id,
+                                    address=p["address"].lower(),
+                                    resolved_type=p.get("resolved_type"),
+                                    origin=f"role {role.get('role', '?')}",
+                                    principal_type="authority_role",
+                                    details=p.get("details"),
+                                )
+                            )
+            session.commit()
 
-                store_artifact(session, job.id, "principal_labels", data=pl_data)
+        store_artifact(session, job.id, "effective_permissions", data=ep_data)
 
-                logger.info(
-                    "Policy stage principal labels complete for job %s address=%s name=%s",
+        logger.info(
+            "Policy stage effective permissions complete for job %s address=%s name=%s",
+            job.id,
+            job.address or "0x0",
+            job.name or "Contract",
+        )
+
+        # Rebuild the resolved graph now that effective_permissions exists,
+        # so semantic role/controller principals can be projected into the graph.
+        # The refresh reuses the nested artifacts persisted during resolution.
+        self.update_detail(session, job, "Refreshing resolved control graph")
+        if not isinstance(tracking_plan, dict):
+            tracking_plan = {}
+        # Attach the target contract's updated effective_permissions to the
+        # root bundle so role/controller principals can be projected when
+        # re-traversing the graph.
+        root_bundle = _root_artifacts(contract_analysis, tracking_plan, cast(ControlSnapshot, control_snapshot))
+        root_bundle["effective_permissions"] = ep_data
+        refreshed_graph, refreshed_nested = resolve_control_graph(
+            root_artifacts=root_bundle,
+            rpc_url=rpc_url,
+            max_depth=RECURSION_MAX_DEPTH,
+            workspace_prefix="recursive",
+            nested_artifacts_override=nested_artifacts,
+        )
+        if refreshed_graph:
+            resolved_control_graph = refreshed_graph
+            store_artifact(session, job.id, "resolved_control_graph", data=refreshed_graph)
+            # Persist any newly materialized nested artifacts (rare — most come
+            # from resolution stage already).
+            new_addresses = set(refreshed_nested) - set(nested_artifacts)
+            if new_addresses:
+                store_nested_artifacts(
+                    session,
                     job.id,
-                    job.address or "0x0",
-                    job.name or "Contract",
+                    {addr: refreshed_nested[addr] for addr in new_addresses},
                 )
 
-            # Cross-contract effect enrichment: propagate labels across contract boundaries
-            enriched = self._enrich_cross_contract(session, job, contract_analysis, control_snapshot)
-            if enriched and ep_data is not None:
-                self._apply_effect_label_updates(ep_data, enriched)
-                effective_permissions_path.write_text(json.dumps(ep_data, indent=2) + "\n")
-                store_artifact(session, job.id, "effective_permissions", data=ep_data)
+        # Label principals
+        self.update_detail(session, job, "Labeling principals")
+        pl_data = build_principal_labels(
+            ep_data,
+            resolved_control_graph=(
+                cast(dict, resolved_control_graph) if isinstance(resolved_control_graph, dict) else None
+            ),
+            rpc_url=rpc_url,
+        )
 
-            self.update_detail(session, job, "Policy analysis complete")
-            logger.info(
-                "Policy stage complete for job %s address=%s name=%s",
-                job.id,
-                job.address or "0x0",
-                job.name or "Contract",
-            )
-
-            # Auto-enroll protocol contracts into unified monitoring
-            if job.protocol_id:
-                try:
-                    from services.monitoring.enrollment import maybe_enroll_protocol
-
-                    enrolled = maybe_enroll_protocol(
-                        session,
-                        job.protocol_id,
-                        rpc_url,
-                        chain="ethereum",
-                        exclude_job_id=job.id,
-                    )
-                    if enrolled:
-                        logger.info(
-                            "Auto-enrolled protocol %s contracts into monitoring",
-                            job.protocol_id,
+        # Write to principal_labels table
+        if contract_row:
+            session.query(PrincipalLabel).filter(PrincipalLabel.contract_id == contract_row.id).delete()
+            for p in pl_data.get("principals", []):
+                if p.get("address"):
+                    session.add(
+                        PrincipalLabel(
+                            contract_id=contract_row.id,
+                            address=p["address"].lower(),
+                            label=p.get("display_name"),
+                            display_name=p.get("display_name"),
+                            resolved_type=p.get("resolved_type"),
+                            labels=p.get("labels"),
+                            confidence=p.get("confidence"),
+                            details=p.get("details"),
+                            graph_context=p.get("graph_context"),
                         )
-                        # Fetch DeFiLlama TVL so the protocol has a number immediately.
-                        # Per-contract tracked value is already in contract_balances
-                        # from the resolution stage — the hourly loop will create
-                        # a full snapshot combining both.
-                        try:
-                            from db.models import Protocol, TvlSnapshot
-                            from services.monitoring.tvl import fetch_defillama_tvl
-
-                            proto = session.get(Protocol, job.protocol_id)
-                            dl = fetch_defillama_tvl(proto.name) if proto else None
-                            if dl:
-                                session.add(
-                                    TvlSnapshot(
-                                        protocol_id=job.protocol_id,
-                                        defillama_tvl=round(dl["tvl"], 2) if dl["tvl"] else None,
-                                        chain_breakdown=dl["chain_breakdown"],
-                                        source="defillama",
-                                    )
-                                )
-                                session.commit()
-                        except Exception:
-                            logger.exception("Initial TVL snapshot failed for protocol %s", job.protocol_id)
-                except Exception:
-                    logger.exception("Auto-enrollment failed for protocol %s", job.protocol_id)
-
-            # Send completion webhook for re-analysis jobs
-            request = job.request if isinstance(job.request, dict) else {}
-            if request.get("reanalysis_trigger"):
-                try:
-                    from services.monitoring.notifier import notify_reanalysis_complete
-
-                    notify_reanalysis_complete(session, job)
-                except Exception:
-                    logger.exception(
-                        "Reanalysis completion notification failed for job %s",
-                        job.id,
                     )
+            session.commit()
 
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+        store_artifact(session, job.id, "principal_labels", data=pl_data)
+
+        logger.info(
+            "Policy stage principal labels complete for job %s address=%s name=%s",
+            job.id,
+            job.address or "0x0",
+            job.name or "Contract",
+        )
+
+        # Cross-contract effect enrichment: propagate labels across contract boundaries
+        enriched = self._enrich_cross_contract(session, job, contract_analysis, control_snapshot)
+        if enriched and ep_data is not None:
+            self._apply_effect_label_updates(ep_data, enriched)
+            store_artifact(session, job.id, "effective_permissions", data=ep_data)
+
+        self.update_detail(session, job, "Policy analysis complete")
+        logger.info(
+            "Policy stage complete for job %s address=%s name=%s",
+            job.id,
+            job.address or "0x0",
+            job.name or "Contract",
+        )
+
+        # Auto-enroll protocol contracts into unified monitoring
+        if job.protocol_id:
+            try:
+                from services.monitoring.enrollment import maybe_enroll_protocol
+
+                enrolled = maybe_enroll_protocol(
+                    session,
+                    job.protocol_id,
+                    rpc_url,
+                    chain="ethereum",
+                    exclude_job_id=job.id,
+                )
+                if enrolled:
+                    logger.info(
+                        "Auto-enrolled protocol %s contracts into monitoring",
+                        job.protocol_id,
+                    )
+                    # Fetch DeFiLlama TVL so the protocol has a number immediately.
+                    # Per-contract tracked value is already in contract_balances
+                    # from the resolution stage — the hourly loop will create
+                    # a full snapshot combining both.
+                    try:
+                        from db.models import Protocol, TvlSnapshot
+                        from services.monitoring.tvl import fetch_defillama_tvl
+
+                        proto = session.get(Protocol, job.protocol_id)
+                        dl = fetch_defillama_tvl(proto.name) if proto else None
+                        if dl:
+                            session.add(
+                                TvlSnapshot(
+                                    protocol_id=job.protocol_id,
+                                    defillama_tvl=round(dl["tvl"], 2) if dl["tvl"] else None,
+                                    chain_breakdown=dl["chain_breakdown"],
+                                    source="defillama",
+                                )
+                            )
+                            session.commit()
+                    except Exception:
+                        logger.exception("Initial TVL snapshot failed for protocol %s", job.protocol_id)
+            except Exception:
+                logger.exception("Auto-enrollment failed for protocol %s", job.protocol_id)
+
+        # Send completion webhook for re-analysis jobs
+        request = job.request if isinstance(job.request, dict) else {}
+        if request.get("reanalysis_trigger"):
+            try:
+                from services.monitoring.notifier import notify_reanalysis_complete
+
+                notify_reanalysis_complete(session, job)
+            except Exception:
+                logger.exception(
+                    "Reanalysis completion notification failed for job %s",
+                    job.id,
+                )
 
     def _apply_effect_label_updates(self, payload: dict, enriched: dict[str, list[str]]) -> None:
         for fn in payload.get("functions", []):
@@ -407,12 +449,21 @@ class PolicyWorker(BaseWorker):
         return enriched
 
     def _resolve_authority(
-        self, project_dir: Path, resolved_graph_path: Path, snapshot_path: Path, contract_analysis: dict
+        self,
+        session: Session,
+        job: Job,
+        resolved_graph: dict,
+        snapshot: dict,
+        nested_artifacts: dict[str, LoadedArtifacts],
     ) -> dict:
-        """Attempt to find authority snapshot and policy state from the resolved graph."""
-        snapshot = json.loads(snapshot_path.read_text())
-        graph = json.loads(resolved_graph_path.read_text())
+        """Locate authority artifacts from the resolution stage's DB bundles.
 
+        The resolution worker persists per-sub-contract artifacts as
+        ``recursive:<address>:<kind>`` rows. This method fetches the
+        authority's bundle from that set (or falls back to existing
+        ``policy_state`` / ``policy_event_history`` artifacts when present)
+        and, if HyperSync is configured, backfills missing policy state.
+        """
         # Find authority address from snapshot
         authority_address = None
         for controller_id, value in snapshot.get("controller_values", {}).items():
@@ -423,19 +474,8 @@ class PolicyWorker(BaseWorker):
         if not authority_address or authority_address == "0x0000000000000000000000000000000000000000":
             return {"principal_resolution": {"status": "no_authority", "reason": "No non-zero authority found"}}
 
-        # Find authority node in graph
-        authority_snapshot_path = None
-        for node in graph.get("nodes", []):
-            if node.get("address", "").lower() != authority_address:
-                continue
-            snapshot_artifact = (node.get("artifacts") or {}).get("snapshot")
-            if snapshot_artifact:
-                candidate = Path(snapshot_artifact)
-                if candidate.exists():
-                    authority_snapshot_path = candidate
-            break
-
-        if authority_snapshot_path is None:
+        authority_bundle = nested_artifacts.get(authority_address)
+        if authority_bundle is None or "snapshot" not in authority_bundle:
             return {
                 "principal_resolution": {
                     "status": "no_authority_snapshot",
@@ -443,43 +483,55 @@ class PolicyWorker(BaseWorker):
                 }
             }
 
-        # Check for policy tracking and HyperSync backfill
-        authority_project_dir = authority_snapshot_path.parent
-        authority_plan_path = authority_project_dir / "control_tracking_plan.json"
-        authority_analysis_path = authority_project_dir / "contract_analysis.json"
-        policy_state_path = authority_project_dir / "policy_state.json"
+        authority_snapshot = cast(dict, authority_bundle["snapshot"])
+        authority_analysis = authority_bundle.get("analysis")
+        authority_plan = authority_bundle.get("tracking_plan")
+        policy_state = get_artifact(session, job.id, artifact_key(authority_address, "policy_state"))
+        if policy_state is not None and not isinstance(policy_state, dict):
+            policy_state = None
 
-        if authority_plan_path.exists() and authority_analysis_path.exists():
-            authority_analysis = json.loads(authority_analysis_path.read_text())
-            if authority_analysis.get("policy_tracking"):
-                if policy_state_path.exists():
-                    return {
-                        "authority_snapshot_path": authority_snapshot_path,
-                        "policy_state_path": policy_state_path,
-                        "principal_resolution": {
-                            "status": "complete",
-                            "reason": "Existing authority policy state joined into permission view",
-                        },
-                    }
-                if os.getenv("ENVIO_API_TOKEN"):
-                    run_hypersync_policy_backfill(
-                        authority_plan_path,
-                        url=DEFAULT_HYPERSYNC_URL,
-                        state_out=policy_state_path,
-                        events_out=authority_project_dir / "policy_event_history.jsonl",
-                    )
-                    if policy_state_path.exists():
-                        return {
-                            "authority_snapshot_path": authority_snapshot_path,
-                            "policy_state_path": policy_state_path,
-                            "principal_resolution": {
-                                "status": "complete",
-                                "reason": "Authority policy backfill completed",
-                            },
-                        }
+        if (
+            isinstance(authority_analysis, dict)
+            and isinstance(authority_plan, dict)
+            and authority_analysis.get("policy_tracking")
+        ):
+            if isinstance(policy_state, dict):
+                return {
+                    "authority_snapshot": authority_snapshot,
+                    "policy_state": policy_state,
+                    "principal_resolution": {
+                        "status": "complete",
+                        "reason": "Existing authority policy state joined into permission view",
+                    },
+                }
+            if os.getenv("ENVIO_API_TOKEN"):
+                events, state = run_hypersync_policy_backfill(
+                    cast(ControlTrackingPlan, authority_plan),
+                    url=DEFAULT_HYPERSYNC_URL,
+                )
+                store_artifact(
+                    session,
+                    job.id,
+                    artifact_key(authority_address, "policy_event_history"),
+                    data=events,
+                )
+                store_artifact(
+                    session,
+                    job.id,
+                    artifact_key(authority_address, "policy_state"),
+                    data=state,
+                )
+                return {
+                    "authority_snapshot": authority_snapshot,
+                    "policy_state": state,
+                    "principal_resolution": {
+                        "status": "complete",
+                        "reason": "Authority policy backfill completed",
+                    },
+                }
 
         return {
-            "authority_snapshot_path": authority_snapshot_path,
+            "authority_snapshot": authority_snapshot,
             "principal_resolution": {
                 "status": "missing_policy_state",
                 "reason": "Authority artifacts incomplete or ENVIO_API_TOKEN not set",

@@ -78,12 +78,6 @@ openrouter = LLMClient(
     default_model="google/gemini-2.0-flash-001",
 )
 
-nim = LLMClient(
-    url="https://integrate.api.nvidia.com/v1/chat/completions",
-    env_var="NVIDIA_API_KEY",
-    default_model="moonshotai/kimi-k2.5",
-)
-
 
 def chat(messages: list[dict], **kwargs) -> str:
     """Convenience function that delegates to the OpenRouter client."""

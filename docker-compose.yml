@@ -93,7 +93,7 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
 
-  proxy-scanner:
+  protocol-scanner:
     build:
       context: .
       dockerfile: Dockerfile
@@ -102,13 +102,13 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
-    command: ["uv", "run", "--no-sync", "python", "-m", "workers.proxy_monitor"]
+    command: ["uv", "run", "--no-sync", "python", "-m", "workers.protocol_monitor"]
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
-  proxy-poller:
+  protocol-poller:
     build:
       context: .
       dockerfile: Dockerfile
@@ -117,7 +117,22 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
-    command: ["uv", "run", "--no-sync", "python", "-m", "workers.proxy_monitor", "--poll"]
+    command: ["uv", "run", "--no-sync", "python", "-m", "workers.protocol_monitor", "--poll"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  tvl-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: psat-api:latest
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://psat:psat@postgres:5432/psat
+    command: ["uv", "run", "--no-sync", "python", "-m", "workers.protocol_monitor", "--tvl"]
     depends_on:
       postgres:
         condition: service_healthy

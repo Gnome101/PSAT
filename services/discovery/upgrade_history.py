@@ -14,9 +14,6 @@ and returns results in <1s regardless of chain history length.
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from services.discovery.static_dependencies import normalize_address
 
 # ---------------------------------------------------------------------------
@@ -338,19 +335,25 @@ def _enrich_implementations(implementations: list[dict], known_names: dict[str, 
 
 
 def _extract_proxies_from_dependencies(
-    dependencies_path: Path,
+    deps: dict,
 ) -> tuple[str, dict[str, tuple[str, str | None]], dict[str, str]]:
-    """Read dependencies.json and extract proxy addresses with their metadata.
+    """Extract proxy metadata for the TARGET only from a unified deps dict.
+
+    Dependency proxies are intentionally ignored — each dependency gets its
+    own analysis job later, and the upgrade history for that dependency is
+    built when it's the target of its own run. Processing dependency proxies
+    here would duplicate work and conflate unrelated contracts' histories.
 
     Returns (target_address, {proxy_addr: (proxy_type, current_impl)}, {addr: name}).
+    The proxy_meta dict contains at most one entry — the target itself, if
+    it's classified as a proxy.
     """
-    deps = json.loads(dependencies_path.read_text())
     target = normalize_address(deps["address"])
 
     proxy_meta: dict[str, tuple[str, str | None]] = {}
     known_names: dict[str, str] = {}
 
-    # Check if the target contract itself is a proxy
+    # Only the target contract's upgrade history is built here.
     target_cls = deps.get("target_classification", {})
     if target_cls.get("type") == "proxy":
         proxy_type = target_cls.get("proxy_type", "unknown")
@@ -363,21 +366,11 @@ def _extract_proxies_from_dependencies(
             current_impl = None
         proxy_meta[target] = (proxy_type, current_impl)
 
-    # Collect known names and proxy metadata from dependencies.
+    # Still harvest known names from dependencies so historical impl
+    # enrichment can reuse them without extra Etherscan calls.
     for addr, info in deps.get("dependencies", {}).items():
         if info.get("contract_name"):
             known_names[normalize_address(addr)] = info["contract_name"]
-        # Also extract proxies from the dependencies dict
-        if info.get("type") == "proxy":
-            dep_proxy_type = info.get("proxy_type", "unknown")
-            dep_impl = info.get("implementation")
-            if isinstance(dep_impl, dict):
-                dep_current_impl = dep_impl.get("address")
-            elif isinstance(dep_impl, str):
-                dep_current_impl = dep_impl
-            else:
-                dep_current_impl = None
-            proxy_meta[normalize_address(addr)] = (dep_proxy_type, dep_current_impl)
         impl = info.get("implementation")
         if isinstance(impl, dict) and impl.get("contract_name"):
             known_names[normalize_address(impl["address"])] = impl["contract_name"]
@@ -395,12 +388,12 @@ def _strip_internal(event: dict) -> dict:
     return {k: v for k, v in event.items() if not k.startswith("_")}
 
 
-def build_upgrade_history(dependencies_path: Path, *, enrich: bool = True, from_block: int = 0) -> dict:
-    """Build upgrade history for all proxy contracts found in dependencies.json.
+def build_upgrade_history(dependencies: dict, *, enrich: bool = True, from_block: int = 0) -> dict:
+    """Build upgrade history for all proxy contracts in a unified deps dict.
 
     Args:
-        dependencies_path: Path to the dependencies.json file written by
-            the dependency pipeline.
+        dependencies: Unified dependency payload as produced by
+            ``services.discovery.unified_dependencies.build_unified_dependencies``.
         enrich: If True (default), resolve contract names for historical
             implementations via Etherscan.  Set to False for faster runs
             when names are not needed.
@@ -411,7 +404,7 @@ def build_upgrade_history(dependencies_path: Path, *, enrich: bool = True, from_
     Returns:
         UpgradeHistoryOutput dict with per-proxy upgrade timelines.
     """
-    target_address, proxy_meta, known_names = _extract_proxies_from_dependencies(dependencies_path)
+    target_address, proxy_meta, known_names = _extract_proxies_from_dependencies(dependencies)
 
     if not proxy_meta:
         return {
@@ -469,54 +462,3 @@ def build_upgrade_history(dependencies_path: Path, *, enrich: bool = True, from_
         "proxies": proxies,
         "total_upgrades": total_upgrades,
     }
-
-
-def write_upgrade_history(
-    dependencies_path: Path,
-    output_path: Path | None = None,
-    *,
-    enrich: bool = True,
-) -> Path | None:
-    """Build and write upgrade history JSON.
-
-    Args:
-        dependencies_path: Path to dependencies.json.
-        output_path: Where to write. Defaults to upgrade_history.json
-            in the same directory as dependencies_path.
-        enrich: If True (default), resolve contract names for historical
-            implementations via Etherscan.
-
-    Returns the output path if any proxies were found, or None.
-    """
-    if output_path is None:
-        output_path = dependencies_path.parent / "upgrade_history.json"
-
-    result = build_upgrade_history(dependencies_path, enrich=enrich)
-    if not result["proxies"]:
-        return None
-    output_path.write_text(json.dumps(result, indent=2) + "\n")
-    return output_path
-
-
-# ---------------------------------------------------------------------------
-# Standalone entry point
-# ---------------------------------------------------------------------------
-
-
-def main():
-    import argparse
-
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
-
-    parser = argparse.ArgumentParser(description="Fetch upgrade history for proxy contracts")
-    parser.add_argument("dependencies", help="Path to dependencies.json")
-    args = parser.parse_args()
-
-    result = build_upgrade_history(Path(args.dependencies))
-    print(json.dumps(result, indent=2))
-
-
-if __name__ == "__main__":
-    main()

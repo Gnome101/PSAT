@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 
@@ -36,11 +35,28 @@ def _make_log(
     return log
 
 
-def _write_deps(tmp_path, target, deps_dict):
-    data = {"address": target, "dependencies": deps_dict}
-    p = tmp_path / "dependencies.json"
-    p.write_text(json.dumps(data))
-    return p
+def _write_deps(_tmp_path, target, deps_dict):
+    """Build a unified-dependencies dict (kept as ``_write_deps`` so the
+    existing call sites stay readable — ``build_upgrade_history`` now takes
+    the dict directly and no temp file is written)."""
+    return {"address": target, "dependencies": deps_dict}
+
+
+def _write_deps_target_proxy(_tmp_path, target, proxy_type, implementation, deps_dict=None):
+    """Unified-dependencies dict where the TARGET is classified as a proxy.
+
+    Upgrade history only processes the target, so tests exercising
+    proxy-level behavior set up the target contract as the proxy.
+    """
+    return {
+        "address": target,
+        "target_classification": {
+            "type": "proxy",
+            "proxy_type": proxy_type,
+            "implementation": implementation,
+        },
+        "dependencies": deps_dict or {},
+    }
 
 
 def _mock_no_enrichment(monkeypatch):
@@ -227,23 +243,17 @@ class TestBuildUpgradeHistory:
         assert result["total_upgrades"] == 0
 
     def test_proxy_with_no_upgrade_events(self, monkeypatch, tmp_path):
-        """A proxy that has never emitted Upgraded events still appears in
-        the output with its current implementation as the sole timeline entry."""
-        proxy = ADDR(1)
+        """A target proxy that has never emitted Upgraded events still appears
+        in the output with its current implementation as the sole timeline entry."""
+        target = ADDR(1)
         impl = ADDR(10)
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": impl},
-            },
-        )
+        deps_path = _write_deps_target_proxy(tmp_path, target, "eip1967", impl)
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t, from_block=0: [])
         _mock_no_enrichment(monkeypatch)
 
         result = uh.build_upgrade_history(deps_path)
-        assert proxy in result["proxies"]
-        h = result["proxies"][proxy]
+        assert target in result["proxies"]
+        h = result["proxies"][target]
         assert h["proxy_type"] == "eip1967"
         assert h["current_implementation"] == impl
         assert h["upgrade_count"] == 0
@@ -255,32 +265,21 @@ class TestBuildUpgradeHistory:
         assert result["total_upgrades"] == 0
 
     def test_single_proxy_full_output(self, monkeypatch, tmp_path):
-        """A single proxy with two Upgraded events produces correct timeline,
+        """A target proxy with two Upgraded events produces correct timeline,
         timestamps, block ranges, and enriched contract names."""
-        proxy = ADDR(1)
+        target = ADDR(1)
         impl_v1, impl_v2 = ADDR(10), ADDR(11)
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                proxy: {
-                    "type": "proxy",
-                    "proxy_type": "eip1967",
-                    "implementation": impl_v2,
-                    "contract_name": "MyProxy",
-                },
-            },
-        )
+        deps_path = _write_deps_target_proxy(tmp_path, target, "eip1967", impl_v2)
 
         def mock_fetch(address, topic0, from_block=0):
             if topic0 != uh.UPGRADED_TOPIC0:
                 return []
             return [
                 _make_log(
-                    proxy, uh.UPGRADED_TOPIC0, _topic_for(impl_v1), block="0x64", tx="0xa", timestamp="0x65a00000"
+                    target, uh.UPGRADED_TOPIC0, _topic_for(impl_v1), block="0x64", tx="0xa", timestamp="0x65a00000"
                 ),
                 _make_log(
-                    proxy, uh.UPGRADED_TOPIC0, _topic_for(impl_v2), block="0xc8", tx="0xb", timestamp="0x65b00000"
+                    target, uh.UPGRADED_TOPIC0, _topic_for(impl_v2), block="0xc8", tx="0xb", timestamp="0x65b00000"
                 ),
             ]
 
@@ -292,11 +291,11 @@ class TestBuildUpgradeHistory:
         result = uh.build_upgrade_history(deps_path)
 
         assert result["schema_version"] == "0.1"
-        assert result["target_address"] == ADDR(0)
+        assert result["target_address"] == target
         assert result["total_upgrades"] == 2
 
-        h = result["proxies"][proxy]
-        assert h["proxy_address"] == proxy
+        h = result["proxies"][target]
+        assert h["proxy_address"] == target
         assert h["proxy_type"] == "eip1967"
         assert h["current_implementation"] == impl_v2
         assert h["upgrade_count"] == 2
@@ -323,60 +322,49 @@ class TestBuildUpgradeHistory:
             assert "event_type" in event
             assert "block_number" in event
 
-    def test_multiple_proxies_events_grouped_correctly(self, monkeypatch, tmp_path):
-        """Events from multiple proxies are grouped to the correct proxy entry."""
+    def test_dependency_proxies_are_ignored(self, monkeypatch, tmp_path):
+        """Proxies listed under ``dependencies`` are NOT processed — upgrade
+        history only runs for the target contract. Each dependency gets its
+        own analysis job later and builds its own history there."""
+        target = ADDR(0)  # regular (non-proxy) target
         proxy_a, proxy_b = ADDR(1), ADDR(2)
         deps_path = _write_deps(
             tmp_path,
-            ADDR(0),
+            target,
             {
                 proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
                 proxy_b: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(21)},
             },
         )
 
-        def mock_fetch(address, topic0, from_block=0):
-            if topic0 != uh.UPGRADED_TOPIC0:
-                return []
-            if address == proxy_a:
-                return [_make_log(proxy_a, uh.UPGRADED_TOPIC0, _topic_for(ADDR(10)), block="0x64")]
-            if address == proxy_b:
-                return [
-                    _make_log(proxy_b, uh.UPGRADED_TOPIC0, _topic_for(ADDR(20)), block="0xc8"),
-                    _make_log(proxy_b, uh.UPGRADED_TOPIC0, _topic_for(ADDR(21)), block="0x12c"),
-                ]
-            return []
+        # Any call to fetch would be unexpected — the target isn't a proxy
+        # and dependency proxies must be skipped.
+        def fail_fetch(address, topic0, from_block=0):
+            pytest.fail(f"_fetch_logs_etherscan should not be called (addr={address})")
 
-        monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
+        monkeypatch.setattr(uh, "_fetch_logs_etherscan", fail_fetch)
         _mock_no_enrichment(monkeypatch)
 
         result = uh.build_upgrade_history(deps_path)
 
-        assert result["total_upgrades"] == 3
-        assert result["proxies"][proxy_a]["upgrade_count"] == 1
-        assert len(result["proxies"][proxy_a]["implementations"]) == 1
-        assert result["proxies"][proxy_b]["upgrade_count"] == 2
-        assert len(result["proxies"][proxy_b]["implementations"]) == 2
+        assert result["schema_version"] == "0.1"
+        assert result["target_address"] == target
+        assert result["proxies"] == {}
+        assert result["total_upgrades"] == 0
 
     def test_admin_changed_events_in_output(self, monkeypatch, tmp_path):
         """AdminChanged events appear in the events list alongside upgrades,
         but don't count as upgrades and don't affect the implementation timeline."""
-        proxy = ADDR(1)
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
-            },
-        )
+        target = ADDR(1)
+        deps_path = _write_deps_target_proxy(tmp_path, target, "eip1967", ADDR(10))
 
         def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
-                return [_make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(ADDR(10)), block="0x64", tx="0xa")]
+                return [_make_log(target, uh.UPGRADED_TOPIC0, _topic_for(ADDR(10)), block="0x64", tx="0xa")]
             if topic0 == uh.ADMIN_CHANGED_TOPIC0:
                 return [
                     _make_log(
-                        proxy, uh.ADMIN_CHANGED_TOPIC0, data=_admin_data(ADDR(50), ADDR(51)), block="0x65", tx="0xb"
+                        target, uh.ADMIN_CHANGED_TOPIC0, data=_admin_data(ADDR(50), ADDR(51)), block="0x65", tx="0xb"
                     )
                 ]
             return []
@@ -385,7 +373,7 @@ class TestBuildUpgradeHistory:
         _mock_no_enrichment(monkeypatch)
 
         result = uh.build_upgrade_history(deps_path)
-        h = result["proxies"][proxy]
+        h = result["proxies"][target]
         assert h["upgrade_count"] == 1
         assert len(h["implementations"]) == 1
         # Both events in the events list
@@ -396,27 +384,27 @@ class TestBuildUpgradeHistory:
         assert admin_event["previous_admin"] == ADDR(50)
         assert admin_event["new_admin"] == ADDR(51)
 
-    def test_implementation_as_dict_in_dependencies(self, monkeypatch, tmp_path):
-        """When dependencies.json has implementation as a dict (with address
-        and contract_name), the pipeline extracts the address correctly and
-        reuses the known name without calling Etherscan."""
-        proxy = ADDR(1)
+    def test_implementation_as_dict_in_target_classification(self, monkeypatch, tmp_path):
+        """When target_classification has implementation as a dict (with address
+        and contract_name), the pipeline extracts the address correctly. A
+        dependency-side entry with the same impl name provides the known-name
+        shortcut so Etherscan is never called."""
+        target = ADDR(1)
         impl = ADDR(10)
-        deps_path = _write_deps(
+        # target_classification carries the impl address; the known name is
+        # sourced from the dependencies side so _enrich_implementations can
+        # reuse it without hitting Etherscan.
+        deps_path = _write_deps_target_proxy(
             tmp_path,
-            ADDR(0),
-            {
-                proxy: {
-                    "type": "proxy",
-                    "proxy_type": "eip1967",
-                    "implementation": {"address": impl, "contract_name": "KnownImpl"},
-                },
-            },
+            target,
+            "eip1967",
+            {"address": impl, "contract_name": "KnownImpl"},
+            deps_dict={impl: {"type": "implementation", "contract_name": "KnownImpl"}},
         )
 
         def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
-                return [_make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(impl), block="0x64", tx="0xa")]
+                return [_make_log(target, uh.UPGRADED_TOPIC0, _topic_for(impl), block="0x64", tx="0xa")]
             return []
 
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
@@ -430,31 +418,27 @@ class TestBuildUpgradeHistory:
         )
 
         result = uh.build_upgrade_history(deps_path)
-        assert result["proxies"][proxy]["implementations"][0]["contract_name"] == "KnownImpl"
+        assert result["proxies"][target]["implementations"][0]["contract_name"] == "KnownImpl"
 
     def test_enrichment_calls_etherscan_for_unknown_implementations(self, monkeypatch, tmp_path):
         """Historical implementations not named in dependencies.json get their
         names resolved via get_contract_info."""
-        proxy = ADDR(1)
+        target = ADDR(1)
         old_impl, new_impl = ADDR(10), ADDR(11)
-        # Only new_impl is named in deps
-        deps_path = _write_deps(
+        # Only new_impl is named (via the deps side, which seeds known_names)
+        deps_path = _write_deps_target_proxy(
             tmp_path,
-            ADDR(0),
-            {
-                proxy: {
-                    "type": "proxy",
-                    "proxy_type": "eip1967",
-                    "implementation": {"address": new_impl, "contract_name": "ImplV2"},
-                },
-            },
+            target,
+            "eip1967",
+            new_impl,
+            deps_dict={new_impl: {"type": "implementation", "contract_name": "ImplV2"}},
         )
 
         def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [
-                    _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(old_impl), block="0x64", tx="0xa"),
-                    _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(new_impl), block="0xc8", tx="0xb"),
+                    _make_log(target, uh.UPGRADED_TOPIC0, _topic_for(old_impl), block="0x64", tx="0xa"),
+                    _make_log(target, uh.UPGRADED_TOPIC0, _topic_for(new_impl), block="0xc8", tx="0xb"),
                 ]
             return []
 
@@ -464,27 +448,24 @@ class TestBuildUpgradeHistory:
         monkeypatch.setattr(etherscan, "get_contract_info", lambda addr: ("ImplV1", {}))
 
         result = uh.build_upgrade_history(deps_path)
-        impls = result["proxies"][proxy]["implementations"]
+        impls = result["proxies"][target]["implementations"]
         assert impls[0]["contract_name"] == "ImplV1"  # fetched via etherscan
         assert impls[1]["contract_name"] == "ImplV2"  # reused from deps
 
     def test_enrichment_deduplicates_calls(self, monkeypatch, tmp_path):
         """get_contract_info is called at most once per unique unknown address,
-        even when the same implementation appears in multiple proxies."""
-        proxy_a, proxy_b = ADDR(1), ADDR(2)
+        even when the same implementation appears multiple times in the
+        target's own upgrade history (e.g., rolled back then re-upgraded)."""
+        target = ADDR(1)
         shared_impl = ADDR(10)
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": shared_impl},
-                proxy_b: {"type": "proxy", "proxy_type": "eip1967", "implementation": shared_impl},
-            },
-        )
+        deps_path = _write_deps_target_proxy(tmp_path, target, "eip1967", shared_impl)
 
         def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
-                return [_make_log(address, uh.UPGRADED_TOPIC0, _topic_for(shared_impl), block="0x64")]
+                return [
+                    _make_log(target, uh.UPGRADED_TOPIC0, _topic_for(shared_impl), block="0x64", tx="0xa"),
+                    _make_log(target, uh.UPGRADED_TOPIC0, _topic_for(shared_impl), block="0xc8", tx="0xb"),
+                ]
             return []
 
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
@@ -499,34 +480,31 @@ class TestBuildUpgradeHistory:
         monkeypatch.setattr(etherscan, "get_contract_info", counting_get_info)
 
         result = uh.build_upgrade_history(deps_path)
-        # shared_impl appears in both proxies' timelines, but should only be fetched once
+        # Same impl appears twice in the timeline but should only be fetched once
         assert call_count[0] == 1
-        for proxy_addr in (proxy_a, proxy_b):
-            impls = result["proxies"][proxy_addr]["implementations"]
-            assert impls[0]["contract_name"] == "SharedImpl"
+        impls = result["proxies"][target]["implementations"]
+        assert len(impls) == 2
+        for impl in impls:
+            assert impl["contract_name"] == "SharedImpl"
 
     def test_enrich_false_skips_etherscan_but_applies_known_names(self, monkeypatch, tmp_path):
         """enrich=False never calls get_contract_info but still applies names
         already present in dependencies.json."""
-        proxy = ADDR(1)
+        target = ADDR(1)
         old_impl, new_impl = ADDR(10), ADDR(11)
-        deps_path = _write_deps(
+        deps_path = _write_deps_target_proxy(
             tmp_path,
-            ADDR(0),
-            {
-                proxy: {
-                    "type": "proxy",
-                    "proxy_type": "eip1967",
-                    "implementation": {"address": new_impl, "contract_name": "ImplV2"},
-                },
-            },
+            target,
+            "eip1967",
+            new_impl,
+            deps_dict={new_impl: {"type": "implementation", "contract_name": "ImplV2"}},
         )
 
         def mock_fetch(address, topic0, from_block=0):
             if topic0 == uh.UPGRADED_TOPIC0:
                 return [
-                    _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(old_impl), block="0x64", tx="0xa"),
-                    _make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(new_impl), block="0xc8", tx="0xb"),
+                    _make_log(target, uh.UPGRADED_TOPIC0, _topic_for(old_impl), block="0x64", tx="0xa"),
+                    _make_log(target, uh.UPGRADED_TOPIC0, _topic_for(new_impl), block="0xc8", tx="0xb"),
                 ]
             return []
 
@@ -540,7 +518,7 @@ class TestBuildUpgradeHistory:
         )
 
         result = uh.build_upgrade_history(deps_path, enrich=False)
-        impls = result["proxies"][proxy]["implementations"]
+        impls = result["proxies"][target]["implementations"]
         assert impls[1].get("contract_name") == "ImplV2"  # known name applied
         assert "contract_name" not in impls[0]  # unknown, not fetched
 
@@ -563,8 +541,6 @@ class TestBuildUpgradeHistory:
             },
             "dependencies": {},
         }
-        p = tmp_path / "dependencies.json"
-        p.write_text(json.dumps(deps))
 
         def mock_fetch(address, topic0, from_block=0):
             if address == target and topic0 == uh.UPGRADED_TOPIC0:
@@ -574,69 +550,49 @@ class TestBuildUpgradeHistory:
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
         _mock_no_enrichment(monkeypatch)
 
-        result = uh.build_upgrade_history(p)
+        result = uh.build_upgrade_history(deps)
         assert target in result["proxies"], "Target contract is a proxy and should appear in the proxies output"
         h = result["proxies"][target]
         assert h["proxy_type"] == "eip1967"
         assert h["current_implementation"] == target_impl
         assert h["upgrade_count"] == 1
 
-    def test_empty_events_for_all_proxies_with_current_impl(self, monkeypatch, tmp_path):
-        """Multiple proxies all have zero events from Etherscan, but each has
-        a current_implementation set. Each proxy should get a single-entry
-        timeline containing just its current implementation address."""
-        proxy_a = ADDR(1)
-        proxy_b = ADDR(2)
-        proxy_c = ADDR(3)
-        impl_a = ADDR(10)
-        impl_b = ADDR(20)
-        impl_c = ADDR(30)
+    @pytest.mark.parametrize(
+        "proxy_type",
+        ["eip1967", "transparent", "uups"],
+    )
+    def test_empty_events_with_current_impl(self, monkeypatch, tmp_path, proxy_type):
+        """A target proxy with zero events from Etherscan but a known
+        current_implementation gets a single-entry timeline pinning just
+        that implementation address."""
+        target = ADDR(1)
+        impl = ADDR(10)
 
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                proxy_a: {"type": "proxy", "proxy_type": "eip1967", "implementation": impl_a},
-                proxy_b: {"type": "proxy", "proxy_type": "transparent", "implementation": impl_b},
-                proxy_c: {"type": "proxy", "proxy_type": "uups", "implementation": impl_c},
-            },
-        )
+        deps_path = _write_deps_target_proxy(tmp_path, target, proxy_type, impl)
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t, from_block=0: [])
         _mock_no_enrichment(monkeypatch)
 
         result = uh.build_upgrade_history(deps_path)
 
         assert result["total_upgrades"] == 0
-
-        for proxy_addr, expected_impl, expected_type in [
-            (proxy_a, impl_a, "eip1967"),
-            (proxy_b, impl_b, "transparent"),
-            (proxy_c, impl_c, "uups"),
-        ]:
-            assert proxy_addr in result["proxies"]
-            h = result["proxies"][proxy_addr]
-            assert h["proxy_type"] == expected_type
-            assert h["current_implementation"] == expected_impl
-            assert h["upgrade_count"] == 0
-            assert h["first_upgrade_block"] is None
-            assert h["last_upgrade_block"] is None
-            assert h["events"] == []
-            # Single-entry timeline with just current implementation
-            assert len(h["implementations"]) == 1
-            assert h["implementations"][0]["address"] == expected_impl
+        assert target in result["proxies"]
+        h = result["proxies"][target]
+        assert h["proxy_type"] == proxy_type
+        assert h["current_implementation"] == impl
+        assert h["upgrade_count"] == 0
+        assert h["first_upgrade_block"] is None
+        assert h["last_upgrade_block"] is None
+        assert h["events"] == []
+        assert len(h["implementations"]) == 1
+        assert h["implementations"][0]["address"] == impl
 
     def test_non_indexed_upgraded_in_full_pipeline(self, monkeypatch, tmp_path):
-        """OZ legacy proxies with implementation in data (not topics) produce
-        correct timelines through the full build_upgrade_history pipeline."""
-        proxy = ADDR(1)
+        """OZ legacy target proxies with implementation in data (not topics)
+        produce correct timelines through the full build_upgrade_history
+        pipeline."""
+        target = ADDR(1)
         impl_v1, impl_v2 = ADDR(10), ADDR(11)
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                proxy: {"type": "proxy", "proxy_type": "oz_legacy", "implementation": impl_v2},
-            },
-        )
+        deps_path = _write_deps_target_proxy(tmp_path, target, "oz_legacy", impl_v2)
 
         def data_for(addr):
             return "0x" + "0" * 24 + addr[2:]
@@ -647,7 +603,7 @@ class TestBuildUpgradeHistory:
             # Return logs with NO topic1 — implementation in data only
             return [
                 {
-                    "address": proxy,
+                    "address": target,
                     "topics": [uh.UPGRADED_TOPIC0],
                     "data": data_for(impl_v1),
                     "blockNumber": "0x64",
@@ -656,7 +612,7 @@ class TestBuildUpgradeHistory:
                     "timeStamp": "0x65a00000",
                 },
                 {
-                    "address": proxy,
+                    "address": target,
                     "topics": [uh.UPGRADED_TOPIC0],
                     "data": data_for(impl_v2),
                     "blockNumber": "0xc8",
@@ -670,73 +626,8 @@ class TestBuildUpgradeHistory:
         _mock_no_enrichment(monkeypatch)
 
         result = uh.build_upgrade_history(deps_path)
-        h = result["proxies"][proxy]
+        h = result["proxies"][target]
         assert h["upgrade_count"] == 2
         assert len(h["implementations"]) == 2
         assert h["implementations"][0]["address"] == impl_v1
         assert h["implementations"][1]["address"] == impl_v2
-
-
-# ---------------------------------------------------------------------------
-# write_upgrade_history — file I/O integration tests
-# ---------------------------------------------------------------------------
-
-
-class TestWriteUpgradeHistory:
-    """Integration tests for the file-writing entry point."""
-
-    def test_writes_valid_json(self, monkeypatch, tmp_path):
-        """write_upgrade_history writes a valid JSON file with the full
-        output structure when proxies exist."""
-        proxy = ADDR(1)
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
-            },
-        )
-
-        def mock_fetch(address, topic0, from_block=0):
-            if topic0 == uh.UPGRADED_TOPIC0:
-                return [_make_log(proxy, uh.UPGRADED_TOPIC0, _topic_for(ADDR(10)), block="0x64")]
-            return []
-
-        monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
-        _mock_no_enrichment(monkeypatch)
-
-        out = uh.write_upgrade_history(deps_path)
-        assert out is not None
-        assert out == tmp_path / "upgrade_history.json"
-        assert out.exists()
-        data = json.loads(out.read_text())
-        assert data["schema_version"] == "0.1"
-        assert proxy in data["proxies"]
-        assert data["total_upgrades"] == 1
-
-    def test_custom_output_path(self, monkeypatch, tmp_path):
-        """write_upgrade_history respects a custom output_path argument."""
-        proxy = ADDR(1)
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                proxy: {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(10)},
-            },
-        )
-        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t, from_block=0: [])
-        _mock_no_enrichment(monkeypatch)
-
-        custom = tmp_path / "subdir" / "history.json"
-        custom.parent.mkdir()
-        out = uh.write_upgrade_history(deps_path, output_path=custom)
-        assert out == custom
-        assert custom.exists()
-
-    def test_returns_none_when_no_proxies(self, tmp_path):
-        """write_upgrade_history returns None and writes no file when there
-        are no proxy dependencies."""
-        deps_path = _write_deps(tmp_path, ADDR(0), {ADDR(1): {"type": "regular"}})
-        result = uh.write_upgrade_history(deps_path)
-        assert result is None
-        assert not (tmp_path / "upgrade_history.json").exists()

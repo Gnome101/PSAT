@@ -411,23 +411,13 @@ def test_detail_inlines_upgrade_history_and_graph_viz(mock_session_cls, mock_get
 # ===================================================================
 
 
-def test_graph_label_prefers_display_name_for_generic_proxy(tmp_path):
-    """When contract_meta has a generic proxy name and a display_name,
-    the graph root node label should use display_name."""
+def test_graph_label_prefers_caller_supplied_label():
+    """Callers supply target_label explicitly; the graph uses it as the root label."""
     from services.discovery.dependency_graph_builder import build_dependency_visualization
 
-    (tmp_path / "contract_meta.json").write_text(
-        json.dumps(
-            {
-                "contract_name": "ERC1967Proxy",
-                "display_name": "Rewards Router",
-            }
-        )
-    )
     unified = {"address": TARGET, "dependencies": {DEP_A: {"type": "regular", "source": ["static"]}}}
-    (tmp_path / "dependencies.json").write_text(json.dumps(unified))
 
-    viz = build_dependency_visualization(tmp_path)
+    viz = build_dependency_visualization(unified, target_label="Rewards Router")
     target_node = next(n for n in viz["nodes"] if n["is_target"])
     assert target_node["label"] == "Rewards Router"
 
@@ -470,10 +460,7 @@ def test_full_data_flow_unified_through_graph_and_upgrade_history(monkeypatch, t
     assert unified["dependencies"][DEP_A]["implementation"]["address"] == IMPL
 
     # -- graph viz --
-    (tmp_path / "dependencies.json").write_text(json.dumps(unified))
-    (tmp_path / "contract_meta.json").write_text(json.dumps({"contract_name": "TestContract"}))
-
-    viz = build_dependency_visualization(tmp_path)
+    viz = build_dependency_visualization(unified, target_label="TestContract")
     node_addrs = {n["address"] for n in viz["nodes"]}
     assert {TARGET, DEP_A, DEP_B, IMPL} <= node_addrs
 
@@ -483,15 +470,19 @@ def test_full_data_flow_unified_through_graph_and_upgrade_history(monkeypatch, t
     assert any(e["op"] == "STATIC_REF" and e["to"] == f"addr:{DEP_B}" for e in viz["edges"])
 
     # -- upgrade history (mock Etherscan boundary) --
+    # Upgrade history only runs for the target. DEP_A is a dependency proxy
+    # and will get its own upgrade_history when it's analyzed as its own
+    # target in a later job, so it should NOT appear here even though it's
+    # classified as a proxy.
     monkeypatch.setattr("services.discovery.upgrade_history._fetch_logs_etherscan", lambda _a, _t, from_block=0: [])
     from utils import etherscan
 
     monkeypatch.setattr(etherscan, "get_contract_info", lambda _a: (None, {}))
 
-    deps_path = tmp_path / "dependencies.json"
-    uh = build_upgrade_history(deps_path)
-    assert DEP_A in uh["proxies"]
-    assert uh["proxies"][DEP_A]["current_implementation"] == IMPL
+    uh = build_upgrade_history(unified)
+    assert DEP_A not in uh["proxies"]
+    assert uh["proxies"] == {}
+    assert uh["total_upgrades"] == 0
 
 
 # ===================================================================
@@ -861,14 +852,12 @@ def test_resolution_worker_rewrites_address_for_impl_jobs(monkeypatch):
     )
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
 
-    # Mock write_resolved_control_graph to capture the analysis it receives
-    def fake_write_graph(analysis_path, rpc_url, output_path, max_depth, workspace_prefix, refresh_snapshots):
-        analysis_data = json.loads(analysis_path.read_text())
-        captured_analyses.append(analysis_data)
-        output_path.write_text(json.dumps({"nodes": [], "edges": []}) + "\n")
-        return output_path
+    # Mock resolve_control_graph to capture the analysis it receives
+    def fake_resolve_graph(*, root_artifacts, rpc_url, max_depth, workspace_prefix):
+        captured_analyses.append(root_artifacts["analysis"])
+        return {"nodes": [], "edges": []}, {}
 
-    monkeypatch.setattr("workers.resolution_worker.write_resolved_control_graph", fake_write_graph)
+    monkeypatch.setattr("workers.resolution_worker.resolve_control_graph", fake_resolve_graph)
 
     worker.process(session, job)  # type: ignore[arg-type]
 

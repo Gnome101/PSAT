@@ -1880,7 +1880,6 @@ function SidebarTabs({ mode, onSetMode, auditCount }) {
 
 function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, error, machines }) {
   const [readingAudit, setReadingAudit] = useState(null);
-
   if (loading) return <section className="ps-principal-section"><div className="ps-inspector-empty">Loading audits…</div></section>;
   if (error) return <section className="ps-principal-section"><div className="ps-inspector-empty">Failed: {error}</div></section>;
   if (!coverageData) return null;
@@ -2015,7 +2014,6 @@ function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, er
     </>
   );
 }
-
 function AuditReadModal({ audit, addresses, machines, shaByAddr, onClose }) {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(true);
@@ -2689,7 +2687,6 @@ export default function ProtocolSurface({ companyName }) {
       .catch(() => { /* labels are best-effort — keep whatever we had */ });
   }, []);
   useEffect(() => { refreshAddressLabels(); }, [refreshAddressLabels]);
-
   useEffect(() => {
     if (!companyName) return undefined;
     let cancelled = false;

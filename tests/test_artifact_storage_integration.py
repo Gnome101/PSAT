@@ -149,6 +149,36 @@ def test_legacy_inline_artifact_still_reads(db_session, storage_bucket):
 # ---------------------------------------------------------------------------
 
 
+def test_nested_artifact_keys_round_trip_through_storage(db_session, storage_bucket):
+    """Regression: nested recursive.* artifact names must pass ``_safe_name``.
+
+    The storage layer's name validator rejects colons. A prior key format
+    used ``recursive:<addr>:<kind>`` which passed unit tests (those stub
+    ``store_artifact``) but failed at runtime whenever S3-compatible storage
+    was active. This test hits the real client to make sure the current
+    naming stays compatible.
+    """
+    from db.nested_artifacts import ARTIFACT_KINDS, artifact_key, parse_key, store_bundle
+    from db.queue import create_job, get_artifact
+
+    job = create_job(db_session, {"address": "0xab", "name": "nested-keys"})
+    address = "0x3994741a5b29c60d0ab318de1024f9256fe959dc"
+    bundle = {
+        "analysis": {"subject": {"address": address, "name": "ETHFIStaking"}},
+        "tracking_plan": {"contract_address": address, "tracked_controllers": []},
+        "snapshot": {"contract_address": address, "controller_values": {}},
+        "effective_permissions": {"contract_address": address, "functions": []},
+    }
+
+    store_bundle(db_session, job.id, {address: bundle})
+
+    # Round-trip each kind back.
+    for kind in ARTIFACT_KINDS:
+        name = artifact_key(address, kind)
+        assert parse_key(name) == (address, kind)
+        assert get_artifact(db_session, job.id, name) == bundle[kind]
+
+
 def test_repeat_store_overwrites_same_key(db_session, storage_bucket):
     from db.models import Artifact
     from db.queue import create_job, get_artifact, store_artifact
@@ -452,7 +482,52 @@ def test_source_file_path_recoverable_from_storage_metadata(db_session, storage_
 
 
 # ---------------------------------------------------------------------------
-# 14. /api/jobs surfaces programming bugs instead of silently swallowing them
+# 14. ARTIFACT_STORAGE_PREFIX scopes every storage key for multi-tenant buckets
+# ---------------------------------------------------------------------------
+
+
+def test_artifact_storage_prefix_scopes_keys_and_round_trips(monkeypatch, db_session, storage_bucket):
+    """With ARTIFACT_STORAGE_PREFIX set, artifact + source-file keys are prefixed and still read/write cleanly.
+
+    This is how PR-preview environments share a single Tigris bucket safely —
+    each preview sets prefix=pr-<N>/ and teardown deletes that prefix.
+    """
+    from db.queue import (
+        artifact_key,
+        create_job,
+        get_artifact,
+        source_file_key,
+        store_artifact,
+        store_source_files,
+    )
+
+    monkeypatch.setenv("ARTIFACT_STORAGE_PREFIX", "pr-123")
+
+    job = create_job(db_session, {"address": "0xab", "name": "prefix-ok"})
+    store_artifact(db_session, job.id, "flagged", data={"ok": True})
+    store_source_files(db_session, job.id, {"src/A.sol": "contract A {}"})
+
+    art_k = artifact_key(job.id, "flagged")
+    src_k = source_file_key(job.id, "src/A.sol")
+    assert art_k.startswith("pr-123/artifacts/")
+    assert src_k.startswith("pr-123/source_files/")
+
+    # Round-trip through the prefixed key.
+    assert get_artifact(db_session, job.id, "flagged") == {"ok": True}
+    assert storage_bucket.get(art_k) == b'{"ok": true}'
+    assert storage_bucket.get(src_k) == b"contract A {}"
+
+    # Trailing / in env is idempotent.
+    monkeypatch.setenv("ARTIFACT_STORAGE_PREFIX", "pr-123/")
+    assert artifact_key(job.id, "flagged") == art_k
+
+    # Unset → original unprefixed shape.
+    monkeypatch.delenv("ARTIFACT_STORAGE_PREFIX")
+    assert artifact_key(job.id, "flagged") == f"artifacts/{job.id}/flagged"
+
+
+# ---------------------------------------------------------------------------
+# 15. /api/jobs surfaces programming bugs instead of silently swallowing them
 # ---------------------------------------------------------------------------
 
 

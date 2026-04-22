@@ -1,0 +1,66 @@
+name: PR cleanup
+
+on:
+  pull_request:
+    # Mirror pr-preview.yml: only previews for main-targeted PRs exist,
+    # so only main-targeted PRs need teardown.
+    branches: [main]
+    types: [closed]
+
+# Let cleanup finish even if a duplicate event is queued; destructive ops
+# are all idempotent (|| true).
+concurrency:
+  group: cleanup-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  destroy:
+    # Fork PRs never had a preview created (see pr-preview.yml), nothing to destroy.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      FLY_APP_NAME: psat-pr-${{ github.event.pull_request.number }}
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      NEON_STAGING_HOST: ${{ secrets.NEON_STAGING_HOST }}
+      NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
+      ARTIFACT_STORAGE_ENDPOINT: ${{ secrets.ARTIFACT_STORAGE_ENDPOINT }}
+      ARTIFACT_STORAGE_BUCKET: ${{ secrets.ARTIFACT_STORAGE_BUCKET }}
+      # awscli reads these standard names; Tigris is S3-compatible.
+      AWS_ACCESS_KEY_ID: ${{ secrets.ARTIFACT_STORAGE_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACT_STORAGE_SECRET_KEY }}
+      AWS_DEFAULT_REGION: auto
+    steps:
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+
+      - name: Destroy Fly app
+        run: flyctl apps destroy "$FLY_APP_NAME" --yes || true
+
+      - name: Drop Neon database
+        env:
+          PGPASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
+        run: |
+          # WITH (FORCE) terminates any lingering connections (workers that
+          # didn't disconnect before the Fly app was destroyed). PG16+, Neon
+          # supports it. Fresh psql session — don't reuse any prior one.
+          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
+            -c "DROP DATABASE IF EXISTS \"psat_pr_${PR_NUMBER}\" WITH (FORCE);" || true
+
+      - name: Delete Tigris prefix
+        run: |
+          aws s3 rm "s3://${ARTIFACT_STORAGE_BUCKET}/pr-${PR_NUMBER}/" \
+            --recursive \
+            --endpoint-url "$ARTIFACT_STORAGE_ENDPOINT" || true
+
+      - name: Update sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
+        with:
+          header: psat-preview
+          message: |
+            Preview environment `${{ env.FLY_APP_NAME }}` has been torn down.

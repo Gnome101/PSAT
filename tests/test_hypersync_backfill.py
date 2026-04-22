@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -268,10 +267,7 @@ def test_reconstruct_policy_state():
     }
 
 
-def test_run_hypersync_policy_backfill_writes_outputs(tmp_path, monkeypatch):
-    plan_path = tmp_path / "control_tracking_plan.json"
-    plan_path.write_text(json.dumps(_plan()) + "\n")
-
+def test_run_hypersync_policy_backfill_returns_events_and_state(monkeypatch):
     records = [
         {
             "schema_version": "0.1",
@@ -296,14 +292,8 @@ def test_run_hypersync_policy_backfill_writes_outputs(tmp_path, monkeypatch):
 
     monkeypatch.setattr("services.policy.hypersync_backfill.fetch_policy_event_history", fake_fetch)
 
-    events_path, state_path = run_hypersync_policy_backfill(
-        plan_path,
-        bearer_token="token",
-    )
+    events, state = run_hypersync_policy_backfill(_plan(), bearer_token="token")
 
-    assert events_path.exists()
-    assert state_path.exists()
-    assert "UserRoleUpdated(address,uint8,bool)" in events_path.read_text()
-    payload = json.loads(state_path.read_text())
-    assert payload["event_count"] == 1
-    assert payload["user_roles"][0]["role"] == 3
+    assert events == records
+    assert state["event_count"] == 1
+    assert state["user_roles"][0]["role"] == 3

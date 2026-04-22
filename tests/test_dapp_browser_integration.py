@@ -232,7 +232,6 @@ def test_crawler_captures_interactions_and_addresses_from_fake_dapp(tmp_path, fa
                 [fake_dapp_url],
                 chain_id=137,
                 wait=1,
-                wallet_path=tmp_path / ".wallet.json",
             )
         )
     except Exception as exc:

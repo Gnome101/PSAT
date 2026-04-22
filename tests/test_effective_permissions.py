@@ -1,10 +1,9 @@
-import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.policy.effective_permissions import build_effective_permissions, write_effective_permissions_from_files
+from services.policy.effective_permissions import build_effective_permissions
 
 
 def test_build_effective_permissions_resolves_roles_and_safe_details():
@@ -148,70 +147,48 @@ def test_build_effective_permissions_resolves_roles_and_safe_details():
     ]
 
 
-def test_write_effective_permissions_from_files(tmp_path):
-    target_analysis_path = tmp_path / "contract_analysis.json"
-    target_snapshot_path = tmp_path / "control_snapshot.json"
-    authority_snapshot_path = tmp_path / "authority_snapshot.json"
-    policy_state_path = tmp_path / "policy_state.json"
+def test_build_effective_permissions_with_authority_snapshot():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "manage(address,bytes,uint256)",
+                    "controller_refs": ["authority"],
+                    "effect_targets": ["target.functionCallWithValue"],
+                    "effect_labels": ["arbitrary_external_call"],
+                    "action_summary": "Executes arbitrary external calldata from the contract.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "Target",
+        "controller_values": {
+            "external_contract:authority": {
+                "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "resolved_type": "contract",
+                "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+            }
+        },
+    }
+    authority_snapshot = {"contract_name": "Authority", "controller_values": {}}
+    policy_state = {
+        "public_capabilities": [],
+        "role_capabilities": [],
+        "user_roles": [],
+    }
 
-    target_analysis_path.write_text(
-        json.dumps(
-            {
-                "subject": {
-                    "address": "0x1111111111111111111111111111111111111111",
-                    "name": "Target",
-                },
-                "access_control": {
-                    "privileged_functions": [
-                        {
-                            "function": "manage(address,bytes,uint256)",
-                            "controller_refs": ["authority"],
-                            "effect_targets": ["target.functionCallWithValue"],
-                            "effect_labels": ["arbitrary_external_call"],
-                            "action_summary": "Executes arbitrary external calldata from the contract.",
-                        }
-                    ]
-                },
-            }
-        )
-        + "\n"
-    )
-    target_snapshot_path.write_text(
-        json.dumps(
-            {
-                "contract_name": "Target",
-                "controller_values": {
-                    "external_contract:authority": {
-                        "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "resolved_type": "contract",
-                        "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
-                    }
-                },
-            }
-        )
-        + "\n"
-    )
-    authority_snapshot_path.write_text(json.dumps({"contract_name": "Authority", "controller_values": {}}) + "\n")
-    policy_state_path.write_text(
-        json.dumps(
-            {
-                "public_capabilities": [],
-                "role_capabilities": [],
-                "user_roles": [],
-            }
-        )
-        + "\n"
+    payload = build_effective_permissions(
+        target_analysis,
+        target_snapshot=target_snapshot,
+        authority_snapshot=authority_snapshot,
+        policy_state=policy_state,
     )
 
-    written = write_effective_permissions_from_files(
-        target_analysis_path,
-        target_snapshot_path=target_snapshot_path,
-        authority_snapshot_path=authority_snapshot_path,
-        policy_state_path=policy_state_path,
-    )
-
-    payload = json.loads(written.read_text())
-    assert written.name == "effective_permissions.json"
     assert payload["contract_name"] == "Target"
     assert payload["authority_contract"] == "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     assert payload["principal_resolution"]["status"] == "complete"

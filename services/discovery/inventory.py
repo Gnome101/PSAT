@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Orchestrator for protocol contract inventory discovery.
 
 Given a company/protocol name or domain, this module:
@@ -10,20 +9,12 @@ Given a company/protocol name or domain, this module:
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
 from collections import Counter, defaultdict
-from pathlib import Path
 from typing import Any
 
-_ROOT = Path(__file__).resolve().parents[2]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-
-from .chain_resolver import resolve_unknown_chains  # noqa: E402
-from .deployer import expand_from_deployers  # noqa: E402
-from .inventory_domain import (  # noqa: E402
+from .chain_resolver import resolve_unknown_chains
+from .deployer import expand_from_deployers
+from .inventory_domain import (
     CHAIN_SORT_ORDER,
     _debug_log,
     _discover_contract_inventory_pages,
@@ -32,8 +23,8 @@ from .inventory_domain import (  # noqa: E402
     _maybe_domain,
     _tavily_search,
 )
-from .inventory_extract import extract_inventory_entries_from_pages  # noqa: E402
-from .ranking import score_inventory_evidence  # noqa: E402
+from .inventory_extract import extract_inventory_entries_from_pages
+from .ranking import score_inventory_evidence
 
 
 def _collect_source_urls(evidence: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
@@ -266,7 +257,7 @@ def _group_multi_deployments(contracts: list[dict[str, Any]]) -> list[dict[str, 
 def search_protocol_inventory(
     company: str,
     chain: str | None = None,
-    limit: int = 100,
+    limit: int = 500,
     max_queries: int = 4,
     run_deployer: bool = True,
     debug: bool = False,
@@ -292,27 +283,42 @@ def search_protocol_inventory(
         ),
     )
 
-    official_domain = _maybe_domain(clean_company)
-    if official_domain:
-        notes.append(f"Using provided company domain: {official_domain}")
-        domain_candidates = [official_domain]
-    else:
-        broad_results = _tavily_search(
-            f'"{clean_company}" protocol smart contract addresses deployments docs',
-            max_results=10,
-            queries_used=queries_used,
-            max_queries=max_queries,
-            errors=errors,
-            debug=debug,
-        )
-        domain_candidates = _domain_candidates_from_results(broad_results)
-        if domain_candidates:
-            notes.append(f"Domain candidates: {', '.join(domain_candidates[:5])}")
-        official_domain, extra_domains = _llm_select_domain(broad_results, clean_company, debug=debug)
-        if not official_domain and len(domain_candidates) == 1:
+    # Always run broad Tavily + LLM domain selection. A domain-shaped input
+    # (e.g. ``"ether.fi"``) is kept as a fallback hint, but we prefer the
+    # LLM's choice so companion docs/github hosts (``etherfi.gitbook.io``,
+    # ``github.com/etherfi-protocol``) can become the primary when they're
+    # the real contract-inventory source.
+    hint_domain = _maybe_domain(clean_company)
+    broad_results = _tavily_search(
+        f'"{clean_company}" protocol smart contract addresses deployments docs',
+        max_results=10,
+        queries_used=queries_used,
+        max_queries=max_queries,
+        errors=errors,
+        debug=debug,
+    )
+    domain_candidates = _domain_candidates_from_results(broad_results)
+    if hint_domain and hint_domain not in domain_candidates:
+        domain_candidates.insert(0, hint_domain)
+    if domain_candidates:
+        notes.append(f"Domain candidates: {', '.join(domain_candidates[:5])}")
+    official_domain, extra_domains = _llm_select_domain(broad_results, clean_company, debug=debug)
+    if not official_domain:
+        if hint_domain:
+            official_domain = hint_domain
+            extra_domains = [d for d in domain_candidates if d != hint_domain][:3]
+            notes.append(f"LLM didn't select a domain; using provided domain: {official_domain}")
+        elif len(domain_candidates) == 1:
             official_domain = domain_candidates[0]
             extra_domains = []
             notes.append(f"Falling back to sole domain candidate: {official_domain}")
+    # Ensure the hint is at least a companion so site-scoped search still
+    # covers the provided domain, even if the LLM preferred a gitbook/github host.
+    if official_domain and hint_domain and hint_domain != official_domain:
+        extras = list(extra_domains or [])
+        if hint_domain not in extras:
+            extras.insert(0, hint_domain)
+        extra_domains = extras
 
     if not official_domain:
         notes.append("Could not identify an official domain")
@@ -387,11 +393,8 @@ def search_protocol_inventory(
     # pipeline runs the single authoritative ranking in the selection
     # stage (see ``services/discovery/ranking.rank_contract_rows``),
     # which sees contracts from every source — inventory, DApp crawl,
-    # DefiLlama — on equal footing. Callers outside that pipeline
-    # (``main.py --discover-inventory``, ``services/demo/runner``) can
-    # call ``enrich_with_activity`` themselves if they want ranked
-    # output; doing it here would re-rank inventory contracts the
-    # selection stage is about to rank again.
+    # DefiLlama — on equal footing. Doing it here would re-rank
+    # inventory contracts the selection stage is about to rank again.
 
     # Group multi-chain deployments of the same contract.
     contracts = _group_multi_deployments(contracts)
@@ -510,29 +513,3 @@ def merge_inventory(prev: dict, new: dict) -> dict:
         result["sources"] = new_sources or prev_sources
 
     return result
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Discover protocol contract inventories")
-    parser.add_argument("company", help="Company, protocol name, or official domain")
-    parser.add_argument("--chain", default=None, help="Optional chain filter")
-    parser.add_argument("--limit", type=int, default=100, help="Max contracts to return")
-    parser.add_argument("--max-queries", type=int, default=4, help="Tavily query cap (default: 4)")
-    parser.add_argument("--debug", action="store_true", help="Print debug logs to stderr")
-    args = parser.parse_args()
-
-    try:
-        result = search_protocol_inventory(
-            args.company,
-            chain=args.chain,
-            limit=args.limit,
-            max_queries=args.max_queries,
-            debug=args.debug,
-        )
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from exc
-    print(json.dumps(result, indent=2))
-
-
-if __name__ == "__main__":
-    main()

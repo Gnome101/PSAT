@@ -32,11 +32,14 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
-COPY main.py api.py ./
+# Playwright browsers + OS deps (required by dapp_crawl_worker). ~400MB.
+RUN uv run --no-sync playwright install --with-deps chromium
+
+COPY api.py ./
 COPY db/ db/
 COPY workers/ workers/
-COPY start_workers.sh ./
-RUN chmod +x start_workers.sh
+COPY start_workers.sh start_container.sh start_web.sh start_browser.sh start_monitor.sh ./
+RUN chmod +x start_workers.sh start_container.sh start_web.sh start_browser.sh start_monitor.sh
 COPY services/ services/
 COPY schemas/ schemas/
 COPY utils/ utils/
@@ -45,4 +48,4 @@ COPY --from=site-builder /site/dist /app/site/dist
 
 EXPOSE 8000
 
-CMD ["uv", "run", "--no-sync", "uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["./start_container.sh"]

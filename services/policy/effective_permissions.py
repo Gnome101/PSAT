@@ -1,18 +1,10 @@
-#!/usr/bin/env python3
 """Join protected-contract analysis with authority policy state."""
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
-from pathlib import Path
 from typing import Any, cast
 
 from eth_utils.crypto import keccak
-
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.effective_permissions import (
     AuthorityRoleGrant,
@@ -41,10 +33,6 @@ def _lower_string(value: Any) -> str:
     if value is None:
         return ""
     return str(value).lower()
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
 
 
 def _normalize_abi_type(type_name: str) -> str:
@@ -652,7 +640,6 @@ def build_effective_permissions(
         "artifacts": artifact_paths or {},
         "functions": functions,
     }
-
 
 def write_effective_permissions_from_files(
     target_analysis_path: Path,

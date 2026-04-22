@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import uuid
 from pathlib import Path
@@ -107,23 +106,21 @@ def _patch_all(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> dict[str, A
     def fake_build_control_snapshot(plan: Any, rpc_url: str) -> dict:
         return snapshot
 
-    def fake_write_resolved_control_graph(
-        analysis_path: Path,
+    def fake_resolve_control_graph(
         *,
+        root_artifacts: Any = None,
         rpc_url: str = "",
-        output_path: Path,
         max_depth: int = 6,
         workspace_prefix: str = "",
-        refresh_snapshots: bool = False,
-    ) -> Path:
-        output_path.write_text(json.dumps(resolved_graph, indent=2) + "\n")
-        return output_path
+        nested_artifacts_override: Any = None,
+    ) -> tuple[dict, dict]:
+        return resolved_graph, {}
 
     monkeypatch.setattr("workers.resolution_worker.get_artifact", fake_get_artifact)
     monkeypatch.setattr("workers.resolution_worker.store_artifact", fake_store_artifact)
     monkeypatch.setattr("workers.resolution_worker.create_job", fake_create_job)
     monkeypatch.setattr("workers.resolution_worker.build_control_snapshot", fake_build_control_snapshot)
-    monkeypatch.setattr("workers.resolution_worker.write_resolved_control_graph", fake_write_resolved_control_graph)
+    monkeypatch.setattr("workers.resolution_worker.resolve_control_graph", fake_resolve_control_graph)
     monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
     return {
@@ -585,7 +582,7 @@ class TestRunUpgradeHistoryNoDeps:
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
         # Should not raise
-        worker._run_upgrade_history(session, cast(Any, job), tmp_path)
+        worker._run_upgrade_history(session, cast(Any, job))
 
         # store_artifact should NOT be called (no error stored)
         session.add.assert_not_called()
@@ -628,7 +625,7 @@ class TestRunUpgradeHistoryNonFatal:
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
         # Should NOT raise
-        worker._run_upgrade_history(session, cast(Any, job), tmp_path)
+        worker._run_upgrade_history(session, cast(Any, job))
 
     def test_upgrade_history_writes_events(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         worker = ResolutionWorker()
@@ -661,7 +658,7 @@ class TestRunUpgradeHistoryNonFatal:
         )
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
-        worker._run_upgrade_history(session, cast(Any, job), tmp_path)
+        worker._run_upgrade_history(session, cast(Any, job))
 
         # Should have added an UpgradeEvent
         assert session.add.call_count == 1
@@ -846,29 +843,27 @@ class TestQueueDiscoveredContractsParentChainEdgeCases:
 # ---------------------------------------------------------------------------
 
 
-class TestResolvedGraphPathMissing:
-    """When write_resolved_control_graph returns a path that doesn't exist."""
+class TestResolvedGraphEmpty:
+    """When resolve_control_graph returns an empty graph the artifact is skipped."""
 
-    def test_graph_not_written_skips_store(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_graph_empty_skips_store(self, monkeypatch: pytest.MonkeyPatch) -> None:
         worker = ResolutionWorker()
         session = MagicMock()
         session.execute.return_value.scalar_one_or_none.return_value = None
         job = _job()
 
-        def fake_write_resolved_graph(
-            analysis_path: Path,
+        def fake_resolve_empty(
             *,
+            root_artifacts: Any = None,
             rpc_url: str = "",
-            output_path: Path,
             max_depth: int = 6,
             workspace_prefix: str = "",
-            refresh_snapshots: bool = False,
-        ) -> Path:
-            # Do NOT write the file — simulate no graph produced
-            return output_path
+            nested_artifacts_override: Any = None,
+        ) -> tuple[dict, dict]:
+            return {}, {}
 
         ctx = _patch_all(monkeypatch)
-        monkeypatch.setattr("workers.resolution_worker.write_resolved_control_graph", fake_write_resolved_graph)
+        monkeypatch.setattr("workers.resolution_worker.resolve_control_graph", fake_resolve_empty)
 
         worker.process(session, cast(Any, job))
 
@@ -897,5 +892,5 @@ class TestRunUpgradeHistoryPathNone:
         monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
 
         # Should not raise
-        worker._run_upgrade_history(session, cast(Any, job), tmp_path)
+        worker._run_upgrade_history(session, cast(Any, job))
         session.add.assert_not_called()
