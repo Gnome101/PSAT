@@ -195,6 +195,17 @@ class TestSearchProtocolInventoryOffline:
             _entry(address="0x" + "a" * 40, name="Vault", chain="ethereum"),
             _entry(address="0x" + "b" * 40, name="Router", chain="arbitrum", kind="official_inventory_link"),
         ]
+        # Even with a domain-shaped input, the orchestrator now runs the broad
+        # Tavily search + LLM domain selection to surface companion docs/github
+        # hosts. Stub them so this test stays offline and deterministic.
+        monkeypatch.setattr(
+            "services.discovery.inventory._tavily_search",
+            lambda *_a, **_kw: [],
+        )
+        monkeypatch.setattr(
+            "services.discovery.inventory._llm_select_domain",
+            lambda *_a, **_kw: (None, []),
+        )
         monkeypatch.setattr(
             "services.discovery.inventory._discover_contract_inventory_pages",
             lambda *_a, **_kw: ([{"url": "https://docs.example.com"}], ["https://docs.example.com"]),

@@ -1,18 +1,10 @@
-#!/usr/bin/env python3
 """Historical HyperSync backfill for policy-tracking events."""
 
 from __future__ import annotations
 
-import argparse
 import asyncio
-import json
 import os
-import sys
-from pathlib import Path
 from typing import Any
-
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.contract_analysis import AssociatedEvent
 from schemas.control_tracking import ControlTrackingPlan, TrackedPolicy
@@ -23,7 +15,7 @@ from schemas.hypersync_backfill import (
     RoleCapabilityStateEntry,
     UserRoleStateEntry,
 )
-from services.resolution.tracking import _decode_event_log_fields, load_control_tracking_plan
+from services.resolution.tracking import _decode_event_log_fields
 from utils.rpc import normalize_hex as _normalize_hex
 
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
@@ -121,7 +113,7 @@ async def fetch_policy_event_history(
 
     if client is None:
         if not bearer_token:
-            raise RuntimeError("HyperSync requires an API token. Set ENVIO_API_TOKEN or pass --token.")
+            raise RuntimeError("HyperSync requires an API token. Set ENVIO_API_TOKEN or pass bearer_token=.")
         client = _create_hypersync_client(hypersync_module, url, bearer_token)
 
     event_lookup = _policy_event_lookup(plan)
@@ -231,27 +223,19 @@ def reconstruct_policy_state(plan: ControlTrackingPlan, records: list[PolicyEven
     }
 
 
-def write_policy_event_history(records: list[PolicyEventRecord], output_path: Path) -> None:
-    with output_path.open("w") as handle:
-        for record in records:
-            handle.write(json.dumps(record) + "\n")
-
-
-def write_policy_state_snapshot(snapshot: PolicyStateSnapshot, output_path: Path) -> None:
-    output_path.write_text(json.dumps(snapshot, indent=2) + "\n")
-
-
 def run_hypersync_policy_backfill(
-    plan_path: Path,
+    plan: ControlTrackingPlan,
     *,
     url: str = DEFAULT_HYPERSYNC_URL,
     bearer_token: str | None = None,
     from_block: int = 0,
     to_block: int | None = None,
-    events_out: Path | None = None,
-    state_out: Path | None = None,
-) -> tuple[Path, Path]:
-    plan = load_control_tracking_plan(plan_path)
+) -> tuple[list[PolicyEventRecord], PolicyStateSnapshot]:
+    """Fetch historical events via HyperSync and reconstruct policy state.
+
+    Returns ``(events, state_snapshot)`` — callers persist the payloads
+    (DB artifacts, object storage, whatever). No filesystem side effects.
+    """
     bearer_token = bearer_token or os.getenv("ENVIO_API_TOKEN")
     records = asyncio.run(
         fetch_policy_event_history(
@@ -263,38 +247,4 @@ def run_hypersync_policy_backfill(
         )
     )
     snapshot = reconstruct_policy_state(plan, records)
-
-    events_out = events_out or plan_path.with_name("policy_event_history.jsonl")
-    state_out = state_out or plan_path.with_name("policy_state.json")
-
-    write_policy_event_history(records, events_out)
-    write_policy_state_snapshot(snapshot, state_out)
-    return events_out, state_out
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Backfill tracked policy events with HyperSync.")
-    parser.add_argument("plan", help="Path to control_tracking_plan.json")
-    parser.add_argument("--url", default=DEFAULT_HYPERSYNC_URL, help="HyperSync URL (default: Ethereum mainnet)")
-    parser.add_argument("--token", help="Envio API token. Falls back to ENVIO_API_TOKEN.")
-    parser.add_argument("--from-block", type=int, default=0, help="Starting block for historical backfill (default: 0)")
-    parser.add_argument("--to-block", type=int, help="Optional exclusive ending block")
-    parser.add_argument("--events-out", help="Optional path to policy_event_history.jsonl")
-    parser.add_argument("--state-out", help="Optional path to policy_state.json")
-    args = parser.parse_args()
-
-    events_path, state_path = run_hypersync_policy_backfill(
-        Path(args.plan),
-        url=args.url,
-        bearer_token=args.token,
-        from_block=args.from_block,
-        to_block=args.to_block,
-        events_out=Path(args.events_out) if args.events_out else None,
-        state_out=Path(args.state_out) if args.state_out else None,
-    )
-    print(f"Policy event history: {events_path}")
-    print(f"Policy state snapshot: {state_path}")
-
-
-if __name__ == "__main__":
-    main()
+    return records, snapshot

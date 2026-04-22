@@ -1,8 +1,7 @@
 """
 Callable entry point for DApp crawling.
 
-Extracts the core logic from the CLI main.py into an importable function
-that the PSAT worker can call directly.
+Importable function used by ``workers.dapp_crawl_worker``.
 """
 
 from __future__ import annotations
@@ -10,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
-from pathlib import Path
 from typing import Callable
 
 from services.crawlers.dapp.browser import DAppCrawler
@@ -19,7 +17,6 @@ from services.crawlers.dapp.wallet import HoneypotWallet
 
 logger = logging.getLogger(__name__)
 
-WALLET_PATH = Path(__file__).resolve().parents[3] / ".wallet.json"
 ProgressCallback = Callable[[str], None]
 
 
@@ -30,10 +27,9 @@ async def _crawl_async(
     eth_balance: str = "0x3635C9ADC5DEA00000",
     token_balance: str = "0x84595161401484A000000",
     wait: int = 10,
-    wallet_path: Path | None = None,
     progress: ProgressCallback | None = None,
 ) -> InteractionLog:
-    wallet = HoneypotWallet.load_or_create(wallet_path or WALLET_PATH)
+    wallet = HoneypotWallet()
     logger.info("Honeypot wallet: %s", wallet.address)
     if progress:
         progress(f"Launching browser with wallet {wallet.address[:8]}...")
@@ -56,7 +52,6 @@ def crawl_dapp(
     *,
     chain_id: int = 1,
     wait: int = 10,
-    wallet_path: Path | None = None,
     progress: ProgressCallback | None = None,
 ) -> dict:
     """Crawl DApp URLs and return discovered contract addresses.
@@ -76,7 +71,6 @@ def crawl_dapp(
             urls,
             chain_id=chain_id,
             wait=wait,
-            wallet_path=wallet_path,
             progress=progress,
         )
     )

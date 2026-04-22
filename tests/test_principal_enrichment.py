@@ -1,10 +1,9 @@
-import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.policy.principal_enrichment import build_principal_labels, write_principal_labels_from_files
+from services.policy.principal_enrichment import build_principal_labels
 
 
 def test_build_principal_labels_enriches_safe_admin_and_operator(monkeypatch):
@@ -129,98 +128,80 @@ def test_build_principal_labels_enriches_safe_admin_and_operator(monkeypatch):
     assert "safe_multisig" in admin_safe["labels"]
 
 
-def test_write_principal_labels_from_files(tmp_path):
-    effective_permissions_path = tmp_path / "effective_permissions.json"
-    resolved_graph_path = tmp_path / "resolved_control_graph.json"
-
-    effective_permissions_path.write_text(
-        json.dumps(
+def test_build_principal_labels_with_resolved_graph_admin_safe():
+    effective_permissions = {
+        "contract_address": "0x1111111111111111111111111111111111111111",
+        "contract_name": "Target",
+        "functions": [
             {
-                "contract_address": "0x1111111111111111111111111111111111111111",
-                "contract_name": "Target",
-                "functions": [
+                "function": "setAuthority(address)",
+                "effect_labels": ["authority_update"],
+                "authority_public": False,
+                "authority_roles": [
                     {
-                        "function": "setAuthority(address)",
-                        "effect_labels": ["authority_update"],
-                        "authority_public": False,
-                        "authority_roles": [
+                        "role": 8,
+                        "principals": [
                             {
-                                "role": 8,
-                                "principals": [
-                                    {
-                                        "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                                        "resolved_type": "safe",
-                                        "details": {
-                                            "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                                            "owners": ["0xcccccccccccccccccccccccccccccccccccccccc"],
-                                            "threshold": 1,
-                                        },
-                                    }
-                                ],
+                                "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                                "resolved_type": "safe",
+                                "details": {
+                                    "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                                    "owners": ["0xcccccccccccccccccccccccccccccccccccccccc"],
+                                    "threshold": 1,
+                                },
                             }
                         ],
-                        "direct_owner": None,
                     }
                 ],
+                "direct_owner": None,
             }
-        )
-        + "\n"
-    )
-    resolved_graph_path.write_text(
-        json.dumps(
+        ],
+    }
+    resolved_graph = {
+        "nodes": [
             {
-                "nodes": [
-                    {
-                        "id": "address:0x1111111111111111111111111111111111111111",
-                        "address": "0x1111111111111111111111111111111111111111",
-                        "node_type": "contract",
-                        "resolved_type": "contract",
-                        "label": "Target",
-                        "contract_name": "Target",
-                        "depth": 0,
-                        "analyzed": True,
-                        "details": {"address": "0x1111111111111111111111111111111111111111"},
-                        "artifacts": {},
-                    },
-                    {
-                        "id": "address:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                        "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                        "node_type": "principal",
-                        "resolved_type": "safe",
-                        "label": "owner",
-                        "contract_name": None,
-                        "depth": 1,
-                        "analyzed": False,
-                        "details": {
-                            "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                            "owners": ["0xcccccccccccccccccccccccccccccccccccccccc"],
-                            "threshold": 1,
-                        },
-                        "artifacts": {},
-                    },
-                ],
-                "edges": [
-                    {
-                        "from_id": "address:0x1111111111111111111111111111111111111111",
-                        "to_id": "address:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                        "relation": "controller_value",
-                        "label": "owner",
-                        "source_controller_id": "state_variable:owner",
-                        "notes": [],
-                    }
-                ],
+                "id": "address:0x1111111111111111111111111111111111111111",
+                "address": "0x1111111111111111111111111111111111111111",
+                "node_type": "contract",
+                "resolved_type": "contract",
+                "label": "Target",
+                "contract_name": "Target",
+                "depth": 0,
+                "analyzed": True,
+                "details": {"address": "0x1111111111111111111111111111111111111111"},
+                "artifacts": {},
+            },
+            {
+                "id": "address:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "node_type": "principal",
+                "resolved_type": "safe",
+                "label": "owner",
+                "contract_name": None,
+                "depth": 1,
+                "analyzed": False,
+                "details": {
+                    "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "owners": ["0xcccccccccccccccccccccccccccccccccccccccc"],
+                    "threshold": 1,
+                },
+                "artifacts": {},
+            },
+        ],
+        "edges": [
+            {
+                "from_id": "address:0x1111111111111111111111111111111111111111",
+                "to_id": "address:0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "relation": "controller_value",
+                "label": "owner",
+                "source_controller_id": "state_variable:owner",
+                "notes": [],
             }
-        )
-        + "\n"
-    )
+        ],
+    }
 
-    output_path = write_principal_labels_from_files(
-        effective_permissions_path,
-        resolved_control_graph_path=resolved_graph_path,
-    )
+    payload = build_principal_labels(effective_permissions, resolved_control_graph=resolved_graph)
 
-    payload = json.loads(output_path.read_text())
-    assert output_path.name == "principal_labels.json"
     assert payload["contract_name"] == "Target"
     principals = {item["address"]: item for item in payload["principals"]}
     assert principals["0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]["display_name"] == "Target admin Safe"

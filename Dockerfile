@@ -32,7 +32,7 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
-COPY main.py api.py ./
+COPY api.py ./
 COPY db/ db/
 COPY workers/ workers/
 COPY start_workers.sh ./

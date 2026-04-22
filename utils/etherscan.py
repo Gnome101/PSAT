@@ -61,12 +61,6 @@ def _cache_key(module: str, action: str, chain_id: int, params: dict) -> tuple:
     return (module, action, chain_id, tuple(sorted(params.items())))
 
 
-def clear_cache() -> None:
-    """Clear the in-memory Etherscan response cache."""
-    with _cache_lock:
-        _cache.clear()
-
-
 def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
     """Make an Etherscan API call with automatic retry on rate-limit errors.
 

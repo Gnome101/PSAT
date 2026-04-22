@@ -124,22 +124,20 @@ This means the runtime should treat:
 - events as low-latency triggers
 - polling as current-truth confirmation and missed-event recovery
 
-## Manual Testing Workflow
+## Recursive Resolution
 
-Until queue orchestration exists, recursion is manual:
+Recursion is now handled automatically inside the worker pipeline by
+`services/resolution/recursive.py`, which is driven by
+`workers/resolution_worker.py`. Starting from a seed contract, the
+resolver walks each controller with `resolved_type: contract`, scaffolds
+and analyzes it, and continues until the chain of control reaches one of:
 
-1. Run the main pipeline on a seed contract.
-2. Read `control_snapshot.json`.
-3. For any controller with `resolved_type: contract`, manually analyze that address:
-   - `uv run python main.py <address> --name <label> --no-llm --no-deps`
-4. Build a new watch plan and snapshot for that controller contract.
-5. Repeat until the chain of control reaches:
-   - `eoa`
-   - `zero`
-   - `safe`
-   - `timelock`
-   - `proxy_admin`
-   - or a custom contract boundary requiring deeper analysis
+- `eoa`
+- `zero`
+- `safe`
+- `timelock`
+- `proxy_admin`
+- or a custom contract boundary requiring deeper analysis
 
 ## Immediate Next Step
 

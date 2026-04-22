@@ -1,18 +1,10 @@
-#!/usr/bin/env python3
 """Join protected-contract analysis with authority policy state."""
 
 from __future__ import annotations
 
-import argparse
-import json
-import sys
-from pathlib import Path
 from typing import Any, cast
 
 from eth_utils.crypto import keccak
-
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.effective_permissions import (
     AuthorityRoleGrant,
@@ -41,10 +33,6 @@ def _lower_string(value: Any) -> str:
     if value is None:
         return ""
     return str(value).lower()
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
 
 
 def _normalize_abi_type(type_name: str) -> str:
@@ -363,66 +351,3 @@ def build_effective_permissions(
         "artifacts": artifact_paths or {},
         "functions": functions,
     }
-
-
-def write_effective_permissions_from_files(
-    target_analysis_path: Path,
-    *,
-    target_snapshot_path: Path | None = None,
-    authority_snapshot_path: Path | None = None,
-    policy_state_path: Path | None = None,
-    output_path: Path | None = None,
-    principal_resolution: PrincipalResolution | None = None,
-) -> Path:
-    target_analysis = _load_json(target_analysis_path)
-    target_snapshot = _load_json(target_snapshot_path) if target_snapshot_path else None
-    authority_snapshot = _load_json(authority_snapshot_path) if authority_snapshot_path else None
-    policy_state = _load_json(policy_state_path) if policy_state_path else None
-
-    artifact_paths = {
-        "target_analysis": str(target_analysis_path),
-    }
-    if target_snapshot_path:
-        artifact_paths["target_snapshot"] = str(target_snapshot_path)
-    if authority_snapshot_path:
-        artifact_paths["authority_snapshot"] = str(authority_snapshot_path)
-    if policy_state_path:
-        artifact_paths["policy_state"] = str(policy_state_path)
-
-    payload = build_effective_permissions(
-        target_analysis,
-        target_snapshot=target_snapshot,
-        authority_snapshot=authority_snapshot,
-        policy_state=policy_state,
-        artifact_paths=artifact_paths,
-        principal_resolution=principal_resolution,
-    )
-    if output_path is None:
-        output_path = target_analysis_path.with_name("effective_permissions.json")
-    output_path.write_text(json.dumps(payload, indent=2) + "\n")
-    return output_path
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Resolve effective permissions from contract analysis and authority policy state."
-    )
-    parser.add_argument("target_analysis", help="Path to target contract_analysis.json")
-    parser.add_argument("--target-snapshot", help="Optional path to target control_snapshot.json")
-    parser.add_argument("--authority-snapshot", help="Optional path to authority control_snapshot.json")
-    parser.add_argument("--policy-state", help="Optional path to authority policy_state.json")
-    parser.add_argument("--out", help="Optional path to effective_permissions.json")
-    args = parser.parse_args()
-
-    output_path = write_effective_permissions_from_files(
-        Path(args.target_analysis),
-        target_snapshot_path=Path(args.target_snapshot) if args.target_snapshot else None,
-        authority_snapshot_path=Path(args.authority_snapshot) if args.authority_snapshot else None,
-        policy_state_path=Path(args.policy_state) if args.policy_state else None,
-        output_path=Path(args.out) if args.out else None,
-    )
-    print(f"Effective permissions: {output_path}")
-
-
-if __name__ == "__main__":
-    main()

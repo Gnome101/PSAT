@@ -1,8 +1,7 @@
 """
 Callable entry point for DefiLlama adapter scanning.
 
-Extracts the core logic from the CLI main.py into importable functions
-that the PSAT worker can call directly.
+Importable functions used by ``workers.defillama_worker``.
 """
 
 from __future__ import annotations
@@ -10,6 +9,7 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
+import tempfile
 import time
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -20,7 +20,9 @@ from services.crawlers.defillama.extract import extract_addresses_from_file, ext
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REPO_PATH = Path(__file__).resolve().parents[4] / "repo" / "DefiLlama-Adapters"
+# Ephemeral cache: cloned once per container lifetime, pulled before each job.
+# Lives in /tmp so restarts/deploys wipe it — acceptable since clone is cheap.
+DEFAULT_REPO_PATH = Path(tempfile.gettempdir()) / "defillama-adapters"
 ProgressCallback = Callable[[str], None]
 
 

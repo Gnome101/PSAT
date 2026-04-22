@@ -10,3 +10,5 @@ image.png
 site/node_modules/
 site/dist/
 *.png
+examples/
+BigPictureSpec.md

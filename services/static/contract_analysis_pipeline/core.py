@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from slither.slither import Slither
@@ -24,14 +23,6 @@ from .summaries import (
     _summarize_slither,
 )
 from .tracking import build_controller_tracking, build_policy_tracking
-
-
-def analyze_contract(project_dir: Path) -> Path:
-    """Generate contract_analysis.json for a scaffolded project."""
-    analysis = collect_contract_analysis(project_dir)
-    output_path = project_dir / "contract_analysis.json"
-    output_path.write_text(json.dumps(analysis, indent=2) + "\n")
-    return output_path
 
 
 def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:

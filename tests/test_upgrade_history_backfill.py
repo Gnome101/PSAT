@@ -414,7 +414,7 @@ def test_run_upgrade_history_writes_events_and_backfills_impls(
 
     monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
 
-    worker._run_upgrade_history(db_session, job, project_dir=Path("/tmp"))
+    worker._run_upgrade_history(db_session, job)
 
     events = db_session.query(UpgradeEvent).filter_by(contract_id=proxy.id).all()
     assert len(events) == 2
@@ -525,7 +525,7 @@ def test_run_upgrade_history_keys_events_to_proxy_not_subject(
 
     monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
 
-    worker._run_upgrade_history(db_session, subject_job, project_dir=Path("/tmp"))
+    worker._run_upgrade_history(db_session, subject_job)
 
     # The subject is not a proxy — it must end up with zero UpgradeEvent
     # rows. Before the fix, it would have 2 (one per proxy in the
@@ -592,7 +592,7 @@ def test_run_upgrade_history_skips_proxies_not_in_inventory(
 
     monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
 
-    worker._run_upgrade_history(db_session, subject_job, project_dir=Path("/tmp"))
+    worker._run_upgrade_history(db_session, subject_job)
 
     # No events written anywhere — the proxy isn't resolvable and we
     # don't have a meaningful Contract.id to key them to.
@@ -630,7 +630,7 @@ def test_run_upgrade_history_skips_when_job_has_no_contract(db_session, seed_pro
 
     # Should not raise. No impl rows should be created (no Contract to
     # hang UpgradeEvents off of → no implAddrs gathered).
-    worker._run_upgrade_history(db_session, job, project_dir=Path("/tmp"))
+    worker._run_upgrade_history(db_session, job)
 
     # The impl address did not become a contract because the outer check
     # short-circuited on the missing Contract row.
@@ -1011,7 +1011,7 @@ def test_run_upgrade_history_persists_event_timestamp(db_session, seed_protocol,
 
     monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
 
-    worker._run_upgrade_history(db_session, proxy_job, project_dir=Path("/tmp"))
+    worker._run_upgrade_history(db_session, proxy_job)
 
     events = db_session.query(UpgradeEvent).filter_by(contract_id=proxy.id).all()
     assert len(events) == 1
@@ -1088,7 +1088,7 @@ def test_run_upgrade_history_handles_missing_timestamp(db_session, seed_protocol
 
     monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
 
-    worker._run_upgrade_history(db_session, proxy_job, project_dir=Path("/tmp"))
+    worker._run_upgrade_history(db_session, proxy_job)
 
     events = db_session.query(UpgradeEvent).filter_by(contract_id=proxy.id).all()
     assert len(events) == 1

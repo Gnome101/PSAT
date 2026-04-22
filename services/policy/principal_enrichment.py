@@ -1,25 +1,13 @@
-#!/usr/bin/env python3
 """Build frontend-friendly principal labels from effective permissions and resolved control graphs."""
 
 from __future__ import annotations
 
-import argparse
-import json
 import re
-import sys
 from collections import defaultdict
-from pathlib import Path
 from typing import Any
-
-if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from schemas.principal_labels import PrincipalLabels, PrincipalPermission, PrincipalProfile
 from services.resolution.tracking import classify_resolved_address
-
-
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
 
 
 def _slug(value: str) -> str:
@@ -368,47 +356,3 @@ def build_principal_labels(
         "contract_name": effective_permissions["contract_name"],
         "principals": principals,
     }
-
-
-def write_principal_labels_from_files(
-    effective_permissions_path: Path,
-    *,
-    resolved_control_graph_path: Path | None = None,
-    rpc_url: str | None = None,
-    output_path: Path | None = None,
-) -> Path:
-    effective_permissions = _load_json(effective_permissions_path)
-    resolved_control_graph = _load_json(resolved_control_graph_path) if resolved_control_graph_path else None
-
-    payload = build_principal_labels(
-        effective_permissions,
-        resolved_control_graph=resolved_control_graph,
-        rpc_url=rpc_url,
-    )
-    if output_path is None:
-        output_path = effective_permissions_path.with_name("principal_labels.json")
-    output_path.write_text(json.dumps(payload, indent=2) + "\n")
-    return output_path
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Build frontend-friendly principal labels from permission and control-graph artifacts."
-    )
-    parser.add_argument("effective_permissions", help="Path to effective_permissions.json")
-    parser.add_argument("--resolved-graph", help="Optional path to resolved_control_graph.json")
-    parser.add_argument("--rpc", help="Optional RPC URL for classifying addresses missing from the resolved graph")
-    parser.add_argument("--out", help="Optional output path for principal_labels.json")
-    args = parser.parse_args()
-
-    output_path = write_principal_labels_from_files(
-        Path(args.effective_permissions),
-        resolved_control_graph_path=Path(args.resolved_graph) if args.resolved_graph else None,
-        rpc_url=args.rpc,
-        output_path=Path(args.out) if args.out else None,
-    )
-    print(f"Principal labels: {output_path}")
-
-
-if __name__ == "__main__":
-    main()

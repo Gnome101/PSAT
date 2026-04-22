@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from schemas.contract_analysis import ContractAnalysis
 from schemas.control_tracking import ControlTrackingPlan, EventWatch, PollingFallback, TrackedController, TrackedPolicy
 
@@ -81,18 +78,3 @@ def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPl
         "tracked_controllers": sorted(tracked_controllers, key=lambda item: item["label"]),
         "tracked_policies": sorted(tracked_policies, key=lambda item: item["label"]),
     }
-
-
-def build_control_tracking_plan_from_file(contract_analysis_path: Path) -> ControlTrackingPlan:
-    """Load a contract_analysis.json file and build a runtime tracking plan."""
-    analysis = json.loads(contract_analysis_path.read_text())
-    return build_control_tracking_plan(analysis)
-
-
-def write_control_tracking_plan(contract_analysis_path: Path, output_path: Path | None = None) -> Path:
-    """Write a control_tracking_plan.json file next to contract_analysis.json by default."""
-    plan = build_control_tracking_plan_from_file(contract_analysis_path)
-    if output_path is None:
-        output_path = contract_analysis_path.with_name("control_tracking_plan.json")
-    output_path.write_text(json.dumps(plan, indent=2) + "\n")
-    return output_path

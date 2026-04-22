@@ -26,7 +26,6 @@ missing=()
 [ -z "$ETH_RPC" ]           && missing+=("ETH_RPC")
 [ -z "$ENVIO_API_TOKEN" ]   && missing+=("ENVIO_API_TOKEN")
 [ -z "$TAVILY_API_KEY" ]    && missing+=("TAVILY_API_KEY")
-[ -z "$NVIDIA_API_KEY" ]    && missing+=("NVIDIA_API_KEY")
 
 if [ ${#missing[@]} -gt 0 ]; then
   echo "ERROR: Missing required environment variables in .env:"

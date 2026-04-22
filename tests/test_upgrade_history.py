@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 
@@ -36,20 +35,20 @@ def _make_log(
     return log
 
 
-def _write_deps(tmp_path, target, deps_dict):
-    data = {"address": target, "dependencies": deps_dict}
-    p = tmp_path / "dependencies.json"
-    p.write_text(json.dumps(data))
-    return p
+def _write_deps(_tmp_path, target, deps_dict):
+    """Build a unified-dependencies dict (kept as ``_write_deps`` so the
+    existing call sites stay readable — ``build_upgrade_history`` now takes
+    the dict directly and no temp file is written)."""
+    return {"address": target, "dependencies": deps_dict}
 
 
-def _write_deps_target_proxy(tmp_path, target, proxy_type, implementation, deps_dict=None):
-    """Write dependencies.json where the TARGET is classified as a proxy.
+def _write_deps_target_proxy(_tmp_path, target, proxy_type, implementation, deps_dict=None):
+    """Unified-dependencies dict where the TARGET is classified as a proxy.
 
     Upgrade history only processes the target, so tests exercising
     proxy-level behavior set up the target contract as the proxy.
     """
-    data = {
+    return {
         "address": target,
         "target_classification": {
             "type": "proxy",
@@ -58,9 +57,6 @@ def _write_deps_target_proxy(tmp_path, target, proxy_type, implementation, deps_
         },
         "dependencies": deps_dict or {},
     }
-    p = tmp_path / "dependencies.json"
-    p.write_text(json.dumps(data))
-    return p
 
 
 def _mock_no_enrichment(monkeypatch):
@@ -545,8 +541,6 @@ class TestBuildUpgradeHistory:
             },
             "dependencies": {},
         }
-        p = tmp_path / "dependencies.json"
-        p.write_text(json.dumps(deps))
 
         def mock_fetch(address, topic0, from_block=0):
             if address == target and topic0 == uh.UPGRADED_TOPIC0:
@@ -556,7 +550,7 @@ class TestBuildUpgradeHistory:
         monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
         _mock_no_enrichment(monkeypatch)
 
-        result = uh.build_upgrade_history(p)
+        result = uh.build_upgrade_history(deps)
         assert target in result["proxies"], "Target contract is a proxy and should appear in the proxies output"
         h = result["proxies"][target]
         assert h["proxy_type"] == "eip1967"
@@ -637,65 +631,3 @@ class TestBuildUpgradeHistory:
         assert len(h["implementations"]) == 2
         assert h["implementations"][0]["address"] == impl_v1
         assert h["implementations"][1]["address"] == impl_v2
-
-
-# ---------------------------------------------------------------------------
-# write_upgrade_history — file I/O integration tests
-# ---------------------------------------------------------------------------
-
-
-class TestWriteUpgradeHistory:
-    """Integration tests for the file-writing entry point."""
-
-    def test_writes_valid_json(self, monkeypatch, tmp_path):
-        """write_upgrade_history writes a valid JSON file with the full
-        output structure when the target is a proxy."""
-        target = ADDR(1)
-        deps_path = _write_deps_target_proxy(tmp_path, target, "eip1967", ADDR(10))
-
-        def mock_fetch(address, topic0, from_block=0):
-            if topic0 == uh.UPGRADED_TOPIC0:
-                return [_make_log(target, uh.UPGRADED_TOPIC0, _topic_for(ADDR(10)), block="0x64")]
-            return []
-
-        monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
-        _mock_no_enrichment(monkeypatch)
-
-        out = uh.write_upgrade_history(deps_path)
-        assert out is not None
-        assert out == tmp_path / "upgrade_history.json"
-        assert out.exists()
-        data = json.loads(out.read_text())
-        assert data["schema_version"] == "0.1"
-        assert target in data["proxies"]
-        assert data["total_upgrades"] == 1
-
-    def test_custom_output_path(self, monkeypatch, tmp_path):
-        """write_upgrade_history respects a custom output_path argument."""
-        target = ADDR(1)
-        deps_path = _write_deps_target_proxy(tmp_path, target, "eip1967", ADDR(10))
-        monkeypatch.setattr(uh, "_fetch_logs_etherscan", lambda addr, t, from_block=0: [])
-        _mock_no_enrichment(monkeypatch)
-
-        custom = tmp_path / "subdir" / "history.json"
-        custom.parent.mkdir()
-        out = uh.write_upgrade_history(deps_path, output_path=custom)
-        assert out == custom
-        assert custom.exists()
-
-    def test_returns_none_when_target_not_proxy(self, tmp_path):
-        """write_upgrade_history returns None and writes no file when the
-        target contract is not a proxy, even if dependencies include proxies."""
-        deps_path = _write_deps(
-            tmp_path,
-            ADDR(0),
-            {
-                ADDR(1): {"type": "regular"},
-                # Dependency proxies are now ignored, so this must still
-                # produce no output.
-                ADDR(2): {"type": "proxy", "proxy_type": "eip1967", "implementation": ADDR(99)},
-            },
-        )
-        result = uh.write_upgrade_history(deps_path)
-        assert result is None
-        assert not (tmp_path / "upgrade_history.json").exists()
