@@ -44,6 +44,7 @@ class PolicyWorker(BaseWorker):
         contract_analysis = get_artifact(session, job.id, "contract_analysis")
         control_snapshot = get_artifact(session, job.id, "control_snapshot")
         resolved_control_graph = get_artifact(session, job.id, "resolved_control_graph")
+        semantic_guards = get_artifact(session, job.id, "semantic_guards")
 
         if not isinstance(contract_analysis, dict):
             raise RuntimeError("contract_analysis artifact not found")
@@ -66,6 +67,10 @@ class PolicyWorker(BaseWorker):
             if isinstance(resolved_control_graph, dict):
                 resolved_graph_path = project_dir / "resolved_control_graph.json"
                 resolved_graph_path.write_text(json.dumps(resolved_control_graph, indent=2) + "\n")
+            semantic_guards_path = None
+            if isinstance(semantic_guards, dict):
+                semantic_guards_path = project_dir / "semantic_guards.json"
+                semantic_guards_path.write_text(json.dumps(semantic_guards, indent=2) + "\n")
 
             # Determine authority snapshot and policy state
             authority_snapshot_path = None
@@ -98,6 +103,8 @@ class PolicyWorker(BaseWorker):
                 target_snapshot_path=snapshot_path,
                 authority_snapshot_path=authority_snapshot_path,
                 policy_state_path=policy_state_path,
+                semantic_guards_path=semantic_guards_path,
+                resolved_control_graph_path=resolved_graph_path,
                 output_path=project_dir / "effective_permissions.json",
                 principal_resolution=principal_resolution,
             )

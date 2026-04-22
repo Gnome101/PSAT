@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 import requests
 
 from db.storage import StorageUnavailable, get_storage_client
+from utils.github_urls import github_blob_to_raw
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +129,16 @@ def _url_looks_text(url: str) -> bool:
     except Exception:
         return False
     return path.endswith(_TEXT_URL_SUFFIXES)
+
+
+def _normalize_download_url(url: str) -> str:
+    """Rewrite GitHub blob file links to raw-content URLs.
+
+    Discovery should ideally persist the raw URL, but normalizing here
+    keeps already-stored rows retriable and prevents one bad discovery run
+    from permanently wedging extraction.
+    """
+    return github_blob_to_raw(url)
 
 
 def download_audit_body(
@@ -365,12 +376,17 @@ def process_audit_report(
     if not url:
         return ExtractionOutcome(status="failed", error="no URL on audit row")
 
-    is_text_url = _url_looks_text(url)
+    download_url = _normalize_download_url(url)
+    is_text_url = _url_looks_text(download_url)
 
     try:
         # Call the module-level helpers so callers that monkeypatch
         # ``download_pdf`` (existing unit tests) still hit the mock.
-        body = download_text(url, session=session) if is_text_url else download_pdf(url, session=session)
+        body = (
+            download_text(download_url, session=session)
+            if is_text_url
+            else download_pdf(download_url, session=session)
+        )
     except PdfTooLargeError as exc:
         return ExtractionOutcome(status="skipped", error=f"pdf too large: {exc}")
     except PdfDownloadError as exc:

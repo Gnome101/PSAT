@@ -355,6 +355,93 @@ def test_build_control_snapshot_expands_role_identifier_principals(monkeypatch):
     ]
 
 
+def test_build_control_snapshot_reads_role_identifier_from_external_controller(monkeypatch):
+    target = "0x1111111111111111111111111111111111111111"
+    authority = "0x2222222222222222222222222222222222222222"
+    plan: ControlTrackingPlan = {
+        "schema_version": "0.1",
+        "contract_address": target,
+        "contract_name": "Mock",
+        "tracking_strategy": "event_first_with_polling_fallback",
+        "tracked_controllers": [
+            {
+                "controller_id": "state_variable:roleRegistry",
+                "label": "roleRegistry",
+                "source": "roleRegistry",
+                "kind": "state_variable",
+                "read_spec": None,
+                "tracking_mode": "state_only",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": target,
+                    "polling_sources": ["roleRegistry"],
+                    "cadence": "state_only",
+                    "notes": [],
+                },
+                "notes": [],
+            },
+            {
+                "controller_id": "role_identifier:BREAK_GLASS",
+                "label": "BREAK_GLASS",
+                "source": "BREAK_GLASS",
+                "kind": "role_identifier",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "BREAK_GLASS",
+                    "contract_source": "roleRegistry",
+                },
+                "tracking_mode": "manual_review",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": target,
+                    "polling_sources": ["BREAK_GLASS"],
+                    "cadence": "periodic_reconciliation",
+                    "notes": [],
+                },
+                "notes": [],
+            },
+        ],
+        "tracked_policies": [],
+    }
+
+    def fake_rpc(_rpc_url, method, params):
+        if method == "eth_blockNumber":
+            return "0x10"
+        if method == "eth_call":
+            to = params[0]["to"].lower()
+            if to == target:
+                return "0x" + "00" * 12 + authority[2:]
+            if to == authority:
+                return "0x" + "11" * 32
+            raise AssertionError(f"Unexpected eth_call target: {to}")
+        raise AssertionError(f"Unexpected RPC call: {method}")
+
+    captured: dict[str, str] = {}
+
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
+    monkeypatch.setattr(
+        "services.resolution.tracking.classify_resolved_address",
+        lambda rpc_url, address, block_tag="latest": ("contract", {"address": address}),
+    )
+
+    def fake_expand(_rpc_url, contract_address, role_id, block_tag="latest"):
+        captured["contract_address"] = contract_address
+        captured["role_id"] = role_id
+        return (
+            ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+            {"adapter": "access_control_enumerable", "member_count": 1},
+        )
+
+    monkeypatch.setattr("services.resolution.tracking.expand_role_identifier_principals", fake_expand)
+
+    snapshot = build_control_snapshot(plan, "https://rpc.example")
+    value = snapshot["controller_values"]["role_identifier:BREAK_GLASS"]
+
+    assert value["value"] == "0x" + "11" * 32
+    assert captured["contract_address"] == authority
+    assert captured["role_id"] == "0x" + "11" * 32
+
+
 def test_build_control_snapshot_expands_aragon_acl_role_principals(monkeypatch):
     from services.resolution.controller_adapters import SET_PERMISSION_TOPIC0
 

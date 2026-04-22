@@ -6,6 +6,7 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -210,6 +211,15 @@ def _function_principal_payload(fp: FunctionPrincipal) -> dict[str, Any]:
     }
 
 
+def _is_generic_authority_contract_principal(principal: dict[str, Any]) -> bool:
+    details = principal.get("details")
+    return (
+        principal.get("resolved_type") == "contract"
+        and isinstance(details, dict)
+        and bool(details.get("authority_kind"))
+    )
+
+
 def _role_value_from_origin(origin: str | None) -> int | str:
     prefix = "role "
     if not origin:
@@ -263,6 +273,19 @@ def _build_company_function_entry(ef: EffectiveFunction, principals: list[Functi
     if not authority_roles and ef.authority_roles:
         authority_roles = list(ef.authority_roles)
 
+    controllers = list(controllers_by_label.values())
+    has_more_specific_controller = any(
+        any(not _is_generic_authority_contract_principal(principal) for principal in entry.get("principals", []))
+        for entry in controllers
+    )
+    if has_more_specific_controller:
+        controllers = [
+            entry
+            for entry in controllers
+            if not entry.get("principals")
+            or not all(_is_generic_authority_contract_principal(principal) for principal in entry["principals"])
+        ]
+
     return {
         "function": ef.abi_signature or ef.function_name,
         "selector": ef.selector,
@@ -270,7 +293,7 @@ def _build_company_function_entry(ef: EffectiveFunction, principals: list[Functi
         "effect_targets": list(ef.effect_targets or []),
         "action_summary": ef.action_summary,
         "authority_public": ef.authority_public,
-        "controllers": list(controllers_by_label.values()),
+        "controllers": controllers,
         "authority_roles": authority_roles,
         "direct_owner": direct_owner,
     }
@@ -507,6 +530,39 @@ def analyze_remaining(company_name: str) -> dict[str, Any]:
             queued.append({"job_id": str(job.id), "address": contract.address})
 
         return {"queued": len(queued), "jobs": queued}
+
+
+@app.delete(
+    "/api/company/{company_name}/addresses/{address}",
+    dependencies=[Depends(require_admin_key)],
+)
+def delete_company_address(company_name: str, address: str) -> dict[str, Any]:
+    """Remove a Contract row from a protocol.
+
+    Scoped to the protocol so unrelated contracts sharing an address (very
+    rare — addresses are chain-global but we key by address only) aren't
+    affected. FK cascades on ``contracts.id`` clean up the audit coverage
+    rows and any upgrade-event attribution.
+    """
+    if not _ADDRESS_RE.match(address):
+        raise HTTPException(status_code=400, detail="Invalid address")
+    with SessionLocal() as session:
+        protocol_row = session.execute(
+            select(Protocol).where(Protocol.name == company_name)
+        ).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+        contract = session.execute(
+            select(Contract).where(
+                Contract.protocol_id == protocol_row.id,
+                Contract.address == address,
+            )
+        ).scalar_one_or_none()
+        if contract is None:
+            raise HTTPException(status_code=404, detail="Address not found for this protocol")
+        session.delete(contract)
+        session.commit()
+    return {"company": company_name, "address": address, "deleted": True}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -1527,8 +1583,17 @@ def company_overview(company_name: str) -> dict:
                     continue
 
                 if node_addr not in principal_map:
-                    # Get details from controller_values
+                    # Seed details with the CGN's own introspection result
+                    # (getOwners/getThreshold for safes, getMinDelay for
+                    # timelocks). This is the authoritative source for the
+                    # principal's intrinsic config — ControllerValue rows
+                    # describe the relationship FROM a consumer, not the
+                    # Safe's own threshold, so prior code that only merged
+                    # CV details missed the threshold and fell back to
+                    # len(owners).
                     details: dict[str, Any] = {}
+                    if isinstance(cgn.details, dict):
+                        details.update(cgn.details)
                     for cv in (
                         session.execute(
                             select(ControllerValue).where(
@@ -1540,15 +1605,21 @@ def company_overview(company_name: str) -> dict:
                         .all()
                     ):
                         if cv.details and isinstance(cv.details, dict):
-                            details.update(cv.details)
+                            # Don't let consumer-side details overwrite the
+                            # safe's own threshold / owners — only fill in
+                            # keys the CGN didn't already establish.
+                            for k, v in cv.details.items():
+                                details.setdefault(k, v)
 
                     # For Safes, attach owners and threshold
                     if cgn.resolved_type == "safe":
-                        owners = safe_owners_map.get(node_addr, [])
-                        details["owners"] = owners
-                        # Try to get threshold from details
-                        if "threshold" not in details and owners:
-                            details["threshold"] = len(owners)  # fallback
+                        # Prefer owners already persisted on the CGN's own
+                        # details (from getOwners). Fall back to the
+                        # edge-derived map if the CGN didn't include them.
+                        if not details.get("owners"):
+                            details["owners"] = safe_owners_map.get(node_addr, [])
+                        if "threshold" not in details and details.get("owners"):
+                            details["threshold"] = len(details["owners"])  # fallback
 
                     principal_map[node_addr] = {
                         "address": node_addr,
@@ -1560,6 +1631,66 @@ def company_overview(company_name: str) -> dict:
 
                 principal_map[node_addr]["controls"].append(target)
                 add_flow(node_addr, target, "principal")
+
+        # Third pass: pull principals out of FunctionPrincipal rows. Some
+        # role-gated functions (e.g. EtherFiTimelock.cancel / .execute) have
+        # their controlling Safe/EOA stored *only* on the per-function
+        # principal row — the Safe never gets a top-level ControlGraphNode
+        # entry for that contract, so the prior CGN-only pass misses the
+        # Safe→Contract edge entirely. This pass backfills.
+        # (FunctionPrincipal + EffectiveFunction are module-level imports.)
+
+        for c in contracts:
+            if not c["address"]:
+                continue
+            target = c["address"].lower()
+            lookup_job_id = c.get("impl_job_id") or c["job_id"]
+            lookup_c = session.execute(
+                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
+            ).scalar_one_or_none()
+            if not lookup_c:
+                continue
+            for fp in (
+                session.execute(
+                    select(FunctionPrincipal)
+                    .join(EffectiveFunction, FunctionPrincipal.function_id == EffectiveFunction.id)
+                    .where(EffectiveFunction.contract_id == lookup_c.id)
+                )
+                .scalars()
+                .all()
+            ):
+                pa = (fp.address or "").lower()
+                if not pa or pa == target:
+                    continue
+                if pa == "0x0000000000000000000000000000000000000000":
+                    continue
+                if pa in owner_of_safe:
+                    # Signer on a Safe — already nested under the Safe node.
+                    continue
+                if fp.resolved_type not in ("safe", "timelock", "eoa", "proxy_admin"):
+                    continue
+                # Skip contract-principals — they're covered by the
+                # controller/owner/CGN passes above as contract-to-contract
+                # edges, not standalone principals.
+                if pa in contract_addrs:
+                    continue
+                if pa not in principal_map:
+                    fp_details = dict(fp.details or {})
+                    if fp.resolved_type == "safe":
+                        if not fp_details.get("owners"):
+                            fp_details["owners"] = safe_owners_map.get(pa, [])
+                        if "threshold" not in fp_details and fp_details.get("owners"):
+                            fp_details["threshold"] = len(fp_details["owners"])  # fallback
+                    principal_map[pa] = {
+                        "address": pa,
+                        "type": fp.resolved_type,
+                        "label": fp.resolved_type,
+                        "details": fp_details,
+                        "controls": [],
+                    }
+                if target not in principal_map[pa]["controls"]:
+                    principal_map[pa]["controls"].append(target)
+                add_flow(pa, target, "principal")
 
         principals = list(principal_map.values())
 
@@ -1576,6 +1707,16 @@ def company_overview(company_name: str) -> dict:
                 if cr:
                     all_contract_rows.append(cr)
 
+        # Prefetch impl-name lookup so proxy rows can expose the implementation
+        # contract name alongside their own generic "UUPSProxy"/"ERC1967Proxy"
+        # template name. Impl rows are already present in all_contract_rows
+        # (the selection worker writes a Contract row for every discovered
+        # impl), so no extra query is needed.
+        impl_name_by_addr = {
+            (c.address or "").lower(): c.contract_name
+            for c in all_contract_rows
+            if c.address and c.contract_name
+        }
         all_addresses = sorted(
             [
                 {
@@ -1587,6 +1728,18 @@ def company_overview(company_name: str) -> dict:
                     "discovery_sources": list(cr.discovery_sources or []),
                     "discovery_url": cr.discovery_url,
                     "chain": cr.chain,
+                    # Selection-worker rank — lets the Addresses modal sort
+                    # highest-ranked first. NULL for rows the selection worker
+                    # hasn't scored yet (e.g. freshly discovered).
+                    "rank_score": (
+                        float(cr.rank_score) if cr.rank_score is not None else None
+                    ),
+                    "implementation_address": cr.implementation if cr.is_proxy else None,
+                    "implementation_name": (
+                        impl_name_by_addr.get((cr.implementation or "").lower())
+                        if cr.is_proxy
+                        else None
+                    ),
                 }
                 for cr in all_contract_rows
             ],
@@ -1653,11 +1806,13 @@ def company_overview(company_name: str) -> dict:
 
 def _audit_report_to_dict(ar: Any) -> dict[str, Any]:
     """Serialize an AuditReport row, including text- and scope-extraction state."""
+    from utils.github_urls import github_blob_to_raw
+
     scope_contracts = list(ar.scope_contracts or [])
     return {
         "id": ar.id,
         "url": ar.url,
-        "pdf_url": ar.pdf_url,
+        "pdf_url": github_blob_to_raw(ar.pdf_url) if ar.pdf_url else None,
         "auditor": ar.auditor,
         "title": ar.title,
         "date": ar.date,
@@ -1670,6 +1825,14 @@ def _audit_report_to_dict(ar: Any) -> dict[str, Any]:
         "scope_extracted_at": (ar.scope_extracted_at.isoformat() if ar.scope_extracted_at else None),
         "scope_contract_count": len(scope_contracts),
         "has_scope": ar.scope_extraction_status == "success",
+        # Commit attribution: `reviewed_commits` is the flat list extracted
+        # from the PDF via regex; `classified_commits` is the LLM-labeled
+        # richer shape with {sha, label, context}. The frontend prefers the
+        # classified list (filtered to label === "reviewed") and falls back
+        # to reviewed_commits when the classification pass hasn't run.
+        "reviewed_commits": list(ar.reviewed_commits or []),
+        "classified_commits": list(ar.classified_commits or []),
+        "referenced_repos": list(ar.referenced_repos or []),
     }
 
 
@@ -1854,6 +2017,50 @@ def get_audit(audit_id: int) -> dict[str, Any]:
         return _audit_report_to_dict(ar)
 
 
+@app.get("/api/audits/{audit_id}/pdf")
+def get_audit_pdf(audit_id: int):
+    """Proxy an audit's PDF through our origin so the frontend can embed it
+    in an iframe. The typical source (GitHub raw content, auditor sites)
+    serves PDFs with `X-Frame-Options: deny` and `Content-Type:
+    application/octet-stream`, both of which prevent inline rendering — we
+    need a passthrough that strips those headers and sets
+    `Content-Type: application/pdf`.
+
+    Only proxies URLs already stored in `AuditReport` rows (admin-curated),
+    so this is not a generic fetch-any-url SSRF gadget.
+    """
+    import requests
+    from fastapi.responses import Response
+
+    from db.models import AuditReport
+    from utils.github_urls import github_blob_to_raw
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        url = ar.pdf_url or (ar.url if ar.url and ar.url.lower().endswith(".pdf") else None)
+        if not url:
+            raise HTTPException(status_code=404, detail="No PDF available for this audit")
+        url = github_blob_to_raw(url)
+        filename = f"audit-{audit_id}.pdf"
+
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch PDF: {exc}") from exc
+
+    return Response(
+        content=resp.content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "public, max-age=3600",
+        },
+    )
+
+
 @app.get("/api/audits/{audit_id}/text", response_class=PlainTextResponse)
 def get_audit_text(audit_id: int) -> str:
     """Return the extracted plain-text body of an audit report.
@@ -2003,6 +2210,11 @@ def _audit_brief(audit: Any, match: Any | None = None) -> dict[str, Any]:
         # FLAG — the audit reviewed exactly this code AND the protocol
         # knew of a fix but never shipped it.
         out["proof_kind"] = getattr(match, "proof_kind", None)
+        # The specific commit SHA this contract's bytecode matched during
+        # source-equivalence verification. NULL on heuristic matches and on
+        # rows verified before the column existed; re-running
+        # refresh_coverage repopulates.
+        out["matched_commit_sha"] = getattr(match, "matched_commit_sha", None)
     return out
 
 
@@ -2427,6 +2639,83 @@ def reextract_audit_scope(audit_id: int) -> dict[str, Any]:
         ar.scope_extraction_started_at = None
         session.commit()
     return {"audit_id": audit_id, "reset": True}
+
+
+class AddAuditRequest(BaseModel):
+    url: str = Field(min_length=1)
+    pdf_url: str | None = None
+    auditor: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    date: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    source_repo: str | None = None
+
+
+@app.post(
+    "/api/company/{company_name}/audits",
+    dependencies=[Depends(require_admin_key)],
+)
+def add_company_audit(company_name: str, req: AddAuditRequest) -> dict[str, Any]:
+    """Register a new audit report for a protocol.
+
+    The row is inserted with NULL text/scope extraction status, so the
+    standing workers will claim it on their next poll: text extraction
+    downloads the PDF, scope extraction parses the contracts + commits,
+    and coverage matching wires it to deployed addresses. Duplicates
+    (same url on the same protocol) are rejected with 409.
+    """
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        protocol_row = session.execute(
+            select(Protocol).where(Protocol.name == company_name)
+        ).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        existing = session.execute(
+            select(AuditReport).where(
+                AuditReport.protocol_id == protocol_row.id,
+                AuditReport.url == req.url,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Audit with this url already exists (id={existing.id})",
+            )
+
+        ar = AuditReport(
+            protocol_id=protocol_row.id,
+            url=req.url,
+            pdf_url=req.pdf_url or req.url,
+            auditor=req.auditor,
+            title=req.title,
+            date=req.date,
+            confidence=req.confidence,
+            source_repo=req.source_repo,
+        )
+        session.add(ar)
+        session.commit()
+        session.refresh(ar)
+        return _audit_report_to_dict(ar)
+
+
+@app.delete(
+    "/api/audits/{audit_id}",
+    dependencies=[Depends(require_admin_key)],
+)
+def delete_audit(audit_id: int) -> dict[str, Any]:
+    """Remove an audit report (cascades to coverage rows)."""
+    from db.models import AuditReport
+
+    with SessionLocal() as session:
+        ar = session.get(AuditReport, audit_id)
+        if ar is None:
+            raise HTTPException(status_code=404, detail="Audit not found")
+        session.delete(ar)
+        session.commit()
+    return {"audit_id": audit_id, "deleted": True}
 
 
 def _watched_proxy_to_dict(proxy: WatchedProxy) -> dict[str, Any]:
@@ -2956,6 +3245,89 @@ def protocol_tvl(protocol_id: int, days: int = 30) -> dict[str, Any]:
                 for s in snapshots
             ],
         }
+
+
+# ─── Address labels (admin-curated human names for arbitrary addresses) ────
+
+_ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
+
+
+def _normalize_address_or_400(address: str) -> str:
+    a = (address or "").strip().lower()
+    if not _ADDRESS_RE.match(a):
+        raise HTTPException(status_code=400, detail="Invalid address format")
+    return a
+
+
+@app.get("/api/address_labels")
+def list_address_labels() -> dict[str, Any]:
+    """Return every stored address → name mapping as a flat dict.
+
+    Public read endpoint so any page (principal detail, surface node, etc.)
+    can decorate raw hex addresses with the admin-assigned name. The admin
+    key is only required to mutate labels (PUT/DELETE below).
+    """
+    from db.models import AddressLabel
+
+    with SessionLocal() as session:
+        rows = session.execute(select(AddressLabel)).scalars().all()
+        return {
+            "labels": {
+                row.address: {
+                    "name": row.name,
+                    "note": row.note,
+                    "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+                }
+                for row in rows
+            },
+        }
+
+
+class AddressLabelUpsert(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+@app.put("/api/address_labels/{address}", dependencies=[Depends(require_admin_key)])
+def upsert_address_label(address: str, payload: AddressLabelUpsert) -> dict[str, Any]:
+    """Create or update the human-readable name for an address.
+
+    Idempotent — repeated calls with the same body leave the row unchanged
+    (aside from ``updated_at``). The frontend uses this to label Safe
+    signers and EOA principals.
+    """
+    from db.models import AddressLabel
+
+    a = _normalize_address_or_400(address)
+    with SessionLocal() as session:
+        row = session.get(AddressLabel, a)
+        if row is None:
+            row = AddressLabel(address=a, name=payload.name.strip(), note=payload.note)
+            session.add(row)
+        else:
+            row.name = payload.name.strip()
+            row.note = payload.note
+        session.commit()
+        return {
+            "address": a,
+            "name": row.name,
+            "note": row.note,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        }
+
+
+@app.delete("/api/address_labels/{address}", dependencies=[Depends(require_admin_key)])
+def delete_address_label(address: str) -> dict[str, Any]:
+    from db.models import AddressLabel
+
+    a = _normalize_address_or_400(address)
+    with SessionLocal() as session:
+        row = session.get(AddressLabel, a)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Label not found")
+        session.delete(row)
+        session.commit()
+        return {"address": a, "deleted": True}
 
 
 @app.get("/{full_path:path}")

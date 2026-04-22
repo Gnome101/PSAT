@@ -28,6 +28,7 @@ from services.discovery.dynamic_dependencies import NoNewTransactionsError
 from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan_from_file
 from services.static import analyze, analyze_contract
+from services.static.hevm_guard_analysis import refine_semantic_guards_with_hevm
 from services.static.vyper_analysis import is_vyper_project
 from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
@@ -734,6 +735,12 @@ class StaticWorker(BaseWorker):
                 if DEBUG_TIMING:
                     logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
 
+                # Phase 4: HEVM semantic guard refinement (best-effort)
+                t0 = time.monotonic()
+                self._run_hevm_semantic_phase(session, job, project_dir, contract_name, address)
+                if DEBUG_TIMING:
+                    logger.info("[TIMING] hevm semantic guards: %.1fs", time.monotonic() - t0)
+
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
 
@@ -1263,6 +1270,9 @@ class StaticWorker(BaseWorker):
             analysis_data = json.loads(contract_analysis_path.read_text())
             # Keep as artifact — resolution/policy stages read it as JSON
             store_artifact(session, job.id, "contract_analysis", data=analysis_data)
+            semantic_guards_path = project_dir / "semantic_guards.json"
+            if semantic_guards_path.exists():
+                store_artifact(session, job.id, "semantic_guards", data=json.loads(semantic_guards_path.read_text()))
             self._write_analysis_tables(session, job, analysis_data)
         logger.info(
             "Static stage contract analysis complete for job %s address=%s contract=%s",
@@ -1360,6 +1370,58 @@ class StaticWorker(BaseWorker):
         except Exception as exc:
             _log_phase_error(str(job.id), address, contract_name, "tracking_plan", str(exc))
             store_artifact(session, job.id, "tracking_plan_error", data={"error": str(exc)})
+
+    def _run_hevm_semantic_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
+        """Refine unresolved semantic guards with HEVM proofs. Non-fatal on failure."""
+        semantic_guards_path = project_dir / "semantic_guards.json"
+        analysis_path = project_dir / "contract_analysis.json"
+        if not semantic_guards_path.exists() or not analysis_path.exists():
+            logger.info("Job %s: skipping HEVM semantic guards — no semantic_guards.json", job.id)
+            return
+
+        request = job.request if isinstance(job.request, dict) else {}
+        rpc_url = request.get("rpc_url") or os.getenv("ETH_RPC")
+        if not rpc_url:
+            logger.info("Job %s: skipping HEVM semantic guards — no RPC URL", job.id)
+            store_artifact(session, job.id, "hevm_semantic_guards", data={"status": "skipped", "reason": "no_rpc_url"})
+            return
+
+        tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
+        if not isinstance(tracking_plan, dict):
+            tracking_plan_path = project_dir / "control_tracking_plan.json"
+            if not tracking_plan_path.exists():
+                logger.info("Job %s: skipping HEVM semantic guards — no tracking plan", job.id)
+                return
+            tracking_plan = json.loads(tracking_plan_path.read_text())
+
+        try:
+            semantic_guards = json.loads(semantic_guards_path.read_text())
+            merged, hevm_artifact = refine_semantic_guards_with_hevm(
+                semantic_guards,
+                tracking_plan=tracking_plan,
+                rpc_url=rpc_url,
+                project_dir=project_dir,
+            )
+            store_artifact(session, job.id, "hevm_semantic_guards", data=hevm_artifact)
+            if merged != semantic_guards:
+                semantic_guards_path.write_text(json.dumps(merged, indent=2) + "\n")
+                store_artifact(session, job.id, "semantic_guards", data=merged)
+                logger.info(
+                    "Static stage HEVM semantic refinement updated semantic_guards for job %s address=%s contract=%s",
+                    job.id,
+                    address,
+                    contract_name,
+                )
+            else:
+                logger.info(
+                    "Static stage HEVM semantic refinement found no stronger guards for job %s address=%s contract=%s",
+                    job.id,
+                    address,
+                    contract_name,
+                )
+        except Exception as exc:
+            _log_phase_error(str(job.id), address, contract_name, "hevm_semantic_guards", str(exc))
+            store_artifact(session, job.id, "hevm_semantic_guards", data={"status": "error", "error": str(exc)})
 
 
 def main():

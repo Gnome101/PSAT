@@ -45,6 +45,7 @@ from services.resolution.controller_adapters import (
     _try_aragon_acl_role_members,
     _try_aragon_app_details,
     _try_enumerable_role_members,
+    _try_role_holders_members,
     expand_role_identifier_principals,
     type_authority_contract,
 )
@@ -779,6 +780,27 @@ class TestTryAccessControlDetails:
         assert result is None
 
 
+class TestTryRoleHoldersMembers:
+    @patch(f"{MOD}._eth_call_raw")
+    @patch(f"{MOD}._decode_abi_value")
+    def test_success(self, mock_decode, mock_call):
+        a1 = _addr(1)
+        a2 = _addr(2)
+        mock_call.return_value = "0xdeadbeef"
+        mock_decode.return_value = [a1, a2]
+
+        members, meta = _try_role_holders_members(RPC, CONTRACT, ROLE)
+
+        assert members == [a1.lower(), a2.lower()]
+        assert meta["adapter"] == "role_holders"
+        assert meta["member_count"] == 2
+
+    @patch(f"{MOD}._eth_call_raw")
+    def test_failure_returns_none(self, mock_call):
+        mock_call.side_effect = RuntimeError("no roleHolders")
+        assert _try_role_holders_members(RPC, CONTRACT, ROLE) is None
+
+
 # =========================================================================
 # 10. expand_role_identifier_principals (top-level dispatcher)
 # =========================================================================
@@ -793,8 +815,26 @@ class TestExpandRoleIdentifierPrincipals:
     @patch(f"{MOD}._try_aragon_acl_role_members")
     @patch(f"{MOD}._role_members_from_events")
     @patch(f"{MOD}._try_enumerable_role_members")
-    def test_enumerable_wins(self, mock_enum, mock_events, mock_aragon):
+    @patch(f"{MOD}._try_role_holders_members")
+    def test_role_holders_wins(self, mock_role_holders, mock_enum, mock_events, mock_aragon):
+        addr = _addr(5)
+        mock_role_holders.return_value = ([addr.lower()], {"adapter": "role_holders", "member_count": 1})
+
+        members, meta = expand_role_identifier_principals(RPC, CONTRACT, ROLE)
+
+        assert members == [addr.lower()]
+        assert meta["adapter"] == "role_holders"
+        mock_enum.assert_not_called()
+        mock_events.assert_not_called()
+        mock_aragon.assert_not_called()
+
+    @patch(f"{MOD}._try_aragon_acl_role_members")
+    @patch(f"{MOD}._role_members_from_events")
+    @patch(f"{MOD}._try_enumerable_role_members")
+    @patch(f"{MOD}._try_role_holders_members")
+    def test_enumerable_wins(self, mock_role_holders, mock_enum, mock_events, mock_aragon):
         addr = _addr(1)
+        mock_role_holders.return_value = None
         mock_enum.return_value = ([addr.lower()], {"adapter": "access_control_enumerable", "member_count": 1})
         members, meta = expand_role_identifier_principals(RPC, CONTRACT, ROLE)
         assert members == [addr.lower()]
@@ -805,8 +845,10 @@ class TestExpandRoleIdentifierPrincipals:
     @patch(f"{MOD}._try_aragon_acl_role_members")
     @patch(f"{MOD}._role_members_from_events")
     @patch(f"{MOD}._try_enumerable_role_members")
-    def test_events_fallback(self, mock_enum, mock_events, mock_aragon):
+    @patch(f"{MOD}._try_role_holders_members")
+    def test_events_fallback(self, mock_role_holders, mock_enum, mock_events, mock_aragon):
         addr = _addr(2)
+        mock_role_holders.return_value = None
         mock_enum.return_value = None
         mock_events.return_value = ([addr.lower()], {"adapter": "access_control_events", "member_count": 1})
         members, meta = expand_role_identifier_principals(RPC, CONTRACT, ROLE)
@@ -817,8 +859,10 @@ class TestExpandRoleIdentifierPrincipals:
     @patch(f"{MOD}._try_aragon_acl_role_members")
     @patch(f"{MOD}._role_members_from_events")
     @patch(f"{MOD}._try_enumerable_role_members")
-    def test_aragon_fallback(self, mock_enum, mock_events, mock_aragon):
+    @patch(f"{MOD}._try_role_holders_members")
+    def test_aragon_fallback(self, mock_role_holders, mock_enum, mock_events, mock_aragon):
         addr = _addr(3)
+        mock_role_holders.return_value = None
         mock_enum.return_value = None
         mock_events.return_value = None
         mock_aragon.return_value = ([addr.lower()], {"adapter": "aragon_acl", "member_count": 1})
@@ -829,7 +873,9 @@ class TestExpandRoleIdentifierPrincipals:
     @patch(f"{MOD}._try_aragon_acl_role_members")
     @patch(f"{MOD}._role_members_from_events")
     @patch(f"{MOD}._try_enumerable_role_members")
-    def test_no_adapter_matched(self, mock_enum, mock_events, mock_aragon):
+    @patch(f"{MOD}._try_role_holders_members")
+    def test_no_adapter_matched(self, mock_role_holders, mock_enum, mock_events, mock_aragon):
+        mock_role_holders.return_value = None
         mock_enum.return_value = None
         mock_events.return_value = None
         mock_aragon.return_value = None

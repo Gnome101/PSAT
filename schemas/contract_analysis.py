@@ -179,6 +179,7 @@ class AssociatedEvent(TypedDict):
 class ControllerReadSpec(TypedDict):
     strategy: ControllerReadStrategy
     target: str
+    contract_source: NotRequired[str]
 
 
 class ControllerWriterFunction(TypedDict):

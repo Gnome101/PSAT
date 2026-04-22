@@ -150,9 +150,11 @@ def _build_report_entry(
     upstream) record exactly where the PDF lived at discovery time — a
     phase-2 linker uses them to verify the artifact hasn't moved.
     """
+    pdf_url = github_blob_to_raw(str(report.get("pdf_url") or "").strip()) or None
+    report_url = github_blob_to_raw(str(report.get("report_url") or "").strip()) or None
     entry = {
-        "url": report.get("pdf_url") or report.get("report_url") or source_url,
-        "pdf_url": report.get("pdf_url"),
+        "url": pdf_url or report_url or source_url,
+        "pdf_url": pdf_url,
         "auditor": report["auditor"],
         "title": report["title"],
         "date": report.get("date"),
@@ -180,9 +182,11 @@ def _build_fallback_entry(
     tavily_match = next((r for r in all_results if r.get("url") == url), None)
     tavily_title = (tavily_match.get("title") or "").strip() if tavily_match else ""
     title = str(classification.get("title") or "").strip() or tavily_title or f"{company} Audit Report"
+    normalized_url = github_blob_to_raw(url)
+    normalized_pdf_url = github_blob_to_raw(pdf_url) if pdf_url else None
     return {
-        "url": url,
-        "pdf_url": pdf_url or (url if _is_pdf_url(url) else None),
+        "url": normalized_url,
+        "pdf_url": normalized_pdf_url or (normalized_url if _is_pdf_url(normalized_url) else None),
         "auditor": str(classification.get("auditor") or "").strip() or "Unknown",
         "title": title,
         "date": classification.get("date") or None,

@@ -464,3 +464,448 @@ def test_build_effective_permissions_uses_resolved_role_principals_and_skips_non
             "notes": [],
         }
     ]
+
+
+def test_build_effective_permissions_prefers_semantic_role_member_predicate():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "pause()",
+                    "controller_refs": ["PAUSE_ROLE", "roleRegistry"],
+                    "effect_targets": ["paused"],
+                    "effect_labels": ["pause_toggle"],
+                    "action_summary": "Pauses the contract.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "Target",
+        "controller_values": {
+            "role_identifier:PAUSE_ROLE": {
+                "source": "PAUSE_ROLE",
+                "value": "0x" + "11" * 32,
+                "resolved_type": "unknown",
+                "details": {
+                    "adapter": "access_control_enumerable",
+                    "resolved_principals": [
+                        {
+                            "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                            "resolved_type": "safe",
+                            "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "threshold": 2},
+                        }
+                    ],
+                },
+            },
+            "state_variable:roleRegistry": {
+                "source": "roleRegistry",
+                "value": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "resolved_type": "contract",
+                "details": {
+                    "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "authority_kind": "access_control_like",
+                },
+            },
+        },
+    }
+    semantic_guards = {
+        "functions": [
+            {
+                "function": "pause()",
+                "status": "resolved",
+                "predicates": [
+                    {
+                        "kind": "role_member",
+                        "role_source": "PAUSE_ROLE",
+                        "authority_source": "roleRegistry",
+                    }
+                ],
+                "notes": [],
+            }
+        ]
+    }
+
+    payload = build_effective_permissions(
+        target_analysis,
+        target_snapshot=target_snapshot,
+        semantic_guards=semantic_guards,
+    )
+
+    pause = payload["functions"][0]
+    assert pause["controllers"] == [
+        {
+            "controller_id": "role_identifier:PAUSE_ROLE",
+            "label": "PAUSE_ROLE",
+            "source": "PAUSE_ROLE",
+            "kind": "role_identifier",
+            "principals": [
+                {
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "resolved_type": "safe",
+                    "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "threshold": 2},
+                    "source_controller_id": "role_identifier:PAUSE_ROLE",
+                }
+            ],
+            "notes": [],
+        }
+    ]
+
+
+def test_build_effective_permissions_uses_external_semantic_role_member_predicate():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "pause()",
+                    "controller_refs": ["auth"],
+                    "effect_targets": ["auth.z"],
+                    "effect_labels": ["pause_toggle"],
+                    "action_summary": "Pauses the contract.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "Target",
+        "contract_address": "0x1111111111111111111111111111111111111111",
+        "controller_values": {
+            "state_variable:auth": {
+                "source": "auth",
+                "value": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "resolved_type": "contract",
+                "details": {"address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+            }
+        },
+    }
+    semantic_guards = {
+        "functions": [
+            {
+                "function": "pause()",
+                "status": "resolved",
+                "predicates": [
+                    {
+                        "kind": "role_member",
+                        "role_source": "BREAK_GLASS",
+                        "authority_source": "auth",
+                        "read_spec": {"strategy": "getter_call", "target": "BREAK_GLASS", "contract_source": "auth"},
+                    }
+                ],
+                "notes": [],
+            }
+        ]
+    }
+    external_snapshots = {
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "contract_name": "OpaqueRoleAuth",
+            "contract_address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "controller_values": {
+                "role_identifier:BREAK_GLASS": {
+                    "source": "BREAK_GLASS",
+                    "value": "0x" + "11" * 32,
+                    "resolved_type": "unknown",
+                    "details": {
+                        "resolved_principals": [
+                            {
+                                "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                "resolved_type": "eoa",
+                                "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                            }
+                        ]
+                    },
+                }
+            },
+        }
+    }
+
+    payload = build_effective_permissions(
+        target_analysis,
+        target_snapshot=target_snapshot,
+        semantic_guards=semantic_guards,
+        external_snapshots=external_snapshots,
+    )
+
+    pause = payload["functions"][0]
+    assert pause["controllers"] == [
+        {
+            "controller_id": "role_identifier:BREAK_GLASS",
+            "label": "BREAK_GLASS",
+            "source": "BREAK_GLASS",
+            "kind": "role_identifier",
+            "principals": [
+                {
+                    "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "resolved_type": "eoa",
+                    "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+                    "source_controller_id": "role_identifier:BREAK_GLASS",
+                }
+            ],
+            "notes": [],
+        }
+    ]
+
+
+def test_build_effective_permissions_uses_semantic_owner_helper_from_external_snapshot():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "upgradeTo(address)",
+                    "controller_refs": ["roleRegistry"],
+                    "effect_targets": ["roleRegistry.onlyProtocolUpgrader"],
+                    "effect_labels": ["delegatecall_execution"],
+                    "action_summary": "Upgrades implementation.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "Target",
+        "controller_values": {
+            "state_variable:roleRegistry": {
+                "source": "roleRegistry",
+                "value": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "resolved_type": "contract",
+                "details": {
+                    "address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "authority_kind": "access_control_like",
+                },
+            }
+        },
+    }
+    external_snapshots = {
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "contract_name": "RoleRegistry",
+            "contract_address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "controller_values": {
+                "state_variable:owner": {
+                    "source": "owner",
+                    "value": "0xcccccccccccccccccccccccccccccccccccccccc",
+                    "resolved_type": "timelock",
+                    "details": {"address": "0xcccccccccccccccccccccccccccccccccccccccc", "delay": 86400},
+                }
+            },
+        }
+    }
+    semantic_guards = {
+        "functions": [
+            {
+                "function": "upgradeTo(address)",
+                "status": "resolved",
+                "predicates": [
+                    {
+                        "kind": "caller_equals_controller",
+                        "controller_source": "owner",
+                        "read_spec": {"strategy": "getter_call", "target": "owner", "contract_source": "roleRegistry"},
+                    }
+                ],
+                "notes": [],
+            }
+        ]
+    }
+
+    payload = build_effective_permissions(
+        target_analysis,
+        target_snapshot=target_snapshot,
+        semantic_guards=semantic_guards,
+        external_snapshots=external_snapshots,
+    )
+
+    upgrade = payload["functions"][0]
+    assert upgrade["direct_owner"] is None
+    assert upgrade["controllers"] == [
+        {
+            "controller_id": "external_owner:owner",
+            "label": "owner",
+            "source": "owner",
+            "kind": "state_variable",
+            "principals": [
+                {
+                    "address": "0xcccccccccccccccccccccccccccccccccccccccc",
+                    "resolved_type": "timelock",
+                    "details": {"address": "0xcccccccccccccccccccccccccccccccccccccccc", "delay": 86400},
+                    "source_contract": "RoleRegistry",
+                    "source_controller_id": "state_variable:owner",
+                }
+            ],
+            "notes": ["contract_source=roleRegistry"],
+        }
+    ]
+
+
+def test_build_effective_permissions_uses_semantic_policy_check_public_capability():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "execute()",
+                    "controller_refs": ["policy"],
+                    "effect_targets": ["policy.q"],
+                    "effect_labels": ["external_contract_call"],
+                    "action_summary": "Executes privileged operation.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "Target",
+        "contract_address": "0x1111111111111111111111111111111111111111",
+        "controller_values": {
+            "state_variable:policy": {
+                "source": "policy",
+                "value": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "resolved_type": "contract",
+                "details": {"address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+            }
+        },
+    }
+    semantic_guards = {
+        "functions": [
+            {
+                "function": "execute()",
+                "status": "partial",
+                "predicates": [
+                    {
+                        "kind": "policy_check",
+                        "authority_source": ["policy"],
+                        "helper": "q",
+                        "status": "unresolved",
+                    }
+                ],
+                "notes": [],
+            }
+        ]
+    }
+    external_policy_states = {
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "public_capabilities": [
+                {
+                    "target": "0x1111111111111111111111111111111111111111",
+                    "function_sig": "0x61461954",
+                    "enabled": True,
+                }
+            ],
+            "role_capabilities": [],
+            "user_roles": [],
+        }
+    }
+
+    payload = build_effective_permissions(
+        target_analysis,
+        target_snapshot=target_snapshot,
+        semantic_guards=semantic_guards,
+        external_policy_states=external_policy_states,
+    )
+
+    execute = payload["functions"][0]
+    assert execute["authority_public"] is True
+    assert execute["authority_roles"] == []
+    assert execute["controllers"] == []
+
+
+def test_build_effective_permissions_uses_semantic_policy_check_role_capability():
+    target_analysis = {
+        "subject": {
+            "address": "0x1111111111111111111111111111111111111111",
+            "name": "Target",
+        },
+        "access_control": {
+            "privileged_functions": [
+                {
+                    "function": "execute()",
+                    "controller_refs": ["policy"],
+                    "effect_targets": ["policy.q"],
+                    "effect_labels": ["external_contract_call"],
+                    "action_summary": "Executes privileged operation.",
+                }
+            ]
+        },
+    }
+    target_snapshot = {
+        "contract_name": "Target",
+        "contract_address": "0x1111111111111111111111111111111111111111",
+        "controller_values": {
+            "state_variable:policy": {
+                "source": "policy",
+                "value": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "resolved_type": "contract",
+                "details": {"address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+            }
+        },
+    }
+    semantic_guards = {
+        "functions": [
+            {
+                "function": "execute()",
+                "status": "partial",
+                "predicates": [
+                    {
+                        "kind": "policy_check",
+                        "authority_source": ["policy"],
+                        "helper": "q",
+                        "status": "unresolved",
+                    }
+                ],
+                "notes": [],
+            }
+        ]
+    }
+    external_policy_states = {
+        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+            "public_capabilities": [],
+            "role_capabilities": [
+                {
+                    "role": 7,
+                    "target": "0x1111111111111111111111111111111111111111",
+                    "function_sig": "0x61461954",
+                    "enabled": True,
+                }
+            ],
+            "user_roles": [
+                {
+                    "user": "0xcccccccccccccccccccccccccccccccccccccccc",
+                    "role": 7,
+                    "enabled": True,
+                }
+            ],
+        }
+    }
+
+    payload = build_effective_permissions(
+        target_analysis,
+        target_snapshot=target_snapshot,
+        semantic_guards=semantic_guards,
+        external_policy_states=external_policy_states,
+    )
+
+    execute = payload["functions"][0]
+    assert execute["authority_public"] is False
+    assert execute["authority_roles"] == [
+        {
+            "role": 7,
+            "principals": [
+                {
+                    "address": "0xcccccccccccccccccccccccccccccccccccccccc",
+                    "resolved_type": "unknown",
+                    "details": {},
+                }
+            ],
+        }
+    ]
+    assert execute["controllers"] == []

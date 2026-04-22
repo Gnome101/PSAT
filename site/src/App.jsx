@@ -19,6 +19,18 @@ import { matchesEra } from "./auditMatching.js";
 import AuditsTab from "./AuditsTab.jsx";
 import AuditExtractionShelf from "./AuditExtractionShelf.jsx";
 import { api } from "./api/client.js";
+import { getPipeline as getAuditPipeline } from "./api/audits.js";
+import ProductHero from "./ProductHero.jsx";
+// Shelved assembly-line hero — kept on disk, not rendered.
+// import SplashHero from "./SplashHero.jsx";
+// import AssemblyLine from "./AssemblyLine.jsx";
+import ProtocolLogo from "./ProtocolLogo.jsx";
+import ProtocolRadar from "./ProtocolRadar.jsx";
+import AddressesModal from "./AddressesModal.jsx";
+import AuditsAdminModal from "./AuditsAdminModal.jsx";
+// SurfacePreview was a static SVG mini-map; we now embed the real
+// ProtocolSurface component inline. File kept for possible reuse.
+// import SurfacePreview from "./SurfacePreview.jsx";
 
 // TODO: replace this with a real sign-in page + session-based auth. Options
 // that fit our Fly deployment: (a) an identity-aware proxy sidecar such as
@@ -1258,13 +1270,54 @@ function GraphTab({ detail }) {
 // Company overview
 // ---------------------------------------------------------------------------
 
-function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, onNavigateToGraph, onNavigateToRisk, onNavigateToMonitoring, onNavigateToAudits }) {
+function computeProtocolScore(contracts, hierarchy, auditCoverage) {
+  const safe = Array.isArray(contracts) ? contracts : [];
+  const total = safe.length || 1;
+
+  const riskCounts = { high: 0, medium: 0, low: 0, unknown: 0 };
+  for (const c of safe) {
+    const lvl = c.risk_level && riskCounts[c.risk_level] != null ? c.risk_level : "unknown";
+    riskCounts[lvl]++;
+  }
+  const riskScore = safe.length
+    ? Math.max(0, 1 - (riskCounts.high * 1.0 + riskCounts.medium * 0.5) / safe.length)
+    : 0.5;
+
+  const controlledOwners = (hierarchy || []).filter((g) => g.owner && g.owner_is_contract).length;
+  const ownerGroups = (hierarchy || []).length || 1;
+  const controlScore = Math.min(1, controlledOwners / ownerGroups);
+
+  const proxyCount = safe.filter((c) => c.is_proxy).length;
+  const upgradesKnown = safe.filter((c) => c.upgrade_count != null).length;
+  const upgradeScore = proxyCount === 0 ? 0.6 : Math.min(1, upgradesKnown / Math.max(1, proxyCount));
+
+  let auditScore = 0;
+  if (auditCoverage?.coverage?.length) {
+    const covered = auditCoverage.coverage.filter((r) => (r.audit_count || 0) > 0).length;
+    auditScore = covered / auditCoverage.coverage.length;
+  }
+
+  const transparency = safe.filter((c) => c.name && c.name.toLowerCase() !== "unknown").length / total;
+
+  const axes = [
+    { key: "coverage", label: "Coverage", value: auditScore, display: `${Math.round(auditScore * 100)}%` },
+    { key: "control", label: "Control", value: controlScore, display: `${Math.round(controlScore * 100)}%` },
+    { key: "risk", label: "Risk", value: riskScore, display: `${Math.round(riskScore * 100)}%` },
+    { key: "upgrades", label: "Upgrades", value: upgradeScore, display: `${Math.round(upgradeScore * 100)}%` },
+    { key: "transparency", label: "Transparency", value: transparency, display: `${Math.round(transparency * 100)}%` },
+  ];
+
+  const composite = Math.round((axes.reduce((a, x) => a + x.value, 0) / axes.length) * 100);
+  const grade = composite >= 85 ? "a" : composite >= 70 ? "b" : composite >= 55 ? "c" : composite >= 40 ? "d" : "f";
+  return { axes, composite, grade };
+}
+
+function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analyzeResult, setAnalyzeResult] = useState(null);
-  const [newAddress, setNewAddress] = useState("");
   const [auditCoverage, setAuditCoverage] = useState(null);
+  const [addressesModalOpen, setAddressesModalOpen] = useState(false);
+  const [auditsAdminOpen, setAuditsAdminOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -1284,11 +1337,10 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
   if (error) return <div className="page"><section className="panel"><p className="empty">Failed to load company overview: {error}</p></section></div>;
   if (!data) return <div className="page"><section className="panel"><p className="empty">Loading...</p></section></div>;
 
-  const { contracts, ownership_hierarchy: hierarchy, all_addresses: allAddresses } = data;
-  const riskColor = { high: "#ef4444", medium: "#f59e0b", low: "#22c55e", unknown: "#94a3b8" };
+  const { contracts, ownership_hierarchy: hierarchy } = data;
 
-  // Index audit coverage by (lowercase) address so the hierarchy rows can
-  // render a compact per-contract audit chip without another request.
+  // Composite-score inputs still use hierarchy + coverageByAddr even though
+  // the hierarchy list itself is no longer rendered below the fold.
   const coverageByAddr = (() => {
     const map = {};
     for (const row of auditCoverage?.coverage || []) {
@@ -1296,242 +1348,162 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface, o
     }
     return map;
   })();
-  function auditChipFor(addr) {
-    const row = coverageByAddr[(addr || "").toLowerCase()];
-    if (!row) return null;  // no coverage data loaded yet or unknown
-    if (!row.audit_count) {
-      return {
-        label: "no audit",
-        tooltip: "No matching audit",
-        style: { background: "#fee2e2", color: "#991b1b" },
-      };
-    }
-    const last = row.last_audit;
-    const hasOpen = (row.audits || []).some(
-      (a) => a.covered_to_block == null && (a.match_confidence === "high" || a.match_type === "reviewed_commit"),
-    );
-    const style = hasOpen
-      ? { background: "#dcfce7", color: "#166534" }
-      : { background: "#fef3c7", color: "#92400e" };
-    const label = hasOpen ? "audited" : "before upgrade";
-    const dateStr = last?.date ? ` · ${last.date}` : "";
-    return {
-      label,
-      tooltip: `${last?.auditor || "Unknown"}${dateStr} — ${last?.match_type || "?"} / ${last?.match_confidence || "?"}`,
-      style,
-    };
-  }
+
+  const { axes, composite, grade } = computeProtocolScore(contracts, hierarchy, auditCoverage);
+  const coveredContracts = Object.values(coverageByAddr).filter((r) => r.audit_count > 0).length;
+
+  const proxyCount = contracts.filter((c) => c.is_proxy).length;
 
   return (
-    <div className="page">
-      <section className="panel">
-        <div className="panel-header">
+    <div className="company-page">
+      {/* Hero band — edge-to-edge, no card borders */}
+      <section className="company-hero-band">
+        <div className="company-hero-inner">
+          <ProtocolLogo name={companyName} size="xlarge" />
+          <div className="company-hero-title-block">
+            <p className="company-hero-eyebrow">Protocol</p>
+            <h1 className="company-hero-title">{companyName}</h1>
+            <p className="company-hero-subtitle">
+              {contracts.length} contracts mapped · {auditCoverage?.audit_count ?? 0} reports on file
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Score + stats on the left, radar on the right */}
+      <section className="company-score-band">
+        <div className="company-score-left">
           <div>
-            <p className="eyebrow">Company Overview</p>
-            <h2>{companyName}</h2>
-          </div>
-          <div className="chips"><span className="chip alt">{contracts.length} contracts</span></div>
-        </div>
-
-        <div className="company-nav-cards">
-          <button className="company-nav-card" onClick={onNavigateToSurface}>
-            <span className="company-nav-card-title">Control Surface</span>
-            <span className="company-nav-card-desc">Full protocol surface map</span>
-          </button>
-          <button className="company-nav-card" onClick={onNavigateToGraph}>
-            <span className="company-nav-card-title">Ownership Graph</span>
-            <span className="company-nav-card-desc">Interactive ownership visualization</span>
-          </button>
-          <button className="company-nav-card" onClick={onNavigateToRisk}>
-            <span className="company-nav-card-title">Risk Matrix</span>
-            <span className="company-nav-card-desc">Contract risk assessment</span>
-          </button>
-          <button className="company-nav-card" onClick={onNavigateToAudits}>
-            <span className="company-nav-card-title">Audits</span>
-            <span className="company-nav-card-desc">
-              {auditCoverage?.audit_count != null
-                ? `${auditCoverage.audit_count} discovered · ${Object.values(coverageByAddr).filter((r) => r.audit_count > 0).length} covered contracts`
-                : "Discovered reports & per-contract coverage"}
-            </span>
-          </button>
-          <button className="company-nav-card" onClick={onNavigateToMonitoring}>
-            <span className="company-nav-card-title">Monitoring</span>
-            <span className="company-nav-card-desc">Live event monitoring &amp; Discord alerts</span>
-          </button>
-        </div>
-      </section>
-
-      {/* Ownership hierarchy */}
-      <section className="panel">
-        <h3 style={{ marginBottom: 16 }}>Ownership Hierarchy</h3>
-        <div className="stack" style={{ gap: 20 }}>
-          {hierarchy.map((group, gi) => (
-            <div key={gi} className="card" style={{ borderLeft: `3px solid ${group.owner ? "#2563eb" : "#94a3b8"}` }}>
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>
-                  {group.owner_name || (group.owner ? "External address" : "No owner detected")}
-                </div>
-                {group.owner && (
-                  <div className="mono" style={{ fontSize: 11, opacity: 0.7 }}>
-                    {group.owner}
-                    {group.owner_is_contract && <span className="chip" style={{ marginLeft: 6, fontSize: 9, padding: "1px 5px" }}>contract</span>}
-                  </div>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {group.contracts.map((c) => {
-                  const full = contracts.find((x) => x.address === c.address);
-                  const auditChip = auditChipFor(c.address);
-                  return (
-                    <button
-                      key={c.address}
-                      className="runs-table-row"
-                      style={{ padding: "6px 10px" }}
-                      onClick={() => onSelectContract(full?.job_id)}
-                    >
-                      <span className="runs-cell-name" style={{ flex: 2 }}>
-                        {c.name}
-                        {full?.is_proxy && <span className="proxy-badge" title={full.proxy_type}>{full.proxy_type || "proxy"}</span>}
-                      </span>
-                      <span className="mono runs-cell-addr" style={{ flex: 2 }}>{c.address}</span>
-                      <span style={{ flex: 1 }}>{full?.control_model || ""}</span>
-                      <span style={{ flex: 1 }}>
-                        {full?.risk_level && <span className="risk-dot" style={{ background: riskColor[full.risk_level] || "#94a3b8" }} />}
-                        {full?.risk_level || ""}
-                      </span>
-                      <span style={{ flex: 1 }}>{full?.upgrade_count != null ? `${full.upgrade_count} upgrades` : ""}</span>
-                      <span style={{ flex: 1 }} onClick={(e) => { if (auditChip) { e.stopPropagation(); onNavigateToAudits && onNavigateToAudits(); } }}>
-                        {auditChip ? (
-                          <span className="chip" style={{ ...auditChip.style, fontSize: 10, padding: "2px 8px" }} title={auditChip.tooltip}>
-                            {auditChip.label}
-                          </span>
-                        ) : auditCoverage ? (
-                          <span className="muted" style={{ fontSize: 11 }}>—</span>
-                        ) : null}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+            <p className="eyebrow" style={{ margin: 0 }}>Composite Score</p>
+            <div className={`company-hero-score grade-${grade}`}>
+              <span className="company-hero-score-value">{composite}</span>
+              <span className="company-hero-score-unit">/ 100</span>
             </div>
-          ))}
-        </div>
-      </section>
-
-      {/* All contracts detail table */}
-      <section className="panel">
-        <h3 style={{ marginBottom: 16 }}>Controller Details</h3>
-        <div className="stack" style={{ gap: 12 }}>
-          {contracts.filter((c) => Object.keys(c.controllers || {}).length > 0).map((c) => (
-            <div key={c.address} className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <div>
-                  <strong>{c.name}</strong>
-                  {c.is_proxy && <span className="proxy-badge" style={{ marginLeft: 6 }}>{c.proxy_type || "proxy"}</span>}
-                </div>
-                <span className="mono" style={{ fontSize: 11, opacity: 0.7 }}>{c.address}</span>
-              </div>
-              <div className="kv-grid">
-                {Object.entries(c.controllers).map(([cid, val]) => (
-                  <div className="kv-row" key={cid}>
-                    <span className="key">{cid}</span>
-                    <span className="mono" style={{ fontSize: 11 }}>{val != null ? String(val) : "null"}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="company-hero-score-label">Grade {grade.toUpperCase()}</div>
+            <div className={`company-hero-grade-bar grade-${grade}`}>
+              <div className="company-hero-grade-bar-fill" style={{ width: `${Math.max(4, composite)}%` }} />
             </div>
-          ))}
-        </div>
-      </section>
-
-      {/* All discovered addresses */}
-      {allAddresses && allAddresses.length > 0 && (
-        <section className="panel">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-            <h3>All Addresses ({allAddresses.length})</h3>
-            {allAddresses.some((a) => !a.analyzed) && (
-              <button
-                disabled={analyzing}
-                onClick={async () => {
-                  setAnalyzing(true);
-                  setAnalyzeResult(null);
-                  try {
-                    const res = await api(`/api/company/${encodeURIComponent(companyName)}/analyze-remaining`, { method: "POST" });
-                    setAnalyzeResult(res);
-                  } catch (err) {
-                    setAnalyzeResult({ error: err.message });
-                  } finally {
-                    setAnalyzing(false);
-                  }
-                }}
-                style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}
-              >
-                {analyzing ? "Queuing..." : `Analyze ${allAddresses.filter((a) => !a.analyzed).length} remaining`}
-              </button>
-            )}
           </div>
-          {/* Add custom address */}
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              if (!newAddress.trim()) return;
-              setAnalyzing(true);
-              setAnalyzeResult(null);
-              try {
-                const res = await api("/api/analyze", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ address: newAddress.trim(), company: companyName }),
-                });
-                setAnalyzeResult({ queued: 1, jobs: [{ job_id: res.job_id, address: newAddress.trim() }] });
-                setNewAddress("");
-              } catch (err) {
-                setAnalyzeResult({ error: err.message });
-              } finally {
-                setAnalyzing(false);
-              }
-            }}
-            style={{ display: "flex", gap: 8, marginBottom: 12 }}
-          >
-            <input
-              value={newAddress}
-              onChange={(e) => setNewAddress(e.target.value)}
-              placeholder="Add address to analyze (0x...)"
-              style={{ flex: 1, padding: "7px 12px", borderRadius: 8, fontSize: 13, fontFamily: "monospace" }}
-            />
-            <button type="submit" disabled={analyzing || !newAddress.trim()} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
-              Analyze
+
+          <div className="company-hero-stats">
+            <button
+              type="button"
+              className="company-hero-stat company-hero-stat--clickable"
+              onClick={() => setAddressesModalOpen(true)}
+              title="Browse all addresses"
+            >
+              <div className="company-hero-stat-value">{contracts.length}</div>
+              <div className="company-hero-stat-label">Contracts ↗</div>
             </button>
-          </form>
-
-          {analyzeResult && (
-            <div style={{ marginBottom: 12, fontSize: 12, padding: "8px 12px", borderRadius: 6, background: analyzeResult.error ? "rgba(239,68,68,0.08)" : "rgba(34,197,94,0.08)", color: analyzeResult.error ? "#ef4444" : "#22c55e" }}>
-              {analyzeResult.error ? `Error: ${analyzeResult.error}` : `Queued ${analyzeResult.queued} contract${analyzeResult.queued !== 1 ? "s" : ""} for analysis`}
+            <button
+              type="button"
+              className="company-hero-stat company-hero-stat--clickable"
+              onClick={() => setAuditsAdminOpen(true)}
+              title="Manage audits (admin)"
+            >
+              <div className="company-hero-stat-value">{auditCoverage?.audit_count ?? "—"}</div>
+              <div className="company-hero-stat-label">Reports ↗</div>
+            </button>
+            <div className="company-hero-stat">
+              <div className="company-hero-stat-value">{coveredContracts}</div>
+              <div className="company-hero-stat-label">Covered</div>
             </div>
-          )}
-
-          <div className="runs-table">
-            <div className="runs-table-header">
-              <span style={{ flex: 2 }}>Name</span>
-              <span style={{ flex: 3 }}>Address</span>
-              <span>Verified</span>
-              <span>Source</span>
-              <span>Status</span>
+            <div className="company-hero-stat">
+              <div className="company-hero-stat-value">{proxyCount}</div>
+              <div className="company-hero-stat-label">Proxies</div>
             </div>
-            {allAddresses.map((a) => (
-              <div key={a.address} className="runs-table-row" style={{ cursor: "default" }}>
-                <span className="runs-cell-name" style={{ flex: 2 }}>
-                  {a.name || <span style={{ color: "#94a3b8" }}>N/A</span>}
-                  {a.is_proxy && <span className="proxy-badge">proxy</span>}
-                </span>
-                <span className="mono runs-cell-addr" style={{ flex: 3 }}>{a.address}</span>
-                <span>{a.source_verified === true ? <span style={{ color: "#22c55e" }}>Yes</span> : a.source_verified === false ? <span style={{ color: "#ef4444" }}>No</span> : <span style={{ color: "#94a3b8" }}>N/A</span>}</span>
-                <span style={{ fontSize: 11 }}>{a.discovery_sources && a.discovery_sources.length > 0 ? a.discovery_sources.join(", ") : <span style={{ color: "#94a3b8" }}>-</span>}</span>
-                <span>{a.analyzed ? <span className="chip" style={{ fontSize: 10, padding: "2px 8px" }}>Analyzed</span> : <span style={{ color: "#94a3b8", fontSize: 11 }}>Not analyzed</span>}</span>
-              </div>
-            ))}
           </div>
-        </section>
+        </div>
+
+        <div className="company-score-right">
+          <p className="eyebrow" style={{ margin: 0 }}>Security Radar</p>
+          <ProtocolRadar axes={axes} size={300} />
+        </div>
+      </section>
+
+      {/* Inline Control Surface — real ProtocolSurface, not a static preview. */}
+      <section className="company-surface-band">
+        <div className="company-surface-band-header">
+          <div>
+            <p className="eyebrow" style={{ margin: 0 }}>Control Surface</p>
+            <h2 className="company-surface-band-title">
+              {contracts.length} contracts · {proxyCount} proxies · audits in the side panel
+            </h2>
+          </div>
+          <div className="company-surface-band-actions">
+            <button
+              type="button"
+              className="company-surface-action"
+              onClick={() => setAddressesModalOpen(true)}
+              title="Browse, label, and compare addresses"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M3 7h18" />
+                <path d="M3 12h18" />
+                <path d="M3 17h18" />
+                <circle cx="5" cy="7" r="0.5" fill="currentColor" />
+                <circle cx="5" cy="12" r="0.5" fill="currentColor" />
+                <circle cx="5" cy="17" r="0.5" fill="currentColor" />
+              </svg>
+              <span>Addresses</span>
+              <span className="company-surface-action-count">
+                {data.all_addresses?.length ?? contracts.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="company-surface-action"
+              onClick={() => setAuditsAdminOpen(true)}
+              title="Manage audit reports"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 2 4 6v6c0 5 3.5 9.3 8 10 4.5-.7 8-5 8-10V6l-8-4Z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+              <span>Audits</span>
+              {auditCoverage?.audit_count != null && (
+                <span className="company-surface-action-count">{auditCoverage.audit_count}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              className="company-surface-action primary"
+              onClick={onNavigateToSurface}
+              title="Open the fullscreen Control Surface"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M15 3h6v6" />
+                <path d="M9 21H3v-6" />
+                <path d="M21 3 14 10" />
+                <path d="M3 21l7-7" />
+              </svg>
+              <span>Fullscreen</span>
+            </button>
+          </div>
+        </div>
+        <div className="company-surface-embed">
+          <ProtocolSurface companyName={companyName} />
+        </div>
+      </section>
+
+      {addressesModalOpen && (
+        <AddressesModal
+          companyName={companyName}
+          onClose={() => setAddressesModalOpen(false)}
+          onSelectContract={(row) => {
+            // Only jump into the job view for addresses that were actually
+            // analyzed; discovered-only rows don't have a job_id. Pass the
+            // matching Contract job_id up to the App-level loader.
+            const full = contracts.find((c) => c.address?.toLowerCase() === row.address?.toLowerCase());
+            if (full?.job_id) onSelectContract(full.job_id);
+          }}
+        />
+      )}
+      {auditsAdminOpen && (
+        <AuditsAdminModal
+          companyName={companyName}
+          onClose={() => setAuditsAdminOpen(false)}
+        />
       )}
     </div>
   );
@@ -2418,6 +2390,7 @@ function monitorJobScope(job) {
 function PipelineDashboard() {
   const [allJobs, setAllJobs] = useState([]);
   const [stats, setStats] = useState(null);
+  const [auditPipeline, setAuditPipeline] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [expandedError, setExpandedError] = useState(null);
@@ -2426,8 +2399,17 @@ function PipelineDashboard() {
     let cancelled = false;
     async function fetchAll() {
       try {
-        const [jobs, s] = await Promise.all([api("/api/jobs"), api("/api/stats")]);
-        if (!cancelled) { setAllJobs(jobs); setStats(s); setLoaded(true); }
+        const [jobs, s, audits] = await Promise.all([
+          api("/api/jobs"),
+          api("/api/stats"),
+          getAuditPipeline().catch(() => null),
+        ]);
+        if (!cancelled) {
+          setAllJobs(jobs);
+          setStats(s);
+          setAuditPipeline(audits);
+          setLoaded(true);
+        }
       } catch {}
     }
     fetchAll();
@@ -2490,6 +2472,71 @@ function PipelineDashboard() {
       }))
       .filter((entry) => entry.jobs.length > 0),
   [visiblePipelineJobs]);
+
+  // Protocol-centric grouping: one card per protocol, collapsing the old
+  // "Live Stage Activity" (stage-grouped) and "Audit Extraction" (separate
+  // panel) into a single unified view. Audits are a parallel sidecar —
+  // they aren't a stage in the job pipeline, they run alongside it.
+  const protocolGroups = useMemo(() => {
+    const byCompany = new Map();
+    function ensure(company) {
+      const key = company || "__standalone__";
+      if (!byCompany.has(key)) {
+        byCompany.set(key, {
+          key,
+          company: company || null,
+          jobs: [],
+          audits: { text: { processing: [], pending: [], failed: [] }, scope: { processing: [], pending: [], failed: [] } },
+        });
+      }
+      return byCompany.get(key);
+    }
+    for (const j of visiblePipelineJobs) {
+      ensure(j.company).jobs.push(j);
+    }
+    if (auditPipeline) {
+      for (const [apiStage, localStage] of [["text_extraction", "text"], ["scope_extraction", "scope"]]) {
+        const bucket = auditPipeline[apiStage] || {};
+        for (const status of ["processing", "pending", "failed"]) {
+          for (const item of bucket[status] || []) {
+            ensure(item.company).audits[localStage][status].push(item);
+          }
+        }
+      }
+    }
+    // Keep only protocols with *active* work (running/queued jobs or any audit
+    // activity). Completed-only protocols drop out — their completion shows
+    // in the "Recently Completed" section below.
+    const groups = [...byCompany.values()].filter((g) => {
+      const anyActiveJob = g.jobs.some((j) => j.status === "processing" || j.status === "queued");
+      const anyAudit = ["text", "scope"].some((s) =>
+        g.audits[s].processing.length + g.audits[s].pending.length + g.audits[s].failed.length > 0,
+      );
+      return anyActiveJob || anyAudit;
+    });
+    // Sort: protocols with running jobs first (by most-recent update), then
+    // audit-only, then standalone.
+    groups.sort((a, b) => {
+      const rankA = a.jobs.some((j) => j.status === "processing") ? 0 : 1;
+      const rankB = b.jobs.some((j) => j.status === "processing") ? 0 : 1;
+      if (rankA !== rankB) return rankA - rankB;
+      const lastA = a.jobs.length ? Math.max(...a.jobs.map((j) => new Date(j.updated_at || j.created_at).getTime())) : 0;
+      const lastB = b.jobs.length ? Math.max(...b.jobs.map((j) => new Date(j.updated_at || j.created_at).getTime())) : 0;
+      return lastB - lastA;
+    });
+    return groups;
+  }, [visiblePipelineJobs, auditPipeline]);
+
+  // Completed-in-the-last-hour feed — replaces the old "Recent Activity"
+  // table, which duplicated the processing/queued information shown above.
+  const RECENT_WINDOW_MS = 60 * 60 * 1000;
+  const recentlyCompleted = useMemo(() => {
+    const cutoff = now - RECENT_WINDOW_MS;
+    return allJobs
+      .filter((j) => (j.status === "completed" || j.status === "failed") && j.updated_at && new Date(j.updated_at).getTime() >= cutoff)
+      .sort(sortByUpdatedAtDesc)
+      .slice(0, 20);
+  }, [allJobs, now]);
 
   if (!loaded) {
     return <div className="page"><section className="panel"><p style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>Loading pipeline status...</p></section></div>;
@@ -2572,120 +2619,262 @@ function PipelineDashboard() {
         </div>
       </section>
 
-      {activeStageGroups.length > 0 && (
+      {protocolGroups.length > 0 && (
         <section className="panel" style={{ marginTop: 16 }}>
           <div className="panel-header">
             <div>
-              <p className="eyebrow">Live Stage Activity</p>
-              <h2>{totals.processing} Running Jobs</h2>
+              <p className="eyebrow">Running Protocols</p>
+              <h2>{protocolGroups.length} active</h2>
             </div>
           </div>
-          <div className="monitor-stage-grid">
-            {activeStageGroups.map(({ stage, jobs }) => (
-              <article className="monitor-stage-card" key={stage}>
-                <div className="monitor-stage-card-header">
-                  <div className="monitor-stage-heading">
-                    <span className="monitor-stage-name" style={{ color: stageColors[stage] }}>{formatStageLabel(stage)}</span>
-                    <span className="monitor-stage-subtitle">{jobs.length} running</span>
-                  </div>
-                  <span className="chip" style={{ background: `${stageColors[stage]}18`, color: stageColors[stage], borderColor: `${stageColors[stage]}33` }}>
-                    live
-                  </span>
-                </div>
-                <div className="monitor-stage-list">
-                  {jobs.slice(0, 3).map((job) => {
-                    const created = new Date(job.created_at).getTime();
-                    const end = now;
-                    return (
-                      <div className="monitor-stage-item" key={job.job_id}>
-                        <div className="monitor-stage-item-top">
-                          <span className="monitor-stage-item-name">{monitorJobLabel(job)}</span>
-                          <span className="monitor-stage-item-time">{formatElapsed(end - created)}</span>
-                        </div>
-                        <div className="monitor-stage-item-meta">{monitorJobScope(job)}</div>
-                        <div className="monitor-stage-item-detail">{job.detail || "Working..."}</div>
-                      </div>
-                    );
-                  })}
-                  {jobs.length > 3 && <div className="monitor-stage-more">+{jobs.length - 3} more running in this stage</div>}
-                </div>
-              </article>
+          <div className="protocol-card-grid">
+            {protocolGroups.map((group) => (
+              <ProtocolCard
+                key={group.key}
+                group={group}
+                now={now}
+                stageColors={stageColors}
+                statusColors={statusColors}
+                expandedError={expandedError}
+                setExpandedError={setExpandedError}
+              />
             ))}
           </div>
         </section>
       )}
 
-      <AuditExtractionShelf />
-
-      {/* Active / Recent jobs table */}
       <section className="panel" style={{ marginTop: 16 }}>
         <div className="panel-header">
-          <div><p className="eyebrow">Recent Activity</p></div>
+          <div>
+            <p className="eyebrow">Recently Completed</p>
+            <h2>Last hour</h2>
+          </div>
+          <div className="chips">
+            <span className="chip" style={{ background: "rgba(34,197,94,0.12)", color: "#4ade80" }}>
+              {recentlyCompleted.filter((j) => j.status === "completed").length} done
+            </span>
+            {recentlyCompleted.some((j) => j.status === "failed") && (
+              <span className="chip" style={{ background: "rgba(239,68,68,0.12)", color: "#fca5a5" }}>
+                {recentlyCompleted.filter((j) => j.status === "failed").length} failed
+              </span>
+            )}
+          </div>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead>
-            <tr style={{ borderBottom: "1px solid rgba(148,163,184,0.15)", color: "#94a3b8", textAlign: "left" }}>
-              <th style={{ padding: "8px 12px" }}>Name</th>
-              <th style={{ padding: "8px 12px" }}>Address</th>
-              <th style={{ padding: "8px 12px" }}>Stage</th>
-              <th style={{ padding: "8px 12px" }}>Status</th>
-              <th style={{ padding: "8px 12px" }}>Time</th>
-              <th style={{ padding: "8px 12px" }}>Detail</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visiblePipelineJobs
-              .filter((j) => j.status === "processing" || j.status === "failed" || j.status === "queued")
-              .sort((a, b) => {
-                const order = { processing: 0, failed: 1, queued: 2 };
-                const delta = (order[a.status] ?? 3) - (order[b.status] ?? 3);
-                return delta !== 0 ? delta : sortByUpdatedAtDesc(a, b);
-              })
-              .slice(0, 30)
-              .map((j) => (
+        {recentlyCompleted.length === 0 ? (
+          <p className="empty" style={{ textAlign: "center", padding: "16px 0" }}>
+            No jobs have completed in the last hour.
+          </p>
+        ) : (
+          <div className="completion-tape">
+            {recentlyCompleted.map((j) => {
+              const done = new Date(j.updated_at).getTime();
+              const ago = now - done;
+              const label = j.name || j.company || (j.address ? shortenAddress(j.address) : "Job");
+              const isFailed = j.status === "failed";
+              return (
                 <React.Fragment key={j.job_id}>
-                  <tr
-                    style={{ borderBottom: "1px solid rgba(148,163,184,0.08)", cursor: j.status === "failed" ? "pointer" : "default" }}
-                    onClick={() => j.status === "failed" && setExpandedError(expandedError === j.job_id ? null : j.job_id)}
+                  <div
+                    className={`completion-row ${isFailed ? "failed" : ""}`}
+                    onClick={() => isFailed && setExpandedError(expandedError === j.job_id ? null : j.job_id)}
+                    style={{ cursor: isFailed ? "pointer" : "default" }}
                   >
-                    <td style={{ padding: "6px 12px", color: "#e2e8f0", fontWeight: 600 }}>{j.name || j.company || "—"}</td>
-                    <td style={{ padding: "6px 12px", color: "#64748b", fontFamily: "monospace", fontSize: 11 }}>{j.address ? j.address.slice(0, 10) + ".." : "—"}</td>
-                    <td style={{ padding: "6px 12px" }}>
-                      <span style={{ color: stageColors[j.stage] || "#94a3b8", fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{j.stage}</span>
-                    </td>
-                    <td style={{ padding: "6px 12px" }}>
-                      <span style={{ color: statusColors[j.status] || "#94a3b8", fontWeight: 600, fontSize: 11 }}>
-                        {j.status === "processing" ? "⚡ " : j.status === "failed" ? "✕ " : ""}{j.status}
-                      </span>
-                    </td>
-                    <td style={{ padding: "6px 12px", color: "#94a3b8", fontSize: 11, fontFamily: "monospace" }}>
-                      {(() => {
-                        const created = new Date(j.created_at).getTime();
-                        const end = (j.status === "completed" || j.status === "failed") ? new Date(j.updated_at).getTime() : now;
-                        return formatElapsed(end - created);
-                      })()}
-                    </td>
-                    <td style={{ padding: "6px 12px", color: "#64748b", fontSize: 11, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {j.status === "failed"
-                        ? <span style={{ color: "#fca5a5", fontWeight: 600 }}>{shortFailReason(j.error)}</span>
-                        : j.detail || ""}
-                    </td>
-                  </tr>
-                  {j.status === "failed" && expandedError === j.job_id && (
-                    <tr>
-                      <td colSpan={6} style={{ padding: 0 }}>
-                        <pre style={{ margin: 0, padding: "12px 16px", background: "rgba(239,68,68,0.06)", color: "#fca5a5", fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 300, overflow: "auto", borderBottom: "1px solid rgba(239,68,68,0.15)" }}>
-                          {j.error || "No error details available"}
-                        </pre>
-                      </td>
-                    </tr>
+                    <span className={`completion-dot ${isFailed ? "failed" : ""}`} />
+                    <span className="completion-name">{label}</span>
+                    <span className="completion-stage" style={{ color: stageColors[j.stage] || "#94a3b8" }}>
+                      {formatStageLabel(j.stage)}
+                    </span>
+                    <span className="completion-detail">
+                      {isFailed
+                        ? <span style={{ color: "#fca5a5" }}>{shortFailReason(j.error)}</span>
+                        : (j.detail || "")}
+                    </span>
+                    <span className="completion-time">{formatElapsed(ago)} ago</span>
+                  </div>
+                  {isFailed && expandedError === j.job_id && (
+                    <pre
+                      style={{
+                        margin: "2px 0 8px",
+                        padding: "10px 14px",
+                        background: "rgba(239,68,68,0.06)",
+                        color: "#fca5a5",
+                        fontSize: 11,
+                        fontFamily: "monospace",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-all",
+                        maxHeight: 260,
+                        overflow: "auto",
+                        borderRadius: 8,
+                        border: "1px solid rgba(239,68,68,0.18)",
+                      }}
+                    >
+                      {j.error || "No error details available"}
+                    </pre>
                   )}
                 </React.Fragment>
-              ))}
-          </tbody>
-        </table>
+              );
+            })}
+          </div>
+        )}
       </section>
     </div>
+  );
+}
+
+// ── Protocol card: shows all running work for a single protocol in one place,
+// including per-stage counts for its jobs and the audit extraction sidecar
+// that runs in parallel with the main pipeline.
+function ProtocolCard({ group, now, stageColors, statusColors, expandedError, setExpandedError }) {
+  const { company, jobs, audits } = group;
+  const running = jobs.filter((j) => j.status === "processing");
+  const queued = jobs.filter((j) => j.status === "queued");
+  const failed = jobs.filter((j) => j.status === "failed");
+  const completedChildren = jobs.filter((j) => j.status === "completed").length;
+
+  // Stage pills — every stage the protocol has jobs in, with running/queued counts.
+  const stagesInPlay = ALL_STAGES
+    .map((stage) => {
+      const stageJobs = jobs.filter((j) => j.stage === stage);
+      return { stage, stageJobs };
+    })
+    .filter((s) => s.stageJobs.length > 0);
+
+  const auditTotals = {
+    text: audits.text.processing.length + audits.text.pending.length,
+    scope: audits.scope.processing.length + audits.scope.pending.length,
+    textRunning: audits.text.processing.length,
+    scopeRunning: audits.scope.processing.length,
+    failed: audits.text.failed.length + audits.scope.failed.length,
+  };
+  const hasAuditActivity = auditTotals.text + auditTotals.scope + auditTotals.failed > 0;
+
+  return (
+    <article className="protocol-card">
+      <div className="protocol-card-header">
+        <div className="protocol-card-title">
+          <span className="protocol-card-name">{company || "Standalone contracts"}</span>
+          <span className="protocol-card-sub">
+            {jobs.length} job{jobs.length === 1 ? "" : "s"}
+            {completedChildren > 0 ? ` · ${completedChildren} done` : ""}
+          </span>
+        </div>
+        <div className="protocol-card-chips">
+          {running.length > 0 && (
+            <span className="chip" style={{ background: "rgba(245,158,11,0.12)", color: "#fbbf24" }}>
+              {running.length} running
+            </span>
+          )}
+          {queued.length > 0 && (
+            <span className="chip" style={{ background: "rgba(148,163,184,0.12)", color: "#cbd5e1" }}>
+              {queued.length} queued
+            </span>
+          )}
+          {failed.length > 0 && (
+            <span className="chip" style={{ background: "rgba(239,68,68,0.12)", color: "#fca5a5" }}>
+              {failed.length} failed
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Main pipeline lane: stage pills for stages the protocol currently has jobs in */}
+      <div className="protocol-lane">
+        <span className="protocol-lane-label">pipeline</span>
+        <div className="protocol-stage-pills">
+          {stagesInPlay.length === 0 ? (
+            <span className="protocol-stage-empty">—</span>
+          ) : (
+            stagesInPlay.map(({ stage, stageJobs }) => {
+              const stageRunning = stageJobs.filter((j) => j.status === "processing").length;
+              const stageQueued = stageJobs.filter((j) => j.status === "queued").length;
+              const stageFailed = stageJobs.filter((j) => j.status === "failed").length;
+              const color = stageColors[stage] || "#94a3b8";
+              return (
+                <span
+                  key={stage}
+                  className="protocol-stage-pill"
+                  style={{ borderColor: `${color}55`, color }}
+                >
+                  <span className="protocol-stage-pill-name">{formatStageLabel(stage)}</span>
+                  <span className="protocol-stage-pill-counts">
+                    {stageRunning > 0 && <span style={{ color: statusColors.processing }}>{stageRunning}</span>}
+                    {stageQueued > 0 && <span style={{ color: statusColors.queued }}>{stageQueued}</span>}
+                    {stageFailed > 0 && <span style={{ color: statusColors.failed }}>{stageFailed}</span>}
+                  </span>
+                </span>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Audit sidecar — parallel to the pipeline, not a stage in it */}
+      {hasAuditActivity && (
+        <div className="protocol-lane protocol-lane-audit">
+          <span className="protocol-lane-label">audits</span>
+          <div className="protocol-stage-pills">
+            <span className="protocol-stage-pill" style={{ borderColor: "#0891b255", color: "#22d3ee" }}>
+              <span className="protocol-stage-pill-name">Text</span>
+              <span className="protocol-stage-pill-counts">
+                {auditTotals.textRunning > 0 && <span style={{ color: statusColors.processing }}>{auditTotals.textRunning}</span>}
+                {audits.text.pending.length > 0 && <span style={{ color: statusColors.queued }}>{audits.text.pending.length}</span>}
+                {audits.text.failed.length > 0 && <span style={{ color: statusColors.failed }}>{audits.text.failed.length}</span>}
+              </span>
+            </span>
+            <span className="protocol-stage-pill" style={{ borderColor: "#7c3aed55", color: "#a78bfa" }}>
+              <span className="protocol-stage-pill-name">Scope</span>
+              <span className="protocol-stage-pill-counts">
+                {auditTotals.scopeRunning > 0 && <span style={{ color: statusColors.processing }}>{auditTotals.scopeRunning}</span>}
+                {audits.scope.pending.length > 0 && <span style={{ color: statusColors.queued }}>{audits.scope.pending.length}</span>}
+                {audits.scope.failed.length > 0 && <span style={{ color: statusColors.failed }}>{audits.scope.failed.length}</span>}
+              </span>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Inline children: up to 3 running jobs with their detail */}
+      {(running.length > 0 || failed.length > 0) && (
+        <div className="protocol-children">
+          {running.slice(0, 3).map((job) => {
+            const created = new Date(job.created_at).getTime();
+            return (
+              <div className="protocol-child" key={job.job_id}>
+                <span className="protocol-child-dot processing" />
+                <span className="protocol-child-name">{monitorJobLabel(job)}</span>
+                <span className="protocol-child-stage" style={{ color: stageColors[job.stage] }}>
+                  {formatStageLabel(job.stage)}
+                </span>
+                <span className="protocol-child-detail">{job.detail || "Working…"}</span>
+                <span className="protocol-child-time">{formatElapsed(now - created)}</span>
+              </div>
+            );
+          })}
+          {running.length > 3 && (
+            <div className="protocol-child-more">+{running.length - 3} more running</div>
+          )}
+          {failed.slice(0, 2).map((job) => (
+            <React.Fragment key={job.job_id}>
+              <div
+                className="protocol-child failed"
+                onClick={() => setExpandedError(expandedError === job.job_id ? null : job.job_id)}
+              >
+                <span className="protocol-child-dot failed" />
+                <span className="protocol-child-name">{monitorJobLabel(job)}</span>
+                <span className="protocol-child-stage" style={{ color: stageColors[job.stage] }}>
+                  {formatStageLabel(job.stage)}
+                </span>
+                <span className="protocol-child-detail" style={{ color: "#fca5a5" }}>
+                  {shortFailReason(job.error)}
+                </span>
+              </div>
+              {expandedError === job.job_id && (
+                <pre className="protocol-child-error">{job.error || "No error details available"}</pre>
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -2697,6 +2886,7 @@ function PipelineDashboard() {
 
 function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectCompany }) {
   const [search, setSearch] = useState("");
+  const protocolSectionRef = useRef(null);
 
   const { companies, standalone } = useMemo(() => {
     const map = new Map();
@@ -2716,10 +2906,16 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectComp
     return companies.filter((c) => c.company.toLowerCase().includes(q));
   }, [companies, search]);
 
+  const contractCount = analyses.length;
+
+  function scrollToProtocols() {
+    protocolSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
-    <div className="page">
+    <div>
       {activeJobs.length > 0 && (
-        <div className="active-jobs-bar">
+        <div className="active-jobs-bar" style={{ maxWidth: 1400, margin: "0 auto", padding: "0 24px" }}>
           {activeJobs.slice(0, 8).map((j) => {
             const stageIdx = PIPELINE_STAGES.indexOf(j.stage);
             const isDone = j.stage === "done" || j.status === "completed";
@@ -2740,52 +2936,50 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectComp
         </div>
       )}
 
-      <section className="panel">
-        <div className="panel-header">
+      <section ref={protocolSectionRef} id="protocols" className="home-protocol-section">
+        <div className="home-protocol-header">
           <div>
-            <p className="eyebrow">Analyzed Protocols</p>
-            <h2>Companies</h2>
+            <p className="eyebrow" style={{ margin: 0 }}>Analyzed Protocols</p>
+            <h2>All protocols</h2>
           </div>
-          <div className="runs-search" style={{ margin: 0 }}>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search companies..." />
+          <div className="home-protocol-search">
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search protocols..." />
           </div>
         </div>
 
         {filtered.length > 0 ? (
-          <div className="runs-table">
-            <div className="runs-table-header">
-              <span style={{ flex: 2 }}>Company</span>
-              <span>Contracts</span>
-            </div>
+          <div className="home-protocol-list">
             {filtered.map((c) => (
-              <button key={c.company} className="runs-table-row" onClick={() => onSelectCompany(c.company)}>
-                <span className="runs-cell-name" style={{ flex: 2 }}>{c.company}</span>
-                <span>{c.contracts}</span>
+              <button key={c.company} className="home-protocol-row" onClick={() => onSelectCompany(c.company)}>
+                <ProtocolLogo name={c.company} />
+                <span className="home-protocol-row-name">{c.company}</span>
+                <span className="home-protocol-row-count">{c.contracts} contracts</span>
+                <span className="home-protocol-row-arrow" aria-hidden="true">→</span>
               </button>
             ))}
           </div>
         ) : (
-          <p className="empty">{search ? "No companies match your search." : "No analyses yet. Submit a company to get started."}</p>
+          <p className="empty">{search ? "No protocols match your search." : "No analyses yet. Submit a protocol to get started."}</p>
+        )}
+
+        {standalone.length > 0 && (
+          <section className="panel" style={{ marginTop: 32 }}>
+            <h3 style={{ marginBottom: 12 }}>Standalone analyses</h3>
+            <div className="runs-table">
+              <div className="runs-table-header">
+                <span style={{ flex: 2 }}>Contract</span>
+                <span style={{ flex: 3 }}>Address</span>
+              </div>
+              {standalone.map((a) => (
+                <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
+                  <span className="runs-cell-name" style={{ flex: 2 }}>{a.contract_name || a.run_name || "Unknown"}</span>
+                  <span className="mono runs-cell-addr" style={{ flex: 3 }}>{a.address || ""}</span>
+                </button>
+              ))}
+            </div>
+          </section>
         )}
       </section>
-
-      {standalone.length > 0 && (
-        <section className="panel" style={{ marginTop: 16 }}>
-          <h3 style={{ marginBottom: 12 }}>Standalone Analyses</h3>
-          <div className="runs-table">
-            <div className="runs-table-header">
-              <span style={{ flex: 2 }}>Contract</span>
-              <span style={{ flex: 3 }}>Address</span>
-            </div>
-            {standalone.map((a) => (
-              <button key={a.job_id || a.run_name} className="runs-table-row" onClick={() => onSelect(a.job_id)}>
-                <span className="runs-cell-name" style={{ flex: 2 }}>{a.contract_name || a.run_name || "Unknown"}</span>
-                <span className="mono runs-cell-addr" style={{ flex: 3 }}>{a.address || ""}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 }
@@ -3156,10 +3350,6 @@ export default function App() {
           companyName={companyName}
           onSelectContract={(jobId) => loadAnalysis(jobId, { history: "push" })}
           onNavigateToSurface={() => navigateCompanyTab("surface")}
-          onNavigateToGraph={() => navigateCompanyTab("graph")}
-          onNavigateToRisk={() => navigateCompanyTab("risk")}
-          onNavigateToMonitoring={() => navigateCompanyTab("monitoring")}
-          onNavigateToAudits={() => navigateCompanyTab("audits")}
         />
       )}
       {isCompany && companyName && companyTab === "surface" && (
@@ -3190,13 +3380,16 @@ export default function App() {
       )}
 
       {!isDetail && !isMonitor && !isCompany && !isProxies && (
-        <RunsPage
-          analyses={analyses}
-          activeJobs={activeJobs}
-          onSelect={(runId) => loadAnalysis(runId, { history: "push" })}
-          onDiscoverMore={discoverMore}
-          onSelectCompany={openCompany}
-        />
+        <>
+          <ProductHero form={form} setForm={setForm} onSubmit={submit} loading={loading} />
+          <RunsPage
+            analyses={analyses}
+            activeJobs={activeJobs}
+            onSelect={(runId) => loadAnalysis(runId, { history: "push" })}
+            onDiscoverMore={discoverMore}
+            onSelectCompany={openCompany}
+          />
+        </>
       )}
     </ErrorBoundary>
   );

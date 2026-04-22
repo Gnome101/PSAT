@@ -14,7 +14,6 @@ from .shared import (
     _entry_points,
     _function_effects,
     _is_mapping_variable,
-    _is_role_identifier,
     _node_contains_require_or_assert,
     _source_evidence,
 )
@@ -48,6 +47,20 @@ def _variable_name(item) -> str:
     if item is None:
         return ""
     return getattr(item, "name", None) or str(item)
+
+
+def _type_name(item) -> str:
+    if item is None:
+        return ""
+    return str(getattr(item, "type", None) or "")
+
+
+def _is_bytes32_typed(item) -> bool:
+    return _type_name(item) == "bytes32"
+
+
+def _is_bool_typed(item) -> bool:
+    return _type_name(item) == "bool"
 
 
 def _lower_camel(value: str) -> str:
@@ -101,6 +114,95 @@ def _looks_like_external_authority_call(function_name: str, destination_name: st
     )
 
 
+def _looks_like_external_helper_guard_call(ir, caller_aliases: set[str], destination_name: str | None) -> bool:
+    if type(ir).__name__ != "HighLevelCall":
+        return False
+    if not destination_name:
+        return False
+    arguments = list(getattr(ir, "arguments", []) or [])
+    if not any(_variable_name(argument) in caller_aliases for argument in arguments):
+        return False
+    function = getattr(ir, "function", None)
+    if not function:
+        return False
+    is_view_like = bool(getattr(function, "view", False) or getattr(function, "pure", False))
+    if not is_view_like:
+        return False
+    return getattr(ir, "lvalue", None) is None
+
+
+def _looks_like_policy_helper_call(arguments: list[Any], caller_aliases: set[str]) -> bool:
+    has_caller = any(_variable_name(argument) in caller_aliases for argument in arguments)
+    if not has_caller:
+        return False
+    non_caller = [argument for argument in arguments if _variable_name(argument) not in caller_aliases]
+    has_address = any(_type_name(argument) == "address" for argument in non_caller)
+    has_bytes4 = any(_type_name(argument) == "bytes4" for argument in non_caller)
+    return has_address and has_bytes4
+
+
+def _resolve_role_source(item, role_aliases: dict[str, str]) -> str | None:
+    name = _variable_name(item)
+    if not name:
+        return None
+    if name in role_aliases:
+        return role_aliases[name]
+    if not _is_bytes32_typed(item):
+        return None
+    if name.startswith("TMP_"):
+        return None
+    return name
+
+
+def _role_sources_from_arguments(
+    arguments: list[Any],
+    caller_aliases: set[str],
+    role_aliases: dict[str, str],
+) -> list[str]:
+    sources: list[str] = []
+    for argument in arguments:
+        if _variable_name(argument) in caller_aliases:
+            continue
+        source = _resolve_role_source(argument, role_aliases)
+        if source and source not in sources:
+            sources.append(source)
+    return sources
+
+
+def _update_role_aliases_for_ir(ir, role_aliases: dict[str, str]) -> None:
+    lvalue_name = _variable_name(getattr(ir, "lvalue", None))
+    if type(ir).__name__ == "Assignment":
+        reads = list(getattr(ir, "read", []) or [])
+        if lvalue_name and len(reads) == 1:
+            source = _resolve_role_source(reads[0], role_aliases)
+            if source:
+                role_aliases[lvalue_name] = source
+        return
+
+    if type(ir).__name__ not in {"HighLevelCall", "InternalCall", "LibraryCall"}:
+        return
+    if not lvalue_name or not _is_bytes32_typed(getattr(ir, "lvalue", None)):
+        return
+
+    arguments = list(getattr(ir, "arguments", []) or [])
+    function_name = getattr(ir, "function_name", None) or getattr(getattr(ir, "function", None), "name", None)
+    if not arguments and function_name:
+        role_aliases[lvalue_name] = str(function_name)
+        return
+
+    if len(arguments) == 1:
+        source = _resolve_role_source(arguments[0], role_aliases)
+        if source:
+            role_aliases[lvalue_name] = source
+
+
+def _updated_role_aliases(node, role_aliases: dict[str, str]) -> dict[str, str]:
+    aliases = dict(role_aliases)
+    for ir in getattr(node, "irs", []) or []:
+        _update_role_aliases_for_ir(ir, aliases)
+    return aliases
+
+
 def _updated_state_aliases(node, state_aliases: dict[str, str]) -> dict[str, str]:
     aliases = dict(state_aliases)
     for ir in getattr(node, "irs", []):
@@ -132,6 +234,23 @@ def _propagated_caller_aliases(ir, caller_aliases: set[str]) -> set[str]:
     for parameter, argument in zip(parameters, arguments):
         if _variable_name(argument) in caller_aliases and getattr(parameter, "name", ""):
             aliases.add(parameter.name)
+    return aliases
+
+
+def _propagated_role_aliases(ir, role_aliases: dict[str, str]) -> dict[str, str]:
+    aliases = dict(role_aliases)
+    callee = getattr(ir, "function", None)
+    if callee is None:
+        return aliases
+
+    parameters = list(getattr(callee, "parameters", []) or [])
+    arguments = list(getattr(ir, "arguments", []) or [])
+    for parameter, argument in zip(parameters, arguments):
+        if not getattr(parameter, "name", ""):
+            continue
+        source = _resolve_role_source(argument, role_aliases)
+        if source:
+            aliases[parameter.name] = source
     return aliases
 
 
@@ -298,26 +417,51 @@ def _index_reads_caller(node, caller_aliases: set[str]) -> bool:
 
 
 def _direct_structural_guards(
-    node, project_dir: Path, caller_aliases: set[str], state_aliases: dict[str, str]
+    node,
+    project_dir: Path,
+    caller_aliases: set[str],
+    state_aliases: dict[str, str],
+    role_aliases: dict[str, str],
 ) -> list[dict[str, Any]]:
     guards: list[dict[str, Any]] = []
     state_reads = [variable for variable in getattr(node, "state_variables_read", []) if getattr(variable, "name", "")]
     evidence = [_source_evidence(node, project_dir, detail=f"guard node {node.node_id}")]
-    is_guard_source = _node_contains_require_or_assert(node) or _node_type_name(node) in {"IF", "IFLOOP", "RETURN"}
+    high_level_calls = [ir for ir in getattr(node, "irs", []) if type(ir).__name__ == "HighLevelCall"]
+    has_external_helper_guard = any(
+        _looks_like_external_helper_guard_call(
+            ir,
+            caller_aliases,
+            _resolve_state_source(getattr(ir, "destination", None), state_aliases)
+            or _variable_name(getattr(ir, "destination", None)),
+        )
+        for ir in high_level_calls
+    )
+    is_guard_source = (
+        _node_contains_require_or_assert(node)
+        or _node_type_name(node) in {"IF", "IFLOOP", "RETURN"}
+        or has_external_helper_guard
+    )
     if not is_guard_source:
         return guards
 
+    local_role_aliases = dict(role_aliases)
     for ir in getattr(node, "irs", []):
         if type(ir).__name__ == "HighLevelCall":
             destination = getattr(ir, "destination", None)
             destination_name = _resolve_state_source(destination, state_aliases) or _variable_name(destination)
             function_name = getattr(ir, "function_name", None) or getattr(getattr(ir, "function", None), "name", None)
-            argument_names = {_variable_name(argument) for argument in getattr(ir, "arguments", []) or []}
+            arguments = list(getattr(ir, "arguments", []) or [])
+            argument_names = {_variable_name(argument) for argument in arguments}
+            role_sources = _role_sources_from_arguments(arguments, caller_aliases, local_role_aliases)
             if (
                 destination_name
                 and function_name
                 and any(name in caller_aliases for name in argument_names)
-                and _looks_like_external_authority_call(str(function_name), destination_name)
+                and (
+                    _looks_like_external_authority_call(str(function_name), destination_name)
+                    or _is_bool_typed(getattr(ir, "lvalue", None))
+                    or _looks_like_external_helper_guard_call(ir, caller_aliases, destination_name)
+                )
             ):
                 guards.append(
                     {
@@ -331,12 +475,55 @@ def _direct_structural_guards(
                             }
                         ],
                         "evidence": evidence,
-                        "details": [f"node:{node.node_id}", "external call guard"],
+                        "details": [
+                            f"node:{node.node_id}",
+                            "external call guard",
+                            *(
+                                ["policy_like_args"]
+                                if _looks_like_policy_helper_call(arguments, caller_aliases)
+                                else []
+                            ),
+                        ],
                     }
                 )
+                if role_sources:
+                    guards.append(
+                        {
+                            "kind": "role_membership_check",
+                            "controllers": [
+                                {
+                                    "kind": "role_identifier",
+                                    "label": source,
+                                    "source": source,
+                                    "evidence": [
+                                        _source_evidence(
+                                            argument,
+                                            project_dir,
+                                            detail=f"role source {source}",
+                                        )
+                                    ],
+                                }
+                                for source, argument in (
+                                    (
+                                        source,
+                                        next(
+                                            arg
+                                            for arg in arguments
+                                            if _resolve_role_source(arg, local_role_aliases) == source
+                                        ),
+                                    )
+                                    for source in role_sources
+                                )
+                            ],
+                            "evidence": evidence,
+                            "details": [f"node:{node.node_id}", "external role guard"],
+                        }
+                    )
+            _update_role_aliases_for_ir(ir, local_role_aliases)
             continue
 
         if type(ir).__name__ != "Binary":
+            _update_role_aliases_for_ir(ir, local_role_aliases)
             continue
 
         left = getattr(ir, "variable_left", None)
@@ -382,6 +569,7 @@ def _direct_structural_guards(
                     "details": [f"node:{node.node_id}", "msg.sender equality to storage-derived state"],
                 }
             )
+        _update_role_aliases_for_ir(ir, local_role_aliases)
 
     mapping_reads = [variable for variable in state_reads if _is_mapping_variable(variable)]
     if mapping_reads and _index_reads_caller(node, caller_aliases):
@@ -406,6 +594,16 @@ def _direct_structural_guards(
 
 
 def _guards_from_internal_call(ir, project_dir: Path, seen: set[str], caller_aliases: set[str]) -> list[dict[str, Any]]:
+    return _guards_from_internal_call_with_roles(ir, project_dir, seen, caller_aliases, {})
+
+
+def _guards_from_internal_call_with_roles(
+    ir,
+    project_dir: Path,
+    seen: set[str],
+    caller_aliases: set[str],
+    role_aliases: dict[str, str],
+) -> list[dict[str, Any]]:
     guards: list[dict[str, Any]] = []
     callee = getattr(ir, "function", None)
     if callee is None:
@@ -442,45 +640,72 @@ def _guards_from_internal_call(ir, project_dir: Path, seen: set[str], caller_ali
             }
         )
 
-    arguments = [argument for argument in getattr(ir, "arguments", []) or [] if getattr(argument, "name", "")]
-    role_arguments = [argument for argument in arguments if _is_role_identifier(argument)]
-    if role_arguments:
+    arguments = [argument for argument in getattr(ir, "arguments", []) or [] if _variable_name(argument)]
+    role_sources = _role_sources_from_arguments(arguments, caller_aliases, role_aliases)
+    propagated_role_aliases = _propagated_role_aliases(ir, role_aliases)
+
+    nested_seen = {callee_name, *seen}
+    nested_guards = _structural_guards_for_unit(
+        callee,
+        project_dir,
+        nested_seen,
+        _propagated_caller_aliases(ir, caller_aliases),
+        propagated_role_aliases,
+    )
+    nested_role_sources = {
+        controller["source"]
+        for guard in nested_guards
+        if guard.get("kind") == "role_membership_check"
+        for controller in guard.get("controllers", [])
+        if controller.get("source")
+    }
+    callee_type = type(callee).__name__
+    if role_sources and (
+        callee_type == "Modifier"
+        or any(guard.get("kind") in {"external_authority_check", "role_membership_check"} for guard in nested_guards)
+    ) and not set(role_sources).issubset(nested_role_sources):
         guards.append(
             {
                 "kind": "role_membership_check",
                 "controllers": [
                     {
                         "kind": "role_identifier",
-                        "label": argument.name,
-                        "source": argument.name,
+                        "label": source,
+                        "source": source,
                         "evidence": [_source_evidence(argument, project_dir)],
                     }
-                    for argument in role_arguments
+                    for source, argument in (
+                        (source, next(arg for arg in arguments if _resolve_role_source(arg, role_aliases) == source))
+                        for source in role_sources
+                    )
                 ],
                 "evidence": [_source_evidence(callee, project_dir, detail=f"via {callee_name}")],
-                "details": [f"via:{callee_name}", "role-scoped modifier/helper call"],
+                "details": [f"via:{callee_name}", "propagated role-scoped guard"],
             }
         )
 
-    nested_seen = {callee_name, *seen}
-    guards.extend(
-        _structural_guards_for_unit(callee, project_dir, nested_seen, _propagated_caller_aliases(ir, caller_aliases))
-    )
+    guards.extend(nested_guards)
     return guards
 
 
 def _structural_guards_for_unit(
-    unit, project_dir: Path, seen: set[str], caller_aliases: set[str]
+    unit,
+    project_dir: Path,
+    seen: set[str],
+    caller_aliases: set[str],
+    role_aliases: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     guards: list[dict[str, Any]] = []
     state_aliases: dict[str, str] = {}
+    role_aliases = dict(role_aliases or {})
     for node in getattr(unit, "nodes", []):
-        guards.extend(_direct_structural_guards(node, project_dir, caller_aliases, state_aliases))
+        guards.extend(_direct_structural_guards(node, project_dir, caller_aliases, state_aliases, role_aliases))
         for ir in getattr(node, "irs", []):
             if type(ir).__name__ not in {"InternalCall", "LibraryCall"}:
                 continue
-            guards.extend(_guards_from_internal_call(ir, project_dir, seen, caller_aliases))
+            guards.extend(_guards_from_internal_call_with_roles(ir, project_dir, seen, caller_aliases, role_aliases))
         state_aliases = _updated_state_aliases(node, state_aliases)
+        role_aliases = _updated_role_aliases(node, role_aliases)
     return guards
 
 
@@ -502,16 +727,18 @@ def _dedupe_guard_candidates(guards: list[dict[str, Any]]) -> list[dict[str, Any
 def _guards_for_sink(function, sink_node, project_dir: Path) -> list[dict[str, Any]]:
     guards: list[dict[str, Any]] = []
     state_aliases: dict[str, str] = {}
+    role_aliases: dict[str, str] = {}
     for node in sorted(sink_node.dominators, key=lambda item: item.node_id):
         node_type = getattr(node, "type", None)
         if node is sink_node or getattr(node_type, "name", None) == "ENTRYPOINT":
             continue
-        guards.extend(_direct_structural_guards(node, project_dir, {"msg.sender"}, state_aliases))
+        guards.extend(_direct_structural_guards(node, project_dir, {"msg.sender"}, state_aliases, role_aliases))
         for ir in getattr(node, "irs", []):
             if type(ir).__name__ not in {"InternalCall", "LibraryCall"}:
                 continue
-            guards.extend(_guards_from_internal_call(ir, project_dir, set(), {"msg.sender"}))
+            guards.extend(_guards_from_internal_call_with_roles(ir, project_dir, set(), {"msg.sender"}, role_aliases))
         state_aliases = _updated_state_aliases(node, state_aliases)
+        role_aliases = _updated_role_aliases(node, role_aliases)
     return _dedupe_guard_candidates(guards)
 
 

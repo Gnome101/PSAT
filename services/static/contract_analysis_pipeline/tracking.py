@@ -21,6 +21,7 @@ from schemas.contract_analysis import (
 from .shared import (
     _contract_functions,
     _declaring_contract_name,
+    _looks_like_role_identifier_name,
     _source_evidence,
 )
 
@@ -156,6 +157,37 @@ def _functions_by_signature(contract) -> dict[str, object]:
     }
 
 
+def _role_identifier_authority_sources(
+    permission_graph: PermissionGraph,
+    access_control: AccessControlAnalysis,
+) -> dict[str, str]:
+    kinds_by_source: dict[str, set[str]] = {}
+    for controller in permission_graph.get("controllers", []):
+        source = str(controller.get("source") or "")
+        kind = str(controller.get("kind") or "")
+        if not source or not kind:
+            continue
+        kinds_by_source.setdefault(source, set()).add(kind)
+
+    role_to_authority: dict[str, str | None] = {}
+    for privileged in access_control.get("privileged_functions", []):
+        refs = [str(ref) for ref in privileged.get("controller_refs", []) if isinstance(ref, str)]
+        role_refs = [ref for ref in refs if "role_identifier" in kinds_by_source.get(ref, set())]
+        authority_refs = [ref for ref in refs if "external_contract" in kinds_by_source.get(ref, set())]
+        unique_authorities = sorted(set(authority_refs))
+        if len(unique_authorities) != 1:
+            continue
+        authority_source = unique_authorities[0]
+        for role_ref in role_refs:
+            existing = role_to_authority.get(role_ref)
+            if existing is None:
+                role_to_authority[role_ref] = authority_source
+            elif existing != authority_source:
+                role_to_authority[role_ref] = None
+
+    return {role: source for role, source in role_to_authority.items() if source}
+
+
 def _writer_records_for_targets(
     contract,
     project_dir: Path,
@@ -212,11 +244,37 @@ def build_controller_tracking(
 ) -> list[ControllerTrackingTarget]:
     """Build event-first tracking metadata for mutable controllers discovered in the permission graph."""
     event_lookup = _event_index(contract)
+    role_authority_sources = _role_identifier_authority_sources(permission_graph, access_control or {})
 
     tracking_targets: list[ControllerTrackingTarget] = []
     for controller in permission_graph["controllers"]:
         controller_kind = controller["kind"]
         controller_source = controller["source"]
+
+        if controller_kind == "role_identifier":
+            read_spec = {"strategy": "getter_call", "target": controller_source}
+            authority_source = role_authority_sources.get(controller_source)
+            if authority_source:
+                read_spec["contract_source"] = authority_source
+            tracking_targets.append(
+                {
+                    "controller_id": controller["id"],
+                    "label": controller["label"],
+                    "source": controller_source,
+                    "kind": controller_kind,
+                    "read_spec": read_spec,
+                    "confidence": controller.get("confidence"),
+                    "tracking_mode": "state_only",
+                    "writer_functions": [],
+                    "associated_events": [],
+                    "polling_sources": [controller_source],
+                    "notes": [
+                        "Resolve the role identifier via eth_call and expand current "
+                        "members through the authority adapter when supported."
+                    ],
+                }
+            )
+            continue
 
         if controller_kind not in {"state_variable", "external_contract"}:
             tracking_targets.append(
@@ -284,22 +342,33 @@ def build_controller_tracking(
         )
 
     existing_ids = {target["controller_id"] for target in tracking_targets}
+    existing_kinds_by_source: dict[str, set[str]] = {}
+    for target in tracking_targets:
+        existing_kinds_by_source.setdefault(target["source"], set()).add(target["kind"])
     if access_control:
         for privileged in access_control.get("privileged_functions", []):
             for ref in privileged.get("controller_refs", []):
                 if ref in {"role", "_role"}:
                     continue
-                kind = "role_identifier" if ref.endswith("_ROLE") else "state_variable"
+                kind = "role_identifier" if _looks_like_role_identifier_name(ref) else "state_variable"
                 controller_id = f"{kind}:{ref}"
                 if controller_id in existing_ids:
                     continue
+                if kind == "state_variable" and "role_identifier" in existing_kinds_by_source.get(ref, set()):
+                    continue
+                read_spec = None
+                if kind == "role_identifier":
+                    read_spec = {"strategy": "getter_call", "target": ref}
+                    authority_source = role_authority_sources.get(ref)
+                    if authority_source:
+                        read_spec["contract_source"] = authority_source
                 tracking_targets.append(
                     {
                         "controller_id": controller_id,
                         "label": ref,
                         "source": ref,
                         "kind": kind,  # type: ignore[typeddict-item]
-                        "read_spec": None,
+                        "read_spec": read_spec,
                         "confidence": None,
                         "tracking_mode": "state_only",
                         "writer_functions": [],
@@ -313,6 +382,7 @@ def build_controller_tracking(
                     }
                 )
                 existing_ids.add(controller_id)
+                existing_kinds_by_source.setdefault(ref, set()).add(kind)
 
     return sorted(tracking_targets, key=lambda item: item["label"])
 

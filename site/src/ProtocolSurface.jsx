@@ -19,6 +19,8 @@ import questionMarkIcon from "./assets/question-mark.svg";
 import vaultIcon from "./assets/vault.svg";
 
 import { getCoverage, getTimeline } from "./api/audits.js";
+import { listAddressLabels } from "./api/addressLabels.js";
+import AddressLabelInline from "./AddressLabelInline.jsx";
 
 const CONTROL_EFFECTS = new Set([
   "implementation_update",
@@ -228,92 +230,59 @@ function isRoleIdAddress(address) {
   return leadingZeros >= 24;
 }
 
-function collectPrincipals(fn, companyData) {
-  const byAddress = new Map();
-
-  // Build a graph of who controls whom from per-contract control graphs
-  // controllerOf: address → [{address, type, label, details}]
-  const controllerOf = new Map();
+// Build a minimal nodeInfo + edge lookup over the per-contract control graphs
+// so we can surface *indirect* upstream governance context without flattening
+// function-level direct callers into it.
+function buildControlGraphIndex(companyData) {
+  const controllerOf = new Map(); // from-address → [{to, relation}]
   const nodeInfo = new Map();
-
-  if (companyData) {
-    for (const contract of companyData.contracts || []) {
-      const cg = contract.control_graph;
-      if (!cg) continue;
-      for (const node of cg.nodes || []) {
-        const addr = (node.address || "").toLowerCase();
-        if (addr) nodeInfo.set(addr, node);
-      }
-      for (const edge of cg.edges || []) {
-        if (edge.relation === "safe_owner") continue; // owners are nested inside their Safe
-        const from = (edge.from || "").toLowerCase();
-        const to = (edge.to || "").toLowerCase();
-        if (!from || !to || from === to) continue;
-        if (!controllerOf.has(from)) controllerOf.set(from, []);
-        const existing = controllerOf.get(from);
-        if (!existing.some((e) => e.to === to)) {
-          existing.push({ to, relation: edge.relation });
-        }
+  if (!companyData) return { controllerOf, nodeInfo };
+  for (const contract of companyData.contracts || []) {
+    const cg = contract.control_graph;
+    if (!cg) continue;
+    for (const node of cg.nodes || []) {
+      const addr = (node.address || "").toLowerCase();
+      if (addr) nodeInfo.set(addr, node);
+    }
+    for (const edge of cg.edges || []) {
+      // safe_owner edges are UI noise — owners are rendered nested under their Safe.
+      if (edge.relation === "safe_owner") continue;
+      const from = (edge.from || "").toLowerCase();
+      const to = (edge.to || "").toLowerCase();
+      if (!from || !to || from === to) continue;
+      if (!controllerOf.has(from)) controllerOf.set(from, []);
+      const existing = controllerOf.get(from);
+      if (!existing.some((e) => e.to === to)) {
+        existing.push({ to, relation: edge.relation });
       }
     }
   }
+  return { controllerOf, nodeInfo };
+}
 
-  // Walk the control graph to find the first non-contract controller
-  function resolveController(address, visited) {
-    if (!visited) visited = new Set();
-    if (visited.has(address)) return null;
-    visited.add(address);
-    const node = nodeInfo.get(address);
-    if (!node) return null;
-    // If this node is not a contract, it's the real controller
-    if (node.type !== "contract") return node;
-    // Walk outgoing edges to find who this contract delegates to
-    const edges = controllerOf.get(address);
-    if (!edges || edges.length === 0) return null;
-    for (const edge of edges) {
-      const resolved = resolveController(edge.to, visited);
-      if (resolved) return resolved;
-    }
-    return null;
-  }
+// Direct callers = exactly what effective_permissions emits for the function:
+// direct_owner, authority_roles[].principals, controllers[].principals. Contract
+// principals stay as contracts — we do NOT replace them with "first reachable
+// Safe/timelock/EOA" via the control graph, because that produces false claims
+// like "Safe can pause" when the function is role-gated and the Safe doesn't
+// hold that role. See ProtocolSurface note at ~line 236.
+function collectDirectCallers(fn) {
+  const byAddress = new Map();
 
   function pushPrincipal(principal, origin) {
     const address = String(principal?.address || "").toLowerCase();
     if (!address.startsWith("0x")) return;
     if (isRoleIdAddress(address)) return;
-
-    // Resolve contract principals through the control graph
-    if (principal.resolved_type === "contract") {
-      const resolved = resolveController(address);
-      if (resolved) {
-        const rAddr = (resolved.address || "").toLowerCase();
-        if (rAddr && !isRoleIdAddress(rAddr)) {
-          if (byAddress.has(rAddr)) {
-            byAddress.get(rAddr).origins.push(origin);
-          } else {
-            byAddress.set(rAddr, {
-              address: rAddr,
-              resolvedType: String(resolved.type || "unknown"),
-              details: resolved.details && typeof resolved.details === "object" ? { ...resolved.details } : {},
-              sourceContract: address,
-              sourceControllerId: principal.source_controller_id || null,
-              origins: [origin],
-            });
-          }
-          return;
-        }
-      }
-    }
-
     const existing = byAddress.get(address);
     if (existing) {
-      existing.origins.push(origin);
+      if (!existing.origins.includes(origin)) existing.origins.push(origin);
       return;
     }
     byAddress.set(address, {
       address,
       resolvedType: String(principal.resolved_type || "unknown"),
       details: principal.details && typeof principal.details === "object" ? { ...principal.details } : {},
+      label: principal.label || null,
       sourceContract: principal.source_contract || null,
       sourceControllerId: principal.source_controller_id || null,
       origins: [origin],
@@ -323,13 +292,11 @@ function collectPrincipals(fn, companyData) {
   if (fn.direct_owner) {
     pushPrincipal(fn.direct_owner, "direct owner");
   }
-
   for (const roleGrant of fn.authority_roles || []) {
     for (const principal of roleGrant.principals || []) {
-      pushPrincipal(principal, `authority role ${roleGrant.role}`);
+      pushPrincipal(principal, `role ${roleGrant.role}`);
     }
   }
-
   for (const controller of fn.controllers || []) {
     const label = controller.label || controller.controller_id || "controller";
     for (const principal of controller.principals || []) {
@@ -337,13 +304,70 @@ function collectPrincipals(fn, companyData) {
     }
   }
 
-  return [...byAddress.values()].sort((left, right) => left.address.localeCompare(right.address));
+  return [...byAddress.values()].sort((a, b) => a.address.localeCompare(b.address));
+}
+
+// Indirect control path = walk outgoing edges from each direct-caller contract
+// principal until we hit non-contract principals (safes, timelocks, EOAs).
+// Reported separately so the UI can present it as "governance context" rather
+// than claiming those principals can directly call the function.
+function collectIndirectPath(directCallers, graphIndex) {
+  const { controllerOf, nodeInfo } = graphIndex;
+  const out = new Map();
+  const visited = new Set();
+
+  function walk(addr, depth, trail) {
+    if (!addr || visited.has(addr) || depth > 6) return;
+    visited.add(addr);
+    const edges = controllerOf.get(addr) || [];
+    for (const edge of edges) {
+      const to = edge.to;
+      if (!to) continue;
+      const node = nodeInfo.get(to);
+      const isContract = node && node.type === "contract";
+      if (!isContract && !isRoleIdAddress(to)) {
+        // Keep the first path we discover to each principal — shorter paths
+        // are more informative and dedupe visual clutter.
+        if (!out.has(to)) {
+          out.set(to, {
+            address: to,
+            resolvedType: String(node?.type || "unknown"),
+            details: node?.details && typeof node.details === "object" ? { ...node.details } : {},
+            label: node?.label || null,
+            path: [...trail, { address: to, relation: edge.relation }],
+          });
+        }
+      }
+      if (isContract) {
+        walk(to, depth + 1, [...trail, { address: to, relation: edge.relation }]);
+      }
+    }
+  }
+
+  for (const caller of directCallers) {
+    if (caller.resolvedType !== "contract") continue;
+    visited.clear();
+    walk(caller.address, 0, [{ address: caller.address, relation: "direct" }]);
+  }
+
+  return [...out.values()].sort((a, b) => a.address.localeCompare(b.address));
+}
+
+function collectPrincipals(fn, companyData) {
+  const direct = collectDirectCallers(fn);
+  const graphIndex = buildControlGraphIndex(companyData);
+  const indirect = collectIndirectPath(direct, graphIndex);
+  return { direct, indirect };
 }
 
 function guardSummary(fn, companyData) {
-  const principals = collectPrincipals(fn, companyData);
+  const { direct, indirect } = collectPrincipals(fn, companyData);
+  // `principals` stays as the direct list for backward compatibility — every
+  // consumer that reads `fnView.guard.principals` only cares about who can
+  // actually call the function *now*, not the governance chain above that.
+  const principals = direct;
 
-  if (!principals.length) {
+  if (!direct.length) {
     const meta = TYPE_META[fn.authority_public ? "open" : "unknown"];
     return {
       kind: fn.authority_public ? "open" : "unknown",
@@ -351,20 +375,22 @@ function guardSummary(fn, companyData) {
       sublabel: fn.authority_public ? "public" : "unresolved",
       accent: meta.accent,
       principals,
+      indirect,
     };
   }
 
-  if (principals.length > 1) {
+  if (direct.length > 1) {
     return {
       kind: "many",
-      label: `${principals.length}P`,
+      label: `${direct.length}P`,
       sublabel: "mixed",
       accent: TYPE_META.many.accent,
       principals,
+      indirect,
     };
   }
 
-  const principal = principals[0];
+  const principal = direct[0];
   const type = TYPE_META[principal.resolvedType] || TYPE_META.unknown;
   const safeOwners = Array.isArray(principal.details?.owners) ? principal.details.owners.length : 0;
   const threshold = Number(principal.details?.threshold);
@@ -375,14 +401,17 @@ function guardSummary(fn, companyData) {
     sublabel = Number.isFinite(threshold) && threshold > 0 ? `${threshold}/${safeOwners}` : `${safeOwners} sig`;
   } else if (principal.resolvedType === "timelock" && delay) {
     sublabel = delay;
+  } else if (principal.resolvedType === "contract") {
+    sublabel = principal.label || "contract";
   }
 
   return {
-      kind: principal.resolvedType,
-      label: type.label,
-      sublabel,
-      accent: type.accent,
+    kind: principal.resolvedType,
+    label: type.label,
+    sublabel,
+    accent: type.accent,
     principals,
+    indirect,
   };
 }
 
@@ -395,6 +424,7 @@ function buildMachines(companyData, functionData) {
 
       for (const fn of rawFunctions) {
         const lane = laneForFunction(fn);
+        const { direct, indirect } = collectPrincipals(fn, companyData);
         lanes[lane].push({
           key: `${contract.address}:${fn.selector || fn.function}`,
           contractName: contract.name,
@@ -406,7 +436,12 @@ function buildMachines(companyData, functionData) {
           action: compactActionSummary(fn),
           effectLabels: fn.effect_labels || [],
           guard: guardSummary(fn, companyData),
-          principals: collectPrincipals(fn, companyData),
+          // `principals` is the direct-callers list — exactly who can fire
+          // msg.sender on this function right now. `indirectPrincipals` is the
+          // governance path above any contract principals, shown as secondary
+          // context in the inspector (never used to claim call rights).
+          principals: direct,
+          indirectPrincipals: indirect,
           authorityPublic: Boolean(fn.authority_public),
         });
       }
@@ -1101,7 +1136,12 @@ function InspectorCard({ selected, onNavigate }) {
       </div>
 
       <div className="ps-inspector-block">
-        <div className="ps-inspector-label">Resolved Principals</div>
+        <div className="ps-inspector-label">
+          Direct Callers
+          <span className="ps-inspector-sublabel">
+            msg.sender set from function-level permissions
+          </span>
+        </div>
         {selected.principals.length ? (
           <div className="ps-principal-list">
             {selected.principals.map((principal) => {
@@ -1129,11 +1169,47 @@ function InspectorCard({ selected, onNavigate }) {
           </p>
         )}
       </div>
+
+      {(selected.indirectPrincipals || []).length > 0 && (
+        <div className="ps-inspector-block">
+          <div className="ps-inspector-label">
+            Indirect Control Path
+            <span className="ps-inspector-sublabel">
+              governance context — not a direct call right
+            </span>
+          </div>
+          <div className="ps-principal-list">
+            {selected.indirectPrincipals.map((principal) => {
+              const type = TYPE_META[principal.resolvedType] || TYPE_META.unknown;
+              return (
+                <div
+                  key={principal.address}
+                  className="ps-principal-card ps-principal-clickable ps-principal-indirect"
+                  onClick={() => onNavigate && onNavigate({ type: principal.resolvedType, address: principal.address, label: principalDetail(principal), details: principal.details })}
+                >
+                  <div className="ps-principal-top">
+                    <span className="ps-principal-type" style={{ "--principal-accent": type.accent }}>{type.label}</span>
+                    <span className="ps-principal-address">{shortAddr(principal.address)}</span>
+                    <span className="ps-principal-goto">→</span>
+                  </div>
+                  <div className="ps-principal-meta">{principalDetail(principal)}</div>
+                  <div className="ps-principal-origin">
+                    via {principal.path
+                      .slice(0, -1)
+                      .map((p) => shortAddr(p.address))
+                      .join(" → ")}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
 
-function PrincipalDetail({ principal, machines, onNavigate, onFocusContract }) {
+function PrincipalDetail({ principal, machines, onNavigate, onFocusContract, addressLabels, refreshAddressLabels }) {
   const [focusIdx, setFocusIdx] = useState(0);
   if (!principal) return null;
   const type = TYPE_META[principal.type] || TYPE_META.unknown;
@@ -1148,8 +1224,22 @@ function PrincipalDetail({ principal, machines, onNavigate, onFocusContract }) {
   return (
     <article className="ps-machine" style={{ borderLeft: `2px solid ${type.accent}` }}>
       <header className="ps-machine-header">
-        <div className="ps-machine-name">{principal.label || shortAddr(principal.address)}</div>
+        <div className="ps-machine-name">
+          {addressLabels?.get(principal.address?.toLowerCase()) || principal.label || shortAddr(principal.address)}
+        </div>
         <div className="ps-machine-address">{principal.address}</div>
+        {/* Only EOAs and Safes are "just an address" — add the inline label
+            affordance for those. Timelocks and contracts already have a
+            meaningful contract-level name. */}
+        {(principal.type === "eoa" || principal.type === "safe") && (
+          <div style={{ marginTop: 6 }}>
+            <AddressLabelInline
+              address={principal.address}
+              labels={addressLabels}
+              refreshAll={refreshAddressLabels}
+            />
+          </div>
+        )}
         <div className="ps-machine-badges">
           <span className="ps-badge" style={{ "--badge-accent": type.accent }}>{type.label}</span>
           {principal.type === "safe" && threshold && (
@@ -1164,16 +1254,36 @@ function PrincipalDetail({ principal, machines, onNavigate, onFocusContract }) {
       {principal.type === "safe" && owners.length > 0 && (
         <section className="ps-principal-section">
           <div className="ps-principal-section-hdr">Signers ({owners.length})</div>
-          {owners.map((addr) => (
-            <div key={addr} className="ps-principal-signer">{addr}</div>
-          ))}
+          {owners.map((addr) => {
+            const labeled = addressLabels?.get((addr || "").toLowerCase());
+            return (
+              <div key={addr} className="ps-principal-signer">
+                <span className="ps-principal-signer-row">
+                  {labeled && <span className="ps-principal-signer-name">{labeled}</span>}
+                  <span className="ps-principal-signer-addr">{addr}</span>
+                </span>
+                <AddressLabelInline
+                  address={addr}
+                  labels={addressLabels}
+                  refreshAll={refreshAddressLabels}
+                  size="xs"
+                />
+              </div>
+            );
+          })}
         </section>
       )}
 
       {controlledMachines.length > 0 && (
         <section className="ps-principal-section">
           <div className="ps-principal-section-hdr" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span>Controls ({controlledMachines.length} contracts)</span>
+            {/* This list is derived from the recursive control graph, not from
+                function-level permissions. Labeling it "Controls" would claim
+                direct call rights — which we can't guarantee without per-
+                function role-holder validation (see service/policy TODO). */}
+            <span title="Computed from the recursive control graph — does not imply direct call rights on these contracts' privileged functions">
+              Appears In Governance Path For ({controlledMachines.length})
+            </span>
             {controlledMachines.length > 1 && (
               <div className="ps-search-arrows" style={{ marginLeft: 8 }}>
                 <button onClick={() => {
@@ -1316,7 +1426,11 @@ function PrincipalNode({ data }) {
   const delay = p.details?.delay;
 
   return (
-    <div className={`ps-principal-node${data.focused ? " ps-node-focused" : ""}`} style={{ "--principal-color": color }}>
+    <div
+      className={`ps-principal-node${data.focused ? " ps-node-focused" : ""}`}
+      style={{ "--principal-color": color, cursor: data.onSelect ? "pointer" : "default" }}
+      onClick={data.onSelect}
+    >
       <Handle type="target" position={Position.Top} id="ctrl-in" className="ps-handle" />
       <Handle type="source" position={Position.Bottom} id="ctrl-out" className="ps-handle" />
       <div className="ps-principal-badge" style={{ background: color + "22", color }}>
@@ -1726,7 +1840,7 @@ function FocusOnNode({ address, focusKey }) {
   return null;
 }
 
-function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, highlightedAddresses, onSelectMachine, principalTour, onTourGo, onTourBack }) {
+function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, highlightedAddresses, onSelectMachine, onSelectPrincipal, principalTour, onTourGo, onTourBack }) {
   const [initNodes, setInitNodes] = useState([]);
   const [initEdges, setInitEdges] = useState([]);
 
@@ -1785,7 +1899,12 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
             ...n.data,
             selected: n.id === selectedAddress,
             focused,
-            onSelect: () => onSelectMachine(n.data.machine),
+            // Dispatch by node kind: contract nodes carry .machine, principal
+            // nodes carry .principal. This lets a click on a Safe/Timelock/EOA
+            // node open its detail panel instead of doing nothing.
+            onSelect: n.data.principal
+              ? () => onSelectPrincipal && onSelectPrincipal(n.data.principal)
+              : () => onSelectMachine(n.data.machine),
           },
         };
       })
@@ -1817,7 +1936,7 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
         };
       })
     );
-  }, [initNodes, initEdges, selectedAddress, focusedAddress, highlightedAddresses, onSelectMachine]);
+  }, [initNodes, initEdges, selectedAddress, focusedAddress, highlightedAddresses, onSelectMachine, onSelectPrincipal]);
 
   return (
     <div className="ps-canvas-wrap">
@@ -1848,28 +1967,16 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
 
 function SidebarTabs({ mode, onSetMode, auditCount }) {
   return (
-    <div style={{ display: "flex", gap: 4, padding: "8px 8px 0 8px", borderBottom: "1px solid #e2e8f0" }}>
+    <div className="ps-sidebar-tabs">
       <button
+        className={`ps-sidebar-tab ${mode === "detail" ? "active" : ""}`}
         onClick={() => onSetMode("detail")}
-        style={{
-          flex: 1, padding: "8px 10px", borderRadius: "6px 6px 0 0",
-          border: "1px solid #e2e8f0", borderBottom: "none",
-          background: mode === "detail" ? "#fafafa" : "transparent",
-          fontWeight: mode === "detail" ? 600 : 400,
-          cursor: "pointer", font: "inherit", color: "inherit",
-        }}
       >
         Detail
       </button>
       <button
+        className={`ps-sidebar-tab ${mode === "audits" ? "active" : ""}`}
         onClick={() => onSetMode("audits")}
-        style={{
-          flex: 1, padding: "8px 10px", borderRadius: "6px 6px 0 0",
-          border: "1px solid #e2e8f0", borderBottom: "none",
-          background: mode === "audits" ? "#fafafa" : "transparent",
-          fontWeight: mode === "audits" ? 600 : 400,
-          cursor: "pointer", font: "inherit", color: "inherit",
-        }}
       >
         Audits{auditCount != null ? ` (${auditCount})` : ""}
       </button>
@@ -1877,12 +1984,17 @@ function SidebarTabs({ mode, onSetMode, auditCount }) {
   );
 }
 
-function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, error }) {
+function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, error, machines }) {
+  const [readingAudit, setReadingAudit] = useState(null);
+
   if (loading) return <section className="ps-principal-section"><div className="ps-inspector-empty">Loading audits…</div></section>;
   if (error) return <section className="ps-principal-section"><div className="ps-inspector-empty">Failed: {error}</div></section>;
   if (!coverageData) return null;
 
-  // Invert: audit_id → { audit, addresses: Set<lowercase string> }
+  // Invert: audit_id → { audit, addresses: Set<lowercase>, shaByAddr: Map<addr, sha> }
+  // Each coverage row has per-(contract, audit) match metadata — notably
+  // matched_commit_sha (Tier 2). Capture it here so the modal can render
+  // the SHA next to the contract without fetching per-row detail again.
   const byAudit = new Map();
   for (const entry of coverageData.coverage || []) {
     const addr = (entry.address || "").toLowerCase();
@@ -1890,13 +2002,18 @@ function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, er
     for (const a of entry.audits || []) {
       const id = a.audit_id;
       if (!byAudit.has(id)) {
-        byAudit.set(id, { audit: a, addresses: new Set() });
+        byAudit.set(id, { audit: a, addresses: new Set(), shaByAddr: new Map() });
       }
-      byAudit.get(id).addresses.add(addr);
+      const bucket = byAudit.get(id);
+      bucket.addresses.add(addr);
+      if (a.matched_commit_sha) {
+        bucket.shaByAddr.set(addr, a.matched_commit_sha);
+      }
     }
   }
 
-  // Sort audits: active first, then by date desc (nulls last), then id desc
+  // Sort audits by date desc (nulls last), then id desc. Active audit is
+  // displayed first via CSS ordering (to surface the coverage list).
   const entries = [...byAudit.values()].sort((x, y) => {
     const dx = x.audit.date || "";
     const dy = y.audit.date || "";
@@ -1904,57 +2021,480 @@ function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, er
     return (y.audit.audit_id || 0) - (x.audit.audit_id || 0);
   });
 
+  const activeEntry = activeAuditId != null
+    ? entries.find((e) => e.audit.audit_id === activeAuditId)
+    : null;
+
+  // Resolve lowercase addresses → { name, address } using the machines map
+  // so covered contracts are legible instead of just raw hex.
+  const contractByAddr = new Map();
+  if (Array.isArray(machines)) {
+    for (const m of machines) {
+      const a = (m.address || "").toLowerCase();
+      if (a) contractByAddr.set(a, m);
+    }
+  }
+
   return (
-    <section className="ps-principal-section">
-      <div className="ps-principal-section-hdr">All audits ({entries.length})</div>
-      <div style={{ fontSize: 11, color: "#6b7590", marginBottom: 8 }}>
-        Click an audit to highlight its covered contracts on the canvas.
-      </div>
-      {activeAuditId != null && (
-        <button
-          onClick={() => onPickAudit(null)}
-          style={{
-            marginBottom: 8, padding: "4px 10px", borderRadius: 4,
-            border: "1px solid #cbd5e1", background: "#fff",
-            cursor: "pointer", fontSize: 11, color: "inherit", font: "inherit",
-          }}
-        >
-          ✕ Clear highlight
-        </button>
+    <>
+      <section className="ps-audits-panel">
+        <div className="ps-audits-panel-hdr">All audits ({entries.length})</div>
+        <div className="ps-audits-panel-hint">
+          Click an audit to highlight its covered contracts on the canvas.
+        </div>
+
+        {activeEntry && (
+          <div className="ps-audits-active-card">
+            <div className="ps-audits-active-hdr">
+              <span>Covered contracts</span>
+              <button
+                className="ps-audits-clear"
+                onClick={() => onPickAudit(null)}
+                title="Clear highlight"
+              >
+                ✕ clear
+              </button>
+            </div>
+            <div className="ps-audits-covered-list">
+              {[...activeEntry.addresses].sort().map((addr) => {
+                const m = contractByAddr.get(addr);
+                return (
+                  <div key={addr} className="ps-audits-covered-row">
+                    <span className="ps-audits-covered-name">{m?.name || "unknown"}</span>
+                    <span className="ps-audits-covered-addr">{shortAddr(addr)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="ps-audits-list">
+          {entries.map(({ audit, addresses }) => {
+            const isActive = activeAuditId === audit.audit_id;
+            return (
+              <div
+                key={audit.audit_id}
+                className={`ps-audits-row ${isActive ? "active" : ""}`}
+              >
+                <button
+                  className="ps-audits-row-main"
+                  onClick={() => onPickAudit(isActive ? null : audit.audit_id)}
+                >
+                  <div className="ps-audits-row-top">
+                    <span className="ps-audits-row-auditor">{audit.auditor || "Unknown"}</span>
+                    <span className="ps-audits-row-date">{formatAuditDate(audit.date)}</span>
+                  </div>
+                  {audit.title && <div className="ps-audits-row-title">{audit.title}</div>}
+                  <div className="ps-audits-row-meta">
+                    covers {addresses.size} contract{addresses.size === 1 ? "" : "s"}
+                    {audit.match_type ? ` · ${audit.match_type}` : ""}
+                  </div>
+                </button>
+                <button
+                  className="ps-audits-row-read"
+                  onClick={() =>
+                    setReadingAudit({
+                      audit,
+                      addresses,
+                      shaByAddr: byAudit.get(audit.audit_id)?.shaByAddr || new Map(),
+                    })
+                  }
+                  title="Read audit"
+                >
+                  Read ↗
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+      {readingAudit && (
+        <AuditReadModal
+          audit={readingAudit.audit}
+          addresses={readingAudit.addresses}
+          shaByAddr={readingAudit.shaByAddr}
+          machines={contractByAddr}
+          onClose={() => setReadingAudit(null)}
+        />
       )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {entries.map(({ audit, addresses }) => {
-          const isActive = activeAuditId === audit.audit_id;
-          return (
-            <button
-              key={audit.audit_id}
-              onClick={() => onPickAudit(isActive ? null : audit.audit_id)}
-              style={{
-                textAlign: "left",
-                padding: "8px 10px",
-                borderRadius: 6,
-                border: isActive ? "2px solid #22c55e" : "1px solid #e2e8f0",
-                background: isActive ? "#f0fdf4" : "#fff",
-                cursor: "pointer",
-                font: "inherit", color: "inherit",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{audit.auditor || "Unknown"}</div>
-                <div style={{ fontSize: 11, color: "#6b7590", whiteSpace: "nowrap" }}>{formatAuditDate(audit.date)}</div>
-              </div>
-              <div style={{ fontSize: 12, color: "#334155", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {audit.title || ""}
-              </div>
-              <div style={{ fontSize: 11, color: "#6b7590", marginTop: 4 }}>
-                covers {addresses.size} contract{addresses.size === 1 ? "" : "s"}
-                {audit.match_type ? ` · ${audit.match_type}` : ""}
-              </div>
-            </button>
-          );
-        })}
+    </>
+  );
+}
+
+function AuditReadModal({ audit, addresses, machines, shaByAddr, onClose }) {
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(true);
+  const [detailError, setDetailError] = useState(null);
+  const [text, setText] = useState(null);
+  const [textLoading, setTextLoading] = useState(false);
+  const [textError, setTextError] = useState(null);
+  // PDF embed failure → flip to text fallback.
+  const [pdfFailed, setPdfFailed] = useState(false);
+  // Which page to jump to in the iframe (null = default / first page).
+  const [targetPage, setTargetPage] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDetail(null);
+    setDetailLoading(true);
+    setDetailError(null);
+    setText(null);
+    setPdfFailed(false);
+    setTargetPage(null);
+    fetch(`/api/audits/${encodeURIComponent(audit.audit_id)}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return r.json();
+      })
+      .then((d) => {
+        if (!cancelled) { setDetail(d); setDetailLoading(false); }
+      })
+      .catch((e) => {
+        if (!cancelled) { setDetailError(String(e.message || e)); setDetailLoading(false); }
+      });
+    return () => { cancelled = true; };
+  }, [audit.audit_id]);
+
+  // Close on Escape
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const sourceUrl = detail?.url || audit.url || audit.source_url || null;
+  const rawPdfUrl = detail?.pdf_url || audit.pdf_url || null;
+  const urlLooksLikePdf = !rawPdfUrl && typeof sourceUrl === "string" && sourceUrl.toLowerCase().endsWith(".pdf");
+  // Point the iframe at our proxy — external hosts (e.g. GitHub raw
+  // content) send X-Frame-Options: deny which blocks inline rendering.
+  const pdfUrl = (rawPdfUrl || urlLooksLikePdf)
+    ? `/api/audits/${encodeURIComponent(audit.audit_id)}/pdf`
+    : null;
+  const downloadUrl = rawPdfUrl || (urlLooksLikePdf ? sourceUrl : null) || sourceUrl;
+  const showPdf = !!pdfUrl && !pdfFailed;
+  const showText = !showPdf;
+
+  // Always fetch text — needed both for the fallback view AND to build the
+  // page index so clicking a covered contract can jump to its mention.
+  // Depend only on audit.audit_id so re-renders from setting textLoading
+  // don't cancel the fetch mid-flight.
+  useEffect(() => {
+    let cancelled = false;
+    setTextLoading(true);
+    setTextError(null);
+    setText(null);
+    fetch(`/api/audits/${encodeURIComponent(audit.audit_id)}/text`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+        return r.text();
+      })
+      .then((t) => {
+        if (!cancelled) { setText(t); setTextLoading(false); }
+      })
+      .catch((e) => {
+        if (!cancelled) { setTextError(String(e.message || e)); setTextLoading(false); }
+      });
+    return () => { cancelled = true; };
+  }, [audit.audit_id]);
+
+  // Parse "--- page N ---" markers from the extracted text into a page index.
+  // Shared by both the contract-mention lookup and the commit-SHA lookup.
+  const lowerPages = useMemo(() => {
+    if (!text) return [];
+    const pages = [];
+    const re = /--- page (\d+) ---/g;
+    let m;
+    let last = 0;
+    let lastPage = null;
+    while ((m = re.exec(text)) !== null) {
+      if (lastPage != null) {
+        pages.push({ page: lastPage, body: text.slice(last, m.index) });
+      }
+      lastPage = parseInt(m[1], 10);
+      last = m.index + m[0].length;
+    }
+    if (lastPage != null) pages.push({ page: lastPage, body: text.slice(last) });
+    return pages.map((p) => ({ page: p.page, body: p.body.toLowerCase() }));
+  }, [text]);
+
+  const mentionByAddress = useMemo(() => {
+    const out = new Map();
+    if (!lowerPages.length) return out;
+    for (const addr of addresses) {
+      const lower = addr.toLowerCase();
+      const short6 = lower.slice(0, 10); // 0x + first 8 hex chars — covers most PDF abbreviations
+      const m2 = machines.get ? machines.get(lower) : null;
+      const name = m2?.name || null;
+      const nameLower = name && name.length >= 5 ? name.toLowerCase() : null;
+      let found = null;
+      for (const p of lowerPages) {
+        if (p.body.includes(lower)
+            || p.body.includes(short6)
+            || (nameLower && p.body.includes(nameLower))) {
+          found = p.page;
+          break;
+        }
+      }
+      out.set(addr, found);
+    }
+    return out;
+  }, [lowerPages, addresses, machines]);
+
+  // For each SHA we care about (the per-contract matched_commit_sha), find
+  // the first page it appears on. Audits embed the SHA in either full
+  // (40-char) or abbreviated (7-char) form, so try both.
+  const pageBySha = useMemo(() => {
+    const out = new Map();
+    if (!lowerPages.length || !shaByAddr || !shaByAddr.values) return out;
+    const uniq = new Set();
+    for (const s of shaByAddr.values()) if (s) uniq.add(String(s).toLowerCase());
+    for (const sha of uniq) {
+      const short = sha.slice(0, 7);
+      let found = null;
+      for (const p of lowerPages) {
+        if (p.body.includes(sha) || p.body.includes(short)) {
+          found = p.page;
+          break;
+        }
+      }
+      out.set(sha, found);
+    }
+    return out;
+  }, [lowerPages, shaByAddr]);
+
+  return (
+    <div className="ps-audit-modal-backdrop" onClick={onClose}>
+      <div className="ps-audit-modal" onClick={(e) => e.stopPropagation()}>
+        <header className="ps-audit-modal-header">
+          <div className="ps-audit-modal-header-left">
+            <div className="ps-audit-modal-auditor">{audit.auditor || "Unknown auditor"}</div>
+            <div className="ps-audit-modal-title">{audit.title || "Untitled audit"}</div>
+            <div className="ps-audit-modal-meta">
+              {formatAuditDate(audit.date)} · covers {addresses.size} contract{addresses.size === 1 ? "" : "s"}
+            </div>
+            <AuditCommitChips detail={detail} />
+          </div>
+          <div className="ps-audit-modal-actions">
+            {sourceUrl && (
+              <a
+                className="ps-audit-modal-btn"
+                href={sourceUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+              >
+                Source ↗
+              </a>
+            )}
+            {downloadUrl && (
+              <a
+                className="ps-audit-modal-btn primary"
+                href={downloadUrl}
+                target="_blank"
+                rel="noreferrer noopener"
+                download
+              >
+                Download
+              </a>
+            )}
+            <button className="ps-audit-modal-btn" onClick={onClose} aria-label="Close">✕</button>
+          </div>
+        </header>
+        <div className="ps-audit-modal-body">
+          <aside className="ps-audit-modal-aside">
+            <div className="ps-audit-modal-aside-hdr">Covered contracts</div>
+            <div className="ps-audit-modal-aside-hint">
+              {text && mentionByAddress.size
+                ? "Click a contract to jump to where it's referenced."
+                : textLoading
+                  ? "Indexing references…"
+                  : null}
+            </div>
+            <div className="ps-audit-modal-aside-list">
+              {[...addresses].sort().map((addr) => {
+                const m = machines.get ? machines.get(addr) : null;
+                const page = mentionByAddress.get(addr);
+                const hasJump = !!page && showPdf;
+                const isActive = targetPage === page && hasJump;
+                const Tag = hasJump ? "button" : "div";
+                const sha = shaByAddr && shaByAddr.get ? shaByAddr.get(addr) : null;
+                const shortSha = sha ? String(sha).slice(0, 7) : null;
+                const repo = Array.isArray(detail?.referenced_repos) && detail.referenced_repos.length
+                  ? detail.referenced_repos[0]
+                  : null;
+                return (
+                  <Tag
+                    key={addr}
+                    className={`ps-audit-modal-aside-row ${hasJump ? "clickable" : ""} ${isActive ? "active" : ""}`}
+                    onClick={hasJump ? () => setTargetPage(page) : undefined}
+                    type={hasJump ? "button" : undefined}
+                  >
+                    <div className="ps-audit-modal-aside-row-main">
+                      <div className="ps-audit-modal-aside-name">{m?.name || "unknown"}</div>
+                      <div className="ps-audit-modal-aside-addr">{addr}</div>
+                    </div>
+                    <div className="ps-audit-modal-aside-badges">
+                      {page ? (
+                        <span className="ps-audit-modal-aside-page" title={`Mentioned on page ${page}`}>
+                          p{page}
+                        </span>
+                      ) : text ? (
+                        <span className="ps-audit-modal-aside-page dim" title="Not found in extracted text">—</span>
+                      ) : null}
+                      {shortSha && (() => {
+                        const shaLower = String(sha).toLowerCase();
+                        const shaPage = pageBySha.get(shaLower) ?? null;
+                        const shaJumpable = !!shaPage && showPdf;
+                        if (shaJumpable) {
+                          // Clicking jumps the PDF to the page where the SHA
+                          // is referenced (like the page badge, but for the
+                          // commit mention instead of the contract mention).
+                          return (
+                            <button
+                              type="button"
+                              className="ps-audit-modal-aside-sha"
+                              title={`Commit ${sha} — mentioned on page ${shaPage}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTargetPage(shaPage);
+                              }}
+                            >
+                              {shortSha}
+                            </button>
+                          );
+                        }
+                        // Fallback: link to GitHub when the SHA isn't in the
+                        // extracted text (or PDF isn't rendered).
+                        if (repo) {
+                          return (
+                            <a
+                              href={`https://github.com/${repo}/tree/${sha}`}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="ps-audit-modal-aside-sha"
+                              title={`Verified against commit ${sha} — open on GitHub`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {shortSha}
+                            </a>
+                          );
+                        }
+                        return (
+                          <span
+                            className="ps-audit-modal-aside-sha"
+                            title={`Verified against commit ${sha}`}
+                          >
+                            {shortSha}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </Tag>
+                );
+              })}
+            </div>
+          </aside>
+          <div className="ps-audit-modal-doc">
+            {detailLoading && (
+              <div className="ps-audit-modal-empty">Loading audit…</div>
+            )}
+            {!detailLoading && showPdf && (
+              <iframe
+                key={targetPage ?? "default"}
+                className="ps-audit-modal-iframe"
+                title="Audit PDF"
+                src={`${pdfUrl}${targetPage ? `#page=${targetPage}` : ""}`}
+                onError={() => setPdfFailed(true)}
+              />
+            )}
+            {!detailLoading && !showPdf && (
+              <>
+                {textLoading && <div className="ps-audit-modal-empty">Loading audit text…</div>}
+                {textError && <div className="ps-audit-modal-empty">Failed to load text: {textError}</div>}
+                {text && <pre className="ps-audit-modal-pre">{text}</pre>}
+                {!textLoading && !textError && !text && detail && !detail.has_text && (
+                  <div className="ps-audit-modal-empty">
+                    No extracted text available for this audit.
+                    {sourceUrl && <> Open the <a href={sourceUrl} target="_blank" rel="noreferrer noopener">source</a> to read it.</>}
+                  </div>
+                )}
+              </>
+            )}
+            {detailError && (
+              <div className="ps-audit-modal-empty">Failed to load audit metadata: {detailError}</div>
+            )}
+          </div>
+        </div>
       </div>
-    </section>
+    </div>
+  );
+}
+
+// Dedupe a mix of 7-char + 40-char SHAs by keeping the full form when we
+// have it and promoting any short form that doesn't have a longer twin.
+function dedupeShas(list) {
+  const fulls = new Map(); // prefix(7) → full sha
+  const shorts = new Set();
+  for (const raw of list || []) {
+    const sha = String(raw || "").trim().toLowerCase();
+    if (!/^[0-9a-f]+$/.test(sha)) continue;
+    if (sha.length >= 20) fulls.set(sha.slice(0, 7), sha);
+    else if (sha.length >= 4) shorts.add(sha);
+  }
+  const out = [...fulls.values()];
+  for (const s of shorts) {
+    if (!fulls.has(s.slice(0, 7))) out.push(s);
+  }
+  return out;
+}
+
+function AuditCommitChips({ detail, maxShown = 4 }) {
+  if (!detail) return null;
+  const classified = Array.isArray(detail.classified_commits) ? detail.classified_commits : [];
+  const reviewedList = classified.filter((c) => c && c.label === "reviewed");
+  let shas;
+  if (reviewedList.length) {
+    shas = dedupeShas(reviewedList.map((c) => c.sha));
+  } else {
+    shas = dedupeShas(detail.reviewed_commits || []);
+  }
+  if (!shas.length) return null;
+
+  const repo = Array.isArray(detail.referenced_repos) && detail.referenced_repos.length
+    ? detail.referenced_repos[0]
+    : null;
+
+  const shown = shas.slice(0, maxShown);
+  const extra = shas.length - shown.length;
+
+  return (
+    <div className="ps-audit-modal-commits">
+      <span className="ps-audit-modal-commits-label">reviewed</span>
+      {shown.map((sha) => {
+        const short = sha.slice(0, 7);
+        const href = repo ? `https://github.com/${repo}/tree/${sha}` : null;
+        if (href) {
+          return (
+            <a
+              key={sha}
+              className="ps-audit-modal-commit-chip"
+              href={href}
+              target="_blank"
+              rel="noreferrer noopener"
+              title={sha}
+            >
+              {short}
+            </a>
+          );
+        }
+        return (
+          <span key={sha} className="ps-audit-modal-commit-chip" title={sha}>{short}</span>
+        );
+      })}
+      {extra > 0 && (
+        <span className="ps-audit-modal-commit-more">+{extra} more</span>
+      )}
+    </div>
   );
 }
 
@@ -2093,8 +2633,26 @@ function buildSearchResults(machines, principals, mode, sortKey, query) {
   return items;
 }
 
-function SearchNavigator({ machines, principals, onFocus }) {
-  const [mode, setMode] = useState("all");
+function SearchModesBar({ mode, setMode }) {
+  return (
+    <div className="ps-search-modes">
+      {SEARCH_MODES.map((m) => (
+        <button
+          key={m.key}
+          className={`ps-search-mode${mode === m.key ? " active" : ""}`}
+          style={{ "--mode-accent": m.accent }}
+          onClick={() => setMode(m.key)}
+          title={m.label}
+        >
+          <span className="ps-search-mode-icon">{m.icon}</span>
+          <span className="ps-search-mode-label">{m.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SearchNavigator({ machines, principals, onFocus, mode, setMode }) {
   const [sortKey, setSortKey] = useState("value");
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -2123,20 +2681,9 @@ function SearchNavigator({ machines, principals, onFocus }) {
 
   return (
     <div className="ps-search-nav">
-      <div className="ps-search-modes">
-        {SEARCH_MODES.map((m) => (
-          <button
-            key={m.key}
-            className={`ps-search-mode${mode === m.key ? " active" : ""}`}
-            style={{ "--mode-accent": m.accent }}
-            onClick={() => setMode(m.key)}
-            title={m.label}
-          >
-            <span className="ps-search-mode-icon">{m.icon}</span>
-            <span className="ps-search-mode-label">{m.label}</span>
-          </button>
-        ))}
-      </div>
+      {/* Mode pills (All / Safes / EOAs / Timelocks / Has Funds) now render
+          at top-left via <SearchModesBar />. The rest of the search nav
+          (input, sort, arrows, preview) stays in the centre overlay. */}
       <div className="ps-search-controls">
         <input
           type="text"
@@ -2190,6 +2737,9 @@ export default function ProtocolSurface({ companyName }) {
   const [selectedGuard, setSelectedGuard] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
   const [selectedPrincipal, setSelectedPrincipal] = useState(null);
+  // Search mode lives on the parent so the mode-pill bar can render at
+  // top-left while the rest of SearchNavigator stays in the centre overlay.
+  const [searchMode, setSearchMode] = useState("all");
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [focusAddress, setFocusAddress] = useState(null);
   const [focusedAddress, setFocusedAddress] = useState(() => {
@@ -2213,7 +2763,7 @@ export default function ProtocolSurface({ companyName }) {
   // Multi-principal tour state: { principals: [...], index: 0, sourceContract: "0x...", sourceFunction: "fn" }
   const [principalTour, setPrincipalTour] = useState(null);
   const [error, setError] = useState(null);
-  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+  const [headerCollapsed, setHeaderCollapsed] = useState(true);
 
   // Right sidebar mode: "detail" (machine/principal inspector) vs "audits"
   // (flat audit list). "audits" mode keeps the list visible while the user
@@ -2229,6 +2779,22 @@ export default function ProtocolSurface({ companyName }) {
   // Active audit: when non-null, its covered contracts get a green ring
   // and everything else dims on the canvas.
   const [activeAuditId, setActiveAuditId] = useState(null);
+
+  // Admin-curated address → name map. Fetched once; edits are optimistic
+  // against the local copy and persisted via the admin-gated PUT/DELETE.
+  const [addressLabels, setAddressLabels] = useState(new Map());
+  const refreshAddressLabels = useCallback(() => {
+    listAddressLabels()
+      .then((d) => {
+        const m = new Map();
+        for (const [addr, info] of Object.entries(d?.labels || {})) {
+          m.set(String(addr).toLowerCase(), info.name);
+        }
+        setAddressLabels(m);
+      })
+      .catch(() => { /* labels are best-effort — keep whatever we had */ });
+  }, []);
+  useEffect(() => { refreshAddressLabels(); }, [refreshAddressLabels]);
 
   useEffect(() => {
     if (!companyName) return undefined;
@@ -2332,6 +2898,19 @@ export default function ProtocolSurface({ companyName }) {
     setSelectedGuard(null);
   }, []);
 
+  // Clicking a Safe/Timelock/EOA node on the canvas selects the principal
+  // (opens the detail panel with signers / delay / controlled contracts)
+  // and focuses it — same behaviour as clicking a single-principal guard
+  // badge, just driven from the node itself.
+  const handleSelectPrincipal = useCallback((principal) => {
+    if (!principal) return;
+    setSelectedPrincipal(principal);
+    setSelectedMachine(null);
+    setSelectedGuard(null);
+    setPrincipalTour(null);
+    if (principal.address) triggerFocus(principal.address);
+  }, [triggerFocus]);
+
   const visiblePrincipals = useMemo(() => {
     const visibleAddrs = new Set(machines.map((m) => m.address?.toLowerCase()));
     return (companyData?.principals || []).filter((p) =>
@@ -2370,27 +2949,27 @@ export default function ProtocolSurface({ companyName }) {
       return current ? [...prev, current] : prev;
     });
 
+    const hasPrincipalTour = target._allPrincipals && target._allPrincipals.length > 1;
+    if (hasPrincipalTour) {
+      setPrincipalTour({
+        principals: target._allPrincipals,
+        index: 0,
+        sourceContract: target._sourceContract,
+        sourceFunction: target._sourceFunction,
+      });
+    } else {
+      setPrincipalTour(null);
+    }
+
     if (target.type === "contract") {
       const machine = machines.find((m) => m.address?.toLowerCase() === target.address?.toLowerCase());
       if (machine) {
         setSelectedMachine(machine);
         setSelectedPrincipal(null);
         setSelectedGuard(null);
-        setPrincipalTour(null);
         triggerFocus(machine.address);
       }
     } else {
-      // Set up multi-principal tour if multiple principals
-      if (target._allPrincipals && target._allPrincipals.length > 1) {
-        setPrincipalTour({
-          principals: target._allPrincipals,
-          index: 0,
-          sourceContract: target._sourceContract,
-          sourceFunction: target._sourceFunction,
-        });
-      } else {
-        setPrincipalTour(null);
-      }
       navigateToPrincipal(target);
     }
   }, [machines, visiblePrincipals, selectedMachine, selectedPrincipal, triggerFocus, navigateToPrincipal]);
@@ -2424,7 +3003,9 @@ export default function ProtocolSurface({ companyName }) {
 
   return (
     <div className="ps-surface ps-surface-fullscreen">
-      {/* Floating header overlay */}
+      {/* Overview strip (contracts / functions / with-funds) removed by
+          request. The role filter toolbar below occupies this slot now. */}
+      {false && (
       <div className={`ps-surface-overlay ${headerCollapsed ? "ps-surface-overlay-collapsed" : ""}`}>
         <button
           className="ps-surface-overlay-toggle"
@@ -2506,16 +3087,24 @@ export default function ProtocolSurface({ companyName }) {
           </div>
         )}
       </div>
+      )}
 
-      {/* Floating toolbar overlays */}
+      {/* Role filter bar — now in the top-left slot where the overview strip used to live */}
       <div className="ps-surface-toolbar-overlay">
         <RoleFilterBar machines={allMachines} enabledRoles={enabledRoles} onToggle={handleToggleRole} />
+      </div>
+
+      {/* Search mode pills — top-left slot (where the overview used to be) */}
+      <div className="ps-search-modes-overlay">
+        <SearchModesBar mode={searchMode} setMode={setSearchMode} />
       </div>
 
       <div className="ps-surface-search-overlay">
         <SearchNavigator
         machines={machines}
         principals={visiblePrincipals}
+        mode={searchMode}
+        setMode={setSearchMode}
         onFocus={(item) => {
           if (!item) {
             setSelectedMachine(null); setSelectedPrincipal(null);
@@ -2553,6 +3142,7 @@ export default function ProtocolSurface({ companyName }) {
             focusedAddress={focusedAddress}
             highlightedAddresses={highlightedAddresses}
             onSelectMachine={handleSelectMachine}
+            onSelectPrincipal={handleSelectPrincipal}
             principalTour={principalTour}
             onTourGo={(nextIndex) => {
               const p = principalTour.principals[nextIndex];
@@ -2591,6 +3181,7 @@ export default function ProtocolSurface({ companyName }) {
               onPickAudit={setActiveAuditId}
               loading={coverageLoading}
               error={coverageError}
+              machines={machines}
             />
           )}
           {sidebarMode === "detail" && (
@@ -2603,6 +3194,8 @@ export default function ProtocolSurface({ companyName }) {
               machines={machines}
               onNavigate={handleNavigate}
               onFocusContract={(addr) => triggerFocus(addr)}
+              addressLabels={addressLabels}
+              refreshAddressLabels={refreshAddressLabels}
             />
           )}
           {sidebarMode === "detail" && selectedMachine && !selectedPrincipal && (

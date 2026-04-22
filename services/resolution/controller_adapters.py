@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
+from eth_abi.abi import decode
 from eth_utils.crypto import keccak
 
 from utils.rpc import (
@@ -49,6 +50,18 @@ def _decode_bytes32(raw_value: str) -> str | None:
     if len(normalized) != 66:
         return None
     return normalized
+
+
+def _decode_abi_value(raw_value: str, abi_type: str):
+    data = bytes.fromhex(_normalize_hex(raw_value)[2:])
+    if not data:
+        raise RuntimeError("Empty ABI data")
+    value = decode([abi_type], data)[0]
+    if abi_type == "address":
+        return str(value).lower()
+    if abi_type == "address[]":
+        return [str(item).lower() for item in value]
+    return value
 
 
 # _topic_to_address is identical to _decode_address
@@ -96,6 +109,27 @@ def _try_enumerable_role_members(
             members.append(member.lower())
 
     return sorted(set(members)), {"adapter": "access_control_enumerable", "member_count": len(set(members))}
+
+
+def _try_role_holders_members(
+    rpc_url: str,
+    contract_address: str,
+    role_id: str,
+    block_tag: str = "latest",
+) -> tuple[list[str], dict[str, object]] | None:
+    role_arg = _normalize_hex(role_id)[2:].zfill(64)
+    calldata = _selector("roleHolders(bytes32)") + role_arg
+    try:
+        raw = _eth_call_raw(rpc_url, contract_address, calldata, block_tag)
+        members = _decode_abi_value(raw, "address[]")
+    except Exception:
+        return None
+
+    if not isinstance(members, list):
+        return None
+
+    normalized_members = sorted({str(member).lower() for member in members})
+    return normalized_members, {"adapter": "role_holders", "member_count": len(normalized_members)}
 
 
 def _logs_for_topic(
@@ -295,6 +329,10 @@ def expand_role_identifier_principals(
     normalized_role = _normalize_hex(role_id)
     if len(normalized_role) != 66:
         return [], {"adapter": "none", "reason": "role_id_not_bytes32"}
+
+    role_holders = _try_role_holders_members(rpc_url, contract_address, normalized_role, block_tag)
+    if role_holders is not None:
+        return role_holders
 
     enumerable = _try_enumerable_role_members(rpc_url, contract_address, normalized_role, block_tag)
     if enumerable is not None:

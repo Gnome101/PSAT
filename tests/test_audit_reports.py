@@ -328,6 +328,43 @@ class TestGithubBlobToRaw:
         assert out.startswith(("https://raw.githubusercontent.com/", "https://github.com/"))
 
 
+class TestReportEntryNormalization:
+    def test_build_report_entry_normalizes_github_blob_pdf_urls(self):
+        from services.discovery.audit_reports import _build_report_entry
+
+        blob = "https://github.com/a/b/blob/main/audits/report.pdf"
+        out = _build_report_entry(
+            {
+                "auditor": "Foo",
+                "title": "Report",
+                "pdf_url": blob,
+            },
+            source_url="https://docs.example.com/audits",
+            confidence=0.9,
+            now_iso="2026-01-01T00:00:00+00:00",
+        )
+
+        assert out["pdf_url"] == "https://raw.githubusercontent.com/a/b/main/audits/report.pdf"
+        assert out["url"] == out["pdf_url"]
+
+    def test_build_fallback_entry_normalizes_github_blob_pdf_urls(self):
+        from services.discovery.audit_reports import _build_fallback_entry
+
+        blob = "https://github.com/a/b/blob/main/audits/report.pdf"
+        out = _build_fallback_entry(
+            blob,
+            {"auditor": "Foo", "title": "Report"},
+            "Acme",
+            [],
+            confidence=0.9,
+            now_iso="2026-01-01T00:00:00+00:00",
+            pdf_url=blob,
+        )
+
+        assert out["pdf_url"] == "https://raw.githubusercontent.com/a/b/main/audits/report.pdf"
+        assert out["url"] == out["pdf_url"]
+
+
 # ---------------------------------------------------------------------------
 # Auto-hop policy — pure predicate, no HTTP
 # ---------------------------------------------------------------------------
