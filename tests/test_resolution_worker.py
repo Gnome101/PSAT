@@ -112,9 +112,9 @@ def _patch_all(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> dict[str, A
         rpc_url: str = "",
         max_depth: int = 6,
         workspace_prefix: str = "",
-        refresh_snapshots: bool = False,
-    ) -> dict:
-        return resolved_graph
+        nested_artifacts_override: Any = None,
+    ) -> tuple[dict, dict]:
+        return resolved_graph, {}
 
     monkeypatch.setattr("workers.resolution_worker.get_artifact", fake_get_artifact)
     monkeypatch.setattr("workers.resolution_worker.store_artifact", fake_store_artifact)
@@ -858,9 +858,9 @@ class TestResolvedGraphEmpty:
             rpc_url: str = "",
             max_depth: int = 6,
             workspace_prefix: str = "",
-            refresh_snapshots: bool = False,
-        ) -> dict:
-            return {}
+            nested_artifacts_override: Any = None,
+        ) -> tuple[dict, dict]:
+            return {}, {}
 
         ctx = _patch_all(monkeypatch)
         monkeypatch.setattr("workers.resolution_worker.resolve_control_graph", fake_resolve_empty)

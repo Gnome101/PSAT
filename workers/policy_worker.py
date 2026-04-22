@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-from pathlib import Path
 from typing import cast
 
 from sqlalchemy import select
@@ -13,12 +11,13 @@ from sqlalchemy.orm import Session
 
 from db.models import Contract, EffectiveFunction, FunctionPrincipal, Job, JobStage, JobStatus, PrincipalLabel
 from db.queue import get_artifact, store_artifact
-from schemas.control_tracking import ControlSnapshot
+from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from schemas.effective_permissions import PrincipalResolution
 from services.policy import build_effective_permissions, build_principal_labels
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from workers.base import BaseWorker
+from workers.resolution_worker import RECURSIVE_ARTIFACT_KINDS, _recursive_artifact_key
 
 logger = logging.getLogger("workers.policy_worker")
 
@@ -27,18 +26,45 @@ DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
 
-def _placeholder_artifacts(
+def _root_artifacts(
     contract_analysis: dict,
+    tracking_plan: dict,
     snapshot: ControlSnapshot,
 ) -> LoadedArtifacts:
-    placeholder_dir = Path("/dev/null")
     return {
-        "project_dir": placeholder_dir,
-        "analysis_path": placeholder_dir / "contract_analysis.json",
-        "plan_path": placeholder_dir / "control_tracking_plan.json",
-        "snapshot_path": placeholder_dir / "control_snapshot.json",
         "analysis": contract_analysis,
+        "tracking_plan": tracking_plan,
         "snapshot": snapshot,
+    }
+
+
+def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifacts]:
+    """Hydrate recursive:* artifacts written by the resolution stage."""
+    from db.models import Artifact
+
+    prefix = "recursive:"
+    rows = (
+        session.execute(select(Artifact).where(Artifact.job_id == job_id, Artifact.name.like(f"{prefix}%")))
+        .scalars()
+        .all()
+    )
+    bundles: dict[str, dict] = {}
+    for row in rows:
+        try:
+            _, address, kind = row.name.split(":", 2)
+        except ValueError:
+            continue
+        if kind not in RECURSIVE_ARTIFACT_KINDS:
+            continue
+        payload = get_artifact(session, job_id, row.name)
+        if payload is None:
+            continue
+        bundles.setdefault(address, {})[kind] = payload
+    # Only keep bundles that have the minimum fields resolve_control_graph needs.
+    return {
+        addr: cast(LoadedArtifacts, bundle)
+        for addr, bundle in bundles.items()
+        if {"analysis", "snapshot"} <= bundle.keys()
     }
 
 
@@ -61,24 +87,33 @@ class PolicyWorker(BaseWorker):
         contract_analysis = get_artifact(session, job.id, "contract_analysis")
         control_snapshot = get_artifact(session, job.id, "control_snapshot")
         resolved_control_graph = get_artifact(session, job.id, "resolved_control_graph")
+        tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
 
         if not isinstance(contract_analysis, dict):
             raise RuntimeError("contract_analysis artifact not found")
         if not isinstance(control_snapshot, dict):
             raise RuntimeError("control_snapshot artifact not found")
 
+        nested_artifacts = _load_nested_artifacts(session, job.id)
+
         # Determine authority snapshot and policy state
-        authority_snapshot_path: Path | None = None
-        policy_state_path: Path | None = None
+        authority_snapshot: dict | None = None
+        policy_state: dict | None = None
         principal_resolution: PrincipalResolution = {
             "status": "no_authority",
             "reason": "Worker-mode authority resolution",
         }
 
         if isinstance(resolved_control_graph, dict):
-            authority_result = self._resolve_authority(resolved_control_graph, control_snapshot)
-            authority_snapshot_path = authority_result.get("authority_snapshot_path")
-            policy_state_path = authority_result.get("policy_state_path")
+            authority_result = self._resolve_authority(
+                session,
+                job,
+                resolved_control_graph,
+                control_snapshot,
+                nested_artifacts,
+            )
+            authority_snapshot = authority_result.get("authority_snapshot")
+            policy_state = authority_result.get("policy_state")
             principal_resolution = authority_result.get("principal_resolution", principal_resolution)
             logger.info(
                 "Policy stage authority resolution for job %s address=%s status=%s",
@@ -87,22 +122,8 @@ class PolicyWorker(BaseWorker):
                 principal_resolution.get("status", "unknown"),
             )
 
-        authority_snapshot = (
-            json.loads(authority_snapshot_path.read_text())
-            if authority_snapshot_path and authority_snapshot_path.exists()
-            else None
-        )
-        policy_state = (
-            json.loads(policy_state_path.read_text()) if policy_state_path and policy_state_path.exists() else None
-        )
-
         # Build effective permissions
         self.update_detail(session, job, "Computing effective permissions")
-        artifact_paths: dict[str, str] = {}
-        if authority_snapshot_path:
-            artifact_paths["authority_snapshot"] = str(authority_snapshot_path)
-        if policy_state_path:
-            artifact_paths["policy_state"] = str(policy_state_path)
 
         ep_data: dict = cast(
             dict,
@@ -111,7 +132,6 @@ class PolicyWorker(BaseWorker):
                 target_snapshot=control_snapshot,
                 authority_snapshot=authority_snapshot,
                 policy_state=policy_state,
-                artifact_paths=artifact_paths or None,
                 principal_resolution=principal_resolution,
             ),
         )
@@ -186,23 +206,36 @@ class PolicyWorker(BaseWorker):
 
         # Rebuild the resolved graph now that effective_permissions exists,
         # so semantic role/controller principals can be projected into the graph.
-        # The refresh reuses existing sub-contract snapshots on disk.
+        # The refresh reuses the nested artifacts persisted during resolution.
         self.update_detail(session, job, "Refreshing resolved control graph")
-        root_artifacts = _placeholder_artifacts(contract_analysis, cast(ControlSnapshot, control_snapshot))
-        # Make the target-contract effective_permissions available via the
-        # sub-project file lookup used by recursive resolution. Ensuring it
-        # exists for the target is not strictly necessary since the root
-        # uses placeholder paths, but writing it costs nothing meaningful.
-        refreshed_graph = resolve_control_graph(
-            root_artifacts=root_artifacts,
+        if not isinstance(tracking_plan, dict):
+            tracking_plan = {}
+        # Attach the target contract's updated effective_permissions to the
+        # root bundle so role/controller principals can be projected when
+        # re-traversing the graph.
+        root_bundle = _root_artifacts(contract_analysis, tracking_plan, cast(ControlSnapshot, control_snapshot))
+        root_bundle["effective_permissions"] = ep_data
+        refreshed_graph, refreshed_nested = resolve_control_graph(
+            root_artifacts=root_bundle,
             rpc_url=rpc_url,
             max_depth=RECURSION_MAX_DEPTH,
             workspace_prefix="recursive",
-            refresh_snapshots=False,
+            nested_artifacts_override=nested_artifacts,
         )
         if refreshed_graph:
             resolved_control_graph = refreshed_graph
             store_artifact(session, job.id, "resolved_control_graph", data=refreshed_graph)
+            # Persist any newly materialized nested artifacts (rare — most come
+            # from resolution stage already).
+            new_addresses = set(refreshed_nested) - set(nested_artifacts)
+            if new_addresses:
+                from workers.resolution_worker import _store_nested_artifacts
+
+                _store_nested_artifacts(
+                    session,
+                    job.id,
+                    {addr: refreshed_nested[addr] for addr in new_addresses},
+                )
 
         # Label principals
         self.update_detail(session, job, "Labeling principals")
@@ -402,14 +435,21 @@ class PolicyWorker(BaseWorker):
                 session.commit()
         return enriched
 
-    def _resolve_authority(self, resolved_graph: dict, snapshot: dict) -> dict:
-        """Locate authority artifact paths from the resolved control graph.
+    def _resolve_authority(
+        self,
+        session: Session,
+        job: Job,
+        resolved_graph: dict,
+        snapshot: dict,
+        nested_artifacts: dict[str, LoadedArtifacts],
+    ) -> dict:
+        """Locate authority artifacts from the resolution stage's DB bundles.
 
-        The graph's nodes carry ``artifacts`` paths that point at persistent
-        sub-contract workspaces under ``contracts/recursive_*/`` (written by
-        the recursive resolver). For each candidate authority address, we
-        check the on-disk paths and, if HyperSync is configured, backfill
-        any missing policy state into the same workspace.
+        The resolution worker persists per-sub-contract artifacts as
+        ``recursive:<address>:<kind>`` rows. This method fetches the
+        authority's bundle from that set (or falls back to existing
+        ``policy_state`` / ``policy_event_history`` artifacts when present)
+        and, if HyperSync is configured, backfills missing policy state.
         """
         # Find authority address from snapshot
         authority_address = None
@@ -421,19 +461,8 @@ class PolicyWorker(BaseWorker):
         if not authority_address or authority_address == "0x0000000000000000000000000000000000000000":
             return {"principal_resolution": {"status": "no_authority", "reason": "No non-zero authority found"}}
 
-        # Find authority node in graph
-        authority_snapshot_path: Path | None = None
-        for node in resolved_graph.get("nodes", []):
-            if node.get("address", "").lower() != authority_address:
-                continue
-            snapshot_artifact = (node.get("artifacts") or {}).get("snapshot")
-            if snapshot_artifact:
-                candidate = Path(snapshot_artifact)
-                if candidate.exists():
-                    authority_snapshot_path = candidate
-            break
-
-        if authority_snapshot_path is None:
+        authority_bundle = nested_artifacts.get(authority_address)
+        if authority_bundle is None or "snapshot" not in authority_bundle:
             return {
                 "principal_resolution": {
                     "status": "no_authority_snapshot",
@@ -441,43 +470,55 @@ class PolicyWorker(BaseWorker):
                 }
             }
 
-        # Check for policy tracking and HyperSync backfill
-        authority_project_dir = authority_snapshot_path.parent
-        authority_plan_path = authority_project_dir / "control_tracking_plan.json"
-        authority_analysis_path = authority_project_dir / "contract_analysis.json"
-        policy_state_path = authority_project_dir / "policy_state.json"
+        authority_snapshot = cast(dict, authority_bundle["snapshot"])
+        authority_analysis = authority_bundle.get("analysis")
+        authority_plan = authority_bundle.get("tracking_plan")
+        policy_state = get_artifact(session, job.id, _recursive_artifact_key(authority_address, "policy_state"))
+        if policy_state is not None and not isinstance(policy_state, dict):
+            policy_state = None
 
-        if authority_plan_path.exists() and authority_analysis_path.exists():
-            authority_analysis = json.loads(authority_analysis_path.read_text())
-            if authority_analysis.get("policy_tracking"):
-                if policy_state_path.exists():
-                    return {
-                        "authority_snapshot_path": authority_snapshot_path,
-                        "policy_state_path": policy_state_path,
-                        "principal_resolution": {
-                            "status": "complete",
-                            "reason": "Existing authority policy state joined into permission view",
-                        },
-                    }
-                if os.getenv("ENVIO_API_TOKEN"):
-                    run_hypersync_policy_backfill(
-                        authority_plan_path,
-                        url=DEFAULT_HYPERSYNC_URL,
-                        state_out=policy_state_path,
-                        events_out=authority_project_dir / "policy_event_history.jsonl",
-                    )
-                    if policy_state_path.exists():
-                        return {
-                            "authority_snapshot_path": authority_snapshot_path,
-                            "policy_state_path": policy_state_path,
-                            "principal_resolution": {
-                                "status": "complete",
-                                "reason": "Authority policy backfill completed",
-                            },
-                        }
+        if (
+            isinstance(authority_analysis, dict)
+            and isinstance(authority_plan, dict)
+            and authority_analysis.get("policy_tracking")
+        ):
+            if isinstance(policy_state, dict):
+                return {
+                    "authority_snapshot": authority_snapshot,
+                    "policy_state": policy_state,
+                    "principal_resolution": {
+                        "status": "complete",
+                        "reason": "Existing authority policy state joined into permission view",
+                    },
+                }
+            if os.getenv("ENVIO_API_TOKEN"):
+                events, state = run_hypersync_policy_backfill(
+                    cast(ControlTrackingPlan, authority_plan),
+                    url=DEFAULT_HYPERSYNC_URL,
+                )
+                store_artifact(
+                    session,
+                    job.id,
+                    _recursive_artifact_key(authority_address, "policy_event_history"),
+                    data=events,
+                )
+                store_artifact(
+                    session,
+                    job.id,
+                    _recursive_artifact_key(authority_address, "policy_state"),
+                    data=state,
+                )
+                return {
+                    "authority_snapshot": authority_snapshot,
+                    "policy_state": state,
+                    "principal_resolution": {
+                        "status": "complete",
+                        "reason": "Authority policy backfill completed",
+                    },
+                }
 
         return {
-            "authority_snapshot_path": authority_snapshot_path,
+            "authority_snapshot": authority_snapshot,
             "principal_resolution": {
                 "status": "missing_policy_state",
                 "reason": "Authority artifacts incomplete or ENVIO_API_TOKEN not set",

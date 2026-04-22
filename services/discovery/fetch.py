@@ -9,8 +9,6 @@ from pathlib import Path
 
 from utils.etherscan import get_source
 
-CONTRACTS_DIR = Path(__file__).resolve().parents[2] / "contracts"
-
 
 def fetch(address: str) -> dict:
     """Fetch verified source from Etherscan. Returns the raw result dict."""
@@ -118,8 +116,12 @@ def _project_src_dir(sources: dict[str, str]) -> str:
     return "."
 
 
-def scaffold(address: str, name: str, result: dict) -> Path:
-    """Write source files into a Foundry project and return the project path."""
+def scaffold(address: str, result: dict, project_dir: Path) -> Path:
+    """Write source files into the given Foundry project dir and return the path.
+
+    The caller owns ``project_dir`` — typically a tempdir. This function does
+    not manage persistence of the scaffolded workspace.
+    """
     sources = parse_sources(result)
     remappings = parse_remappings(result)
     bundle = parse_verification_bundle(result)
@@ -129,7 +131,6 @@ def scaffold(address: str, name: str, result: dict) -> Path:
     raw_evm = result.get("EVMVersion", "") or ""
     evm_version = raw_evm if raw_evm.lower() not in ("", "default") else "shanghai"
 
-    project_dir = CONTRACTS_DIR / name
     project_dir.mkdir(parents=True, exist_ok=True)
 
     # foundry.toml

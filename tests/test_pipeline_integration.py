@@ -853,9 +853,9 @@ def test_resolution_worker_rewrites_address_for_impl_jobs(monkeypatch):
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
 
     # Mock resolve_control_graph to capture the analysis it receives
-    def fake_resolve_graph(*, root_artifacts, rpc_url, max_depth, workspace_prefix, refresh_snapshots):
+    def fake_resolve_graph(*, root_artifacts, rpc_url, max_depth, workspace_prefix):
         captured_analyses.append(root_artifacts["analysis"])
-        return {"nodes": [], "edges": []}
+        return {"nodes": [], "edges": []}, {}
 
     monkeypatch.setattr("workers.resolution_worker.resolve_control_graph", fake_resolve_graph)
 

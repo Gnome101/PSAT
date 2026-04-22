@@ -57,8 +57,26 @@ def _minimal_contract_analysis() -> dict:
     }
 
 
+def _authority_bundle(snapshot: dict | None = None, policy_tracking: bool = False) -> dict:
+    return {
+        "analysis": {
+            "subject": {"address": AUTH_ADDRESS, "name": "Authority"},
+            "policy_tracking": policy_tracking,
+        },
+        "tracking_plan": {
+            "schema_version": "0.1",
+            "contract_address": AUTH_ADDRESS,
+            "contract_name": "Authority",
+            "tracking_strategy": "event_first_with_polling_fallback",
+            "tracked_controllers": [],
+            "tracked_policies": [],
+        },
+        "snapshot": snapshot or {"contract_address": AUTH_ADDRESS, "controller_values": {}},
+    }
+
+
 # ---------------------------------------------------------------------------
-# _resolve_authority tests (now takes dicts directly)
+# _resolve_authority tests (now takes session, job, graph, snapshot, nested)
 # ---------------------------------------------------------------------------
 
 
@@ -67,11 +85,13 @@ class TestResolveAuthorityNoAuthority:
 
     def test_returns_no_authority(self) -> None:
         worker = PolicyWorker()
+        session = MagicMock()
+        job = _job()
 
         snapshot = _minimal_snapshot({"owner_slot:admin": {"value": "0xbbb"}})
         graph = _graph_with_nodes([])
 
-        result = worker._resolve_authority(graph, snapshot)
+        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, {})
 
         assert result["principal_resolution"]["status"] == "no_authority"
 
@@ -81,55 +101,52 @@ class TestResolveAuthorityZeroAddress:
 
     def test_returns_no_authority(self) -> None:
         worker = PolicyWorker()
+        session = MagicMock()
+        job = _job()
 
         snapshot = _minimal_snapshot({"state_variable:authority": {"value": ZERO_ADDRESS}})
         graph = _graph_with_nodes([])
 
-        result = worker._resolve_authority(graph, snapshot)
+        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, {})
 
         assert result["principal_resolution"]["status"] == "no_authority"
         assert "non-zero" in result["principal_resolution"]["reason"].lower()
 
 
 class TestResolveAuthorityNoSnapshot:
-    """Authority address is in the graph but its node has no snapshot artifact."""
+    """Authority address is in the graph but its bundle is missing from nested artifacts."""
 
     def test_returns_no_authority_snapshot(self) -> None:
         worker = PolicyWorker()
+        session = MagicMock()
+        job = _job()
 
         snapshot = _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}})
         graph = _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {}}])
 
-        result = worker._resolve_authority(graph, snapshot)
+        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, {})
 
         assert result["principal_resolution"]["status"] == "no_authority_snapshot"
 
 
 class TestResolveAuthorityWithSnapshot:
-    """Authority found with a real snapshot file, no policy tracking."""
+    """Authority found with a real snapshot bundle, no policy tracking."""
 
-    def test_returns_authority_path_and_missing_policy(self, tmp_path: Path) -> None:
+    def test_returns_authority_snapshot_and_missing_policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         worker = PolicyWorker()
-
-        # Create the authority project directory with a snapshot file
-        authority_dir = tmp_path / "authority_project"
-        authority_dir.mkdir()
-        authority_snapshot = authority_dir / "control_snapshot.json"
-        authority_snapshot.write_text('{"contract_address": "' + AUTH_ADDRESS + '", "controller_values": {}}\n')
+        session = MagicMock()
+        job = _job()
 
         snapshot = _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}})
-        graph = _graph_with_nodes(
-            [
-                {
-                    "address": AUTH_ADDRESS,
-                    "artifacts": {"snapshot": str(authority_snapshot)},
-                }
-            ]
-        )
+        graph = _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {"data_key": f"recursive:{AUTH_ADDRESS}"}}])
+        nested = cast(Any, {AUTH_ADDRESS: _authority_bundle(policy_tracking=False)})
 
-        result = worker._resolve_authority(graph, snapshot)
+        # No policy_state artifact stored for authority.
+        monkeypatch.setattr("workers.policy_worker.get_artifact", lambda *_args, **_kwargs: None)
 
-        assert result["authority_snapshot_path"] == authority_snapshot
+        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, nested)
+
+        assert result["authority_snapshot"] == nested[AUTH_ADDRESS]["snapshot"]
         assert result["principal_resolution"]["status"] == "missing_policy_state"
 
 
@@ -150,12 +167,14 @@ class TestProcessStoresAllArtifacts:
         contract_analysis = _minimal_contract_analysis()
         control_snapshot = _minimal_snapshot({"some_key:admin": {"value": "0xbbb"}})
         resolved_graph = _graph_with_nodes([])
+        tracking_plan = {"schema_version": "0.1", "contract_address": TARGET_ADDRESS, "contract_name": "TestContract"}
 
         def fake_get_artifact(_session: Any, _job_id: Any, name: str) -> Any:
             return {
                 "contract_analysis": contract_analysis,
                 "control_snapshot": control_snapshot,
                 "resolved_control_graph": resolved_graph,
+                "control_tracking_plan": tracking_plan,
             }.get(name)
 
         store_calls: list[tuple[str, Any]] = []
@@ -171,13 +190,14 @@ class TestProcessStoresAllArtifacts:
 
         monkeypatch.setattr("workers.policy_worker.get_artifact", fake_get_artifact)
         monkeypatch.setattr("workers.policy_worker.store_artifact", fake_store_artifact)
+        monkeypatch.setattr("workers.policy_worker._load_nested_artifacts", lambda *_a, **_kw: {})
         monkeypatch.setattr(
             "workers.policy_worker.build_effective_permissions",
             lambda *a, **kw: {"schema_version": "1", "functions": []},
         )
         monkeypatch.setattr(
             "workers.policy_worker.resolve_control_graph",
-            lambda **kw: {"nodes": [], "edges": [], "refreshed": True},
+            lambda **kw: ({"nodes": [], "edges": [], "refreshed": True}, {}),
         )
         monkeypatch.setattr(
             "workers.policy_worker.build_principal_labels",
@@ -204,12 +224,14 @@ class TestGraphRefreshAfterEffectivePermissions:
         contract_analysis = _minimal_contract_analysis()
         control_snapshot = _minimal_snapshot()
         resolved_graph = _graph_with_nodes([])
+        tracking_plan = {"schema_version": "0.1", "contract_address": TARGET_ADDRESS, "contract_name": "TestContract"}
 
         def fake_get_artifact(_session: Any, _job_id: Any, name: str) -> Any:
             return {
                 "contract_analysis": contract_analysis,
                 "control_snapshot": control_snapshot,
                 "resolved_control_graph": resolved_graph,
+                "control_tracking_plan": tracking_plan,
             }.get(name)
 
         call_order: list[str] = []
@@ -218,9 +240,9 @@ class TestGraphRefreshAfterEffectivePermissions:
             call_order.append("effective_permissions")
             return {"schema_version": "1", "functions": []}
 
-        def fake_resolve_graph(**kwargs: Any) -> dict:
+        def fake_resolve_graph(**kwargs: Any) -> tuple[dict, dict]:
             call_order.append("resolved_control_graph")
-            return {"nodes": [], "edges": [], "refreshed": True}
+            return {"nodes": [], "edges": [], "refreshed": True}, {}
 
         def fake_build_labels(*args: Any, **kwargs: Any) -> dict:
             call_order.append("principal_labels")
@@ -228,6 +250,7 @@ class TestGraphRefreshAfterEffectivePermissions:
 
         monkeypatch.setattr("workers.policy_worker.get_artifact", fake_get_artifact)
         monkeypatch.setattr("workers.policy_worker.store_artifact", lambda *a, **kw: None)
+        monkeypatch.setattr("workers.policy_worker._load_nested_artifacts", lambda *_a, **_kw: {})
         monkeypatch.setattr("workers.policy_worker.build_effective_permissions", fake_build_ep)
         monkeypatch.setattr("workers.policy_worker.resolve_control_graph", fake_resolve_graph)
         monkeypatch.setattr("workers.policy_worker.build_principal_labels", fake_build_labels)
@@ -254,12 +277,14 @@ class TestCrossContractEnrichmentArtifactSync:
         contract_analysis = _minimal_contract_analysis()
         control_snapshot = _minimal_snapshot({"state_variable:token": {"value": AUTH_ADDRESS}})
         resolved_graph = _graph_with_nodes([])
+        tracking_plan = {"schema_version": "0.1", "contract_address": TARGET_ADDRESS, "contract_name": "TestContract"}
 
         def fake_get_artifact(_session: Any, _job_id: Any, name: str) -> Any:
             return {
                 "contract_analysis": contract_analysis,
                 "control_snapshot": control_snapshot,
                 "resolved_control_graph": resolved_graph,
+                "control_tracking_plan": tracking_plan,
             }.get(name)
 
         store_calls: list[tuple[str, Any]] = []
@@ -281,6 +306,7 @@ class TestCrossContractEnrichmentArtifactSync:
 
         monkeypatch.setattr("workers.policy_worker.get_artifact", fake_get_artifact)
         monkeypatch.setattr("workers.policy_worker.store_artifact", fake_store_artifact)
+        monkeypatch.setattr("workers.policy_worker._load_nested_artifacts", lambda *_a, **_kw: {})
         monkeypatch.setattr(
             "workers.policy_worker.build_effective_permissions",
             lambda *a, **kw: {
@@ -298,7 +324,7 @@ class TestCrossContractEnrichmentArtifactSync:
         )
         monkeypatch.setattr(
             "workers.policy_worker.resolve_control_graph",
-            lambda **kw: {"nodes": [], "edges": []},
+            lambda **kw: ({"nodes": [], "edges": []}, {}),
         )
         monkeypatch.setattr(
             "workers.policy_worker.build_principal_labels",

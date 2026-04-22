@@ -1,4 +1,3 @@
-import json
 import sys
 from pathlib import Path
 from typing import cast
@@ -7,54 +6,48 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from schemas.resolved_control_graph import ResolvedGraphEdge
 from services.resolution.recursive import (
+    LoadedArtifacts,
     _add_edge,
     _materialize_contract_artifacts,
-    resolve_control_graph_from_path,
+    resolve_control_graph,
 )
 
 
-def _write_artifact_dir(base: Path, name: str, *, address: str, contract_name: str, snapshot: dict) -> Path:
-    directory = base / name
-    directory.mkdir(parents=True)
-    (directory / "contract_analysis.json").write_text(
-        json.dumps(
-            {
-                "subject": {
-                    "address": address,
-                    "name": contract_name,
-                }
-            }
-        )
-        + "\n"
-    )
-    (directory / "control_tracking_plan.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "0.1",
-                "contract_address": address,
-                "contract_name": contract_name,
-                "tracking_strategy": "event_first_with_polling_fallback",
-                "tracked_controllers": [],
-                "tracked_policies": [],
-            }
-        )
-        + "\n"
-    )
-    (directory / "control_snapshot.json").write_text(json.dumps(snapshot) + "\n")
-    return directory / "contract_analysis.json"
+def _bundle(address: str, contract_name: str, *, snapshot: dict, effective_permissions: dict | None = None) -> dict:
+    """Build an in-memory ``LoadedArtifacts`` for a contract."""
+    plan = {
+        "schema_version": "0.1",
+        "contract_address": address,
+        "contract_name": contract_name,
+        "tracking_strategy": "event_first_with_polling_fallback",
+        "tracked_controllers": [],
+        "tracked_policies": [],
+    }
+    analysis = {
+        "subject": {
+            "address": address,
+            "name": contract_name,
+        }
+    }
+    bundle = {
+        "analysis": analysis,
+        "tracking_plan": plan,
+        "snapshot": snapshot,
+    }
+    if effective_permissions is not None:
+        bundle["effective_permissions"] = effective_permissions
+    return bundle
 
 
-def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch, tmp_path):
+def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch):
     root_address = "0x1111111111111111111111111111111111111111"
     authority_address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     safe_address = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     signer_address = "0xcccccccccccccccccccccccccccccccccccccccc"
 
-    root_analysis_path = _write_artifact_dir(
-        tmp_path,
-        "root",
-        address=root_address,
-        contract_name="Vault",
+    root_bundle = _bundle(
+        root_address,
+        "Vault",
         snapshot={
             "schema_version": "0.1",
             "contract_address": root_address,
@@ -81,11 +74,9 @@ def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch, tmp_pa
         },
     )
 
-    nested_path = _write_artifact_dir(
-        tmp_path,
-        "authority",
-        address=authority_address,
-        contract_name="RolesAuthority",
+    authority_bundle = _bundle(
+        authority_address,
+        "RolesAuthority",
         snapshot={
             "schema_version": "0.1",
             "contract_address": authority_address,
@@ -108,16 +99,9 @@ def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch, tmp_pa
         },
     )
 
-    def fake_materialize(address, rpc_url, *, workspace_prefix, refresh_snapshots):
+    def fake_materialize(address, rpc_url, *, workspace_prefix):
         assert address == authority_address
-        return {
-            "project_dir": nested_path.parent,
-            "analysis_path": nested_path,
-            "plan_path": nested_path.with_name("control_tracking_plan.json"),
-            "snapshot_path": nested_path.with_name("control_snapshot.json"),
-            "analysis": json.loads(nested_path.read_text()),
-            "snapshot": json.loads(nested_path.with_name("control_snapshot.json").read_text()),
-        }
+        return authority_bundle
 
     def fake_classify(rpc_url, address, block_tag="latest"):
         if address == signer_address:
@@ -127,11 +111,10 @@ def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch, tmp_pa
     monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
     monkeypatch.setattr("services.resolution.recursive.classify_resolved_address", fake_classify)
 
-    graph = resolve_control_graph_from_path(
-        root_analysis_path,
+    graph, nested = resolve_control_graph(
+        root_artifacts=cast(LoadedArtifacts, root_bundle),
         rpc_url="http://rpc.example",
         max_depth=3,
-        refresh_snapshots=False,
     )
 
     nodes = {node["address"]: node for node in graph["nodes"]}
@@ -159,17 +142,17 @@ def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch, tmp_pa
         "safe_owner",
         "address:0xcccccccccccccccccccccccccccccccccccccccc",
     ) in edges
+    # Nested artifact for authority was materialized and returned.
+    assert authority_address in nested
 
 
-def test_resolve_control_graph_dedupes_recursive_contract_addresses(monkeypatch, tmp_path):
+def test_resolve_control_graph_dedupes_recursive_contract_addresses(monkeypatch):
     root_address = "0x1111111111111111111111111111111111111111"
     shared_address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-    root_analysis_path = _write_artifact_dir(
-        tmp_path,
-        "root",
-        address=root_address,
-        contract_name="Vault",
+    root_bundle = _bundle(
+        root_address,
+        "Vault",
         snapshot={
             "schema_version": "0.1",
             "contract_address": root_address,
@@ -196,11 +179,9 @@ def test_resolve_control_graph_dedupes_recursive_contract_addresses(monkeypatch,
         },
     )
 
-    nested_path = _write_artifact_dir(
-        tmp_path,
-        "shared",
-        address=shared_address,
-        contract_name="SharedController",
+    shared_bundle = _bundle(
+        shared_address,
+        "SharedController",
         snapshot={
             "schema_version": "0.1",
             "contract_address": shared_address,
@@ -212,16 +193,9 @@ def test_resolve_control_graph_dedupes_recursive_contract_addresses(monkeypatch,
 
     materialize_calls: list[str] = []
 
-    def fake_materialize(address, rpc_url, *, workspace_prefix, refresh_snapshots):
+    def fake_materialize(address, rpc_url, *, workspace_prefix):
         materialize_calls.append(address)
-        return {
-            "project_dir": nested_path.parent,
-            "analysis_path": nested_path,
-            "plan_path": nested_path.with_name("control_tracking_plan.json"),
-            "snapshot_path": nested_path.with_name("control_snapshot.json"),
-            "analysis": json.loads(nested_path.read_text()),
-            "snapshot": json.loads(nested_path.with_name("control_snapshot.json").read_text()),
-        }
+        return shared_bundle
 
     monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
     monkeypatch.setattr(
@@ -229,11 +203,10 @@ def test_resolve_control_graph_dedupes_recursive_contract_addresses(monkeypatch,
         lambda rpc_url, address, block_tag="latest": ("unknown", {"address": address}),
     )
 
-    graph = resolve_control_graph_from_path(
-        root_analysis_path,
+    graph, _nested = resolve_control_graph(
+        root_artifacts=cast(LoadedArtifacts, root_bundle),
         rpc_url="http://rpc.example",
         max_depth=2,
-        refresh_snapshots=False,
     )
 
     analyzed_addresses = [node["address"] for node in graph["nodes"] if node.get("analyzed")]
@@ -241,17 +214,15 @@ def test_resolve_control_graph_dedupes_recursive_contract_addresses(monkeypatch,
     assert materialize_calls == [shared_address]
 
 
-def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch, tmp_path):
+def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch):
     root_address = "0x1111111111111111111111111111111111111111"
     role_holder_address = "0xdddddddddddddddddddddddddddddddddddddddd"
     safe_address = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     signer_address = "0xcccccccccccccccccccccccccccccccccccccccc"
 
-    root_analysis_path = _write_artifact_dir(
-        tmp_path,
-        "root",
-        address=root_address,
-        contract_name="Vault",
+    root_bundle = _bundle(
+        root_address,
+        "Vault",
         snapshot={
             "schema_version": "0.1",
             "contract_address": root_address,
@@ -259,42 +230,35 @@ def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch, 
             "block_number": 1,
             "controller_values": {},
         },
-    )
-    root_analysis_path.with_name("effective_permissions.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "0.1",
-                "contract_address": root_address,
-                "contract_name": "Vault",
-                "functions": [
-                    {
-                        "function": "manage(address,bytes,uint256)",
-                        "selector": "0x12345678",
-                        "authority_public": False,
-                        "authority_roles": [
-                            {
-                                "role": 1,
-                                "principals": [
-                                    {
-                                        "address": role_holder_address,
-                                        "resolved_type": "contract",
-                                        "details": {"address": role_holder_address},
-                                    }
-                                ],
-                            }
-                        ],
-                    }
-                ],
-            }
-        )
-        + "\n"
+        effective_permissions={
+            "schema_version": "0.1",
+            "contract_address": root_address,
+            "contract_name": "Vault",
+            "functions": [
+                {
+                    "function": "manage(address,bytes,uint256)",
+                    "selector": "0x12345678",
+                    "authority_public": False,
+                    "authority_roles": [
+                        {
+                            "role": 1,
+                            "principals": [
+                                {
+                                    "address": role_holder_address,
+                                    "resolved_type": "contract",
+                                    "details": {"address": role_holder_address},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
     )
 
-    nested_path = _write_artifact_dir(
-        tmp_path,
-        "role_holder",
-        address=role_holder_address,
-        contract_name="ManagerContract",
+    role_holder_bundle = _bundle(
+        role_holder_address,
+        "ManagerContract",
         snapshot={
             "schema_version": "0.1",
             "contract_address": role_holder_address,
@@ -319,17 +283,10 @@ def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch, 
 
     materialize_calls: list[str] = []
 
-    def fake_materialize(address, rpc_url, *, workspace_prefix, refresh_snapshots):
+    def fake_materialize(address, rpc_url, *, workspace_prefix):
         materialize_calls.append(address)
         assert address == role_holder_address
-        return {
-            "project_dir": nested_path.parent,
-            "analysis_path": nested_path,
-            "plan_path": nested_path.with_name("control_tracking_plan.json"),
-            "snapshot_path": nested_path.with_name("control_snapshot.json"),
-            "analysis": json.loads(nested_path.read_text()),
-            "snapshot": json.loads(nested_path.with_name("control_snapshot.json").read_text()),
-        }
+        return role_holder_bundle
 
     def fake_classify(rpc_url, address, block_tag="latest"):
         if address == signer_address:
@@ -343,24 +300,17 @@ def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch, 
     monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
     monkeypatch.setattr("services.resolution.recursive.classify_resolved_address", fake_classify)
 
-    resolve_control_graph_from_path(
-        root_analysis_path,
+    resolve_control_graph(
+        root_artifacts=cast(LoadedArtifacts, root_bundle),
         rpc_url="http://rpc.example",
         max_depth=3,
-        refresh_snapshots=False,
     )
 
     assert materialize_calls == [role_holder_address]
 
 
-def test_materialize_contract_artifacts_tolerates_slither_cli_failure(monkeypatch, tmp_path):
+def test_materialize_contract_artifacts_tolerates_slither_cli_failure(monkeypatch):
     address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    project_dir = tmp_path / "recursive_TestContract_aaaaaaaa"
-    analysis_path = project_dir / "contract_analysis.json"
-    plan_path = project_dir / "control_tracking_plan.json"
-    snapshot_path = project_dir / "control_snapshot.json"
-
-    monkeypatch.setattr("services.resolution.recursive.CONTRACTS_DIR", tmp_path)
 
     monkeypatch.setattr(
         "services.resolution.recursive.classify_single",
@@ -371,142 +321,125 @@ def test_materialize_contract_artifacts_tolerates_slither_cli_failure(monkeypatc
         "services.resolution.recursive.fetch",
         lambda _address: {"ContractName": "TestContract"},
     )
-
-    def fake_scaffold(_address, _project_name, _result):
-        project_dir.mkdir(parents=True, exist_ok=True)
-        return project_dir
-
-    monkeypatch.setattr("services.resolution.recursive.scaffold", fake_scaffold)
+    monkeypatch.setattr(
+        "services.resolution.recursive.scaffold",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         "services.resolution.recursive.analyze",
         lambda project_dir, contract_name, effective_address: (_ for _ in ()).throw(RuntimeError("slither failed")),
     )
 
-    def fake_collect(_project_dir):
-        analysis = {
-            "subject": {"address": address, "name": "TestContract"},
-            "access_control": {"privileged_functions": []},
-        }
-        analysis_path.write_text(json.dumps(analysis) + "\n")
-        return analysis
-
-    monkeypatch.setattr("services.resolution.recursive.collect_contract_analysis", fake_collect)
-
-    sentinel = {
-        "project_dir": project_dir,
-        "analysis_path": analysis_path,
-        "plan_path": plan_path,
-        "snapshot_path": snapshot_path,
-        "analysis": {
-            "subject": {"address": address, "name": "TestContract"},
-            "access_control": {"privileged_functions": []},
+    sample_analysis = {
+        "subject": {"address": address, "name": "TestContract"},
+        "access_control": {"privileged_functions": []},
+    }
+    monkeypatch.setattr(
+        "services.resolution.recursive.collect_contract_analysis",
+        lambda _project_dir: sample_analysis,
+    )
+    monkeypatch.setattr(
+        "services.resolution.recursive.build_control_tracking_plan",
+        lambda _analysis: {
+            "schema_version": "0.1",
+            "contract_address": address,
+            "contract_name": "TestContract",
+            "tracking_strategy": "event_first_with_polling_fallback",
+            "tracked_controllers": [],
+            "tracked_policies": [],
         },
-        "snapshot": {
+    )
+    monkeypatch.setattr(
+        "services.resolution.recursive.build_control_snapshot",
+        lambda _plan, _rpc: {
             "schema_version": "0.1",
             "contract_address": address,
             "contract_name": "TestContract",
             "block_number": 1,
             "controller_values": {},
         },
-    }
-    project_dir.mkdir(parents=True, exist_ok=True)
-    snapshot_path.write_text(json.dumps(sentinel["snapshot"]) + "\n")
-    monkeypatch.setattr(
-        "services.resolution.recursive._load_or_build_artifacts",
-        lambda analysis_path, rpc_url, refresh_snapshots: sentinel,
     )
 
+    # Use skip_slither=False to exercise the slither-failure tolerance path.
     loaded = _materialize_contract_artifacts(
         address,
         "http://rpc.example",
         workspace_prefix="recursive",
-        refresh_snapshots=False,
+        skip_slither=False,
     )
 
-    assert loaded == sentinel
+    assert loaded["analysis"] == sample_analysis
+    assert loaded["tracking_plan"]["contract_address"] == address
+    assert loaded["snapshot"]["contract_address"] == address
 
 
-def test_materialize_contract_artifacts_writes_effective_permissions(monkeypatch, tmp_path):
+def test_materialize_contract_artifacts_builds_effective_permissions(monkeypatch):
     address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    project_dir = tmp_path / "recursive_TestContract_aaaaaaaa"
-    analysis_path = project_dir / "contract_analysis.json"
-    plan_path = project_dir / "control_tracking_plan.json"
-    snapshot_path = project_dir / "control_snapshot.json"
-    effective_permissions_path = project_dir / "effective_permissions.json"
 
-    monkeypatch.setattr("services.resolution.recursive.CONTRACTS_DIR", tmp_path)
+    monkeypatch.setattr(
+        "services.resolution.recursive.classify_single",
+        lambda address, rpc_url: {"address": address, "type": "regular"},
+        raising=False,
+    )
     monkeypatch.setattr(
         "services.resolution.recursive.fetch",
         lambda _address: {"ContractName": "TestContract"},
     )
     monkeypatch.setattr(
         "services.resolution.recursive.scaffold",
-        lambda *_args, **_kwargs: project_dir.mkdir(parents=True, exist_ok=True),
+        lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr("services.resolution.recursive.analyze", lambda *args, **kwargs: None)
-
-    def fake_collect(_project_dir):
-        analysis = {
+    monkeypatch.setattr(
+        "services.resolution.recursive.collect_contract_analysis",
+        lambda _project_dir: {
             "subject": {"address": address, "name": "TestContract"},
             "access_control": {"privileged_functions": []},
-        }
-        analysis_path.write_text(json.dumps(analysis) + "\n")
-        return analysis
-
-    monkeypatch.setattr("services.resolution.recursive.collect_contract_analysis", fake_collect)
-    monkeypatch.setattr(
-        "services.resolution.recursive._load_or_build_artifacts",
-        lambda analysis_path, rpc_url, refresh_snapshots: {
-            "project_dir": project_dir,
-            "analysis_path": analysis_path,
-            "plan_path": plan_path,
-            "snapshot_path": snapshot_path,
-            "analysis": {
-                "subject": {"address": address, "name": "TestContract"},
-                "access_control": {"privileged_functions": []},
-            },
-            "snapshot": {
-                "schema_version": "0.1",
-                "contract_address": address,
-                "contract_name": "TestContract",
-                "block_number": 1,
-                "controller_values": {},
-            },
         },
     )
-    project_dir.mkdir(parents=True, exist_ok=True)
-    snapshot_path.write_text(
-        json.dumps(
-            {
-                "schema_version": "0.1",
-                "contract_address": address,
-                "contract_name": "TestContract",
-                "block_number": 1,
-                "controller_values": {},
-            }
-        )
-        + "\n"
+    monkeypatch.setattr(
+        "services.resolution.recursive.build_control_tracking_plan",
+        lambda _analysis: {
+            "schema_version": "0.1",
+            "contract_address": address,
+            "contract_name": "TestContract",
+            "tracking_strategy": "event_first_with_polling_fallback",
+            "tracked_controllers": [],
+            "tracked_policies": [],
+        },
+    )
+    monkeypatch.setattr(
+        "services.resolution.recursive.build_control_snapshot",
+        lambda _plan, _rpc: {
+            "schema_version": "0.1",
+            "contract_address": address,
+            "contract_name": "TestContract",
+            "block_number": 1,
+            "controller_values": {},
+        },
+    )
+    marker = {"schema_version": "0.1", "functions": []}
+    monkeypatch.setattr(
+        "services.resolution.recursive._build_effective_permissions",
+        lambda _analysis, _snapshot: marker,
     )
 
-    _materialize_contract_artifacts(
+    loaded = _materialize_contract_artifacts(
         address,
         "http://rpc.example",
         workspace_prefix="recursive",
-        refresh_snapshots=False,
     )
 
-    assert effective_permissions_path.exists()
+    assert loaded.get("effective_permissions") is marker
 
 
-def test_resolve_control_graph_skips_failed_nested_materialization(monkeypatch, tmp_path):
+def test_resolve_control_graph_skips_failed_nested_materialization(monkeypatch):
     root_address = "0x1111111111111111111111111111111111111111"
     nested_address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-    _write_artifact_dir(
-        tmp_path,
-        "root",
-        address=root_address,
-        contract_name="Vault",
+    root_bundle = _bundle(
+        root_address,
+        "Vault",
         snapshot={
             "schema_version": "0.1",
             "contract_address": root_address,
@@ -527,21 +460,27 @@ def test_resolve_control_graph_skips_failed_nested_materialization(monkeypatch, 
 
     monkeypatch.setattr(
         "services.resolution.recursive._materialize_contract_artifacts",
-        lambda address, rpc_url, *, workspace_prefix, refresh_snapshots: (_ for _ in ()).throw(
-            RuntimeError("nested compile failed")
-        ),
+        lambda address, rpc_url, *, workspace_prefix: (_ for _ in ()).throw(RuntimeError("nested compile failed")),
     )
 
+    graph, _nested = resolve_control_graph(
+        root_artifacts=cast(LoadedArtifacts, root_bundle),
+        rpc_url="http://rpc.example",
+        max_depth=2,
+    )
 
-def test_resolve_control_graph_names_failed_nested_contract_from_metadata(monkeypatch, tmp_path):
+    nodes = {node["address"]: node for node in graph["nodes"]}
+    assert nodes[nested_address]["analyzed"] is False
+    assert "materialize_error" in nodes[nested_address]["details"]
+
+
+def test_resolve_control_graph_names_failed_nested_contract_from_metadata(monkeypatch):
     root_address = "0x1111111111111111111111111111111111111111"
     nested_address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-    root_analysis_path = _write_artifact_dir(
-        tmp_path,
-        "root",
-        address=root_address,
-        contract_name="Vault",
+    root_bundle = _bundle(
+        root_address,
+        "Vault",
         snapshot={
             "schema_version": "0.1",
             "contract_address": root_address,
@@ -569,11 +508,10 @@ def test_resolve_control_graph_names_failed_nested_contract_from_metadata(monkey
         lambda address: "GateSeal" if address == nested_address else None,
     )
 
-    graph = resolve_control_graph_from_path(
-        root_analysis_path,
+    graph, _nested = resolve_control_graph(
+        root_artifacts=cast(LoadedArtifacts, root_bundle),
         rpc_url="http://rpc.example",
         max_depth=2,
-        refresh_snapshots=False,
     )
 
     nodes = {node["address"]: node for node in graph["nodes"]}
@@ -609,14 +547,12 @@ def test_add_edge_dedupes_nested_safe_owner_edges_across_sources():
     assert merged["notes"] == ["path=owner", "path=role"]
 
 
-def test_resolve_control_graph_skips_self_referential_role_principal_edges(monkeypatch, tmp_path):
+def test_resolve_control_graph_skips_self_referential_role_principal_edges(monkeypatch):
     root_address = "0x1111111111111111111111111111111111111111"
 
-    root_analysis_path = _write_artifact_dir(
-        tmp_path,
-        "root",
-        address=root_address,
-        contract_name="Voting",
+    root_bundle = _bundle(
+        root_address,
+        "Voting",
         snapshot={
             "schema_version": "0.1",
             "contract_address": root_address,
@@ -624,35 +560,30 @@ def test_resolve_control_graph_skips_self_referential_role_principal_edges(monke
             "block_number": 1,
             "controller_values": {},
         },
-    )
-    root_analysis_path.with_name("effective_permissions.json").write_text(
-        json.dumps(
-            {
-                "schema_version": "0.1",
-                "contract_address": root_address,
-                "contract_name": "Voting",
-                "functions": [
-                    {
-                        "function": "forward(bytes)",
-                        "selector": "0x12345678",
-                        "authority_public": False,
-                        "authority_roles": [
-                            {
-                                "role": 1,
-                                "principals": [
-                                    {
-                                        "address": root_address,
-                                        "resolved_type": "contract",
-                                        "details": {"address": root_address},
-                                    }
-                                ],
-                            }
-                        ],
-                    }
-                ],
-            }
-        )
-        + "\n"
+        effective_permissions={
+            "schema_version": "0.1",
+            "contract_address": root_address,
+            "contract_name": "Voting",
+            "functions": [
+                {
+                    "function": "forward(bytes)",
+                    "selector": "0x12345678",
+                    "authority_public": False,
+                    "authority_roles": [
+                        {
+                            "role": 1,
+                            "principals": [
+                                {
+                                    "address": root_address,
+                                    "resolved_type": "contract",
+                                    "details": {"address": root_address},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
     )
 
     monkeypatch.setattr(
@@ -660,11 +591,10 @@ def test_resolve_control_graph_skips_self_referential_role_principal_edges(monke
         lambda rpc_url, address, block_tag="latest": ("contract", {"address": address}),
     )
 
-    graph = resolve_control_graph_from_path(
-        root_analysis_path,
+    graph, _nested = resolve_control_graph(
+        root_artifacts=cast(LoadedArtifacts, root_bundle),
         rpc_url="http://rpc.example",
         max_depth=2,
-        refresh_snapshots=False,
     )
 
     assert all(edge["from_id"] != edge["to_id"] for edge in graph["edges"])

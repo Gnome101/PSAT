@@ -27,6 +27,22 @@ from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
 from workers.base import DEBUG_TIMING, BaseWorker
 
+RECURSIVE_ARTIFACT_KINDS: tuple[str, ...] = ("analysis", "tracking_plan", "snapshot", "effective_permissions")
+
+
+def _recursive_artifact_key(address: str, kind: str) -> str:
+    return f"recursive:{address.lower()}:{kind}"
+
+
+def _store_nested_artifacts(session: Session, job_id, nested: dict[str, LoadedArtifacts]) -> None:
+    for address, bundle in nested.items():
+        for kind in RECURSIVE_ARTIFACT_KINDS:
+            payload = bundle.get(kind)
+            if payload is None:
+                continue
+            store_artifact(session, job_id, _recursive_artifact_key(address, kind), data=payload)
+
+
 logger = logging.getLogger("workers.resolution_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
@@ -38,22 +54,10 @@ def _build_root_artifacts(
     tracking_plan: dict,
     snapshot: ControlSnapshot,
 ) -> LoadedArtifacts:
-    """Package the root job's in-memory artifacts for the recursive resolver.
-
-    The resolver records these paths in the resolved graph's root node. The
-    root lives only in DB storage (no on-disk workspace), so the paths are
-    placeholders — policy-stage authority lookups use sub-contract artifacts
-    from persistent ``contracts/recursive_*/`` dirs, not the root.
-    """
-    from pathlib import Path as _Path
-
-    placeholder_dir = _Path("/dev/null")
+    """Package the root job's in-memory artifacts for the recursive resolver."""
     return {
-        "project_dir": placeholder_dir,
-        "analysis_path": placeholder_dir / "contract_analysis.json",
-        "plan_path": placeholder_dir / "control_tracking_plan.json",
-        "snapshot_path": placeholder_dir / "control_snapshot.json",
         "analysis": contract_analysis,
+        "tracking_plan": tracking_plan,
         "snapshot": snapshot,
     }
 
@@ -140,18 +144,20 @@ class ResolutionWorker(BaseWorker):
 
         self.update_detail(session, job, "Resolving recursive control graph")
         t0 = time.monotonic()
-        resolved_graph = resolve_control_graph(
+        resolved_graph, nested_artifacts = resolve_control_graph(
             root_artifacts=root_artifacts,
             rpc_url=rpc_url,
             max_depth=RECURSION_MAX_DEPTH,
             workspace_prefix="recursive",
-            refresh_snapshots=True,
         )
 
         if DEBUG_TIMING:
             logger.info("[TIMING] recursive graph: %.1fs", time.monotonic() - t0)
 
         if resolved_graph:
+            # Persist each nested contract's artifacts so the policy stage can
+            # read them back by address (no local filesystem).
+            _store_nested_artifacts(session, job.id, nested_artifacts)
             # Keep as artifact — policy stage reads it as JSON
             store_artifact(session, job.id, "resolved_control_graph", data=resolved_graph)
             logger.info(

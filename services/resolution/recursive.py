@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
+import tempfile
 from collections import deque
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -15,30 +15,40 @@ from typing_extensions import NotRequired
 from schemas.contract_analysis import ContractAnalysis
 from schemas.control_tracking import ControlSnapshot
 from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEdge, ResolvedGraphNode
-from services.discovery.fetch import CONTRACTS_DIR, fetch, scaffold
+from services.discovery.fetch import fetch, scaffold
 from services.policy.effective_permissions import build_effective_permissions
 from services.static import analyze, collect_contract_analysis
 
 from .tracking import (
     build_control_snapshot,
     classify_resolved_address,
-    load_control_tracking_plan,
+)
+from .tracking import (
+    load_control_tracking_plan as _load_control_tracking_plan,  # kept for standalone callers
 )
 from .tracking_plan import build_control_tracking_plan
 
 logger = logging.getLogger(__name__)
+
+# Silences unused-import warning for the re-export above without changing behavior.
+_ = _load_control_tracking_plan
 
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
 DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
 
 class LoadedArtifacts(TypedDict):
-    project_dir: Path
-    analysis_path: Path
-    plan_path: Path
-    snapshot_path: Path
+    """Per-contract artifact bundle held in memory by the resolver.
+
+    Superset of what the policy worker needs to read back for authority
+    resolution. Emitted by ``resolve_control_graph`` keyed by address and
+    persisted by the worker as DB artifacts (no local filesystem writes).
+    """
+
     analysis: dict[str, Any]
+    tracking_plan: dict[str, Any]
     snapshot: ControlSnapshot
+    effective_permissions: NotRequired[dict[str, Any] | None]
 
 
 class PendingContract(TypedDict):
@@ -63,57 +73,6 @@ class RolePrincipal(TypedDict):
     functions: list[str]
 
 
-def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text())
-
-
-def _load_effective_permissions(project_dir: Path) -> dict[str, Any] | None:
-    path = project_dir / "effective_permissions.json"
-    if not path.exists():
-        return None
-    return _load_json(path)
-
-
-def _ensure_effective_permissions(
-    analysis_path: Path,
-    snapshot_path: Path,
-    *,
-    force: bool = False,
-) -> Path:
-    """Write ``effective_permissions.json`` next to an analysis file.
-
-    Sub-contract workspaces under ``contracts/recursive_*/`` still need this
-    file on disk so the policy worker's authority-resolution step can read
-    it back via path lookup.
-    """
-    output_path = analysis_path.with_name("effective_permissions.json")
-    if force or not output_path.exists():
-        analysis = _load_json(analysis_path)
-        snapshot = _load_json(snapshot_path) if snapshot_path.exists() else None
-        artifact_paths: dict[str, str] = {"target_analysis": str(analysis_path)}
-        if snapshot_path.exists():
-            artifact_paths["target_snapshot"] = str(snapshot_path)
-        payload = build_effective_permissions(
-            analysis,
-            target_snapshot=snapshot,
-            artifact_paths=artifact_paths,
-            principal_resolution={"status": "no_authority", "reason": "No non-zero authority found"},
-        )
-        output_path.write_text(json.dumps(payload, indent=2) + "\n")
-    return output_path
-
-
-def _contract_name_for_address(address: str) -> str | None:
-    try:
-        result = fetch(address)
-    except Exception:
-        return None
-    if not isinstance(result, dict):
-        return None
-    name = str(result.get("ContractName", "")).strip()
-    return name or None
-
-
 def _address_node_id(address: str) -> str:
     return f"address:{address.lower()}"
 
@@ -127,43 +86,38 @@ def _workspace_name(contract_name: str, address: str, prefix: str) -> str:
     return f"{_sanitize_name(prefix)}_{_sanitize_name(contract_name)}_{address.lower()[2:10]}"
 
 
-def _write_tracking_plan(analysis: ContractAnalysis | dict[str, Any], plan_path: Path) -> None:
-    plan = build_control_tracking_plan(cast(ContractAnalysis, analysis))
-    plan_path.write_text(json.dumps(plan, indent=2) + "\n")
+def _contract_name_for_address(address: str) -> str | None:
+    try:
+        result = fetch(address)
+    except Exception:
+        return None
+    if not isinstance(result, dict):
+        return None
+    name = str(result.get("ContractName", "")).strip()
+    return name or None
 
 
-def _write_control_snapshot(snapshot: ControlSnapshot, path: Path) -> None:
-    path.write_text(json.dumps(snapshot, indent=2) + "\n")
+def _build_effective_permissions(
+    analysis: dict[str, Any],
+    snapshot: ControlSnapshot,
+) -> dict[str, Any] | None:
+    """Compute the effective-permissions payload for a sub-contract.
 
-
-def _load_or_build_artifacts(
-    analysis_path: Path,
-    rpc_url: str,
-    *,
-    refresh_snapshots: bool,
-) -> LoadedArtifacts:
-    analysis = _load_json(analysis_path)
-    project_dir = analysis_path.parent
-    plan_path = project_dir / "control_tracking_plan.json"
-    if not plan_path.exists():
-        _write_tracking_plan(analysis, plan_path)
-
-    snapshot_path = project_dir / "control_snapshot.json"
-    if refresh_snapshots or not snapshot_path.exists():
-        plan = load_control_tracking_plan(plan_path)
-        snapshot = build_control_snapshot(plan, rpc_url)
-        _write_control_snapshot(snapshot, snapshot_path)
-    else:
-        snapshot = cast(ControlSnapshot, _load_json(snapshot_path))
-
-    return {
-        "project_dir": project_dir,
-        "analysis_path": analysis_path,
-        "plan_path": plan_path,
-        "snapshot_path": snapshot_path,
-        "analysis": analysis,
-        "snapshot": snapshot,
-    }
+    Matches the legacy on-disk ``effective_permissions.json`` shape so the
+    policy stage can consume role/controller principals without change.
+    """
+    try:
+        return cast(
+            dict,
+            build_effective_permissions(
+                analysis,
+                target_snapshot=cast(dict, snapshot),
+                principal_resolution={"status": "no_authority", "reason": "No non-zero authority found"},
+            ),
+        )
+    except Exception as exc:
+        logger.debug("Recursive resolve: effective_permissions build failed: %s", exc)
+        return None
 
 
 def _materialize_contract_artifacts(
@@ -171,12 +125,17 @@ def _materialize_contract_artifacts(
     rpc_url: str,
     *,
     workspace_prefix: str,
-    refresh_snapshots: bool,
     skip_slither: bool = True,
 ) -> LoadedArtifacts:
-    # Check if this address is a proxy — if so, analyze the implementation instead
+    """Build analysis + tracking plan + snapshot + effective permissions in memory.
+
+    Source is scaffolded into a tempdir so Slither/structured analysis can
+    parse it; the tempdir is cleaned up before returning. Nothing persists
+    to the local filesystem after this function returns.
+    """
+    # Proxy check — analyze the implementation but read storage from the proxy.
     effective_address = address
-    snapshot_address = address  # address to read storage from
+    snapshot_address = address
     try:
         from services.discovery.classifier import classify_single
 
@@ -186,19 +145,16 @@ def _materialize_contract_artifacts(
             if impl:
                 logger.info("Recursive resolve: %s is a proxy, using impl %s", address, impl)
                 effective_address = impl
-                snapshot_address = address  # read storage from proxy, not impl
     except Exception as exc:
         logger.debug("Recursive resolve: proxy check failed for %s: %s", address, exc)
 
     result = fetch(effective_address)
     contract_name = str(result.get("ContractName", "Contract"))
     project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
-    project_dir = CONTRACTS_DIR / project_name
-    analysis_path = project_dir / "contract_analysis.json"
 
-    if refresh_snapshots or not analysis_path.exists():
-        if not project_dir.exists():
-            scaffold(effective_address, project_name, result)
+    with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
+        project_dir = Path(tmp) / project_name
+        scaffold(effective_address, result, project_dir)
         if not skip_slither:
             try:
                 analyze(project_dir, contract_name, effective_address)
@@ -210,21 +166,20 @@ def _materialize_contract_artifacts(
                     exc,
                 )
         analysis = collect_contract_analysis(project_dir)
-        analysis_path.write_text(json.dumps(analysis, indent=2) + "\n")
-        _write_tracking_plan(analysis, project_dir / "control_tracking_plan.json")
 
-    # If analyzing through a proxy, override the address in the tracking plan so
-    # snapshot reads go to the proxy (where storage lives)
+    plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
     if snapshot_address != effective_address:
-        plan_path = project_dir / "control_tracking_plan.json"
-        if plan_path.exists():
-            plan = json.loads(plan_path.read_text())
-            plan["contract_address"] = snapshot_address
-            plan_path.write_text(json.dumps(plan, indent=2) + "\n")
+        plan = {**plan, "contract_address": snapshot_address}
 
-    loaded = _load_or_build_artifacts(analysis_path, rpc_url, refresh_snapshots=refresh_snapshots)
-    _ensure_effective_permissions(loaded["analysis_path"], loaded["snapshot_path"], force=refresh_snapshots)
-    return loaded
+    snapshot = build_control_snapshot(cast(Any, plan), rpc_url)
+    effective_permissions = _build_effective_permissions(cast(dict, analysis), snapshot)
+
+    return {
+        "analysis": cast(dict, analysis),
+        "tracking_plan": plan,
+        "snapshot": snapshot,
+        "effective_permissions": effective_permissions,
+    }
 
 
 def _ensure_node(
@@ -461,45 +416,23 @@ def _add_nested_principals(
             _maybe_queue_address(queue, queued, nested_address, depth + 1, max_depth)
 
 
-def resolve_control_graph_from_path(
-    root_analysis_path: Path,
-    *,
-    rpc_url: str,
-    max_depth: int = DEFAULT_RECURSION_MAX_DEPTH,
-    workspace_prefix: str = "recursive",
-    refresh_snapshots: bool = True,
-) -> ResolvedControlGraph:
-    """Load root artifacts from disk and invoke :func:`resolve_control_graph`.
-
-    Kept as a narrow entrypoint for ad-hoc / test use — workers load the
-    root's artifacts from the DB and call :func:`resolve_control_graph`
-    directly with the in-memory dict.
-    """
-    root_artifacts = _load_or_build_artifacts(root_analysis_path, rpc_url, refresh_snapshots=refresh_snapshots)
-    return resolve_control_graph(
-        root_artifacts=root_artifacts,
-        rpc_url=rpc_url,
-        max_depth=max_depth,
-        workspace_prefix=workspace_prefix,
-        refresh_snapshots=refresh_snapshots,
-    )
-
-
 def resolve_control_graph(
     *,
     root_artifacts: LoadedArtifacts,
     rpc_url: str,
     max_depth: int = DEFAULT_RECURSION_MAX_DEPTH,
     workspace_prefix: str = "recursive",
-    refresh_snapshots: bool = True,
-) -> ResolvedControlGraph:
+    nested_artifacts_override: dict[str, LoadedArtifacts] | None = None,
+) -> tuple[ResolvedControlGraph, dict[str, LoadedArtifacts]]:
     """Walk the control chain breadth-first starting from a pre-loaded root.
 
-    Sub-contracts discovered along the way are materialized into persistent
-    ``contracts/recursive_*/`` workspaces for Slither / structured analysis.
-    Only the root is kept in-memory; this keeps the worker call site free of
-    temp-file plumbing while still providing on-disk authority artifacts
-    the policy stage can read back.
+    Returns ``(graph, nested_artifacts_by_address)``. The nested map is keyed
+    by lowercase sub-contract address and is what the worker persists to the
+    DB — the policy stage reads it back by the same key to locate authority
+    artifacts.
+
+    ``nested_artifacts_override`` lets callers (e.g. the policy worker refresh
+    path) supply pre-computed nested artifacts to skip remote fetches.
     """
     root_analysis = root_artifacts["analysis"]
     root_subject = root_analysis.get("subject", {})
@@ -517,6 +450,7 @@ def resolve_control_graph(
     queued = {root_address}
     processed: set[str] = set()
     _classify_cache: dict[str, tuple[str, dict[str, object]]] = {}
+    nested_artifacts: dict[str, LoadedArtifacts] = dict(nested_artifacts_override or {})
 
     def _cached_classify(addr: str) -> tuple[str, dict[str, object]]:
         key = addr.lower()
@@ -537,13 +471,14 @@ def resolve_control_graph(
         preloaded = pending.get("artifacts")
         if preloaded is not None:
             artifacts = preloaded
+        elif address in nested_artifacts:
+            artifacts = nested_artifacts[address]
         else:
             try:
                 artifacts = _materialize_contract_artifacts(
                     address,
                     rpc_url,
                     workspace_prefix=workspace_prefix,
-                    refresh_snapshots=refresh_snapshots,
                 )
             except Exception as exc:
                 contract_name = _contract_name_for_address(address)
@@ -566,11 +501,12 @@ def resolve_control_graph(
                 )
                 processed.add(address)
                 continue
+            nested_artifacts[address] = artifacts
 
         processed.add(address)
         analysis = artifacts["analysis"]
         snapshot = artifacts["snapshot"]
-        effective_permissions = _load_effective_permissions(artifacts["project_dir"])
+        effective_permissions = artifacts.get("effective_permissions")
         subject = analysis.get("subject", {})
         contract_name = str(subject.get("name", address))
         contract_node_id = _ensure_node(
@@ -583,11 +519,7 @@ def resolve_control_graph(
             contract_name=contract_name,
             analyzed=True,
             details={"address": address},
-            artifacts={
-                "analysis": str(artifacts["analysis_path"]),
-                "tracking_plan": str(artifacts["plan_path"]),
-                "snapshot": str(artifacts["snapshot_path"]),
-            },
+            artifacts={"data_key": f"recursive:{address.lower()}"},
         )
 
         for controller_id, controller_value in snapshot.get("controller_values", {}).items():
@@ -689,10 +621,11 @@ def resolve_control_graph(
                 classify_fn=_cached_classify,
             )
 
-    return {
+    graph: ResolvedControlGraph = {
         "schema_version": "0.1",
         "root_contract_address": root_address,
         "max_depth": max_depth,
         "nodes": sorted(nodes.values(), key=lambda item: item["id"]),
         "edges": sorted(edges.values(), key=lambda item: (item["from_id"], item["relation"], item["to_id"])),
     }
+    return graph, nested_artifacts
