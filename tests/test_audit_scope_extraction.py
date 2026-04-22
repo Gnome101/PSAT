@@ -457,21 +457,21 @@ def _setup_stub(tmp_path, monkeypatch, response_body: str) -> None:
 def test_extract_scope_with_llm_parses_string_array(tmp_path, monkeypatch):
     _setup_stub(tmp_path, monkeypatch, '["Pool","Vault","Strategy"]')
     sections = [ScopeSection(1, 1, "scope", "Pool.sol Vault.sol Strategy.sol")]
-    names, _, _ = extract_scope_with_llm(sections, "T", "A")
+    names, _, _, _, _ = extract_scope_with_llm(sections, "T", "A")
     assert names == ["Pool", "Vault", "Strategy"]
 
 
 def test_extract_scope_with_llm_tolerates_markdown_fence(tmp_path, monkeypatch):
     _setup_stub(tmp_path, monkeypatch, '```json\n["Pool"]\n```')
     sections = [ScopeSection(1, 1, "scope", "Pool.sol")]
-    names, _, _ = extract_scope_with_llm(sections, "T", "A")
+    names, _, _, _, _ = extract_scope_with_llm(sections, "T", "A")
     assert names == ["Pool"]
 
 
 def test_extract_scope_with_llm_strips_extensions_and_dedupes(tmp_path, monkeypatch):
     _setup_stub(tmp_path, monkeypatch, '["Pool.sol","pool","Vault.vy"]')
     sections = [ScopeSection(1, 1, "scope", "Pool Vault")]
-    names, _, _ = extract_scope_with_llm(sections, "T", "A")
+    names, _, _, _, _ = extract_scope_with_llm(sections, "T", "A")
     # "Pool.sol" and "pool" dedupe under case-insensitive match.
     assert names == ["Pool", "Vault"]
 
@@ -483,8 +483,116 @@ def test_extract_scope_with_llm_accepts_object_entries(tmp_path, monkeypatch):
         '[{"name":"Pool"},{"contract_name":"Vault"},{"file":"Strategy.sol"}]',
     )
     sections = [ScopeSection(1, 1, "scope", "Pool Vault Strategy.sol")]
-    names, _, _ = extract_scope_with_llm(sections, "T", "A")
+    names, _, _, _, _ = extract_scope_with_llm(sections, "T", "A")
     assert names == ["Pool", "Vault", "Strategy"]
+
+
+def test_extract_scope_with_llm_parses_classified_commits_from_object(tmp_path, monkeypatch):
+    _setup_stub(
+        tmp_path,
+        monkeypatch,
+        json.dumps(
+            {
+                "contracts": ["Vault"],
+                "scope_entries": [
+                    {
+                        "name": "Pool",
+                        "address": "0x1234567890abcdef1234567890abcdef12345678",
+                        "commit": "ABC1234",
+                        "chain": "Ethereum",
+                    }
+                ],
+                "classified_commits": [
+                    {
+                        "sha": "ABC1234",
+                        "label": "reviewed",
+                        "context": "Audited at commit abc1234",
+                    },
+                    {
+                        "sha": "def5678",
+                        "label": "fix",
+                        "context": "Resolved in def5678",
+                    },
+                ],
+            }
+        ),
+    )
+    sections = [ScopeSection(1, 1, "scope", "Pool.sol Vault.sol abc1234 def5678")]
+    names, scope_entries, classified_commits, _, _ = extract_scope_with_llm(sections, "T", "A")
+    assert names == ["Vault", "Pool"]
+    assert scope_entries == [
+        {
+            "name": "Pool",
+            "address": "0x1234567890abcdef1234567890abcdef12345678",
+            "commit": "abc1234",
+            "chain": "ethereum",
+        }
+    ]
+    assert classified_commits == [
+        {
+            "sha": "abc1234",
+            "label": "reviewed",
+            "context": "Audited at commit abc1234",
+        },
+        {
+            "sha": "def5678",
+            "label": "fix",
+            "context": "Resolved in def5678",
+        },
+    ]
+
+
+def test_extract_scope_with_llm_dedupes_classified_commits_preferring_stronger_label(tmp_path, monkeypatch):
+    _setup_stub(
+        tmp_path,
+        monkeypatch,
+        json.dumps(
+            {
+                "contracts": ["Pool"],
+                "classified_commits": [
+                    {"sha": "abc1234", "label": "cited", "context": "Mentioned in appendix"},
+                    {"sha": "ABC1234", "label": "reviewed", "context": "Audited at abc1234"},
+                ],
+            }
+        ),
+    )
+    sections = [ScopeSection(1, 1, "scope", "Pool.sol abc1234")]
+    _, _, classified_commits, _, _ = extract_scope_with_llm(sections, "T", "A")
+    assert classified_commits == [
+        {
+            "sha": "abc1234",
+            "label": "reviewed",
+            "context": "Audited at abc1234",
+        }
+    ]
+
+
+def test_extract_scope_with_llm_normalizes_unknown_commit_labels_to_unclear(tmp_path, monkeypatch):
+    _setup_stub(
+        tmp_path,
+        monkeypatch,
+        json.dumps(
+            {
+                "contracts": ["Pool"],
+                "classified_commits": [
+                    {
+                        "sha": "abc1234",
+                        "label": "baseline",
+                        "context": "x" * 500,
+                    }
+                ],
+            }
+        ),
+    )
+    sections = [ScopeSection(1, 1, "scope", "Pool.sol abc1234")]
+    _, _, classified_commits, _, _ = extract_scope_with_llm(sections, "T", "A")
+    assert classified_commits == [
+        {
+            "sha": "abc1234",
+            "label": "unclear",
+            "context": "x" * 400,
+        }
+    ]
 
 
 def test_extract_scope_with_llm_raises_on_unparseable(tmp_path, monkeypatch):
@@ -497,7 +605,7 @@ def test_extract_scope_with_llm_raises_on_unparseable(tmp_path, monkeypatch):
 def test_extract_scope_with_llm_handles_empty_array(tmp_path, monkeypatch):
     _setup_stub(tmp_path, monkeypatch, "[]")
     sections = [ScopeSection(1, 1, "scope", "anything")]
-    names, _, _ = extract_scope_with_llm(sections, "T", "A")
+    names, _, _, _, _ = extract_scope_with_llm(sections, "T", "A")
     assert names == []
 
 
@@ -704,7 +812,7 @@ def test_chunk_scan_stops_at_first_hit(tmp_path, monkeypatch):
         *(_page(i, "boilerplate " * 30) for i in range(1, 6)),
         *(_page(i, "Pool.sol Vault.sol UNIQUE_SCOPE_MARKER_XYZ reviewed") for i in range(6, 11)),
     )
-    names, response, model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "Title", "Auditor")
+    names, _, _, response, model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "Title", "Auditor")
     assert names == ["Pool", "Vault"]
     assert chunks_used == 2
     assert model == "stub"
@@ -723,7 +831,7 @@ def test_chunk_scan_returns_empty_when_no_chunk_has_scope(tmp_path, monkeypatch)
     monkeypatch.setattr("services.audits.scope_extraction._llm._call_llm", fake_call)
 
     text = _doc(*(_page(i, "no scope anywhere " * 20) for i in range(1, 11)))
-    names, response, model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
+    names, _, _, response, model, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
     assert names == []
     # Every chunk got consulted because none hit.
     assert chunks_used >= 1
@@ -759,7 +867,7 @@ def test_chunk_scan_rejects_findings_only_chunks_without_scope_signal(
         _page(1, "L-01: Pool has an edge case\nSeverity: Low\nDescription: lorem ipsum."),
         _page(2, "L-02: Vault config needs review\nSeverity: Info\nOther prose."),
     )
-    names, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
+    names, _, _, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
     assert names == []
     assert winning_chunk is None
 
@@ -779,7 +887,7 @@ def test_chunk_scan_accepts_chunk_with_scope_signal(monkeypatch):
         ),
         _page(2, "Findings"),
     )
-    names, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
+    names, _, _, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
     assert names == ["Pool", "Vault"]
     assert winning_chunk is not None
 
@@ -824,7 +932,7 @@ def test_chunk_scan_merges_across_multiple_passing_chunks(monkeypatch):
         _page(9, "body"),
         _page(10, "body"),
     )
-    names, _, _, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
+    names, _, _, _, _, chunks_used, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
     # Merged across both chunks; dedupes, preserves first-seen order.
     assert "TitleContract" in names
     assert "Pool" in names
@@ -859,7 +967,7 @@ def test_chunk_scan_accepts_single_focus_audit_via_frequency(monkeypatch):
             "L-02: WeETHWithdrawAdapter rate limit issue\nAdditional analysis of WeETHWithdrawAdapter.",
         ),
     )
-    names, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
+    names, _, _, _, _, _, winning_chunk = extract_scope_via_chunk_scan(text, "T", "A")
     # Accepted because WeETHWithdrawAdapter appears multiple times.
     assert names == ["WeETHWithdrawAdapter"]
     assert winning_chunk is not None

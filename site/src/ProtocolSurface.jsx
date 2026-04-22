@@ -18,6 +18,21 @@ import hourglassIcon from "./assets/hourglass-empty.svg";
 import questionMarkIcon from "./assets/question-mark.svg";
 import vaultIcon from "./assets/vault.svg";
 
+import { getCoverage, getTimeline } from "./api/audits.js";
+import {
+  AUDIT_STATUS_META,
+  DRIFT_FALSE_META,
+  DRIFT_TRUE_META,
+  EQUIVALENCE_META,
+  formatAuditDate,
+  MATCH_TYPE_META,
+  MetaBadge,
+  proofKindTitle,
+  PROOF_KIND_META,
+  SEVERITY_META,
+  STATUS_LABELS,
+} from "./auditUi.jsx";
+
 const CONTROL_EFFECTS = new Set([
   "implementation_update",
   "delegatecall_execution",
@@ -637,9 +652,10 @@ const MACHINE_TABS = [
   { key: "inflows", label: "Inflows" },
   { key: "outflows", label: "Outflows" },
   { key: "balances", label: "Balances" },
+  { key: "audits", label: "Audits" },
 ];
 
-function ContractMachine({ machine, onSelectGuard, onNavigate }) {
+function ContractMachine({ machine, onSelectGuard, onNavigate, companyName }) {
   const [activeTab, setActiveTab] = useState("control");
   const usdLabel = formatUsd(machine.total_usd);
 
@@ -692,7 +708,234 @@ function ContractMachine({ machine, onSelectGuard, onNavigate }) {
       {activeTab === "balances" && (
         <BalanceTable machine={machine} />
       )}
+      {activeTab === "audits" && (
+        <AuditsPanel machine={machine} companyName={companyName} />
+      )}
     </article>
+  );
+}
+
+function AuditsPanel({ machine, companyName }) {
+  const [timeline, setTimeline] = useState(null);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const contractId = machine.contract_id;
+
+  useEffect(() => {
+    if (!contractId) {
+      setTimeline(null);
+      return undefined;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    getTimeline(contractId)
+      .then((data) => {
+        if (cancelled) return;
+        setTimeline(data);
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err?.message || "Failed to load audits");
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [contractId]);
+
+  if (!contractId) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">Contract not yet indexed for audit coverage.</div>
+      </section>
+    );
+  }
+  if (loading) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">Loading audits…</div>
+      </section>
+    );
+  }
+  if (error) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">Failed to load audits: {error}</div>
+      </section>
+    );
+  }
+  if (!timeline) return null;
+
+  const statusMeta = AUDIT_STATUS_META[timeline.current_status] || AUDIT_STATUS_META.non_proxy_unaudited;
+  const coverage = timeline.coverage || [];
+  const topAudits = coverage.slice(0, 5);
+
+  const handleAuditClick = (auditId) => {
+    const url = `/company/${encodeURIComponent(companyName)}/audits?audit=${encodeURIComponent(auditId)}`;
+    window.location.href = url;
+  };
+
+  return (
+    <section className="ps-principal-section">
+      <div className="ps-principal-section-hdr">Audit coverage</div>
+
+      <div style={{ marginBottom: 12 }}>
+        <MetaBadge meta={statusMeta} />
+        <span style={{ marginLeft: 8, color: "#6b7590", fontSize: 12 }}>
+          {coverage.length} audit{coverage.length === 1 ? "" : "s"}
+          {coverage.length > topAudits.length ? ` (showing ${topAudits.length} most recent)` : ""}
+        </span>
+      </div>
+
+      {topAudits.length === 0 ? (
+        <div className="ps-inspector-empty">No audits cover this contract yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {topAudits.map((a) => {
+            const matchMeta = MATCH_TYPE_META[a.match_type] || MATCH_TYPE_META.direct;
+            // drift === true means the bytecode at the impl address changed
+            // since this audit was matched. drift === null/undefined means
+            // we couldn't determine (missing keccak on either side) — show
+            // no badge rather than a misleading one.
+            const driftKnown = a.bytecode_drift === true || a.bytecode_drift === false;
+            return (
+              <button
+                key={a.audit_id}
+                onClick={() => handleAuditClick(a.audit_id)}
+                style={{
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  border: "1px solid #e2e8f0",
+                  background: "#fafafa",
+                  cursor: "pointer",
+                  font: "inherit",
+                  color: "inherit",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{a.auditor || "Unknown"}</div>
+                  <div style={{ fontSize: 11, color: "#6b7590", whiteSpace: "nowrap" }}>{formatAuditDate(a.date)}</div>
+                </div>
+                <div style={{ fontSize: 12, color: "#334155", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {a.title || ""}
+                </div>
+                <div style={{ marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  <MetaBadge meta={matchMeta} />
+                  {a.match_confidence && (
+                    <span className="ps-badge" style={{ "--badge-accent": "#6b7590", fontSize: 10 }}>
+                      {a.match_confidence}
+                    </span>
+                  )}
+                  {a.equivalence_status && a.equivalence_status !== "proven" && EQUIVALENCE_META[a.equivalence_status] && (
+                    <MetaBadge
+                      meta={EQUIVALENCE_META[a.equivalence_status]}
+                      title={a.equivalence_reason || ""}
+                    />
+                  )}
+                  {a.equivalence_status === "proven" && a.proof_kind && PROOF_KIND_META[a.proof_kind] && (
+                    <MetaBadge
+                      meta={PROOF_KIND_META[a.proof_kind]}
+                      title={proofKindTitle(a.proof_kind)}
+                    />
+                  )}
+                  {a.bytecode_drift === true && (
+                    <MetaBadge
+                      meta={DRIFT_TRUE_META}
+                      label="⚠ code changed"
+                      title="Runtime bytecode at this impl changed since the audit was matched"
+                    />
+                  )}
+                  {a.bytecode_drift === false && (
+                    <MetaBadge
+                      meta={DRIFT_FALSE_META}
+                      label="✓ bytecode stable"
+                      title="Runtime bytecode hash matches the hash captured at audit match time"
+                    />
+                  )}
+                  {!driftKnown && a.bytecode_keccak_now && !a.bytecode_keccak_at_match && (
+                    <span
+                      className="ps-badge"
+                      title="Anchor not set — refresh coverage to stamp runtime bytecode hash"
+                      style={{
+                        "--badge-accent": "#6b7590",
+                        fontSize: 10,
+                      }}
+                    >
+                      drift unverified
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <LiveFindingsSection coverage={coverage} />
+    </section>
+  );
+}
+
+function LiveFindingsSection({ coverage }) {
+  // Collect every live finding across covering audits, tagged with its
+  // originating auditor/title so the user can see which audit raised it.
+  const entries = [];
+  for (const a of coverage) {
+    const lf = a.live_findings || [];
+    for (const f of lf) {
+      entries.push({ finding: f, audit: a });
+    }
+  }
+
+  if (entries.length === 0) return null;
+
+  // Sort: severity descending (critical first), stable within.
+  const severityRank = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+  entries.sort((x, y) => {
+    const rx = severityRank[x.finding.severity] ?? 5;
+    const ry = severityRank[y.finding.severity] ?? 5;
+    return rx - ry;
+  });
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div className="ps-principal-section-hdr">Live findings on current code</div>
+      <div style={{ fontSize: 11, color: "#6b7590", marginBottom: 8 }}>
+        Issues that were not marked "fixed" in the audit. May still be active.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {entries.map((e, i) => {
+          const sevMeta = SEVERITY_META[e.finding.severity] || SEVERITY_META.info;
+          const statusLabel = STATUS_LABELS[e.finding.status] || e.finding.status || "?";
+          return (
+            <div
+              key={i}
+              style={{
+                padding: "6px 8px",
+                borderRadius: 5,
+                border: "1px solid #e2e8f0",
+                background: "#fff",
+              }}
+            >
+              <div style={{ display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" }}>
+                <MetaBadge meta={sevMeta} label={e.finding.severity || "info"} />
+                <span className="ps-badge" style={{ "--badge-accent": "#6b7590", fontSize: 10 }}>
+                  {statusLabel}
+                </span>
+                <span style={{ fontSize: 11, color: "#6b7590" }}>
+                  {e.audit.auditor || "Unknown"}
+                </span>
+              </div>
+              <div style={{ fontSize: 12, color: "#334155", marginTop: 4 }}>
+                {e.finding.title || "(untitled)"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -1377,7 +1620,7 @@ function FocusOnNode({ address, focusKey }) {
   return null;
 }
 
-function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, onSelectMachine, principalTour, onTourGo, onTourBack }) {
+function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focusAddress, focusedAddress, highlightedAddresses, onSelectMachine, principalTour, onTourGo, onTourBack }) {
   const [initNodes, setInitNodes] = useState([]);
   const [initEdges, setInitEdges] = useState([]);
 
@@ -1411,15 +1654,27 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
       }
     }
 
+    // Audit-coverage highlight takes precedence when active: non-covered
+    // nodes dim, covered ones get a green ring so the user sees exactly
+    // which contracts an audit touched. Falls back to the connected-node
+    // dimming when no audit is selected.
+    const hiActive = highlightedAddresses && highlightedAddresses.size > 0;
+
     const foc = focusedAddress?.toLowerCase();
     setNodes(
       initNodes.map((n) => {
         const nid = n.id?.toLowerCase();
-        const dimmed = sel && !connectedNodes.has(nid);
+        const inAudit = hiActive && highlightedAddresses.has(nid);
+        const dimmed = hiActive ? !inAudit : (sel && !connectedNodes.has(nid));
         const focused = foc && nid === foc;
+        const style = dimmed
+          ? { opacity: 0.2 }
+          : inAudit
+          ? { boxShadow: "0 0 0 2px #22c55e, 0 0 12px rgba(34,197,94,0.55)", borderRadius: 6 }
+          : {};
         return {
           ...n,
-          style: dimmed ? { opacity: 0.25 } : {},
+          style,
           data: {
             ...n.data,
             selected: n.id === selectedAddress,
@@ -1434,7 +1689,10 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
       initEdges.map((e) => {
         const src = e.source?.toLowerCase();
         const tgt = e.target?.toLowerCase();
-        const related = !sel || src === sel || tgt === sel;
+        // When audit highlight is active, fade edges that touch a
+        // non-covered endpoint so the covered subgraph reads clearly.
+        const edgeInAudit = hiActive && highlightedAddresses.has(src) && highlightedAddresses.has(tgt);
+        const related = hiActive ? edgeInAudit : (!sel || src === sel || tgt === sel);
         const showLabel = sel && related;
         const caps = e.data?.capabilities || [];
         const labelText = showLabel ? (caps.join(", ") || e.data?.flowType || "") : "";
@@ -1453,7 +1711,7 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
         };
       })
     );
-  }, [initNodes, initEdges, selectedAddress, focusedAddress, onSelectMachine]);
+  }, [initNodes, initEdges, selectedAddress, focusedAddress, highlightedAddresses, onSelectMachine]);
 
   return (
     <div className="ps-canvas-wrap">
@@ -1479,6 +1737,118 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
         )}
       </ReactFlow>
     </div>
+  );
+}
+
+function SidebarTabs({ mode, onSetMode, auditCount }) {
+  return (
+    <div style={{ display: "flex", gap: 4, padding: "8px 8px 0 8px", borderBottom: "1px solid #e2e8f0" }}>
+      <button
+        onClick={() => onSetMode("detail")}
+        style={{
+          flex: 1, padding: "8px 10px", borderRadius: "6px 6px 0 0",
+          border: "1px solid #e2e8f0", borderBottom: "none",
+          background: mode === "detail" ? "#fafafa" : "transparent",
+          fontWeight: mode === "detail" ? 600 : 400,
+          cursor: "pointer", font: "inherit", color: "inherit",
+        }}
+      >
+        Detail
+      </button>
+      <button
+        onClick={() => onSetMode("audits")}
+        style={{
+          flex: 1, padding: "8px 10px", borderRadius: "6px 6px 0 0",
+          border: "1px solid #e2e8f0", borderBottom: "none",
+          background: mode === "audits" ? "#fafafa" : "transparent",
+          fontWeight: mode === "audits" ? 600 : 400,
+          cursor: "pointer", font: "inherit", color: "inherit",
+        }}
+      >
+        Audits{auditCount != null ? ` (${auditCount})` : ""}
+      </button>
+    </div>
+  );
+}
+
+function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, error }) {
+  if (loading) return <section className="ps-principal-section"><div className="ps-inspector-empty">Loading audits…</div></section>;
+  if (error) return <section className="ps-principal-section"><div className="ps-inspector-empty">Failed: {error}</div></section>;
+  if (!coverageData) return null;
+
+  // Invert: audit_id → { audit, addresses: Set<lowercase string> }
+  const byAudit = new Map();
+  for (const entry of coverageData.coverage || []) {
+    const addr = (entry.address || "").toLowerCase();
+    if (!addr) continue;
+    for (const a of entry.audits || []) {
+      const id = a.audit_id;
+      if (!byAudit.has(id)) {
+        byAudit.set(id, { audit: a, addresses: new Set() });
+      }
+      byAudit.get(id).addresses.add(addr);
+    }
+  }
+
+  // Sort audits: active first, then by date desc (nulls last), then id desc
+  const entries = [...byAudit.values()].sort((x, y) => {
+    const dx = x.audit.date || "";
+    const dy = y.audit.date || "";
+    if (dx !== dy) return dx < dy ? 1 : -1;
+    return (y.audit.audit_id || 0) - (x.audit.audit_id || 0);
+  });
+
+  return (
+    <section className="ps-principal-section">
+      <div className="ps-principal-section-hdr">All audits ({entries.length})</div>
+      <div style={{ fontSize: 11, color: "#6b7590", marginBottom: 8 }}>
+        Click an audit to highlight its covered contracts on the canvas.
+      </div>
+      {activeAuditId != null && (
+        <button
+          onClick={() => onPickAudit(null)}
+          style={{
+            marginBottom: 8, padding: "4px 10px", borderRadius: 4,
+            border: "1px solid #cbd5e1", background: "#fff",
+            cursor: "pointer", fontSize: 11, color: "inherit", font: "inherit",
+          }}
+        >
+          ✕ Clear highlight
+        </button>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {entries.map(({ audit, addresses }) => {
+          const isActive = activeAuditId === audit.audit_id;
+          return (
+            <button
+              key={audit.audit_id}
+              onClick={() => onPickAudit(isActive ? null : audit.audit_id)}
+              style={{
+                textAlign: "left",
+                padding: "8px 10px",
+                borderRadius: 6,
+                border: isActive ? "2px solid #22c55e" : "1px solid #e2e8f0",
+                background: isActive ? "#f0fdf4" : "#fff",
+                cursor: "pointer",
+                font: "inherit", color: "inherit",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{audit.auditor || "Unknown"}</div>
+                <div style={{ fontSize: 11, color: "#6b7590", whiteSpace: "nowrap" }}>{formatAuditDate(audit.date)}</div>
+              </div>
+              <div style={{ fontSize: 12, color: "#334155", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {audit.title || ""}
+              </div>
+              <div style={{ fontSize: 11, color: "#6b7590", marginTop: 4 }}>
+                covers {addresses.size} contract{addresses.size === 1 ? "" : "s"}
+                {audit.match_type ? ` · ${audit.match_type}` : ""}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -1738,6 +2108,47 @@ export default function ProtocolSurface({ companyName }) {
   const [principalTour, setPrincipalTour] = useState(null);
   const [error, setError] = useState(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
+
+  // Right sidebar mode: "detail" (machine/principal inspector) vs "audits"
+  // (flat audit list). "audits" mode keeps the list visible while the user
+  // clicks different audits and watches the canvas highlight update.
+  const [sidebarMode, setSidebarMode] = useState("detail");
+
+  // Coverage payload — one call, cached locally. Used to build the audits
+  // list + the audit_id → address-set map for highlight propagation.
+  const [coverageData, setCoverageData] = useState(null);
+  const [coverageError, setCoverageError] = useState(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
+
+  // Active audit: when non-null, its covered contracts get a green ring
+  // and everything else dims on the canvas.
+  const [activeAuditId, setActiveAuditId] = useState(null);
+
+  useEffect(() => {
+    if (!companyName) return undefined;
+    let cancelled = false;
+    setCoverageLoading(true);
+    setCoverageError(null);
+    getCoverage(companyName)
+      .then((d) => { if (!cancelled) { setCoverageData(d); setCoverageLoading(false); } })
+      .catch((e) => { if (!cancelled) { setCoverageError(e?.message || "Failed"); setCoverageLoading(false); } });
+    return () => { cancelled = true; };
+  }, [companyName]);
+
+  // Highlighted addresses for the active audit — lowercased Set so the
+  // canvas comparison is O(1). null if no audit selected.
+  const highlightedAddresses = useMemo(() => {
+    if (activeAuditId == null || !coverageData) return null;
+    const out = new Set();
+    for (const entry of coverageData.coverage || []) {
+      const addr = (entry.address || "").toLowerCase();
+      if (!addr) continue;
+      if ((entry.audits || []).some((a) => a.audit_id === activeAuditId)) {
+        out.add(addr);
+      }
+    }
+    return out;
+  }, [activeAuditId, coverageData]);
   const [enabledRoles, setEnabledRoles] = useState(() => {
     const initial = new Set();
     for (const [role, meta] of Object.entries(ROLE_META)) {
@@ -2034,6 +2445,7 @@ export default function ProtocolSurface({ companyName }) {
             selectedAddress={selectedMachine?.address}
             focusAddress={focusAddress}
             focusedAddress={focusedAddress}
+            highlightedAddresses={highlightedAddresses}
             onSelectMachine={handleSelectMachine}
             principalTour={principalTour}
             onTourGo={(nextIndex) => {
@@ -2061,8 +2473,24 @@ export default function ProtocolSurface({ companyName }) {
           />
         </ReactFlowProvider>
         <DraggableSidebar>
-          <Breadcrumbs items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
-          {selectedPrincipal && (
+          <SidebarTabs
+            mode={sidebarMode}
+            onSetMode={setSidebarMode}
+            auditCount={coverageData?.audit_count}
+          />
+          {sidebarMode === "audits" && (
+            <AuditsListPanel
+              coverageData={coverageData}
+              activeAuditId={activeAuditId}
+              onPickAudit={setActiveAuditId}
+              loading={coverageLoading}
+              error={coverageError}
+            />
+          )}
+          {sidebarMode === "detail" && (
+            <Breadcrumbs items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
+          )}
+          {sidebarMode === "detail" && selectedPrincipal && (
             <PrincipalDetail
               key={selectedPrincipal.address}
               principal={selectedPrincipal}
@@ -2071,15 +2499,16 @@ export default function ProtocolSurface({ companyName }) {
               onFocusContract={(addr) => triggerFocus(addr)}
             />
           )}
-          {selectedMachine && !selectedPrincipal && (
+          {sidebarMode === "detail" && selectedMachine && !selectedPrincipal && (
             <ContractMachine
               key={selectedMachine.address}
               machine={selectedMachine}
               onSelectGuard={setSelectedGuard}
               onNavigate={handleNavigate}
+              companyName={companyName}
             />
           )}
-          {!selectedPrincipal && <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />}
+          {sidebarMode === "detail" && !selectedPrincipal && <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />}
         </DraggableSidebar>
       </div>
     </div>

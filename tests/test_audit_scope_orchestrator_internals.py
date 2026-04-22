@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -170,7 +171,15 @@ class TestChunkScanPath:
         )
         monkeypatch.setattr(
             "services.audits.scope_extraction.extract_scope_via_chunk_scan",
-            lambda *_a, **_k: (["LiquidityPool", "Vault"], '["LiquidityPool","Vault"]', "stub:m", 1, fake_chunk),
+            lambda *_a, **_k: (
+                ["LiquidityPool", "Vault"],
+                [],
+                [],
+                '["LiquidityPool","Vault"]',
+                "stub:m",
+                1,
+                fake_chunk,
+            ),
         )
         # Intercept artifact write so we don't need a real bucket.
         stored: dict = {}
@@ -199,6 +208,70 @@ class TestChunkScanPath:
         # The stored payload carries the winning chunk's text slice.
         assert stored["payload"]["scope_section_text"] is not None
         assert stored["payload"]["method"] == "llm_chunk_scan"
+
+
+class TestClassifiedCommitFiltering:
+    def test_process_audit_scope_drops_classified_shas_missing_from_raw_text(self, monkeypatch):
+        """Keep only classified commits whose 7-char prefix actually appears
+        in the PDF text; this is the hallucination guard for commit labels."""
+        body = _page_text("Scope\nPool.sol reviewed at commit abc1234 for this assessment.")
+        _patch_storage(monkeypatch, _make_client(body.encode("utf-8")))
+
+        monkeypatch.setattr(
+            "services.audits.scope_extraction.extract_scope_with_llm",
+            lambda *_a, **_k: (
+                ["Pool"],
+                [],
+                [
+                    {
+                        "sha": "abc1234deadbeef",
+                        "label": "reviewed",
+                        "context": "audited at abc1234",
+                    },
+                    {
+                        "sha": "def5678deadbeef",
+                        "label": "fix",
+                        "context": "fixed in def5678",
+                    },
+                ],
+                '{"contracts":["Pool"]}',
+                "stub:m",
+            ),
+        )
+
+        stored: dict[str, object] = {}
+
+        def fake_store(aid, payload):
+            stored["aid"] = aid
+            stored["payload"] = payload
+            return f"audits/scope/{aid}.json"
+
+        monkeypatch.setattr("services.audits.scope_extraction._store_artifact", fake_store)
+
+        outcome = process_audit_scope(
+            audit_report_id=7,
+            text_storage_key="audits/text/7.txt",
+            text_sha256=None,
+            audit_title="Security Review",
+            auditor="Firm",
+        )
+        assert outcome.status == "success"
+        assert outcome.classified_commits == (
+            {
+                "sha": "abc1234deadbeef",
+                "label": "reviewed",
+                "context": "audited at abc1234",
+            },
+        )
+        assert stored["aid"] == 7
+        payload = cast(dict[str, Any], stored["payload"])
+        assert payload["classified_commits"] == [
+            {
+                "sha": "abc1234deadbeef",
+                "label": "reviewed",
+                "context": "audited at abc1234",
+            }
+        ]
 
 
 class TestOutcomeDefaults:

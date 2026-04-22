@@ -1710,20 +1710,37 @@ _PIPELINE_BUCKET_LIMIT = 50
 
 
 def _pipeline_item(ar: Any, protocol_name: str | None, now: datetime) -> dict[str, Any]:
-    """Shape one audit row for the monitor page's worker-card list."""
+    """Shape one audit row for the monitor page's live timeline."""
     started = ar.text_extraction_started_at or ar.scope_extraction_started_at
     elapsed = int((now - started).total_seconds()) if started else None
+    scope_contracts = list(ar.scope_contracts or [])
+    reviewed_commits = list(ar.reviewed_commits or [])
+    referenced_repos = list(ar.referenced_repos or [])
+    scope_entries = list(ar.scope_entries or [])
+    classified_commits = list(ar.classified_commits or [])
     return {
         "audit_id": ar.id,
         "protocol_id": ar.protocol_id,
         "company": protocol_name,
         "auditor": ar.auditor,
         "title": ar.title,
+        "date": ar.date,
+        "pdf_url": ar.pdf_url,
         "worker_id": (
             ar.text_extraction_worker if ar.text_extraction_status == "processing" else ar.scope_extraction_worker
         ),
         "started_at": started.isoformat() if started else None,
         "elapsed_seconds": elapsed,
+        "text_extraction_status": ar.text_extraction_status,
+        "text_extracted_at": (ar.text_extracted_at.isoformat() if ar.text_extracted_at else None),
+        "text_size_bytes": ar.text_size_bytes,
+        "scope_extraction_status": ar.scope_extraction_status,
+        "scope_extracted_at": (ar.scope_extracted_at.isoformat() if ar.scope_extracted_at else None),
+        "scope_contract_count": len(scope_contracts),
+        "reviewed_commit_count": len(reviewed_commits),
+        "referenced_repo_count": len(referenced_repos),
+        "scope_entry_count": len(scope_entries),
+        "classified_commit_count": len(classified_commits),
         "error": (
             ar.text_extraction_error
             if ar.text_extraction_status == "failed"
@@ -1933,6 +1950,47 @@ def get_audit_scope(audit_id: int) -> dict[str, Any]:
         }
 
 
+# --- Bytecode drift cache ----------------------------------------------
+#
+# Per-process TTL cache of eth_getCode keccak hashes keyed by address.
+# The audit_timeline endpoint fetches these live to compare against the
+# per-coverage-row ``bytecode_keccak_at_match`` — a rapid reload of the
+# surface view shouldn't fire one RPC per audit row on every request.
+# TTL is intentionally short (30s) so "just upgraded" reflects quickly
+# in the UI when someone's actively debugging a drift.
+
+_BYTECODE_KECCAK_CACHE: dict[str, tuple[float, str | None]] = {}
+_BYTECODE_KECCAK_TTL_SECONDS: float = 30.0
+
+
+def _bytecode_keccak_now_batch(addresses: set[str]) -> dict[str, str | None]:
+    """Return ``{lower_address: keccak_hex_or_None}`` for a set of addresses.
+
+    Uses a short TTL cache so the typical burst-of-requests pattern (UI
+    loading and user flipping between contracts) only pays for one RPC
+    per impl per 30s. A ``None`` result is cached too — a temporary RPC
+    outage shouldn't cause a hot retry loop.
+    """
+    import time
+
+    from services.audits.coverage import _fetch_bytecode_keccak
+
+    now = time.monotonic()
+    out: dict[str, str | None] = {}
+    for raw in addresses:
+        if not raw:
+            continue
+        addr = raw.lower()
+        cached = _BYTECODE_KECCAK_CACHE.get(addr)
+        if cached is not None and (now - cached[0]) < _BYTECODE_KECCAK_TTL_SECONDS:
+            out[addr] = cached[1]
+            continue
+        keccak = _fetch_bytecode_keccak(addr)
+        _BYTECODE_KECCAK_CACHE[addr] = (now, keccak)
+        out[addr] = keccak
+    return out
+
+
 def _audit_brief(audit: Any, match: Any | None = None) -> dict[str, Any]:
     """Compact audit-report dict for the coverage/timeline endpoints."""
     out: dict[str, Any] = {
@@ -1946,6 +2004,20 @@ def _audit_brief(audit: Any, match: Any | None = None) -> dict[str, Any]:
         out["match_confidence"] = match.match_confidence
         out["covered_from_block"] = match.covered_from_block
         out["covered_to_block"] = match.covered_to_block
+        # Source-equivalence verdict — see services.audits.source_equivalence
+        # for the status vocabulary. ``proven`` means cryptographically
+        # verified (file SHA-256 match between audit's GitHub commit and
+        # Etherscan-verified source). Other values describe *why* the
+        # check couldn't produce a proof so the UI can badge specifically.
+        out["equivalence_status"] = getattr(match, "equivalence_status", None)
+        out["equivalence_reason"] = getattr(match, "equivalence_reason", None)
+        equivalence_checked_at = getattr(match, "equivalence_checked_at", None)
+        out["equivalence_checked_at"] = equivalence_checked_at.isoformat() if equivalence_checked_at else None
+        # Phase C: proof_kind is the strength subtype of ``proven`` rows.
+        # 'pre_fix_unpatched' gets special treatment in the UI as a RED
+        # FLAG — the audit reviewed exactly this code AND the protocol
+        # knew of a fix but never shipped it.
+        out["proof_kind"] = getattr(match, "proof_kind", None)
     return out
 
 
@@ -2175,13 +2247,41 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
             ).all()
         }
 
+        # Live bytecode keccak for every impl referenced by a coverage row —
+        # one RPC per distinct address, cached briefly so repeated hits to
+        # this endpoint don't spam the provider. Compared against the
+        # ``bytecode_keccak_at_match`` stored by ``services.audits.coverage``
+        # to produce ``bytecode_drift``.
+        live_keccaks = _bytecode_keccak_now_batch(
+            {addr_by_cid[r.contract_id] for r in best_by_audit.values() if r.contract_id in addr_by_cid}
+        )
+
         coverage_out: list[dict[str, Any]] = []
         for r in best_by_audit.values():
             audit = audits_by_id.get(r.audit_report_id)
             if not audit:
                 continue
             brief = _audit_brief(audit, r)
-            brief["impl_address"] = addr_by_cid.get(r.contract_id)
+            impl_addr = addr_by_cid.get(r.contract_id)
+            brief["impl_address"] = impl_addr
+            brief["bytecode_keccak_at_match"] = r.bytecode_keccak_at_match
+            now_keccak = live_keccaks.get(impl_addr.lower()) if impl_addr else None
+            brief["bytecode_keccak_now"] = now_keccak
+            # Drift is only asserted when BOTH are known and differ. A NULL
+            # on either side leaves drift=None so the UI can say
+            # "unverified" rather than falsely flashing a drift warning.
+            if r.bytecode_keccak_at_match and now_keccak:
+                brief["bytecode_drift"] = r.bytecode_keccak_at_match.lower() != now_keccak.lower()
+            else:
+                brief["bytecode_drift"] = None
+            brief["verified_at"] = r.verified_at.isoformat() if r.verified_at else None
+            # live_findings: audit.findings filtered to non-'fixed' statuses.
+            # Phase 3a seeds these manually; Phase 3b (deferred) fills them
+            # from scope extraction. None/missing → empty list, not an error.
+            findings = audit.findings or []
+            brief["live_findings"] = [
+                f for f in findings if isinstance(f, dict) and (f.get("status") or "").lower() != "fixed"
+            ]
             coverage_out.append(brief)
         # Newest first by audit date (nulls last, id desc to break ties).
         coverage_out.sort(key=lambda e: (e.get("date") or "", e["audit_id"]), reverse=True)
@@ -2227,20 +2327,37 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
                 .all()
             )
             # 'audited' requires definitive coverage of the currently-open
-            # impl window:
-            #   - match_type='reviewed_commit' (source-equivalence proof —
-            #     PDF referenced a commit whose source file sha matches
-            #     Etherscan-verified source), OR
-            #   - high-confidence temporal match (audit date lands inside
-            #     the open window).
+            # impl window. Two paths:
+            #   (a) any row on this impl has a cryptographic proof
+            #       (equivalence_status='proven') with a non-coincidental
+            #       proof kind — strongest evidence, overrides everything
+            #       else on the impl;
+            #   (b) a high-confidence open-ended temporal match AND no
+            #       hash_mismatch anywhere on the impl. hash_mismatch
+            #       is strong negative evidence — deployed code differs
+            #       from what the auditor reviewed — so we don't let a
+            #       heuristic temporal match paper over cryptographic
+            #       disproof from a different audit. Weak
+            #       ``proof_kind='cited_only'`` rows don't qualify here
+            #       either just because their coverage row is
+            #       ``reviewed_commit/high``.
+            # Rows proven only via a 'cited_only' commit don't qualify:
+            # the deployed code matched a SHA the PDF mentioned only for
+            # context, not one the auditor actually reviewed.
             # Grace-medium temporal matches are intentionally NOT enough —
             # an audit 10 days before the impl went live is suggestive
             # but not proof the reviewed code is what shipped.
-            has_current = any(
-                (r.match_type == "reviewed_commit") or (r.match_confidence == "high" and r.covered_to_block is None)
+            has_proven = any(r.equivalence_status == "proven" and r.proof_kind != "cited_only" for r in current_cov)
+            has_temporal_high = any(
+                r.match_confidence == "high"
+                and r.covered_to_block is None
+                and not (r.equivalence_status == "proven" and r.proof_kind == "cited_only")
                 for r in current_cov
             )
-            if has_current:
+            has_hash_mismatch = any(r.equivalence_status == "hash_mismatch" for r in current_cov)
+            if has_proven:
+                return "audited"
+            if has_temporal_high and not has_hash_mismatch:
                 return "audited"
             if current_cov or cov_rows:
                 return "unaudited_since_upgrade"
@@ -2267,7 +2384,7 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
 )
 def refresh_company_coverage(
     company_name: str,
-    verify_source_equivalence: bool = False,
+    verify_source_equivalence: bool = True,
 ) -> dict[str, Any]:
     """Rebuild ``audit_contract_coverage`` rows for every scoped audit in a protocol.
 
@@ -2276,13 +2393,14 @@ def refresh_company_coverage(
     bulk data migration needs to re-seat links without waiting for the
     next scope re-extraction.
 
-    ``verify_source_equivalence=true`` runs the GitHub + Etherscan
-    cross-check: for each audit with reviewed_commits + source_repo,
-    compare the byte content of each scope file against Etherscan's
-    verified source for matching impls. Hits upgrade to
-    ``match_type='reviewed_commit'`` / ``match_confidence='high'`` and
-    flip ``current_status`` to ``'audited'`` even when the temporal
-    window doesn't line up. Network-bound; off by default.
+    ``verify_source_equivalence`` defaults to true: for each audit with
+    reviewed_commits + source_repo, compare the byte content of each
+    scope file against Etherscan's verified source. Proven matches
+    upgrade to ``match_type='reviewed_commit'`` / ``match_confidence='high'``
+    and every row gets an ``equivalence_status`` + ``equivalence_reason``
+    stamp so the UI can surface failure modes (hash_mismatch, commit
+    not in repo, etc.). Pass ``?verify_source_equivalence=false`` to
+    skip the network pass for a fast heuristic-only refresh.
     """
     from services.audits.coverage import upsert_coverage_for_protocol
 

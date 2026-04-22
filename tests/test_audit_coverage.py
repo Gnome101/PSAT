@@ -913,15 +913,21 @@ def test_source_equivalence_proves_coverage_when_hashes_match(db_session, seed_p
 
     # Stub Etherscan: return a single source file whose sha matches.
     def fake_etherscan(address):
-        return source_equivalence.VerifiedSource(
-            contract_name="MyPool",
-            compiler_version="0.8.27",
-            files={"src/MyPool.sol": content_hash},
+        return source_equivalence.EtherscanFetch(
+            source=source_equivalence.VerifiedSource(
+                contract_name="MyPool",
+                compiler_version="0.8.27",
+                files={"src/MyPool.sol": content_hash},
+            ),
+            status="ok",
+            detail="",
         )
 
     # Stub GitHub: same hash → equivalence proven.
     def fake_github(repo, commit, path, *, token=None):
-        return content_hash if path == "src/MyPool.sol" else None
+        if path == "src/MyPool.sol":
+            return source_equivalence.GithubHashResult(sha256=content_hash, status="ok", detail="")
+        return source_equivalence.GithubHashResult(sha256=None, status="http_404", detail="not found")
 
     monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", fake_etherscan)
     monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
@@ -934,6 +940,7 @@ def test_source_equivalence_proves_coverage_when_hashes_match(db_session, seed_p
     assert row.contract_id == impl.id
     assert row.match_type == "reviewed_commit"
     assert row.match_confidence == "high"
+    assert row.equivalence_status == "proven"
 
 
 def test_source_equivalence_leaves_temporal_match_when_hashes_differ(db_session, seed_protocol, monkeypatch):
@@ -954,12 +961,16 @@ def test_source_equivalence_leaves_temporal_match_when_hashes_differ(db_session,
 
     # Stubs return mismatching hashes.
     def fake_etherscan(address):
-        return source_equivalence.VerifiedSource(
-            contract_name="MyPool", compiler_version="0.8", files={"src/MyPool.sol": "aaa"}
+        return source_equivalence.EtherscanFetch(
+            source=source_equivalence.VerifiedSource(
+                contract_name="MyPool", compiler_version="0.8", files={"src/MyPool.sol": "aaa"}
+            ),
+            status="ok",
+            detail="",
         )
 
     def fake_github(repo, commit, path, *, token=None):
-        return "bbb"  # different sha
+        return source_equivalence.GithubHashResult(sha256="bbb", status="ok", detail="")  # different sha
 
     monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", fake_etherscan)
     monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
@@ -969,6 +980,8 @@ def test_source_equivalence_leaves_temporal_match_when_hashes_differ(db_session,
     row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
     # Original temporal match stands — 'direct' because no proxy history.
     assert row.match_type == "direct"
+    # But equivalence_status reflects the mismatch.
+    assert row.equivalence_status == "hash_mismatch"
 
 
 def test_source_equivalence_prefers_db_source_files(db_session, seed_protocol, monkeypatch):
@@ -1010,7 +1023,9 @@ def test_source_equivalence_prefers_db_source_files(db_session, seed_protocol, m
 
     # GitHub stub returns the matching hash.
     def fake_github(repo, commit, path, *, token=None):
-        return content_hash if path == "src/MyPool.sol" else None
+        if path == "src/MyPool.sol":
+            return source_equivalence.GithubHashResult(sha256=content_hash, status="ok", detail="")
+        return source_equivalence.GithubHashResult(sha256=None, status="http_404", detail="not found")
 
     monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", boom_etherscan)
     monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
@@ -1059,14 +1074,20 @@ def test_source_equivalence_falls_back_to_etherscan_when_no_db_source(db_session
 
     def fake_etherscan(address):
         etherscan_calls["count"] += 1
-        return source_equivalence.VerifiedSource(
-            contract_name="MyPool",
-            compiler_version="0.8",
-            files={"src/MyPool.sol": content_hash},
+        return source_equivalence.EtherscanFetch(
+            source=source_equivalence.VerifiedSource(
+                contract_name="MyPool",
+                compiler_version="0.8",
+                files={"src/MyPool.sol": content_hash},
+            ),
+            status="ok",
+            detail="",
         )
 
     def fake_github(repo, commit, path, *, token=None):
-        return content_hash if path == "src/MyPool.sol" else None
+        if path == "src/MyPool.sol":
+            return source_equivalence.GithubHashResult(sha256=content_hash, status="ok", detail="")
+        return source_equivalence.GithubHashResult(sha256=None, status="http_404", detail="not found")
 
     monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", fake_etherscan)
     monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
@@ -1138,6 +1159,60 @@ def test_verify_source_equivalence_off_by_default(db_session, seed_protocol, mon
     upsert_coverage_for_audit(db_session, audit.id)
     db_session.commit()
     assert called == {"etherscan": 0, "github": 0}
+
+
+def test_source_equivalence_uses_referenced_repos_when_source_repo_missing(
+    db_session,
+    seed_protocol,
+    monkeypatch,
+):
+    """Coverage refresh must still verify rows when source_repo is NULL but
+    referenced_repos contains the real code repo."""
+    import hashlib
+
+    from db.models import AuditContractCoverage
+    from services.audits import source_equivalence
+    from services.audits.coverage import upsert_coverage_for_audit
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "7" * 40, name="MyPool")
+    audit = _add_audit(db_session, protocol_id, scope=["MyPool"], date="2024-06-01")
+    audit.reviewed_commits = ["abc1234"]
+    audit.source_repo = None
+    audit.referenced_repos = ["etherfi-protocol/smart-contracts"]
+    db_session.commit()
+
+    content = "contract MyPool {}"
+    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    fetched_repos: list[str] = []
+
+    def fake_etherscan(address):
+        return source_equivalence.EtherscanFetch(
+            source=source_equivalence.VerifiedSource(
+                contract_name="MyPool",
+                compiler_version="0.8.27",
+                files={"src/MyPool.sol": content_hash},
+            ),
+            status="ok",
+            detail="",
+        )
+
+    def fake_github(repo, commit, path, *, token=None):
+        fetched_repos.append(repo)
+        if path == "src/MyPool.sol":
+            return source_equivalence.GithubHashResult(sha256=content_hash, status="ok", detail="")
+        return source_equivalence.GithubHashResult(sha256=None, status="http_404", detail="not found")
+
+    monkeypatch.setattr(source_equivalence, "fetch_etherscan_source_files", fake_etherscan)
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
+
+    upsert_coverage_for_audit(db_session, audit.id, verify_source_equivalence=True)
+    db_session.commit()
+
+    row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert row.match_type == "reviewed_commit"
+    assert row.equivalence_status == "proven"
+    assert fetched_repos == ["etherfi-protocol/smart-contracts"]
 
 
 # ---------------------------------------------------------------------------
@@ -1470,3 +1545,533 @@ def test_match_contracts_for_audit_per_contract_dedupe_prefers_reviewed_commit(d
         match_confidence="low",
     )
     assert _row_score(direct_high) > _row_score(reviewed_low)
+
+
+# ---------------------------------------------------------------------------
+# Bytecode anchor (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _stub_get_code(code_map: dict[str, str]):
+    """Return a ``get_code(rpc_url, address)`` stand-in served from a dict.
+
+    Lets tests exercise ``_fetch_bytecode_keccak`` / ``_apply_bytecode_anchor``
+    without an RPC. Keys are lowercased addresses; value is the code hex
+    string the RPC would return (including ``'0x'`` for EOAs).
+    """
+
+    def fake_get_code(rpc_url, addr):
+        return code_map.get((addr or "").lower(), "0x")
+
+    return fake_get_code
+
+
+def test_fetch_bytecode_keccak_returns_hex_hash(monkeypatch):
+    """Runtime bytecode → keccak256 hex string with ``0x`` prefix."""
+    from services.audits import coverage as cov
+
+    addr = "0x" + "ab" * 20
+    # Known input → known keccak. "0x1234" runtime bytes, keccak256 is
+    # deterministic so a stable assert is possible.
+    monkeypatch.setattr(
+        cov,
+        "get_code" if hasattr(cov, "get_code") else "_dummy",
+        lambda *a, **k: "0x1234",
+        raising=False,
+    )
+    # Patch through the import site (utils.rpc.get_code) since that's what
+    # _fetch_bytecode_keccak imports at call time.
+    from utils import rpc
+
+    monkeypatch.setattr(rpc, "get_code", _stub_get_code({addr: "0x1234"}))
+
+    got = cov._fetch_bytecode_keccak(addr)
+    assert got is not None
+    assert got.startswith("0x")
+    assert len(got) == 66  # 0x + 64 hex chars
+
+
+def test_fetch_bytecode_keccak_none_on_empty_code(monkeypatch):
+    """EOA or selfdestructed address returns ``None`` not a zero hash."""
+    from services.audits import coverage as cov
+    from utils import rpc
+
+    monkeypatch.setattr(rpc, "get_code", _stub_get_code({}))
+    assert cov._fetch_bytecode_keccak("0x" + "cd" * 20) is None
+
+
+def test_fetch_bytecode_keccak_none_on_rpc_error(monkeypatch):
+    """RPC exception → NULL propagates (drift-unknown, not drift-detected)."""
+    from services.audits import coverage as cov
+    from utils import rpc
+
+    def boom(_rpc_url, _addr):
+        raise RuntimeError("RPC down")
+
+    monkeypatch.setattr(rpc, "get_code", boom)
+    assert cov._fetch_bytecode_keccak("0x" + "ef" * 20) is None
+
+
+def test_upsert_coverage_stamps_bytecode_keccak(db_session, seed_protocol, monkeypatch):
+    """End-to-end: after upsert, coverage rows carry ``bytecode_keccak_at_match``."""
+    from db.models import AuditContractCoverage
+    from services.audits.coverage import upsert_coverage_for_audit
+    from utils import rpc
+
+    protocol_id, _ = seed_protocol
+    pool_addr = "0x" + "aa" * 20
+    _add_contract(db_session, protocol_id, address=pool_addr, name="Pool")
+    audit = _add_audit(db_session, protocol_id, date="2024-06-15", scope=["Pool"])
+
+    monkeypatch.setattr(rpc, "get_code", _stub_get_code({pool_addr: "0xdeadbeef"}))
+
+    rows_written = upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+    assert rows_written == 1
+
+    cov_row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert cov_row.bytecode_keccak_at_match is not None
+    assert cov_row.bytecode_keccak_at_match.startswith("0x")
+    assert len(cov_row.bytecode_keccak_at_match) == 66
+    assert cov_row.verified_at is not None
+
+
+def test_upsert_coverage_keccak_null_when_rpc_fails(db_session, seed_protocol, monkeypatch):
+    """Row still writes, keccak/verified_at stay NULL — drift unknown."""
+    from db.models import AuditContractCoverage
+    from services.audits.coverage import upsert_coverage_for_audit
+    from utils import rpc
+
+    protocol_id, _ = seed_protocol
+    _add_contract(db_session, protocol_id, address="0x" + "bb" * 20, name="Treasury")
+    audit = _add_audit(db_session, protocol_id, date="2024-06-15", scope=["Treasury"])
+
+    def always_fail(_rpc_url, _addr):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(rpc, "get_code", always_fail)
+
+    upsert_coverage_for_audit(db_session, audit.id)
+    db_session.commit()
+
+    cov_row = db_session.query(AuditContractCoverage).filter_by(audit_report_id=audit.id).one()
+    assert cov_row.bytecode_keccak_at_match is None
+    assert cov_row.verified_at is None
+
+
+# ---------------------------------------------------------------------------
+# Findings / live_findings filter (Phase 3a)
+# ---------------------------------------------------------------------------
+
+
+def test_live_findings_filters_fixed_status(db_session, seed_protocol, monkeypatch):
+    """Timeline endpoint exposes non-'fixed' findings, hides 'fixed' ones."""
+    from db.models import AuditReport
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "cc" * 20
+    contract = _add_contract(db_session, protocol_id, address=addr, name="Vault")
+    audit = _add_audit(db_session, protocol_id, date="2024-06-15", scope=["Vault"])
+
+    # Write a coverage row directly (bypass upsert to keep this test
+    # focused on the findings filter rather than the whole match path).
+    from db.models import AuditContractCoverage
+
+    db_session.add(
+        AuditContractCoverage(
+            contract_id=contract.id,
+            audit_report_id=audit.id,
+            protocol_id=protocol_id,
+            matched_name="Vault",
+            match_type="direct",
+            match_confidence="high",
+        )
+    )
+    # Set findings on the audit row — must update via SQLAlchemy so the
+    # JSONB serialization path runs.
+    audit_row = db_session.query(AuditReport).filter_by(id=audit.id).one()
+    audit_row.findings = [
+        {"title": "Fixed issue", "severity": "medium", "status": "fixed", "contract_hint": "Vault"},
+        {"title": "Acknowledged issue", "severity": "high", "status": "acknowledged", "contract_hint": "Vault"},
+        {"title": "Still mitigating", "severity": "low", "status": "mitigated", "contract_hint": "Vault"},
+    ]
+    db_session.commit()
+
+    from utils import rpc
+
+    monkeypatch.setattr(rpc, "get_code", _stub_get_code({addr: "0xbeef"}))
+
+    # Call the endpoint's function directly via FastAPI TestClient.
+    from fastapi.testclient import TestClient
+
+    import api as api_module
+
+    client = TestClient(api_module.app)
+    resp = client.get(f"/api/contracts/{contract.id}/audit_timeline")
+    assert resp.status_code == 200
+    payload = resp.json()
+
+    assert len(payload["coverage"]) == 1
+    live = payload["coverage"][0]["live_findings"]
+    # 'fixed' dropped, the other two survive.
+    titles = {f["title"] for f in live}
+    assert "Fixed issue" not in titles
+    assert "Acknowledged issue" in titles
+    assert "Still mitigating" in titles
+
+
+# ---------------------------------------------------------------------------
+# Phase F: address-anchored matching via scope_entries
+# ---------------------------------------------------------------------------
+
+
+def test_scope_entry_address_produces_reviewed_address_match(db_session, seed_protocol):
+    """Audit with an address-pinned scope entry emits match_type='reviewed_address'
+    at the Contract row sharing that address. No name matching needed."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "a" * 40
+    c = _add_contract(db_session, protocol_id, address=addr, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": "abc1234", "chain": "ethereum"}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    m = matches[0]
+    assert m.match_type == "reviewed_address"
+    assert m.match_confidence == "high"
+    assert m.contract_id == c.id
+    assert m.pinned_commit == "abc1234"
+
+
+def test_scope_entry_proxy_address_resolves_to_impl(db_session, seed_protocol):
+    """Audit's scope table names the PROXY address; coverage row targets
+    the impl contract_id (proxy rejected by db trigger, resolved before insert)."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy_addr = "0x" + "b" * 40
+    impl_addr = "0x" + "c" * 40
+    _add_contract(
+        db_session,
+        protocol_id,
+        address=proxy_addr,
+        name="WeETHProxy",
+        is_proxy=True,
+        implementation=impl_addr,
+    )
+    impl = _add_contract(db_session, protocol_id, address=impl_addr, name="WeETH")
+    audit = _add_audit(db_session, protocol_id, scope=["WeETH"], date="2024-06-01")
+    # Audit lists the PROXY address (user-facing), not the impl.
+    audit.scope_entries = [{"name": "WeETH", "address": proxy_addr, "commit": None, "chain": None}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == impl.id  # impl, not proxy
+    assert matches[0].match_type == "reviewed_address"
+
+
+def test_scope_entry_proxy_address_uses_impl_active_at_audit_date(db_session, seed_protocol):
+    """A proxy-address scope entry must resolve to the impl active when the
+    audit happened, not the proxy's current implementation pointer."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    proxy_addr = "0x" + "d" * 40
+    impl_a = _add_contract(db_session, protocol_id, address="0x" + "e" * 40, name="ImplA")
+    impl_b = _add_contract(db_session, protocol_id, address="0x" + "f" * 40, name="ImplB")
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address=proxy_addr,
+        name="Proxy",
+        is_proxy=True,
+        implementation=impl_b.address,
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_a.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        old_impl=impl_a.address,
+        new_impl=impl_b.address,
+        block_number=200,
+        timestamp=_ts(2024, 7, 1),
+    )
+    audit = _add_audit(db_session, protocol_id, scope=[], date="2024-03-15")
+    audit.scope_entries = [{"name": "Pool", "address": proxy_addr, "commit": None, "chain": "ethereum"}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == impl_a.id
+    assert matches[0].match_type == "reviewed_address"
+
+
+def test_scope_entry_suppresses_duplicate_name_match(db_session, seed_protocol):
+    """Audit has BOTH a scope_entry with address AND the name in
+    scope_contracts[]. Matcher emits a single reviewed_address row,
+    not a redundant direct/impl_era row on the same contract."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "d" * 40
+    _add_contract(db_session, protocol_id, address=addr, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": None, "chain": None}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].match_type == "reviewed_address"
+
+
+def test_scope_entry_match_survives_unmatched_leftover_scope_names(db_session, seed_protocol):
+    """Address-pinned matches must survive even when leftover scope names
+    don't match any Contract rows."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "1" * 40
+    c = _add_contract(db_session, protocol_id, address=addr, name="Pool")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool", "MadeUpAlias"], date="2024-06-01")
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": None, "chain": None}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == c.id
+    assert matches[0].match_type == "reviewed_address"
+
+
+def test_scope_entry_address_honors_chain(db_session, seed_protocol):
+    """Same-address contracts on different chains must not collide."""
+    from services.audits.coverage import match_contracts_for_audit
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "2" * 40
+    _add_contract(db_session, protocol_id, address=addr, name="PoolEth", chain="ethereum")
+    arb = _add_contract(db_session, protocol_id, address=addr, name="PoolArb", chain="arbitrum")
+    audit = _add_audit(db_session, protocol_id, scope=["Pool"], date="2024-06-01")
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": None, "chain": "arbitrum"}]
+    db_session.commit()
+
+    matches = match_contracts_for_audit(db_session, audit.id)
+    assert len(matches) == 1
+    assert matches[0].contract_id == arb.id
+    assert matches[0].match_type == "reviewed_address"
+
+
+def test_match_audits_for_contract_finds_address_anchored(db_session, seed_protocol):
+    """Dual-entry contract→audits matcher honors scope_entries by address."""
+    from services.audits.coverage import match_audits_for_contract
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "e" * 40
+    c = _add_contract(db_session, protocol_id, address=addr, name="SomeContract")
+    audit = _add_audit(db_session, protocol_id, scope=[], date="2024-06-01")
+    audit.scope_entries = [{"name": "OtherNameInAudit", "address": addr, "commit": "cafebab", "chain": None}]
+    db_session.commit()
+
+    matches = match_audits_for_contract(db_session, c.id)
+    assert len(matches) == 1
+    m = matches[0]
+    assert m.match_type == "reviewed_address"
+    # matched_name comes from the audit entry's name, not our contract_name
+    assert m.matched_name == "OtherNameInAudit"
+    assert m.pinned_commit == "cafebab"
+
+
+def test_match_audits_for_contract_proxy_scope_entry_uses_historical_impl(db_session, seed_protocol):
+    """Reverse lookup must not rebind a historical proxy-address audit to
+    the proxy's current impl after an upgrade."""
+    from services.audits.coverage import match_audits_for_contract
+
+    protocol_id, _ = seed_protocol
+    proxy_addr = "0x" + "3" * 40
+    impl_a = _add_contract(db_session, protocol_id, address="0x" + "4" * 40, name="ImplA")
+    impl_b = _add_contract(db_session, protocol_id, address="0x" + "5" * 40, name="ImplB")
+    proxy = _add_contract(
+        db_session,
+        protocol_id,
+        address=proxy_addr,
+        name="Proxy",
+        is_proxy=True,
+        implementation=impl_b.address,
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        new_impl=impl_a.address,
+        block_number=100,
+        timestamp=_ts(2024, 1, 1),
+    )
+    _add_upgrade_event(
+        db_session,
+        contract_id=proxy.id,
+        proxy_address=proxy.address,
+        old_impl=impl_a.address,
+        new_impl=impl_b.address,
+        block_number=200,
+        timestamp=_ts(2024, 7, 1),
+    )
+    audit = _add_audit(db_session, protocol_id, scope=[], date="2024-03-15")
+    audit.scope_entries = [{"name": "Pool", "address": proxy_addr, "commit": None, "chain": "ethereum"}]
+    db_session.commit()
+
+    old_matches = match_audits_for_contract(db_session, impl_a.id)
+    new_matches = match_audits_for_contract(db_session, impl_b.id)
+    assert len(old_matches) == 1
+    assert old_matches[0].audit_report_id == audit.id
+    assert old_matches[0].match_type == "reviewed_address"
+    assert new_matches == []
+
+
+def test_match_audits_for_contract_address_anchor_honors_chain(db_session, seed_protocol):
+    """Reverse address-anchored matching must respect chain as well as address."""
+    from services.audits.coverage import match_audits_for_contract
+
+    protocol_id, _ = seed_protocol
+    addr = "0x" + "6" * 40
+    eth = _add_contract(db_session, protocol_id, address=addr, name="Pool", chain="ethereum")
+    arb = _add_contract(db_session, protocol_id, address=addr, name="Pool", chain="arbitrum")
+    audit = _add_audit(db_session, protocol_id, scope=[], date="2024-06-01")
+    audit.scope_entries = [{"name": "Pool", "address": addr, "commit": None, "chain": "arbitrum"}]
+    db_session.commit()
+
+    assert match_audits_for_contract(db_session, eth.id) == []
+    matches = match_audits_for_contract(db_session, arb.id)
+    assert len(matches) == 1
+    assert matches[0].audit_report_id == audit.id
+    assert matches[0].match_type == "reviewed_address"
+
+
+def test_pinned_commit_overrides_reviewed_commits_in_verification(monkeypatch):
+    """specific_commit narrows verify_audit_covers_impl to exactly that SHA;
+    other commits in reviewed_commits are not attempted."""
+    from services.audits import source_equivalence
+
+    fetched_commits = []
+
+    def fake_github(repo, commit, path, *, token=None):
+        fetched_commits.append(commit)
+        return source_equivalence.GithubHashResult(sha256="matching", status="ok", detail="")
+
+    monkeypatch.setattr(source_equivalence, "fetch_github_source_hash", fake_github)
+
+    impl = source_equivalence.VerifiedSource(
+        contract_name="Pool", compiler_version="v0.8", files={"src/Pool.sol": "matching"}
+    )
+    out = source_equivalence.verify_audit_covers_impl(
+        reviewed_commits=["abc1234", "def5678", "fed9876"],
+        scope_name="Pool",
+        impl_source=impl,
+        source_repo="r/n",
+        specific_commit="def5678",  # narrow to this one
+    )
+    assert out.status == "proven"
+    # Only the specific commit was fetched, not the full list.
+    assert fetched_commits == ["def5678"]
+
+
+def test_reviewed_address_match_type_in_order_ranking():
+    """_MATCH_TYPE_ORDER: reviewed_address beats impl_era, loses to reviewed_commit."""
+    from services.audits.coverage import _MATCH_TYPE_ORDER
+
+    assert _MATCH_TYPE_ORDER["direct"] < _MATCH_TYPE_ORDER["impl_era"]
+    assert _MATCH_TYPE_ORDER["impl_era"] < _MATCH_TYPE_ORDER["reviewed_address"]
+    assert _MATCH_TYPE_ORDER["reviewed_address"] < _MATCH_TYPE_ORDER["reviewed_commit"]
+
+
+# ---------------------------------------------------------------------------
+# Phase C: _compute_proof_kind — one test per taxonomy case
+# ---------------------------------------------------------------------------
+
+
+class TestComputeProofKind:
+    """Covers the five proof_kind values the Phase C rules produce.
+
+    The function is pure: it doesn't hit the DB or network. Each test
+    feeds a matched-commit set + a classified_commits list and asserts
+    the returned kind.
+    """
+
+    def _call(self, matched: list[str], classified: list[dict] | None):
+        from services.audits.coverage import _compute_proof_kind
+
+        return _compute_proof_kind({m.lower() for m in matched}, classified)
+
+    def test_unclassified_when_no_classification_data(self):
+        """NULL classified_commits → we can't judge strength → ``unclassified``."""
+        assert self._call(["abc1234"], None) == "unclassified"
+        assert self._call(["abc1234"], []) == "unclassified"
+
+    def test_clean_when_matched_reviewed_and_no_fix_commits(self):
+        """Audit has no fix commits; deployed matches the reviewed one.
+        Canonical happy path."""
+        classified = [{"sha": "abc1234", "label": "reviewed", "context": "audited at abc1234"}]
+        assert self._call(["abc1234"], classified) == "clean"
+
+    def test_clean_when_matched_reviewed_and_fix(self):
+        """Deployed matches both reviewed and fix commits — file was stable
+        across the fix window. Still clean."""
+        classified = [
+            {"sha": "abc1234", "label": "reviewed", "context": "review"},
+            {"sha": "def5678", "label": "fix", "context": "fix L-01"},
+        ]
+        assert self._call(["abc1234", "def5678"], classified) == "clean"
+
+    def test_post_fix_when_matched_only_fix(self):
+        """Deployed matches fix but not reviewed — audit reviewed older
+        code, fix was shipped. Audit's findings are addressed."""
+        classified = [
+            {"sha": "abc1234", "label": "reviewed", "context": "review"},
+            {"sha": "def5678", "label": "fix", "context": "fix L-01"},
+        ]
+        assert self._call(["def5678"], classified) == "post_fix"
+
+    def test_pre_fix_unpatched_when_reviewed_matches_but_fix_doesnt(self):
+        """DANGER: deployed matches reviewed AND fix commits exist AND
+        deployed doesn't match any fix. Audit's findings are still
+        present in the deployed code."""
+        classified = [
+            {"sha": "abc1234", "label": "reviewed", "context": "review"},
+            {"sha": "def5678", "label": "fix", "context": "fix L-01"},
+            {"sha": "ffa9876", "label": "fix", "context": "fix L-02"},
+        ]
+        assert self._call(["abc1234"], classified) == "pre_fix_unpatched"
+
+    def test_cited_only_when_match_hits_cited_label(self):
+        """Matched only a commit labeled as 'cited' (historical context,
+        not the reviewed commit) — coincidence. Weak signal."""
+        classified = [
+            {"sha": "abc1234", "label": "reviewed", "context": "review"},
+            {"sha": "def5678", "label": "cited", "context": "baseline"},
+        ]
+        assert self._call(["def5678"], classified) == "cited_only"
+
+    def test_cited_only_when_match_hits_unclear_label(self):
+        """Matched only a commit labeled 'unclear' — same semantics as cited."""
+        classified = [
+            {"sha": "abc1234", "label": "reviewed", "context": "review"},
+            {"sha": "def5678", "label": "unclear", "context": "?"},
+        ]
+        assert self._call(["def5678"], classified) == "cited_only"
+
+    def test_prefix_match_tolerates_abbreviated_shas(self):
+        """Matched commit is 40-char full SHA; classified is 7-char abbrev.
+        Proof kind computation compares on the shared 7-char prefix."""
+        full = "abc1234" + "f" * 33
+        classified = [{"sha": "abc1234", "label": "reviewed", "context": "review"}]
+        assert self._call([full], classified) == "clean"

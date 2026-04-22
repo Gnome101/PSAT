@@ -437,7 +437,11 @@ def _refresh_coverage_after_upgrade(session: Session, protocol_id: int | None) -
     from services.audits.coverage import upsert_coverage_for_protocol
 
     try:
-        upsert_coverage_for_protocol(session, protocol_id)
+        # verify_source_equivalence=True so the source-equivalence verdict
+        # stays fresh on every automatic refresh. Matches the worker call
+        # sites (coverage_worker, audit_scope_extraction, resolution_worker)
+        # that also opt in to verification.
+        upsert_coverage_for_protocol(session, protocol_id, verify_source_equivalence=True)
     except Exception:
         logger.exception(
             "Failed to refresh audit coverage for protocol %s after upgrade",

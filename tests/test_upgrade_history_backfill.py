@@ -1116,8 +1116,6 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
     can prove byte-equality with the impl's Etherscan source are promoted
     to ``reviewed_commit`` / ``high`` at creation time.
     """
-    from types import SimpleNamespace
-
     from db.models import (
         AuditContractCoverage,
         AuditReport,
@@ -1176,7 +1174,7 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
 
     def fake_check(*, reviewed_commits, scope_contracts, impl_source, source_repo, github_token=None):
         return [
-            SimpleNamespace(
+            se_mod.EquivalenceMatch(
                 commit="3b6b81b",
                 scope_name="LiquidityPool",
                 etherscan_path="src/LiquidityPool.sol",
@@ -1184,14 +1182,46 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
             )
         ]
 
+    # The coverage layer now calls ``verify_audit_covers_impl`` per
+    # matched_name (not the legacy multi-scope ``check_audit_covers_impl``).
+    # Stub the new one to return a proven outcome so the row ends up as
+    # reviewed_commit/high.
+    def fake_verify(
+        *,
+        reviewed_commits,
+        scope_name,
+        impl_source,
+        source_repo,
+        github_token=None,
+        specific_commit=None,
+        fallback_repos=None,
+    ):
+        return se_mod.EquivalenceOutcome(
+            status="proven",
+            reason="test",
+            matches=tuple(
+                fake_check(
+                    reviewed_commits=reviewed_commits,
+                    scope_contracts=[scope_name],
+                    impl_source=impl_source,
+                    source_repo=source_repo,
+                )
+            ),
+        )
+
     monkeypatch.setattr(se_mod, "check_audit_covers_impl", fake_check)
+    monkeypatch.setattr(se_mod, "verify_audit_covers_impl", fake_verify)
     monkeypatch.setattr(
         se_mod,
         "fetch_etherscan_source_files",
-        lambda _addr: se_mod.VerifiedSource(
-            contract_name="LiquidityPool",
-            compiler_version="0.8",
-            files={"src/LiquidityPool.sol": "stubhash"},
+        lambda _addr: se_mod.EtherscanFetch(
+            source=se_mod.VerifiedSource(
+                contract_name="LiquidityPool",
+                compiler_version="0.8",
+                files={"src/LiquidityPool.sol": "stubhash"},
+            ),
+            status="ok",
+            detail="",
         ),
     )
 
