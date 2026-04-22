@@ -39,15 +39,25 @@ def _safe_name(name: str) -> str:
     return name
 
 
+def _key_prefix() -> str:
+    """Optional prefix for every storage key. Used to scope PR-preview envs to
+    a shared bucket (e.g. ``pr-123/``) so teardown can wipe one prefix cleanly.
+
+    Normalized to an empty string or a single trailing slash.
+    """
+    prefix = os.environ.get("ARTIFACT_STORAGE_PREFIX", "").strip().strip("/")
+    return f"{prefix}/" if prefix else ""
+
+
 def artifact_key(job_id: UUID | str, name: str) -> str:
     """Deterministic S3 key for an artifact body."""
-    return f"artifacts/{job_id}/{_safe_name(name)}"
+    return f"{_key_prefix()}artifacts/{job_id}/{_safe_name(name)}"
 
 
 def source_file_key(job_id: UUID | str, path: str) -> str:
     """Deterministic S3 key for a source file (path is hashed to avoid unsafe chars)."""
     digest = hashlib.sha1(path.encode("utf-8")).hexdigest()
-    return f"source_files/{job_id}/{digest}"
+    return f"{_key_prefix()}source_files/{job_id}/{digest}"
 
 
 def serialize_artifact(data: Any | None, text_data: str | None) -> tuple[bytes, str]:

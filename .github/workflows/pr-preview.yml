@@ -1,0 +1,100 @@
+name: PR preview
+
+on:
+  pull_request:
+    # Base-branch filter: only spin up previews for PRs targeting main.
+    # PRs to intermediate branches (feat/*, ci/*, etc.) skip preview.
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+# One deploy per PR at a time. A rapid-fire push cancels the previous run
+# so we never race two deploys for the same app.
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  deploy:
+    # Same-repo PRs only. Fork PRs don't get secrets on `pull_request` events,
+    # so skip them — teardown would dangle anyway. Reviewers can cherry-pick
+    # a fork PR into a local branch to preview.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      FLY_APP_NAME: psat-pr-${{ github.event.pull_request.number }}
+      FLY_ORG: personal
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      NEON_STAGING_HOST: ${{ secrets.NEON_STAGING_HOST }}
+      NEON_STAGING_POOLER_HOST: ${{ secrets.NEON_STAGING_POOLER_HOST }}
+      NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
+      NEON_STAGING_PASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
+    steps:
+      # Pinned to v4 (first-party GitHub action — tag is fine).
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      # superfly/flyctl-actions has no release tags; pin to master SHA.
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+
+      - name: Create Fly app if missing
+        run: |
+          flyctl apps create "$FLY_APP_NAME" --org "$FLY_ORG" || true
+
+      - name: Create per-PR Neon database
+        env:
+          PGPASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
+        run: |
+          # CREATE DATABASE must target the direct compute endpoint. The
+          # pooler endpoint runs pgbouncer in transaction mode, which
+          # doesn't allow admin commands like CREATE DATABASE. The app
+          # itself still uses the pooler (see DATABASE_URL below).
+          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
+            -c "CREATE DATABASE \"psat_pr_${PR_NUMBER}\";" || true
+
+      - name: Stage Fly secrets
+        run: |
+          # App connects via the pooler endpoint so many preview envs + their
+          # ~10 workers each don't blow through Neon's connection cap.
+          DB_URL="postgresql://${NEON_STAGING_USER}:${NEON_STAGING_PASSWORD}@${NEON_STAGING_POOLER_HOST}/psat_pr_${PR_NUMBER}?sslmode=require"
+          flyctl secrets set --stage -a "$FLY_APP_NAME" \
+            DATABASE_URL="$DB_URL" \
+            PSAT_ADMIN_KEY="${{ secrets.PSAT_ADMIN_KEY }}" \
+            PSAT_SITE_ORIGIN="https://${FLY_APP_NAME}.fly.dev" \
+            ETHERSCAN_API_KEY="${{ secrets.ETHERSCAN_API_KEY }}" \
+            ETH_RPC="${{ secrets.ETH_RPC }}" \
+            ENVIO_API_TOKEN="${{ secrets.ENVIO_API_TOKEN }}" \
+            TAVILY_API_KEY="${{ secrets.TAVILY_API_KEY }}" \
+            OPEN_ROUTER_KEY="${{ secrets.OPEN_ROUTER_KEY }}" \
+            GITHUB_TOKEN="${{ secrets.PROTOCOL_GITHUB_TOKEN }}" \
+            ARTIFACT_STORAGE_ENDPOINT="${{ secrets.ARTIFACT_STORAGE_ENDPOINT }}" \
+            ARTIFACT_STORAGE_BUCKET="${{ secrets.ARTIFACT_STORAGE_BUCKET }}" \
+            ARTIFACT_STORAGE_ACCESS_KEY="${{ secrets.ARTIFACT_STORAGE_ACCESS_KEY }}" \
+            ARTIFACT_STORAGE_SECRET_KEY="${{ secrets.ARTIFACT_STORAGE_SECRET_KEY }}" \
+            ARTIFACT_STORAGE_PREFIX="pr-${PR_NUMBER}/"
+
+      - name: Deploy preview
+        run: flyctl deploy -a "$FLY_APP_NAME" --remote-only
+
+      # marocchino/sticky-pull-request-comment@v2.9.4 pinned to SHA.
+      - name: Post/update sticky preview comment
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
+        with:
+          header: psat-preview
+          message: |
+            ### :rocket: PSAT preview deployed
+
+            - **URL:** https://${{ env.FLY_APP_NAME }}.fly.dev
+            - **Health:** https://${{ env.FLY_APP_NAME }}.fly.dev/api/health
+            - **Fly app:** `${{ env.FLY_APP_NAME }}`
+            - **Neon DB:** `psat_pr_${{ env.PR_NUMBER }}` (staging pooler)
+            - **Artifact prefix:** `pr-${{ env.PR_NUMBER }}/` (shared staging bucket)
+
+            This environment is torn down automatically when the PR closes.

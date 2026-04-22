@@ -482,7 +482,52 @@ def test_source_file_path_recoverable_from_storage_metadata(db_session, storage_
 
 
 # ---------------------------------------------------------------------------
-# 14. /api/jobs surfaces programming bugs instead of silently swallowing them
+# 14. ARTIFACT_STORAGE_PREFIX scopes every storage key for multi-tenant buckets
+# ---------------------------------------------------------------------------
+
+
+def test_artifact_storage_prefix_scopes_keys_and_round_trips(monkeypatch, db_session, storage_bucket):
+    """With ARTIFACT_STORAGE_PREFIX set, artifact + source-file keys are prefixed and still read/write cleanly.
+
+    This is how PR-preview environments share a single Tigris bucket safely —
+    each preview sets prefix=pr-<N>/ and teardown deletes that prefix.
+    """
+    from db.queue import (
+        artifact_key,
+        create_job,
+        get_artifact,
+        source_file_key,
+        store_artifact,
+        store_source_files,
+    )
+
+    monkeypatch.setenv("ARTIFACT_STORAGE_PREFIX", "pr-123")
+
+    job = create_job(db_session, {"address": "0xab", "name": "prefix-ok"})
+    store_artifact(db_session, job.id, "flagged", data={"ok": True})
+    store_source_files(db_session, job.id, {"src/A.sol": "contract A {}"})
+
+    art_k = artifact_key(job.id, "flagged")
+    src_k = source_file_key(job.id, "src/A.sol")
+    assert art_k.startswith("pr-123/artifacts/")
+    assert src_k.startswith("pr-123/source_files/")
+
+    # Round-trip through the prefixed key.
+    assert get_artifact(db_session, job.id, "flagged") == {"ok": True}
+    assert storage_bucket.get(art_k) == b'{"ok": true}'
+    assert storage_bucket.get(src_k) == b"contract A {}"
+
+    # Trailing / in env is idempotent.
+    monkeypatch.setenv("ARTIFACT_STORAGE_PREFIX", "pr-123/")
+    assert artifact_key(job.id, "flagged") == art_k
+
+    # Unset → original unprefixed shape.
+    monkeypatch.delenv("ARTIFACT_STORAGE_PREFIX")
+    assert artifact_key(job.id, "flagged") == f"artifacts/{job.id}/flagged"
+
+
+# ---------------------------------------------------------------------------
+# 15. /api/jobs surfaces programming bugs instead of silently swallowing them
 # ---------------------------------------------------------------------------
 
 
