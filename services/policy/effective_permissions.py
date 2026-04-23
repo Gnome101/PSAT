@@ -636,6 +636,12 @@ def build_effective_permissions(
         external_call_guards = list(privileged.get("external_call_guards") or [])
         if external_call_guards:
             function_permission["external_call_guards"] = [dict(g) for g in external_call_guards]
+        # Phase 4: pass the full sinks list through so policy_worker's
+        # sink-dispatch bridge can route caller_equals / caller_in_mapping
+        # sinks that the legacy external_call_guards projection drops.
+        caller_sinks = list(privileged.get("sinks") or [])
+        if caller_sinks:
+            function_permission["sinks"] = [dict(s) for s in caller_sinks]
         functions.append(function_permission)
 
     return {
