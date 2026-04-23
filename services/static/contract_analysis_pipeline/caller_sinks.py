@@ -213,31 +213,47 @@ class MsgSenderTaint:
                     self.add(getattr(ir, "lvalue", None))
 
 
+def _ir_is_revert(ir: Any) -> bool:
+    """Is `ir` a SolidityCall that triggers a revert (custom error
+    or plain revert)?"""
+    if _ir_name(ir) != "SolidityCall":
+        return False
+    function_ref = getattr(ir, "function", None)
+    name = getattr(function_ref, "name", None) or str(function_ref or "")
+    return name in _REVERT_SOLIDITY_CALLS or name.startswith("revert ")
+
+
 def _node_is_revert_gate(node: Any) -> bool:
     """Does reaching this node's condition's `false` branch trigger a
     revert?
 
-    Covers three cases:
+    Covers:
     - `require(cond)` / `assert(cond)`: slither marks the node with a
       `contains_require_or_assert` predicate we reuse from `shared.py`.
-    - `if (!cond) revert E()`: the node's IR list terminates in a
-      SolidityCall whose function_name starts with "revert".
-    - `RETURN` or loop/branch nodes that route to a revert sink: out
-      of scope for this first pass — a future phase walks successors.
+    - `if (!cond) revert E()` inline (IF and revert fused in one node).
+    - `if (cond) revert E()` across nodes — slither lowers this into an
+      IF node with the binary condition, whose `sons` successor contains
+      the revert SolidityCall. Phase 6: walk direct successors (one hop)
+      and check if any is a revert-terminating branch.
 
-    Returning False here doesn't mean the guard is ignored; it flips
-    `revert_on_mismatch=False` on the emitted sink so downstream can
-    tell "observed msg.sender read" from "gating check".
+    Returning False flips `revert_on_mismatch=False` on the emitted
+    sink so downstream can tell "observed msg.sender read" from "gating
+    check". Same-node revert wins over cross-node — cheaper to detect
+    and covers the most common shapes.
     """
     if _node_contains_require_or_assert(node):
         return True
     for ir in getattr(node, "irs", []) or []:
-        if _ir_name(ir) != "SolidityCall":
-            continue
-        function_ref = getattr(ir, "function", None)
-        name = getattr(function_ref, "name", None) or str(function_ref or "")
-        if name in _REVERT_SOLIDITY_CALLS or name.startswith("revert "):
+        if _ir_is_revert(ir):
             return True
+    # Cross-node: slither splits `if (bad) revert E()` into an IF node
+    # containing the Binary + a successor EXPRESSION node containing the
+    # SolidityCall. One hop is enough — deeper control flow is rare for
+    # gating checks and would need a dedicated reachability pass.
+    for son in getattr(node, "sons", []) or []:
+        for ir in getattr(son, "irs", []) or []:
+            if _ir_is_revert(ir):
+                return True
     return False
 
 
@@ -275,6 +291,34 @@ def _resolve_tmp_to_state_var(tmp_var: Any, recent_irs: list[Any]) -> tuple[str,
                     read_type = _var_type(var) or read_type
         if len(reads) == 1:
             return next(iter(reads)), read_type
+    return "", ""
+
+
+def _resolve_ref_to_struct_field(ref_var: Any, recent_irs: list[Any]) -> tuple[str, str]:
+    """If `ref_var` is the lvalue of a preceding Member IR (struct
+    field access like `contracts.accountingOracle`), return
+    (`<base>.<field>`, base_type_or_empty). Otherwise ('', '').
+
+    Phase 6: accounting_proxy and friends gate functions with
+    `msg.sender != contracts.oracle`. Slither lowers `contracts.oracle`
+    into a Member IR producing a REF_N lvalue that the Binary compares
+    against. We rebuild the dotted name so the downstream resolver can
+    RPC-read the struct field on-chain.
+    """
+    ref_name = _var_name(ref_var)
+    if not ref_name:
+        return "", ""
+    for ir in recent_irs:
+        if _ir_name(ir) != "Member":
+            continue
+        if _var_name(getattr(ir, "lvalue", None)) != ref_name:
+            continue
+        base = getattr(ir, "variable_left", None)
+        field = getattr(ir, "variable_right", None)
+        base_name = _var_name(base)
+        field_name = _var_name(field)
+        if base_name and field_name:
+            return f"{base_name}.{field_name}", _var_type(base)
     return "", ""
 
 
@@ -321,18 +365,28 @@ def _classify_caller_equals(node: Any, taint: MsgSenderTaint, project_dir: Path)
                 # Compile-time constant counterparty.
                 sink["constant_value"] = str(value)
             else:
-                # Local/TMP counterparty. If it's the lvalue of a
-                # preceding InternalCall to a single-state-var getter
-                # (`owner()` returning `_owner`), resolve to that
-                # state var — otherwise we'd emit a useless target
-                # like "TMP_1".
-                resolved_name, resolved_type = _resolve_tmp_to_state_var(other, node_irs)
-                if resolved_name:
-                    sink["target_state_var"] = resolved_name
-                    if resolved_type:
-                        sink["target_type"] = resolved_type
+                # Phase 6: struct-field access (`contracts.oracle`)
+                # resolves to `<base>.<field>` — caught before the
+                # single-state-var-getter path because the Member IR is
+                # more specific than a generic TMP.
+                struct_name, struct_type = _resolve_ref_to_struct_field(other, node_irs)
+                if struct_name:
+                    sink["target_state_var"] = struct_name
+                    if struct_type:
+                        sink["target_type"] = struct_type
                 else:
-                    sink["target_state_var"] = _var_name(other)
+                    # Local/TMP counterparty. If it's the lvalue of a
+                    # preceding InternalCall to a single-state-var getter
+                    # (`owner()` returning `_owner`), resolve to that
+                    # state var — otherwise we'd emit a useless target
+                    # like "TMP_1".
+                    resolved_name, resolved_type = _resolve_tmp_to_state_var(other, node_irs)
+                    if resolved_name:
+                        sink["target_state_var"] = resolved_name
+                        if resolved_type:
+                            sink["target_type"] = resolved_type
+                    else:
+                        sink["target_state_var"] = _var_name(other)
         sinks.append(sink)
     return sinks
 

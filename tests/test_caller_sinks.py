@@ -829,6 +829,96 @@ def test_cross_function_depth_cap():
     assert not any(s["kind"] == "caller_equals" and s.get("target_state_var") == "owner" for s in sinks)
 
 
+# ---------------------------------------------------------------------------
+# Phase 6 — custom-error revert + struct-field target resolution
+# ---------------------------------------------------------------------------
+
+
+def _member(base: Any, field_name: str, lvalue: Any) -> SimpleNamespace:
+    """`base.field` — slither lowers to a Member IR producing a REF_N
+    lvalue that downstream IRs reference. `variable_right` holds the
+    field identifier (its `.name` is the field name)."""
+    field_ref = SimpleNamespace(name=field_name)
+    return _named("Member", variable_left=base, variable_right=field_ref, lvalue=lvalue)
+
+
+def _ref(name: str) -> SimpleNamespace:
+    subclass = type("ReferenceVariable", (SimpleNamespace,), {})
+    subclass.__name__ = "ReferenceVariable"
+    return subclass(name=name, type="address")
+
+
+def test_caller_equals_resolves_struct_field_counterparty():
+    """`msg.sender != contracts.accountingOracle` — the counterparty
+    is a Member IR on a struct state var. Emit the dotted name so the
+    downstream resolver can RPC-read `contracts.accountingOracle`."""
+    contracts = _state_var("contracts", type_str="C.Contracts")
+    ref = _ref("REF_0")
+    node = _node(
+        [
+            _member(contracts, "accountingOracle", ref),
+            _binary(_msg_sender(), ref, op="!="),
+        ],
+        require=True,
+    )
+    sinks = _run(_fn([node]))
+    equals = [s for s in sinks if s["kind"] == "caller_equals"]
+    assert len(equals) == 1
+    assert equals[0]["target_state_var"] == "contracts.accountingOracle"
+    assert equals[0]["target_type"] == "C.Contracts"
+    assert equals[0]["revert_on_mismatch"] is True
+
+
+def test_caller_equals_revert_detected_across_nodes():
+    """`if (msg.sender != X) revert NotAuthorized()` lowers across
+    two nodes in slither: an IF node with the Binary, then an
+    EXPRESSION node with the SolidityCall. `revert_on_mismatch` must
+    fire via one-hop successor inspection, not same-node-only."""
+    owner = _state_var("owner")
+    revert_son = SimpleNamespace(
+        irs=[_solidity_call("revert NotAuthorized()")],
+        node_id=2,
+        state_variables_read=[],
+        contains_require_or_assert=lambda: False,
+    )
+    if_node = SimpleNamespace(
+        irs=[_binary(_msg_sender(), owner, op="!=")],
+        node_id=1,
+        state_variables_read=[],
+        contains_require_or_assert=lambda: False,
+        sons=[revert_son],
+    )
+    sinks = _run(_fn([if_node, revert_son]))
+    equals = [s for s in sinks if s["kind"] == "caller_equals"]
+    assert len(equals) == 1
+    assert equals[0]["revert_on_mismatch"] is True
+
+
+def test_caller_equals_no_revert_without_successor_revert():
+    """Counterexample: Binary compares msg.sender with X, but no
+    successor reverts. `revert_on_mismatch` stays False — we observed
+    the read but it's not a gating check."""
+    owner = _state_var("owner")
+    harmless_son = SimpleNamespace(
+        irs=[_assignment(lvalue=_tmp("T"), rvalue=_constant(1))],
+        node_id=2,
+        state_variables_read=[],
+        contains_require_or_assert=lambda: False,
+    )
+    if_node = SimpleNamespace(
+        irs=[_binary(_msg_sender(), owner, op="!=")],
+        node_id=1,
+        state_variables_read=[],
+        contains_require_or_assert=lambda: False,
+        sons=[harmless_son],
+    )
+    sinks = _run(_fn([if_node, harmless_son]))
+    equals = [s for s in sinks if s["kind"] == "caller_equals"]
+    # Still emits the sink (observed read), but not gating.
+    assert len(equals) == 1
+    assert equals[0]["revert_on_mismatch"] is False
+
+
 def test_caller_unknown_requires_revert_context():
     """Non-gating reads of msg.sender (e.g. `emit Log(msg.sender)` in
     a write path) don't become unknowns. We only flag as an
