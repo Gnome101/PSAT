@@ -528,7 +528,7 @@ def resolve_control_graph(
         # materialize each current member as a principal node tagged
         # with `controller_label=<mapping_name>`.
         mapping_specs = list(access_control_block.get("mapping_writer_events") or [])
-        enumerated: list = []
+        enumerated: list[Any] = []
         if mapping_specs:
             hypersync_token = os.getenv("ENVIO_API_TOKEN") or ""
             logger.info(
