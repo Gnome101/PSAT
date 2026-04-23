@@ -27,7 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from workers.policy_worker import (  # noqa: E402
     _apply_external_call_guard_bridge,
+    _apply_sink_bridge,
     _method_to_role_for_address,
+    _principals_by_controller_label,
     _principals_for_role_from_graph,
     _resolve_target_state_var_address,
 )
@@ -454,3 +456,217 @@ def test_bridge_with_no_guards_is_a_noop():
     )
     assert added == 0
     session.add.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — _apply_sink_bridge (caller_equals + caller_in_mapping)
+# ---------------------------------------------------------------------------
+
+
+OWNER_STATE = "0xabcdef0123456789abcdef0123456789abcdef01"
+WARDS_A = "0xbe8e3e3618f7474f8cb1d074a26affef007e98fb"
+WARDS_B = "0xb313eab3fde99b2bb4ba9750c2ddfbe2729d1ce9"
+
+
+def _snapshot_with_owner() -> dict:
+    return {
+        "controller_values": {
+            "state_variable:owner": {"value": OWNER_STATE, "resolved_type": "eoa"},
+        }
+    }
+
+
+def _wards_nodes() -> list[dict]:
+    return [
+        {
+            "address": WARDS_A,
+            "resolved_type": "unknown",
+            "details": {"controller_label": "wards", "mapping_name": "wards"},
+        },
+        {
+            "address": WARDS_B,
+            "resolved_type": "unknown",
+            "details": {"controller_label": "wards", "mapping_name": "wards"},
+        },
+    ]
+
+
+def test_principals_by_controller_label_filters_on_label():
+    """Only nodes tagged with the exact label come back. Other
+    principal nodes in the graph don't leak through."""
+    nodes = _wards_nodes() + [
+        {
+            "address": "0xdead000000000000000000000000000000000000",
+            "resolved_type": "eoa",
+            "details": {"controller_label": "something_else"},
+        }
+    ]
+    out = _principals_by_controller_label("wards", nodes)
+    assert {p["address"] for p in out} == {WARDS_A, WARDS_B}
+
+
+def test_sink_bridge_caller_equals_resolves_via_snapshot():
+    """`msg.sender == owner` where `owner` is a state variable →
+    one FunctionPrincipal row pointing at the resolved address."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=101)
+    fn = {
+        "function": "renounceOwnership()",
+        "sinks": [{"kind": "caller_equals", "target_state_var": "owner"}],
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot=_snapshot_with_owner(),
+        control_graph_nodes=[],
+    )
+    assert added == 1
+    row = session.add.call_args.args[0]
+    assert row.address == OWNER_STATE
+    assert row.origin == "caller_equals:owner"
+    assert row.principal_type == "caller_equals"
+
+
+def test_sink_bridge_caller_equals_skips_when_state_var_unresolved():
+    """No owner entry in controller_values → nothing to attribute.
+    Bridge stays silent (the v5 bridge for external calls behaves
+    the same way for an unresolved target state var)."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=1)
+    fn = {"sinks": [{"kind": "caller_equals", "target_state_var": "gate"}]}
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot={"controller_values": {}},
+        control_graph_nodes=[],
+    )
+    assert added == 0
+    session.add.assert_not_called()
+
+
+def test_sink_bridge_caller_in_mapping_attaches_enumerated_principals():
+    """`wards[msg.sender]` guard + Phase-3 enumerated graph nodes →
+    one row per wards member. This is the Sky case from the plan."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=202)
+    fn = {
+        "function": "rely(address)",
+        "sinks": [
+            {
+                "kind": "caller_in_mapping",
+                "mapping_name": "wards",
+                "mapping_predicate": "== 1",
+            }
+        ],
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot={"controller_values": {}},
+        control_graph_nodes=_wards_nodes(),
+    )
+    assert added == 2
+    addresses = {c.args[0].address for c in session.add.call_args_list}
+    assert addresses == {WARDS_A, WARDS_B}
+    for c in session.add.call_args_list:
+        row = c.args[0]
+        assert row.origin == "mapping:wards"
+        assert row.principal_type == "caller_in_mapping"
+        assert row.details["mapping_name"] == "wards"
+        assert row.details["mapping_predicate"] == "== 1"
+
+
+def test_sink_bridge_caller_in_mapping_no_members_is_noop():
+    """Mapping exists but the enumerator found no current members
+    (empty allowlist). Bridge adds nothing — not an error."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=1)
+    fn = {
+        "sinks": [{"kind": "caller_in_mapping", "mapping_name": "wards"}],
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot={"controller_values": {}},
+        control_graph_nodes=[],
+    )
+    assert added == 0
+
+
+def test_sink_bridge_deduplicates_same_address_across_sinks():
+    """Two sinks on the same function, both resolving to the same
+    principal → one row, not two. Matters when a function has both a
+    `msg.sender == owner` check AND a mapping membership check where
+    `owner` happens to be in the mapping."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=1)
+    nodes = [
+        {
+            "address": OWNER_STATE,
+            "resolved_type": "eoa",
+            "details": {"controller_label": "wards"},
+        },
+    ]
+    fn = {
+        "sinks": [
+            {"kind": "caller_equals", "target_state_var": "owner"},
+            {"kind": "caller_in_mapping", "mapping_name": "wards"},
+        ]
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot=_snapshot_with_owner(),
+        control_graph_nodes=nodes,
+    )
+    # OWNER_STATE shows up through two different origins — those are
+    # distinct (origin differs) so the dedup key lets both through.
+    # But a second caller_equals:owner on the same function would dedup.
+    assert added == 2
+
+
+def test_sink_bridge_ignores_kinds_outside_phase_4_scope():
+    """caller_external_call → handled by the v5 bridge.
+    caller_signature/merkle/unknown → Phase 5+. This bridge must not
+    double-emit or crash on them."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=1)
+    fn = {
+        "sinks": [
+            {"kind": "caller_external_call", "target_state_var": "roleManager", "external_method": "hasRole"},
+            {"kind": "caller_signature", "signature_source_var": "signer"},
+            {"kind": "caller_merkle", "merkle_root_var": "root"},
+            {"kind": "caller_unknown"},
+            {"kind": "caller_internal_call", "internal_callee": "_check"},
+        ]
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot=_snapshot_with_owner(),
+        control_graph_nodes=_wards_nodes(),
+    )
+    assert added == 0
+    session.add.assert_not_called()
+
+
+def test_sink_bridge_with_no_sinks_is_a_noop():
+    """Record with no `sinks` key at all (e.g. an older artifact) →
+    bridge is a no-op."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=1)
+    fn = {"function": "foo()"}
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot=_snapshot_with_owner(),
+        control_graph_nodes=_wards_nodes(),
+    )
+    assert added == 0

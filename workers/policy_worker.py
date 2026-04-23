@@ -92,6 +92,108 @@ def _principals_for_role_from_graph(role: str, control_graph_nodes: list[dict] |
     return principals
 
 
+def _principals_by_controller_label(label: str, control_graph_nodes: list[dict] | None) -> list[dict]:
+    """Collect every graph node tagged with `controller_label == label`.
+
+    Phase 3 writes one node per enumerated mapping member with
+    `controller_label=<mapping_name>`. This is the lookup the Phase 4
+    `caller_in_mapping` bridge uses to route `wards[msg.sender]` guards
+    back to the concrete addresses the mapping enumerator found."""
+    out: list[dict] = []
+    for node in control_graph_nodes or []:
+        details = node.get("details") or {}
+        if str(details.get("controller_label", "")) != label:
+            continue
+        address = str(node.get("address", "")).lower()
+        if not (address.startswith("0x") and len(address) == 42):
+            continue
+        out.append({"address": address, "resolved_type": node.get("resolved_type"), "details": details})
+    return out
+
+
+def _apply_sink_bridge(
+    session: Session,
+    *,
+    effective_function: Any,
+    function_record: dict[str, Any],
+    control_snapshot: dict | ControlSnapshot | None,
+    control_graph_nodes: list[dict] | None,
+) -> int:
+    """Dispatch each `CallerSink` kind to its principal resolver.
+
+    Handles the kinds the legacy external-call-guard bridge doesn't:
+
+    - `caller_equals` → `msg.sender == X` where X is a state variable.
+      The target's resolved address IS the principal (from
+      controller_values). Constant-compared (`msg.sender == ZERO`)
+      is skipped — not a real principal.
+    - `caller_in_mapping` → `X[msg.sender]` predicate. The current
+      members live as graph nodes with `controller_label=<mapping_name>`
+      (written by the resolver's Phase 3 enumerator). Attach each one
+      as a function principal.
+
+    `caller_external_call` is left to the existing v5 bridge; the
+    remaining kinds (internal_call, signature, merkle, unknown) are
+    Phase 5+/no-op here. Returns the count added."""
+    sinks = function_record.get("sinks") or []
+    if not sinks:
+        return 0
+    added = 0
+    seen: set[tuple[str, str, str]] = set()
+
+    def _add(address: str, origin: str, principal_type: str, details: dict[str, Any]) -> None:
+        nonlocal added
+        key = (address.lower(), origin, principal_type)
+        if key in seen:
+            return
+        seen.add(key)
+        session.add(
+            FunctionPrincipal(
+                function_id=effective_function.id,
+                address=address.lower(),
+                resolved_type=details.get("resolved_type"),
+                origin=origin,
+                principal_type=principal_type,
+                details=details,
+            )
+        )
+        added += 1
+
+    for sink in sinks:
+        kind = str(sink.get("kind") or "")
+        if kind == "caller_equals":
+            target_var = str(sink.get("target_state_var") or "")
+            if not target_var:
+                continue
+            addr = _resolve_target_state_var_address(target_var, control_snapshot)
+            if not addr:
+                continue
+            _add(
+                addr,
+                f"caller_equals:{target_var}",
+                "caller_equals",
+                {"target_state_var": target_var, "sink_kind": kind},
+            )
+        elif kind == "caller_in_mapping":
+            mapping_name = str(sink.get("mapping_name") or "")
+            if not mapping_name:
+                continue
+            for principal in _principals_by_controller_label(mapping_name, control_graph_nodes):
+                _add(
+                    principal["address"],
+                    f"mapping:{mapping_name}",
+                    "caller_in_mapping",
+                    {
+                        "mapping_name": mapping_name,
+                        "mapping_predicate": sink.get("mapping_predicate"),
+                        "sink_kind": kind,
+                        "resolved_type": principal.get("resolved_type"),
+                        **(principal.get("details") or {}),
+                    },
+                )
+    return added
+
+
 def _apply_external_call_guard_bridge(
     session: Session,
     *,
@@ -356,6 +458,17 @@ class PolicyWorker(BaseWorker):
                 # separate-authority patterns without keyword heuristics.
                 graph_nodes = resolved_control_graph.get("nodes") if isinstance(resolved_control_graph, dict) else None
                 _apply_external_call_guard_bridge(
+                    session,
+                    effective_function=ef,
+                    function_record=fn,
+                    control_snapshot=control_snapshot,
+                    control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
+                )
+                # Phase 4: unified sink-dispatch bridge — routes the
+                # caller_equals and caller_in_mapping sink kinds that the
+                # legacy external-call-guard bridge doesn't cover (wards
+                # mappings, owner-storage-var checks without external call).
+                _apply_sink_bridge(
                     session,
                     effective_function=ef,
                     function_record=fn,
