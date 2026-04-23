@@ -50,6 +50,10 @@ def _build_root_artifacts(
 class ResolutionWorker(BaseWorker):
     stage = JobStage.resolution
     next_stage = JobStage.policy
+    # Recursive proxy resolution calls out to etherscan, eth_rpc, and (on
+    # impls not yet compiled) crytic_compile/forge. Bigger than a typical
+    # network call budget because each impl discovered expands the work.
+    process_budget_seconds = int(os.getenv("PSAT_RESOLUTION_BUDGET_SECONDS", "1200"))
 
     def process(self, session: Session, job: Job) -> None:
         logger.info(
@@ -579,11 +583,9 @@ class ResolutionWorker(BaseWorker):
 
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        force=True,
-    )
+    from utils.logging_setup import configure_logging
+
+    configure_logging(force=True)
     ResolutionWorker().run_loop()
 
 

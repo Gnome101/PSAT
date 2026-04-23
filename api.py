@@ -7,6 +7,7 @@ import hmac
 import logging
 import os
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -51,6 +52,12 @@ from db.queue import (
     get_artifact,
 )
 from db.storage import StorageError, StorageUnavailable, get_storage_client
+from utils.logging_setup import configure_logging
+
+# Install the JSON handler as early as possible so startup messages and
+# lifespan hooks already ride the structured pipeline. `force=False` means
+# pytest's caplog handler is preserved when tests import the app.
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +440,7 @@ def pipeline_stats() -> dict[str, Any]:
 
 @app.get("/api/jobs")
 def list_jobs() -> list[dict[str, Any]]:
+    endpoint_started = time.monotonic()
     with SessionLocal() as session:
         stmt = select(Job).order_by(Job.created_at.desc())
         jobs = session.execute(stmt).scalars().all()
@@ -442,15 +450,39 @@ def list_jobs() -> list[dict[str, Any]]:
         # _resolve_artifact_value() handles both transparently.
         job_ids = [job.id for job in jobs]
         proxy_ids: set[str] = set()
+        slow_reads = 0
+        storage_errors = 0
         if job_ids:
             flags_stmt = select(Artifact).where(Artifact.job_id.in_(job_ids), Artifact.name == "contract_flags")
             for art in session.execute(flags_stmt).scalars():
+                t0 = time.monotonic()
                 try:
                     value = _resolve_artifact_value(art)
                 except StorageError:
-                    # Storage object missing or unreachable — skip but don't block the list.
-                    logger.warning("contract_flags storage read failed for job %s", art.job_id)
+                    storage_errors += 1
+                    logger.warning(
+                        "artifact read failed",
+                        extra={
+                            "artifact_name": "contract_flags",
+                            "job_id": str(art.job_id),
+                            "storage_key": getattr(art, "storage_key", None),
+                        },
+                    )
                     continue
+                read_ms = int((time.monotonic() - t0) * 1000)
+                # One slow Tigris read used to stall the whole /api/jobs
+                # response under /monitor's 2.5s poll. Log it so operators
+                # can see storage hiccups, but don't abort the list.
+                if read_ms > 1000:
+                    slow_reads += 1
+                    logger.warning(
+                        "slow artifact read",
+                        extra={
+                            "artifact_name": "contract_flags",
+                            "job_id": str(art.job_id),
+                            "duration_ms": read_ms,
+                        },
+                    )
                 if isinstance(value, dict) and value.get("is_proxy"):
                     proxy_ids.add(str(art.job_id))
 
@@ -459,6 +491,21 @@ def list_jobs() -> list[dict[str, Any]]:
             d = job.to_dict()
             d["is_proxy"] = str(job.id) in proxy_ids
             result.append(d)
+
+        total_ms = int((time.monotonic() - endpoint_started) * 1000)
+        log_level = logging.WARNING if total_ms > 5000 else logging.INFO
+        logger.log(
+            log_level,
+            "list_jobs done",
+            extra={
+                "endpoint": "/api/jobs",
+                "jobs_returned": len(result),
+                "proxy_jobs": len(proxy_ids),
+                "slow_artifact_reads": slow_reads,
+                "storage_errors": storage_errors,
+                "duration_ms": total_ms,
+            },
+        )
         return result
 
 
@@ -1713,6 +1760,17 @@ def company_overview(company_name: str) -> dict:
         impl_name_by_addr = {
             (c.address or "").lower(): c.contract_name for c in all_contract_rows if c.address and c.contract_name
         }
+        # "analyzed" means the linked job reached completion — not merely that
+        # a job was queued. A queued/in-flight job leaves job_id set on the
+        # Contract row, which used to flip the chip green prematurely.
+        job_ids = {cr.job_id for cr in all_contract_rows if cr.job_id is not None}
+        completed_job_ids: set = set()
+        if job_ids:
+            completed_job_ids = set(
+                session.execute(select(Job.id).where(Job.id.in_(job_ids), Job.status == JobStatus.completed))
+                .scalars()
+                .all()
+            )
         all_addresses = sorted(
             [
                 {

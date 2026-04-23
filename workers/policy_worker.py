@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,6 +25,144 @@ logger = logging.getLogger("workers.policy_worker")
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
+
+
+def _resolve_target_state_var_address(
+    target_state_var: str,
+    control_snapshot: dict | ControlSnapshot | None,
+) -> str | None:
+    """Resolve a state variable name to the live on-chain address it holds.
+
+    The resolution stage writes `controller_values` keyed on controller
+    IDs like `external_contract:roleManager` or `state_variable:admin`.
+    This helper finds the entry whose key ends with `:<target_state_var>`
+    (we match the suffix, not the prefix, because `external_contract` vs
+    `state_variable` is semantic noise to the cross-contract guard join)
+    and returns the address in lowercase. Returns None if unresolved.
+    """
+    if not target_state_var or not isinstance(control_snapshot, dict):
+        return None
+    suffix = f":{target_state_var}"
+    for key, value in (control_snapshot.get("controller_values") or {}).items():
+        if not key.endswith(suffix):
+            continue
+        address = str(value.get("value") or "").lower() if isinstance(value, dict) else ""
+        if address.startswith("0x") and len(address) == 42:
+            return address
+    return None
+
+
+def _method_to_role_for_address(address: str, control_graph_nodes: list[dict] | None) -> dict[str, list[str]]:
+    """Look up the `method -> [role_constant, ...]` map on the graph node
+    for `address`. Written by the resolver during recursion onto every
+    node classified as an access-control authority."""
+    for node in control_graph_nodes or []:
+        if str(node.get("address", "")).lower() != address.lower():
+            continue
+        details = node.get("details") or {}
+        m2r = details.get("method_to_role")
+        if isinstance(m2r, dict):
+            return {k: list(v) for k, v in m2r.items() if isinstance(v, list)}
+    return {}
+
+
+def _principals_for_role_from_graph(role: str, control_graph_nodes: list[dict] | None) -> list[dict]:
+    """Collect every graph node tagged with `controller_label == role`.
+
+    These are the principal addresses the resolver already enumerated
+    via on-chain role-grant events/state reads — EOAs, Safes, Timelocks,
+    whoever holds the role. We just need to point FunctionPrincipal rows
+    at them, keyed by the function whose guard maps to this role.
+    """
+    principals: list[dict] = []
+    for node in control_graph_nodes or []:
+        details = node.get("details") or {}
+        if str(details.get("controller_label", "")) != role:
+            continue
+        address = str(node.get("address", "")).lower()
+        if not (address.startswith("0x") and len(address) == 42):
+            continue
+        principals.append(
+            {
+                "address": address,
+                "resolved_type": node.get("resolved_type"),
+                "details": details,
+            }
+        )
+    return principals
+
+
+def _apply_external_call_guard_bridge(
+    session: Session,
+    *,
+    effective_function: Any,  # EffectiveFunction row; Any for test-mock friendliness
+    function_record: dict[str, Any],
+    control_snapshot: dict | ControlSnapshot | None,
+    control_graph_nodes: list[dict] | None,
+) -> int:
+    """The cross-contract role join.
+
+    For a function gated by `X.method(msg.sender)` on an external
+    authority contract, this bridge:
+        1. resolves state-var X to the authority's on-chain address,
+        2. reads the authority's `method_to_role` map off its graph node,
+        3. matches the guard's method name to a role constant, and
+        4. attaches every principal currently holding that role as a
+           FunctionPrincipal row.
+
+    No keyword heuristics — the only runtime piece is step 1's address
+    lookup, which the resolution stage has already done. Returns the
+    number of principal rows added so the caller can log coverage.
+    """
+    guards = function_record.get("external_call_guards") or []
+    if not guards:
+        return 0
+    added = 0
+    seen: set[tuple[str, str, str]] = set()
+    for guard in guards:
+        target_var = str(guard.get("target_state_var") or "")
+        method = str(guard.get("method") or "")
+        if not target_var or not method:
+            continue
+        authority_addr = _resolve_target_state_var_address(target_var, control_snapshot)
+        if not authority_addr:
+            continue
+        # Pattern B wins when present: the guard's role is sitting right
+        # there in the call arguments (`hasRole(ROLE, msg.sender)`), so we
+        # trust those over the authority's method_to_role. Pattern A falls
+        # back to the method-name lookup when the caller didn't spell the
+        # role out as an argument.
+        role_args = [str(r) for r in (guard.get("role_args") or []) if r]
+        if role_args:
+            roles = role_args
+        else:
+            m2r = _method_to_role_for_address(authority_addr, control_graph_nodes)
+            roles = list(m2r.get(method, []))
+        for role in roles:
+            for principal in _principals_for_role_from_graph(role, control_graph_nodes):
+                key = (principal["address"], role, method)
+                if key in seen:
+                    continue
+                seen.add(key)
+                session.add(
+                    FunctionPrincipal(
+                        function_id=effective_function.id,
+                        address=principal["address"],
+                        resolved_type=principal.get("resolved_type"),
+                        origin=f"{target_var}.{method}",
+                        principal_type="external_call_guard",
+                        details={
+                            "role": role,
+                            "authority_address": authority_addr,
+                            "guard_method": method,
+                            "target_state_var": target_var,
+                            "guard_pattern": "role_args" if role_args else "method_to_role",
+                            **(principal.get("details") or {}),
+                        },
+                    )
+                )
+                added += 1
+    return added
 
 
 def _root_artifacts(
@@ -208,6 +346,22 @@ class PolicyWorker(BaseWorker):
                                     details=p.get("details"),
                                 )
                             )
+                # Cross-contract external-call-guard bridge: for functions
+                # gated by `X.method(msg.sender)` where X is a state
+                # variable pointing at a RoleManager / AccessControl-like
+                # authority, resolve the role via the authority's
+                # method_to_role map (written onto control_graph_nodes by
+                # the resolver) and attach every principal holding that
+                # role. This closes the Renzo / ether.fi / Lido family of
+                # separate-authority patterns without keyword heuristics.
+                graph_nodes = resolved_control_graph.get("nodes") if isinstance(resolved_control_graph, dict) else None
+                _apply_external_call_guard_bridge(
+                    session,
+                    effective_function=ef,
+                    function_record=fn,
+                    control_snapshot=control_snapshot,
+                    control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
+                )
             session.commit()
 
         store_artifact(session, job.id, "effective_permissions", data=ep_data)
@@ -540,11 +694,9 @@ class PolicyWorker(BaseWorker):
 
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        force=True,
-    )
+    from utils.logging_setup import configure_logging
+
+    configure_logging(force=True)
     PolicyWorker().run_loop()
 
 

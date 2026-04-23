@@ -56,6 +56,12 @@ class EffectiveFunctionPermission(TypedDict):
     effect_labels: list[str]
     action_summary: str
     notes: list[str]
+    # Structured external-call guards carried through from the static
+    # pipeline so the policy worker's cross-contract bridge can resolve
+    # them to principals. Absent when the function has no such guards,
+    # hence NotRequired — total=True on the class so the other fields
+    # stay required for existing callers.
+    external_call_guards: NotRequired[list[dict]]
 
 
 class EffectivePermissions(TypedDict):

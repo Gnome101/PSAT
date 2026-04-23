@@ -13,6 +13,12 @@ ResolvedEdgeRelation = Literal[
     "safe_owner",
     "timelock_owner",
     "proxy_admin_owner",
+    # Phase 3: mapping_member — edge from an access-control-like
+    # contract to each current member of a mapping-backed allowlist
+    # (MakerDAO wards, OZ-style whitelist, custom "approved" set).
+    # Populated by the resolver after replaying the writer events
+    # discovered in the static stage.
+    "mapping_member",
 ]
 
 

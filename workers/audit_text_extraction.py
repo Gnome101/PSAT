@@ -166,11 +166,9 @@ class AuditTextExtractionWorker(AuditRowWorker):
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        force=True,
-    )
+    from utils.logging_setup import configure_logging
+
+    configure_logging(force=True)
     AuditTextExtractionWorker().run_loop()
 
 
