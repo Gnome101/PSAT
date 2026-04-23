@@ -88,10 +88,11 @@ _KNOWN_AUDITORS = (
 )
 
 _CLASSIFICATION_PROMPT = """\
-You are triaging web search results to find third-party security audit material \
-about the **{company}** smart contract protocol. Be GENEROUS — downstream code \
-validates each hit before it reaches the user, so the cost of including a weak \
-match is low, and the cost of rejecting a real audit is high.
+You are analyzing web search results to find third-party security audit \
+material about the **{company}** smart contract protocol. Be GENEROUS — \
+downstream code validates each hit before it reaches the user, so the cost \
+of including a weak match is low, and the cost of rejecting a real audit is \
+high.
 
 Protocol name note: the slug may be stylized different ways — "{company}", the \
 same with dots/hyphens/underscores instead of spaces, lowercased, or \
@@ -295,41 +296,31 @@ def classify_search_results(
 ) -> list[dict[str, Any]]:
     """Stage 1: Classify Tavily results as audit/not-audit.
 
-    Runs a deterministic pre-filter first (name-variant ∩ audit-keyword
-    in URL or title → auto-accept), then sends only the ambiguous
-    remainder to the LLM. This makes the pipeline robust to LLM
-    non-determinism on obvious matches — previously a result titled
-    ``Audit Report for ether.fi`` could be accepted on one call and
-    rejected on the next, giving inconsistent audit counts between
-    runs on identical inputs.
+    LLM is the primary classifier — it runs on every result and is the
+    source of truth for ``auditor`` / ``title`` / ``date`` enrichment
+    that downstream stages (two-hop GitHub enumeration, dedup) depend
+    on. The deterministic pre-filter runs afterwards as a RESCUE: any
+    result the LLM rejected whose URL/title clearly names a
+    company-variant AND an audit-shape keyword is added back at
+    confidence 0.85 with ``auditor=None`` (downstream filename-match
+    can still enrich from the URL path).
+
+    Previous iteration tried pre-filter-THEN-LLM and broke two
+    integration tests because the LLM was being short-circuited on
+    results like "Beta Protocol Audit Report (Trail of Bits)", losing
+    the auditor extraction. Keeping the LLM primary preserves all the
+    existing two-hop / case-study / repo-enumeration flows.
 
     Returns list of ``{url, is_audit, auditor, type, confidence}`` dicts.
     """
     if not results:
         return []
 
-    # --- Deterministic pre-filter ---
-    preaccepted: list[dict[str, Any]] = []
-    needs_llm: list[dict[str, Any]] = []
-    for r in results:
-        hit = _deterministic_audit_match(r, company)
-        if hit:
-            preaccepted.append(hit)
-        else:
-            needs_llm.append(r)
-    _debug_log(
-        debug,
-        f"Classifier pre-filter: {len(preaccepted)} auto-accepted, {len(needs_llm)} deferred to LLM",
-    )
-
-    if not needs_llm:
-        return preaccepted
-
     formatted = "\n".join(
         f"- Title: {r.get('title', '(untitled)')}\n"
         f"  URL: {r.get('url', '')}\n"
         f"  Snippet: {(r.get('content', '') or '')[:300]}"
-        for r in needs_llm
+        for r in results
     )
 
     prompt = _CLASSIFICATION_PROMPT.format(
@@ -337,6 +328,9 @@ def classify_search_results(
         results=formatted,
         auditors=_KNOWN_AUDITORS,
     )
+
+    confirmed: list[dict[str, Any]] = []
+    accepted_urls: set[str] = set()
 
     try:
         response = llm.chat(
@@ -349,32 +343,29 @@ def classify_search_results(
         )
     except Exception as exc:
         _debug_log(debug, f"Audit classification LLM call failed: {exc!r}")
-        # LLM failure doesn't wipe the deterministic pre-filter's wins.
-        return preaccepted
+        response = None
 
-    parsed = _parse_json_array(response)
-    if parsed is None:
+    parsed = _parse_json_array(response) if response else None
+    if parsed is None and response is not None:
         _debug_log(debug, "Audit classification: could not parse LLM response as JSON array")
-        return preaccepted
 
-    confirmed: list[dict[str, Any]] = list(preaccepted)
-    for item in parsed:
+    for item in parsed or []:
         if not isinstance(item, dict):
             continue
         if not item.get("is_audit"):
             continue
         confidence = float(item.get("confidence", 0))
-        # Threshold lowered from 0.5 → 0.3 alongside the "be generous"
-        # prompt rewrite. Downstream deduplication + filename-match + URL
-        # reachability checks throw out false positives, so accepting
-        # borderline hits here costs little and catches audits the old
-        # strict prompt missed (e.g. GitBook-hosted PDFs whose titles
-        # don't say the word "audit" explicitly).
+        # Threshold 0.3 alongside the "be generous" prompt. Downstream
+        # deduplication + filename-match + URL reachability checks
+        # throw out false positives, so borderline hits are cheap to
+        # accept here and catch audits the strict prompt used to miss
+        # (e.g. GitBook-hosted PDFs whose titles don't say "audit").
         if confidence < 0.3:
             continue
         url = str(item.get("url", "")).strip()
         if not url:
             continue
+        accepted_urls.add(url)
         confirmed.append(
             {
                 "url": url,
@@ -386,7 +377,28 @@ def classify_search_results(
             }
         )
 
-    _debug_log(debug, f"Audit classification: {len(confirmed)} confirmed from {len(results)} results")
+    # --- Deterministic rescue pass ---
+    # Any Tavily hit whose URL/title literally contains a company-name
+    # variant AND an audit-shape keyword, but the LLM didn't accept (or
+    # the LLM call failed), is added back at conf 0.85. ``auditor`` is
+    # left None; the downstream filename / GitHub enumeration stages
+    # enrich it from path + tree content.
+    rescued = 0
+    for r in results:
+        url = (r.get("url") or "").strip()
+        if not url or url in accepted_urls:
+            continue
+        hit = _deterministic_audit_match(r, company)
+        if hit:
+            confirmed.append(hit)
+            accepted_urls.add(url)
+            rescued += 1
+
+    _debug_log(
+        debug,
+        f"Audit classification: {len(confirmed)} confirmed ({rescued} rescued deterministically) "
+        f"from {len(results)} results",
+    )
     return confirmed
 
 

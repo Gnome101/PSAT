@@ -30,7 +30,7 @@ import {
 } from "./auditUi.jsx";
 import AuditsTab from "./AuditsTab.jsx";
 import AuditExtractionShelf from "./AuditExtractionShelf.jsx";
-import { api } from "./api/client.js";
+import { api, apiSwr } from "./api/client.js";
 import { getPipeline as getAuditPipeline } from "./api/audits.js";
 import ProductHero from "./ProductHero.jsx";
 // Shelved assembly-line hero — kept on disk, not rendered.
@@ -1510,15 +1510,19 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface })
 
   useEffect(() => {
     let cancelled = false;
-    api(`/api/company/${encodeURIComponent(companyName)}`)
-      .then((d) => { if (!cancelled) setData(d); })
+    // SWR — if we've loaded this company before, the cached value
+    // returns immediately (page paints), then a fresh fetch runs in
+    // the background and swaps in once it arrives. First-ever visit
+    // still awaits the network; repeat visits feel instant.
+    apiSwr(`/api/company/${encodeURIComponent(companyName)}`, null, (fresh) => {
+      if (!cancelled) setData(fresh);
+    })
+      .then((d) => { if (!cancelled && d) setData(d); })
       .catch((e) => { if (!cancelled) setError(e.message); });
-    // Audit coverage is a separate concern — fetching it in parallel means
-    // the overview still renders even if the audits pipeline hasn't been
-    // wired up yet for this protocol. 404 / 500 / network errors are
-    // swallowed; the audit column just stays empty.
-    api(`/api/company/${encodeURIComponent(companyName)}/audit_coverage`)
-      .then((c) => { if (!cancelled) setAuditCoverage(c); })
+    apiSwr(`/api/company/${encodeURIComponent(companyName)}/audit_coverage`, null, (fresh) => {
+      if (!cancelled) setAuditCoverage(fresh);
+    })
+      .then((c) => { if (!cancelled && c) setAuditCoverage(c); })
       .catch(() => { /* audits optional — keep the page usable */ });
     return () => { cancelled = true; };
   }, [companyName]);

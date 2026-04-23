@@ -121,9 +121,7 @@ def search(
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
     except requests.RequestException as exc:
-        raise ExaError(
-            normalize_error(f"Exa network error: {exc}", retryable=True)
-        ) from exc
+        raise ExaError(normalize_error(f"Exa network error: {exc}", retryable=True)) from exc
 
     if resp.status_code >= 400:
         retryable = resp.status_code in (429, 500, 502, 503, 504)

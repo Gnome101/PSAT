@@ -10,14 +10,13 @@ This module provides the infrastructure layer for the inventory discovery pipeli
 from __future__ import annotations
 
 import json
+import os as _os
 import re
 import sys
 from collections import defaultdict
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
-
-import os as _os
 
 import requests as _requests
 

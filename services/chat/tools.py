@@ -103,7 +103,7 @@ def list_contracts(
                 }
             )
         if order_by == "tvl":
-            items.sort(key=lambda x: (x.get("total_usd") or 0), reverse=True)
+            items.sort(key=lambda x: x.get("total_usd") or 0, reverse=True)
         elif order_by == "name":
             items.sort(key=lambda x: (x.get("name") or "").lower())
         items = items[:limit]
@@ -116,12 +116,10 @@ def get_contract(address: str) -> dict[str, Any]:
         c = _contract_by_address(address, session)
         if c is None:
             return {"error": f"contract {address!r} not found"}
-        s = session.execute(
-            select(ContractSummary).where(ContractSummary.contract_id == c.id)
-        ).scalar_one_or_none()
-        fn_count = session.execute(
-            select(EffectiveFunction).where(EffectiveFunction.contract_id == c.id)
-        ).scalars().all()
+        s = session.execute(select(ContractSummary).where(ContractSummary.contract_id == c.id)).scalar_one_or_none()
+        fn_count = (
+            session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == c.id)).scalars().all()
+        )
         return {
             "address": c.address,
             "name": c.contract_name,
@@ -149,9 +147,9 @@ def list_functions(address: str, limit: int = 100) -> dict[str, Any]:
         if c is None:
             return {"error": f"contract {address!r} not found"}
         fns = list(
-            session.execute(
-                select(EffectiveFunction).where(EffectiveFunction.contract_id == c.id).limit(limit)
-            ).scalars().all()
+            session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == c.id).limit(limit))
+            .scalars()
+            .all()
         )
         fn_ids = [f.id for f in fns]
         principals_by_fn: dict[int, list[dict]] = {}
@@ -230,10 +228,7 @@ def search_contracts(company: str, query: str, limit: int = 15) -> dict[str, Any
         return {
             "company": company,
             "query": query,
-            "matches": [
-                {"name": r.contract_name, "address": r.address, "is_proxy": r.is_proxy}
-                for r in rows
-            ],
+            "matches": [{"name": r.contract_name, "address": r.address, "is_proxy": r.is_proxy} for r in rows],
         }
 
 
@@ -255,9 +250,7 @@ def get_control_graph(address: str, direction: str = "out", max_edges: int = 30)
         elif direction == "in":
             edges = [e for e in edges if e.to_node_id == node_id_out]
         nodes = list(
-            session.execute(
-                select(ControlGraphNode).where(ControlGraphNode.contract_id == c.id)
-            ).scalars().all()
+            session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == c.id)).scalars().all()
         )
         node_by_id = {f"address:{n.address}": n for n in nodes}
         edge_items = []
@@ -343,7 +336,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_contract",
-            "description": "Full detail for one contract by address: name, proxy status, implementation, owner, timelock, pausability, risk level, and standard tags.",
+            "description": (
+                "Full detail for one contract by address: name, proxy status, "
+                "implementation, owner, timelock, pausability, risk level, "
+                "and standard tags."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"address": {"type": "string", "description": "0x-prefixed 20-byte address"}},
@@ -355,7 +352,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_functions",
-            "description": "List privileged functions of a contract with their resolved on-chain principals (addresses that can call the function). Essential for blast-radius analysis.",
+            "description": (
+                "List privileged functions of a contract with their resolved "
+                "on-chain principals (addresses that can call the function). "
+                "Essential for blast-radius analysis."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -370,7 +371,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_audits",
-            "description": "Full list of third-party security audit reports for a company. Use this when the user asks about audit coverage — the context's top-20 may not include the one they're asking about.",
+            "description": (
+                "Full list of third-party security audit reports for a company. "
+                "Use this when the user asks about audit coverage — the "
+                "context's top-20 may not include the one they're asking about."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -386,7 +391,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_contracts",
-            "description": "Fuzzy search contracts by name or address prefix within a company. Use when the user names a contract that wasn't in the context dump.",
+            "description": (
+                "Fuzzy search contracts by name or address prefix within a "
+                "company. Use when the user names a contract that wasn't in "
+                "the context dump."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -402,7 +411,11 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_control_graph",
-            "description": "Returns who owns this contract and what it owns (outgoing/incoming control edges). Use for 'what does X control' or 'who can change Y' questions.",
+            "description": (
+                "Returns who owns this contract and what it owns "
+                "(outgoing/incoming control edges). Use for 'what does X "
+                "control' or 'who can change Y' questions."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -418,7 +431,12 @@ TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_source",
-            "description": "Read source code for a contract. If path_substring is omitted, returns the list of source files available; call again with path_substring to fetch one. Content is truncated at max_chars.",
+            "description": (
+                "Read source code for a contract. If path_substring is "
+                "omitted, returns the list of source files available; call "
+                "again with path_substring to fetch one. Content is "
+                "truncated at max_chars."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

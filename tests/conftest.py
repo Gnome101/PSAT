@@ -41,6 +41,10 @@ from db.models import (  # noqa: E402
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "")
 
 os.environ.setdefault("PSAT_ADMIN_KEY", "test-admin-key")
+# Disable the in-process TTL cache during tests so state doesn't bleed
+# across cases (e.g. a 200-OK response from test A into an error-path
+# test B that stubs storage to 500).
+os.environ.setdefault("PSAT_CACHE_DISABLED", "1")
 
 # ---------------------------------------------------------------------------
 # Object storage (minio in dev, Tigris in prod) — opt-in via storage_bucket
