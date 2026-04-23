@@ -19,6 +19,24 @@ const GENERIC_PROXY_NAMES = new Set([
 
 const ADDRESS_RE = /0x[a-fA-F0-9]{40}/g;
 
+// Block-explorer base URLs keyed on the chain slug the API returns.
+// Fallback to Etherscan for anything we haven't mapped — it at least
+// renders a useful "not found" page rather than a broken link.
+const EXPLORER_BASE = {
+  ethereum: "https://etherscan.io",
+  mainnet: "https://etherscan.io",
+  arbitrum: "https://arbiscan.io",
+  optimism: "https://optimistic.etherscan.io",
+  base: "https://basescan.org",
+  polygon: "https://polygonscan.com",
+  bsc: "https://bscscan.com",
+};
+
+function explorerAddressUrl(address, chain) {
+  const base = EXPLORER_BASE[(chain || "ethereum").toLowerCase()] || EXPLORER_BASE.ethereum;
+  return `${base}/address/${address}`;
+}
+
 function prettyAddressName(row) {
   const raw = row?.name || "";
   const isGeneric = GENERIC_PROXY_NAMES.has(raw.toLowerCase());
@@ -434,7 +452,17 @@ export default function AddressesModal({ companyName, onClose, onSelectContract 
                           </div>
                         )}
                       </td>
-                      <td className="ps-addresses-modal-addr mono">{r.address}</td>
+                      <td className="ps-addresses-modal-addr mono" onClick={(e) => e.stopPropagation()}>
+                        <a
+                          href={explorerAddressUrl(r.address, r.chain)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title={`Open ${r.address} on block explorer`}
+                          className="ps-addresses-modal-addr-link"
+                        >
+                          {r.address}
+                        </a>
+                      </td>
                       <td>
                         {compareOpen ? (
                           isMissing ? (

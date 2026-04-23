@@ -3401,6 +3401,139 @@ def delete_address_label(address: str) -> dict[str, Any]:
         return {"address": a, "deleted": True}
 
 
+class ProtocolAskRequest(BaseModel):
+    """Ask the protocol assistant a question about the company's contracts.
+
+    History is optional — callers can pass prior messages to continue a
+    conversation, but the server treats each call as standalone (no
+    persistence) so there's no session id.
+    """
+
+    question: str = Field(..., min_length=1, max_length=2000)
+    history: list[dict] | None = None
+
+    @field_validator("history")
+    @classmethod
+    def _clean_history(cls, v):
+        if v is None:
+            return v
+        # Drop anything not shaped like {role, content}; hard-cap history
+        # length so the context stays within the model's budget.
+        out = []
+        for msg in v[-16:]:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            content = msg.get("content")
+            if role not in ("user", "assistant") or not isinstance(content, str):
+                continue
+            out.append({"role": role, "content": content[:4000]})
+        return out
+
+
+def _build_protocol_context(company_slug: str) -> str:
+    """Materialize a compact text snapshot of a company's contracts,
+    ownership, principals, and audits — everything the chatbot needs
+    to answer "what can one EOA do?" style questions.
+
+    We deliberately truncate: top 30 contracts by TVL, top 40
+    principals, 20 audit titles. That keeps the prompt around 4–8k
+    tokens even for large protocols like ether.fi (500+ addresses)."""
+    # Reuse the existing overview serializer so we get the same view the
+    # UI shows. It raises HTTPException(404) itself if the company is
+    # missing, which bubbles up cleanly.
+    data = company_overview(company_slug)
+    lines: list[str] = [f"PROTOCOL: {company_slug}"]
+    tvl = (data.get("tvl") or {}).get("total_usd")
+    if tvl:
+        lines.append(f"TVL (total USD across tracked contracts): ${tvl:,.0f}")
+    contracts = sorted(
+        data.get("contracts") or [],
+        key=lambda c: c.get("total_usd") or 0,
+        reverse=True,
+    )
+    lines.append("")
+    lines.append(f"TOP CONTRACTS ({min(30, len(contracts))} of {len(contracts)} shown, by TVL):")
+    for c in contracts[:30]:
+        tags = []
+        if c.get("is_proxy"):
+            tags.append(f"proxy={c.get('proxy_type') or '?'}")
+        if c.get("has_timelock"):
+            tags.append("timelock")
+        if c.get("is_pausable"):
+            tags.append("pausable")
+        if c.get("source_verified") is False:
+            tags.append("UNVERIFIED")
+        if c.get("risk_level"):
+            tags.append(f"risk={c['risk_level']}")
+        usd = c.get("total_usd") or 0
+        owner = c.get("owner") or "(none)"
+        lines.append(
+            f"  - {c.get('name') or '(unnamed)'} {c.get('address')}  "
+            f"${usd:,.0f}  owner={owner}  [{', '.join(tags) or 'no-flags'}]"
+        )
+    hierarchy = data.get("ownership_hierarchy") or []
+    if hierarchy:
+        lines.append("")
+        lines.append(f"OWNERSHIP GROUPS ({len(hierarchy)}):")
+        for g in hierarchy[:20]:
+            owner = g.get("owner") or "(null)"
+            name = g.get("owner_name") or ("contract" if g.get("owner_is_contract") else "EOA")
+            n_contracts = len(g.get("contracts") or [])
+            lines.append(f"  - owner={owner} ({name})  controls {n_contracts} contract(s)")
+    principals = data.get("principals") or []
+    if principals:
+        lines.append("")
+        lines.append(f"KEY PRINCIPALS ({min(40, len(principals))} of {len(principals)} shown):")
+        for p in principals[:40]:
+            addr = p.get("address") or "(?)"
+            label = p.get("label") or p.get("display_name") or "(unlabeled)"
+            rtype = p.get("resolved_type") or "?"
+            lines.append(f"  - {addr}  ({rtype})  {label}")
+    audits = data.get("audit_reports") or []
+    if audits:
+        lines.append("")
+        lines.append(f"AUDIT REPORTS ({min(20, len(audits))} of {len(audits)}):")
+        for a in audits[:20]:
+            lines.append(f"  - {a.get('auditor') or '?'}: {a.get('title') or '(untitled)'}")
+    return "\n".join(lines)
+
+
+@app.post("/api/company/{company_name}/ask")
+def ask_protocol(company_name: str, body: ProtocolAskRequest) -> dict[str, Any]:
+    """Protocol assistant — answers free-form questions about the company's
+    contracts, ownership, principals, and audits via OpenRouter.
+
+    Not admin-gated: reads from the same data the UI already shows. The
+    OPEN_ROUTER_KEY isn't exposed to the caller, just the synthesized
+    answer. Errors from the LLM surface as 502 so the frontend can show
+    a retry rather than a generic 500.
+    """
+    from utils.llm import chat as llm_chat
+
+    context = _build_protocol_context(company_name)
+    system = (
+        "You are a security analyst assistant for PSAT (Protocol Security "
+        "Assessment Tool). Answer the user's question about the protocol "
+        "below, grounded strictly in the CONTEXT provided. If the answer "
+        "isn't inferable from the context, say so — do not invent contract "
+        "names, addresses, or controls. Keep answers concrete: cite "
+        "contract names, addresses (shortened to 0xabcd…1234 is fine), "
+        "role names, and auditor names from the context.\n\n"
+        "CONTEXT:\n" + context
+    )
+    messages: list[dict] = [{"role": "system", "content": system}]
+    for msg in body.history or []:
+        messages.append(msg)
+    messages.append({"role": "user", "content": body.question})
+    try:
+        answer = llm_chat(messages, max_tokens=1200, temperature=0.3)
+    except Exception as exc:
+        logger.warning("Protocol ask failed for %s: %s", company_name, exc)
+        raise HTTPException(status_code=502, detail=f"assistant unavailable: {exc}") from exc
+    return {"company": company_name, "answer": answer}
+
+
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):
     if full_path == "api" or full_path.startswith("api/"):

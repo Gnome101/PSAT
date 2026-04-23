@@ -40,6 +40,7 @@ import ProtocolLogo from "./ProtocolLogo.jsx";
 import ProtocolRadar from "./ProtocolRadar.jsx";
 import AddressesModal from "./AddressesModal.jsx";
 import AuditsAdminModal from "./AuditsAdminModal.jsx";
+import ProtocolChat from "./ProtocolChat.jsx";
 // SurfacePreview was a static SVG mini-map; we now embed the real
 // ProtocolSurface component inline. File kept for possible reuse.
 // import SurfacePreview from "./SurfacePreview.jsx";
@@ -1374,44 +1375,128 @@ function GraphTab({ detail }) {
 // Company overview
 // ---------------------------------------------------------------------------
 
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+
+// TVL-weighted mean: contract with $1B at risk counts more than $0.
+// Empty or zero-TVL fleets fall back to a plain mean so small protocols
+// still get a score instead of NaN.
+function weightedMean(items, valueFn, weightFn) {
+  let num = 0;
+  let den = 0;
+  for (const it of items) {
+    const v = valueFn(it);
+    if (v == null || Number.isNaN(v)) continue;
+    const w = Math.max(0, weightFn(it) || 0);
+    num += v * w;
+    den += w;
+  }
+  if (den > 0) return num / den;
+  // Fall back to plain mean over items that produced a value.
+  let n = 0;
+  let s = 0;
+  for (const it of items) {
+    const v = valueFn(it);
+    if (v == null || Number.isNaN(v)) continue;
+    s += v;
+    n++;
+  }
+  return n > 0 ? s / n : 0;
+}
+
 function computeProtocolScore(contracts, hierarchy, auditCoverage) {
   const safe = Array.isArray(contracts) ? contracts : [];
   const total = safe.length || 1;
 
-  const riskCounts = { high: 0, medium: 0, low: 0, unknown: 0 };
-  for (const c of safe) {
-    const lvl = c.risk_level && riskCounts[c.risk_level] != null ? c.risk_level : "unknown";
-    riskCounts[lvl]++;
+  // --- Coverage: fraction of contracts with ≥1 audit, TVL-weighted. -----
+  // The old version divided by auditCoverage.coverage.length which could
+  // exceed the in-scope fleet (peripheral tokens, etc.) and deflate the
+  // ratio. We now use coverage rows keyed on CONTRACT addresses and count
+  // what fraction are covered, then TVL-weight so a well-audited $1B
+  // contract lifts the score more than an unaudited $0 peripheral.
+  const coverageByAddr = new Map();
+  for (const r of auditCoverage?.coverage || []) {
+    if (r.address) coverageByAddr.set(r.address.toLowerCase(), r);
   }
-  const riskScore = safe.length
-    ? Math.max(0, 1 - (riskCounts.high * 1.0 + riskCounts.medium * 0.5) / safe.length)
-    : 0.5;
+  const coverageScore = weightedMean(
+    safe,
+    (c) => ((coverageByAddr.get((c.address || "").toLowerCase())?.audit_count || 0) > 0 ? 1 : 0),
+    (c) => (c.total_usd || 0) + 1, // +1 so zero-TVL contracts still count a little
+  );
 
-  const controlledOwners = (hierarchy || []).filter((g) => g.owner && g.owner_is_contract).length;
-  const ownerGroups = (hierarchy || []).length || 1;
-  const controlScore = Math.min(1, controlledOwners / ownerGroups);
+  // --- Control: owner-group quality, graded by how hard it is to abuse. --
+  // renounced (0x0)   → 1.0  (no admin surface at all)
+  // contract + timelock-on-any-controlled-contract → 0.85
+  // contract owner    → 0.4  (upgradeable / mutable by that contract)
+  // EOA owner         → 0.0  (single-key compromise ends the protocol)
+  // no owner declared → 0.5  (we don't know — neutral)
+  const controlScore = (() => {
+    const groups = hierarchy || [];
+    if (!groups.length) return 0.5;
+    let sum = 0;
+    for (const g of groups) {
+      if (!g.owner || g.owner === ZERO_ADDR) { sum += 1.0; continue; }
+      if (g.owner_is_contract) {
+        // Infer timelock: any contract in the group carrying has_timelock
+        // lifts the group's score. We don't have per-group timelock data,
+        // so we use fleet-wide `has_timelock` as a proxy — the few protocols
+        // that deploy a timelock generally wire it into every admin path.
+        const tlCoverage = safe.filter((c) => c.has_timelock).length / total;
+        sum += 0.4 + 0.45 * Math.min(1, tlCoverage * 3);
+      } else {
+        sum += 0.0; // EOA
+      }
+    }
+    return sum / groups.length;
+  })();
 
-  const proxyCount = safe.filter((c) => c.is_proxy).length;
-  const upgradesKnown = safe.filter((c) => c.upgrade_count != null).length;
-  const upgradeScore = proxyCount === 0 ? 0.6 : Math.min(1, upgradesKnown / Math.max(1, proxyCount));
+  // --- Risk: real signals rather than the previously-unpopulated label. --
+  // Share of HIGH-risk contracts (inverted), share unverified (inverted),
+  // share of contracts with an EOA-style owner (inverted).
+  // `risk_level=null` stays neutral (doesn't count as safe OR risky).
+  const tagged = safe.filter((c) => c.risk_level);
+  const highShare = tagged.length
+    ? tagged.filter((c) => c.risk_level === "high").length / tagged.length
+    : 0.3; // untagged fleet → mild penalty; we're not confirming it's safe
+  const unverifiedShare = 1 - safe.filter((c) => c.source_verified).length / total;
+  // Owner-is-EOA: flagged per-CONTRACT not per-group, so a protocol where
+  // many contracts directly list an EOA as owner is riskier than one where
+  // one EOA group aggregates many contracts.
+  const eoaOwnedShare = safe.filter((c) => {
+    const o = (c.owner || "").toLowerCase();
+    return o && o !== ZERO_ADDR && !c.has_timelock; // heuristic: admin path without timelock
+  }).length / total;
+  const riskScore = Math.max(0, 1 - (0.5 * highShare + 0.3 * unverifiedShare + 0.2 * eoaOwnedShare));
 
-  let auditScore = 0;
-  if (auditCoverage?.coverage?.length) {
-    const covered = auditCoverage.coverage.filter((r) => (r.audit_count || 0) > 0).length;
-    auditScore = covered / auditCoverage.coverage.length;
-  }
+  // --- Upgrades: proxy hygiene. ----------------------------------------
+  // No proxies ⇒ no upgrade risk ⇒ 1.0 (was 0.6, which bizarrely penalized
+  // immutable protocols). With proxies: fraction whose upgrade path is
+  // timelocked OR whose upgrade history is known.
+  const proxies = safe.filter((c) => c.is_proxy);
+  const upgradeScore = proxies.length === 0
+    ? 1.0
+    : proxies.filter((c) => c.has_timelock || c.upgrade_count != null).length / proxies.length;
 
-  const transparency = safe.filter((c) => c.name && c.name.toLowerCase() !== "unknown").length / total;
+  // --- Transparency: actual observable signals. -------------------------
+  const verifiedShare = safe.filter((c) => c.source_verified).length / total;
+  const namedShare = safe.filter((c) => c.name && c.name.toLowerCase() !== "unknown").length / total;
+  const deployerShare = safe.filter((c) => c.deployer).length / total;
+  const transparencyScore = (verifiedShare + namedShare + deployerShare) / 3;
 
   const axes = [
-    { key: "coverage", label: "Coverage", value: auditScore, display: `${Math.round(auditScore * 100)}%` },
+    { key: "coverage", label: "Coverage", value: coverageScore, display: `${Math.round(coverageScore * 100)}%` },
     { key: "control", label: "Control", value: controlScore, display: `${Math.round(controlScore * 100)}%` },
     { key: "risk", label: "Risk", value: riskScore, display: `${Math.round(riskScore * 100)}%` },
     { key: "upgrades", label: "Upgrades", value: upgradeScore, display: `${Math.round(upgradeScore * 100)}%` },
-    { key: "transparency", label: "Transparency", value: transparency, display: `${Math.round(transparency * 100)}%` },
+    { key: "transparency", label: "Transparency", value: transparencyScore, display: `${Math.round(transparencyScore * 100)}%` },
   ];
 
-  const composite = Math.round((axes.reduce((a, x) => a + x.value, 0) / axes.length) * 100);
+  // Weighted composite: coverage + risk dominate (they're what users care
+  // about most); transparency is lower-weight because being verified is
+  // table stakes, not differentiating.
+  const weights = { coverage: 0.25, control: 0.20, risk: 0.30, upgrades: 0.15, transparency: 0.10 };
+  const composite = Math.round(
+    axes.reduce((a, x) => a + x.value * (weights[x.key] ?? 0.2), 0) * 100
+  );
   const grade = composite >= 85 ? "a" : composite >= 70 ? "b" : composite >= 55 ? "c" : composite >= 40 ? "d" : "f";
   return { axes, composite, grade };
 }
@@ -1523,6 +1608,13 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface })
           <p className="eyebrow" style={{ margin: 0 }}>Security Radar</p>
           <ProtocolRadar axes={axes} size={300} />
         </div>
+      </section>
+
+      {/* Protocol assistant — answers free-form questions using the
+          backend /ask endpoint which loads contracts, ownership,
+          principals, and audit info as context. */}
+      <section className="company-chat-band">
+        <ProtocolChat companyName={companyName} />
       </section>
 
       {/* Inline Control Surface — real ProtocolSurface, not a static preview. */}
