@@ -17,11 +17,23 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
+import os as _os
+
 import requests as _requests
 
+from utils import exa as _exa
 from utils import llm, tavily
 
 from .static_dependencies import normalize_address as _normalize_address
+
+# Switch between search backends without touching call sites. Exa's
+# neural/auto mode handles hyphenated/dotted protocol slugs ("ether fi"
+# ≈ "ether.fi") via embeddings where Tavily's keyword index fails.
+# Default stays on Tavily for backcompat; setting
+# ``PSAT_SEARCH_PROVIDER=exa`` routes every _tavily_search call through
+# Exa instead. See utils/exa.py for the shape-compatibility contract
+# and /tmp/exa_vs_tavily.py for the benchmark.
+_SEARCH_PROVIDER = (_os.getenv("PSAT_SEARCH_PROVIDER") or "tavily").strip().lower()
 
 # -- Constants ---------------------------------------------------------------
 
@@ -198,19 +210,39 @@ def _tavily_search(
     errors: list[dict],
     debug: bool = False,
 ) -> list[dict]:
-    """Run a single Tavily search, respecting query budget.
+    """Run a single search via the configured provider, respecting the
+    query budget.
 
-    Always uses include_raw_content=False — page content is fetched directly
-    via HTTP where needed, avoiding Tavily's per-result content charges.
+    Provider-agnostic despite the ``_tavily_search`` name (kept for
+    backcompat with existing callers): dispatches to Exa when
+    ``PSAT_SEARCH_PROVIDER=exa`` and falls back to Tavily otherwise.
+    Both clients return the same shape (``{url, title, content, score}``)
+    so downstream consumers don't care which backend ran.
+
+    Always uses the cheap content-light mode — page content is fetched
+    directly via HTTP where needed, avoiding per-result content
+    charges.
     """
     if queries_used[0] >= max_queries:
-        _debug_log(debug, f"Skipping Tavily query (budget exhausted): {query!r}")
+        _debug_log(debug, f"Skipping search (budget exhausted): {query!r}")
         return []
     queries_used[0] += 1
+    provider = _SEARCH_PROVIDER
     _debug_log(
         debug,
-        f"Tavily query {queries_used[0]}/{max_queries}: {query!r} (max_results={max_results})",
+        f"{provider} query {queries_used[0]}/{max_queries}: {query!r} (max_results={max_results})",
     )
+    if provider == "exa":
+        try:
+            # ``auto`` lets Exa pick neural vs keyword per query — strongest
+            # across the slug variants we see in practice.
+            results = _exa.search(query, max_results=max_results, mode="auto", include_text=True)
+            _debug_log(debug, f"Exa returned {len(results)} result(s)")
+            return results
+        except (_exa.ExaError, _requests.RequestException) as exc:
+            errors.append(_exa.error_from_exception(exc))
+            _debug_log(debug, f"Exa query failed, falling back to Tavily: {exc!r}")
+            # Fall through to Tavily so a transient Exa outage doesn't blank discovery.
     try:
         results = tavily.search(
             query,

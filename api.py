@@ -3509,25 +3509,55 @@ def ask_protocol(company_name: str, body: ProtocolAskRequest) -> dict[str, Any]:
     answer. Errors from the LLM surface as 502 so the frontend can show
     a retry rather than a generic 500.
     """
-    from utils.llm import chat as llm_chat
+    from services.chat.tools import TOOL_IMPLS, TOOLS
+    from utils.llm import chat_with_tools
 
+    # Short "situational awareness" snapshot still precedes the chat so
+    # the LLM has the protocol name + headline numbers without spending
+    # a tool call. Tools let it drill deeper when the user's question
+    # can't be answered from the snapshot alone.
     context = _build_protocol_context(company_name)
     system = (
         "You are a security analyst assistant for PSAT (Protocol Security "
         "Assessment Tool). Answer the user's question about the protocol "
-        "below, grounded strictly in the CONTEXT provided. If the answer "
-        "isn't inferable from the context, say so — do not invent contract "
-        "names, addresses, or controls. Keep answers concrete: cite "
-        "contract names, addresses (shortened to 0xabcd…1234 is fine), "
-        "role names, and auditor names from the context.\n\n"
-        "CONTEXT:\n" + context
+        f"'{company_name}'. You have access to tools that can fetch "
+        "additional contract detail, function-level privileges, source "
+        "code, audit reports, and control-graph edges — use them whenever "
+        "the short context snapshot below isn't enough. Ground your "
+        "answer strictly in tool output + snapshot; do NOT invent "
+        "addresses, functions, or ownership claims. Cite contract names "
+        "and addresses (shortened 0xabcd…1234 is fine) you see in the "
+        "data.\n\n"
+        "Tool-use guidelines:\n"
+        "- Start with list_contracts if you need an overview broader "
+        "than the snapshot.\n"
+        "- Use get_contract / list_functions / get_control_graph to "
+        "drill into a specific contract.\n"
+        "- Use get_source for questions about what a function actually "
+        "does at the Solidity level.\n"
+        "- Use list_audits (with auditor= filter) for audit-coverage "
+        "questions — the snapshot only shows the top 20.\n"
+        "- Stop calling tools once you have enough; write the answer.\n\n"
+        "SNAPSHOT:\n" + context
     )
     messages: list[dict] = [{"role": "system", "content": system}]
     for msg in body.history or []:
         messages.append(msg)
     messages.append({"role": "user", "content": body.question})
+    # GLM 5.1 — ~3x better reasoning than Gemini 2.0 Flash default, $1.05/$3.50
+    # per 1M tokens (~$0.012 baseline per turn for 8k-in/1k-out; tool-call
+    # loops add ~$0.005 per extra round). Other LLM callers (classifier,
+    # domain picker, extractor) stay on the cheaper default.
     try:
-        answer = llm_chat(messages, max_tokens=1200, temperature=0.3)
+        answer, _transcript = chat_with_tools(
+            messages,
+            tools=TOOLS,
+            tool_impls=TOOL_IMPLS,
+            model="z-ai/glm-5.1",
+            max_tokens=1200,
+            temperature=0.3,
+            max_iters=6,
+        )
     except Exception as exc:
         logger.warning("Protocol ask failed for %s: %s", company_name, exc)
         raise HTTPException(status_code=502, detail=f"assistant unavailable: {exc}") from exc

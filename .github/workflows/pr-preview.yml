@@ -72,6 +72,7 @@ jobs:
             ETH_RPC="${{ secrets.ETH_RPC }}" \
             ENVIO_API_TOKEN="${{ secrets.ENVIO_API_TOKEN }}" \
             TAVILY_API_KEY="${{ secrets.TAVILY_API_KEY }}" \
+            EXA_API_KEY="${{ secrets.EXA_API_KEY }}" \
             OPEN_ROUTER_KEY="${{ secrets.OPEN_ROUTER_KEY }}" \
             GITHUB_TOKEN="${{ secrets.PROTOCOL_GITHUB_TOKEN }}" \
             ARTIFACT_STORAGE_ENDPOINT="${{ secrets.ARTIFACT_STORAGE_ENDPOINT }}" \

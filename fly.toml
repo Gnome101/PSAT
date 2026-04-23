@@ -12,6 +12,11 @@ kill_timeout = 30
 [env]
   PORT = "8000"
   PYTHONUNBUFFERED = "1"
+  # Exa's neural/auto search is dramatically better for protocol-slug
+  # discovery ("ether fi" → ether.fi semantically) than Tavily's
+  # keyword index. Fallback to Tavily is wired in _tavily_search when
+  # Exa errors, so setting this here doesn't add a hard dependency.
+  PSAT_SEARCH_PROVIDER = "exa"
 
 # One-shot schema migration in a temporary machine. Runs once per
 # deploy, before any long-lived machine boots — so the four process

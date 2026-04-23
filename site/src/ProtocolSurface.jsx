@@ -21,6 +21,7 @@ import vaultIcon from "./assets/vault.svg";
 import { getCoverage, getTimeline } from "./api/audits.js";
 import { listAddressLabels } from "./api/addressLabels.js";
 import AddressLabelInline from "./AddressLabelInline.jsx";
+import { explorerAddressUrl } from "./explorerUrl.js";
 import {
   AUDIT_STATUS_META,
   DRIFT_FALSE_META,
@@ -705,7 +706,18 @@ function ContractMachine({ machine, onSelectGuard, onNavigate, companyName }) {
     <article className="ps-machine" style={machine.total_usd ? { borderLeft: "2px solid #f59e0b33" } : undefined}>
       <header className="ps-machine-header">
         <div className="ps-machine-name">{machine.name || shortAddr(machine.address)}</div>
-        <div className="ps-machine-address">{shortAddr(machine.address)}</div>
+        <div className="ps-machine-address">
+          <a
+            href={explorerAddressUrl(machine.address, machine.chain)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Open ${machine.address} on block explorer`}
+            className="ps-address-link"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {shortAddr(machine.address)}
+          </a>
+        </div>
         <div className="ps-machine-badges">
           <span className="ps-badge" style={{ "--badge-accent": (ROLE_META[machine.role] || ROLE_META.utility).color }}>{(ROLE_META[machine.role] || ROLE_META.utility).label.replace(/s$/, "")}</span>
           {machine.is_proxy ? <span className="ps-badge" style={{ "--badge-accent": "#9a8a6e" }}>{machine.proxy_type || "proxy"}</span> : null}
@@ -1008,7 +1020,16 @@ function InspectorCard({ selected, onNavigate }) {
       <h3>{selected.name}</h3>
       <div className="ps-inspector-subtitle">
         <span>{selected.contractName}</span>
-        <span>{shortAddr(selected.contractAddress)}</span>
+        <a
+          href={explorerAddressUrl(selected.contractAddress, selected.chain)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`Open ${selected.contractAddress} on block explorer`}
+          className="ps-address-link"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {shortAddr(selected.contractAddress)}
+        </a>
       </div>
 
       <div className="ps-inspector-badges">
@@ -1121,7 +1142,18 @@ function PrincipalDetail({ principal, machines, onNavigate, onFocusContract, add
         <div className="ps-machine-name">
           {addressLabels?.get(principal.address?.toLowerCase()) || principal.label || shortAddr(principal.address)}
         </div>
-        <div className="ps-machine-address">{principal.address}</div>
+        <div className="ps-machine-address">
+          <a
+            href={explorerAddressUrl(principal.address)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Open ${principal.address} on block explorer`}
+            className="ps-address-link"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {principal.address}
+          </a>
+        </div>
         {/* Only EOAs and Safes are "just an address" — add the inline label
             affordance for those. Timelocks and contracts already have a
             meaningful contract-level name. */}

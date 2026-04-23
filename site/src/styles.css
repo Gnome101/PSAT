@@ -3064,6 +3064,23 @@ button.ghost {
   font-family: "JetBrains Mono", monospace;
 }
 
+/* Shared link styling for addresses rendered in the Control Surface
+   (machine headers, inspector subtitle, principal details). Inherits
+   its color from the parent so it matches the subdued mono aesthetic,
+   and only lights up on hover so the address doesn't scream "link"
+   next to contract names that already carry the user's attention. */
+.ps-address-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted currentColor;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.ps-address-link:hover {
+  color: #38bdf8;
+  border-bottom-color: #38bdf8;
+}
+
 .ps-machine-badges,
 .ps-inspector-badges {
   display: flex;

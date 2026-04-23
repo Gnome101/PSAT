@@ -95,12 +95,19 @@ def _parse_github_url(url: str) -> dict[str, str] | None:
 
 
 def _github_api_headers() -> dict[str, str]:
-    """Standard headers. GITHUB_TOKEN bumps rate limit 60→5000/hr."""
+    """Standard headers. A GitHub token bumps rate limit 60→5000/hr.
+
+    Reads ``PROTOCOL_GITHUB_TOKEN`` first (our own env-var convention;
+    distinct from the generic ``GITHUB_TOKEN`` that some CI tooling
+    auto-populates so we don't accidentally use the wrong token in
+    shared environments). Falls back to ``GITHUB_TOKEN`` so existing
+    setups keep working.
+    """
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "PSAT/0.1",
     }
-    token = os.getenv("GITHUB_TOKEN")
+    token = os.getenv("PROTOCOL_GITHUB_TOKEN") or os.getenv("GITHUB_TOKEN")
     if token:
         headers["Authorization"] = f"token {token}"
     return headers
