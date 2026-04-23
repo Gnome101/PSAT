@@ -1778,7 +1778,7 @@ def company_overview(company_name: str) -> dict:
                     "name": cr.contract_name,
                     "source_verified": cr.source_verified,
                     "is_proxy": cr.is_proxy,
-                    "analyzed": cr.job_id is not None,
+                    "analyzed": cr.job_id is not None and cr.job_id in completed_job_ids,
                     "discovery_sources": list(cr.discovery_sources or []),
                     "discovery_url": cr.discovery_url,
                     "chain": cr.chain,
