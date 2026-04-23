@@ -538,7 +538,7 @@ def resolve_control_graph(
         # by matching the `caller_in_mapping` sink's mapping_name
         # against these nodes.
         mapping_specs = list(access_control_block.get("mapping_writer_events") or [])
-        enumerated: list[dict[str, Any]] = []
+        enumerated: list[Any] = []
         if mapping_specs:
             hypersync_token = os.getenv("ENVIO_API_TOKEN") or ""
             logger.info(

@@ -474,9 +474,7 @@ def test_bare_event_name_in_ir_resolves_to_canonical_signature():
         written=[wards],
     )
     rely_event_decl = SimpleNamespace(name="Rely", full_name="Rely(address)")
-    contract = SimpleNamespace(
-        name="TestContract", functions=[rely_fn], inheritance=[], events=[rely_event_decl]
-    )
+    contract = SimpleNamespace(name="TestContract", functions=[rely_fn], inheritance=[], events=[rely_event_decl])
     specs = discover_mapping_writer_events(contract)
     assert len(specs) == 1
     assert specs[0]["event_signature"] == "Rely(address)"
