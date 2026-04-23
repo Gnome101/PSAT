@@ -22,6 +22,8 @@ from services.resolution.mapping_enumerator import (  # noqa: E402
     _decode_address_arg_from_data,
     _decode_address_topic,
     _event_topic0,
+)
+from services.resolution.mapping_enumerator import (
     enumerate_mapping_allowlist as _enumerate,
 )
 
@@ -30,6 +32,7 @@ def enumerate_mapping_allowlist(contract_address, writer_specs, **kwargs):
     """Test shim — pyright's TypedDict invariance rejects list[dict]
     passed where list[WriterEventSpec] is declared. Cast once here."""
     return _enumerate(contract_address, cast(Any, writer_specs), **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
