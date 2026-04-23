@@ -53,6 +53,11 @@ spawn() {
 spawn workers.discovery
 spawn workers.static_worker
 spawn workers.static_worker
+# Two resolution workers — resolution is the typical bottleneck on
+# protocols with many proxies + external authority contracts
+# (ether.fi, Sky). Matches static's 2-wide to avoid the static-done /
+# resolution-backlog fan-in.
+spawn workers.resolution_worker
 spawn workers.resolution_worker
 spawn workers.policy_worker
 spawn workers.coverage_worker
