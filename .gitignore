@@ -24,3 +24,4 @@ out/
 *.png
 .db_snapshots/
 .claude/
+info-dont-add-to-git.txt

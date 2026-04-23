@@ -633,6 +633,18 @@ def build_effective_permissions(
             "action_summary": privileged.get("action_summary", "Performs a permissioned contract action."),
             "notes": notes,
         }
+        # Pass structured external-call guards through so the policy
+        # worker's cross-contract bridge can resolve them to principals
+        # (pattern A via the authority's method_to_role map, pattern B
+        # via the captured role_args). Drop when absent so we don't
+        # inflate artifact size for contracts that don't use the
+        # separate-authority pattern.
+        external_call_guards = list(privileged.get("external_call_guards") or [])
+        if external_call_guards:
+            # Cast via a bare list[dict] — the EffectiveFunctionPermission
+            # schema accepts dicts here; the TypedDict in contract_analysis
+            # is structurally identical but a different nominal type.
+            function_permission["external_call_guards"] = [dict(g) for g in external_call_guards]
         functions.append(function_permission)
 
     return {

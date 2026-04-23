@@ -631,6 +631,10 @@ def _check_proxy_cache(session, job, contract_row) -> dict | None:
 class StaticWorker(BaseWorker):
     stage = JobStage.static
     next_stage = JobStage.resolution
+    # Slither + forge + hevm against a large Solidity project can easily run
+    # 15-20min legitimately. Override the 900s default so we don't trip the
+    # watchdog on a slow-but-correct run.
+    process_budget_seconds = int(os.getenv("PSAT_STATIC_BUDGET_SECONDS", "1800"))
 
     def process(self, session, job):
         from sqlalchemy import select as sa_select
@@ -1470,11 +1474,9 @@ class StaticWorker(BaseWorker):
 
 
 def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        force=True,
-    )
+    from utils.logging_setup import configure_logging
+
+    configure_logging(force=True)
     StaticWorker().run_loop()
 
 

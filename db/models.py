@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -791,6 +792,38 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
 
 
+def _log_engine_init() -> None:
+    """Record the DB endpoint once at module load.
+
+    Parses DATABASE_URL so a deploy that silently swapped pooler→direct (or
+    vice versa) is obvious in Grafana instead of guesswork. We don't log
+    credentials — only the host/port/pooled flag and whether SSL was
+    requested. Best-effort: a bad URL should never crash import.
+    """
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(DATABASE_URL)
+        host = parsed.hostname or "unknown"
+        logging.getLogger(__name__).info(
+            "db engine initialized",
+            extra={
+                "db_host": host,
+                "db_port": parsed.port,
+                "db_name": (parsed.path or "/").lstrip("/"),
+                # Neon's pooler endpoint always contains "-pooler" in the
+                # hostname; the direct endpoint does not.
+                "db_pooled": "-pooler" in host,
+                "db_sslmode": "require" if "sslmode=require" in (parsed.query or "") else None,
+            },
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("db engine init log failed")
+
+
+_log_engine_init()
+
+
 def apply_storage_migrations(target_engine=None) -> None:
     """Add object-storage columns to existing artifact and source_files tables.
 
@@ -801,6 +834,22 @@ def apply_storage_migrations(target_engine=None) -> None:
     from sqlalchemy import text
 
     target = target_engine if target_engine is not None else engine
+    migrations_logger = logging.getLogger(__name__)
+    migrations_started = __import__("time").monotonic()
+
+    def _snapshot_columns(conn) -> set[tuple[str, str]]:
+        """Return {(table, column)} so we can diff before vs. after.
+
+        This is how we detect drift silently fixed by an `ADD COLUMN IF NOT
+        EXISTS`: a fresh DB has everything, a drifted DB gains rows here.
+        The log record after the migration block names each column added,
+        which is the signal a forgotten-migration would emit.
+        """
+        rows = conn.execute(
+            text("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'")
+        ).all()
+        return {(t, c) for t, c in rows}
+
     # ``ALTER TYPE ... ADD VALUE`` cannot run inside a transaction block on
     # Postgres, so run it on a dedicated AUTOCOMMIT connection. ``IF NOT
     # EXISTS`` keeps it idempotent across restarts and test-DB reuse.
@@ -810,6 +859,12 @@ def apply_storage_migrations(target_engine=None) -> None:
         # rolling deploy.
         ac_conn.execute(text("SET lock_timeout = '10s'"))
         ac_conn.execute(text("SET statement_timeout = '30s'"))
+        try:
+            columns_before = _snapshot_columns(ac_conn)
+        except Exception:
+            # A fresh DB where public schema doesn't exist yet is fine —
+            # create_all runs right before us and will populate everything.
+            columns_before = set()
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'coverage' BEFORE 'done'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'selection' BEFORE 'static'"))
         # Contracts.discovery_source → discovery_sources (array): writers
@@ -1023,6 +1078,25 @@ def apply_storage_migrations(target_engine=None) -> None:
             )
         )
         conn.commit()
+
+    # Re-snapshot on a fresh connection so the comparison sees post-commit
+    # state. Diff surfaces every column the migration just added — this is
+    # the signal a forgotten-migration would emit on the next deploy.
+    try:
+        with target.connect() as diff_conn:
+            columns_after = _snapshot_columns(diff_conn)
+        added_columns = sorted({f"{t}.{c}" for (t, c) in (columns_after - columns_before)})
+    except Exception:
+        added_columns = []
+    duration_ms = int((__import__("time").monotonic() - migrations_started) * 1000)
+    migrations_logger.info(
+        "apply_storage_migrations done",
+        extra={
+            "duration_ms": duration_ms,
+            "added_columns": added_columns,
+            "added_count": len(added_columns),
+        },
+    )
 
 
 def create_tables() -> None:

@@ -503,6 +503,19 @@ def resolve_control_graph(
         effective_permissions = artifacts.get("effective_permissions")
         subject = analysis.get("subject", {})
         contract_name = str(subject.get("name", address))
+        # If the analyzed dep is an access-control authority
+        # (RoleManager / AccessControl-derivative), carry its
+        # `method_to_role` map into the graph node. Other contracts
+        # that guard a function via an external call to this authority
+        # (`roleManager.onlyDepositWithdrawPauser(msg.sender)`) land
+        # in policy with only a method name — the join reads this map
+        # off the node to turn `method -> role_constant -> principals`
+        # without any keyword heuristics.
+        access_control_block = analysis.get("access_control") or {}
+        method_to_role = access_control_block.get("method_to_role") or {}
+        node_details: dict[str, object] = {"address": address}
+        if method_to_role:
+            node_details["method_to_role"] = dict(method_to_role)
         contract_node_id = _ensure_node(
             nodes,
             address=address,
@@ -512,9 +525,78 @@ def resolve_control_graph(
             node_type="contract",
             contract_name=contract_name,
             analyzed=True,
-            details={"address": address},
+            details=node_details,
             artifacts={"data_key": f"recursive:{address.lower()}"},
         )
+
+        # Phase 3: mapping-allowlist enumeration. For every
+        # (mapping, event, direction) triple the static stage
+        # discovered on this contract, replay the event history via
+        # Hypersync and materialize each current allowlist member as
+        # a principal node tagged `controller_label=<mapping_name>`.
+        # Phase 4's unified bridge then attributes function principals
+        # by matching the `caller_in_mapping` sink's mapping_name
+        # against these nodes.
+        mapping_specs = list(access_control_block.get("mapping_writer_events") or [])
+        enumerated: list[dict[str, Any]] = []
+        if mapping_specs:
+            hypersync_token = os.getenv("ENVIO_API_TOKEN") or ""
+            logger.info(
+                "mapping_enumerator: %s has %d writer-event specs, token=%s",
+                address,
+                len(mapping_specs),
+                "present" if hypersync_token else "missing",
+            )
+            if hypersync_token:
+                try:
+                    from services.resolution.mapping_enumerator import enumerate_mapping_allowlist_sync
+
+                    enumerated = enumerate_mapping_allowlist_sync(
+                        address,
+                        mapping_specs,
+                        bearer_token=hypersync_token,
+                    )
+                    logger.info(
+                        "mapping_enumerator: %s returned %d principals",
+                        address,
+                        len(enumerated),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "mapping_enumerator FAILED for %s: %s — skipping",
+                        address,
+                        exc,
+                    )
+                    enumerated = []
+            for principal in enumerated:
+                member_addr = principal["address"]
+                _ensure_node(
+                    nodes,
+                    address=member_addr,
+                    resolved_type="unknown",
+                    label=principal["mapping_name"],
+                    depth=depth + 1,
+                    node_type="principal",
+                    analyzed=False,
+                    details={
+                        "address": member_addr,
+                        "controller_label": principal["mapping_name"],
+                        "mapping_name": principal["mapping_name"],
+                        "last_seen_block": principal["last_seen_block"],
+                        "direction_history": principal["direction_history"],
+                    },
+                )
+                _add_edge(
+                    edges,
+                    {
+                        "from_id": contract_node_id,
+                        "to_id": _address_node_id(member_addr),
+                        "relation": "mapping_member",
+                        "label": principal["mapping_name"],
+                        "source_controller_id": f"mapping:{principal['mapping_name']}",
+                        "notes": [],
+                    },
+                )
 
         for controller_id, controller_value in snapshot.get("controller_values", {}).items():
             controller_address = str(controller_value.get("value", "")).lower()

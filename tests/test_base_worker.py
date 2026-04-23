@@ -534,3 +534,134 @@ def test_run_loop_session_closed_when_no_job(mock_sleep, mock_claim, mock_sessio
 
     # session.close called in the continue branch and in finally
     assert mock_session.close.call_count >= 2
+
+
+# ---------------------------------------------------------------------------
+# Tests: process() watchdog (SIGALRM-based)
+# ---------------------------------------------------------------------------
+
+
+def test_on_process_timeout_raises_process_budget_exceeded():
+    """The SIGALRM handler must raise ProcessBudgetExceeded so the main
+    loop's except clause can log + fail the job uniformly."""
+    from workers.base import ProcessBudgetExceeded
+
+    with patch("workers.base.signal.signal"):
+        w = _TestWorker()
+    with pytest.raises(ProcessBudgetExceeded) as excinfo:
+        w._on_process_timeout(signal.SIGALRM, None)
+    # Error message must include the stage so Grafana alerts can fan out.
+    assert w.stage.value in str(excinfo.value)
+
+
+@patch("workers.base.fail_job")
+@patch("workers.base.advance_job")
+@patch("workers.base.claim_job")
+@patch("workers.base.SessionLocal")
+@patch("workers.base.signal.alarm")
+@patch("workers.base.signal.signal")
+def test_run_loop_arms_and_disarms_alarm_on_success(
+    mock_signal, mock_alarm, mock_session_cls, mock_claim, mock_advance, mock_fail
+):
+    """Watchdog is armed before process() and cleared after success."""
+    mock_session = MagicMock()
+    mock_session_cls.return_value = mock_session
+    job = _make_job()
+    w = _TestWorker()
+
+    cycle = 0
+
+    def _claim_side_effect(session, stage, worker_id):
+        nonlocal cycle
+        cycle += 1
+        if cycle >= 2:
+            w._running = False
+            return None
+        return job
+
+    mock_claim.side_effect = _claim_side_effect
+    w.run_loop()
+
+    # The budget arm, then a zero-disarm in finally.
+    alarm_values = [c.args[0] for c in mock_alarm.call_args_list]
+    assert w.process_budget_seconds in alarm_values
+    assert 0 in alarm_values
+    # Last alarm() call in the finally should be a disarm.
+    assert alarm_values[-1] == 0
+
+
+@patch("workers.base.fail_job")
+@patch("workers.base.claim_job")
+@patch("workers.base.SessionLocal")
+@patch("workers.base.signal.alarm")
+@patch("workers.base.signal.signal")
+def test_run_loop_budget_trip_fails_job_and_continues(mock_signal, mock_alarm, mock_session_cls, mock_claim, mock_fail):
+    """A ProcessBudgetExceeded in process() must fail the job and let
+    the loop continue — not crash the whole worker."""
+    from workers.base import ProcessBudgetExceeded
+
+    mock_session = MagicMock()
+    mock_session_cls.return_value = mock_session
+    job = _make_job()
+
+    class _TimeoutWorker(_TestWorker):
+        def process(self, session, job):
+            raise ProcessBudgetExceeded("budget exceeded for stage=discovery")
+
+    w = _TimeoutWorker()
+
+    cycle = 0
+
+    def _claim_side_effect(session, stage, worker_id):
+        nonlocal cycle
+        cycle += 1
+        if cycle >= 2:
+            w._running = False
+            return None
+        return job
+
+    mock_claim.side_effect = _claim_side_effect
+    w.run_loop()
+
+    # Job was failed exactly once with a budget-exceeded reason.
+    assert mock_fail.call_count == 1
+    call = mock_fail.call_args
+    assert call.args[1] == job.id
+    assert "budget" in call.args[2].lower()
+    # Watchdog was disarmed despite the exception.
+    alarm_values = [c.args[0] for c in mock_alarm.call_args_list]
+    assert 0 in alarm_values
+
+
+@patch("workers.base.fail_job")
+@patch("workers.base.claim_job")
+@patch("workers.base.SessionLocal")
+@patch("workers.base.signal.alarm")
+@patch("workers.base.signal.signal")
+def test_run_loop_budget_zero_disables_watchdog(mock_signal, mock_alarm, mock_session_cls, mock_claim, mock_fail):
+    """Setting process_budget_seconds = 0 must skip arming the alarm."""
+    mock_session = MagicMock()
+    mock_session_cls.return_value = mock_session
+    job = _make_job()
+
+    class _NoBudgetWorker(_TestWorker):
+        process_budget_seconds = 0
+
+    w = _NoBudgetWorker()
+
+    cycle = 0
+
+    def _claim_side_effect(session, stage, worker_id):
+        nonlocal cycle
+        cycle += 1
+        if cycle >= 2:
+            w._running = False
+            return None
+        return job
+
+    mock_claim.side_effect = _claim_side_effect
+    w.run_loop()
+
+    # No non-zero alarm() call should have been made.
+    non_zero_alarms = [c.args[0] for c in mock_alarm.call_args_list if c.args[0] != 0]
+    assert non_zero_alarms == []
