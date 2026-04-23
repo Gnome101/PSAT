@@ -630,17 +630,17 @@ def test_sink_bridge_deduplicates_same_address_across_sinks():
     assert added == 2
 
 
-def test_sink_bridge_ignores_kinds_outside_phase_4_scope():
+def test_sink_bridge_ignores_kinds_outside_phase_5_scope():
     """caller_external_call → handled by the v5 bridge.
-    caller_signature/merkle/unknown → Phase 5+. This bridge must not
-    double-emit or crash on them."""
+    caller_unknown / caller_internal_call → no-op here (internal_call
+    bubbles via cross-function taint; unknown is intentionally
+    unresolved). caller_signature / caller_merkle are tested
+    separately below in the off_chain_witness section."""
     session = MagicMock()
     ef = SimpleNamespace(id=1)
     fn = {
         "sinks": [
             {"kind": "caller_external_call", "target_state_var": "roleManager", "external_method": "hasRole"},
-            {"kind": "caller_signature", "signature_source_var": "signer"},
-            {"kind": "caller_merkle", "merkle_root_var": "root"},
             {"kind": "caller_unknown"},
             {"kind": "caller_internal_call", "internal_callee": "_check"},
         ]
@@ -654,6 +654,103 @@ def test_sink_bridge_ignores_kinds_outside_phase_4_scope():
     )
     assert added == 0
     session.add.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — off_chain_witness for signature + merkle sinks
+# ---------------------------------------------------------------------------
+
+
+ZERO = "0x" + "0" * 40
+
+
+def test_sink_bridge_caller_signature_emits_off_chain_witness():
+    """USDC EIP-3009 pattern: `transferWithAuthorization` lands in
+    `ecrecover(...)` against a holder address. No finite principal set
+    — we emit one `off_chain_witness` row pointing at the state slot
+    that carries the authority (here the signer field)."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=301)
+    fn = {
+        "function": "transferWithAuthorization(...)",
+        "sinks": [{"kind": "caller_signature", "signature_source_var": "from"}],
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot={"controller_values": {}},
+        control_graph_nodes=[],
+    )
+    assert added == 1
+    row = session.add.call_args.args[0]
+    assert row.address == ZERO
+    assert row.principal_type == "off_chain_witness"
+    assert row.origin == "off_chain_witness:from"
+    assert row.details["kind"] == "signature"
+    assert row.details["source_slot"] == "from"
+
+
+def test_sink_bridge_caller_merkle_emits_off_chain_witness():
+    """Merkle-proof allowlist: `MerkleProof.verify(proof, root, leaf)`
+    where root is a state variable. Anyone with a proof matching the
+    root can call — off_chain_witness pointing at the root slot."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=302)
+    fn = {
+        "function": "claim(bytes32[],uint256)",
+        "sinks": [{"kind": "caller_merkle", "merkle_root_var": "merkleRoot"}],
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot={"controller_values": {}},
+        control_graph_nodes=[],
+    )
+    assert added == 1
+    row = session.add.call_args.args[0]
+    assert row.details["kind"] == "merkle"
+    assert row.details["source_slot"] == "merkleRoot"
+
+
+def test_sink_bridge_signature_without_source_var_skipped():
+    """A `caller_signature` sink that didn't capture a source_var
+    can't be pointed at a slot — skip rather than emit an anonymous
+    row that the UI can't label."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=1)
+    fn = {"sinks": [{"kind": "caller_signature"}]}
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot={"controller_values": {}},
+        control_graph_nodes=[],
+    )
+    assert added == 0
+    session.add.assert_not_called()
+
+
+def test_sink_bridge_merkle_dedupes_same_root_across_sinks():
+    """Two caller_merkle sinks pointing at the same root → one witness
+    row, not two (origin matches, zero-address matches)."""
+    session = MagicMock()
+    ef = SimpleNamespace(id=1)
+    fn = {
+        "sinks": [
+            {"kind": "caller_merkle", "merkle_root_var": "root"},
+            {"kind": "caller_merkle", "merkle_root_var": "root"},
+        ]
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot={"controller_values": {}},
+        control_graph_nodes=[],
+    )
+    assert added == 1
 
 
 def test_sink_bridge_with_no_sinks_is_a_noop():
