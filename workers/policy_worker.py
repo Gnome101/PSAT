@@ -191,6 +191,33 @@ def _apply_sink_bridge(
                         **(principal.get("details") or {}),
                     },
                 )
+        elif kind in ("caller_signature", "caller_merkle"):
+            # Phase 5: off-chain witness. No finite principal set, but
+            # we can point at the storage slot that holds the authority
+            # (signer address, nonce map, Merkle root). The UI renders
+            # these as "callable by holder of <slot>" instead of silently
+            # dropping or claiming permissionless.
+            source_var = str(
+                sink.get("signature_source_var") or sink.get("merkle_root_var") or sink.get("target_state_var") or ""
+            )
+            if not source_var:
+                continue
+            # Address field on FunctionPrincipal is NOT NULL — use the
+            # sentinel zero address to mark "descriptor, not real
+            # address". Details.source_slot carries the real pointer.
+            zero = "0x" + "0" * 40
+            witness_kind = "signature" if kind == "caller_signature" else "merkle"
+            _add(
+                zero,
+                f"off_chain_witness:{source_var}",
+                "off_chain_witness",
+                {
+                    "kind": witness_kind,
+                    "source_slot": source_var,
+                    "sink_kind": kind,
+                    "resolved_type": "off_chain_witness",
+                },
+            )
     return added
 
 
