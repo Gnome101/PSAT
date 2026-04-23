@@ -74,6 +74,47 @@ def _parse_json_object(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _name_variants(company: str) -> list[str]:
+    """Generate reasonable spelling variants of a protocol name for the
+    LLM classifier to accept.
+
+    The real issue we hit: a slug like ``"ether fi"`` (with space) gets
+    the LLM to reject every audit titled ``"ether.fi - Zellic Audit"``
+    because the literal string ``"ether fi"`` doesn't appear in any of
+    the titles. Each real audit uses ``"ether.fi"`` / ``"Ether.Fi"`` /
+    ``"etherfi"``. By injecting the variant list into the prompt the LLM
+    stops pattern-matching literally and actually reasons about the
+    project identity.
+
+    Variants generated: the original slug, lowercased no-separator,
+    lowercased with dot/hyphen/underscore joiners, and the compact form.
+    We cap at ~6 distinct variants — plenty to cover the common stylings
+    without blowing the prompt budget.
+    """
+    base = (company or "").strip()
+    if not base:
+        return []
+    lower = base.lower()
+    # Tokenize on any non-alphanumeric so both "ether fi", "ether.fi", "ether-fi"
+    # normalize to ["ether", "fi"]. Multi-word names ("curve finance") work too.
+    import re as _re
+
+    tokens = [t for t in _re.split(r"[^a-z0-9]+", lower) if t]
+    out = [base]
+    if tokens:
+        compact = "".join(tokens)
+        dotted = ".".join(tokens)
+        hyphen = "-".join(tokens)
+        underscore = "_".join(tokens)
+        spaced = " ".join(tokens)
+        # Title-case variant too — matches "Ether.Fi", "EtherFi" styling.
+        title = "".join(t.capitalize() for t in tokens)
+        for v in (compact, dotted, hyphen, underscore, spaced, title):
+            if v and v not in out:
+                out.append(v)
+    return out[:6]
+
+
 _KNOWN_AUDITORS = (
     "Trail of Bits (often abbreviated ToB), OpenZeppelin (often OZ), Spearbit, "
     "Consensys Diligence, Halborn, Quantstamp, Sigma Prime, Sherlock, Code4rena (C4), "
@@ -91,10 +132,14 @@ _CLASSIFICATION_PROMPT = """\
 You are analyzing web search results to identify third-party security audit reports \
 specifically for the **{company}** smart contract protocol.
 
-CRITICAL: Only classify a result as an audit if it is specifically about {company}. \
-Audit reports for OTHER protocols (even if they appear in search results) must be \
-marked is_audit: false. The title, URL, and snippet must reference {company} or its \
-known contracts/products.
+The protocol may be referenced in results using ANY of these equivalent spellings: \
+{name_variants}. Treat them as the same protocol — a title reading "ether.fi", \
+"Ether.Fi", "etherfi", or "EtherFi" all refer to the same project as "ether fi".
+
+CRITICAL: Only classify a result as an audit if it is specifically about {company} \
+(or any of the equivalent spellings above). Audit reports for OTHER protocols must \
+be marked is_audit: false. The title, URL, or snippet must reference one of the \
+protocol's name variants or its known contracts/products.
 
 An audit report is a formal security review conducted by an independent auditing firm. \
 Common firms: {auditors}. Use these names verbatim when you spot a match — including \
@@ -141,8 +186,11 @@ URL (or YYYY-MM / YYYY), null if not present
 
 _EXTRACTION_PROMPT = """\
 Identify third-party security audits of the **{company}** smart-contract protocol \
-listed on the following page. We only need enough metadata to *identify* each \
-audit — no findings, scope, or summary is required.
+listed on the following page. The protocol may appear under any of these equivalent \
+spellings: {name_variants}. Treat them as the same project.
+
+We only need enough metadata to *identify* each audit — no findings, scope, or \
+summary is required.
 
 Page URL: {url}
 Page content (truncated):
@@ -150,9 +198,9 @@ Page content (truncated):
 
 CRITICAL FILTER: Many pages are auditor publication directories or aggregator \
 indexes that list audits for many DIFFERENT protocols. You must extract ONLY \
-the audits that are clearly for {company}. Audits whose title or filename \
-references a different protocol must be excluded — even if they are listed on \
-the same page. When in doubt, exclude.
+the audits that are clearly for {company} (or one of its equivalent spellings). \
+Audits whose title or filename references a different protocol must be excluded \
+— even if they are listed on the same page. When in doubt, exclude.
 
 Return ONLY a JSON object with these fields:
 - "reports": a list of audit report objects (audits of {company} only), each with:
@@ -245,8 +293,10 @@ def classify_search_results(
         for r in results
     )
 
+    variants = _name_variants(company)
     prompt = _CLASSIFICATION_PROMPT.format(
         company=company,
+        name_variants=", ".join(f'"{v}"' for v in variants),
         results=formatted,
         auditors=_KNOWN_AUDITORS,
     )
@@ -328,7 +378,12 @@ def _extract_one_chunk(
 ) -> dict[str, Any] | None:
     """Run the extraction prompt over a single text chunk and parse the
     JSON response. Returns ``None`` on LLM failure or unparseable output."""
-    prompt = _EXTRACTION_PROMPT.format(company=company, url=url, page_text=chunk)
+    prompt = _EXTRACTION_PROMPT.format(
+        company=company,
+        name_variants=", ".join(f'"{v}"' for v in _name_variants(company)),
+        url=url,
+        page_text=chunk,
+    )
     try:
         response = llm.chat(
             [{"role": "user", "content": prompt}],
