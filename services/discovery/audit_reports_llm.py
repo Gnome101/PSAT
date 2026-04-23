@@ -88,56 +88,66 @@ _KNOWN_AUDITORS = (
 )
 
 _CLASSIFICATION_PROMPT = """\
-You are analyzing web search results to identify third-party security audit reports \
-specifically for the **{company}** smart contract protocol.
+You are triaging web search results to find third-party security audit material \
+about the **{company}** smart contract protocol. Be GENEROUS — downstream code \
+validates each hit before it reaches the user, so the cost of including a weak \
+match is low, and the cost of rejecting a real audit is high.
 
-CRITICAL: Only classify a result as an audit if it is specifically about {company}. \
-Audit reports for OTHER protocols (even if they appear in search results) must be \
-marked is_audit: false. The title, URL, and snippet must reference {company} or its \
-known contracts/products.
+Protocol name note: the slug may be stylized different ways — "{company}", the \
+same with dots/hyphens/underscores instead of spaces, lowercased, or \
+TitleCased. Treat all of these as the same protocol (e.g. "ether fi", \
+"ether.fi", "Ether.Fi", "etherfi", "EtherFi" are the same).
 
-An audit report is a formal security review conducted by an independent auditing firm. \
-Common firms: {auditors}. Use these names verbatim when you spot a match — including \
-when only an abbreviation or report-ID prefix appears in the URL or filename.
+An audit report is any document or page produced by an independent security \
+firm that reviews the protocol's smart contracts. Common firms: {auditors}. \
+Audits are often hosted on:
+  - the firm's own publication directory (zellic, spearbit, trailofbits, etc.)
+  - the protocol's docs/GitBook/security page
+  - the protocol's GitHub repo under audits/ or similar
+  - audit-platform aggregators (Code4rena, Sherlock, Cantina — include these \
+when they clearly host a {company} report, even if the aggregator covers many \
+protocols)
+  - case studies and auditor blog posts that describe the {company} engagement
 
-For each search result below, determine:
-- Is it an actual audit report for {company}, a page linking to {company} audit \
-reports, or a page that lists/indexes multiple {company} audits?
-- Pages that aggregate or list multiple audit reports for {company} (e.g. the \
-protocol's security page, a GitHub audits directory) are valuable — mark them as \
-is_audit: true with type "listing".
+Mark is_audit: true for any of:
+  - a direct PDF audit report on {company}
+  - a listing page that indexes multiple {company} audits (mark type="listing")
+  - an auditor's own case-study / blog post that describes a {company} audit
+  - a GitHub repo path containing {company} audit files
+  - a bug-bounty program page if it clearly links to the protocol's audits \
+(otherwise mark false)
 
-Do NOT classify as audits:
-- Audit reports for OTHER protocols (even if the URL looks audit-related)
-- Blog posts about security in general
-- Bug bounty program pages
-- Generic audit aggregator pages that list many protocols
-- Marketing pages or protocol docs that merely mention security
+Only mark is_audit: false when the result is clearly unrelated, such as:
+  - an audit for a DIFFERENT protocol whose name doesn't resemble {company}
+  - generic "we do audits" marketing pages with no {company} reference
+  - academic papers, journalism, or news summaries unrelated to specific audits
+  - protocol docs that merely mention security at a high level
 
 Search results:
 {results}
 
-When extracting fields, look at ALL of: the title, the snippet, and the URL \
-path/filename. Auditor names and dates are often embedded in the URL filename \
-(e.g. ``Omniscia_Audit_EtherFi.pdf``, ``2024.06.25 - Halborn - EFIP.pdf``), or \
+Look at ALL of: the title, the snippet, and the URL path/filename. Auditor \
+names and dates are often embedded in the URL filename (e.g. \
+``Omniscia_Audit_EtherFi.pdf``, ``2024.06.25 - Halborn - EFIP.pdf``), or \
 encoded as report IDs that follow a known auditor's convention. Use your \
-knowledge of common auditor naming patterns to resolve those to a firm name \
-when it is unambiguous.
+knowledge of common auditor naming patterns to resolve those to a firm name.
 
 Reply with ONLY a JSON array. Each element must have:
 - "url": the exact URL from the search result
-- "is_audit": true ONLY if this is an audit report or listing page \
-specifically for {company}
-- "type": "report" for a single audit report, "listing" for a page that \
-links to multiple audits, "pdf" for a direct PDF link, null if not an audit
+- "is_audit": true if this is plausibly an audit/audit-listing for {company}
+- "type": "report" for a single audit report, "listing" for an index page, \
+"pdf" for a direct PDF, "case_study" for an auditor's case-study page, \
+"bounty" for a bug-bounty page that hosts audits, null if not an audit
 - "auditor": name of the auditing firm if identifiable from the title, \
-snippet, OR url filename — null only when no signal is available
-- "title": short clean human-readable title for the audit (drop \
-boilerplate like "[PDF]" prefixes), null if not applicable
-- "date": audit date as YYYY-MM-DD if visible in the title, snippet or \
-URL (or YYYY-MM / YYYY), null if not present
-- "confidence": 0.0 to 1.0 how confident you are this is a real \
-{company} audit page"""
+snippet, OR url filename — null only when truly no signal is available
+- "title": short clean human-readable title (drop boilerplate like "[PDF]"), \
+null if not applicable
+- "date": audit date as YYYY-MM-DD if visible in the title, snippet or URL \
+(or YYYY-MM / YYYY), null if not present
+- "confidence": 0.0 to 1.0. Use >=0.5 when the title or URL contains a name \
+variant of {company} AND an audit-shape signal (PDF, "audit", "security", \
+auditor firm name). Use 0.3–0.5 for weaker but plausible matches. Reserve \
+<0.3 for clear non-audits."""
 
 _EXTRACTION_PROMPT = """\
 Identify third-party security audits of the **{company}** smart-contract protocol \
@@ -225,6 +235,59 @@ def generate_followup_query(
     return None
 
 
+def _name_variants(company: str) -> list[str]:
+    """Lowercased variants of a protocol slug for substring matching.
+
+    ``"ether fi"`` → ``["ether fi", "etherfi", "ether.fi", "ether-fi", "ether_fi"]``.
+    Used by the deterministic pre-filter to recognize that e.g.
+    ``Audit_Report_-_ether.fi_26.10.2023.pdf`` references the same
+    project as the ``"ether fi"`` slug we submitted."""
+    base = (company or "").strip().lower()
+    if not base:
+        return []
+    tokens = [t for t in re.split(r"[^a-z0-9]+", base) if t]
+    out = {base}
+    if tokens:
+        out.add("".join(tokens))
+        out.add(".".join(tokens))
+        out.add("-".join(tokens))
+        out.add("_".join(tokens))
+        out.add(" ".join(tokens))
+    return [v for v in out if v]
+
+
+def _deterministic_audit_match(result: dict[str, Any], company: str) -> dict[str, Any] | None:
+    """Fast-path: a Tavily result whose URL or title contains a company-name
+    variant AND an audit-shape keyword is confidently audit-relevant.
+    Bypasses the LLM for that result so obvious matches aren't at the
+    mercy of Gemini's temperature-0 non-determinism (same prompt returns
+    is_audit=true on one call and false on the next in practice).
+    Returns a pre-classified record, or None to defer to the LLM.
+    """
+    title = (result.get("title") or "").lower()
+    url = (result.get("url") or "").lower()
+    haystack = f"{title} {url}"
+    variants = _name_variants(company)
+    if not any(v in haystack for v in variants):
+        return None
+    if not any(k in haystack for k in ("audit", "security review", "smart contract review", "assessment")):
+        return None
+    if url.endswith(".pdf"):
+        kind = "pdf"
+    elif "/audits" in url or "/security" in url:
+        kind = "listing"
+    else:
+        kind = "report"
+    return {
+        "url": result.get("url") or "",
+        "auditor": None,  # LLM doesn't enrich pre-accepted rows; downstream GitHub/dedup steps do
+        "title": result.get("title"),
+        "date": None,
+        "type": kind,
+        "confidence": 0.85,
+    }
+
+
 def classify_search_results(
     results: list[dict[str, Any]],
     company: str,
@@ -232,17 +295,41 @@ def classify_search_results(
 ) -> list[dict[str, Any]]:
     """Stage 1: Classify Tavily results as audit/not-audit.
 
-    Returns list of ``{url, is_audit, auditor, type, confidence}`` dicts for
-    results classified as audits with confidence >= 0.5.
+    Runs a deterministic pre-filter first (name-variant ∩ audit-keyword
+    in URL or title → auto-accept), then sends only the ambiguous
+    remainder to the LLM. This makes the pipeline robust to LLM
+    non-determinism on obvious matches — previously a result titled
+    ``Audit Report for ether.fi`` could be accepted on one call and
+    rejected on the next, giving inconsistent audit counts between
+    runs on identical inputs.
+
+    Returns list of ``{url, is_audit, auditor, type, confidence}`` dicts.
     """
     if not results:
         return []
+
+    # --- Deterministic pre-filter ---
+    preaccepted: list[dict[str, Any]] = []
+    needs_llm: list[dict[str, Any]] = []
+    for r in results:
+        hit = _deterministic_audit_match(r, company)
+        if hit:
+            preaccepted.append(hit)
+        else:
+            needs_llm.append(r)
+    _debug_log(
+        debug,
+        f"Classifier pre-filter: {len(preaccepted)} auto-accepted, {len(needs_llm)} deferred to LLM",
+    )
+
+    if not needs_llm:
+        return preaccepted
 
     formatted = "\n".join(
         f"- Title: {r.get('title', '(untitled)')}\n"
         f"  URL: {r.get('url', '')}\n"
         f"  Snippet: {(r.get('content', '') or '')[:300]}"
-        for r in results
+        for r in needs_llm
     )
 
     prompt = _CLASSIFICATION_PROMPT.format(
@@ -262,21 +349,28 @@ def classify_search_results(
         )
     except Exception as exc:
         _debug_log(debug, f"Audit classification LLM call failed: {exc!r}")
-        return []
+        # LLM failure doesn't wipe the deterministic pre-filter's wins.
+        return preaccepted
 
     parsed = _parse_json_array(response)
     if parsed is None:
         _debug_log(debug, "Audit classification: could not parse LLM response as JSON array")
-        return []
+        return preaccepted
 
-    confirmed: list[dict[str, Any]] = []
+    confirmed: list[dict[str, Any]] = list(preaccepted)
     for item in parsed:
         if not isinstance(item, dict):
             continue
         if not item.get("is_audit"):
             continue
         confidence = float(item.get("confidence", 0))
-        if confidence < 0.5:
+        # Threshold lowered from 0.5 → 0.3 alongside the "be generous"
+        # prompt rewrite. Downstream deduplication + filename-match + URL
+        # reachability checks throw out false positives, so accepting
+        # borderline hits here costs little and catches audits the old
+        # strict prompt missed (e.g. GitBook-hosted PDFs whose titles
+        # don't say the word "audit" explicitly).
+        if confidence < 0.3:
             continue
         url = str(item.get("url", "")).strip()
         if not url:

@@ -398,11 +398,14 @@ class TestClassifySearchResults:
                         "auditor": "X",
                         "title": "Y",
                         "date": "2024",
-                        "confidence": 0.3,
+                        # Below the 0.3 acceptance floor.
+                        "confidence": 0.2,
                     },
                 ]
             ),
         )
+        # Input shaped to avoid the deterministic pre-filter (no company-name
+        # variant + audit keyword overlap) so the LLM path is exercised.
         out = classify_search_results([{"url": "https://x.com", "title": "t", "content": "c"}], "Acme")
         assert out == []
 
