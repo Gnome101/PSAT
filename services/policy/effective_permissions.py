@@ -645,6 +645,12 @@ def build_effective_permissions(
             # schema accepts dicts here; the TypedDict in contract_analysis
             # is structurally identical but a different nominal type.
             function_permission["external_call_guards"] = [dict(g) for g in external_call_guards]
+        # Phase 4: pass the full sinks list through so policy_worker's
+        # sink-dispatch bridge can route caller_equals / caller_in_mapping
+        # sinks that the legacy external_call_guards projection drops.
+        caller_sinks = list(privileged.get("sinks") or [])
+        if caller_sinks:
+            function_permission["sinks"] = [dict(s) for s in caller_sinks]
         functions.append(function_permission)
 
     return {
