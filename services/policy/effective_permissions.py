@@ -633,6 +633,9 @@ def build_effective_permissions(
             "action_summary": privileged.get("action_summary", "Performs a permissioned contract action."),
             "notes": notes,
         }
+        external_call_guards = list(privileged.get("external_call_guards") or [])
+        if external_call_guards:
+            function_permission["external_call_guards"] = [dict(g) for g in external_call_guards]
         functions.append(function_permission)
 
     return {

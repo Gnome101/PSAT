@@ -735,6 +735,49 @@ def _detect_contract_classification(contract, project_dir: Path) -> ContractClas
     }
 
 
+# Role-membership checks. `grantRole`/`revokeRole` are deliberately
+# excluded — we want role-gating, not role-admin.
+_ROLE_CHECK_CALLEES = {"hasRole", "_checkRole", "checkRole", "_hasRole", "hasAnyRole"}
+
+
+def _function_calls_role_check(function) -> bool:
+    for call in _call_or_value(function, "all_internal_calls"):
+        callee = getattr(call, "function", None)
+        name = getattr(callee, "name", None) or str(callee or "")
+        if name in _ROLE_CHECK_CALLEES:
+            return True
+    for node in getattr(function, "nodes", []) or []:
+        for ir in getattr(node, "irs", []) or []:
+            if type(ir).__name__ not in {"HighLevelCall", "InternalCall", "LibraryCall"}:
+                continue
+            function_ref = getattr(ir, "function_name", None) or getattr(ir, "function", None)
+            name = getattr(function_ref, "name", None) or str(function_ref or "")
+            if name in _ROLE_CHECK_CALLEES:
+                return True
+    return False
+
+
+def _build_method_to_role_map(contract, project_dir: Path) -> dict[str, list[str]]:
+    """Map each public/external method that invokes a role-membership
+    check to the role constants it references — feeds the cross-contract
+    policy-stage role join."""
+    result: dict[str, list[str]] = {}
+    for function in _contract_functions(contract):
+        if getattr(function, "is_constructor", False):
+            continue
+        visibility = getattr(function, "visibility", "")
+        if visibility not in ("public", "external"):
+            continue
+        if not _function_calls_role_check(function):
+            continue
+        roles = _role_constants_from_function(function, project_dir)
+        if roles:
+            name = getattr(function, "name", "") or ""
+            if name:
+                result[name] = sorted(set(roles))
+    return result
+
+
 def _detect_access_control(contract, project_dir: Path, permission_graph: PermissionGraph) -> AccessControlAnalysis:
     state_variables = _all_state_variables(contract)
     modifiers = _all_modifiers(contract)
@@ -791,27 +834,36 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
             continue
 
         guards = _dedupe_strings((graph_entry["guards"] if graph_entry else []) + inferred_guards)
-        privileged_functions.append(
-            {
-                "contract": _declaring_contract_name(function, contract.name),
-                "function": function_signature,
-                "visibility": getattr(function, "visibility", "unknown"),
-                "guards": guards,
-                "guard_kinds": graph_entry["guard_kinds"] if graph_entry else [],
-                "controller_refs": _dedupe_strings(
-                    (graph_entry["controller_refs"] if graph_entry else [])
-                    + graph_guard_controller_refs
-                    + inferred_controller_refs
-                    + target_controller_refs
-                ),
-                "sink_ids": graph_entry["sink_ids"] if graph_entry else [],
-                "effects": effects,
-                "effect_targets": effect_targets,
-                "effect_labels": effect_labels,
-                "value_flows": _extract_value_flows(function),
-                "action_summary": action_summary,
-            }
-        )
+        # `sinks` is the canonical source; `external_call_guards` is a derived
+        # legacy-shape view for consumers that haven't migrated.
+        from .caller_sinks import caller_reach_analysis, sinks_to_external_call_guards
+
+        caller_sinks = caller_reach_analysis(function, project_dir)
+        external_call_guards = sinks_to_external_call_guards(caller_sinks)
+        entry: dict = {
+            "contract": _declaring_contract_name(function, contract.name),
+            "function": function_signature,
+            "visibility": getattr(function, "visibility", "unknown"),
+            "guards": guards,
+            "guard_kinds": graph_entry["guard_kinds"] if graph_entry else [],
+            "controller_refs": _dedupe_strings(
+                (graph_entry["controller_refs"] if graph_entry else [])
+                + graph_guard_controller_refs
+                + inferred_controller_refs
+                + target_controller_refs
+            ),
+            "sink_ids": graph_entry["sink_ids"] if graph_entry else [],
+            "effects": effects,
+            "effect_targets": effect_targets,
+            "effect_labels": effect_labels,
+            "value_flows": _extract_value_flows(function),
+            "action_summary": action_summary,
+        }
+        if external_call_guards:
+            entry["external_call_guards"] = external_call_guards
+        if caller_sinks:
+            entry["sinks"] = caller_sinks
+        privileged_functions.append(entry)
 
     modifier_names = [modifier.name.lower() for modifier in modifiers]
     pattern = "unknown"
@@ -834,7 +886,7 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
     elif privileged_functions or admin_variables:
         pattern = "custom"
 
-    return {
+    result: AccessControlAnalysis = {
         "pattern": pattern,
         "owner_variables": _dedupe_strings(owner_variables),
         "admin_variables": _dedupe_strings(admin_variables),
@@ -844,6 +896,16 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
             "status": "unknown_static_only",
         },
     }
+    if pattern in ("access_control", "governance") or role_definitions:
+        method_to_role = _build_method_to_role_map(contract, project_dir)
+        if method_to_role:
+            result["method_to_role"] = method_to_role
+    from .mapping_events import discover_mapping_writer_events
+
+    mapping_writer_events = discover_mapping_writer_events(contract)
+    if mapping_writer_events:
+        result["mapping_writer_events"] = [dict(spec) for spec in mapping_writer_events]
+    return result
 
 
 def _detect_upgradeability(contract, project_dir: Path) -> UpgradeabilityAnalysis:

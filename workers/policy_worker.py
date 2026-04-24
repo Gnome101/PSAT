@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,6 +25,118 @@ logger = logging.getLogger("workers.policy_worker")
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
+
+
+def _resolve_target_state_var_address(
+    target_state_var: str,
+    control_snapshot: dict | ControlSnapshot | None,
+) -> str | None:
+    """Look up `target_state_var` in `controller_values` (matched by the
+    `:name` suffix, so either `state_variable:X` or `external_contract:X`
+    hits) and return the lowercased address, or None."""
+    if not target_state_var or not isinstance(control_snapshot, dict):
+        return None
+    suffix = f":{target_state_var}"
+    for key, value in (control_snapshot.get("controller_values") or {}).items():
+        if not key.endswith(suffix):
+            continue
+        address = str(value.get("value") or "").lower() if isinstance(value, dict) else ""
+        if address.startswith("0x") and len(address) == 42:
+            return address
+    return None
+
+
+def _method_to_role_for_address(address: str, control_graph_nodes: list[dict] | None) -> dict[str, list[str]]:
+    """Return the `method -> [role_constant, ...]` map the resolver attached
+    to the graph node for `address`, or {}."""
+    for node in control_graph_nodes or []:
+        if str(node.get("address", "")).lower() != address.lower():
+            continue
+        details = node.get("details") or {}
+        m2r = details.get("method_to_role")
+        if isinstance(m2r, dict):
+            return {k: list(v) for k, v in m2r.items() if isinstance(v, list)}
+    return {}
+
+
+def _principals_for_role_from_graph(role: str, control_graph_nodes: list[dict] | None) -> list[dict]:
+    """Return the graph nodes whose `controller_label` matches `role` — the
+    resolver-enumerated principals (EOAs, Safes, Timelocks) holding it."""
+    principals: list[dict] = []
+    for node in control_graph_nodes or []:
+        details = node.get("details") or {}
+        if str(details.get("controller_label", "")) != role:
+            continue
+        address = str(node.get("address", "")).lower()
+        if not (address.startswith("0x") and len(address) == 42):
+            continue
+        principals.append(
+            {
+                "address": address,
+                "resolved_type": node.get("resolved_type"),
+                "details": details,
+            }
+        )
+    return principals
+
+
+def _apply_external_call_guard_bridge(
+    session: Session,
+    *,
+    effective_function: Any,
+    function_record: dict[str, Any],
+    control_snapshot: dict | ControlSnapshot | None,
+    control_graph_nodes: list[dict] | None,
+) -> int:
+    """For each `X.method(msg.sender)` guard, resolve X's authority
+    address, map the method (or explicit `role_args`) to a role, and
+    attach every principal holding that role as a FunctionPrincipal row."""
+    guards = function_record.get("external_call_guards") or []
+    if not guards:
+        return 0
+    added = 0
+    seen: set[tuple[str, str, str]] = set()
+    for guard in guards:
+        target_var = str(guard.get("target_state_var") or "")
+        method = str(guard.get("method") or "")
+        if not target_var or not method:
+            continue
+        authority_addr = _resolve_target_state_var_address(target_var, control_snapshot)
+        if not authority_addr:
+            continue
+        # Explicit role_args (`hasRole(ROLE, msg.sender)`) win over the
+        # authority's method-name lookup.
+        role_args = [str(r) for r in (guard.get("role_args") or []) if r]
+        if role_args:
+            roles = role_args
+        else:
+            m2r = _method_to_role_for_address(authority_addr, control_graph_nodes)
+            roles = list(m2r.get(method, []))
+        for role in roles:
+            for principal in _principals_for_role_from_graph(role, control_graph_nodes):
+                key = (principal["address"], role, method)
+                if key in seen:
+                    continue
+                seen.add(key)
+                session.add(
+                    FunctionPrincipal(
+                        function_id=effective_function.id,
+                        address=principal["address"],
+                        resolved_type=principal.get("resolved_type"),
+                        origin=f"{target_var}.{method}",
+                        principal_type="external_call_guard",
+                        details={
+                            "role": role,
+                            "authority_address": authority_addr,
+                            "guard_method": method,
+                            "target_state_var": target_var,
+                            "guard_pattern": "role_args" if role_args else "method_to_role",
+                            **(principal.get("details") or {}),
+                        },
+                    )
+                )
+                added += 1
+    return added
 
 
 def _root_artifacts(
@@ -208,6 +320,14 @@ class PolicyWorker(BaseWorker):
                                     details=p.get("details"),
                                 )
                             )
+                graph_nodes = resolved_control_graph.get("nodes") if isinstance(resolved_control_graph, dict) else None
+                _apply_external_call_guard_bridge(
+                    session,
+                    effective_function=ef,
+                    function_record=fn,
+                    control_snapshot=control_snapshot,
+                    control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
+                )
             session.commit()
 
         store_artifact(session, job.id, "effective_permissions", data=ep_data)
