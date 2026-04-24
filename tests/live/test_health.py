@@ -1,9 +1,4 @@
-"""Live integration tests for unauth GET endpoints + SPA fallback.
-
-Smoke-level: just enough to prove the deployed stack is up, serving JSON
-from the expected routes, and falling back to the built frontend for
-non-API paths. Anything deeper belongs in a dedicated test file.
-"""
+"""Smoke tests: unauth GET endpoints + SPA fallback."""
 
 from __future__ import annotations
 
@@ -21,8 +16,7 @@ def test_health_reports_ok(live_client: LiveClient):
     body = r.json()
     assert body.get("status") == "ok"
     assert body.get("db") == "ok"
-    # storage is "ok" when object storage is configured, "inline" for legacy
-    # Postgres-only stacks. Both are healthy — "unavailable" is the failure.
+    # "inline" = legacy Postgres-only; "unavailable" is the failure value.
     assert body.get("storage") in ("ok", "inline")
 
 
@@ -42,7 +36,6 @@ def test_stats_returns_counts(live_client: LiveClient):
 
 
 def test_spa_fallback_serves_frontend(live_base_url: str):
-    # SPA fallback should return HTML for any non-/api path; auth not required.
     r = requests.get(live_base_url + "/", timeout=15)
     assert r.status_code == 200, r.text
     ctype = r.headers.get("Content-Type", "")
@@ -52,17 +45,11 @@ def test_spa_fallback_serves_frontend(live_base_url: str):
 
 
 def test_frontend_assets_served(live_base_url: str):
-    """Pull the SPA HTML, find a referenced JS asset, and confirm it's
-    served with a JS content-type. Catches the case where the SPA
-    fallback returns HTML but the underlying ``/assets`` mount points at
-    a missing or empty directory — a deploy that loads the shell but
-    never paints anything beyond it."""
+    """Catch the case where SPA HTML loads but /assets is empty — shell-only deploy."""
     html = requests.get(live_base_url + "/", timeout=15).text
     m = re.search(r"/assets/([\w.\-]+\.js)", html)
     if not m:
-        # Local-dev runs may not have a built frontend at all — the SPA
-        # fallback will serve a plaintext "Frontend not built" message.
-        # Skip rather than fail so the live suite is runnable locally.
+        # Local-dev may have no built frontend; SPA fallback serves a plaintext message.
         pytest.skip("no JS asset URL found in frontend HTML (likely no built frontend)")
     asset_path = "/assets/" + m.group(1)
     r = requests.get(live_base_url + asset_path, timeout=15)

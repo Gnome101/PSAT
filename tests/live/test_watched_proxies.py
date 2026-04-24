@@ -1,11 +1,4 @@
-"""Live integration tests for the watched-proxies + subscriptions API.
-
-Exercises the full roundtrip of adding a proxy to the watcher, attaching
-a notification subscription, reading both back, and tearing everything
-down. Uses a well-known public EIP-1967 proxy so the server-side
-classification inside POST /api/watched-proxies resolves cleanly against
-mainnet RPC.
-"""
+"""Watched-proxies + subscriptions roundtrip against Aave V3 Pool (EIP-1967 proxy on mainnet)."""
 
 from __future__ import annotations
 
@@ -16,25 +9,15 @@ import requests
 
 from tests.live.conftest import LiveClient
 
-# Aave V3 Pool on Ethereum mainnet — stable, well-known TransparentUpgradeable
-# proxy. Chosen over USDC (which test_proxy_flow uses) so the two files
-# can run concurrently without stepping on each other's DB state.
+# Distinct from test_proxy_flow's USDC so the two files can run concurrently.
 AAVE_V3_POOL = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"
 
-# Fake webhook host — never actually called because proxy upgrade events
-# only trigger on real on-chain upgrades, which won't fire inside a test run.
 TEST_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/0/psat-live-test-never-delivered"
 
 
 @pytest.fixture(scope="module")
 def watched_proxy(live_client: LiveClient, request) -> dict[str, Any]:
-    """Add Aave V3 Pool to the watch list; remove it + its subscriptions on teardown.
-
-    The POST endpoint is idempotent at the (address, chain) level — if a
-    previous failed run left the row behind, it returns the existing row
-    rather than erroring. Finalizer drops the proxy, which FK-cascades
-    to subscriptions and monitored-contracts.
-    """
+    # POST is idempotent at (address, chain); finalizer FK-cascades to subs + monitored.
     payload = {"address": AAVE_V3_POOL, "chain": "ethereum", "label": "psat-live-test"}
     proxy = live_client.add_watched_proxy(payload)
     assert proxy.get("id"), f"add_watched_proxy response missing id: {proxy}"
@@ -58,9 +41,7 @@ def test_watched_proxy_persisted(watched_proxy, live_client: LiveClient):
 def test_watched_proxy_metadata(watched_proxy):
     assert watched_proxy["proxy_address"].lower() == AAVE_V3_POOL.lower()
     assert watched_proxy["chain"] == "ethereum"
-    # Classification is best-effort — proxy_type may be None if the RPC
-    # was flaky during the initial POST. But the row must record the chain
-    # we asked for and a stamped creation time.
+    # proxy_type is best-effort (None on flaky RPC); chain + created_at are required.
     assert watched_proxy["created_at"]
 
 
@@ -92,9 +73,7 @@ def test_subscription_listed(subscription, watched_proxy, live_client: LiveClien
 
 
 def test_subscription_delete(watched_proxy, live_client: LiveClient):
-    # Deliberately not using the session fixture — create an ephemeral
-    # subscription here so we can assert DELETE removes it independent
-    # of other tests' cleanup.
+    # Own subscription so DELETE can be verified independent of fixture cleanup.
     payload = {"discord_webhook_url": TEST_DISCORD_WEBHOOK, "label": "psat-live-test-ephemeral"}
     sub = live_client.add_subscription(watched_proxy["id"], payload)
     live_client.delete_subscription(sub["id"])
@@ -104,9 +83,7 @@ def test_subscription_delete(watched_proxy, live_client: LiveClient):
 
 
 def test_proxy_events_endpoint(live_client: LiveClient):
-    # Read-only shape test — the preview will typically have zero events
-    # unless an actual upgrade fired during the watched window, so we
-    # assert structure rather than content.
+    # Shape-only — most previews have zero events unless a real upgrade fired.
     events = live_client.list_proxy_events()
     assert isinstance(events, list)
     for event in events[:5]:

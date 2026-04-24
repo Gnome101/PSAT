@@ -1,17 +1,12 @@
 name: PR preview
 
-# Triggered by CI completing on a PR. Gating on CI success keeps us from
-# burning Fly + Neon resources on PRs whose lint/tests/typecheck didn't
-# even pass — and from triggering a wasted live test run downstream.
+# Triggered by CI success so we don't burn Fly + Neon on red builds.
 on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
 
-# One deploy per PR at a time. Keyed on the triggering CI run id so two
-# rapid pushes don't race two preview deploys for the same app — the
-# latest CI run wins (the previous CI was cancelled by ci.yml's own
-# cancel-in-progress, so its preview chain never started).
+# Keyed on triggering CI run id — rapid pushes don't race; latest wins via ci.yml cancel-in-progress.
 concurrency:
   group: preview-${{ github.event.workflow_run.id }}
   cancel-in-progress: true
@@ -23,12 +18,8 @@ permissions:
 
 jobs:
   deploy:
-    # Three gates, all required:
-    # 1. CI must have succeeded — broken code shouldn't reach Fly.
-    # 2. CI must have been triggered by a PR — main pushes go through
-    #    prod-deploy.yml, not here.
-    # 3. The PR's head must live in this repo — fork PRs don't get
-    #    secrets and we don't want to deploy untrusted code to staging.
+    # Require CI success, a PR event (main pushes go to prod-deploy), and a same-repo head
+    # (fork PRs don't get staging secrets).
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'pull_request' &&
@@ -42,10 +33,7 @@ jobs:
       NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
       NEON_STAGING_PASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
     steps:
-      # Pinned to v4 (first-party GitHub action — tag is fine).
-      # Checkout the SHA that CI ran against, not the workflow_run head
-      # (default), so PR_NUMBER resolution and the deploy operate on the
-      # exact same commit CI signed off on.
+      # Checkout CI's SHA so deploy operates on the exact commit CI signed off on.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
@@ -55,9 +43,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # workflow_run.pull_requests is populated for same-repo PRs; fall
-          # back to a head-SHA lookup otherwise. Either fails → the CI run
-          # doesn't belong to a resolvable PR and there's nothing to preview.
+          # workflow_run.pull_requests is populated for same-repo PRs; fall back to head-SHA lookup.
           PR_NUM=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
           if [ -z "$PR_NUM" ]; then
             PR_NUM=$(gh pr list \
@@ -88,17 +74,13 @@ jobs:
         env:
           PGPASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
         run: |
-          # CREATE DATABASE must target the direct compute endpoint. The
-          # pooler endpoint runs pgbouncer in transaction mode, which
-          # doesn't allow admin commands like CREATE DATABASE. The app
-          # itself still uses the pooler (see DATABASE_URL below).
+          # CREATE DATABASE must hit the direct compute endpoint (pgbouncer txn mode blocks admin).
           psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
             -c "CREATE DATABASE \"psat_pr_${{ steps.pr.outputs.number }}\";" || true
 
       - name: Stage Fly secrets
         run: |
-          # App connects via the pooler endpoint so many preview envs + their
-          # ~10 workers each don't blow through Neon's connection cap.
+          # App uses the pooler so N previews × ~10 workers don't blow Neon's connection cap.
           PR_NUMBER="${{ steps.pr.outputs.number }}"
           DB_URL="postgresql://${NEON_STAGING_USER}:${NEON_STAGING_PASSWORD}@${NEON_STAGING_POOLER_HOST}/psat_pr_${PR_NUMBER}?sslmode=require"
           flyctl secrets set --stage -a "${{ steps.fly.outputs.app }}" \

@@ -1,9 +1,6 @@
 name: Live tests
 
-# Runs after the "PR preview" workflow finishes. That workflow is gated to
-# same-repo PRs (fork PRs don't get secrets), so we inherit the same gate
-# here by virtue of there being no preview to point at for forks.
-
+# Runs after PR preview finishes. PR preview is gated to same-repo PRs, so forks are filtered there.
 on:
   workflow_run:
     workflows: ["PR preview"]
@@ -14,9 +11,7 @@ permissions:
   pull-requests: write
   actions: read
 
-# One live run per triggering preview. A second preview deploy (rapid-fire
-# push) supersedes the current live run so we never bang two live suites
-# against the same staging DB concurrently.
+# Cancel in-flight live runs when a new preview lands — avoids two suites hitting the same staging DB.
 concurrency:
   group: live-${{ github.event.workflow_run.id }}
   cancel-in-progress: true
@@ -38,10 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # workflow_run.pull_requests is populated for same-repo PRs; fall
-          # back to a head-SHA lookup otherwise. Either fails → the preview
-          # doesn't belong to a resolvable PR and there's nothing to comment
-          # on, so abort.
+          # workflow_run.pull_requests is populated for same-repo PRs; fall back to head-SHA lookup.
           PR_NUM=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
           if [ -z "$PR_NUM" ]; then
             PR_NUM=$(gh pr list \
@@ -64,9 +56,7 @@ jobs:
       - name: Wait for preview /api/health
         run: |
           URL="${{ steps.preview.outputs.url }}/api/health"
-          # 24 * 5s = 2 min. Preview workers need ~30-60s to boot on a
-          # cold start; anything past 2 min almost certainly means the
-          # deploy is unhealthy and rerunning live tests won't fix it.
+          # 2 min ceiling: cold-start is 30-60s; past that the deploy is unhealthy.
           for i in $(seq 1 24); do
             if curl -fsS --max-time 5 "$URL" >/dev/null; then
               echo "preview healthy after attempt $i"
@@ -86,11 +76,7 @@ jobs:
         env:
           PSAT_LIVE_URL: ${{ steps.preview.outputs.url }}
           PSAT_ADMIN_KEY: ${{ secrets.PSAT_ADMIN_KEY }}
-          # Pin the audit-fixture URL to the head SHA of the PR. The file
-          # is vendored at tests/fixtures/audits/sample_audit.pdf and
-          # ``raw.githubusercontent.com/<repo>/<sha>/...`` resolves to
-          # that exact commit's blob — stable forever in git history,
-          # immune to repo-default-branch renames or future file moves.
+          # Pin to head SHA via raw.github — stable in git history regardless of renames.
           PSAT_LIVE_AUDIT_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.workflow_run.head_sha }}/tests/fixtures/audits/sample_audit.pdf
         run: uv run pytest -m live -q
 

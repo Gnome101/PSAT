@@ -6,11 +6,7 @@ on:
   pull_request:
     branches: [main]
 
-# Latest commit wins. A rapid-fire push cancels any in-flight CI for the
-# same PR (or the same branch on main) so we never spend resources on
-# stale SHAs. Cancelled CI runs don't trigger pr-preview or prod-deploy
-# (both are gated on conclusion == 'success'), so chained deploys also
-# follow the latest-commit-wins rule.
+# Latest commit wins; cancelled runs don't trigger the preview/prod chain (both gated on success).
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -72,9 +68,7 @@ jobs:
       TEST_ARTIFACT_STORAGE_BUCKET: psat-artifacts-test
       TEST_ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
       TEST_ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
-      # Routes services.audits.scope_extraction._call_llm through fixture
-      # files instead of OpenRouter. Integration tests depend on this
-      # being set — without it they would attempt a real LLM call.
+      # Routes scope_extraction._call_llm to fixtures; without this, integration tests hit OpenRouter.
       PSAT_LLM_STUB_DIR: tests/fixtures/scope_extraction/llm_responses
     steps:
       - uses: actions/checkout@v4

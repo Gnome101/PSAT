@@ -1,11 +1,4 @@
-"""Live read-path tests for the protocol-monitoring cluster.
-
-The endpoints under ``/api/protocols/{id}/...`` all key on the integer
-Protocol.id resolved by the ``company_protocol_id`` fixture. Each test
-asserts shape rather than count — the preview's monitoring rows depend on
-how long the protocol has been enrolled and whether the on-chain watcher
-has surfaced any events, neither of which we control from here.
-"""
+"""Protocol monitoring reads (/api/protocols/{id}/...) — shape, not count (watcher state varies)."""
 
 from __future__ import annotations
 
@@ -41,16 +34,12 @@ def test_protocol_tvl_shape(company_protocol_id: int, live_client: LiveClient):
     body = live_client.protocol_tvl(company_protocol_id, days=7)
     assert body["protocol_id"] == company_protocol_id
     assert isinstance(body.get("protocol_name"), str)
-    # ``current`` is always present even when no snapshots exist (its inner
-    # fields are None) so the frontend can render a "no data" state without
-    # special-casing missing keys. ``history`` is always a list.
+    # ``current`` is always present (inner fields None when no snapshots); ``history`` always a list.
     assert "current" in body and isinstance(body["current"], dict)
     assert "history" in body and isinstance(body["history"], list)
 
 
 def test_protocol_tvl_unknown_protocol_returns_404(live_client: LiveClient):
-    # Use raw session since the wrapper raises for status; we want to inspect
-    # the actual code, not catch an HTTPError.
     r = live_client._session.get(
         live_client._url("/api/protocols/999999999/tvl"),
         timeout=15,

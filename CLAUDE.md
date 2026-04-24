@@ -70,3 +70,7 @@ Never `requests.post()` an admin-protected endpoint directly — you'll forget t
 Concurrency: `requests.Session` is not thread-safe across calls. `test_concurrency.py` spawns one `LiveClient` per thread for that reason; reuse the pattern when you parallelize.
 
 MonitoredContract rows leak across runs: `WatchedProxy.delete` is `ON DELETE SET NULL` for the `MonitoredContract.watched_proxy_id` link (`db/models.py:647-649`), and there is no admin DELETE for `MonitoredContract`. Tests that create them rely on the `(address, chain)` unique key keeping the row a singleton — pick a stable test address rather than randomizing.
+
+## Style
+
+Keep comments and docstrings terse. Module docstrings: one line. Comments: only when the *why* is non-obvious. Don't narrate what the code already says — reviewers can read it.

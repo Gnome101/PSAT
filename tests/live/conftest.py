@@ -1,17 +1,4 @@
-"""Shared fixtures for the live test suite.
-
-Live tests run against a deployed PSAT API (staging preview or prod) and
-exercise the whole stack end-to-end: API → Postgres → worker pool →
-Etherscan/RPC/Tavily/OpenRouter → object storage.
-
-Configuration via env:
-    PSAT_LIVE_URL    — base URL of the deployed API (required in CI)
-    PSAT_ADMIN_KEY   — admin key header for POST endpoints (required)
-
-Everything under ``tests/live/`` is tagged with ``@pytest.mark.live`` by the
-autouse marker below, so the CI command ``pytest -m "not live"`` skips the
-whole directory and ``pytest -m live`` selects it.
-"""
+"""Shared fixtures for the live test suite. See CLAUDE.md for the full writeup."""
 
 from __future__ import annotations
 
@@ -23,12 +10,10 @@ from typing import Any
 import pytest
 import requests
 
-# Known, fast-to-analyze contract used by the session-scoped WETH fixture.
-# WETH on Ethereum mainnet: small, non-proxy, cached aggressively on Etherscan.
 WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5c4F27eAD9083C756Cc2"
 
-DEFAULT_SINGLE_TIMEOUT = 600  # one contract: 2-5 min typical, 10 min ceiling
-DEFAULT_COMPANY_TIMEOUT = 900  # company: 5-10 min typical, 15 min ceiling
+DEFAULT_SINGLE_TIMEOUT = 600
+DEFAULT_COMPANY_TIMEOUT = 900
 DEFAULT_POLL_INTERVAL = 5
 
 
@@ -42,25 +27,18 @@ def _parse_dt(s: str) -> datetime:
 
 
 class LiveClient:
-    """Thin wrapper over a deployed PSAT API.
-
-    Centralizes the base URL, admin-key header, timeouts, and the polling
-    loops that every live test otherwise re-implements.
-    """
+    """Thin wrapper over a deployed PSAT API."""
 
     def __init__(self, base_url: str, admin_key: str) -> None:
         self.base_url = base_url.rstrip("/")
         self._session = requests.Session()
         self._session.headers.update({"X-PSAT-Admin-Key": admin_key})
 
-    # -- basic HTTP ----------------------------------------------------------
-
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"
 
     def health(self, timeout: float = 5) -> requests.Response:
-        # Health doesn't need auth — use bare requests so a missing/invalid
-        # admin key doesn't mask a real reachability problem.
+        # Bare requests (no auth) so a bad admin key doesn't mask reachability.
         return requests.get(self._url("/api/health"), timeout=timeout)
 
     def is_healthy(self) -> bool:
@@ -104,9 +82,7 @@ class LiveClient:
         return r.json()
 
     def refresh_company_coverage(self, company: str, verify_source_equivalence: bool = False) -> dict[str, Any]:
-        # ``verify_source_equivalence=False`` skips the per-file Etherscan
-        # equivalence pass. Tests default to false because the network leg
-        # is rate-limited and irrelevant to "did the row count update?".
+        # Skip the per-file Etherscan equivalence pass — rate-limited, irrelevant to row count.
         r = self._session.post(
             self._url(f"/api/company/{company}/refresh_coverage"),
             params={"verify_source_equivalence": str(verify_source_equivalence).lower()},
@@ -116,8 +92,7 @@ class LiveClient:
         return r.json()
 
     def reextract_audit_scope(self, audit_id: int) -> requests.Response:
-        # Raw Response so callers can inspect 409 (text extraction not
-        # complete) without the wrapper raising on it.
+        # Raw Response so callers can inspect 409 (text extraction not complete).
         return self._session.post(self._url(f"/api/audits/{audit_id}/reextract_scope"), timeout=15)
 
     # -- reads ---------------------------------------------------------------
@@ -137,9 +112,7 @@ class LiveClient:
 
     def artifact(self, run_name: str, artifact_name: str) -> dict | str | None:
         """Fetch an artifact. Returns dict for JSON, str for text, None on 404."""
-        # The artifact endpoint routes on the extension, so we need to know
-        # which artifacts are text vs JSON. analysis_report is the slither
-        # output (plain text); everything else the pipeline emits is JSON.
+        # analysis_report is slither plain-text output; everything else is JSON.
         ext = ".txt" if artifact_name == "analysis_report" else ".json"
         r = self._session.get(
             self._url(f"/api/analyses/{run_name}/artifact/{artifact_name}{ext}"),
@@ -207,8 +180,7 @@ class LiveClient:
         return r.json()
 
     def audit_text(self, audit_id: int) -> requests.Response:
-        # Raw Response so tests can distinguish 200 (text ready) from 409
-        # (extraction still in progress) from 503 (storage offline).
+        # Raw Response so tests can distinguish 200 / 409 (in progress) / 503 (storage down).
         return self._session.get(self._url(f"/api/audits/{audit_id}/text"), timeout=30)
 
     def audit_pdf(self, audit_id: int) -> requests.Response:
@@ -231,8 +203,7 @@ class LiveClient:
         return r.json()
 
     def audit_scope(self, audit_id: int) -> requests.Response:
-        # Returns the raw Response so callers can inspect 409 ("not ready yet")
-        # without the polling helper treating it as a hard error.
+        # Raw Response so callers can inspect 409 ("not ready yet").
         return self._session.get(self._url(f"/api/audits/{audit_id}/scope"), timeout=15)
 
     def delete_audit(self, audit_id: int) -> dict[str, Any]:
@@ -256,11 +227,7 @@ class LiveClient:
         timeout: float = DEFAULT_COMPANY_TIMEOUT,
         interval: float = DEFAULT_POLL_INTERVAL * 2,
     ) -> dict[str, Any]:
-        """Poll ``/api/audits/{id}`` until scope extraction reaches success/failed.
-
-        Returns the final audit row. Raises ``TimeoutError`` if the workers
-        didn't produce a terminal status within ``timeout`` seconds.
-        """
+        """Poll the audit row until scope extraction reaches success/failed."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             row = self.get_audit(audit_id)
@@ -357,9 +324,7 @@ class LiveClient:
         return r.json()
 
     def re_enroll_protocol(self, protocol_id: int, chain: str = "ethereum") -> dict[str, Any]:
-        # Re-enrollment hits the live RPC + classifier and can take a while
-        # on a cold preview, so the timeout is generous compared to other
-        # mutation endpoints.
+        # Hits live RPC + classifier; generous timeout for cold previews.
         r = self._session.post(
             self._url(f"/api/protocols/{protocol_id}/re-enroll"),
             params={"chain": chain},
@@ -445,11 +410,7 @@ class LiveClient:
 
 
 def pytest_collection_modifyitems(config, items):
-    """Auto-tag every test under ``tests/live/`` with @pytest.mark.live.
-
-    Saves callers from remembering to set ``pytestmark`` in each new file
-    and keeps the ``-m live`` filter honest across the whole directory.
-    """
+    """Auto-tag every test under ``tests/live/`` with @pytest.mark.live."""
     live_mark = pytest.mark.live
     for item in items:
         if "/tests/live/" in str(item.fspath) or "\\tests\\live\\" in str(item.fspath):
@@ -481,22 +442,9 @@ def _require_live_api(live_client: LiveClient):
         pytest.skip(f"API not reachable at {live_client.base_url}")
 
 
-# ---------------------------------------------------------------------------
-# Shared "known-good completed run" fixtures
-#
-# These amortize the ~3-5 min WETH analysis across every downstream test
-# that just needs a terminated job to inspect.
-# ---------------------------------------------------------------------------
-
-
 @pytest.fixture(scope="session")
 def analyzed_weth(live_client: LiveClient) -> dict[str, Any]:
-    """Submit WETH once per session; every dependent test reuses the result.
-
-    Fails the whole fixture (and therefore every dependent test) if WETH
-    didn't reach ``completed`` — a hard signal that the pipeline is broken
-    on staging, not just this one test.
-    """
+    """Submit WETH once per session; dependent tests reuse the result."""
     job = live_client.submit_and_wait(WETH_ADDRESS)
     if job["status"] != "completed":
         pytest.fail(f"WETH analysis did not complete on {live_client.base_url}: {job.get('error')}")
@@ -513,22 +461,13 @@ def analyze_and_wait(live_client: LiveClient):
     return _fn
 
 
-# Company used by tests that need a Protocol row in the DB (e.g. audits).
-# ``etherfi`` is the same company test_cache.py exercises, so the inventory
-# is typically already warm; ``limit=1`` keeps this fixture cheap when the
-# preview is cold.
+# Shared with test_cache.py so its inventory is warm; limit=1 keeps cold previews cheap.
 DEFAULT_TEST_COMPANY = "etherfi"
 
 
 @pytest.fixture(scope="session")
 def analyzed_company(live_client: LiveClient) -> dict[str, Any]:
-    """Ensure a Protocol row exists for ``DEFAULT_TEST_COMPANY``.
-
-    Tests that POST to ``/api/company/{name}/...`` endpoints need a protocol
-    in the DB or the endpoint 404s. This fixture guarantees one exists with
-    minimal overhead — ``limit=1`` caps analysis to a single contract, and
-    subsequent runs reuse cached static data from the first.
-    """
+    """Ensure a Protocol row exists for ``DEFAULT_TEST_COMPANY`` (else POSTs 404)."""
     parent = live_client.submit_company_and_wait(DEFAULT_TEST_COMPANY, limit=1)
     if parent["status"] != "completed":
         pytest.fail(
@@ -540,14 +479,7 @@ def analyzed_company(live_client: LiveClient) -> dict[str, Any]:
 
 @pytest.fixture(scope="session")
 def company_protocol_id(analyzed_company, live_client: LiveClient) -> int:
-    """Resolve the integer Protocol.id for the test company.
-
-    The protocol cluster of endpoints (``/api/protocols/{id}/...``) all key
-    on this id. The parent Job row ``analyzed_company`` returns includes a
-    ``protocol_id`` after discovery commits it, but we deliberately re-read
-    via ``GET /api/company/{name}`` so this fixture also doubles as a sanity
-    check that the company was actually upserted as a Protocol row.
-    """
+    """Resolve Protocol.id for the test company via GET — doubles as an upsert sanity check."""
     overview = live_client.company_overview(DEFAULT_TEST_COMPANY)
     pid = overview.get("protocol_id")
     if not isinstance(pid, int):

@@ -1,10 +1,4 @@
-"""Proxy upgrade event decoding — replaces test_proxy_watcher_live.py.
-
-Exercises scan_for_upgrades end-to-end against synthesized eth_getLogs
-responses that mirror real mainnet event layouts for every upgrade event
-type the scanner supports. Runs in CI without secrets (RPC is monkeypatched;
-only PostgreSQL is required).
-"""
+"""scan_for_upgrades against synthesized eth_getLogs. Mirrors real mainnet layouts; no RPC needed."""
 
 from __future__ import annotations
 
@@ -30,20 +24,14 @@ from services.discovery.upgrade_history import (
 )
 from tests.conftest import requires_postgres
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 ZERO_WORD = "0x" + "0" * 64
 
 
 def _addr_topic(addr: str) -> str:
-    """Left-pad a 20-byte address into a 32-byte log topic."""
     return "0x" + "0" * 24 + addr.lower().replace("0x", "")
 
 
 def _addr_word(addr: str) -> str:
-    """ABI-encode a single address (32-byte padded, no 0x prefix)."""
     return "0" * 24 + addr.lower().replace("0x", "")
 
 
@@ -71,11 +59,7 @@ def _install_rpc_stub(
     latest_block: int,
     storage: dict[tuple[str, str], str] | None = None,
 ) -> None:
-    """Replace services.monitoring.proxy_watcher.rpc_request with a canned stub.
-
-    ``logs`` is the set of log entries the scanner may see; the stub filters
-    them by block range, address, and topic0 the way a real node would.
-    """
+    """Canned rpc_request stub; filters logs by range/address/topic0 like a real node."""
     import services.monitoring.proxy_watcher as pw
 
     all_logs = list(logs)
@@ -129,12 +113,7 @@ def _add_proxy(
     return proxy
 
 
-# ---------------------------------------------------------------------------
-# Known-upgrade fixtures — mainnet-derived addresses + tx hashes kept so these
-# tests stay a faithful port of the original live suite. Only the RPC payloads
-# are synthesized — the block numbers, topic0s, and final implementation
-# addresses are real.
-# ---------------------------------------------------------------------------
+# Mainnet-derived addrs + tx hashes. Block numbers, topic0s, and impls are real; only payloads synthesized.
 
 # Aave V3 Pool — standard EIP-1967 Upgraded(address indexed implementation)
 AAVE_V3_POOL = "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2"
@@ -187,9 +166,7 @@ SYNTHETIX_TX = "0xf286b1dd8d6163e866601cf85ba1646f76a11bae86f8f323ea4a8f0ca46db4
 DIAMOND_PROXY = "0x3caca7b48d0573d793d3b0279b5f0029180e83b6"
 DIAMOND_CUT_BLOCK = 14004881
 DIAMOND_CUT_TX = "0x915094b1a190e242eeb15ba6c569370bcf4d40eb9caf95a4558d54e2f59c08fc"
-# Pre-encoded DiamondCut(FacetCut[], _init=0, _calldata=0x) with one facet
-# at address 0x0606...06. Encoded via eth_abi so the byte layout matches
-# what a real mainnet event would produce.
+# Pre-encoded DiamondCut(FacetCut[], _init=0, _calldata=0x) with one facet at 0x0606...06.
 DIAMOND_CUT_DATA = (
     "0x"
     "0000000000000000000000000000000000000000000000000000000000000060"  # offset to FacetCut[]
@@ -203,11 +180,6 @@ DIAMOND_CUT_DATA = (
     "0000000000000000000000000000000000000000000000000000000000000000"  # selectors[].length = 0
     "0000000000000000000000000000000000000000000000000000000000000000"  # calldata.length = 0
 )
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
 
 
 @requires_postgres

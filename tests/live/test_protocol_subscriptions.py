@@ -1,9 +1,4 @@
-"""Live integration tests for protocol-level subscription mutations.
-
-Covers the create + delete roundtrip and the admin re-enroll flow. All
-three endpoints are admin-protected, so we go through ``LiveClient``
-which attaches the admin key automatically.
-"""
+"""Protocol-level subscription mutations: create/delete roundtrip + admin re-enroll."""
 
 from __future__ import annotations
 
@@ -14,9 +9,6 @@ import requests
 
 from tests.live.conftest import LiveClient
 
-# Fake webhook host — protocol subscriptions only fire on real on-chain
-# governance events, which won't trigger inside a test run, so the URL is
-# never actually called.
 TEST_DISCORD_WEBHOOK = "https://discord.com/api/webhooks/0/psat-live-test-protocol-never-delivered"
 
 
@@ -26,12 +18,7 @@ def protocol_subscription(
     live_client: LiveClient,
     request,
 ) -> dict[str, Any]:
-    """Create a per-test ProtocolSubscription and tear it down via finalizer.
-
-    Function-scoped so each mutation test gets its own fresh row — the
-    create endpoint doesn't dedupe on (protocol_id, webhook_url), so a
-    module-level fixture would silently accumulate rows on retry.
-    """
+    # Function-scoped: the endpoint doesn't dedupe on (protocol_id, webhook_url) so rows would accumulate.
     payload = {
         "discord_webhook_url": TEST_DISCORD_WEBHOOK,
         "label": "psat-live-test",
@@ -44,8 +31,6 @@ def protocol_subscription(
         try:
             live_client.delete_protocol_subscription(sub["id"])
         except requests.HTTPError:
-            # Already gone — either the test under exercise deleted it,
-            # or a parallel cleanup got there first. Either way, fine.
             pass
 
     request.addfinalizer(_cleanup)
@@ -56,8 +41,7 @@ def test_protocol_subscription_created(protocol_subscription, company_protocol_i
     assert protocol_subscription["protocol_id"] == company_protocol_id
     assert protocol_subscription["discord_webhook_url"] == TEST_DISCORD_WEBHOOK
     assert protocol_subscription["label"] == "psat-live-test"
-    # event_filter roundtrips verbatim — tested explicitly because the
-    # validator on the request side does shape-checking that could mangle it.
+    # event_filter must roundtrip verbatim; the request validator could mangle it.
     assert protocol_subscription.get("event_filter") == {"event_types": ["upgraded"]}
 
 
@@ -75,8 +59,7 @@ def test_protocol_subscription_delete_roundtrip(
     company_protocol_id: int,
     live_client: LiveClient,
 ):
-    # Deliberately not the fixture — create here so we can assert delete
-    # actually removes it from the listing without racing the finalizer.
+    # Not the fixture — avoids racing the finalizer.
     payload = {"discord_webhook_url": TEST_DISCORD_WEBHOOK, "label": "psat-live-test-ephemeral"}
     sub = live_client.subscribe_protocol(company_protocol_id, payload)
     live_client.delete_protocol_subscription(sub["id"])
@@ -86,7 +69,6 @@ def test_protocol_subscription_delete_roundtrip(
 
 
 def test_protocol_subscribe_unknown_protocol_404(live_client: LiveClient):
-    # Use raw session (the wrapper raises for status) so we can read the code.
     r = live_client._session.post(
         live_client._url("/api/protocols/999999999/subscribe"),
         json={"discord_webhook_url": TEST_DISCORD_WEBHOOK},
@@ -96,16 +78,7 @@ def test_protocol_subscribe_unknown_protocol_404(live_client: LiveClient):
 
 
 def test_re_enroll_protocol(company_protocol_id: int, live_client: LiveClient):
-    """Re-enrollment is destructive in the sense that it can re-create
-    MonitoredContract rows for the protocol. We only assert it returns a
-    well-shaped response — exact contract counts depend on what the
-    classifier finds against live RPC, which isn't deterministic.
-
-    Skips on 502/503 so a transient RPC failure on the preview doesn't
-    fail the suite. Re-enrollment hits the live mainnet RPC; if it's
-    unreachable from the preview, that's an infrastructure problem, not
-    a regression in PSAT.
-    """
+    """Shape-only: exact contract counts depend on live-RPC classification. Skip on 502/503."""
     try:
         body = live_client.re_enroll_protocol(company_protocol_id, chain="ethereum")
     except requests.HTTPError as exc:

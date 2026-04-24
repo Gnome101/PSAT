@@ -1,15 +1,4 @@
-"""Live integration test for cross-PR artifact tenancy.
-
-Per-PR Fly previews share a single object-storage bucket with each
-preview's keys namespaced by ``ARTIFACT_STORAGE_PREFIX=pr-{N}/`` (set
-in .github/workflows/pr-preview.yml). Each preview also has its own
-Neon DB, so the practical defense is layered: the DB lookup for
-``run_name`` will fail before storage is even consulted.
-
-This test proves the layered contract: an artifact known to exist on
-another PR is not readable via our PR's API. Skips cleanly when a
-second preview can't be resolved (most local runs).
-"""
+"""Cross-PR artifact tenancy: per-PR Neon DBs isolate run_name lookups even on a shared bucket."""
 
 from __future__ import annotations
 
@@ -25,19 +14,10 @@ _PR_HOST_RE = re.compile(r"https?://psat-pr-(\d+)\.fly\.dev", re.IGNORECASE)
 
 
 def _other_pr_base_url(self_url: str) -> str | None:
-    """Resolve a second preview URL to compare against.
-
-    Order:
-      1. ``PSAT_LIVE_OTHER_PR`` env var: explicit PR number override (set
-         by CI when a sibling preview is known to exist).
-      2. None — the test should skip when we can't safely pick another
-         preview without knowing it's running.
-    """
     m = _PR_HOST_RE.match(self_url.rstrip("/"))
     if not m:
-        return None  # not a fly preview — nothing to compare against
+        return None
     self_pr = m.group(1)
-
     other_pr = os.environ.get("PSAT_LIVE_OTHER_PR", "").strip()
     if not other_pr or other_pr == self_pr:
         return None
@@ -45,7 +25,6 @@ def _other_pr_base_url(self_url: str) -> str | None:
 
 
 def _first_listed_run_name(base_url: str) -> str | None:
-    """Pull the first run_name from another PR's /api/analyses listing."""
     try:
         r = requests.get(base_url + "/api/analyses", timeout=15)
         r.raise_for_status()
@@ -69,8 +48,7 @@ def test_other_prs_artifacts_not_readable(live_client: LiveClient, live_base_url
     if not other_run:
         pytest.skip(f"no analyses listed on {other_url} to use as a tenancy probe")
 
-    # Sanity: the other PR's API actually serves this artifact (otherwise
-    # the negative assertion below is testing nothing).
+    # Confirm the probe artifact is actually served on the other PR, else the negative below is moot.
     other_resp = requests.get(
         f"{other_url}/api/analyses/{other_run}/artifact/contract_analysis.json",
         timeout=15,
@@ -81,8 +59,6 @@ def test_other_prs_artifacts_not_readable(live_client: LiveClient, live_base_url
             f"returned {other_resp.status_code}; cannot use as tenancy probe"
         )
 
-    # Now try the same fetch via our PR. Should 404 because our DB has
-    # no row for this run_name (the per-PR Neon DBs are isolated).
     own_resp = live_client._session.get(
         live_client._url(f"/api/analyses/{other_run}/artifact/contract_analysis.json"),
         timeout=15,
