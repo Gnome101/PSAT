@@ -48,13 +48,16 @@ PROTOCOLS = [
 ]
 
 CONFIGS: list[tuple[str, str]] = [
-    ("exa", "deep"),
+    ("exa", "neural"),
     ("exa", "regular"),
     ("exa", "instant"),
     ("tavily", "default"),
     ("brave", "default"),
     ("exa", "research"),
     ("exa", "research_plus"),
+    ("exa", "deep-lite"),
+    ("exa", "deep"),
+    ("exa", "deep-reasoning"),
 ]
 
 
@@ -135,7 +138,7 @@ def _fetch_research_citations(protocol: str) -> tuple[list[dict], str | None]:
         f"reports on GitHub or auditor websites. For each, provide the auditor name, "
         f"a URL to the audit document, and the date if known."
     )
-    r = exa.deep_research(instructions, timeout_seconds=600)
+    r = exa.deep_research(instructions, timeout_seconds=1500)
     citations: list[dict] = []
     for item in r.get("data", {}).get("auditReports", []):
         url = str(item.get("url") or "").strip()
@@ -156,11 +159,38 @@ def _fetch_research_citations(protocol: str) -> tuple[list[dict], str | None]:
 def run_pipeline(protocol: str, backend: str, mode: str) -> dict[str, Any]:
     """Run full search_audit_reports() with backend patched in."""
     t0 = time.monotonic()
-    original = inventory_domain_mod._tavily_search  # type: ignore[attr-defined]
+    original_search = inventory_domain_mod._tavily_search  # type: ignore[attr-defined]
+    original_classify = audit_reports_mod.classify_search_results  # type: ignore[attr-defined]
     research_citations: list[dict] | None = None
     research_task_id: str | None = None
     if backend == "exa" and mode == "research_plus":
         research_citations, research_task_id = _fetch_research_citations(protocol)
+
+        # Bypass stage 1b for Deep Research seeds: append them as pre-approved
+        # classified entries (confidence=1.0) so they flow into stage 2/3 even
+        # if their snippet wouldn't match "audit report" keywords.
+        def _classify_with_research_seeds(results, company, debug=False):
+            classified = original_classify(results, company, debug=debug)
+            seen_urls = {c.get("url", "").strip() for c in classified}
+            for cit in research_citations or []:
+                url = cit.get("url", "").strip()
+                if not url or url in seen_urls:
+                    continue
+                classified.append(
+                    {
+                        "url": url,
+                        "title": cit.get("title"),
+                        "auditor": None,
+                        "date": None,
+                        "type": None,
+                        "confidence": 1.0,
+                    }
+                )
+                seen_urls.add(url)
+            return classified
+
+        audit_reports_mod.classify_search_results = _classify_with_research_seeds  # type: ignore[attr-defined]
+
     _patch_search(backend, mode, research_citations=research_citations)
     try:
         result = audit_reports_mod.search_audit_reports(
@@ -170,7 +200,8 @@ def run_pipeline(protocol: str, backend: str, mode: str) -> dict[str, Any]:
             debug=False,
         )
     finally:
-        _restore_search(original)
+        _restore_search(original_search)
+        audit_reports_mod.classify_search_results = original_classify  # type: ignore[attr-defined]
     elapsed_ms = int((time.monotonic() - t0) * 1000)
     return {
         "protocol": protocol,
@@ -206,7 +237,7 @@ def run_deep_research(protocol: str) -> dict[str, Any]:
         "notes": [],
     }
     try:
-        r = exa.deep_research(instructions, timeout_seconds=600)
+        r = exa.deep_research(instructions, timeout_seconds=1500)
         record["task_id"] = r.get("task_id")
         for item in r.get("data", {}).get("auditReports", []):
             url = str(item.get("url") or "").strip()
