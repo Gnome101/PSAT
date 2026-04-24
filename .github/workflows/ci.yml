@@ -6,6 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# Latest commit wins. A rapid-fire push cancels any in-flight CI for the
+# same PR (or the same branch on main) so we never spend resources on
+# stale SHAs. Cancelled CI runs don't trigger pr-preview or prod-deploy
+# (both are gated on conclusion == 'success'), so chained deploys also
+# follow the latest-commit-wins rule.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest

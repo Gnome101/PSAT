@@ -1,19 +1,36 @@
 name: Production deploy
 
+# Triggered by CI completing on a push to main. Gating on CI success
+# keeps red builds from reaching prod even if the `production`
+# environment's manual-approval gate is misconfigured or removed.
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 # Never run two prod deploys at once; let a queued one wait for the first.
+# Keyed on a static name (not run id) so multiple SHAs land in a queue
+# rather than racing flyctl deploy.
 concurrency:
   group: prod-deploy
   cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   deploy:
+    # Three gates, all required:
+    # 1. CI must have succeeded — broken main shouldn't reach prod even
+    #    if someone bypassed branch protection.
+    # 2. CI must have been triggered by a push (PRs go through pr-preview).
+    # 3. The push must have targeted main — CI on other branches doesn't
+    #    deploy.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     # Environment `production` gates secrets (FLY_PROD_API_TOKEN) and can
     # require a manual reviewer approval — configure in Settings → Environments.
@@ -21,7 +38,12 @@ jobs:
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_PROD_API_TOKEN }}
     steps:
+      # Checkout the SHA CI signed off on (default would be the workflow_run
+      # head, which is the same SHA but pinning it explicitly keeps intent
+      # clear — flyctl deploy uses the working tree).
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Setup flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
