@@ -86,6 +86,12 @@ jobs:
         env:
           PSAT_LIVE_URL: ${{ steps.preview.outputs.url }}
           PSAT_ADMIN_KEY: ${{ secrets.PSAT_ADMIN_KEY }}
+          # Pin the audit-fixture URL to the head SHA of the PR. The file
+          # is vendored at tests/fixtures/audits/sample_audit.pdf and
+          # ``raw.githubusercontent.com/<repo>/<sha>/...`` resolves to
+          # that exact commit's blob — stable forever in git history,
+          # immune to repo-default-branch renames or future file moves.
+          PSAT_LIVE_AUDIT_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.workflow_run.head_sha }}/tests/fixtures/audits/sample_audit.pdf
         run: uv run pytest -m live -q
 
       - name: Post sticky result (success)

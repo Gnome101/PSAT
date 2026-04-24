@@ -95,6 +95,31 @@ class LiveClient:
         r.raise_for_status()
         return r.json()
 
+    def analyze_remaining(self, company: str) -> dict[str, Any]:
+        r = self._session.post(
+            self._url(f"/api/company/{company}/analyze-remaining"),
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def refresh_company_coverage(self, company: str, verify_source_equivalence: bool = False) -> dict[str, Any]:
+        # ``verify_source_equivalence=False`` skips the per-file Etherscan
+        # equivalence pass. Tests default to false because the network leg
+        # is rate-limited and irrelevant to "did the row count update?".
+        r = self._session.post(
+            self._url(f"/api/company/{company}/refresh_coverage"),
+            params={"verify_source_equivalence": str(verify_source_equivalence).lower()},
+            timeout=120,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def reextract_audit_scope(self, audit_id: int) -> requests.Response:
+        # Raw Response so callers can inspect 409 (text extraction not
+        # complete) without the wrapper raising on it.
+        return self._session.post(self._url(f"/api/audits/{audit_id}/reextract_scope"), timeout=15)
+
     # -- reads ---------------------------------------------------------------
 
     def job(self, job_id: str) -> dict[str, Any]:
@@ -165,11 +190,6 @@ class LiveClient:
         return r.json()
 
     # -- monitoring ----------------------------------------------------------
-
-    def list_monitored_contracts(self) -> list[dict[str, Any]]:
-        r = self._session.get(self._url("/api/monitored-contracts"), timeout=15)
-        r.raise_for_status()
-        return r.json()
 
     def list_monitored_events(self, limit: int = 50) -> list[dict[str, Any]]:
         r = self._session.get(self._url("/api/monitored-events"), params={"limit": limit}, timeout=15)
@@ -286,6 +306,79 @@ class LiveClient:
 
     def delete_subscription(self, subscription_id: str) -> dict[str, Any]:
         r = self._session.delete(self._url(f"/api/subscriptions/{subscription_id}"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    # -- monitored contracts (PATCH) ----------------------------------------
+
+    def list_monitored_contracts(
+        self,
+        protocol_id: int | None = None,
+        chain: str | None = None,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {}
+        if protocol_id is not None:
+            params["protocol_id"] = protocol_id
+        if chain is not None:
+            params["chain"] = chain
+        r = self._session.get(self._url("/api/monitored-contracts"), params=params, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def patch_monitored_contract(self, contract_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        r = self._session.patch(
+            self._url(f"/api/monitored-contracts/{contract_id}"),
+            json=payload,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    # -- protocol monitoring -------------------------------------------------
+
+    def protocol_monitoring(self, protocol_id: int) -> list[dict[str, Any]]:
+        r = self._session.get(self._url(f"/api/protocols/{protocol_id}/monitoring"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def protocol_subscriptions(self, protocol_id: int) -> list[dict[str, Any]]:
+        r = self._session.get(self._url(f"/api/protocols/{protocol_id}/subscriptions"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def protocol_events(self, protocol_id: int, limit: int = 50) -> list[dict[str, Any]]:
+        r = self._session.get(self._url(f"/api/protocols/{protocol_id}/events"), params={"limit": limit}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def protocol_tvl(self, protocol_id: int, days: int = 30) -> dict[str, Any]:
+        r = self._session.get(self._url(f"/api/protocols/{protocol_id}/tvl"), params={"days": days}, timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+    def re_enroll_protocol(self, protocol_id: int, chain: str = "ethereum") -> dict[str, Any]:
+        # Re-enrollment hits the live RPC + classifier and can take a while
+        # on a cold preview, so the timeout is generous compared to other
+        # mutation endpoints.
+        r = self._session.post(
+            self._url(f"/api/protocols/{protocol_id}/re-enroll"),
+            params={"chain": chain},
+            timeout=120,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def subscribe_protocol(self, protocol_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        r = self._session.post(
+            self._url(f"/api/protocols/{protocol_id}/subscribe"),
+            json=payload,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def delete_protocol_subscription(self, sub_id: str) -> dict[str, Any]:
+        r = self._session.delete(self._url(f"/api/protocol-subscriptions/{sub_id}"), timeout=15)
         r.raise_for_status()
         return r.json()
 
@@ -443,3 +536,23 @@ def analyzed_company(live_client: LiveClient) -> dict[str, Any]:
             f"on {live_client.base_url}: {parent.get('error')}"
         )
     return parent
+
+
+@pytest.fixture(scope="session")
+def company_protocol_id(analyzed_company, live_client: LiveClient) -> int:
+    """Resolve the integer Protocol.id for the test company.
+
+    The protocol cluster of endpoints (``/api/protocols/{id}/...``) all key
+    on this id. The parent Job row ``analyzed_company`` returns includes a
+    ``protocol_id`` after discovery commits it, but we deliberately re-read
+    via ``GET /api/company/{name}`` so this fixture also doubles as a sanity
+    check that the company was actually upserted as a Protocol row.
+    """
+    overview = live_client.company_overview(DEFAULT_TEST_COMPANY)
+    pid = overview.get("protocol_id")
+    if not isinstance(pid, int):
+        pytest.fail(
+            f"Company '{DEFAULT_TEST_COMPANY}' has no Protocol row after analysis "
+            f"(overview.protocol_id={pid!r}); cannot exercise protocol endpoints."
+        )
+    return pid

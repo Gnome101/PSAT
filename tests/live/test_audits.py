@@ -27,11 +27,16 @@ import requests
 
 from tests.live.conftest import DEFAULT_COMPANY_TIMEOUT, DEFAULT_TEST_COMPANY, LiveClient
 
-# Public Spearbit audit PDF of EtherFi — chosen because:
-# (1) Spearbit's portfolio repo is stable and unlikely to rewrite history,
-# (2) EtherFi is the default test company used by analyzed_company,
-# (3) the PDF has an explicit scope section that scope extraction handles well.
-# If the file moves, override with PSAT_LIVE_AUDIT_URL.
+# Default audit PDF used when ``PSAT_LIVE_AUDIT_URL`` is not set. This
+# is the public Spearbit EtherFi review — kept as the local-dev default
+# because (a) it has a real scope section the LLM extracts well and
+# (b) Spearbit's repo is stable enough for ad-hoc local runs.
+#
+# CI overrides ``PSAT_LIVE_AUDIT_URL`` (see .github/workflows/live.yml)
+# to point at ``tests/fixtures/audits/sample_audit.pdf`` via raw.github
+# at the PR's head SHA — that URL is repo-owned and immune to
+# upstream rot or repo renames. Override locally too if the Spearbit
+# URL ever 404s.
 DEFAULT_AUDIT_URL = "https://github.com/spearbit/portfolio/raw/master/pdfs/EtherFi-Spearbit-Security-Review.pdf"
 AUDIT_URL = os.environ.get("PSAT_LIVE_AUDIT_URL", DEFAULT_AUDIT_URL)
 
@@ -182,6 +187,37 @@ def test_audit_pdf_proxied(created_audit, live_client: LiveClient):
     # Small-but-non-zero body — the exact size depends on the upstream PDF
     # but a byte or two would indicate a passthrough failure.
     assert len(resp.content) > 100
+
+
+def test_reextract_scope_resets_status(scoped_audit, live_client: LiveClient):
+    """``reextract_scope`` clears scope-extraction state on a row whose
+    text extraction has already succeeded. We assert the response shape
+    and that a follow-up GET sees the cleared status before the workers
+    re-claim the row.
+
+    Race: the scope-extraction worker polls every few seconds and may
+    re-set status to ``processing`` before our GET fires. We accept any
+    of {None, 'processing'} as proof the reset took effect — anything
+    still showing ``success`` means the reset itself was a no-op.
+    """
+    audit_id = scoped_audit["id"]
+    resp = live_client.reextract_audit_scope(audit_id)
+    assert resp.status_code == 200, f"reextract returned {resp.status_code}: {resp.text[:200]}"
+    body = resp.json()
+    assert body == {"audit_id": audit_id, "reset": True}
+
+    # Check the row state immediately. Worker can re-claim quickly so we
+    # accept either the reset value (None) or the post-reclaim value
+    # (processing). ``success`` would mean the reset never happened.
+    row = live_client.get_audit(audit_id)
+    assert row.get("scope_extraction_status") in (None, "processing"), (
+        f"scope_extraction_status should be reset to None or in-flight, got {row.get('scope_extraction_status')!r}"
+    )
+
+
+def test_reextract_scope_unknown_audit_404(live_client: LiveClient):
+    resp = live_client.reextract_audit_scope(999_999_999)
+    assert resp.status_code == 404, f"unknown audit id should 404, got {resp.status_code}: {resp.text[:200]}"
 
 
 def test_contract_audit_timeline_on_weth(analyzed_weth, live_client: LiveClient):

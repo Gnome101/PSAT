@@ -7,6 +7,9 @@ non-API paths. Anything deeper belongs in a dedicated test file.
 
 from __future__ import annotations
 
+import re
+
+import pytest
 import requests
 
 from tests.live.conftest import LiveClient
@@ -45,4 +48,26 @@ def test_spa_fallback_serves_frontend(live_base_url: str):
     ctype = r.headers.get("Content-Type", "")
     assert "html" in ctype.lower() or "text/plain" in ctype.lower(), (
         f"Root path should return HTML (or the build-not-found text fallback), got {ctype!r}"
+    )
+
+
+def test_frontend_assets_served(live_base_url: str):
+    """Pull the SPA HTML, find a referenced JS asset, and confirm it's
+    served with a JS content-type. Catches the case where the SPA
+    fallback returns HTML but the underlying ``/assets`` mount points at
+    a missing or empty directory — a deploy that loads the shell but
+    never paints anything beyond it."""
+    html = requests.get(live_base_url + "/", timeout=15).text
+    m = re.search(r"/assets/([\w.\-]+\.js)", html)
+    if not m:
+        # Local-dev runs may not have a built frontend at all — the SPA
+        # fallback will serve a plaintext "Frontend not built" message.
+        # Skip rather than fail so the live suite is runnable locally.
+        pytest.skip("no JS asset URL found in frontend HTML (likely no built frontend)")
+    asset_path = "/assets/" + m.group(1)
+    r = requests.get(live_base_url + asset_path, timeout=15)
+    assert r.status_code == 200, f"asset {asset_path} returned {r.status_code}"
+    ctype = r.headers.get("Content-Type", "")
+    assert ctype.startswith(("application/javascript", "text/javascript")), (
+        f"asset {asset_path} served with non-JS content-type {ctype!r}"
     )
