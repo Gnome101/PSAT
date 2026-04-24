@@ -1059,16 +1059,22 @@ def test_discovery_company_mode_advances_to_selection(monkeypatch):
         "workers.discovery.find_previous_company_inventory",
         lambda _s, _company, exclude_job_id=None, chain=None: None,
     )
+    _fake_inventory = {
+        "contracts": [
+            {"address": "0xaaaa" + "a" * 36, "name": "TokenA", "chains": ["ethereum"], "confidence": 0.9},
+            {"address": "0xbbbb" + "b" * 36, "name": "TokenB", "chains": ["ethereum"], "confidence": 0.8},
+        ],
+        "official_domain": "testprotocol.io",
+    }
     monkeypatch.setattr(
-        "workers.discovery.search_protocol_inventory",
+        "services.discovery.run_discovery.run_discovery",
         lambda *_a, **_kw: {
-            "contracts": [
-                {"address": "0xaaaa" + "a" * 36, "name": "TokenA", "chains": ["ethereum"], "confidence": 0.9},
-                {"address": "0xbbbb" + "b" * 36, "name": "TokenB", "chains": ["ethereum"], "confidence": 0.8},
-            ],
-            "official_domain": "testprotocol.io",
+            "audits": {"reports": [], "errors": [], "notes": []},
+            "addresses": _fake_inventory,
+            "meta": {"protocol": "TestProtocol", "estimated_cost_usd": 0.0, "search_calls": 0, "research_calls": 0},
         },
     )
+    monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *_a, **_kw: _fake_inventory)
     monkeypatch.setattr(worker, "_spawn_parallel_discovery", lambda *_a, **_kw: None)
 
     try:

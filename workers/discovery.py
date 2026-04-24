@@ -112,15 +112,31 @@ class DiscoveryWorker(BaseWorker):
             if isinstance(_raw, dict):
                 prev_inventory = _raw
 
-        self.update_detail(session, job, f"Discovering contracts for {company}")
+        self.update_detail(session, job, f"Discovering contracts + audits for {company}")
         logger.info("Discovery started for job %s: company=%s, chain=%s", job.id, company, chain)
-        inventory = search_protocol_inventory(company, chain=chain)
+
+        # Premium+Deps unified discovery (see services/discovery/run_discovery.py).
+        # Runs audit + address pipelines in one call, including Deep Research seeds,
+        # dependency two-pass for BoringVault-class components, and SPA-bait overrides.
+        from services.discovery.run_discovery import run_discovery
+
+        try:
+            unified = run_discovery(company, chain=chain)
+            inventory = unified["addresses"]
+            audit_result_raw: dict | None = unified["audits"]
+            discovery_meta = unified["meta"]
+        except Exception as exc:
+            logger.warning("Job %s: unified discovery failed, falling back to legacy search: %s", job.id, exc)
+            inventory = search_protocol_inventory(company, chain=chain)
+            audit_result_raw = None
+            discovery_meta = {"fallback": True, "error": str(exc)}
 
         # Merge with previous inventory if available
         if prev_inventory and isinstance(prev_inventory, dict):
             inventory = merge_inventory(prev_inventory, inventory)
 
         store_artifact(session, job.id, "contract_inventory", data=inventory)
+        store_artifact(session, job.id, "discovery_meta", data=discovery_meta)
 
         # Create or look up Protocol row
         protocol_row = get_or_create_protocol(session, company, official_domain=inventory.get("official_domain"))
@@ -128,7 +144,7 @@ class DiscoveryWorker(BaseWorker):
         session.commit()
 
         # --- Audit report discovery ---
-        self.update_detail(session, job, f"Discovering audit reports for {company}")
+        self.update_detail(session, job, f"Persisting audit reports for {company}")
         prev_audits: dict | None = None
         if prev_job:
             _raw_audits = get_artifact(session, prev_job.id, "audit_reports")
@@ -136,10 +152,13 @@ class DiscoveryWorker(BaseWorker):
                 prev_audits = _raw_audits
 
         try:
-            audit_result = search_audit_reports(
-                company,
-                official_domain=inventory.get("official_domain"),
-            )
+            if audit_result_raw is None:
+                # Legacy fallback path (unified discovery failed above)
+                audit_result_raw = search_audit_reports(
+                    company,
+                    official_domain=inventory.get("official_domain"),
+                )
+            audit_result = audit_result_raw
             if prev_audits:
                 audit_result = merge_audit_reports(prev_audits, audit_result)
             store_artifact(session, job.id, "audit_reports", data=audit_result)
@@ -148,7 +167,7 @@ class DiscoveryWorker(BaseWorker):
             if audit_count:
                 logger.info("Job %s: found %d audit report(s) for %s", job.id, audit_count, company)
         except Exception as exc:
-            logger.warning("Job %s: audit report discovery failed: %s", job.id, exc)
+            logger.warning("Job %s: audit report persistence failed: %s", job.id, exc)
 
         discovered = [e for e in inventory.get("contracts", []) if e.get("address")]
 
