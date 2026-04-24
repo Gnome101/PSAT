@@ -85,6 +85,15 @@ class LiveClient:
         r.raise_for_status()
         return r.json()
 
+    def cancel_queued_company_jobs(self, company: str) -> dict[str, Any]:
+        """Delete every ``queued`` job tagged to *company*; teardown for analyze-remaining."""
+        r = self._session.delete(
+            self._url(f"/api/company/{company}/queued-jobs"),
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
     def refresh_company_coverage(self, company: str, verify_source_equivalence: bool = False) -> dict[str, Any]:
         # Skip the per-file Etherscan equivalence pass — rate-limited, irrelevant to row count.
         r = self._session.post(

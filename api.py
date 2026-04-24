@@ -533,6 +533,38 @@ def analyze_remaining(company_name: str) -> dict[str, Any]:
 
 
 @app.delete(
+    "/api/company/{company_name}/queued-jobs",
+    dependencies=[Depends(require_admin_key)],
+)
+def cancel_queued_company_jobs(company_name: str) -> dict[str, Any]:
+    """Delete every ``queued`` job tagged to *company_name*.
+
+    Intended for test teardown after ``POST /api/company/{name}/analyze-remaining``
+    so the resulting job flood doesn't starve downstream tests running against
+    the same preview DB. Leaves ``processing``/``completed``/``failed`` rows
+    alone — those represent real in-flight or persisted work a concurrent
+    caller may be polling.
+    """
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+        result = session.execute(
+            text(
+                """
+                DELETE FROM jobs
+                WHERE company = :company AND status = 'queued'
+                RETURNING id
+                """
+            ),
+            {"company": company_name},
+        )
+        deleted = [str(row_id) for (row_id,) in result]
+        session.commit()
+    return {"company": company_name, "cancelled": len(deleted), "job_ids": deleted}
+
+
+@app.delete(
     "/api/company/{company_name}/addresses/{address}",
     dependencies=[Depends(require_admin_key)],
 )

@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+import pytest
+
 from tests.live.conftest import DEFAULT_TEST_COMPANY, LiveClient
 
 
-def test_analyze_remaining_response_shape(analyzed_company, live_client: LiveClient):
+@pytest.fixture
+def _drain_etherfi_queue(live_client: LiveClient):
+    """Cancel every queued etherfi job after the test.
+
+    ``analyze-remaining`` legitimately queues hundreds of rows and our test
+    only asserts the response shape, not that any complete. Without this
+    teardown the flood sits in the queue and starves downstream tests
+    (test_concurrency especially) that run against the same preview DB.
+    """
+    yield
+    live_client.cancel_queued_company_jobs(DEFAULT_TEST_COMPANY)
+
+
+def test_analyze_remaining_response_shape(
+    analyzed_company, live_client: LiveClient, _drain_etherfi_queue
+):
     # Shape-only: ``queued`` count depends on prior runs against this preview's DB.
     body = live_client.analyze_remaining(DEFAULT_TEST_COMPANY)
     assert isinstance(body.get("queued"), int)
