@@ -1,0 +1,46 @@
+{
+  "protocol": "ether.fi",
+  "backend": "exa",
+  "mode": "regular",
+  "elapsed_ms": 26620,
+  "reports": [
+    {
+      "url": "https://github.com/etherfi-protocol/smart-contracts/tree/master/audits",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "smart-contracts/audits at master \u00b7 etherfi-protocol/smart-contracts \u00b7 GitHub",
+      "date": null,
+      "source_url": "https://github.com/etherfi-protocol/smart-contracts/tree/master/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:03:50.462051+00:00"
+    },
+    {
+      "url": "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf?alt=media&token=1d8564be-61de-42ca-96c5-b21e58ef5155",
+      "pdf_url": "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf?alt=media&token=1d8564be-61de-42ca-96c5-b21e58ef5155",
+      "auditor": "Solidified",
+      "title": "Audit Report for ether.fi",
+      "date": "2023-10-26",
+      "source_url": "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf?alt=media&token=1d8564be-61de-42ca-96c5-b21e58ef5155",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:03:50.462051+00:00"
+    },
+    {
+      "url": "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf?alt=media&token=5aa1a2dc-33c7-430d-a2cb-59f56d2cfd2b",
+      "pdf_url": "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf?alt=media&token=5aa1a2dc-33c7-430d-a2cb-59f56d2cfd2b",
+      "auditor": "Nethermind",
+      "title": "Security Review Report NM-0093 Ether Fi",
+      "date": "2023-07-05",
+      "source_url": "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf?alt=media&token=5aa1a2dc-33c7-430d-a2cb-59f56d2cfd2b",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:03:50.462051+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 19 unique result(s)",
+    "LLM classified 4 result(s) as audit reports",
+    "Extracted 3 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

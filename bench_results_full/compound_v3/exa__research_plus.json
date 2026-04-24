@@ -1,0 +1,68 @@
+{
+  "protocol": "compound v3",
+  "backend": "exa",
+  "mode": "research_plus",
+  "elapsed_ms": 109102,
+  "reports": [
+    {
+      "url": "https://www.openzeppelin.com/news/compound-iii-audit",
+      "pdf_url": null,
+      "auditor": "OpenZeppelin",
+      "title": "Compound III Audit",
+      "date": "2022-07-20",
+      "source_url": "https://www.openzeppelin.com/news/compound-iii-audit",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T08:36:09.913060+00:00"
+    },
+    {
+      "url": "https://chainsecurity.com/reports/Compound/ChainSecurity_Compound_Comet_Audit.pdf",
+      "pdf_url": "https://chainsecurity.com/reports/Compound/ChainSecurity_Compound_Comet_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "ChainSecurity audit report for compound v3",
+      "date": "2022-05-30",
+      "source_url": "https://chainsecurity.com/reports/Compound/ChainSecurity_Compound_Comet_Audit.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T08:36:09.913060+00:00"
+    },
+    {
+      "url": "https://certora.cdn.prismic.io/certora/e7ca6508-fad8-4a41-8588-b3312d8b750e_Compound+Report.pdf",
+      "pdf_url": "https://certora.cdn.prismic.io/certora/e7ca6508-fad8-4a41-8588-b3312d8b750e_Compound+Report.pdf",
+      "auditor": "Certora",
+      "title": "Compound V3 (Comet)",
+      "date": "2022-07-06",
+      "source_url": "https://www.certora.com/reports/compound-report",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T08:36:09.913060+00:00"
+    },
+    {
+      "url": "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+      "pdf_url": null,
+      "auditor": "Chainrisk",
+      "title": "Compound V3 Economic Audit Announcement",
+      "date": null,
+      "source_url": "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T08:36:09.913060+00:00"
+    },
+    {
+      "url": "https://arxiv.org/pdf/2410.04085",
+      "pdf_url": "https://arxiv.org/pdf/2410.04085",
+      "auditor": "Chainrisk",
+      "title": "Compound V3 Economic Audit Announcement",
+      "date": "2024-05-21",
+      "source_url": "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T08:36:09.913060+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 15 unique result(s)",
+    "LLM classified 5 result(s) as audit reports",
+    "Extracted 5 audit report(s)",
+    "Tavily queries used: 2/4"
+  ],
+  "research_task_id": "01kpza2amg2yydg1f3jxdgqczg",
+  "research_seed_count": 5
+}

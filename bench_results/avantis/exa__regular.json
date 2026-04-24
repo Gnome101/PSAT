@@ -1,0 +1,310 @@
+{
+  "protocol": "avantis",
+  "backend": "exa",
+  "mode": "regular",
+  "broad_query": "\"avantis\" smart contract security audit report",
+  "followup_query": "Avantis site:github.com audit OR security PDF",
+  "broad_results": [
+    {
+      "url": "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf?alt=media&token=cf670d4b-e0ff-48b0-be2c-42a415c74e61",
+      "title": "[PDF] SMART CONTRACTS REVIEW - GitBook",
+      "content": "SMART CONTRACTS REVIEW\nDecember 23rd 2023 | v. 1.0\nscore\n\n86\nPASS\nZokyo Security has concluded that \nthese smart contracts passed a \nsecurity audit.\nSecurity Audit Score\n# Zokyo Audit Scoring Avantis\n1\nAvantis Labs Smart Contracts Review\n1. Severity of Issues:\n\n\u00a0\u00a0\u00a0\u00a0- Critical: Direct, immediate risk",
+      "score": null
+    },
+    {
+      "url": "https://docs.avantisfi.com/security/audits",
+      "title": "Audits - Avantis Docs",
+      "content": "# Audits\n\n### Contracts\n\nOur contracts are open source and can be found here: https://github.com/Avantis-Labs\n\n### Protocol (Smart contract) security \n\nOur live contracts have gone through two security audits with Zellic as well Zokyo, who collectively have covered protocols such as Solana, Pyth, Su",
+      "score": null
+    },
+    {
+      "url": "https://app.kryll.io/x-ray/avantis",
+      "title": "Kryll\u00b3 | $AVNT (Avantis) X-Ray Score \u2013 Trusted Token Audit, On-Chain DYOR & Financial Insights",
+      "content": "Kryll\u00b3 | $AVNT (Avantis) X-Ray Score \u2013 Trusted Token Audit, On-Chain DYOR & Financial Insights\n\nFinancial 64%Fundamental 58%Social 50%Security 57%OnChain 58%\n\nSee all audited projects\n\nAvantis\n\n$avnt\n\nAudit Report\n\n$0.139\n\n-2.19%\n\n5.7\n\n\u26a0\ufe0f Stay Cautious\n\nAvantis is the largest RWA perps DEX in DeFi, ",
+      "score": null
+    },
+    {
+      "url": "https://ogaudit.com/crypto/avantis-avnt",
+      "title": "Avantis AVNT Social Audit, Trust Score & Expert Reviews",
+      "content": "Avantis AVNT Social Audit, Trust Score & Expert Reviews\n\nMarket Cap\n\n$2.60T\n\n1.23%\n\n24h Vol.\n\n$118.71B\n\nDom.\n\n57.42%\n\nBTC\n\n$74,528.00\n\n1.41%\n\nETH\n\n$2,281.33\n\n2.63%\n\nETH Gas\n\nLow\n\nAvarage\n\nHigh\n\nData by Etherscan\n\nFear & Greed\n\n29\n\nLogin\n\n---\n\nValue-generating projects are displayed here!\n\nSponsored\n",
+      "score": null
+    },
+    {
+      "url": "https://threesigma.xyz/case-studies/derivatives/avantis",
+      "title": "Avantis",
+      "content": "Avantis\n\nCase Studies\n\navantis\n\nEconomic Audit\n\n# Avantis\n\n## A platform offering global markets with leverage for FX, commodities, and crypto.\n\nAudit Date: 2023-05-15\n\nLanguage:\n\nType: Economic Audit\n\n## Introduction\n\nIn our engagement with Avantis, we focused on developing a robust tranche archite",
+      "score": null
+    },
+    {
+      "url": "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+      "title": "Zellic - Audit Reports",
+      "content": "Zellic - Audit Reports\n[\n](https://reports.zellic.io/)\n[Assessment reports](https://reports.zellic.io/)[Public findings](https://reports.zellic.io/findings)\n[Back to Zellic siteBack\n\u2197](https://www.zellic.io/)\n[Assessment reports](https://reports.zellic.io/)>[Avantis](https://reports.zellic.io/public",
+      "score": null
+    },
+    {
+      "url": "https://app.charmverse.io/op-grants/avantis-audit-grant-request-9441679810816523",
+      "title": "Avantis Audit Grant Request - CharmVerse",
+      "content": "CharmVerse - The Network for Onchain Communities",
+      "score": null
+    },
+    {
+      "url": "https://docs.avantisfi.com/avnt-token/staking-security-module",
+      "title": "Staking: Security Module | Avantis",
+      "content": "# Staking: Security Module\n\nAvantis Security Module\n\nThe Avantis Security Module (SM) is a mechanism designed to protect the protocol LPs against major shortfall events.\n\nAvantis token holders can opt-in by staking their tokens in the SM. In return, they earn protocol rewards, XP boosts and fee disc",
+      "score": null
+    },
+    {
+      "url": "https://skynet.certik.com/projects/avantis",
+      "title": "Avantis - CertiK Skynet Project Insight",
+      "content": "Avantis - CertiK Skynet Project Insight\n\nPulse Feed\n\nCode Security\n\nFundamental\n\nOperational\n\nCommunity\n\nGovernance\n\nMarket\n\nMonitor\n\nPulse Feed & News\n\n03/26 17:03\n\nVolume 24h Reached $25.50M\n\n03/26 17:03\n\nVolume 24h Spiked 252.18%\n\n03/23 17:03\n\nVolume 24h Reached $11.50M\n\n03/22 21:03\n\nVolume 24h R",
+      "score": null
+    },
+    {
+      "url": "https://coincodecap.com/avantis-review",
+      "title": "Avantis Review: Must try! 2026 - CoinCodeCap",
+      "content": "Avantis Review: Must try! 2026 - CoinCodeCap /* */ --\n\nShare IT\n\nAvantis is a decentralized trading platform that opens the door to global markets right from your crypto wallet. Built on Base (by Coinbase), it combines speed, low fees, and on-chain transparency to let anyone trade not just crypto, b",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+      "title": "publications/Avantis - Zellic Audit Report.pdf at master - GitHub",
+      "content": "# File: Zellic/publications/Avantis%20-%20Zellic%20Audit%20Report.pdf\n\n- Repository: Zellic/publications | Zellic's audits, publications, and reports | 218 stars\n- Branch: master\n\nBinary file | 1056269 bytes | application/octet-stream",
+      "score": null
+    },
+    {
+      "url": "https://github.com/nelsontanko/safe-audit",
+      "title": "nelsontanko/safe-audit",
+      "content": "# Repository: nelsontanko/safe-audit\n\nRegulatory audit logging framework for Spring Boot applications with Nigerian regulatory compliance support (CBN, NDPA)\n\n- Stars: 1\n- Forks: 0\n- Watchers: 1\n- Open issues: 0\n- Primary language: Java\n- Languages: Java (97.1%), HTML (2.8%), Shell\n- License: Apache",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Avantis-Labs/avantis_trader_sdk/security",
+      "title": "Overview \u00b7 Avantis-Labs/avantis_trader_sdk \u00b7 GitHub",
+      "content": "Overview \u00b7 Avantis-Labs/avantis_trader_sdk \u00b7 GitHub\n\n/ avantis_trader_sdk Public\n\nStar 23\n\n- Pricing\n- Notifications\n- Fork 17\n\n## Security\n\n### No security policy detected\n\nThis project has not set up a SECURITY.md file yet.\n\n## There aren\u2019t any published security advisories",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Avantis-Labs/avantis_trader_sdk_docs",
+      "title": "Avantis-Labs/avantis_trader_sdk_docs",
+      "content": "# Repository: Avantis-Labs/avantis_trader_sdk_docs\n\nDocs for avantis_trader_sdk\n\n- Stars: 1\n- Forks: 1\n- Watchers: 1\n- Open issues: 0\n- Primary language: HTML\n- Languages: HTML (95.7%), JavaScript (2.5%), CSS (1.4%), SCSS (0.3%)\n- Default branch: main\n- Created: 2024-03-02T07:50:46Z\n- Last push: 202",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Avantis-Labs/avantis_trader_sdk/community",
+      "title": "Community Standards \u00b7 GitHub",
+      "content": "Community Standards \u00b7 GitHub\n\n## Community Standards\n\nHere\u2019s how this project compares to recommended community standards.\n\nChecklist\n\nDescription\n\nCode of conduct\n\nContributing Writing contributing guidelines\n\nLicense Choosing a license\n\nSecurity policy Set up a security policy\n\nIssue templates\n\nPu",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Zellic/publications",
+      "title": "Zellic's audit reports and publications - GitHub",
+      "content": "# Repository: Zellic/publications\n\nZellic's audits, publications, and reports\n\n- Stars: 216\n- Forks: 28\n- Watchers: 216\n- Open issues: 2\n- Default branch: master\n- Homepage: https://reports.zellic.io\n- Created: 2022-03-17T15:29:31Z\n- Last push: 2026-03-24T18:39:48Z\n- Contributors: 7 (top: justin-cho",
+      "score": null
+    },
+    {
+      "url": "https://github.com/DefiLlama/DefiLlama-Adapters/pull/8865",
+      "title": "Add AvantisFi \u00b7 Pull Request #8865 \u00b7 DefiLlama/DefiLlama-Adapters",
+      "content": "# Pull Request: DefiLlama/DefiLlama-Adapters #8865\n\n- Repository: DefiLlama/DefiLlama-Adapters | 1K stars | JavaScript\n\n## Add AvantisFi\n\n- Author: [@skords](https://github.com/skords)\n- Association: CONTRIBUTOR\n- State: closed\n- Source branch: main\n- Target branch: main\n- Mergeable: dirty\n- Commits",
+      "score": null
+    },
+    {
+      "url": "https://github.com/AventusDAO/avn-parachain/security",
+      "title": "Overview \u00b7 AventusDAO/avn-parachain \u00b7 GitHub",
+      "content": "Overview \u00b7 AventusDAO/avn-parachain \u00b7 GitHub\n\n## Security\n\n### SECURITY.md\n\n# Security Policy\n\nAventus Network is committed to resolving security vulnerabilities quickly and carefully. We make every effort to ensure that risks are minimised and vulnerability fixes are delivered quickly to address se",
+      "score": null
+    },
+    {
+      "url": "https://gist.github.com/pantheraudits/e56428bdccaf0747de519be47010925c",
+      "title": "AAVE Aptos V3 Security Findings by Panther",
+      "content": "# Gist: AAVE Aptos V3 Security Findings by Panther\n\n- Author: [@pantheraudits](https://github.com/pantheraudits)\n- Public gist (1 file)\n- Created: 2026-01-30T16:40:41Z\n- Updated: 2026-02-14T08:05:57Z\n\n## aave-aptos-findings.md\n\n```md\n# AAVE Aptos V3 Security Findings\n\n**Audit Contest:** [Cantina - A",
+      "score": null
+    },
+    {
+      "url": "https://github.com/rudi-q/leed_pdf_viewer/blob/81aa66fa07ad3f0fd7c3aa06e379c614150701eb/SECURITY.md",
+      "title": "SECURITY.md at 81aa66fa07ad3f0fd7c3aa06e379c614150701eb \u00b7 rudi-q/leed_pdf_viewer",
+      "content": "# File: rudi-q/leed_pdf_viewer/SECURITY.md\n\n- Repository: rudi-q/leed_pdf_viewer | Open-source PDF annotation and drawing tool built for privacy. Sketch and annotate PDFs with natural pen-like precision, drawing tablet support. SvelteKit + Tauri. | 390 stars | Svelte\n- Branch: 81aa66fa07ad3f0fd7c3aa",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf?alt=media&token=cf670d4b-e0ff-48b0-be2c-42a415c74e61",
+      "title": "[PDF] SMART CONTRACTS REVIEW - GitBook",
+      "content": "SMART CONTRACTS REVIEW\nDecember 23rd 2023 | v. 1.0\nscore\n\n86\nPASS\nZokyo Security has concluded that \nthese smart contracts passed a \nsecurity audit.\nSecurity Audit Score\n# Zokyo Audit Scoring Avantis\n1\nAvantis Labs Smart Contracts Review\n1. Severity of Issues:\n\n\u00a0\u00a0\u00a0\u00a0- Critical: Direct, immediate risk",
+      "score": null
+    },
+    {
+      "url": "https://docs.avantisfi.com/security/audits",
+      "title": "Audits - Avantis Docs",
+      "content": "# Audits\n\n### Contracts\n\nOur contracts are open source and can be found here: https://github.com/Avantis-Labs\n\n### Protocol (Smart contract) security \n\nOur live contracts have gone through two security audits with Zellic as well Zokyo, who collectively have covered protocols such as Solana, Pyth, Su",
+      "score": null
+    },
+    {
+      "url": "https://app.kryll.io/x-ray/avantis",
+      "title": "Kryll\u00b3 | $AVNT (Avantis) X-Ray Score \u2013 Trusted Token Audit, On-Chain DYOR & Financial Insights",
+      "content": "Kryll\u00b3 | $AVNT (Avantis) X-Ray Score \u2013 Trusted Token Audit, On-Chain DYOR & Financial Insights\n\nFinancial 64%Fundamental 58%Social 50%Security 57%OnChain 58%\n\nSee all audited projects\n\nAvantis\n\n$avnt\n\nAudit Report\n\n$0.139\n\n-2.19%\n\n5.7\n\n\u26a0\ufe0f Stay Cautious\n\nAvantis is the largest RWA perps DEX in DeFi, ",
+      "score": null
+    },
+    {
+      "url": "https://ogaudit.com/crypto/avantis-avnt",
+      "title": "Avantis AVNT Social Audit, Trust Score & Expert Reviews",
+      "content": "Avantis AVNT Social Audit, Trust Score & Expert Reviews\n\nMarket Cap\n\n$2.60T\n\n1.23%\n\n24h Vol.\n\n$118.71B\n\nDom.\n\n57.42%\n\nBTC\n\n$74,528.00\n\n1.41%\n\nETH\n\n$2,281.33\n\n2.63%\n\nETH Gas\n\nLow\n\nAvarage\n\nHigh\n\nData by Etherscan\n\nFear & Greed\n\n29\n\nLogin\n\n---\n\nValue-generating projects are displayed here!\n\nSponsored\n",
+      "score": null
+    },
+    {
+      "url": "https://threesigma.xyz/case-studies/derivatives/avantis",
+      "title": "Avantis",
+      "content": "Avantis\n\nCase Studies\n\navantis\n\nEconomic Audit\n\n# Avantis\n\n## A platform offering global markets with leverage for FX, commodities, and crypto.\n\nAudit Date: 2023-05-15\n\nLanguage:\n\nType: Economic Audit\n\n## Introduction\n\nIn our engagement with Avantis, we focused on developing a robust tranche archite",
+      "score": null
+    },
+    {
+      "url": "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+      "title": "Zellic - Audit Reports",
+      "content": "Zellic - Audit Reports\n[\n](https://reports.zellic.io/)\n[Assessment reports](https://reports.zellic.io/)[Public findings](https://reports.zellic.io/findings)\n[Back to Zellic siteBack\n\u2197](https://www.zellic.io/)\n[Assessment reports](https://reports.zellic.io/)>[Avantis](https://reports.zellic.io/public",
+      "score": null
+    },
+    {
+      "url": "https://app.charmverse.io/op-grants/avantis-audit-grant-request-9441679810816523",
+      "title": "Avantis Audit Grant Request - CharmVerse",
+      "content": "CharmVerse - The Network for Onchain Communities",
+      "score": null
+    },
+    {
+      "url": "https://docs.avantisfi.com/avnt-token/staking-security-module",
+      "title": "Staking: Security Module | Avantis",
+      "content": "# Staking: Security Module\n\nAvantis Security Module\n\nThe Avantis Security Module (SM) is a mechanism designed to protect the protocol LPs against major shortfall events.\n\nAvantis token holders can opt-in by staking their tokens in the SM. In return, they earn protocol rewards, XP boosts and fee disc",
+      "score": null
+    },
+    {
+      "url": "https://skynet.certik.com/projects/avantis",
+      "title": "Avantis - CertiK Skynet Project Insight",
+      "content": "Avantis - CertiK Skynet Project Insight\n\nPulse Feed\n\nCode Security\n\nFundamental\n\nOperational\n\nCommunity\n\nGovernance\n\nMarket\n\nMonitor\n\nPulse Feed & News\n\n03/26 17:03\n\nVolume 24h Reached $25.50M\n\n03/26 17:03\n\nVolume 24h Spiked 252.18%\n\n03/23 17:03\n\nVolume 24h Reached $11.50M\n\n03/22 21:03\n\nVolume 24h R",
+      "score": null
+    },
+    {
+      "url": "https://coincodecap.com/avantis-review",
+      "title": "Avantis Review: Must try! 2026 - CoinCodeCap",
+      "content": "Avantis Review: Must try! 2026 - CoinCodeCap /* */ --\n\nShare IT\n\nAvantis is a decentralized trading platform that opens the door to global markets right from your crypto wallet. Built on Base (by Coinbase), it combines speed, low fees, and on-chain transparency to let anyone trade not just crypto, b",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+      "title": "publications/Avantis - Zellic Audit Report.pdf at master - GitHub",
+      "content": "# File: Zellic/publications/Avantis%20-%20Zellic%20Audit%20Report.pdf\n\n- Repository: Zellic/publications | Zellic's audits, publications, and reports | 218 stars\n- Branch: master\n\nBinary file | 1056269 bytes | application/octet-stream",
+      "score": null
+    },
+    {
+      "url": "https://github.com/nelsontanko/safe-audit",
+      "title": "nelsontanko/safe-audit",
+      "content": "# Repository: nelsontanko/safe-audit\n\nRegulatory audit logging framework for Spring Boot applications with Nigerian regulatory compliance support (CBN, NDPA)\n\n- Stars: 1\n- Forks: 0\n- Watchers: 1\n- Open issues: 0\n- Primary language: Java\n- Languages: Java (97.1%), HTML (2.8%), Shell\n- License: Apache",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Avantis-Labs/avantis_trader_sdk/security",
+      "title": "Overview \u00b7 Avantis-Labs/avantis_trader_sdk \u00b7 GitHub",
+      "content": "Overview \u00b7 Avantis-Labs/avantis_trader_sdk \u00b7 GitHub\n\n/ avantis_trader_sdk Public\n\nStar 23\n\n- Pricing\n- Notifications\n- Fork 17\n\n## Security\n\n### No security policy detected\n\nThis project has not set up a SECURITY.md file yet.\n\n## There aren\u2019t any published security advisories",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Avantis-Labs/avantis_trader_sdk_docs",
+      "title": "Avantis-Labs/avantis_trader_sdk_docs",
+      "content": "# Repository: Avantis-Labs/avantis_trader_sdk_docs\n\nDocs for avantis_trader_sdk\n\n- Stars: 1\n- Forks: 1\n- Watchers: 1\n- Open issues: 0\n- Primary language: HTML\n- Languages: HTML (95.7%), JavaScript (2.5%), CSS (1.4%), SCSS (0.3%)\n- Default branch: main\n- Created: 2024-03-02T07:50:46Z\n- Last push: 202",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Avantis-Labs/avantis_trader_sdk/community",
+      "title": "Community Standards \u00b7 GitHub",
+      "content": "Community Standards \u00b7 GitHub\n\n## Community Standards\n\nHere\u2019s how this project compares to recommended community standards.\n\nChecklist\n\nDescription\n\nCode of conduct\n\nContributing Writing contributing guidelines\n\nLicense Choosing a license\n\nSecurity policy Set up a security policy\n\nIssue templates\n\nPu",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Zellic/publications",
+      "title": "Zellic's audit reports and publications - GitHub",
+      "content": "# Repository: Zellic/publications\n\nZellic's audits, publications, and reports\n\n- Stars: 216\n- Forks: 28\n- Watchers: 216\n- Open issues: 2\n- Default branch: master\n- Homepage: https://reports.zellic.io\n- Created: 2022-03-17T15:29:31Z\n- Last push: 2026-03-24T18:39:48Z\n- Contributors: 7 (top: justin-cho",
+      "score": null
+    },
+    {
+      "url": "https://github.com/DefiLlama/DefiLlama-Adapters/pull/8865",
+      "title": "Add AvantisFi \u00b7 Pull Request #8865 \u00b7 DefiLlama/DefiLlama-Adapters",
+      "content": "# Pull Request: DefiLlama/DefiLlama-Adapters #8865\n\n- Repository: DefiLlama/DefiLlama-Adapters | 1K stars | JavaScript\n\n## Add AvantisFi\n\n- Author: [@skords](https://github.com/skords)\n- Association: CONTRIBUTOR\n- State: closed\n- Source branch: main\n- Target branch: main\n- Mergeable: dirty\n- Commits",
+      "score": null
+    },
+    {
+      "url": "https://github.com/AventusDAO/avn-parachain/security",
+      "title": "Overview \u00b7 AventusDAO/avn-parachain \u00b7 GitHub",
+      "content": "Overview \u00b7 AventusDAO/avn-parachain \u00b7 GitHub\n\n## Security\n\n### SECURITY.md\n\n# Security Policy\n\nAventus Network is committed to resolving security vulnerabilities quickly and carefully. We make every effort to ensure that risks are minimised and vulnerability fixes are delivered quickly to address se",
+      "score": null
+    },
+    {
+      "url": "https://gist.github.com/pantheraudits/e56428bdccaf0747de519be47010925c",
+      "title": "AAVE Aptos V3 Security Findings by Panther",
+      "content": "# Gist: AAVE Aptos V3 Security Findings by Panther\n\n- Author: [@pantheraudits](https://github.com/pantheraudits)\n- Public gist (1 file)\n- Created: 2026-01-30T16:40:41Z\n- Updated: 2026-02-14T08:05:57Z\n\n## aave-aptos-findings.md\n\n```md\n# AAVE Aptos V3 Security Findings\n\n**Audit Contest:** [Cantina - A",
+      "score": null
+    },
+    {
+      "url": "https://github.com/rudi-q/leed_pdf_viewer/blob/81aa66fa07ad3f0fd7c3aa06e379c614150701eb/SECURITY.md",
+      "title": "SECURITY.md at 81aa66fa07ad3f0fd7c3aa06e379c614150701eb \u00b7 rudi-q/leed_pdf_viewer",
+      "content": "# File: rudi-q/leed_pdf_viewer/SECURITY.md\n\n- Repository: rudi-q/leed_pdf_viewer | Open-source PDF annotation and drawing tool built for privacy. Sketch and annotate PDFs with natural pen-like precision, drawing tablet support. SvelteKit + Tauri. | 390 stars | Svelte\n- Branch: 81aa66fa07ad3f0fd7c3aa",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf?alt=media&token=cf670d4b-e0ff-48b0-be2c-42a415c74e61",
+      "auditor": "Zokyo",
+      "title": "Avantis Labs Smart Contracts Review",
+      "date": "2023-12-23",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://docs.avantisfi.com/security/audits",
+      "auditor": null,
+      "title": "Audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://threesigma.xyz/case-studies/derivatives/avantis",
+      "auditor": "Three Sigma",
+      "title": "Avantis Economic Audit",
+      "date": "2023-05-15",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+      "auditor": "Zellic",
+      "title": "Avantis Audit Report",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+      "auditor": "Zellic",
+      "title": "Avantis Audit Report",
+      "date": null,
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Zellic/publications",
+      "auditor": "Zellic",
+      "title": "Zellic's audit reports and publications",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.8
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 1245,
+    "followup_query": 667,
+    "followup_search": 1000,
+    "classify": 11569
+  },
+  "errors": []
+}

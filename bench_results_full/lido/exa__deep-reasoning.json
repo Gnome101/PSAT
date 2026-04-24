@@ -1,0 +1,199 @@
+{
+  "protocol": "lido",
+  "backend": "exa",
+  "mode": "deep-reasoning",
+  "elapsed_ms": 157022,
+  "reports": [
+    {
+      "url": "https://github.com/solodit/solodit_content/blob/main/reports/Hexens/2023-04-14-Lido.md",
+      "pdf_url": null,
+      "auditor": "Hexens",
+      "title": "Hexens Lido Audit",
+      "date": "2023-04-14",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20Protocol/README.md#1-opportunity-to-add-bufferedeth-without-submitting-to-lido",
+      "pdf_url": null,
+      "auditor": "MixBytes",
+      "title": "MixBytes Lido Audit",
+      "date": "2022-05-24",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20KSM/README.md#6-possible-zero-balance-on-lido",
+      "pdf_url": null,
+      "auditor": "MixBytes",
+      "title": "MixBytes Lido Audit",
+      "date": "2022-02-08",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://app.sherlock.xyz/audits/contests/509",
+      "pdf_url": null,
+      "auditor": "Sherlock",
+      "title": "Sherlock Saffron Lido Vaults Contest",
+      "date": "2024-09-21",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://github.com/sigp/public-audits/blob/master/lido/lido/review.pdf",
+      "pdf_url": "https://solodit-bucket.s3.amazonaws.com/storage/reports/sigmaprime/lido.pdf",
+      "auditor": "SigmaPrime",
+      "title": "SigmaPrime Lido Audit",
+      "date": "2020-12-01",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://github.com/shieldify-security/audits-portfolio-md/blob/main/Lido-CSM-Security-Review.md",
+      "pdf_url": null,
+      "auditor": "Shieldify",
+      "title": "Shieldify Lido Csm Audit",
+      "date": "2024-12-04",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://github.com/sigp/public-audits/blob/master/lido/lido-easy-track/review.pdf",
+      "pdf_url": "https://solodit-bucket.s3.amazonaws.com/storage/reports/sigmaprime/lido-easy-track.pdf",
+      "auditor": "SigmaPrime",
+      "title": "SigmaPrime Lido Audit",
+      "date": "2021-09-01",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/security/audits/",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "Lido Protocol Audits",
+      "date": null,
+      "source_url": "https://docs.lido.fi/security/audits/",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2025-07-28_Sherlock_Mellow-Core-Vaults-b8fffecfc7c40da7dac9d1654f59ca1e.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2025-07-28_Sherlock_Mellow-Core-Vaults-b8fffecfc7c40da7dac9d1654f59ca1e.pdf",
+      "auditor": "Sherlock",
+      "title": "Mellow Core Vaults",
+      "date": "2025-07-28",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2025-09-03_Nethermind_Mellow-Core-Vaults-2d0fc4a5c603de11cd338ba30110cdaa.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2025-09-03_Nethermind_Mellow-Core-Vaults-2d0fc4a5c603de11cd338ba30110cdaa.pdf",
+      "auditor": "Nethermind",
+      "title": "Mellow Core Vaults",
+      "date": "2025-09-03",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2025-10-15_Nethermind_NM-0682_Mellow-bf1ce27d0e36bff7ad7cb26077705428.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2025-10-15_Nethermind_NM-0682_Mellow-bf1ce27d0e36bff7ad7cb26077705428.pdf",
+      "auditor": "Nethermind",
+      "title": "NM-0682 Migrator",
+      "date": "2025-10-15",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2025-11-17_Nethermind_NM-0703_Mellow-61713de8a6d07b1e1efea20c6af6ab61.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2025-11-17_Nethermind_NM-0703_Mellow-61713de8a6d07b1e1efea20c6af6ab61.pdf",
+      "auditor": "Nethermind",
+      "title": "NM-0703 Oracle Submitter",
+      "date": "2025-11-17",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2025-11-19_Nethermind_NM-0735_Mellow-dfe7f5e4b179a46c4dcacfa8598769d9.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2025-11-19_Nethermind_NM-0735_Mellow-dfe7f5e4b179a46c4dcacfa8598769d9.pdf",
+      "auditor": "Nethermind",
+      "title": "NM-0735 Swap Module",
+      "date": "2025-11-19",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2025-12-09_Nethermind_NM-0758_Mellow-882ef5c8bc26ba2870ebb6655a989718.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2025-12-09_Nethermind_NM-0758_Mellow-882ef5c8bc26ba2870ebb6655a989718.pdf",
+      "auditor": "Nethermind",
+      "title": "NM-0758 SyncDepositQueue",
+      "date": "2025-12-09",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2026-01-07_Nethermind_NM-0798_Mellow-234cd31bcfcfe7e0239fa7c3da25fda8.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2026-01-07_Nethermind_NM-0798_Mellow-234cd31bcfcfe7e0239fa7c3da25fda8.pdf",
+      "auditor": "Nethermind",
+      "title": "NM-0798 BurnableTokenizedShareManager",
+      "date": "2026-01-07",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2026-01-21_Nethermind_NM-0812_Mellow-a9c3d364fc476f68a4f82d6bc5c993ac.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2026-01-21_Nethermind_NM-0812_Mellow-a9c3d364fc476f68a4f82d6bc5c993ac.pdf",
+      "auditor": "Nethermind",
+      "title": "NM-0812 Redeem Queue Fee Fix",
+      "date": "2026-01-21",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/assets/files/2026-03-02_Nethermind_NM-0758_Mellow-16bc93dbff41496cfb995655c453cf0f.pdf",
+      "pdf_url": "https://docs.lido.fi/assets/files/2026-03-02_Nethermind_NM-0758_Mellow-16bc93dbff41496cfb995655c453cf0f.pdf",
+      "auditor": "Nethermind",
+      "title": "NM-0758 SyncDepositQueue",
+      "date": "2026-03-02",
+      "source_url": "https://docs.lido.fi/earn/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    },
+    {
+      "url": "https://www.chainsecurity.com/reports/Lido/ChainSecurity_Lido_Lido_Audit.pdf",
+      "pdf_url": "https://www.chainsecurity.com/reports/Lido/ChainSecurity_Lido_Lido_Audit.pdf",
+      "auditor": "Chainsecurity",
+      "title": "Lido Security Audit",
+      "date": null,
+      "source_url": "https://www.chainsecurity.com/security-audit/lido",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T10:48:30.253879+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Solodit: 8 audit(s)",
+    "Search returned 17 unique result(s)",
+    "LLM classified 15 result(s) as audit reports",
+    "Extracted 18 audit report(s)",
+    "Tavily queries used: 2/4"
+  ],
+  "research_task_id": null,
+  "research_seed_count": 0
+}

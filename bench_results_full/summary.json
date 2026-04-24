@@ -1,0 +1,120 @@
+[
+  {
+    "status": "skipped",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/etherfi/exa__deep-reasoning.json",
+    "reason": "exists",
+    "protocol": "ether.fi",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/uniswap/exa__deep-reasoning.json",
+    "reports": 5,
+    "errors": 0,
+    "elapsed_ms": 119483,
+    "protocol": "uniswap",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/sky/exa__deep-reasoning.json",
+    "reports": 6,
+    "errors": 0,
+    "elapsed_ms": 53931,
+    "protocol": "sky",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/lido/exa__deep-reasoning.json",
+    "reports": 18,
+    "errors": 0,
+    "elapsed_ms": 157022,
+    "protocol": "lido",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/morpho/exa__deep-reasoning.json",
+    "reports": 85,
+    "errors": 0,
+    "elapsed_ms": 578670,
+    "protocol": "morpho",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/aave/exa__deep-reasoning.json",
+    "reports": 69,
+    "errors": 0,
+    "elapsed_ms": 308101,
+    "protocol": "aave",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/avantis/exa__deep-reasoning.json",
+    "reports": 7,
+    "errors": 0,
+    "elapsed_ms": 137433,
+    "protocol": "avantis",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/gains_network/exa__deep-reasoning.json",
+    "reports": 2,
+    "errors": 0,
+    "elapsed_ms": 141984,
+    "protocol": "gains network",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/gmx/exa__deep-reasoning.json",
+    "reports": 34,
+    "errors": 0,
+    "elapsed_ms": 160848,
+    "protocol": "gmx",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/compound_v3/exa__deep-reasoning.json",
+    "reports": 2,
+    "errors": 0,
+    "elapsed_ms": 251661,
+    "protocol": "compound v3",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/aerodrome/exa__deep-reasoning.json",
+    "reports": 7,
+    "errors": 0,
+    "elapsed_ms": 98554,
+    "protocol": "aerodrome",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_full/ethena/exa__deep-reasoning.json",
+    "reports": 23,
+    "errors": 0,
+    "elapsed_ms": 85482,
+    "protocol": "ethena",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  }
+]

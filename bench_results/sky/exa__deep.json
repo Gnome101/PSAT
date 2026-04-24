@@ -1,0 +1,262 @@
+{
+  "protocol": "sky",
+  "backend": "exa",
+  "mode": "deep",
+  "broad_query": "\"sky\" smart contract security audit report",
+  "followup_query": "Sky Protocol audit report -site:chainsecurity.com filetype:pdf",
+  "broad_results": [
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the SP-BEAM Module\nSmart Contracts\nMarch 31, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Open Findings 11\n6 Resolved Findings 12\n7 Notes 15\nSky - SP-BEAM Module - ChainSecurity - \u00a9 Decentra",
+      "score": 1
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-stusds",
+      "title": "Smart Contract Audit - Sky stUSDS - ChainSecurity",
+      "content": "Smart Contract Audit - Sky stUSDS - ChainSecurity\n\nBack to Overview\n\n# Sky stUSDS\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to contin",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+      "title": "Smart Contract Audit - Sky smart contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky smart contracts - ChainSecurity \n\nBack to Overview\n\n# Sky smart contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re lookin",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://developers.sky.money/security/security-measures/overview",
+      "title": "Overview | Sky Protocol Docs",
+      "content": "Overview | Sky Protocol Docs Skip to content\n\n# Overview\n\n## Front-ends\n\n### IP Address Screening\n\nFront-end web applications implement geo-blocking, VPN blocking, and other sanctions compliance features to restrict access in certain regions and ensure compliance with legal and regulatory requiremen",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-lz-governance-relay",
+      "title": "Smart Contract Audit - Sky LZ Governance Relay - ChainSecurity",
+      "content": "Smart Contract Audit - Sky LZ Governance Relay - ChainSecurity\n\nBack to Overview\n\n# Sky LZ Governance Relay\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-dss-flappers",
+      "title": "Sky Dss Flappers smart contract audit by ChainSecurity",
+      "content": "Sky Dss Flappers smart contract audit by ChainSecurity\n\nBack to Overview\n\n# Sky Dss Flappers Security Audit\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-sp-beam-module",
+      "title": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity",
+      "content": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity\n\nBack to Overview\n\n# Sky SP-BEAM Module\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking f",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+      "title": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity\n\nBack to Overview\n\n# Protego Smart Contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014w",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/maker-endgame-toolkit",
+      "title": "Sky Endgame Toolkit Security Audit by ChainSecurity",
+      "content": "Sky Endgame Toolkit Security Audit by ChainSecurity \n\nBack to Overview\n\n# Sky Endgame Toolkit Security Audit\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe most critical subjects covered in our audit are functional correctness, access control and frontrunning resistance. While security regarding a",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+      "title": "Sky Permissioned Action System",
+      "content": "Sky Permissioned Action System\n\nBack to Overview\n\n# Sky Permissioned Action System\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to continuing the p",
+      "score": 0
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the SP-BEAM Module\nSmart Contracts\nMarch 31, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Open Findings 11\n6 Resolved Findings 12\n7 Notes 15\nSky - SP-BEAM Module - ChainSecurity - \u00a9 Decentra",
+      "score": 1
+    },
+    {
+      "url": "https://developers.sky.money/security/security-measures/overview",
+      "title": "Overview | Sky Protocol Docs",
+      "content": "Overview | Sky Protocol Docs Skip to content\n\n# Overview\n\n## Front-ends\n\n### IP Address Screening\n\nFront-end web applications implement geo-blocking, VPN blocking, and other sanctions compliance features to restrict access in certain regions and ensure compliance with legal and regulatory requiremen",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+      "title": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity\n\nBack to Overview\n\n# Protego Smart Contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014w",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/maker-endgame-toolkit",
+      "title": "Sky Endgame Toolkit Security Audit by ChainSecurity",
+      "content": "Sky Endgame Toolkit Security Audit by ChainSecurity \n\nBack to Overview\n\n# Sky Endgame Toolkit Security Audit\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe most critical subjects covered in our audit are functional correctness, access control and frontrunning resistance. While security regarding a",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-stusds",
+      "title": "Smart Contract Audit - Sky stUSDS - ChainSecurity",
+      "content": "Smart Contract Audit - Sky stUSDS - ChainSecurity\n\nBack to Overview\n\n# Sky stUSDS\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to contin",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+      "title": "Smart Contract Audit - Sky smart contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky smart contracts - ChainSecurity \n\nBack to Overview\n\n# Sky smart contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re lookin",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-sp-beam-module",
+      "title": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity",
+      "content": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity\n\nBack to Overview\n\n# Sky SP-BEAM Module\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking f",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-dss-exec-lib",
+      "title": "Sky DSS Exec Lib Audit Report",
+      "content": "Sky DSS Exec Lib Audit Report\n\nBack to Overview\n\n# Sky DSS Exec Lib\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to continuing the partnership!\n\nDe",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-lz-governance-relay",
+      "title": "Smart Contract Audit - Sky LZ Governance Relay - ChainSecurity",
+      "content": "Smart Contract Audit - Sky LZ Governance Relay - ChainSecurity\n\nBack to Overview\n\n# Sky LZ Governance Relay\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://www.skyprotocol.org/technical-wp.pdf",
+      "title": "Sky Protocol Technical Overview - June 16 2024 (public)",
+      "content": "SKY PROTOCOL\n\nDATA AVAILABILITY NETWORK\n\nWHITEPAPER Version 2.1\n\nThis page is intentionally left blank.\n\nG SKY PROTOCOL\n\nAbstract\nSky Protocol is pioneering a Layer 2 solution tailored for Cardano, dedicated to revolutionizing\ndata availability. Sky Protocol unbundles four essential aspects of block",
+      "score": 0
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the SP-BEAM Module\nSmart Contracts\nMarch 31, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Open Findings 11\n6 Resolved Findings 12\n7 Notes 15\nSky - SP-BEAM Module - ChainSecurity - \u00a9 Decentra",
+      "score": 1
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-stusds",
+      "title": "Smart Contract Audit - Sky stUSDS - ChainSecurity",
+      "content": "Smart Contract Audit - Sky stUSDS - ChainSecurity\n\nBack to Overview\n\n# Sky stUSDS\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to contin",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+      "title": "Smart Contract Audit - Sky smart contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky smart contracts - ChainSecurity \n\nBack to Overview\n\n# Sky smart contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re lookin",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://developers.sky.money/security/security-measures/overview",
+      "title": "Overview | Sky Protocol Docs",
+      "content": "Overview | Sky Protocol Docs Skip to content\n\n# Overview\n\n## Front-ends\n\n### IP Address Screening\n\nFront-end web applications implement geo-blocking, VPN blocking, and other sanctions compliance features to restrict access in certain regions and ensure compliance with legal and regulatory requiremen",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-lz-governance-relay",
+      "title": "Smart Contract Audit - Sky LZ Governance Relay - ChainSecurity",
+      "content": "Smart Contract Audit - Sky LZ Governance Relay - ChainSecurity\n\nBack to Overview\n\n# Sky LZ Governance Relay\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-dss-flappers",
+      "title": "Sky Dss Flappers smart contract audit by ChainSecurity",
+      "content": "Sky Dss Flappers smart contract audit by ChainSecurity\n\nBack to Overview\n\n# Sky Dss Flappers Security Audit\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-sp-beam-module",
+      "title": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity",
+      "content": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity\n\nBack to Overview\n\n# Sky SP-BEAM Module\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking f",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+      "title": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity\n\nBack to Overview\n\n# Protego Smart Contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014w",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/maker-endgame-toolkit",
+      "title": "Sky Endgame Toolkit Security Audit by ChainSecurity",
+      "content": "Sky Endgame Toolkit Security Audit by ChainSecurity \n\nBack to Overview\n\n# Sky Endgame Toolkit Security Audit\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe most critical subjects covered in our audit are functional correctness, access control and frontrunning resistance. While security regarding a",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+      "title": "Sky Permissioned Action System",
+      "content": "Sky Permissioned Action System\n\nBack to Overview\n\n# Sky Permissioned Action System\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to continuing the p",
+      "score": 0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-dss-exec-lib",
+      "title": "Sky DSS Exec Lib Audit Report",
+      "content": "Sky DSS Exec Lib Audit Report\n\nBack to Overview\n\n# Sky DSS Exec Lib\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to continuing the partnership!\n\nDe",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://www.skyprotocol.org/technical-wp.pdf",
+      "title": "Sky Protocol Technical Overview - June 16 2024 (public)",
+      "content": "SKY PROTOCOL\n\nDATA AVAILABILITY NETWORK\n\nWHITEPAPER Version 2.1\n\nThis page is intentionally left blank.\n\nG SKY PROTOCOL\n\nAbstract\nSky Protocol is pioneering a Layer 2 solution tailored for Cardano, dedicated to revolutionizing\ndata availability. Sky Protocol unbundles four essential aspects of block",
+      "score": 0
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Sky SP-BEAM Module Audit",
+      "date": "2025-03-31",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-stusds",
+      "auditor": "ChainSecurity",
+      "title": "Sky stUSDS Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-lz-governance-relay",
+      "auditor": "ChainSecurity",
+      "title": "Sky LZ Governance Relay Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-sp-beam-module",
+      "auditor": "ChainSecurity",
+      "title": "Sky SP-BEAM Module Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+      "auditor": "ChainSecurity",
+      "title": "Sky Permissioned Action System",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-dss-exec-lib",
+      "auditor": "ChainSecurity",
+      "title": "Sky DSS Exec Lib Audit Report",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 534,
+    "followup_query": 800,
+    "followup_search": 431,
+    "classify": 6903
+  },
+  "errors": []
+}

@@ -50,12 +50,13 @@ def _sink(
     target_type: str = "IRoleManager",
     method: str = "onlyFoo",
     role_args: list[str] | None = None,
+    revert_on_mismatch: bool = True,
     evidence: dict | None = None,
 ) -> dict:
     rec: dict = {
         "kind": kind,
         "evidence": evidence or {"detail": "test"},
-        "revert_on_mismatch": True,
+        "revert_on_mismatch": revert_on_mismatch,
         "external_target_state_var": target,
         "target_type": target_type,
         "external_method": method,
@@ -109,6 +110,10 @@ def test_projection_drops_sinks_missing_target_or_method():
     assert out == []
 
 
+def test_projection_drops_non_reverting_external_call_sinks():
+    assert sinks_to_external_call_guards([_sink(revert_on_mismatch=False)]) == []
+
+
 def test_projection_preserves_order():
     """Multiple sinks project in order — two different external calls
     on the same function must both appear, not get deduped."""
@@ -127,6 +132,7 @@ def test_projection_does_not_crash_on_missing_optional_fields():
     the field is just absent in the output."""
     minimal: dict = {
         "kind": "caller_external_call",
+        "revert_on_mismatch": True,
         "external_target_state_var": "role",
         "target_type": "IRole",
         "external_method": "check",

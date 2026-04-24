@@ -1,0 +1,660 @@
+{
+  "protocol": "morpho",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 24215,
+  "contracts": [
+    {
+      "name": "AaveV2MigrationAdapter",
+      "address": "0x40288815c399709dfc0875a384b637ffe387961b",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s22"
+      ]
+    },
+    {
+      "name": "AaveV3MigrationAdapter \u201cCore\u201d",
+      "address": "0xb09e40ebe31b738fbf20289270a397118707d475",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s17"
+      ]
+    },
+    {
+      "name": "AaveV3MigrationAdapter \u201cEtherFi\u201d",
+      "address": "0x4011dc6581fa05f9b0c7a12adcd676e2b1a59ca3",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s19"
+      ]
+    },
+    {
+      "name": "AaveV3MigrationAdapter \u201cPrime\u201d",
+      "address": "0x2cc8d502a65824b4cf9a58db03490ba024bdb806",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s18"
+      ]
+    },
+    {
+      "name": "AaveV3OptimizerMigrationAdapter",
+      "address": "0x9e2ea2d5785598a163d569d795f286f5c55ad972",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s21"
+      ]
+    },
+    {
+      "name": "AaveV3OptimizerMigrationBundler",
+      "address": "0x16f38d2e764e7bebf625a8e995b34968226d2f9c",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s28"
+      ]
+    },
+    {
+      "name": "Adaptive Curve Irm",
+      "address": "0x870ac11d48b15db9a138cf899d20f13f79ba00bc",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s7"
+      ]
+    },
+    {
+      "name": "CompoundV2MigrationAdapter",
+      "address": "0x9b89c07f480df1945279031b5fc6ff241b8f1101",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s23"
+      ]
+    },
+    {
+      "name": "CompoundV3MigrationAdapter",
+      "address": "0xdba5bde29ea030bfa6a608592dfca1d02cb26773",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s20"
+      ]
+    },
+    {
+      "name": "ERC20WrapperAdapter",
+      "address": "0xf83d17dfe160597b19e4fdd8ea61a23e9a87f962",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s15"
+      ]
+    },
+    {
+      "name": "MetaMorpho Factory V1.1",
+      "address": "0x1897a8997241c1cd4bd0698647e4eb7213535c24",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s9"
+      ]
+    },
+    {
+      "name": "MetaMorpho Factory [OLD]",
+      "address": "0xa9c3d3a366466fa809d1ae982fb2c46e5fc41101",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s10"
+      ]
+    },
+    {
+      "name": "Morpho ChainlinkOracleV2 Factory",
+      "address": "0x3a7bb36ee3f3ee32a60e9f2b33c1e5f2e83ad766",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s8"
+      ]
+    },
+    {
+      "name": "MorphoMarketV1 AdapterV2Factory",
+      "address": "0x32bb1c0d48d8b1b3363e86eeb9a0300bad61ccc1",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s4"
+      ]
+    },
+    {
+      "name": "MorphoVaultV1 AdapterFactory",
+      "address": "0xd1b8e2dee25c2b89dcd2f98448a7ce87d6f63394",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s3"
+      ]
+    },
+    {
+      "name": "PreLiquidation Factory",
+      "address": "0x6ff33615e792e35ed1026ea7caccf42d9bf83476",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s12"
+      ]
+    },
+    {
+      "name": "Universal Rewards Distributor Factory",
+      "address": "0x9baa51245cdd28d8d74afe8b3959b616e9ee7c8d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s31"
+      ]
+    },
+    {
+      "name": "VaultV2Factory",
+      "address": "0xa1d94f746defa1928926b84fb2596c06926c0405",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s2"
+      ]
+    },
+    {
+      "name": "morpho-blue",
+      "address": "0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s6"
+      ]
+    },
+    {
+      "name": "morpho-org/bundler3",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s16",
+        "s14",
+        "s13"
+      ],
+      "deployments": [
+        {
+          "address": "0x03b5259bd204bfd4a616e5b79b0b786d90c6c38f",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x4a6c312ec70e8747a587ee860a0353cd42be0ae0",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x6566194141eefa99af43bb5aa71460ca2dc90245",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "morpho-org/legacy-morpho-token",
+      "address": "0x9994e35db50125e0df82e4c2dde62496ce330999",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s36"
+      ]
+    },
+    {
+      "name": "morpho-org/morpho-blue-bundlers",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s29",
+        "s30",
+        "s24",
+        "s27",
+        "s25",
+        "s26"
+      ],
+      "deployments": [
+        {
+          "address": "0x26bf52a84360ad3d01d7cdc28fc2ddc04d8c8647",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x3a0e2e9fb9c95fbc843daf166276c90b6c479558",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x4095f064b8d3c3548a3bebfd0bbfd04750e30077",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x98ccb155e86bb478d514a827d16f58c6912f9bdc",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xa7995f71aa11525db02fc2473c37dee5dbf55107",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xb3dcc75db379925edfd3007511a8ce0cb4aa8e76",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "morpho-org/morpho-token",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s33",
+        "s35"
+      ],
+      "deployments": [
+        {
+          "address": "0x58d97b57bb95320f9a05dc918aef65434969c2b2",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x9d03bb2092270648d7480049d0e58d2fcf0e5123",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "morpho-org/morpho-token-l0",
+      "address": "0x50d3d6fd7518682155e3c1b65fdd50e1b35649d9",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s34"
+      ]
+    },
+    {
+      "name": "public-allocator",
+      "address": "0xfd32fa2ca22c76dd6e550706ad913fc6ce91c75d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s11"
+      ]
+    },
+    {
+      "name": "universal-rewards-distributor",
+      "address": "0x330eefa8a787552dc5cad3c3ca644844b1e61ddb",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s32"
+      ]
+    },
+    {
+      "name": "vault-v2-adapter-registries",
+      "address": "0x3696c5eae4a7ffd04ea163564571e9cd8ed9364e",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s5"
+      ]
+    }
+  ],
+  "official_domain": "docs.morpho.org",
+  "errors": [],
+  "notes": [
+    "Domain candidates: docs.morpho.org, docs.morph.network, github.com, legacy.docs.morpho.org, npmjs.com",
+    "Official domain: docs.morpho.org",
+    "Selected pages: 3",
+    "Tavily queries used: 4/4"
+  ]
+}

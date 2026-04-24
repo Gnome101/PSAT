@@ -1,12 +1,3 @@
-"""Phase 3a — writer-event discovery for mapping allowlist patterns.
-
-Covers `discover_mapping_writer_events` on the MakerDAO `wards` family,
-OZ-style bool whitelists, `delete`-based removals, and multi-arg
-events where the key isn't the first parameter. All mocks use slither's
-IR class-name convention (`type(ir).__name__`) so the extractor's
-filters match.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -67,6 +58,12 @@ def _event_call(signature: str, arguments: list[Any]) -> SimpleNamespace:
     return _named("EventCall", name=signature, arguments=arguments)
 
 
+def _event_decl(name: str, inputs: list[tuple[str, str, bool]]) -> SimpleNamespace:
+    elems = [SimpleNamespace(name=arg_name, type=arg_type, indexed=indexed) for arg_name, arg_type, indexed in inputs]
+    full_name = f"{name}({','.join(arg_type for _, arg_type, _ in inputs)})"
+    return SimpleNamespace(name=name, full_name=full_name, elems=elems)
+
+
 def _node(irs: list[Any]) -> SimpleNamespace:
     return SimpleNamespace(irs=irs, node_id=0)
 
@@ -87,18 +84,11 @@ def _function(
     )
 
 
-def _contract(functions: list[Any]) -> SimpleNamespace:
-    return SimpleNamespace(name="TestContract", functions=functions, inheritance=[])
-
-
-# ---------------------------------------------------------------------------
-# MakerDAO wards pattern
-# ---------------------------------------------------------------------------
+def _contract(functions: list[Any], events: list[Any] | None = None) -> SimpleNamespace:
+    return SimpleNamespace(name="TestContract", functions=functions, inheritance=[], events=events or [])
 
 
 def test_makerdao_rely_adds_to_wards():
-    """`rely(address guy) auth { wards[guy] = 1; emit Rely(guy); }` —
-    yields one WriterEventSpec with direction=add."""
     wards = _mapping("wards")
     guy = _local("guy")
     index_lv = _tmp("TMP_0")
@@ -126,8 +116,6 @@ def test_makerdao_rely_adds_to_wards():
 
 
 def test_makerdao_deny_removes_via_zero_write():
-    """`deny(address guy) auth { wards[guy] = 0; emit Deny(guy); }` —
-    direction=remove."""
     wards = _mapping("wards")
     guy = _local("guy")
     index_lv = _tmp("TMP_0")
@@ -150,7 +138,6 @@ def test_makerdao_deny_removes_via_zero_write():
 
 
 def test_rely_and_deny_together_produce_two_specs():
-    """Both writers present — we get one spec per direction."""
     wards = _mapping("wards")
     guy_a = _local("guy_a")
     guy_b = _local("guy_b")
@@ -186,13 +173,7 @@ def test_rely_and_deny_together_produce_two_specs():
     assert all(s["mapping_name"] == "wards" for s in specs)
 
 
-# ---------------------------------------------------------------------------
-# OZ-style bool whitelist
-# ---------------------------------------------------------------------------
-
-
 def test_bool_mapping_true_is_add():
-    """`whitelist[x] = true` + `emit Whitelisted(x)` — direction=add."""
     whitelist = _mapping("whitelist", value_type="bool")
     x = _local("x")
     lv = _tmp("T0", type_str="bool")
@@ -236,14 +217,7 @@ def test_bool_mapping_false_is_remove():
     assert specs[0]["direction"] == "remove"
 
 
-# ---------------------------------------------------------------------------
-# delete
-# ---------------------------------------------------------------------------
-
-
 def test_delete_is_remove():
-    """`delete wards[guy]; emit Deny(guy);` — treated as remove even
-    though there's no explicit assignment. Slither emits a Delete IR."""
     wards = _mapping("wards")
     guy = _local("guy")
     lv = _tmp("T0")
@@ -265,14 +239,7 @@ def test_delete_is_remove():
     assert specs[0]["direction"] == "remove"
 
 
-# ---------------------------------------------------------------------------
-# Negative cases
-# ---------------------------------------------------------------------------
-
-
 def test_write_with_no_emit_is_skipped():
-    """A mapping write without a co-emitted event is un-enumerable —
-    skipped rather than emitting a spec the enumerator can't use."""
     wards = _mapping("wards")
     guy = _local("guy")
     lv = _tmp("T0")
@@ -285,8 +252,6 @@ def test_write_with_no_emit_is_skipped():
 
 
 def test_emit_without_matching_key_arg_is_skipped():
-    """The function emits an event but the event's args don't include
-    the mapping key. Couldn't enumerate from the event, so skip."""
     wards = _mapping("wards")
     guy = _local("guy")
     other = _local("other")
@@ -308,8 +273,6 @@ def test_emit_without_matching_key_arg_is_skipped():
 
 
 def test_non_address_keyed_mapping_skipped():
-    """`mapping(uint256 => bool) roleByIndex` — not an allowlist we
-    can enumerate via address-keyed events. Skip."""
     subclass = type("StateVariable", (SimpleNamespace,), {})
     subclass.__name__ = "StateVariable"
     role_mapping = subclass(name="roleByIndex", type="mapping(uint256 => bool)")
@@ -332,9 +295,6 @@ def test_non_address_keyed_mapping_skipped():
 
 
 def test_constructor_skipped():
-    """Writes in the constructor are initial state, not enumerable —
-    skip (the enumerator scrapes events from deploy-block onward
-    separately, not via constructor writes)."""
     wards = _mapping("wards")
     guy = _local("guy")
     lv = _tmp("T0")
@@ -356,8 +316,6 @@ def test_constructor_skipped():
 
 
 def test_non_literal_value_skipped():
-    """`wards[guy] = someVariable;` — we can't statically tell if
-    it's add or remove. Skip rather than emit an ambiguous spec."""
     wards = _mapping("wards")
     guy = _local("guy")
     some = _local("someValue", "uint256")
@@ -379,8 +337,6 @@ def test_non_literal_value_skipped():
 
 
 def test_multi_arg_event_with_key_not_first():
-    """`emit UserSet(uint256 id, address guy)` where `guy` is arg 1 —
-    key_position must be 1."""
     wards = _mapping("wards")
     id_var = _local("id", "uint256")
     guy = _local("guy", "address")
@@ -403,10 +359,71 @@ def test_multi_arg_event_with_key_not_first():
     assert specs[0]["key_position"] == 1
 
 
+def test_indexed_positions_come_from_event_declaration():
+    wards = _mapping("wards")
+    guy = _local("guy")
+    lv = _tmp("T0")
+    fn = _function(
+        "rely",
+        nodes=[_node([_index(wards, guy, lv), _assignment(lv, _constant(1)), _event_call("Rely", [guy])])],
+        written=[wards],
+    )
+    specs = discover_mapping_writer_events(_contract([fn], events=[_event_decl("Rely", [("guy", "address", True)])]))
+    assert len(specs) == 1
+    assert specs[0]["indexed_positions"] == [0]
+
+
+def test_non_indexed_key_position_is_recorded():
+    whitelist = _mapping("whitelist", value_type="bool")
+    user = _local("user")
+    enabled = _local("enabled", "bool")
+    lv = _tmp("T0", type_str="bool")
+    fn = _function(
+        "setWhitelisted",
+        nodes=[
+            _node(
+                [
+                    _index(whitelist, user, lv),
+                    _assignment(lv, _constant(True, type_str="bool")),
+                    _event_call("SetWhitelisted", [user, enabled]),
+                ]
+            )
+        ],
+        written=[whitelist],
+    )
+    event = _event_decl("SetWhitelisted", [("user", "address", False), ("enabled", "bool", False)])
+    specs = discover_mapping_writer_events(_contract([fn], events=[event]))
+    assert len(specs) == 1
+    assert specs[0]["key_position"] == 0
+    assert specs[0]["indexed_positions"] == []
+
+
+def test_indexed_position_before_key_is_recorded():
+    wards = _mapping("wards")
+    tier = _local("tier", "uint256")
+    user = _local("user")
+    lv = _tmp("T0")
+    fn = _function(
+        "setWard",
+        nodes=[
+            _node(
+                [
+                    _index(wards, user, lv),
+                    _assignment(lv, _constant(1)),
+                    _event_call("Foo", [tier, user]),
+                ]
+            )
+        ],
+        written=[wards],
+    )
+    event = _event_decl("Foo", [("tier", "uint256", True), ("user", "address", False)])
+    specs = discover_mapping_writer_events(_contract([fn], events=[event]))
+    assert len(specs) == 1
+    assert specs[0]["key_position"] == 1
+    assert specs[0]["indexed_positions"] == [0]
+
+
 def test_dedupes_on_mapping_event_direction():
-    """Two different writer functions that emit the same `(mapping,
-    event, direction)` triple shouldn't produce two specs — the
-    enumerator only queries each event stream once."""
     wards = _mapping("wards")
     guy_a = _local("guy_a")
     guy_b = _local("guy_b")
@@ -447,19 +464,9 @@ def test_empty_contract_returns_empty():
 
 
 def test_bare_event_name_in_ir_resolves_to_canonical_signature():
-    """Regression: slither's EventCall IR exposes `.name` as the bare
-    event name ("Rely"), not the canonical signature ("Rely(address)").
-    We must look the full name up on `contract.events` so the downstream
-    keccak(topic0) matches the on-chain hash — otherwise Hypersync
-    returns zero logs.
-
-    Pre-fix: the stored `event_signature` was "Rely", which keccak'd to
-    the wrong topic0 and produced 0 principals for Sky.
-    """
     wards = _mapping("wards")
     guy = _local("guy")
     index_lv = _tmp("TMP_0")
-    # EventCall IR name is the bare event name — what slither really emits.
     rely_fn = _function(
         "rely",
         nodes=[
@@ -467,7 +474,7 @@ def test_bare_event_name_in_ir_resolves_to_canonical_signature():
                 [
                     _index(wards, guy, index_lv),
                     _assignment(index_lv, _constant(1)),
-                    _event_call("Rely", [guy]),  # bare name, as slither emits it
+                    _event_call("Rely", [guy]),
                 ]
             )
         ],

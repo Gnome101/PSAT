@@ -1,0 +1,298 @@
+{
+  "protocol": "gmx",
+  "backend": "exa",
+  "mode": "instant",
+  "broad_query": "\"gmx\" smart contract security audit report",
+  "followup_query": "gmx protocol audit report site:github.com OR site:code4rena.com OR site:sherlock.xyz",
+  "broad_results": [
+    {
+      "url": "https://docs.gmx.io/docs/security/",
+      "title": "Security | GMX Docs",
+      "content": "# Security\n\n> This page covers general safety practices, audit reports, and the bug bounty program.\n\n# Security\n\nThis page covers general safety practices, audit reports, and the bug bounty program.\n\n## General safety\n\nExercise caution when interacting with any smart contract or blockchain applicati",
+      "score": null
+    },
+    {
+      "url": "https://guardianaudits.com/casestudies/gmx-case-study",
+      "title": "GMX Case Study - Comprehensive Smart Contract Audits | Guardian",
+      "content": "Comprehensive Smart Contract Audits | Guardian \n\nBack\n\n# Guardian - GMX Case Study\n\n\u201cGuardian's commitment to high quality audits, keeping up with industry best practices and alignment between the auditors and the protocol has led to them being a highly valuable partner in improving the security of ",
+      "score": null
+    },
+    {
+      "url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022/",
+      "title": "GMX Synthetics - Dedaub Audit Reports",
+      "content": "GMX smart contract audit report | Dedaub Audit Reports\n\nGMX GMX Synthetics - Nov 20, 2022\n\n# GMX Synthetics\n\nSmart Contract Security Assessment\n\nNovember 20, 2022\n\n## SUMMARY\u200b\n\nID\n\nDESCRIPTION\n\nSTATUS\n\nCRITICAL SEVERITY\n\nC1\n\nReentrancy vulnerability in cancelOrder\n\nopen\n\nHIGH SEVERITY\n\nH1\n\nCondition",
+      "score": null
+    },
+    {
+      "url": "https://github.com/GuardianAudits/GMX",
+      "title": "GuardianAudits/GMX - GitHub",
+      "content": "# Repository: GuardianAudits/GMX\n\n- Stars: 0\n- Forks: 1\n- Watchers: 0\n- Open issues: 0\n- Primary language: JavaScript\n- Languages: JavaScript (52.8%), Solidity (47.2%)\n- License: Other (NOASSERTION)\n- Default branch: master\n- Created: 2022-10-24T15:57:36Z\n- Last push: 2023-02-19T02:16:36Z\n- Contribu",
+      "score": null
+    },
+    {
+      "url": "https://sourcehat.com/audits/GMXV2Vault/",
+      "title": "GMX V2 Vault Smart Contract Audit by SourceHat",
+      "content": "GMX V2 Vault Smart Contract Audit by SourceHat\n\n---\n\n# GMX V2 Vault\n\n# Smart Contract Audit Report\n\n## Audit Summary\n\nGMX V2 Vault is a new platform which allows users to stake USDC and WETH in order to earn interest over time.\n\nAudit Scope Contract Name Source Address OpenHeadToken ETH Mainnet 0xca",
+      "score": null
+    },
+    {
+      "url": "https://gov.gmx.io/t/exploring-the-evaluation-of-a-proactive-smart-contract-security-layer-to-complement-gmx-s-existing-audits-and-monitoring/5028",
+      "title": "Exploring the Evaluation of a Proactive Smart Contract Security ...",
+      "content": "Exploring the Evaluation of a Proactive Smart Contract Security Layer to Complement GMX\u2019s Existing Audits and Monitoring - Proposals - GMX\n\nExploring the Evaluation of a Proactive Smart Contract Security Layer to Complement GMX\u2019s Existing Audits and Monitoring - Proposals - GMX",
+      "score": null
+    },
+    {
+      "url": "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+      "title": "[PDF] GMX Audit - Dwebox",
+      "content": "Security Audit\nEmail: contact@dwebox.com\nWebsite: https://dwebox.com\nDwebox.com\nIntroduction\nhttps://gmx.io\nhttps://t.me/GMX_IO\nhttps://twitter.com/GMX_IO\nGMX is a decentralized perpetuals futures platform on Arbitrum chain.\nPurpose of the Audit:\nThe purpose of the audit is to identify potential sec",
+      "score": null
+    },
+    {
+      "url": "https://www.certik.com/blog/gmx-incident-analysis",
+      "title": "GMX Incident Analysis - CertiK",
+      "content": "GMX Incident Analysis - CertiK\n\nElevate Your Web3 Journey\n\nSOC 2 Type II & ISO 27001\n\n\"The gatekeeper function is very important, that we know this piece of software has been audited, has a minimum level of security, and also for the users it's very important, because this way they can trust a certa",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://github.com/sherlock-audit/2023-04-gmx",
+      "title": "sherlock-audit/2023-04-gmx - GitHub",
+      "content": "# Repository: sherlock-audit/2023-04-gmx\n\n- Stars: 1\n- Forks: 1\n- Watchers: 1\n- Open issues: 0\n- Primary language: Solidity\n- Languages: Solidity (66.1%), TypeScript (33.9%), JavaScript, Shell\n- Default branch: main\n- Created: 2023-04-20T06:04:15Z\n- Last push: 2023-04-25T17:44:02Z\n- Contributors: 2 ",
+      "score": null
+    },
+    {
+      "url": "https://github.com/santipu03/santipu03/blob/main/private-audits/dHEDGE_GMX.md",
+      "title": "santipu03/private-audits/dHEDGE_GMX.md at main - GitHub",
+      "content": "# File: santipu03/santipu03/private-audits/dHEDGE_GMX.md\n\n- Repository: santipu03/santipu03 | This is my personal repo for the README | 4 stars\n- Branch: main\n\n```md\n# Audit Report - dHEDGE Integration GMX\n\n<img src=\"https://2347102836-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/space",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-02-gmx-judging",
+      "title": "sherlock-audit/2023-02-gmx-judging - GitHub",
+      "content": "# Repository: sherlock-audit/2023-02-gmx-judging\n\n- Stars: 34\n- Forks: 17\n- Watchers: 34\n- Open issues: 59\n- Primary language: Python\n- Languages: Python\n- Default branch: main\n- Created: 2022-09-22T19:02:44Z\n- Last push: 2023-05-01T17:42:41Z\n- Contributors: 3 (top: frimoldi, sherlock-admin, Evert0x",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-02-gmx",
+      "title": "sherlock-audit/2023-02-gmx - GitHub",
+      "content": "# Repository: sherlock-audit/2023-02-gmx\n\n- Stars: 0\n- Forks: 1\n- Watchers: 0\n- Open issues: 0\n- Primary language: TypeScript\n- Languages: TypeScript (80.6%), Solidity (19.4%)\n- Default branch: main\n- Created: 2022-09-22T18:15:47Z\n- Last push: 2023-03-25T09:51:37Z\n- Contributors: 4 (top: xvi10, Ever",
+      "score": null
+    },
+    {
+      "url": "https://github.com/code-423n4/gmx-solana-bug-bounty",
+      "title": "code-423n4/gmx-solana-bug-bounty - GitHub",
+      "content": "# Repository: code-423n4/gmtrade-bug-bounty\n\n- Stars: 1\n- Forks: 2\n- Watchers: 0\n- Open issues: 0\n- Default branch: main\n- Created: 2025-07-08T14:52:43Z\n- Last push: 2026-04-02T03:28:03Z\n- Contributors: 5 (top: itsmetechjay, sentinelxyz, kartoonjoy, SamusElderg, thebrittfactor)\n\n---\n\n# GMTrade Bug B",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Dedaub/audits",
+      "title": "Dedaub/audits: Repository containing past audit reports - GitHub",
+      "content": "# Repository: Dedaub/audits\n\nRepository containing past audit reports\n\n- Stars: 54\n- Forks: 4\n- Watchers: 54\n- Open issues: 1\n- License: Creative Commons Attribution Share Alike 4.0 International (CC-BY-SA-4.0)\n- Default branch: main\n- Created: 2021-03-18T23:26:53Z\n- Last push: 2023-11-27T13:17:42Z\n",
+      "score": null
+    },
+    {
+      "url": "https://github.com/dinero-protocol/audits",
+      "title": "Smart contract and backed audits for Dinero products - GitHub",
+      "content": "# Repository: dinero-protocol/audits\n\nSmart contract and backed audits for Dinero products\n\n- Stars: 8\n- Forks: 3\n- Watchers: 8\n- Open issues: 0\n- Topics: audits, hidden-hand, pirex, security, smart-contracts\n- Default branch: master\n- Homepage: https://dinero.xyz\n- Created: 2023-08-03T21:09:59Z\n- L",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-protocol/sherlock-reports",
+      "title": "Sherlock audit and coverage reports - GitHub",
+      "content": "# Repository: sherlock-protocol/sherlock-reports\n\nSherlock audit and coverage reports\n\n- Stars: 148\n- Forks: 33\n- Watchers: 148\n- Open issues: 3\n- Default branch: main\n- Created: 2022-06-07T20:36:07Z\n- Last push: 2026-03-19T13:55:49Z\n- Contributors: 9 (top: sherlock-admin, jacksanford1, MLON33, rcst",
+      "score": null
+    },
+    {
+      "url": "https://github.com/IAm0x52/audit-portfolio",
+      "title": "IAm0x52/audit-portfolio - GitHub",
+      "content": "# Repository: IAm0x52/audit-portfolio\n\n- Stars: 79\n- Forks: 9\n- Watchers: 79\n- Open issues: 0\n- Default branch: main\n- Created: 2025-04-02T18:33:22Z\n- Last push: 2025-05-12T20:50:54Z\n- Contributors: 1 (top: IAm0x52)\n\n---\n\n![image](assets/0x52.png)\n\n#\n\nAs a professional smart contract auditor, I have",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://docs.gmx.io/docs/security/",
+      "title": "Security | GMX Docs",
+      "content": "# Security\n\n> This page covers general safety practices, audit reports, and the bug bounty program.\n\n# Security\n\nThis page covers general safety practices, audit reports, and the bug bounty program.\n\n## General safety\n\nExercise caution when interacting with any smart contract or blockchain applicati",
+      "score": null
+    },
+    {
+      "url": "https://guardianaudits.com/casestudies/gmx-case-study",
+      "title": "GMX Case Study - Comprehensive Smart Contract Audits | Guardian",
+      "content": "Comprehensive Smart Contract Audits | Guardian \n\nBack\n\n# Guardian - GMX Case Study\n\n\u201cGuardian's commitment to high quality audits, keeping up with industry best practices and alignment between the auditors and the protocol has led to them being a highly valuable partner in improving the security of ",
+      "score": null
+    },
+    {
+      "url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022/",
+      "title": "GMX Synthetics - Dedaub Audit Reports",
+      "content": "GMX smart contract audit report | Dedaub Audit Reports\n\nGMX GMX Synthetics - Nov 20, 2022\n\n# GMX Synthetics\n\nSmart Contract Security Assessment\n\nNovember 20, 2022\n\n## SUMMARY\u200b\n\nID\n\nDESCRIPTION\n\nSTATUS\n\nCRITICAL SEVERITY\n\nC1\n\nReentrancy vulnerability in cancelOrder\n\nopen\n\nHIGH SEVERITY\n\nH1\n\nCondition",
+      "score": null
+    },
+    {
+      "url": "https://github.com/GuardianAudits/GMX",
+      "title": "GuardianAudits/GMX - GitHub",
+      "content": "# Repository: GuardianAudits/GMX\n\n- Stars: 0\n- Forks: 1\n- Watchers: 0\n- Open issues: 0\n- Primary language: JavaScript\n- Languages: JavaScript (52.8%), Solidity (47.2%)\n- License: Other (NOASSERTION)\n- Default branch: master\n- Created: 2022-10-24T15:57:36Z\n- Last push: 2023-02-19T02:16:36Z\n- Contribu",
+      "score": null
+    },
+    {
+      "url": "https://sourcehat.com/audits/GMXV2Vault/",
+      "title": "GMX V2 Vault Smart Contract Audit by SourceHat",
+      "content": "GMX V2 Vault Smart Contract Audit by SourceHat\n\n---\n\n# GMX V2 Vault\n\n# Smart Contract Audit Report\n\n## Audit Summary\n\nGMX V2 Vault is a new platform which allows users to stake USDC and WETH in order to earn interest over time.\n\nAudit Scope Contract Name Source Address OpenHeadToken ETH Mainnet 0xca",
+      "score": null
+    },
+    {
+      "url": "https://gov.gmx.io/t/exploring-the-evaluation-of-a-proactive-smart-contract-security-layer-to-complement-gmx-s-existing-audits-and-monitoring/5028",
+      "title": "Exploring the Evaluation of a Proactive Smart Contract Security ...",
+      "content": "Exploring the Evaluation of a Proactive Smart Contract Security Layer to Complement GMX\u2019s Existing Audits and Monitoring - Proposals - GMX\n\nExploring the Evaluation of a Proactive Smart Contract Security Layer to Complement GMX\u2019s Existing Audits and Monitoring - Proposals - GMX",
+      "score": null
+    },
+    {
+      "url": "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+      "title": "[PDF] GMX Audit - Dwebox",
+      "content": "Security Audit\nEmail: contact@dwebox.com\nWebsite: https://dwebox.com\nDwebox.com\nIntroduction\nhttps://gmx.io\nhttps://t.me/GMX_IO\nhttps://twitter.com/GMX_IO\nGMX is a decentralized perpetuals futures platform on Arbitrum chain.\nPurpose of the Audit:\nThe purpose of the audit is to identify potential sec",
+      "score": null
+    },
+    {
+      "url": "https://www.certik.com/blog/gmx-incident-analysis",
+      "title": "GMX Incident Analysis - CertiK",
+      "content": "GMX Incident Analysis - CertiK\n\nElevate Your Web3 Journey\n\nSOC 2 Type II & ISO 27001\n\n\"The gatekeeper function is very important, that we know this piece of software has been audited, has a minimum level of security, and also for the users it's very important, because this way they can trust a certa",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-04-gmx",
+      "title": "sherlock-audit/2023-04-gmx - GitHub",
+      "content": "# Repository: sherlock-audit/2023-04-gmx\n\n- Stars: 1\n- Forks: 1\n- Watchers: 1\n- Open issues: 0\n- Primary language: Solidity\n- Languages: Solidity (66.1%), TypeScript (33.9%), JavaScript, Shell\n- Default branch: main\n- Created: 2023-04-20T06:04:15Z\n- Last push: 2023-04-25T17:44:02Z\n- Contributors: 2 ",
+      "score": null
+    },
+    {
+      "url": "https://github.com/santipu03/santipu03/blob/main/private-audits/dHEDGE_GMX.md",
+      "title": "santipu03/private-audits/dHEDGE_GMX.md at main - GitHub",
+      "content": "# File: santipu03/santipu03/private-audits/dHEDGE_GMX.md\n\n- Repository: santipu03/santipu03 | This is my personal repo for the README | 4 stars\n- Branch: main\n\n```md\n# Audit Report - dHEDGE Integration GMX\n\n<img src=\"https://2347102836-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/space",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-02-gmx-judging",
+      "title": "sherlock-audit/2023-02-gmx-judging - GitHub",
+      "content": "# Repository: sherlock-audit/2023-02-gmx-judging\n\n- Stars: 34\n- Forks: 17\n- Watchers: 34\n- Open issues: 59\n- Primary language: Python\n- Languages: Python\n- Default branch: main\n- Created: 2022-09-22T19:02:44Z\n- Last push: 2023-05-01T17:42:41Z\n- Contributors: 3 (top: frimoldi, sherlock-admin, Evert0x",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-02-gmx",
+      "title": "sherlock-audit/2023-02-gmx - GitHub",
+      "content": "# Repository: sherlock-audit/2023-02-gmx\n\n- Stars: 0\n- Forks: 1\n- Watchers: 0\n- Open issues: 0\n- Primary language: TypeScript\n- Languages: TypeScript (80.6%), Solidity (19.4%)\n- Default branch: main\n- Created: 2022-09-22T18:15:47Z\n- Last push: 2023-03-25T09:51:37Z\n- Contributors: 4 (top: xvi10, Ever",
+      "score": null
+    },
+    {
+      "url": "https://github.com/code-423n4/gmx-solana-bug-bounty",
+      "title": "code-423n4/gmx-solana-bug-bounty - GitHub",
+      "content": "# Repository: code-423n4/gmtrade-bug-bounty\n\n- Stars: 1\n- Forks: 2\n- Watchers: 0\n- Open issues: 0\n- Default branch: main\n- Created: 2025-07-08T14:52:43Z\n- Last push: 2026-04-02T03:28:03Z\n- Contributors: 5 (top: itsmetechjay, sentinelxyz, kartoonjoy, SamusElderg, thebrittfactor)\n\n---\n\n# GMTrade Bug B",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Dedaub/audits",
+      "title": "Dedaub/audits: Repository containing past audit reports - GitHub",
+      "content": "# Repository: Dedaub/audits\n\nRepository containing past audit reports\n\n- Stars: 54\n- Forks: 4\n- Watchers: 54\n- Open issues: 1\n- License: Creative Commons Attribution Share Alike 4.0 International (CC-BY-SA-4.0)\n- Default branch: main\n- Created: 2021-03-18T23:26:53Z\n- Last push: 2023-11-27T13:17:42Z\n",
+      "score": null
+    },
+    {
+      "url": "https://github.com/dinero-protocol/audits",
+      "title": "Smart contract and backed audits for Dinero products - GitHub",
+      "content": "# Repository: dinero-protocol/audits\n\nSmart contract and backed audits for Dinero products\n\n- Stars: 8\n- Forks: 3\n- Watchers: 8\n- Open issues: 0\n- Topics: audits, hidden-hand, pirex, security, smart-contracts\n- Default branch: master\n- Homepage: https://dinero.xyz\n- Created: 2023-08-03T21:09:59Z\n- L",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-protocol/sherlock-reports",
+      "title": "Sherlock audit and coverage reports - GitHub",
+      "content": "# Repository: sherlock-protocol/sherlock-reports\n\nSherlock audit and coverage reports\n\n- Stars: 148\n- Forks: 33\n- Watchers: 148\n- Open issues: 3\n- Default branch: main\n- Created: 2022-06-07T20:36:07Z\n- Last push: 2026-03-19T13:55:49Z\n- Contributors: 9 (top: sherlock-admin, jacksanford1, MLON33, rcst",
+      "score": null
+    },
+    {
+      "url": "https://github.com/IAm0x52/audit-portfolio",
+      "title": "IAm0x52/audit-portfolio - GitHub",
+      "content": "# Repository: IAm0x52/audit-portfolio\n\n- Stars: 79\n- Forks: 9\n- Watchers: 79\n- Open issues: 0\n- Default branch: main\n- Created: 2025-04-02T18:33:22Z\n- Last push: 2025-05-12T20:50:54Z\n- Contributors: 1 (top: IAm0x52)\n\n---\n\n![image](assets/0x52.png)\n\n#\n\nAs a professional smart contract auditor, I have",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://docs.gmx.io/docs/security/",
+      "auditor": null,
+      "title": "GMX Docs - Security",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://guardianaudits.com/casestudies/gmx-case-study",
+      "auditor": "Guardian Audits",
+      "title": "Guardian - GMX Case Study",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022/",
+      "auditor": "Dedaub",
+      "title": "GMX Synthetics - Dedaub Audit Reports",
+      "date": "2022-11-20",
+      "type": "report",
+      "confidence": 0.95
+    },
+    {
+      "url": "https://github.com/GuardianAudits/GMX",
+      "auditor": "Guardian Audits",
+      "title": "GuardianAudits/GMX - GitHub",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.8
+    },
+    {
+      "url": "https://sourcehat.com/audits/GMXV2Vault/",
+      "auditor": "SourceHat",
+      "title": "GMX V2 Vault Smart Contract Audit by SourceHat",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+      "auditor": "Dwebox",
+      "title": "GMX Audit",
+      "date": null,
+      "type": "pdf",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-04-gmx",
+      "auditor": "Sherlock",
+      "title": "sherlock-audit/2023-04-gmx - GitHub",
+      "date": "2023-04",
+      "type": "listing",
+      "confidence": 0.85
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-02-gmx-judging",
+      "auditor": "Sherlock",
+      "title": "sherlock-audit/2023-02-gmx-judging - GitHub",
+      "date": "2023-02",
+      "type": "listing",
+      "confidence": 0.85
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-02-gmx",
+      "auditor": "Sherlock",
+      "title": "sherlock-audit/2023-02-gmx - GitHub",
+      "date": "2023-02",
+      "type": "listing",
+      "confidence": 0.85
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 827,
+    "followup_query": 943,
+    "followup_search": 815,
+    "classify": 9330
+  },
+  "errors": []
+}

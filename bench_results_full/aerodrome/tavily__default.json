@@ -1,0 +1,37 @@
+{
+  "protocol": "aerodrome",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 23720,
+  "reports": [
+    {
+      "url": "https://app.sherlock.xyz/audits/contests/321",
+      "pdf_url": null,
+      "auditor": "Sherlock",
+      "title": "Sherlock Arcadia - Aerodrome integrations Contest",
+      "date": "2024-04-25",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:54:05.298711+00:00"
+    },
+    {
+      "url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "pdf_url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Audit Report",
+      "date": "2024-06",
+      "source_url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:54:05.298711+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Solodit: 1 audit(s)",
+    "Search returned 16 unique result(s)",
+    "LLM classified 2 result(s) as audit reports",
+    "Extracted 2 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

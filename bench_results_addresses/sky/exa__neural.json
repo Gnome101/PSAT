@@ -1,0 +1,365 @@
+{
+  "protocol": "sky",
+  "backend": "exa",
+  "mode": "neural",
+  "elapsed_ms": 3837,
+  "contracts": [
+    {
+      "name": "Bribe Factory",
+      "address": "0xa533488a22e904ed1616a19ea2359e0428fff51b",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "DAI",
+      "address": "0xca77eb3fefe3725dc33bccb54edefc3d9f764f97",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Gauge Factory",
+      "address": "0x2fc62c39b4137213dc4c0b35a34b292dffaa2208",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Minter",
+      "address": "0x654d1a48edc66a9bb9d873517b567b6890571c9d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Multicall3",
+      "address": "0x74cae2839919f0493e7f3a53a284c42197df9616",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Pair Factory",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ],
+      "deployments": [
+        {
+          "address": "0x2516212168034b18a0155ffbe59f2f0063fffbd9",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x74b8738862e4814c6e6d6e0202f8386685ca7b9d",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rewards Distributor",
+      "address": "0x0aa1faf2b59d424c1dc5ac17c4b5290d023d1f8c",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Router",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ],
+      "deployments": [
+        {
+          "address": "0x03290a52ba3164639067622e20b90857eaded299",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xaa111c62cdeef205f70e6722d1e22274274ec12f",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Team Multi-Sig",
+      "address": "0xe5a882c3f18d8c9473bd0cf574f8a11f9da51c29",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "USDC",
+      "address": "0x06efdbff2a14a7c8e15944d1f4a48f9f95f663a4",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "USDT",
+      "address": "0xf55bec9cafdbe8730f096aa55dad6d22d44099df",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "VeArtProxy",
+      "address": "0x1e043521c6b9853e4c9e8c69a93c267d7ffc3b6b",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Velocimeter Library",
+      "address": "0xc9508cac5ce23227cd8ecd60f3f25007e0a66e12",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Voter",
+      "address": "0x5bafc7f9c0cbebe1fae9fc6c39e9bbe497fa6c22",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Voting Escrow",
+      "address": "0x91f3ebc0a4ca08c295c95ca3cde5954a862cc13b",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "WETH",
+      "address": "0x5300000000000000000000000000000000000004",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Official $SKY token address:- #official-usdsky-token-address",
+      "address": "0x95a52ec1d60e74cd3eb002fe54a2c74b185a4c16",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.65,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "text": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    }
+  ],
+  "official_domain": "docs.skydrome.finance",
+  "errors": [],
+  "notes": [
+    "Domain candidates: developers.sky.money, developers.skyeco.com, docs.skydrome.finance",
+    "Official domain: docs.skydrome.finance",
+    "Selected pages: 1",
+    "Tavily queries used: 3/4"
+  ]
+}

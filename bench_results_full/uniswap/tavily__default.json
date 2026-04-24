@@ -1,0 +1,87 @@
+{
+  "protocol": "uniswap",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 81069,
+  "reports": [
+    {
+      "url": "https://github.com/trailofbits/publications/blob/master/reviews/2024-02-uniswap-wallet-browserextension-securityreview.pdf",
+      "pdf_url": "https://solodit-bucket.s3.amazonaws.com/storage/reports/trailofbits/2024-02-uniswap-wallet-browserextension-securityreview.pdf",
+      "auditor": "TrailOfBits",
+      "title": "TrailOfBits Uniswap Wallet Browser Extension Audit",
+      "date": "2024-04-30",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:10:09.787748+00:00"
+    },
+    {
+      "url": "https://github.com/trailofbits/publications/blob/master/reviews/2023-09-uniswap-wallet-securityreview.pdf",
+      "pdf_url": "https://solodit-bucket.s3.amazonaws.com/storage/reports/trailofbits/2023-09-uniswap-wallet-securityreview.pdf",
+      "auditor": "TrailOfBits",
+      "title": "TrailOfBits Uniswap Wallet, Android Audit",
+      "date": "2023-11-02",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:10:09.787748+00:00"
+    },
+    {
+      "url": "https://blog.openzeppelin.com/compound-open-price-feed-uniswap-integration-audit/",
+      "pdf_url": null,
+      "auditor": "OpenZeppelin",
+      "title": "OpenZeppelin Compound Open Price Feed \u2013 Uniswap Integration Audit Audit",
+      "date": "2020-07-17",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:10:09.787748+00:00"
+    },
+    {
+      "url": "https://developers.uniswap.org/docs/protocols/v2/audits",
+      "pdf_url": null,
+      "auditor": "Team of six engineers",
+      "title": "Formal verification and code review of Uniswap v2 smart contracts",
+      "date": "2020-04-30",
+      "source_url": "https://developers.uniswap.org/docs/protocols/v2/audits",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T02:10:09.787748+00:00"
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "pdf_url": null,
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap v4 Core Audit",
+      "date": "2024-08-27",
+      "source_url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:10:09.787748+00:00"
+    },
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "pdf_url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "auditor": "Trail of Bits",
+      "title": "Uniswap V3 Core Assessment",
+      "date": "2021",
+      "source_url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:10:09.787748+00:00"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/Uniswap/v3-core/main/audits/abdk/audit.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/Uniswap/v3-core/main/audits/abdk/audit.pdf",
+      "auditor": "ABDK Consulting",
+      "title": "Uniswap V3 Core Audit",
+      "date": null,
+      "source_url": "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:10:09.787748+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Solodit: 3 audit(s)",
+    "Search returned 17 unique result(s)",
+    "LLM classified 11 result(s) as audit reports",
+    "Extracted 7 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

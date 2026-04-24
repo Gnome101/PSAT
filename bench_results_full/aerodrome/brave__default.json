@@ -1,0 +1,48 @@
+{
+  "protocol": "aerodrome",
+  "backend": "brave",
+  "mode": "default",
+  "elapsed_ms": 28400,
+  "reports": [
+    {
+      "url": "https://app.sherlock.xyz/audits/contests/321",
+      "pdf_url": null,
+      "auditor": "Sherlock",
+      "title": "Sherlock Aerodrome Integrations Contest",
+      "date": "2024-04-25",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:54:29.017469+00:00"
+    },
+    {
+      "url": "https://aerodrome.finance/security",
+      "pdf_url": null,
+      "auditor": "Code4rena",
+      "title": "Aerodrome Finance Audit",
+      "date": "2023-08",
+      "source_url": "https://aerodrome.finance/security",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T02:54:29.017469+00:00"
+    },
+    {
+      "url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "pdf_url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "auditor": "Ether Authority",
+      "title": "Aerodrome (AERO) Audit Report",
+      "date": "2024-06-05",
+      "source_url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T02:54:29.017469+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Solodit: 1 audit(s)",
+    "Search returned 20 unique result(s)",
+    "LLM classified 5 result(s) as audit reports",
+    "LLM validate+cluster: 3 \u2192 3 (dropped=0, collapsed=0, auditor_filled=0, title_fixed=1)",
+    "Extracted 3 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

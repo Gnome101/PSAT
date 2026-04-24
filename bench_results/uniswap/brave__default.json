@@ -1,0 +1,358 @@
+{
+  "protocol": "uniswap",
+  "backend": "brave",
+  "mode": "default",
+  "broad_query": "\"uniswap\" smart contract security audit report",
+  "followup_query": "Uniswap audit site:code4rena.com OR site:sherlock.xyz OR site:cantina.xyz",
+  "broad_results": [
+    {
+      "url": "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+      "title": "Security | Uniswap",
+      "content": "Note: The audit report is no longer available at its original URL. The audit was completed by a team of six engineers between January and April 2020. Uniswap has an open and ongoing bug bounty program on Cantina. When integrating Uniswap V2 into another on-chain system, particular care must be taken to avoid security vulnerabilities, avenues for manipulations, and the potential loss of funds. As a preliminary note: smart contract integrations can happen at two levels: directly with Pair contracts, or through the Router.",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-permit2",
+      "title": "Uniswap - Permit2 Smart Contract Audit - Chainsecurity",
+      "content": "The most critical subjects covered in our audit are <strong>functional correctness, signature handling andfront-running</strong>. Security regarding front-running is improvable due to a possible attack vector on permitapprovals, see Race Condition on Approvals.",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/security-audits",
+      "title": "OpenZeppelin | Smart Contract Security Audits",
+      "content": "Read the reports \u00b7 These include Chainlink and UMA Protocol, and Oracle-dependent components used by platforms like Compound and Synthetix Oracle manager, which utilize Pyth, Chainlink, and Uniswap V3 TWAP oracles. As UMA&#x27;s primary security partner, we&#x27;ve conducted over 10 audits, revealing critical vulnerabilities in its optimistic verification system and cross-chain components.",
+      "score": null
+    },
+    {
+      "url": "https://dapp.org.uk/reports/uniswapv2.html",
+      "title": "Uniswap V2 Audit Report",
+      "content": "<strong>The audit team performed a review of the numerical error incurred during contract execution, with a focus on the desirable invariants proposed by the Uniswap development team</strong> (e.g. the rounding error, if any, in a swap, favours the pool). The team did not find any locations where numeric errors ...",
+      "score": null
+    },
+    {
+      "url": "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007",
+      "title": "Uniswap audit. We are proud to announce that we have\u2026 | by Sergii Kravchenko | ConsenSys Diligence | Medium",
+      "content": "You can read the complete audit report here. In the rest of this post, we will describe an important undocumented \u2018trust issue\u2019. To our knowledge, this issue does not currently place any funds at serious risk, but may in the future. Certain apparently benign token implementations, created without malicious intent, could enable a reentrancy attack resulting in the theft of all the ETH and token liquidity in the Uniswap Exchange contract associated with that specific token.",
+      "score": null
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit",
+      "content": "The team decided to create a SECURITY.md markdown file in the root of the project repository with the necessary security contacts. The purpose of the noDelegateCall modifier in the unlock function is to prevent proxy contracts from making delegate calls to the Uniswap v4 core contracts. This restriction is mainly due to license limitations. However, during the audit, the team was notified that this limitation can be bypassed by creating a custom contract that implements the same unlock function and writes to the same slot for the lock value, thereby allowing delegate calls to all other external functions, effectively circumventing the restriction.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "title": "Uniswap-audit-report-2018-12/Uniswap-final.md at master \u00b7 ConsenSysDiligence/Uniswap-audit-report-2018-12",
+      "content": "To our knowledge, this is the first security audit conducted on a Vyper codebase. ... <strong>The focus of the audit was to verify that the smart contract system is secure, resilient and working according to its specifications</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+      "title": "Uniswap v4 Periphery and Universal Router Audit",
+      "content": "The Uniswap V4 Position Manager ... to the V4 Position Manager. <strong>The audit identified one critical-, one high-, and two medium-severity vulnerabilities, along with several lower-severity issues</strong>....",
+      "score": null
+    },
+    {
+      "url": "https://www.cyfrin.io/case-studies/oku-trade",
+      "title": "Fortifying the security of Oku Trade Uniswap v3 and Chainlink based on-chain limit orders - Audit Case Study | Cyfrin Audits",
+      "content": "Fortifying the security of Oku Trade Uniswap v3 and Chainlink based on-chain limit orders security audit report - Read the details and report of the Fortifying the security of Oku Trade Uniswap v3 and Chainlink based on-chain limit orders smart contract security audit.",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+      "title": "Smart Contract Audit - Arrakis Uniswap V4 Module - ChainSecurity",
+      "content": "The most critical subjects covered in our audit are <strong>functional correctness, integration with Arrakis Modular and external systems, asset solvency and precision of arithmetic operations</strong>.",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+      "title": "Uniswap Labs / uniswap-v4 competition - Cantina.xyz",
+      "content": "Previous security reviews. All reports should also be available within the audits folder of each repository(for v4-periphery please refer link below)",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-12-panoptic-next-core",
+      "title": "Panoptic: Next Core Audit | Code4rena",
+      "content": "Panoptic: Next Core audit on Code4rena. <strong>$56,000 in USDC, from 19 Dec 2025 to 7 Jan 2026</strong>. Panoptic is a DeFi options protocol designed to enhance LPing and trading. It transforms Uniswap LP positions into onchain options, enabling traders to ...",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Top auditors compete to keep high severity bugs out of production. <strong>Start a public or private audit within 48 hours</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+      "title": "UniStaker Infrastructure Audit | Code4rena",
+      "content": "UniStaker Infrastructure audit on Code4rena. <strong>$92,000 in USDC, from 23 Feb 2024 to 5 Mar 2024</strong>. Staking infrastructure to empower Uniswap Governance.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-06-panoptic-hypovault",
+      "title": "Panoptic Hypovault Audit | Code4rena",
+      "content": "<strong>Panoptic Hypovault audit on Code4rena</strong>. $18,000 in USDC, from 27 Jun 2025 to 7 Jul 2025. Panoptic is a DeFi options protocol designed to enhance LPing and trading. It transforms Uniswap LP positions into onchain options, enabling traders to access ...",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/blog/uniswap-15-5-million-bug-bounty",
+      "title": "Uniswap v4 Bug Bounty: Cantina\u2019s $15.5M Reward",
+      "content": "Throughout the past year, we&#x27;ve collaborated with Uniswap Labs to help audit various protocol components.",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/bounties/f9df94db-c7b1-434b-bb06-d1360abdd1be",
+      "title": "Uniswap Labs / Uniswap bounty - Cantina.xyz",
+      "content": "Dependency confusion / namespace takeover risks involving packages used by Uniswap projects (including transitive deps), where exploitability is demonstrated (e.g., realistic install path in CI or consumer environments).",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+      "title": "Sorella Angstrom Protocol Security Audit | Cantina",
+      "content": "Security audit for Sorella Angstrom reviewed fee logic, memory safety, swap behavior, and tick rewards to protect LPs and swappers on Uniswap v4 hooks.",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+      "title": "Cantina x Uniswap Labs 2025: A Historic Year For Liquidity, Institutions, And Security",
+      "content": "This audit covered the contracts that configure protocol fees on Uniswap V3 pools and route those fees into Uniswap\u2019s fee jars, releasers, and vesting contracts, checking that fee settings, collection, and release behave as designed.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2026-03-chainlink-payment-abstraction-v2",
+      "title": "Chainlink Payment Abstraction V2 Audit | Code4rena",
+      "content": "While Payment Abstraction V1 uses Uniswap V3 for executing fee-to-LINK conversions, V2 implements a permissionless dutch auction mechanism where any participant can bid on auctioned allowlisted assets.",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+      "title": "Security | Uniswap",
+      "content": "Note: The audit report is no longer available at its original URL. The audit was completed by a team of six engineers between January and April 2020. Uniswap has an open and ongoing bug bounty program on Cantina. When integrating Uniswap V2 into another on-chain system, particular care must be taken to avoid security vulnerabilities, avenues for manipulations, and the potential loss of funds. As a preliminary note: smart contract integrations can happen at two levels: directly with Pair contracts, or through the Router.",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-permit2",
+      "title": "Uniswap - Permit2 Smart Contract Audit - Chainsecurity",
+      "content": "The most critical subjects covered in our audit are <strong>functional correctness, signature handling andfront-running</strong>. Security regarding front-running is improvable due to a possible attack vector on permitapprovals, see Race Condition on Approvals.",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/security-audits",
+      "title": "OpenZeppelin | Smart Contract Security Audits",
+      "content": "Read the reports \u00b7 These include Chainlink and UMA Protocol, and Oracle-dependent components used by platforms like Compound and Synthetix Oracle manager, which utilize Pyth, Chainlink, and Uniswap V3 TWAP oracles. As UMA&#x27;s primary security partner, we&#x27;ve conducted over 10 audits, revealing critical vulnerabilities in its optimistic verification system and cross-chain components.",
+      "score": null
+    },
+    {
+      "url": "https://dapp.org.uk/reports/uniswapv2.html",
+      "title": "Uniswap V2 Audit Report",
+      "content": "<strong>The audit team performed a review of the numerical error incurred during contract execution, with a focus on the desirable invariants proposed by the Uniswap development team</strong> (e.g. the rounding error, if any, in a swap, favours the pool). The team did not find any locations where numeric errors ...",
+      "score": null
+    },
+    {
+      "url": "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007",
+      "title": "Uniswap audit. We are proud to announce that we have\u2026 | by Sergii Kravchenko | ConsenSys Diligence | Medium",
+      "content": "You can read the complete audit report here. In the rest of this post, we will describe an important undocumented \u2018trust issue\u2019. To our knowledge, this issue does not currently place any funds at serious risk, but may in the future. Certain apparently benign token implementations, created without malicious intent, could enable a reentrancy attack resulting in the theft of all the ETH and token liquidity in the Uniswap Exchange contract associated with that specific token.",
+      "score": null
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit",
+      "content": "The team decided to create a SECURITY.md markdown file in the root of the project repository with the necessary security contacts. The purpose of the noDelegateCall modifier in the unlock function is to prevent proxy contracts from making delegate calls to the Uniswap v4 core contracts. This restriction is mainly due to license limitations. However, during the audit, the team was notified that this limitation can be bypassed by creating a custom contract that implements the same unlock function and writes to the same slot for the lock value, thereby allowing delegate calls to all other external functions, effectively circumventing the restriction.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "title": "Uniswap-audit-report-2018-12/Uniswap-final.md at master \u00b7 ConsenSysDiligence/Uniswap-audit-report-2018-12",
+      "content": "To our knowledge, this is the first security audit conducted on a Vyper codebase. ... <strong>The focus of the audit was to verify that the smart contract system is secure, resilient and working according to its specifications</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+      "title": "Uniswap v4 Periphery and Universal Router Audit",
+      "content": "The Uniswap V4 Position Manager ... to the V4 Position Manager. <strong>The audit identified one critical-, one high-, and two medium-severity vulnerabilities, along with several lower-severity issues</strong>....",
+      "score": null
+    },
+    {
+      "url": "https://www.cyfrin.io/case-studies/oku-trade",
+      "title": "Fortifying the security of Oku Trade Uniswap v3 and Chainlink based on-chain limit orders - Audit Case Study | Cyfrin Audits",
+      "content": "Fortifying the security of Oku Trade Uniswap v3 and Chainlink based on-chain limit orders security audit report - Read the details and report of the Fortifying the security of Oku Trade Uniswap v3 and Chainlink based on-chain limit orders smart contract security audit.",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+      "title": "Smart Contract Audit - Arrakis Uniswap V4 Module - ChainSecurity",
+      "content": "The most critical subjects covered in our audit are <strong>functional correctness, integration with Arrakis Modular and external systems, asset solvency and precision of arithmetic operations</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+      "title": "Uniswap Labs / uniswap-v4 competition - Cantina.xyz",
+      "content": "Previous security reviews. All reports should also be available within the audits folder of each repository(for v4-periphery please refer link below)",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-12-panoptic-next-core",
+      "title": "Panoptic: Next Core Audit | Code4rena",
+      "content": "Panoptic: Next Core audit on Code4rena. <strong>$56,000 in USDC, from 19 Dec 2025 to 7 Jan 2026</strong>. Panoptic is a DeFi options protocol designed to enhance LPing and trading. It transforms Uniswap LP positions into onchain options, enabling traders to ...",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Top auditors compete to keep high severity bugs out of production. <strong>Start a public or private audit within 48 hours</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+      "title": "UniStaker Infrastructure Audit | Code4rena",
+      "content": "UniStaker Infrastructure audit on Code4rena. <strong>$92,000 in USDC, from 23 Feb 2024 to 5 Mar 2024</strong>. Staking infrastructure to empower Uniswap Governance.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-06-panoptic-hypovault",
+      "title": "Panoptic Hypovault Audit | Code4rena",
+      "content": "<strong>Panoptic Hypovault audit on Code4rena</strong>. $18,000 in USDC, from 27 Jun 2025 to 7 Jul 2025. Panoptic is a DeFi options protocol designed to enhance LPing and trading. It transforms Uniswap LP positions into onchain options, enabling traders to access ...",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/blog/uniswap-15-5-million-bug-bounty",
+      "title": "Uniswap v4 Bug Bounty: Cantina\u2019s $15.5M Reward",
+      "content": "Throughout the past year, we&#x27;ve collaborated with Uniswap Labs to help audit various protocol components.",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/bounties/f9df94db-c7b1-434b-bb06-d1360abdd1be",
+      "title": "Uniswap Labs / Uniswap bounty - Cantina.xyz",
+      "content": "Dependency confusion / namespace takeover risks involving packages used by Uniswap projects (including transitive deps), where exploitability is demonstrated (e.g., realistic install path in CI or consumer environments).",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+      "title": "Sorella Angstrom Protocol Security Audit | Cantina",
+      "content": "Security audit for Sorella Angstrom reviewed fee logic, memory safety, swap behavior, and tick rewards to protect LPs and swappers on Uniswap v4 hooks.",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+      "title": "Cantina x Uniswap Labs 2025: A Historic Year For Liquidity, Institutions, And Security",
+      "content": "This audit covered the contracts that configure protocol fees on Uniswap V3 pools and route those fees into Uniswap\u2019s fee jars, releasers, and vesting contracts, checking that fee settings, collection, and release behave as designed.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2026-03-chainlink-payment-abstraction-v2",
+      "title": "Chainlink Payment Abstraction V2 Audit | Code4rena",
+      "content": "While Payment Abstraction V1 uses Uniswap V3 for executing fee-to-LINK conversions, V2 implements a permissionless dutch auction mechanism where any participant can bid on auctioned allowlisted assets.",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+      "auditor": null,
+      "title": "Uniswap V2 Security",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-permit2",
+      "auditor": "ChainSecurity",
+      "title": "Uniswap - Permit2 Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://dapp.org.uk/reports/uniswapv2.html",
+      "auditor": null,
+      "title": "Uniswap V2 Audit Report",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007",
+      "auditor": "ConsenSys Diligence",
+      "title": "Uniswap audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap v4 Core Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "auditor": "ConsenSys Diligence",
+      "title": "Uniswap-audit-report-2018-12",
+      "date": "2018-12",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap v4 Periphery and Universal Router Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+      "auditor": "ChainSecurity",
+      "title": "Smart Contract Audit - Arrakis Uniswap V4 Module",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+      "auditor": "Cantina",
+      "title": "Uniswap Labs / uniswap-v4 competition",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.8
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "auditor": "Code4rena",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "date": "2024-02",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+      "auditor": "Cantina",
+      "title": "Sorella Angstrom Protocol Security Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+      "auditor": "Cantina",
+      "title": "Cantina x Uniswap Labs 2025: A Historic Year For Liquidity, Institutions, And Security",
+      "date": "2025",
+      "type": "report",
+      "confidence": 0.9
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 563,
+    "followup_query": 1535,
+    "followup_search": 574,
+    "classify": 11510
+  },
+  "errors": []
+}

@@ -1,0 +1,16 @@
+{
+  "protocol": "avantis",
+  "backend": "brave",
+  "mode": "default",
+  "elapsed_ms": 3037,
+  "contracts": [],
+  "official_domain": "docs.avantisfi.com",
+  "errors": [],
+  "notes": [
+    "Domain candidates: docs.avantisfi.com, mexc.com, rootdata.com, weex.com",
+    "Official domain: docs.avantisfi.com",
+    "Selected pages: 1",
+    "No inventory contracts extracted from selected pages",
+    "Tavily queries used: 2/4"
+  ]
+}

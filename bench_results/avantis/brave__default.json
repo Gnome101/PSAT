@@ -1,0 +1,198 @@
+{
+  "protocol": "avantis",
+  "backend": "brave",
+  "mode": "default",
+  "broad_query": "\"avantis\" smart contract security audit report",
+  "followup_query": "Avantis Protocol audit report github OR Code4rena OR Sherlock",
+  "broad_results": [
+    {
+      "url": "https://docs.avantisfi.com/security/audits",
+      "title": "Audits | Avantis",
+      "content": "Our live contracts have gone through two security audits with Zellic as well Zokyo, who collectively have covered protocols such as Solana, Pyth, Sushiswap, etc. We&#x27;re adding our security audit reports from both auditors, as well as our partnership announcements here \u00b7 Zokyo: https://twitter.com/avantisfinance/status/1750322630631268631",
+      "score": null
+    },
+    {
+      "url": "https://staging.skynet.certik.com/projects/avantis/security-score",
+      "title": "CertiK Skynet Project Security Score - Avantis",
+      "content": "Keep up with the latest security insights for Avantis: Audits Security Scores, KYC, Honors, On-Chain Monitoring, Bug Bounty and more.",
+      "score": null
+    },
+    {
+      "url": "https://www.avantisai.com/",
+      "title": "Avantis AI",
+      "content": "\u201c<strong>Avantis&#x27; ability to instantly analyze SEC and SEDAR+ filings, combined with its robust corporate intelligence tools, allows us to uncover insights that would otherwise take weeks to compile</strong>.\u201d",
+      "score": null
+    },
+    {
+      "url": "https://skynet.certik.com/projects/avantis",
+      "title": "Avantis - CertiK Skynet Project Insight",
+      "content": "Avantis \u00b7 #328 \u00b7 AVNT$0.38310 \u00b7 24h \u00b7 16.63% Mcap$94.42M \u00b7 Vol$165.18M \u00b7 CertiK Skynet Score \u00b7 81.08 \u00b7 A \u00b7 9 \u00b7 0 \u00b7 3 \u00b7 0 \u00b7 CertiK Audit \u00b7 Team Verification \u00b7 Bug Bounty \u00b7 Verified Contract \u00b7 User Rating \u00b7 3.77 \u00b7 565Ratings \u00b7 Rate Now \u00b7 Avantis Info \u00b7",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://code4rena.com/reports/2021-07-sherlock",
+      "title": "Sherlock",
+      "content": "A C4 code contest is an event in which community participants, referred to as Wardens, review, audit, or analyze smart contract logic in exchange for a bounty provided by sponsoring projects. During the code contest outlined in this document, C4 conducted an analysis of the Sherlock smart contract system written in Solidity. The code contest took place between July 21\u2014July 28. 14 Wardens contributed reports to the Sherlock code contest:",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Interested in competitive audits? View all current, upcoming, and past Code4rena audits in one convenient location.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-01-sherlock",
+      "title": "Sherlock contest Findings & Analysis Report",
+      "content": "Hence, we set it to the next lowest // possible value LIVENESS, // Proposal liveness address(sherlockCore), // Sherlock core address 0 // price ); where BOND becomes the reward and the actual bond for UMA is 1. Ideally, it should be set to 0, but if set as such, UMA interprets it to use the final fee as the bond amount instead. [request.bond = bond != 0 ? bond : finalFee;](https://github.com/UMAprotocol/protocol/blob/master/packages/core/contracts/oracle/implementation/SkinnyOptimisticOracle.sol#L321)",
+      "score": null
+    },
+    {
+      "url": "https://github.com/zaskoh/audit-reports",
+      "title": "GitHub - zaskoh/audit-reports: check code4rena and sherlock for new reports and push as notification to discord",
+      "content": "audit-reports will check <strong>https://code4rena.com/reports/ and https://app.sherlock.xyz/audits/contests</strong> for new reports and inform you via discord / log.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Tri-pathi/Audits",
+      "title": "GitHub - Tri-pathi/Audits: All my submitted reports in C4 and Sherlock",
+      "content": "Namaskar friends. I&#x27;m Tripathi, a graduate from IIT Roorkee,building derivative perpetual DEX . Currently active in many competitive/private audit platforms like Code4rena, CodeHawks, Sherlock, Cantina Code, Hats and sometimes Immunefi.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/IvanFitro/Contest-Audit-Portfolio",
+      "title": "GitHub - IvanFitro/Contest-Audit-Portfolio: All valid vulnerabilities I identified in Code4rena, Sherlock and CodeHawks.",
+      "content": "A curated collection of confirmed vulnerabilities and findings I have submitted as a security researcher across major auditing platforms: Code4rena, Sherlock, CodeHawks, and Cantina.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/AlexCZM/audits",
+      "title": "GitHub - AlexCZM/audits",
+      "content": "DeFi options protocol designed to enhance LPing and trading \u00b7 Code4rena \u00b7 Report \u00b7 Jigsaw \u00b7 CDP based stablecoin \u00b7 Cantina \u00b7 Link \u00b7 BadgerDao \u00b7 eBTC Stability Module facilitates exchange between eBTC and other BTC-denominated assets \u00b7 Cantina \u00b7 Link \u00b7 Yieldoor \u00b7 Leveraged Yield Farming \u00b7 Sherlock \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Saurabh-0312/Audit-Reports",
+      "title": "GitHub - Saurabh-0312/Audit-Reports",
+      "content": "CodeHawks: Contributed to securing ... across 3 competitive security contests \u00b7 Sherlock: <strong>Successfully participated in 4 protocol security contests with high-impact findings</strong>...",
+      "score": null
+    },
+    {
+      "url": "https://hackenproof.com/blog/for-business/code4rena-vs-sherlock-crowdsourced-audits-comparison-guide",
+      "title": "Comparison guide of crowdsourced audits: Code4rena vs Sherlock",
+      "content": "If a project that\u2019s been audited by Sherlock is exploited, it provides coverage, ensuring peace of mind for developers and stakeholders alike. ... Versatility for All: Catering to a broad audience, Code4rena is more focused on beginners, so it may be a better fit if you are new to smart contract auditing.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-protocol/sherlock-reports",
+      "title": "GitHub - sherlock-protocol/sherlock-reports: Sherlock audit and coverage reports \u00b7 GitHub",
+      "content": "Sherlock audit and coverage reports. Contribute to sherlock-protocol/sherlock-reports development by creating an account on GitHub.",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://docs.avantisfi.com/security/audits",
+      "title": "Audits | Avantis",
+      "content": "Our live contracts have gone through two security audits with Zellic as well Zokyo, who collectively have covered protocols such as Solana, Pyth, Sushiswap, etc. We&#x27;re adding our security audit reports from both auditors, as well as our partnership announcements here \u00b7 Zokyo: https://twitter.com/avantisfinance/status/1750322630631268631",
+      "score": null
+    },
+    {
+      "url": "https://staging.skynet.certik.com/projects/avantis/security-score",
+      "title": "CertiK Skynet Project Security Score - Avantis",
+      "content": "Keep up with the latest security insights for Avantis: Audits Security Scores, KYC, Honors, On-Chain Monitoring, Bug Bounty and more.",
+      "score": null
+    },
+    {
+      "url": "https://www.avantisai.com/",
+      "title": "Avantis AI",
+      "content": "\u201c<strong>Avantis&#x27; ability to instantly analyze SEC and SEDAR+ filings, combined with its robust corporate intelligence tools, allows us to uncover insights that would otherwise take weeks to compile</strong>.\u201d",
+      "score": null
+    },
+    {
+      "url": "https://skynet.certik.com/projects/avantis",
+      "title": "Avantis - CertiK Skynet Project Insight",
+      "content": "Avantis \u00b7 #328 \u00b7 AVNT$0.38310 \u00b7 24h \u00b7 16.63% Mcap$94.42M \u00b7 Vol$165.18M \u00b7 CertiK Skynet Score \u00b7 81.08 \u00b7 A \u00b7 9 \u00b7 0 \u00b7 3 \u00b7 0 \u00b7 CertiK Audit \u00b7 Team Verification \u00b7 Bug Bounty \u00b7 Verified Contract \u00b7 User Rating \u00b7 3.77 \u00b7 565Ratings \u00b7 Rate Now \u00b7 Avantis Info \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2021-07-sherlock",
+      "title": "Sherlock",
+      "content": "A C4 code contest is an event in which community participants, referred to as Wardens, review, audit, or analyze smart contract logic in exchange for a bounty provided by sponsoring projects. During the code contest outlined in this document, C4 conducted an analysis of the Sherlock smart contract system written in Solidity. The code contest took place between July 21\u2014July 28. 14 Wardens contributed reports to the Sherlock code contest:",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Interested in competitive audits? View all current, upcoming, and past Code4rena audits in one convenient location.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-01-sherlock",
+      "title": "Sherlock contest Findings & Analysis Report",
+      "content": "Hence, we set it to the next lowest // possible value LIVENESS, // Proposal liveness address(sherlockCore), // Sherlock core address 0 // price ); where BOND becomes the reward and the actual bond for UMA is 1. Ideally, it should be set to 0, but if set as such, UMA interprets it to use the final fee as the bond amount instead. [request.bond = bond != 0 ? bond : finalFee;](https://github.com/UMAprotocol/protocol/blob/master/packages/core/contracts/oracle/implementation/SkinnyOptimisticOracle.sol#L321)",
+      "score": null
+    },
+    {
+      "url": "https://github.com/zaskoh/audit-reports",
+      "title": "GitHub - zaskoh/audit-reports: check code4rena and sherlock for new reports and push as notification to discord",
+      "content": "audit-reports will check <strong>https://code4rena.com/reports/ and https://app.sherlock.xyz/audits/contests</strong> for new reports and inform you via discord / log.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Tri-pathi/Audits",
+      "title": "GitHub - Tri-pathi/Audits: All my submitted reports in C4 and Sherlock",
+      "content": "Namaskar friends. I&#x27;m Tripathi, a graduate from IIT Roorkee,building derivative perpetual DEX . Currently active in many competitive/private audit platforms like Code4rena, CodeHawks, Sherlock, Cantina Code, Hats and sometimes Immunefi.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/IvanFitro/Contest-Audit-Portfolio",
+      "title": "GitHub - IvanFitro/Contest-Audit-Portfolio: All valid vulnerabilities I identified in Code4rena, Sherlock and CodeHawks.",
+      "content": "A curated collection of confirmed vulnerabilities and findings I have submitted as a security researcher across major auditing platforms: Code4rena, Sherlock, CodeHawks, and Cantina.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/AlexCZM/audits",
+      "title": "GitHub - AlexCZM/audits",
+      "content": "DeFi options protocol designed to enhance LPing and trading \u00b7 Code4rena \u00b7 Report \u00b7 Jigsaw \u00b7 CDP based stablecoin \u00b7 Cantina \u00b7 Link \u00b7 BadgerDao \u00b7 eBTC Stability Module facilitates exchange between eBTC and other BTC-denominated assets \u00b7 Cantina \u00b7 Link \u00b7 Yieldoor \u00b7 Leveraged Yield Farming \u00b7 Sherlock \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Saurabh-0312/Audit-Reports",
+      "title": "GitHub - Saurabh-0312/Audit-Reports",
+      "content": "CodeHawks: Contributed to securing ... across 3 competitive security contests \u00b7 Sherlock: <strong>Successfully participated in 4 protocol security contests with high-impact findings</strong>...",
+      "score": null
+    },
+    {
+      "url": "https://hackenproof.com/blog/for-business/code4rena-vs-sherlock-crowdsourced-audits-comparison-guide",
+      "title": "Comparison guide of crowdsourced audits: Code4rena vs Sherlock",
+      "content": "If a project that\u2019s been audited by Sherlock is exploited, it provides coverage, ensuring peace of mind for developers and stakeholders alike. ... Versatility for All: Catering to a broad audience, Code4rena is more focused on beginners, so it may be a better fit if you are new to smart contract auditing.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-protocol/sherlock-reports",
+      "title": "GitHub - sherlock-protocol/sherlock-reports: Sherlock audit and coverage reports \u00b7 GitHub",
+      "content": "Sherlock audit and coverage reports. Contribute to sherlock-protocol/sherlock-reports development by creating an account on GitHub.",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://docs.avantisfi.com/security/audits",
+      "auditor": null,
+      "title": "Audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 549,
+    "followup_query": 728,
+    "followup_search": 642,
+    "classify": 6791
+  },
+  "errors": []
+}

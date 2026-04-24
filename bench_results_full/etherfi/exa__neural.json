@@ -1,0 +1,26 @@
+{
+  "protocol": "ether.fi",
+  "backend": "exa",
+  "mode": "neural",
+  "elapsed_ms": 38979,
+  "reports": [
+    {
+      "url": "https://www.halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+      "pdf_url": null,
+      "auditor": "Halborn",
+      "title": "Case Study: Enhancing Security for Ether.fi\u2019s Liquid Staking Protocol with Halborn",
+      "date": null,
+      "source_url": "https://www.halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T02:03:11.485606+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 19 unique result(s)",
+    "LLM classified 5 result(s) as audit reports",
+    "Extracted 1 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

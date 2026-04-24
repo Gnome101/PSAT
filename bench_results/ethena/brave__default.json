@@ -1,0 +1,312 @@
+{
+  "protocol": "ethena",
+  "backend": "brave",
+  "mode": "default",
+  "broad_query": "\"ethena\" smart contract security audit report",
+  "followup_query": "Ethena protocol audit Code4rena Sherlock Cantina",
+  "broad_results": [
+    {
+      "url": "https://docs.ethena.fi/resources/audits",
+      "title": "Audits | Ethena",
+      "content": "Our initial audit on the first ... were reviewed and patched during the audit cycle. ... <strong>Attached is the audit report by Quantstamp completed on 18 Oct 2023</strong>....",
+      "score": null
+    },
+    {
+      "url": "https://www.cyberscope.io/audits/coin-ethena",
+      "title": "Ethena Smart Contract Audit | Cyberscope",
+      "content": "Stay informed about the latest security updates for Ethena, including smart contract audit reports, security ratings, KYC verifications, on-chain monitoring, and more.",
+      "score": null
+    },
+    {
+      "url": "https://www.veritasprotocol.com/audits/ethena-ena-audit",
+      "title": "Ethena $ENA Token Audit by Veritas Protocol",
+      "content": "If the owner of a contract has permission to whitelist users or tokens, it\u2019ll be unfair toward other users or the transaction flow may not be executed impartially. ... If this function exists, it is possible for the project owner to regain ownership even after relinquishing it. The Reports neither endorse nor condemn any specific project or team, nor do they guarantee the security of any specific project.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+      "title": "audits/team/md/Ethena-security-review-October.md at master \u00b7 pashov/audits",
+      "content": "We can not guarantee 100% security after the review or even if the review will find any problems with your smart contracts. Subsequent security reviews, bug bounty programs and on-chain monitoring are strongly recommended. A time-boxed security review of the ethena-labs/ethena-ustb-audit repository was done by Pashov Audit Group, with a focus on the security aspects of the application&#x27;s smart contracts implementation.",
+      "score": null
+    },
+    {
+      "url": "https://immunefi.com/bug-bounty/ethena/information/",
+      "title": "Ethena Bug Bounties | Immunefi",
+      "content": "FULL_RESTRICTED Stakers can bypass restriction through approvals ... Ethena\u2019s completed audit reports can be found at <strong>https://ethena-labs.gitbook.io/ethena-labs/resources/audits</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://www.cyberscope.io/audits/coin-ethena-usde",
+      "title": "Ethena USDe Smart Contract Audit | Cyberscope",
+      "content": "Stay informed about the latest security updates for Ethena USDe, including smart contract audit reports, security ratings, KYC verifications, on-chain monitoring, and more.",
+      "score": null
+    },
+    {
+      "url": "https://www.cyberscope.io/audits/coin-ethena-staked-usde",
+      "title": "Ethena Staked USDe Smart Contract Audit | Cyberscope",
+      "content": "Stay informed about the latest security updates for Ethena Staked USDe, including smart contract audit reports, security ratings, KYC verifications, on-chain monitoring, and more.",
+      "score": null
+    },
+    {
+      "url": "https://www.cyfrin.io/blog/top-10-smart-contract-auditing-companies",
+      "title": "Top 10 Smart Contract Auditing Companies & Services - Cyfrin",
+      "content": "Cyfrin specializes in auditing smart contracts written in Solidity and Vyper, utilizing tools such as Foundry, Hardhat, Brownie, Apeworx, and Truffle to ensure comprehensive security assessments. ... ZKsync, Chainlink, Wormhole, Securitize, Lido, Starknet, Ethena, Uniswap, and many more.",
+      "score": null
+    },
+    {
+      "url": "https://www.pashov.com/",
+      "title": "Pashov Audit Group | Smart Contract Security Audits",
+      "content": "You can request an audit by visiting our Request Audit page at <strong>www.pashov.com/request-audit</strong>, messaging us on Telegram at @pashovkrum, or emailing [email protected]. We can start your audit right away \u2014 reach out and we begin immediately.",
+      "score": null
+    },
+    {
+      "url": "https://ethenafl.webflow.io/",
+      "title": "Ethena Fi\u2122 | Official Home Site",
+      "content": "Enhanced Security: Safeguarding User Funds3.1 Smart Contract Audits [1]Ethena Fi places a strong emphasis on security and conducts thorough smart contract audits.Smart contract audits <strong>involve a comprehensive review of the codebase to identify potential vulnerabilities and security risks</strong>.By ...",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://docs.ethena.fi/resources/audits",
+      "title": "Audits | Ethena",
+      "content": "Phase 1: conducted initial audit with Zellic on the v1 of the protocol where no critical or high level vulnerabilities were found. Phase 2: architecture design review and economic risk factor analysis with Spearbit&#x27;s Kurt Barry former Lead Engineer at MakerDAO \u00b7 Phase 3: phased audit with industry leading firms: -Quantstamp -Spearbit &amp; Cantina Phase 4: independent audit with Pashov with individual experience of over 50 audits",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-10-ethena-labs",
+      "title": "Ethena Labs Audit | Code4rena",
+      "content": "Ethena Labs audit on Code4rena. <strong>$36,500 USDC, from 24 Oct 2023 to 30 Oct 2023</strong>. Enabling The Internet Bond",
+      "score": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Y4zG8dmWe7M",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, Code4rena, Sherlock & More - YouTube",
+      "content": "Curious about how people are making real money in Web3? In this video, I break down everything you need to know about smart contract auditing\u2014why it\u2019s such a...",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-11-ethena-labs",
+      "title": "Ethena Labs Invitational",
+      "content": "L-02, L-08 in ethena-labs/ethena-ustb-contest/pull/2 \u00b7 EV_om (judge) commented via private message to C4 staff: L-01 Invalid L-02 Low L-03 Low L-04 Invalid L-05 Non-Critical L-06 Non-Critical L-07 Low L-08 Non-Critical L-09 Invalid L-10 Invalid L-11 Non-Critical L-12 Invalid \u00b7 The judge also highlighted the downgraded issues #7 and #8 to be linked in this report for completeness. Following the audit, SpicyMeatball conducted a mitigation review of the Ethena team\u2019s mitigations.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+      "title": "Ethena Labs Invitational Audit | Code4rena",
+      "content": "Ethena Labs Invitational audit on Code4rena. <strong>$20,000 in USDC, from 4 Nov 2024 to 11 Nov 2024</strong>. Enabling The Internet Bond.",
+      "score": null
+    },
+    {
+      "url": "https://www.reddit.com/r/ethdev/comments/1rcti9u/telegram_bot_for_audit_contest_updates_sherlock/",
+      "title": "r/ethdev on Reddit: Telegram bot for audit contest updates (Sherlock, Code4rena, Cantina, Immunefi)",
+      "content": "I got tired of checking Sherlock, Code4rena, Cantina, and Immunefi all the time and didn\u2019t want to depend on Discord, so I built a small bot for myself that sends audit contest updates to a Telegram channel.",
+      "score": null
+    },
+    {
+      "url": "https://theauditorbook.com/",
+      "title": "The Auditor Book \u2014 A compilation from Code4rena & Sherlock",
+      "content": "The Auditor Book is <strong>a compilation of high and medium-severity findings from Code4rena &amp; Sherlock</strong>. Compiled by aviggiano.eth",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/pulse/complete-audit-competitions-guide-strategies-cantina-code4rena-time-q3wdc",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, ...",
+      "content": "We cannot provide a description for this page right now",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "title": "Ethena Labs Findings & Analysis Report",
+      "content": "The code under review can be found within the C4 Ethena Labs repository, and is composed of 6 smart contracts written in the Solidity programming language and includes 588 lines of Solidity code. In addition to the known issues identified by the project team, a Code4rena bot race was conducted at the start of the audit.",
+      "score": null
+    },
+    {
+      "url": "https://news.ycombinator.com/item?id=36883121",
+      "title": "There is a thriving community of security researchers and engineers in the smart... | Hacker News",
+      "content": "Services like code4rena (https://code4rena.com/) and sherlock (https://www.sherlock.xyz/) <strong>make audits a public and competitive process with leaderboards that track the best of the best</strong>. Naturally those that rise to the top of these leaderboards tend to end up offering boutique auditing services ...",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://docs.ethena.fi/resources/audits",
+      "title": "Audits | Ethena",
+      "content": "Our initial audit on the first ... were reviewed and patched during the audit cycle. ... <strong>Attached is the audit report by Quantstamp completed on 18 Oct 2023</strong>....",
+      "score": null
+    },
+    {
+      "url": "https://www.cyberscope.io/audits/coin-ethena",
+      "title": "Ethena Smart Contract Audit | Cyberscope",
+      "content": "Stay informed about the latest security updates for Ethena, including smart contract audit reports, security ratings, KYC verifications, on-chain monitoring, and more.",
+      "score": null
+    },
+    {
+      "url": "https://www.veritasprotocol.com/audits/ethena-ena-audit",
+      "title": "Ethena $ENA Token Audit by Veritas Protocol",
+      "content": "If the owner of a contract has permission to whitelist users or tokens, it\u2019ll be unfair toward other users or the transaction flow may not be executed impartially. ... If this function exists, it is possible for the project owner to regain ownership even after relinquishing it. The Reports neither endorse nor condemn any specific project or team, nor do they guarantee the security of any specific project.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+      "title": "audits/team/md/Ethena-security-review-October.md at master \u00b7 pashov/audits",
+      "content": "We can not guarantee 100% security after the review or even if the review will find any problems with your smart contracts. Subsequent security reviews, bug bounty programs and on-chain monitoring are strongly recommended. A time-boxed security review of the ethena-labs/ethena-ustb-audit repository was done by Pashov Audit Group, with a focus on the security aspects of the application&#x27;s smart contracts implementation.",
+      "score": null
+    },
+    {
+      "url": "https://immunefi.com/bug-bounty/ethena/information/",
+      "title": "Ethena Bug Bounties | Immunefi",
+      "content": "FULL_RESTRICTED Stakers can bypass restriction through approvals ... Ethena\u2019s completed audit reports can be found at <strong>https://ethena-labs.gitbook.io/ethena-labs/resources/audits</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://www.cyberscope.io/audits/coin-ethena-usde",
+      "title": "Ethena USDe Smart Contract Audit | Cyberscope",
+      "content": "Stay informed about the latest security updates for Ethena USDe, including smart contract audit reports, security ratings, KYC verifications, on-chain monitoring, and more.",
+      "score": null
+    },
+    {
+      "url": "https://www.cyberscope.io/audits/coin-ethena-staked-usde",
+      "title": "Ethena Staked USDe Smart Contract Audit | Cyberscope",
+      "content": "Stay informed about the latest security updates for Ethena Staked USDe, including smart contract audit reports, security ratings, KYC verifications, on-chain monitoring, and more.",
+      "score": null
+    },
+    {
+      "url": "https://www.cyfrin.io/blog/top-10-smart-contract-auditing-companies",
+      "title": "Top 10 Smart Contract Auditing Companies & Services - Cyfrin",
+      "content": "Cyfrin specializes in auditing smart contracts written in Solidity and Vyper, utilizing tools such as Foundry, Hardhat, Brownie, Apeworx, and Truffle to ensure comprehensive security assessments. ... ZKsync, Chainlink, Wormhole, Securitize, Lido, Starknet, Ethena, Uniswap, and many more.",
+      "score": null
+    },
+    {
+      "url": "https://www.pashov.com/",
+      "title": "Pashov Audit Group | Smart Contract Security Audits",
+      "content": "You can request an audit by visiting our Request Audit page at <strong>www.pashov.com/request-audit</strong>, messaging us on Telegram at @pashovkrum, or emailing [email protected]. We can start your audit right away \u2014 reach out and we begin immediately.",
+      "score": null
+    },
+    {
+      "url": "https://ethenafl.webflow.io/",
+      "title": "Ethena Fi\u2122 | Official Home Site",
+      "content": "Enhanced Security: Safeguarding User Funds3.1 Smart Contract Audits [1]Ethena Fi places a strong emphasis on security and conducts thorough smart contract audits.Smart contract audits <strong>involve a comprehensive review of the codebase to identify potential vulnerabilities and security risks</strong>.By ...",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-10-ethena-labs",
+      "title": "Ethena Labs Audit | Code4rena",
+      "content": "Ethena Labs audit on Code4rena. <strong>$36,500 USDC, from 24 Oct 2023 to 30 Oct 2023</strong>. Enabling The Internet Bond",
+      "score": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Y4zG8dmWe7M",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, Code4rena, Sherlock & More - YouTube",
+      "content": "Curious about how people are making real money in Web3? In this video, I break down everything you need to know about smart contract auditing\u2014why it\u2019s such a...",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-11-ethena-labs",
+      "title": "Ethena Labs Invitational",
+      "content": "L-02, L-08 in ethena-labs/ethena-ustb-contest/pull/2 \u00b7 EV_om (judge) commented via private message to C4 staff: L-01 Invalid L-02 Low L-03 Low L-04 Invalid L-05 Non-Critical L-06 Non-Critical L-07 Low L-08 Non-Critical L-09 Invalid L-10 Invalid L-11 Non-Critical L-12 Invalid \u00b7 The judge also highlighted the downgraded issues #7 and #8 to be linked in this report for completeness. Following the audit, SpicyMeatball conducted a mitigation review of the Ethena team\u2019s mitigations.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+      "title": "Ethena Labs Invitational Audit | Code4rena",
+      "content": "Ethena Labs Invitational audit on Code4rena. <strong>$20,000 in USDC, from 4 Nov 2024 to 11 Nov 2024</strong>. Enabling The Internet Bond.",
+      "score": null
+    },
+    {
+      "url": "https://www.reddit.com/r/ethdev/comments/1rcti9u/telegram_bot_for_audit_contest_updates_sherlock/",
+      "title": "r/ethdev on Reddit: Telegram bot for audit contest updates (Sherlock, Code4rena, Cantina, Immunefi)",
+      "content": "I got tired of checking Sherlock, Code4rena, Cantina, and Immunefi all the time and didn\u2019t want to depend on Discord, so I built a small bot for myself that sends audit contest updates to a Telegram channel.",
+      "score": null
+    },
+    {
+      "url": "https://theauditorbook.com/",
+      "title": "The Auditor Book \u2014 A compilation from Code4rena & Sherlock",
+      "content": "The Auditor Book is <strong>a compilation of high and medium-severity findings from Code4rena &amp; Sherlock</strong>. Compiled by aviggiano.eth",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/pulse/complete-audit-competitions-guide-strategies-cantina-code4rena-time-q3wdc",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, ...",
+      "content": "We cannot provide a description for this page right now",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "title": "Ethena Labs Findings & Analysis Report",
+      "content": "The code under review can be found within the C4 Ethena Labs repository, and is composed of 6 smart contracts written in the Solidity programming language and includes 588 lines of Solidity code. In addition to the known issues identified by the project team, a Code4rena bot race was conducted at the start of the audit.",
+      "score": null
+    },
+    {
+      "url": "https://news.ycombinator.com/item?id=36883121",
+      "title": "There is a thriving community of security researchers and engineers in the smart... | Hacker News",
+      "content": "Services like code4rena (https://code4rena.com/) and sherlock (https://www.sherlock.xyz/) <strong>make audits a public and competitive process with leaderboards that track the best of the best</strong>. Naturally those that rise to the top of these leaderboards tend to end up offering boutique auditing services ...",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://docs.ethena.fi/resources/audits",
+      "auditor": "Quantstamp",
+      "title": "Audits",
+      "date": "2023-10-18",
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.veritasprotocol.com/audits/ethena-ena-audit",
+      "auditor": "Veritas Protocol",
+      "title": "Ethena $ENA Token Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+      "auditor": "Pashov",
+      "title": "Ethena security review",
+      "date": "2023-10",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-10-ethena-labs",
+      "auditor": "Code4rena",
+      "title": "Ethena Labs Audit",
+      "date": "2023-10",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-11-ethena-labs",
+      "auditor": "Code4rena",
+      "title": "Ethena Labs Invitational",
+      "date": "2024-11",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+      "auditor": "Code4rena",
+      "title": "Ethena Labs Invitational Audit",
+      "date": "2024-11",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "auditor": "Code4rena",
+      "title": "Ethena Labs Findings & Analysis Report",
+      "date": "2023-10",
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 564,
+    "followup_query": 719,
+    "followup_search": 632,
+    "classify": 7929
+  },
+  "errors": []
+}

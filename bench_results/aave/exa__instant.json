@@ -1,0 +1,320 @@
+{
+  "protocol": "aave",
+  "backend": "exa",
+  "mode": "instant",
+  "broad_query": "\"aave\" smart contract security audit report",
+  "followup_query": "Aave audit report Code4rena",
+  "broad_results": [
+    {
+      "url": "https://aave.com/security",
+      "title": "Security | Aave",
+      "content": "Security | Aave\n\n \n\nBug BountyReport responsibly and get rewarded.\n\nGitHubThe Aave Protocol codebase.\n\n### V4 Audits\n\nView Contracts\n\n#### Security Audit\n\nFeb 19 2026\n\n#### Security Review\n\nFeb 10 2026\n\n#### Collaborative Audit Report\n\nFeb 05 2026\n\n### V3.6 Audits\n\nView Contracts\n\n#### Security Revi",
+      "score": null
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "title": "[PDF] AAVE V3.3.0 SMART CONTRACTS SECURITY AUDIT REPORT",
+      "content": "JANUARY 29, 2025\nAAVE V3.3.0\nSMART\nCONTRACTS\nSECURITY\nAUDIT REPORT\nCODE DEVElOPED bY\nEXECUTIVE 1 SUMMARY\nEXECUTIVE SUMMARY 3\n1.1 EXECUTIVE SUMMARY\nThis document presents the smart contracts security audit conducted by Oxorio for BGD\nLabs\u2019s Aave v3.3.0 Update.\nBGD Labs (Bored Ghosts Developing Labs) ",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+      "title": "Aave-security-review.md - pashov/audits - GitHub",
+      "content": "# File: pashov/audits/team/md/Aave-security-review.md\n\n- Repository: pashov/audits | 1K stars\n- Branch: master\n\n```md\n# About\n\nPashov Audit Group consists of multiple teams of some of the best smart contract security researchers in the space. Having a combined reported security vulnerabilities count",
+      "score": null
+    },
+    {
+      "url": "https://www.halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+      "title": "AAVE V3 Origin Audit | Tea-Fi | Halborn Audit Reports",
+      "content": "AAVE V3 Origin Audit | Tea-Fi | Halborn Audit Reports\n\n \n\n \n\nTHIS WEBSITE USES COOKIES\n\nWe use cookies to personalise content and ads, to provide social media features and to analyse our traffic. We also share information about your use of our site with our social media, advertising and analytics pa",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/aave-v4",
+      "title": "Aave V4 Audit - ChainSecurity",
+      "content": "Aave V4 Audit \n\nBack to Overview\n\n# Aave V4 Smart Contracts\n\ndownload report\n\nA huge thank you to ChainSecurity for your hard work and diligence. We\u2019re truly impressed by the team.\n\nStani Kulechov\n\nFounder & CEO, Aave Labs\n\nexternal-link\n\n## About Aave V4\n\nAave V4 introduces a lending protocol with ",
+      "score": null
+    },
+    {
+      "url": "https://aave.com/blog/aave-v4-security-by-design",
+      "title": "Security by Design: Aave V4 Governance Security Update",
+      "content": "Security by Design: Aave V4 Governance Security Update | Aave\n\n \n\n## Back to BlogSecurity by Design: Aave V4 Governance Security Update\n\nAave Labs\n\nNews\n\nAave V4 was built under a security-first framework. Security was never treated as a final gate before deployment. Instead, security controls were ",
+      "score": null
+    },
+    {
+      "url": "https://immunefi.com/bug-bounty/aave/information/",
+      "title": "AAVE Bug Bounties | Immunefi",
+      "content": "AAVE Bug Bounties | Immunefi\n\nBack to Explore\n\n# AAVE\n\nAave is a decentralized non-custodial liquidity protocol where users can participate as suppliers or borrowers in a common pool. Suppliers provide liquidity to earn a passive income, while borrowers are able to borrow in an overcollateralized (p",
+      "score": null
+    },
+    {
+      "url": "https://docs.spark.fi/dev/security/security-and-audits",
+      "title": "Security Audits \u2013 Spark Docs",
+      "content": "Security Audits \u2013 Spark Docs Are you an LLM? Read llms.txt for a summary of the docs, or llms-full.txt for the full context.\n\nSearch...\n\nMenu\n\nSecurity Audits\n\nOn this page\n\n## SparkLend\n\nSparkLend is based on the Aave v3 codebase, including the 3.0.1 and 3.0.2 upgrades, which have been extensively ",
+      "score": null
+    },
+    {
+      "url": "https://www.theblock.co/post/392410/aave-labs-outlines-layered-security-plan-for-v4-after-1-5-million-audit-program",
+      "title": "Aave Labs outlines layered security plan for V4 after $1.5 million ...",
+      "content": "Aave Labs outlines layered security plan for V4 after $1.5 million audit program | The Block\n\nBTCUSD$70,536.000.25%ETHUSD$2,071.231.24%SOLUSD$87.221.03%PYTHUSD$0.04670.11%LINKUSD$9.040.63%\n\n## Latest Crypto News\n\n## Ripple launches $750 million share buyback at $50 billion valuation\n\nMar 11, 2026, 3",
+      "score": null
+    },
+    {
+      "url": "https://www.scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021",
+      "title": "Aave v2.0 Security Assessment Report | PDF | Loans | Interest - Scribd",
+      "content": "Aave v2.0 Security Assessment Report | PDF | Loans | Interest\n\nSkip to main content\n\nOpen navigation menu\n\nClose suggestionsSearchSearch\n\nenChange Language\n\nUpload\n\nSign in\n\nSign in\n\n0% found this document useful (0 votes)\n\n50 views23 pages\n\n# Aave v2.0 Security Assessment Report\n\nThe Aave Protocol ",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://code4rena.com/audits/2022-02-aave-lens-contest",
+      "title": "Aave Lens contest Audit | Code4rena",
+      "content": "Aave Lens contest Audit | Code4rena\n\nCompleted\n\n# Aave Lens contest\n\nWeb3 permissionless, composable & decentralized social graph\n\nView repo View report\n\n- Duration7 days\n- Total awards$100,000 USDC\n- End date16 Feb 2022\n- Start date10 Feb 2022\n\n- Details\n- Results\n\n- Gas\n- (Solo)\n- Med\n- (Solo)\n- H",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-04-pooltogether",
+      "title": "PoolTogether Aave v3 contest - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionPoolTogether Aave v3 contest\n\n# PoolTogether Aave v3 contest Findings & Analysis Report\n\n#### 2022-06-23\n\n## Table of contents\n\nOverview\n\n- Wardens\n- About C4\n\nHigh Risk Findings (1)\n\n- [H-01] A malicious early user/attacker can manipulate the ",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-02-aave-lens",
+      "title": "Aave Lens contest Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionAave Lens contest\n\n# Aave Lens contest Findings & Analysis Report\n\n#### 2022-06-13\n\n## Table of contents\n\nOverview\n\n- Wardens\n- About C4\n\nMedium Risk Findings (13)\n\n- [M-13] Reentrancy allows commenter to overwrite own comments\n- [M-12] Ineffec",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports",
+      "title": "Security Audit Reports - Code4rena",
+      "content": "Security Audit Reports | Code4rena\n\n# Audit Reports\n\nSort By:\n\nDate Range:\n\nSecurity Audit Reports | Code4rena\n[Skip Navigation](#skip-link)\n# Audit Reports\nSort By:\nDate Range:",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of production\n\nSecure your smart contracts.\n\nTop auditors compete to keep high severity bugs out of production.\n\n600+ auditors per contest. Zero platform fees.\n\n1,607\n\nunique high-severity vulns\n\n26,898\n\nunique findings\n\n16,600+\n\nregistered wardens\n\n510\n\nau",
+      "score": null
+    },
+    {
+      "url": "https://aave.com/security",
+      "title": "Security | Aave",
+      "content": "Security | Aave\n\n \n\nBug BountyReport responsibly and get rewarded.\n\nGitHubThe Aave Protocol codebase.\n\n### V4 Audits\n\nView Contracts\n\n#### Security Audit\n\nFeb 19 2026\n\n#### Security Review\n\nFeb 10 2026\n\n#### Collaborative Audit Report\n\nFeb 05 2026\n\n### V3.6 Audits\n\nView Contracts\n\n#### Security Revi",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2021-07-sherlock",
+      "title": "Sherlock - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionSherlock\n\n \n\n# Sherlock Findings & Analysis Report\n\n#### 2021-09-16\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (2)\n\n- [H-01] Single under-funded protocol can break paying off debt\n- [H-02] [Bug] A critical bug in`",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2025-08-morpheus",
+      "title": "Morpheus Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionMorpheus\n\n# Morpheus Findings & Analysis Report\n\n#### 2025-09-11\n\n## Table of contents\n\nOverview\n\n- About C4\n\nMedium Risk Findings (4)\n\n- [M-01] Same heartbeat for multiple price feeds is vulnerable\n- [M-02] Inconsistent balance accounting in s",
+      "score": null
+    },
+    {
+      "url": "https://github.com/zhongeric/code4rena-reports",
+      "title": "zhongeric/code4rena-reports - GitHub",
+      "content": "# Repository: zhongeric/code4rena-reports\n\nSmart contract audit reports that have been judged and awarded in code4rena contests. YTD winnings: $3,211.01\n\n- Stars: 3\n- Forks: 0\n- Watchers: 3\n- Open issues: 0\n- Default branch: main\n- Homepage: https://code4rena.com/\n- Created: 2022-05-20T01:48:41Z\n- L",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://aave.com/security",
+      "title": "Security | Aave",
+      "content": "Security | Aave\n\n \n\nBug BountyReport responsibly and get rewarded.\n\nGitHubThe Aave Protocol codebase.\n\n### V4 Audits\n\nView Contracts\n\n#### Security Audit\n\nFeb 19 2026\n\n#### Security Review\n\nFeb 10 2026\n\n#### Collaborative Audit Report\n\nFeb 05 2026\n\n### V3.6 Audits\n\nView Contracts\n\n#### Security Revi",
+      "score": null
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "title": "[PDF] AAVE V3.3.0 SMART CONTRACTS SECURITY AUDIT REPORT",
+      "content": "JANUARY 29, 2025\nAAVE V3.3.0\nSMART\nCONTRACTS\nSECURITY\nAUDIT REPORT\nCODE DEVElOPED bY\nEXECUTIVE 1 SUMMARY\nEXECUTIVE SUMMARY 3\n1.1 EXECUTIVE SUMMARY\nThis document presents the smart contracts security audit conducted by Oxorio for BGD\nLabs\u2019s Aave v3.3.0 Update.\nBGD Labs (Bored Ghosts Developing Labs) ",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+      "title": "Aave-security-review.md - pashov/audits - GitHub",
+      "content": "# File: pashov/audits/team/md/Aave-security-review.md\n\n- Repository: pashov/audits | 1K stars\n- Branch: master\n\n```md\n# About\n\nPashov Audit Group consists of multiple teams of some of the best smart contract security researchers in the space. Having a combined reported security vulnerabilities count",
+      "score": null
+    },
+    {
+      "url": "https://www.halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+      "title": "AAVE V3 Origin Audit | Tea-Fi | Halborn Audit Reports",
+      "content": "AAVE V3 Origin Audit | Tea-Fi | Halborn Audit Reports\n\n \n\n \n\nTHIS WEBSITE USES COOKIES\n\nWe use cookies to personalise content and ads, to provide social media features and to analyse our traffic. We also share information about your use of our site with our social media, advertising and analytics pa",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/aave-v4",
+      "title": "Aave V4 Audit - ChainSecurity",
+      "content": "Aave V4 Audit \n\nBack to Overview\n\n# Aave V4 Smart Contracts\n\ndownload report\n\nA huge thank you to ChainSecurity for your hard work and diligence. We\u2019re truly impressed by the team.\n\nStani Kulechov\n\nFounder & CEO, Aave Labs\n\nexternal-link\n\n## About Aave V4\n\nAave V4 introduces a lending protocol with ",
+      "score": null
+    },
+    {
+      "url": "https://aave.com/blog/aave-v4-security-by-design",
+      "title": "Security by Design: Aave V4 Governance Security Update",
+      "content": "Security by Design: Aave V4 Governance Security Update | Aave\n\n \n\n## Back to BlogSecurity by Design: Aave V4 Governance Security Update\n\nAave Labs\n\nNews\n\nAave V4 was built under a security-first framework. Security was never treated as a final gate before deployment. Instead, security controls were ",
+      "score": null
+    },
+    {
+      "url": "https://immunefi.com/bug-bounty/aave/information/",
+      "title": "AAVE Bug Bounties | Immunefi",
+      "content": "AAVE Bug Bounties | Immunefi\n\nBack to Explore\n\n# AAVE\n\nAave is a decentralized non-custodial liquidity protocol where users can participate as suppliers or borrowers in a common pool. Suppliers provide liquidity to earn a passive income, while borrowers are able to borrow in an overcollateralized (p",
+      "score": null
+    },
+    {
+      "url": "https://docs.spark.fi/dev/security/security-and-audits",
+      "title": "Security Audits \u2013 Spark Docs",
+      "content": "Security Audits \u2013 Spark Docs Are you an LLM? Read llms.txt for a summary of the docs, or llms-full.txt for the full context.\n\nSearch...\n\nMenu\n\nSecurity Audits\n\nOn this page\n\n## SparkLend\n\nSparkLend is based on the Aave v3 codebase, including the 3.0.1 and 3.0.2 upgrades, which have been extensively ",
+      "score": null
+    },
+    {
+      "url": "https://www.theblock.co/post/392410/aave-labs-outlines-layered-security-plan-for-v4-after-1-5-million-audit-program",
+      "title": "Aave Labs outlines layered security plan for V4 after $1.5 million ...",
+      "content": "Aave Labs outlines layered security plan for V4 after $1.5 million audit program | The Block\n\nBTCUSD$70,536.000.25%ETHUSD$2,071.231.24%SOLUSD$87.221.03%PYTHUSD$0.04670.11%LINKUSD$9.040.63%\n\n## Latest Crypto News\n\n## Ripple launches $750 million share buyback at $50 billion valuation\n\nMar 11, 2026, 3",
+      "score": null
+    },
+    {
+      "url": "https://www.scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021",
+      "title": "Aave v2.0 Security Assessment Report | PDF | Loans | Interest - Scribd",
+      "content": "Aave v2.0 Security Assessment Report | PDF | Loans | Interest\n\nSkip to main content\n\nOpen navigation menu\n\nClose suggestionsSearchSearch\n\nenChange Language\n\nUpload\n\nSign in\n\nSign in\n\n0% found this document useful (0 votes)\n\n50 views23 pages\n\n# Aave v2.0 Security Assessment Report\n\nThe Aave Protocol ",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2022-02-aave-lens-contest",
+      "title": "Aave Lens contest Audit | Code4rena",
+      "content": "Aave Lens contest Audit | Code4rena\n\nCompleted\n\n# Aave Lens contest\n\nWeb3 permissionless, composable & decentralized social graph\n\nView repo View report\n\n- Duration7 days\n- Total awards$100,000 USDC\n- End date16 Feb 2022\n- Start date10 Feb 2022\n\n- Details\n- Results\n\n- Gas\n- (Solo)\n- Med\n- (Solo)\n- H",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-04-pooltogether",
+      "title": "PoolTogether Aave v3 contest - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionPoolTogether Aave v3 contest\n\n# PoolTogether Aave v3 contest Findings & Analysis Report\n\n#### 2022-06-23\n\n## Table of contents\n\nOverview\n\n- Wardens\n- About C4\n\nHigh Risk Findings (1)\n\n- [H-01] A malicious early user/attacker can manipulate the ",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-02-aave-lens",
+      "title": "Aave Lens contest Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionAave Lens contest\n\n# Aave Lens contest Findings & Analysis Report\n\n#### 2022-06-13\n\n## Table of contents\n\nOverview\n\n- Wardens\n- About C4\n\nMedium Risk Findings (13)\n\n- [M-13] Reentrancy allows commenter to overwrite own comments\n- [M-12] Ineffec",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports",
+      "title": "Security Audit Reports - Code4rena",
+      "content": "Security Audit Reports | Code4rena\n\n# Audit Reports\n\nSort By:\n\nDate Range:\n\nSecurity Audit Reports | Code4rena\n[Skip Navigation](#skip-link)\n# Audit Reports\nSort By:\nDate Range:",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of production\n\nSecure your smart contracts.\n\nTop auditors compete to keep high severity bugs out of production.\n\n600+ auditors per contest. Zero platform fees.\n\n1,607\n\nunique high-severity vulns\n\n26,898\n\nunique findings\n\n16,600+\n\nregistered wardens\n\n510\n\nau",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2021-07-sherlock",
+      "title": "Sherlock - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionSherlock\n\n \n\n# Sherlock Findings & Analysis Report\n\n#### 2021-09-16\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (2)\n\n- [H-01] Single under-funded protocol can break paying off debt\n- [H-02] [Bug] A critical bug in`",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2025-08-morpheus",
+      "title": "Morpheus Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionMorpheus\n\n# Morpheus Findings & Analysis Report\n\n#### 2025-09-11\n\n## Table of contents\n\nOverview\n\n- About C4\n\nMedium Risk Findings (4)\n\n- [M-01] Same heartbeat for multiple price feeds is vulnerable\n- [M-02] Inconsistent balance accounting in s",
+      "score": null
+    },
+    {
+      "url": "https://github.com/zhongeric/code4rena-reports",
+      "title": "zhongeric/code4rena-reports - GitHub",
+      "content": "# Repository: zhongeric/code4rena-reports\n\nSmart contract audit reports that have been judged and awarded in code4rena contests. YTD winnings: $3,211.01\n\n- Stars: 3\n- Forks: 0\n- Watchers: 3\n- Open issues: 0\n- Default branch: main\n- Homepage: https://code4rena.com/\n- Created: 2022-05-20T01:48:41Z\n- L",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://aave.com/security",
+      "auditor": null,
+      "title": "Security",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "auditor": "Oxorio",
+      "title": "AAVE V3.3.0 SMART CONTRACTS SECURITY AUDIT REPORT",
+      "date": "2025-01-29",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+      "auditor": "Pashov",
+      "title": "Aave-security-review.md",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://www.halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+      "auditor": "Halborn",
+      "title": "AAVE V3 Origin Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/aave-v4",
+      "auditor": "ChainSecurity",
+      "title": "Aave V4 Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021",
+      "auditor": "Sigma Prime",
+      "title": "Aave v2.0 Security Assessment Report",
+      "date": "2021-01",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/audits/2022-02-aave-lens-contest",
+      "auditor": "Code4rena",
+      "title": "Aave Lens contest Audit",
+      "date": "2022-02",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-02-aave-lens",
+      "auditor": "Code4rena",
+      "title": "Aave Lens contest Findings & Analysis Report",
+      "date": "2022-02",
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 1073,
+    "followup_query": 949,
+    "followup_search": 738,
+    "classify": 15478
+  },
+  "errors": []
+}

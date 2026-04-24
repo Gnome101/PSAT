@@ -1,0 +1,14 @@
+{
+  "protocol": "sky",
+  "backend": "exa",
+  "mode": "deep-lite",
+  "elapsed_ms": 9769,
+  "contracts": [],
+  "official_domain": null,
+  "errors": [],
+  "notes": [
+    "Domain candidates: developers.sky.money, developers.skyeco.com, docs.spark.fi, github.com, makerdao.com",
+    "Could not identify an official domain",
+    "Tavily queries used: 1/4"
+  ]
+}

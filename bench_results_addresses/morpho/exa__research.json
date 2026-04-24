@@ -1,0 +1,276 @@
+{
+  "protocol": "morpho",
+  "backend": "exa",
+  "mode": "research",
+  "instructions": "Find the main deployed smart contract addresses for the morpho protocol. List the core production contracts (not peripheral helpers) with their names and 0x-prefixed on-chain addresses. Include the chain where each is deployed. Prioritize contracts the protocol team themselves publish on their official docs or governance pages.",
+  "contracts": [
+    {
+      "name": "VaultV2Factory",
+      "address": "0xa1d94f746defa1928926b84fb2596c06926c0405",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoVaultV1 AdapterFactory",
+      "address": "0xd1b8e2dee25c2b89dcd2f98448a7ce87d6f63394",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoMarketV1 AdapterV2Factory",
+      "address": "0x32bb1c0d48d8b1b3363e86eeb9a0300bad61ccc1",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoRegistry",
+      "address": "0x3696c5eae4a7ffd04ea163564571e9cd8ed9364e",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "VaultV2Factory",
+      "address": "0x6b46fa3cc9ebf8ab230abac664e37f2966bf7971",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoVaultV1 AdapterFactory",
+      "address": "0xd8fc8a85779551e78b516da9f74061cb3b086793",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoMarketV1 AdapterV2Factory",
+      "address": "0xef84b1ecebe43283ec5af95d7a5c4d7de0a9859b",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoRegistry",
+      "address": "0xc00eb3c7ad1ae986a7f05f5a9d71aca39c763c65",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "VaultV2Factory",
+      "address": "0xf7b1d9e43baea3705f2b303693766acbcfec6a55",
+      "chains": [
+        "Avalanche"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoMarketV1 AdapterV2Factory",
+      "address": "0x9633d22bb8f42f6f70dbbbe34c11eb9209769b8b",
+      "chains": [
+        "Avalanche"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoRegistry",
+      "address": "0x66dc122cf454576684ad78a2800a8eb052b2e9a6",
+      "chains": [
+        "Avalanche"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "VaultV2Factory",
+      "address": "0x4501125508079a99ebbebce205dec9593c2b5857",
+      "chains": [
+        "Base"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoVaultV1 AdapterFactory",
+      "address": "0xf42d9c36b34c9c2cf3bc30ed2a52a90eeb604642",
+      "chains": [
+        "Base"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoMarketV1 AdapterV2Factory",
+      "address": "0x9a1b378c43ba535cdb89934230f0d3890c51c0eb",
+      "chains": [
+        "Base"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoRegistry",
+      "address": "0x5c2531cbd2cf112cf687da3cd536708add7db10a",
+      "chains": [
+        "Base"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "VaultV2Factory",
+      "address": "0x2c83a291cf1428f915e60d4dc0c063498d9b137a",
+      "chains": [
+        "Botanix"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoVaultV1 AdapterFactory",
+      "address": "0xda8d0b0e00a3062fd09005bbae843a1c82d67a97",
+      "chains": [
+        "Botanix"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoMarketV1 AdapterV2Factory",
+      "address": "0xa4a4b6d925734fa1e45bb38fba20d32bb39a3e7a",
+      "chains": [
+        "Botanix"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoRegistry",
+      "address": "0xca0ccc121000561134bf5f2a0cf8b8d6fc4cf044",
+      "chains": [
+        "Botanix"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "VaultV2Factory",
+      "address": "0x3137e22f379a1df004ddb10ebbecf1cfd8cbc0e2",
+      "chains": [
+        "Citrea"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoMarketV1 AdapterV2Factory",
+      "address": "0x01ff31888b1fb51f951273c409f653dba5ce8200",
+      "chains": [
+        "Citrea"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MorphoRegistry",
+      "address": "0x83dd673fa2c4de16caaf0e6109845eeebb6d1e00",
+      "chains": [
+        "Citrea"
+      ],
+      "role": null,
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    }
+  ],
+  "errors": [],
+  "notes": [],
+  "task_id": "01kpzbry8v2m69wk410kcgjj8e",
+  "elapsed_ms": 58557
+}

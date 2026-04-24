@@ -1,0 +1,1109 @@
+{
+  "protocol": "aerodrome",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 14027,
+  "contracts": [
+    {
+      "name": "0x603a4f414489c59e19f86c6f7d2001acc4022e789beb15e1ee13c71ad4cd30f2",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 4,
+        "table": 4
+      },
+      "source_ids": [
+        "s1",
+        "s6"
+      ],
+      "aliases": [
+        "0x0704c9f4521d079761c918c8c62736e00bf723b58930f45d03c81eb0aede9d13",
+        "0xe3950e598fbcb306720b897739119912acca088e87f6d92f3b80289609c8a5d5",
+        "WETH"
+      ],
+      "deployments": [
+        {
+          "address": "0x4200000000000000000000000000000000000006",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x420dd381b31aef6683db6b902084cb0ffece40da",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x9ad08a62baac4608695a710ace8dca66f3c9f06a",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xca68ad4ee5c96871ec6c6dac2f714a8437a3fe66",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0xbc3c24517cbe1727fd8d5e61982769a6aea5750b399f10eb4929cfb6691842d0",
+      "address": "0xcf77a3ba9a5ca399b7c97c74d54e5b1beb874e43",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 6,
+        "table": 6
+      },
+      "source_ids": [
+        "s1",
+        "s6"
+      ],
+      "aliases": [
+        "0x4b88da747164a6b2a81537aa9fdaf9c01da966dfef1d596b34d94f3088d10156",
+        "0x59abbd34c7029996859aaede41c90f3fb8744879d8a553ec4752cb510b9ea77f",
+        "0x640fa96a743655fffac2680621a54775d23e4a3d7f7c02e962bfc070bd66472e",
+        "0xc2871e401aa86abd539f0a7c8710315c512bedfa61bb81aba04d7873d02124da",
+        "Router"
+      ]
+    },
+    {
+      "name": "0xf525687d7c60f8aa112b99b74a9a40c71ade2b1ed4a12007e6322e394b2fa6b5",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 4,
+        "table": 4
+      },
+      "source_ids": [
+        "s1",
+        "s6"
+      ],
+      "aliases": [
+        "0x0cfeba9027603a1a2d821c0a01bb2b614f11ceb5a919df1d3ad7918196cf429e",
+        "0xf4c74f0ace8d08f9effe49ca3d48bd061a7e0f776bc39b61ce7272823e00d333",
+        "Voter"
+      ],
+      "deployments": [
+        {
+          "address": "0x16613524e02ad97edfef371bc883f2f5d6c480a5",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x35f35ca5b132cadf2916bab57639128eac5bbcb5",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x3d71e08d283e275a6dcee6436002c0348413abb8",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x67c247ea8ac79cba228d0fd9ec3c884c9dc58271",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x7c415789bfd497264adecac1bec5ac56d88f7872",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xc890cd746bcef1c8fc3703481685ccb358d323f9",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xe08a47322304a5988daf9486c7c46de8c2261ab1",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Deployed Contracts (Base Mainnet)",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s5",
+        "s3",
+        "s4",
+        "s2"
+      ],
+      "deployments": [
+        {
+          "address": "0x72f40b3ff806347d8a8d8aece2125ee7e6c424e8",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x85f85603d374c398c8fc2459917719d7ae1e9383",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x8da8b2252070b0e1e2565cbabac8478a3614cdf1",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xb285c6fe5e5a9d777b47b08ef9f5cf68c573576d",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x02d44f073a36fb85185003c7d3401fa4c13e245d856da0f79724e161bbee7f1d",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 3,
+        "table": 3
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "aliases": [
+        "0x2b48d9d31c1029e4cc118326f94ac03ad63861c8b01c64167118c91d7fa8085b",
+        "0x3a35df16b9dbb78b4e92386aa91333c7f61c59710ae39eb8eb87e7fba62e3b16"
+      ],
+      "deployments": [
+        {
+          "address": "0x04806550b12c5558c6a4b0e5ee0926b23c8e8223",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xc01e2ff20501839db7b28f5cb3ed2876fea3d6b1",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x0704c9f4521d079761c918c8c62736e00bf723b58930f45d03c81eb0aede9d13",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x27dcb425c7005dd7558f9583797eda39a8d70abd",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xf5a5a87911a8260898916f61a965caea507ccf24",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x0b24c62ae00e055c151479edea3b9d24a7b7a4a7ac088188bb650ff4dfe4fb8a",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x0000000000000000000000000000000000000000",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x92b2ea322c96745498273187e0c9d9d8005eaba5",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xeae066c25106006fb386a3a8b1698a0cb6931c1a",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x0cfeba9027603a1a2d821c0a01bb2b614f11ceb5a919df1d3ad7918196cf429e",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x02e0c302380aa679189d9caa349a0da5a6a19108",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x3d7da85886dcb807d502bbf4b7b469c58e4efa39",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x461f64e54f1babf31a589da5fbe28520b013c3ba",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x70c37882b82896597aa3ec630acbe1bc4d6c889f",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xded5d28998f2b9796ba587f6ae39d4be11967209",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x1c494631aeb2ac5283823c7e22332feec02522ef59ad06fa2938a7422bf15d3a",
+      "address": "0x6eab8c1b93f5799dadf2c687a30230a540dbd636",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ]
+    },
+    {
+      "name": "0x2a485084cffa0f6db15fa6c92d8bde45f54fb142411133e2f14b31b7c5a9c7b0",
+      "address": "0xeea174486776bac738861be5e864bacbcbdada23",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ]
+    },
+    {
+      "name": "0x59abbd34c7029996859aaede41c90f3fb8744879d8a553ec4752cb510b9ea77f",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x688f778c51db4d990bf1abaf8d33fd95e48c6641",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xad2a93c62373c5d4d77c253dd3fc72a7e3090f3e",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x5f1832241802aec54e348fb241333a9fe1be5d1150ca62799021b9feb1673bb5",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 6,
+        "table": 6
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "aliases": [
+        "0x0a6ba275bb6c6471746ff95e30d8bec992c00580554e507b867f949c3bd61e14",
+        "0x0b24c62ae00e055c151479edea3b9d24a7b7a4a7ac088188bb650ff4dfe4fb8a",
+        "0x4b88da747164a6b2a81537aa9fdaf9c01da966dfef1d596b34d94f3088d10156",
+        "0xbc3c24517cbe1727fd8d5e61982769a6aea5750b399f10eb4929cfb6691842d0",
+        "0xc2871e401aa86abd539f0a7c8710315c512bedfa61bb81aba04d7873d02124da"
+      ],
+      "deployments": [
+        {
+          "address": "0x0b25c51637c43decd6cc1c1e3da4518d54ddb528",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x4d5bbce91d9bf7434bf358c1199c8a9c33303787",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x640fa96a743655fffac2680621a54775d23e4a3d7f7c02e962bfc070bd66472e",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x2d25e0514f23c6367687de89bd5167dc754d4934",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xb556ee2761f5d2887b8f35a7dda367abd20503bf",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x7f89e0ef596b78c4e513f9ecf7bd4ddb476a1e6940ec5ae8675546579effb32c",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x2dad3a13ef0c6366220f989157009e501e7938f8",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x51f0c4d693820ead25f573e243f4895c57a2276f",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xe6742fae461ecaf4c6dbd3eb0e3e482bcb2c5567",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x84cd5df61dad08766a92c15bfb76491c75ce0fc6d6aa27121d563e4a3cc5cea9",
+      "address": "0x80218eea7490d4a7c48b7a98a2d6373246eb25b1",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ]
+    },
+    {
+      "name": "0x91e40012108a58b1d98560dee3fed0902d7dc6784a14e7eaf73cf273196751f5",
+      "address": "0x1a3b6d3389e0e0e7ee3f5c43867d6961fc98341b",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ]
+    },
+    {
+      "name": "0x978bfe0ad83f2b48b849f030f6fa4a981d3091b211c3a5cb921853d0b1d7b01d",
+      "address": "0x5f45e48f9c053286ce9ca08db897f8b7eb3f7992",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ]
+    },
+    {
+      "name": "0x9bc95f78ff3996c6233085a5df659facec7a0a59935fd62cd0dfbbbf92d970d2",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 3,
+        "table": 3
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "aliases": [
+        "0x91e40012108a58b1d98560dee3fed0902d7dc6784a14e7eaf73cf273196751f5",
+        "0xf46b53fc9731702d17994d4bce317ef21444ba433bbff9b083a265d2b9c6ae41"
+      ],
+      "deployments": [
+        {
+          "address": "0x01ce4be3631746d157a09a53cf23c2a43578b84c",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xb905d9195019778cfbaa4e9ed90df3fc5871cd9a",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0x9dcba65ae083c7d100d498f1b15dcb88437337b086bc81e1c335a8d737dd009c",
+      "address": "0x1bee27670a1facac1b59143a387740223a203604",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ]
+    },
+    {
+      "name": "0xb6d3eeb35ca0d8b67cf743b36a5f9f8936258a1a4ba9067411c269bacab10fa8",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 3,
+        "table": 3
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "aliases": [
+        "0x2a485084cffa0f6db15fa6c92d8bde45f54fb142411133e2f14b31b7c5a9c7b0",
+        "0xda73f0b34bd4376d324d3337b31f54b6a1ff1afaeea52e2e2f33e6968e5a4e59"
+      ],
+      "deployments": [
+        {
+          "address": "0x2223f9fe624f69da4d8256a7bcc9104fba7f8f75",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x6d2a624cae3d6574903db145ee0bf921a202325d",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0xbc3d94c6dc526a931ae5d6b8d0d4d3cfa13ad8f043b6c83a53b57b834391090e",
+      "address": "0x3fc28bfac25fc8e93b5b2fc15efbbd5a8aa44efe",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 2,
+        "table": 2
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "aliases": [
+        "0xc8f6dacfb00562de5ce9dc9ebed086e0e28098293e71ee3105cdfe7c6a6ea56d"
+      ]
+    },
+    {
+      "name": "0xbc5f0165af50fe20621f985dee5069481b938d259e66e37ecb4db8fa6bae6c89",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x45aa5359e755386710285cb8d5ffd7c9583672f0",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xc8b1487c06bc8680305f952c9d78bc54c7e018fd",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xf89042057d079debe2a65a1a899e48e0e825105f",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0xcfdbcdd59005d6168d7cc2c727b0d6643c77b5e6a142f7fb3f3eb413aa5a20c5",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 2,
+        "table": 2
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "aliases": [
+        "0x9dcba65ae083c7d100d498f1b15dcb88437337b086bc81e1c335a8d737dd009c"
+      ],
+      "deployments": [
+        {
+          "address": "0x26f3901ac8a79c50fb0d8289c74f0d09adc42e29",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xb0b88ca338f183d2fbabab0f75ba3c90424131d9",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xd818b9f7cb4090047d26c51e63c9cb1b5e12886a",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0xda73f0b34bd4376d324d3337b31f54b6a1ff1afaeea52e2e2f33e6968e5a4e59",
+      "address": "0x36bac71a12d2398994e7e224e2f66ab8b46dae3b",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ]
+    },
+    {
+      "name": "0xe3950e598fbcb306720b897739119912acca088e87f6d92f3b80289609c8a5d5",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x8be49607832a299fa33ee837038418ad0223333e",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xf4784435aad798c86c5074e8481cbf5b99d9a089",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "0xf46b53fc9731702d17994d4bce317ef21444ba433bbff9b083a265d2b9c6ae41",
+      "address": "0xa491f60dcbd14121cae9d7eba3d73ee8d4ab4a6c",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ]
+    },
+    {
+      "name": "0xf4c74f0ace8d08f9effe49ca3d48bd061a7e0f776bc39b61ce7272823e00d333",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "deployments": [
+        {
+          "address": "0x0a1278f47317a1313369dc466f5e42ab766c46eb",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x23084f461e37d6009faefa5778ecb253bb72169d",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x36e5d096fd479d469120d021bb793c26cf28e57d",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x98b510b0c4cfcd25a4c195a82f1f20578cbc970b",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xd3a31c6f99dbacf7eb9f0906bf1a038874eef294",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Autopilot PermanentLocksPoolV1",
+      "address": "0xa7c68a960ba0f6726c4b7446004fe64969e2b4d4",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "CL Factory",
+      "address": "0x5e7bb104d84c7cb9b682aac2f3d509f5f406809a",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Contract address of the factory that deploys voting rewards contracts for this gauge on Base. Always in this dataset",
+      "address": "0x45ca74858c579e717ee29a86042e0d53b252b504",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 4,
+        "table": 3
+      },
+      "source_ids": [
+        "s6"
+      ],
+      "aliases": [
+        "0x0cfeba9027603a1a2d821c0a01bb2b614f11ceb5a919df1d3ad7918196cf429e",
+        "0xf4c74f0ace8d08f9effe49ca3d48bd061a7e0f776bc39b61ce7272823e00d333",
+        "0xf525687d7c60f8aa112b99b74a9a40c71ade2b1ed4a12007e6322e394b2fa6b5"
+      ]
+    },
+    {
+      "name": "LPLocker",
+      "address": "0x19842164463241092ab1b00f6ef62e4a172730c6",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "NonfungiblePositionManager",
+      "address": "0x827922686190790b37229fd06084350e74485b72",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "Swap Router",
+      "address": "0xbe6d8f0d05cc4be24d5167a3ef062215be6d18a5",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "TokenVesting",
+      "address": "0x3628adbdcb26a17ca2359bf4795b212261af24cb",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "USDC (Rewards Token)",
+      "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "VoteSalePoolDeployer",
+      "address": "0xc0d8eb2309860761879b01aacdebeef84a76c025",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "VotingEscrow (veAERO)",
+      "address": "0xebf418fe2512e7e6bd9b87a8f0f294acdc67e6b4",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    }
+  ],
+  "official_domain": "github.com",
+  "errors": [],
+  "notes": [
+    "Domain candidates: quicknode.com, atomicwallet.io, degencode.com, docs.presearch.io, gate.com",
+    "Official domain: github.com",
+    "Selected pages: 2",
+    "Tavily queries used: 3/4"
+  ]
+}

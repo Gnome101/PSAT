@@ -1,0 +1,36 @@
+{
+  "protocol": "aave",
+  "backend": "exa",
+  "mode": "deep-lite",
+  "elapsed_ms": 27977,
+  "contracts": [
+    {
+      "name": "console . log ( AaveV3Ethereum . POOL ) ; // \" \"",
+      "address": "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.65,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "text": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    }
+  ],
+  "official_domain": "aave.com",
+  "errors": [],
+  "notes": [
+    "Domain candidates: aave.com, github.com, docs.aave.com, ethereum.stackexchange.com, web3-ethereum-defi.readthedocs.io",
+    "Official domain: aave.com",
+    "LLM page selection unavailable; fell back to top in-domain page candidates",
+    "Selected pages: 3",
+    "Tavily queries used: 4/4"
+  ]
+}

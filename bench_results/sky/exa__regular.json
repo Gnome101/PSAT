@@ -1,0 +1,358 @@
+{
+  "protocol": "sky",
+  "backend": "exa",
+  "mode": "regular",
+  "broad_query": "\"sky\" smart contract security audit report",
+  "followup_query": "Sky smart contracts audit report site:github.com OR site:medium.com",
+  "broad_results": [
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+      "title": "Sky smart contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky smart contracts - ChainSecurity \n\nBack to Overview\n\n# Sky smart contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re lookin",
+      "score": null
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the SP-BEAM Module\nSmart Contracts\nMarch 31, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Open Findings 11\n6 Resolved Findings 12\n7 Notes 15\nSky - SP-BEAM Module - ChainSecurity - \u00a9 Decentra",
+      "score": null
+    },
+    {
+      "url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "title": "[PDF] Code Assessment of the Sky Smart Contracts - ChainSecurity",
+      "content": "PUBLIC\nCode Assessment\nof the Sky\nSmart Contracts\nJune 06, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 10\n4 Terminology 11\n5 Open Findings 12\n6 Resolved Findings 13\n7 Notes 14\nSky - Sky - ChainSecurity - \u00a9 Decentralized Security AG 2\n1 ",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-sp-beam-module",
+      "title": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity",
+      "content": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity\n\nBack to Overview\n\n# Sky SP-BEAM Module\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking f",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-stusds",
+      "title": "Smart Contract Audit - Sky stUSDS - ChainSecurity",
+      "content": "Smart Contract Audit - Sky stUSDS - ChainSecurity\n\nBack to Overview\n\n# Sky stUSDS\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to contin",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+      "title": "[PDF] Code Assessment of the Endgame Toolkit Smart Contracts",
+      "content": "PUBLIC\nCode Assessment\nof the Endgame Toolkit\nSmart Contracts\nJanuary 16, 2026\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 14\n4 Terminology 15\n5 Open Findings 16\n6 Resolved Findings 18\n7 Informational 22\n8 Notes 23\nSky - Endgame Toolkit - Ch",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/maker-endgame-toolkit",
+      "title": "Sky Endgame Toolkit Security Audit by ChainSecurity",
+      "content": "Sky Endgame Toolkit Security Audit by ChainSecurity \n\nBack to Overview\n\n# Sky Endgame Toolkit Security Audit\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe most critical subjects covered in our audit are functional correctness, access control and frontrunning resistance. While security regarding a",
+      "score": null
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+      "title": "[PDF] Code Assessment of the Protego Smart Contracts",
+      "content": "PUBLIC\nCode Assessment\nof the Protego\nSmart Contracts\nApril 15, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 8\n4 Terminology 9\n5 Open Findings 10\n6 Resolved Findings 11\nSky - Protego - ChainSecurity - \u00a9 Decentralized Security AG 2\n1 Exec",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-dss-flappers",
+      "title": "Sky Dss Flappers smart contract audit by ChainSecurity",
+      "content": "Sky Dss Flappers smart contract audit by ChainSecurity\n\nBack to Overview\n\n# Sky Dss Flappers Security Audit\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+      "title": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity\n\nBack to Overview\n\n# Protego Smart Contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014w",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+      "title": "mcd-security/audit-reports.md at master - GitHub",
+      "content": "# File: sky-ecosystem/mcd-security/audit-reports.md\n\n- Repository: sky-ecosystem/mcd-security | The Maker Foundation's highest priority is the security of the Maker protocol. This repository is dedicated to providing transparency to our community with respect to the results of our MCD Audits and our",
+      "score": null
+    },
+    {
+      "url": "https://github.com/makerdao/mcd-security/blob/master/Audit%20Reports/TOB_MakerDAO_Final_Report.pdf",
+      "title": "mcd-security/Audit Reports/TOB_MakerDAO_Final_Report.pdf at ...",
+      "content": "# File: sky-ecosystem/mcd-security/Audit%20Reports/TOB_MakerDAO_Final_Report.pdf\n\n- Repository: sky-ecosystem/mcd-security | The Maker Foundation's highest priority is the security of the Maker protocol. This repository is dedicated to providing transparency to our community with respect to the resu",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/audits",
+      "title": "sky-ecosystem/audits",
+      "content": "# Repository: sky-ecosystem/audits\n\nThird Party Audits of Maker Smart Contracts\n\n- Stars: 6\n- Forks: 6\n- Watchers: 6\n- Open issues: 0\n- License: Other (NOASSERTION)\n- Default branch: master\n- Created: 2019-06-11T16:43:23Z\n- Last push: 2019-08-06T17:52:51Z\n- Contributors: 2 (top: d-xo, tomedwardsmith",
+      "score": null
+    },
+    {
+      "url": "https://gist.github.com/ryzhak/8f8ffe8117fdb96905a00ae3fe05057f",
+      "title": "no_highs_no_lies.md",
+      "content": "# Gist: no_highs_no_lies.md\n\n- Author: [@ryzhak](https://github.com/ryzhak)\n- Private gist (1 file)\n- Created: 2025-12-05T14:58:42Z\n- Updated: 2025-12-17T08:47:43Z\n\n## no_highs_no_lies.md\n\n```md\n# Comprehensive Smart Contract Audit with Certora Formal Verification\n\nHey guys, in this blog post, we're",
+      "score": null
+    },
+    {
+      "url": "https://gist.github.com/nachomazzara/46a5f547dabb363269dc15ef76052b1d",
+      "title": "Horizon - SkyWeaver Bridges & Conquest - Security Review",
+      "content": "# Gist: Horizon - SkyWeaver Bridges & Conquest - Security Review\n\n- Author: [@nachomazzara](https://github.com/nachomazzara)\n- Public gist (1 file)\n- Created: 2020-08-05T15:07:29Z\n- Updated: 2020-10-31T17:58:52Z\n\n## SkyWeaver_Audit.md\n\n```md\n# Arcadeum - Security Audit\n\n## Table of contest\n\n- [Intro",
+      "score": null
+    },
+    {
+      "url": "https://github.com/makerdao/sky",
+      "title": "sky-ecosystem/sky - GitHub",
+      "content": "# Repository: sky-ecosystem/sky\n\n- Stars: 24\n- Forks: 10\n- Watchers: 24\n- Open issues: 1\n- Primary language: Python\n- Languages: Python (52.1%), Solidity (47.3%), Makefile (0.6%)\n- License: GNU Affero General Public License v3.0 (AGPL-3.0)\n- Default branch: master\n- Created: 2023-05-03T14:15:46Z\n- L",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/developerguides/blob/master/dai/dai-in-smart-contracts/dai-in-smart-contracts.md",
+      "title": "dai/dai-in-smart-contracts/dai-in-smart-contracts.md at master \u00b7 sky-ecosystem/developerguides",
+      "content": "# File: sky-ecosystem/developerguides/dai/dai-in-smart-contracts/dai-in-smart-contracts.md\n\n- Repository: sky-ecosystem/developerguides | Developer guides to integrate with MakerDAO's smart contracts, SDKs, APIs, products, and partners | 682 stars | Shell\n- Branch: master\n\n```md\n---\ntitle: Dai in Sm",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/dss/pull/390",
+      "title": "Add zero-value guards to abaci.sol auction parameter setters \u00b7 Pull Request #390 \u00b7 sky-ecosystem/dss",
+      "content": "# Pull Request: sky-ecosystem/dss #390\n\n- Repository: sky-ecosystem/dss | Dai Stablecoin System | 826 stars | Solidity\n\n## Add zero-value guards to abaci.sol auction parameter setters\n\n- Author: [@daatsuka](https://github.com/daatsuka)\n- State: open\n- Source branch: correct-abaci-sol-vulnerability\n-",
+      "score": null
+    },
+    {
+      "url": "https://github.com/wormhole-foundation/wormhole/issues/4749",
+      "title": "Critical Cross-Chain Bridge Validation Flaw in SkyLink Avalanche Deployment \u00b7 Issue #4749 \u00b7 wormhole-foundation/wormhole",
+      "content": "# Issue: wormhole-foundation/wormhole #4749\n\n- Repository: wormhole-foundation/wormhole | A reference implementation for the Wormhole blockchain interoperability protocol. | 2K stars | TypeScript\n\n## Critical Cross-Chain Bridge Validation Flaw in SkyLink Avalanche Deployment\n\n- Author: [@vandurmedri",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/spells-mainnet/pull/538",
+      "title": "Fix: SafeHarbor script output \u00b7 Pull Request #538 \u00b7 sky-ecosystem/spells-mainnet",
+      "content": "# Pull Request: sky-ecosystem/spells-mainnet #538\n\n- Repository: sky-ecosystem/spells-mainnet | Staging repo for MakerDAO weekly executive spells | 173 stars | Solidity\n\n## Fix: SafeHarbor script output\n\n- Author: [@SidestreamFrostyFig](https://github.com/SidestreamFrostyFig)\n- Association: CONTRIBU",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+      "title": "Sky smart contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky smart contracts - ChainSecurity \n\nBack to Overview\n\n# Sky smart contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re lookin",
+      "score": null
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the SP-BEAM Module\nSmart Contracts\nMarch 31, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Open Findings 11\n6 Resolved Findings 12\n7 Notes 15\nSky - SP-BEAM Module - ChainSecurity - \u00a9 Decentra",
+      "score": null
+    },
+    {
+      "url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "title": "[PDF] Code Assessment of the Sky Smart Contracts - ChainSecurity",
+      "content": "PUBLIC\nCode Assessment\nof the Sky\nSmart Contracts\nJune 06, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 10\n4 Terminology 11\n5 Open Findings 12\n6 Resolved Findings 13\n7 Notes 14\nSky - Sky - ChainSecurity - \u00a9 Decentralized Security AG 2\n1 ",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-sp-beam-module",
+      "title": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity",
+      "content": "Smart contract audit - Sky SP-BEAM Module - ChainSecurity\n\nBack to Overview\n\n# Sky SP-BEAM Module\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking f",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-stusds",
+      "title": "Smart Contract Audit - Sky stUSDS - ChainSecurity",
+      "content": "Smart Contract Audit - Sky stUSDS - ChainSecurity\n\nBack to Overview\n\n# Sky stUSDS\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re looking forward to contin",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+      "title": "[PDF] Code Assessment of the Endgame Toolkit Smart Contracts",
+      "content": "PUBLIC\nCode Assessment\nof the Endgame Toolkit\nSmart Contracts\nJanuary 16, 2026\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 14\n4 Terminology 15\n5 Open Findings 16\n6 Resolved Findings 18\n7 Informational 22\n8 Notes 23\nSky - Endgame Toolkit - Ch",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/maker-endgame-toolkit",
+      "title": "Sky Endgame Toolkit Security Audit by ChainSecurity",
+      "content": "Sky Endgame Toolkit Security Audit by ChainSecurity \n\nBack to Overview\n\n# Sky Endgame Toolkit Security Audit\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe most critical subjects covered in our audit are functional correctness, access control and frontrunning resistance. While security regarding a",
+      "score": null
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+      "title": "[PDF] Code Assessment of the Protego Smart Contracts",
+      "content": "PUBLIC\nCode Assessment\nof the Protego\nSmart Contracts\nApril 15, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 8\n4 Terminology 9\n5 Open Findings 10\n6 Resolved Findings 11\nSky - Protego - ChainSecurity - \u00a9 Decentralized Security AG 2\n1 Exec",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-dss-flappers",
+      "title": "Sky Dss Flappers smart contract audit by ChainSecurity",
+      "content": "Sky Dss Flappers smart contract audit by ChainSecurity\n\nBack to Overview\n\n# Sky Dss Flappers Security Audit\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014we\u2019re",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+      "title": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Sky Protego Smart Contracts - ChainSecurity\n\nBack to Overview\n\n# Protego Smart Contracts\n\ndownload report\n\nChainSecurity has been an invaluable partner throughout almost two years of high-stakes product launches. We prize them for their proactivity, consistency & flexibility\u2014w",
+      "score": null
+    },
+    {
+      "url": "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+      "title": "mcd-security/audit-reports.md at master - GitHub",
+      "content": "# File: sky-ecosystem/mcd-security/audit-reports.md\n\n- Repository: sky-ecosystem/mcd-security | The Maker Foundation's highest priority is the security of the Maker protocol. This repository is dedicated to providing transparency to our community with respect to the results of our MCD Audits and our",
+      "score": null
+    },
+    {
+      "url": "https://github.com/makerdao/mcd-security/blob/master/Audit%20Reports/TOB_MakerDAO_Final_Report.pdf",
+      "title": "mcd-security/Audit Reports/TOB_MakerDAO_Final_Report.pdf at ...",
+      "content": "# File: sky-ecosystem/mcd-security/Audit%20Reports/TOB_MakerDAO_Final_Report.pdf\n\n- Repository: sky-ecosystem/mcd-security | The Maker Foundation's highest priority is the security of the Maker protocol. This repository is dedicated to providing transparency to our community with respect to the resu",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/audits",
+      "title": "sky-ecosystem/audits",
+      "content": "# Repository: sky-ecosystem/audits\n\nThird Party Audits of Maker Smart Contracts\n\n- Stars: 6\n- Forks: 6\n- Watchers: 6\n- Open issues: 0\n- License: Other (NOASSERTION)\n- Default branch: master\n- Created: 2019-06-11T16:43:23Z\n- Last push: 2019-08-06T17:52:51Z\n- Contributors: 2 (top: d-xo, tomedwardsmith",
+      "score": null
+    },
+    {
+      "url": "https://gist.github.com/ryzhak/8f8ffe8117fdb96905a00ae3fe05057f",
+      "title": "no_highs_no_lies.md",
+      "content": "# Gist: no_highs_no_lies.md\n\n- Author: [@ryzhak](https://github.com/ryzhak)\n- Private gist (1 file)\n- Created: 2025-12-05T14:58:42Z\n- Updated: 2025-12-17T08:47:43Z\n\n## no_highs_no_lies.md\n\n```md\n# Comprehensive Smart Contract Audit with Certora Formal Verification\n\nHey guys, in this blog post, we're",
+      "score": null
+    },
+    {
+      "url": "https://gist.github.com/nachomazzara/46a5f547dabb363269dc15ef76052b1d",
+      "title": "Horizon - SkyWeaver Bridges & Conquest - Security Review",
+      "content": "# Gist: Horizon - SkyWeaver Bridges & Conquest - Security Review\n\n- Author: [@nachomazzara](https://github.com/nachomazzara)\n- Public gist (1 file)\n- Created: 2020-08-05T15:07:29Z\n- Updated: 2020-10-31T17:58:52Z\n\n## SkyWeaver_Audit.md\n\n```md\n# Arcadeum - Security Audit\n\n## Table of contest\n\n- [Intro",
+      "score": null
+    },
+    {
+      "url": "https://github.com/makerdao/sky",
+      "title": "sky-ecosystem/sky - GitHub",
+      "content": "# Repository: sky-ecosystem/sky\n\n- Stars: 24\n- Forks: 10\n- Watchers: 24\n- Open issues: 1\n- Primary language: Python\n- Languages: Python (52.1%), Solidity (47.3%), Makefile (0.6%)\n- License: GNU Affero General Public License v3.0 (AGPL-3.0)\n- Default branch: master\n- Created: 2023-05-03T14:15:46Z\n- L",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/developerguides/blob/master/dai/dai-in-smart-contracts/dai-in-smart-contracts.md",
+      "title": "dai/dai-in-smart-contracts/dai-in-smart-contracts.md at master \u00b7 sky-ecosystem/developerguides",
+      "content": "# File: sky-ecosystem/developerguides/dai/dai-in-smart-contracts/dai-in-smart-contracts.md\n\n- Repository: sky-ecosystem/developerguides | Developer guides to integrate with MakerDAO's smart contracts, SDKs, APIs, products, and partners | 682 stars | Shell\n- Branch: master\n\n```md\n---\ntitle: Dai in Sm",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/dss/pull/390",
+      "title": "Add zero-value guards to abaci.sol auction parameter setters \u00b7 Pull Request #390 \u00b7 sky-ecosystem/dss",
+      "content": "# Pull Request: sky-ecosystem/dss #390\n\n- Repository: sky-ecosystem/dss | Dai Stablecoin System | 826 stars | Solidity\n\n## Add zero-value guards to abaci.sol auction parameter setters\n\n- Author: [@daatsuka](https://github.com/daatsuka)\n- State: open\n- Source branch: correct-abaci-sol-vulnerability\n-",
+      "score": null
+    },
+    {
+      "url": "https://github.com/wormhole-foundation/wormhole/issues/4749",
+      "title": "Critical Cross-Chain Bridge Validation Flaw in SkyLink Avalanche Deployment \u00b7 Issue #4749 \u00b7 wormhole-foundation/wormhole",
+      "content": "# Issue: wormhole-foundation/wormhole #4749\n\n- Repository: wormhole-foundation/wormhole | A reference implementation for the Wormhole blockchain interoperability protocol. | 2K stars | TypeScript\n\n## Critical Cross-Chain Bridge Validation Flaw in SkyLink Avalanche Deployment\n\n- Author: [@vandurmedri",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/spells-mainnet/pull/538",
+      "title": "Fix: SafeHarbor script output \u00b7 Pull Request #538 \u00b7 sky-ecosystem/spells-mainnet",
+      "content": "# Pull Request: sky-ecosystem/spells-mainnet #538\n\n- Repository: sky-ecosystem/spells-mainnet | Staging repo for MakerDAO weekly executive spells | 173 stars | Solidity\n\n## Fix: SafeHarbor script output\n\n- Author: [@SidestreamFrostyFig](https://github.com/SidestreamFrostyFig)\n- Association: CONTRIBU",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+      "auditor": "ChainSecurity",
+      "title": "Sky smart contracts",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Sky SP-BEAM Module Code Assessment",
+      "date": "2025-03-31",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Sky Smart Contracts Code Assessment",
+      "date": "2025-06-06",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-sp-beam-module",
+      "auditor": "ChainSecurity",
+      "title": "Sky SP-BEAM Module",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/sky-stusds",
+      "auditor": "ChainSecurity",
+      "title": "Sky stUSDS",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Endgame Toolkit Smart Contracts Code Assessment",
+      "date": "2026-01-16",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/maker-endgame-toolkit",
+      "auditor": "ChainSecurity",
+      "title": "Sky Endgame Toolkit Security Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Protego Smart Contracts Code Assessment",
+      "date": "2025-04-15",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-dss-flappers",
+      "auditor": "ChainSecurity",
+      "title": "Sky Dss Flappers",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+      "auditor": "ChainSecurity",
+      "title": "Sky Protego Smart Contracts",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+      "auditor": null,
+      "title": "mcd-security/audit-reports.md",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/sky-ecosystem/audits",
+      "auditor": null,
+      "title": "sky-ecosystem/audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 993,
+    "followup_query": 872,
+    "followup_search": 1088,
+    "classify": 11307
+  },
+  "errors": []
+}

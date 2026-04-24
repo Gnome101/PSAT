@@ -1,0 +1,16 @@
+{
+  "protocol": "compound v3",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 14011,
+  "contracts": [],
+  "official_domain": "docs.compound.finance",
+  "errors": [],
+  "notes": [
+    "Domain candidates: docs.compound.finance, academy.santiment.net, cdn.prod.website-files.com, comp.xyz, exponential.fi",
+    "Official domain: docs.compound.finance",
+    "Selected pages: 2",
+    "No inventory contracts extracted from selected pages",
+    "Tavily queries used: 3/4"
+  ]
+}

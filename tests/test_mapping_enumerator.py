@@ -1,11 +1,3 @@
-"""Phase 3b — Hypersync set-replay enumeration of mapping allowlists.
-
-Exercises `enumerate_mapping_allowlist` with a fake Hypersync client.
-Covers set-semantics (add/remove/re-add), address decoding from
-indexed topics vs. data-field slots, multi-event mappings (rely +
-deny), and pagination via `next_block`.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -29,29 +21,26 @@ from services.resolution.mapping_enumerator import (
 
 
 def enumerate_mapping_allowlist(contract_address, writer_specs, **kwargs):
-    """Test shim — pyright's TypedDict invariance rejects list[dict]
-    passed where list[WriterEventSpec] is declared. Cast once here."""
     return _enumerate(contract_address, cast(Any, writer_specs), **kwargs)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _addr(hex_suffix: str) -> str:
-    """20-byte address with zero-padded high bytes."""
     return "0x" + hex_suffix.lower().rjust(40, "0")
 
 
 def _indexed_topic(addr: str) -> str:
-    """Address padded to 32 bytes — how indexed address args appear in
-    Ethereum log topics."""
+    return "0x" + addr[2:].rjust(64, "0")
+
+
+def _uint_topic(value: int) -> str:
+    return "0x" + f"{value:064x}"
+
+
+def _address_data(addr: str) -> str:
     return "0x" + addr[2:].rjust(64, "0")
 
 
 def _log(topic0: str, indexed_args: list[str] | None = None, data: str = "0x", block: int = 1):
-    """Mock log matching Hypersync's `data` / `topics` shape."""
     topics = [topic0] + [_indexed_topic(a) for a in (indexed_args or [])]
     return SimpleNamespace(
         topics=topics,
@@ -63,9 +52,6 @@ def _log(topic0: str, indexed_args: list[str] | None = None, data: str = "0x", b
 
 
 def _fake_client(batches: list[tuple[list[Any], int | None]]):
-    """Client whose `.get(query)` returns successive batches. Each
-    batch is `(logs, next_block)` — when `next_block` is None, the
-    loop terminates."""
     calls: dict[str, int] = {"n": 0}
 
     class _Client:
@@ -81,9 +67,6 @@ def _fake_client(batches: list[tuple[list[Any], int | None]]):
 
 
 class _FakeFieldEnumMeta(type):
-    """Metaclass so `for x in LogField` iterates the members — same
-    shape Hypersync's real enum presents to callers."""
-
     _members = ("address", "topic0", "data", "block_number")
 
     def __iter__(cls):
@@ -107,13 +90,7 @@ def _run(coroutine):
     return asyncio.run(coroutine)
 
 
-# ---------------------------------------------------------------------------
-# Topic / data decoding
-# ---------------------------------------------------------------------------
-
-
 def test_event_topic0_hashes_canonical_signature():
-    """`keccak('Rely(address)')` is the well-known topic0."""
     expected = "0xdd0e34038ac38b2a1ce960229778ac48a8719bc900b6c4f8d0475c6e8b385a60"
     assert _event_topic0("Rely(address)") == expected
 
@@ -140,17 +117,13 @@ def test_decode_address_arg_from_data_position_1():
     assert _decode_address_arg_from_data(data, 1) == b
 
 
-# ---------------------------------------------------------------------------
-# Set-semantics
-# ---------------------------------------------------------------------------
-
-
 def _rely_spec():
     return {
         "mapping_name": "wards",
         "event_signature": "Rely(address)",
         "event_name": "Rely",
         "key_position": 0,
+        "indexed_positions": [0],
         "direction": "add",
         "writer_function": "rely(address)",
     }
@@ -162,6 +135,7 @@ def _deny_spec():
         "event_signature": "Deny(address)",
         "event_name": "Deny",
         "key_position": 0,
+        "indexed_positions": [0],
         "direction": "remove",
         "writer_function": "deny(address)",
     }
@@ -213,6 +187,36 @@ def test_add_then_remove_leaves_empty():
         )
     )
     assert out == []
+
+
+def test_conflicting_directions_for_same_event_topic_are_rejected():
+    topic = _event_topic0("WhitelistSet(address,bool)")
+    alice = _addr("a11ce")
+    client, calls = _fake_client([([_log(topic, data=_address_data(alice), block=10)], None)])
+    add_spec = {
+        "mapping_name": "whitelist",
+        "event_signature": "WhitelistSet(address,bool)",
+        "event_name": "WhitelistSet",
+        "key_position": 0,
+        "indexed_positions": [],
+        "direction": "add",
+        "writer_function": "setWhitelisted(address,bool)",
+    }
+    remove_spec = {
+        **add_spec,
+        "direction": "remove",
+        "writer_function": "unsetWhitelisted(address,bool)",
+    }
+    out = _run(
+        enumerate_mapping_allowlist(
+            "0xCC00000000000000000000000000000000000001",
+            [add_spec, remove_spec],
+            client=client,
+            hypersync_module=_FakeHypersyncModule(),
+        )
+    )
+    assert out == []
+    assert calls["n"] == 0
 
 
 def test_add_remove_add_ends_present():
@@ -271,6 +275,61 @@ def test_multiple_principals_independent():
     assert addresses == sorted([alice, bob])
 
 
+def test_non_indexed_key_decodes_from_data_slot():
+    topic = _event_topic0("SetAuthorized(address)")
+    alice = _addr("a11ce")
+    client, _ = _fake_client([([_log(topic, data=_address_data(alice), block=10)], None)])
+    spec = {
+        "mapping_name": "authorized",
+        "event_signature": "SetAuthorized(address)",
+        "event_name": "SetAuthorized",
+        "key_position": 0,
+        "indexed_positions": [],
+        "direction": "add",
+        "writer_function": "setAuthorized(address)",
+    }
+    out = _run(
+        enumerate_mapping_allowlist(
+            "0xCC00000000000000000000000000000000000001",
+            [spec],
+            client=client,
+            hypersync_module=_FakeHypersyncModule(),
+        )
+    )
+    assert [p["address"] for p in out] == [alice]
+
+
+def test_indexed_argument_before_non_indexed_key_uses_data_slot_zero():
+    topic = _event_topic0("Foo(uint256,address)")
+    alice = _addr("a11ce")
+    log = SimpleNamespace(
+        topics=[topic, _uint_topic(42)],
+        data=_address_data(alice),
+        block_number=10,
+        transaction_hash="0x" + "f" * 64,
+        log_index=0,
+    )
+    client, _ = _fake_client([([log], None)])
+    spec = {
+        "mapping_name": "authorized",
+        "event_signature": "Foo(uint256,address)",
+        "event_name": "Foo",
+        "key_position": 1,
+        "indexed_positions": [0],
+        "direction": "add",
+        "writer_function": "setAuthorized(address)",
+    }
+    out = _run(
+        enumerate_mapping_allowlist(
+            "0xCC00000000000000000000000000000000000001",
+            [spec],
+            client=client,
+            hypersync_module=_FakeHypersyncModule(),
+        )
+    )
+    assert [p["address"] for p in out] == [alice]
+
+
 def test_empty_history_returns_empty():
     client, _ = _fake_client([])
     out = _run(
@@ -285,7 +344,6 @@ def test_empty_history_returns_empty():
 
 
 def test_no_specs_returns_empty_without_client():
-    """Early-out: no specs → no query, no token required."""
     out = _run(
         enumerate_mapping_allowlist(
             "0xCC00000000000000000000000000000000000001",
@@ -297,8 +355,6 @@ def test_no_specs_returns_empty_without_client():
 
 
 def test_pagination_via_next_block():
-    """Hypersync returns results in chunks — the enumerator must page
-    through until next_block stops advancing."""
     rely_topic = _event_topic0("Rely(address)")
     alice = _addr("a11ce")
     bob = _addr("b0b")
@@ -324,10 +380,6 @@ def test_pagination_via_next_block():
 
 
 def test_unknown_topic_ignored():
-    """A log with a topic0 that isn't in our spec set shouldn't
-    pollute the output — e.g. if the contract is noisy with other
-    events, we filter by topic0 at the query level, but this is a
-    defense-in-depth check."""
     rely_topic = _event_topic0("Rely(address)")
     other_topic = _event_topic0("Unrelated(uint256)")
     alice = _addr("a11ce")
@@ -354,11 +406,9 @@ def test_unknown_topic_ignored():
 
 
 def test_malformed_address_topic_skipped():
-    """Topics that don't decode to a valid 20-byte address get
-    skipped rather than crashing the whole enumeration."""
     rely_topic = _event_topic0("Rely(address)")
     bad_log = SimpleNamespace(
-        topics=[rely_topic, "0xdead"],  # topic1 is malformed
+        topics=[rely_topic, "0xdead"],
         data="0x",
         block_number=10,
         transaction_hash="0x" + "f" * 64,

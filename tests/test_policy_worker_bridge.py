@@ -40,9 +40,15 @@ from workers.policy_worker import (  # noqa: E402
 
 
 ROLE_MANAGER = "0x4994efc62101a9e3f885d872514c2dc7b3235849"
+SECOND_ROLE_MANAGER = "0x1111111111111111111111111111111111111111"
 PAUSER_EOA = "0x19d74871a530c97065d95278223e8b7a7cd5ba27"
 PAUSER_TIMELOCK = "0x81f6e9914136da1a1d3b1efd14f7e0761c3d4cc7"
+OTHER_PAUSER = "0x2222222222222222222222222222222222222222"
 ADMIN_EOA = "0x3b8c27038848592a51384334d8090dd869a816cb"
+
+
+def _node_id(address: str) -> str:
+    return f"address:{address.lower()}"
 
 
 def _graph_nodes() -> list[dict]:
@@ -50,6 +56,7 @@ def _graph_nodes() -> list[dict]:
     `method_to_role`, plus three principal nodes tagged with roles."""
     return [
         {
+            "id": _node_id(ROLE_MANAGER),
             "address": ROLE_MANAGER,
             "resolved_type": "contract",
             "details": {
@@ -61,16 +68,19 @@ def _graph_nodes() -> list[dict]:
             },
         },
         {
+            "id": _node_id(PAUSER_EOA),
             "address": PAUSER_EOA,
             "resolved_type": "eoa",
             "details": {"controller_label": "DEPOSIT_WITHDRAW_PAUSER"},
         },
         {
+            "id": _node_id(PAUSER_TIMELOCK),
             "address": PAUSER_TIMELOCK,
             "resolved_type": "timelock",
             "details": {"controller_label": "DEPOSIT_WITHDRAW_PAUSER", "delay": 604800},
         },
         {
+            "id": _node_id(ADMIN_EOA),
             "address": ADMIN_EOA,
             "resolved_type": "eoa",
             "details": {"controller_label": "PROTOCOL_UPGRADER_ROLE"},
@@ -185,6 +195,48 @@ def test_principals_for_role_preserves_resolved_type():
     assert types == {"eoa", "timelock"}
 
 
+def test_principals_for_role_scopes_to_authority_edges():
+    nodes = _graph_nodes() + [
+        {
+            "id": _node_id(SECOND_ROLE_MANAGER),
+            "address": SECOND_ROLE_MANAGER,
+            "resolved_type": "contract",
+            "details": {"method_to_role": {"onlyDepositWithdrawPauser": ["DEPOSIT_WITHDRAW_PAUSER"]}},
+        },
+        {
+            "id": _node_id(OTHER_PAUSER),
+            "address": OTHER_PAUSER,
+            "resolved_type": "eoa",
+            "details": {"controller_label": "DEPOSIT_WITHDRAW_PAUSER"},
+        },
+    ]
+    edges = [
+        {
+            "from_id": _node_id(ROLE_MANAGER),
+            "to_id": _node_id(PAUSER_EOA),
+            "relation": "role_principal",
+            "label": "DEPOSIT_WITHDRAW_PAUSER",
+            "source_controller_id": None,
+            "notes": [],
+        },
+        {
+            "from_id": _node_id(SECOND_ROLE_MANAGER),
+            "to_id": _node_id(OTHER_PAUSER),
+            "relation": "role_principal",
+            "label": "DEPOSIT_WITHDRAW_PAUSER",
+            "source_controller_id": None,
+            "notes": [],
+        },
+    ]
+    result = _principals_for_role_from_graph(
+        "DEPOSIT_WITHDRAW_PAUSER",
+        nodes,
+        authority_address=ROLE_MANAGER,
+        control_graph_edges=edges,
+    )
+    assert {p["address"] for p in result} == {PAUSER_EOA}
+
+
 # ---------------------------------------------------------------------------
 # _apply_external_call_guard_bridge (end-to-end)
 # ---------------------------------------------------------------------------
@@ -227,6 +279,65 @@ def test_bridge_adds_one_principal_per_role_holder():
         assert row.details["role"] == "DEPOSIT_WITHDRAW_PAUSER"
         assert row.details["authority_address"] == ROLE_MANAGER
         assert row.details["guard_method"] == "onlyDepositWithdrawPauser"
+
+
+def test_bridge_scopes_role_principals_to_resolved_authority():
+    session = MagicMock()
+    ef = SimpleNamespace(id=42)
+    nodes = _graph_nodes() + [
+        {
+            "id": _node_id(SECOND_ROLE_MANAGER),
+            "address": SECOND_ROLE_MANAGER,
+            "resolved_type": "contract",
+            "details": {"method_to_role": {"onlyDepositWithdrawPauser": ["DEPOSIT_WITHDRAW_PAUSER"]}},
+        },
+        {
+            "id": _node_id(OTHER_PAUSER),
+            "address": OTHER_PAUSER,
+            "resolved_type": "eoa",
+            "details": {"controller_label": "DEPOSIT_WITHDRAW_PAUSER"},
+        },
+    ]
+    edges = [
+        {
+            "from_id": _node_id(ROLE_MANAGER),
+            "to_id": _node_id(PAUSER_EOA),
+            "relation": "role_principal",
+            "label": "DEPOSIT_WITHDRAW_PAUSER",
+            "source_controller_id": None,
+            "notes": [],
+        },
+        {
+            "from_id": _node_id(SECOND_ROLE_MANAGER),
+            "to_id": _node_id(OTHER_PAUSER),
+            "relation": "role_principal",
+            "label": "DEPOSIT_WITHDRAW_PAUSER",
+            "source_controller_id": None,
+            "notes": [],
+        },
+    ]
+    fn = _function_record(
+        [
+            {
+                "kind": "modifier",
+                "target_state_var": "roleManager",
+                "target_type": "IRoleManager",
+                "method": "onlyDepositWithdrawPauser",
+                "sender_in_args": True,
+            }
+        ]
+    )
+    added = _apply_external_call_guard_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot=_snapshot(),
+        control_graph_nodes=nodes,
+        control_graph_edges=edges,
+    )
+    assert added == 1
+    row = session.add.call_args.args[0]
+    assert row.address == PAUSER_EOA
 
 
 def test_bridge_deduplicates_same_principal_across_guards():
@@ -512,7 +623,7 @@ def test_sink_bridge_caller_equals_resolves_via_snapshot():
     ef = SimpleNamespace(id=101)
     fn = {
         "function": "renounceOwnership()",
-        "sinks": [{"kind": "caller_equals", "target_state_var": "owner"}],
+        "sinks": [{"kind": "caller_equals", "target_state_var": "owner", "revert_on_mismatch": True}],
     }
     added = _apply_sink_bridge(
         session,
@@ -528,13 +639,31 @@ def test_sink_bridge_caller_equals_resolves_via_snapshot():
     assert row.principal_type == "caller_equals"
 
 
+def test_sink_bridge_skips_observational_caller_equals():
+    session = MagicMock()
+    ef = SimpleNamespace(id=101)
+    fn = {
+        "function": "viewOwner()",
+        "sinks": [{"kind": "caller_equals", "target_state_var": "owner", "revert_on_mismatch": False}],
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot=_snapshot_with_owner(),
+        control_graph_nodes=[],
+    )
+    assert added == 0
+    session.add.assert_not_called()
+
+
 def test_sink_bridge_caller_equals_skips_when_state_var_unresolved():
     """No owner entry in controller_values → nothing to attribute.
     Bridge stays silent (the v5 bridge for external calls behaves
     the same way for an unresolved target state var)."""
     session = MagicMock()
     ef = SimpleNamespace(id=1)
-    fn = {"sinks": [{"kind": "caller_equals", "target_state_var": "gate"}]}
+    fn = {"sinks": [{"kind": "caller_equals", "target_state_var": "gate", "revert_on_mismatch": True}]}
     added = _apply_sink_bridge(
         session,
         effective_function=ef,
@@ -558,6 +687,7 @@ def test_sink_bridge_caller_in_mapping_attaches_enumerated_principals():
                 "kind": "caller_in_mapping",
                 "mapping_name": "wards",
                 "mapping_predicate": "== 1",
+                "revert_on_mismatch": True,
             }
         ],
     }
@@ -579,13 +709,30 @@ def test_sink_bridge_caller_in_mapping_attaches_enumerated_principals():
         assert row.details["mapping_predicate"] == "== 1"
 
 
+def test_sink_bridge_skips_observational_caller_in_mapping():
+    session = MagicMock()
+    ef = SimpleNamespace(id=202)
+    fn = {
+        "sinks": [{"kind": "caller_in_mapping", "mapping_name": "wards", "revert_on_mismatch": False}],
+    }
+    added = _apply_sink_bridge(
+        session,
+        effective_function=ef,
+        function_record=fn,
+        control_snapshot={"controller_values": {}},
+        control_graph_nodes=_wards_nodes(),
+    )
+    assert added == 0
+    session.add.assert_not_called()
+
+
 def test_sink_bridge_caller_in_mapping_no_members_is_noop():
     """Mapping exists but the enumerator found no current members
     (empty allowlist). Bridge adds nothing — not an error."""
     session = MagicMock()
     ef = SimpleNamespace(id=1)
     fn = {
-        "sinks": [{"kind": "caller_in_mapping", "mapping_name": "wards"}],
+        "sinks": [{"kind": "caller_in_mapping", "mapping_name": "wards", "revert_on_mismatch": True}],
     }
     added = _apply_sink_bridge(
         session,
@@ -613,8 +760,8 @@ def test_sink_bridge_deduplicates_same_address_across_sinks():
     ]
     fn = {
         "sinks": [
-            {"kind": "caller_equals", "target_state_var": "owner"},
-            {"kind": "caller_in_mapping", "mapping_name": "wards"},
+            {"kind": "caller_equals", "target_state_var": "owner", "revert_on_mismatch": True},
+            {"kind": "caller_in_mapping", "mapping_name": "wards", "revert_on_mismatch": True},
         ]
     }
     added = _apply_sink_bridge(
@@ -673,7 +820,7 @@ def test_sink_bridge_caller_signature_emits_off_chain_witness():
     ef = SimpleNamespace(id=301)
     fn = {
         "function": "transferWithAuthorization(...)",
-        "sinks": [{"kind": "caller_signature", "signature_source_var": "from"}],
+        "sinks": [{"kind": "caller_signature", "signature_source_var": "from", "revert_on_mismatch": True}],
     }
     added = _apply_sink_bridge(
         session,
@@ -699,7 +846,7 @@ def test_sink_bridge_caller_merkle_emits_off_chain_witness():
     ef = SimpleNamespace(id=302)
     fn = {
         "function": "claim(bytes32[],uint256)",
-        "sinks": [{"kind": "caller_merkle", "merkle_root_var": "merkleRoot"}],
+        "sinks": [{"kind": "caller_merkle", "merkle_root_var": "merkleRoot", "revert_on_mismatch": True}],
     }
     added = _apply_sink_bridge(
         session,
@@ -720,7 +867,7 @@ def test_sink_bridge_signature_without_source_var_skipped():
     row that the UI can't label."""
     session = MagicMock()
     ef = SimpleNamespace(id=1)
-    fn = {"sinks": [{"kind": "caller_signature"}]}
+    fn = {"sinks": [{"kind": "caller_signature", "revert_on_mismatch": True}]}
     added = _apply_sink_bridge(
         session,
         effective_function=ef,
@@ -739,8 +886,8 @@ def test_sink_bridge_merkle_dedupes_same_root_across_sinks():
     ef = SimpleNamespace(id=1)
     fn = {
         "sinks": [
-            {"kind": "caller_merkle", "merkle_root_var": "root"},
-            {"kind": "caller_merkle", "merkle_root_var": "root"},
+            {"kind": "caller_merkle", "merkle_root_var": "root", "revert_on_mismatch": True},
+            {"kind": "caller_merkle", "merkle_root_var": "root", "revert_on_mismatch": True},
         ]
     }
     added = _apply_sink_bridge(

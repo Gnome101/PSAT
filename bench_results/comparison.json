@@ -1,0 +1,2673 @@
+{
+  "protocols": {
+    "aave": {
+      "union_size": 32,
+      "union_urls": [
+        "https://aave.com/security",
+        "https://aave.org/security",
+        "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+        "https://audits.sherlock.xyz/bug-bounties/300",
+        "https://audits.sherlock.xyz/contests/1209",
+        "https://audits.sherlock.xyz/contests/747",
+        "https://blog.openzeppelin.com/aave-protocol-audit",
+        "https://cdck-file-uploads-europe1.s3.dualstack.eu-west-1.amazonaws.com/flex013/uploads/aave/original/2X/1/15794b6badb0f903aabda34f028593899319123d.pdf",
+        "https://certora.com/reports/aave-v3-risk-steward",
+        "https://chainsecurity.com/security-audit/aave-cowswap-adapters",
+        "https://chainsecurity.com/security-audit/aave-v4",
+        "https://chainsecurity.com/security-audit/aave-vault-revenue-splitter",
+        "https://code4rena.com/audits/2022-02-aave-lens-contest",
+        "https://code4rena.com/reports/2022-02-aave-lens",
+        "https://consensys.net/diligence/audits/2020/09/aave-protocol-v2",
+        "https://diligence.security/audits/2020/09/aave-protocol-v2",
+        "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+        "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+        "https://github.com/aave/aave-horizon-price-feeds/blob/main/security/SigmaPrime/audit-report.md",
+        "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+        "https://github.com/mixbytes/audits_public/blob/master/AAVE/Umbrella/README.md",
+        "https://github.com/mixbytes/audits_public/blob/master/AAVE/protocol%20v2/README.md",
+        "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+        "https://halborn.com/audits/jigsaw-finance/aave-strategies-v1",
+        "https://halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+        "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+        "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+        "https://scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021",
+        "https://sherlock.xyz/case-studies/aave",
+        "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review",
+        "https://veritasprotocol.com/audits/aave",
+        "https://x.com/sherlockdefi/status/2034611365516841426"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 8,
+          "unique_urls": 8,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 584,
+            "followup_query": 592,
+            "followup_search": 639,
+            "classify": 10891
+          },
+          "urls": [
+            "https://aave.com/security",
+            "https://audits.sherlock.xyz/contests/1209",
+            "https://certora.com/reports/aave-v3-risk-steward",
+            "https://chainsecurity.com/security-audit/aave-vault-revenue-splitter",
+            "https://halborn.com/audits/jigsaw-finance/aave-strategies-v1",
+            "https://halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+            "https://x.com/sherlockdefi/status/2034611365516841426"
+          ],
+          "recall": 0.25,
+          "missed_vs_union": [
+            "https://aave.org/security",
+            "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+            "https://audits.sherlock.xyz/bug-bounties/300",
+            "https://audits.sherlock.xyz/contests/747",
+            "https://blog.openzeppelin.com/aave-protocol-audit",
+            "https://cdck-file-uploads-europe1.s3.dualstack.eu-west-1.amazonaws.com/flex013/uploads/aave/original/2X/1/15794b6badb0f903aabda34f028593899319123d.pdf",
+            "https://chainsecurity.com/security-audit/aave-cowswap-adapters",
+            "https://chainsecurity.com/security-audit/aave-v4",
+            "https://code4rena.com/audits/2022-02-aave-lens-contest",
+            "https://code4rena.com/reports/2022-02-aave-lens",
+            "https://consensys.net/diligence/audits/2020/09/aave-protocol-v2",
+            "https://diligence.security/audits/2020/09/aave-protocol-v2",
+            "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+            "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+            "https://github.com/aave/aave-horizon-price-feeds/blob/main/security/SigmaPrime/audit-report.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Umbrella/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/protocol%20v2/README.md",
+            "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+            "https://scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021",
+            "https://sherlock.xyz/case-studies/aave",
+            "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review",
+            "https://veritasprotocol.com/audits/aave"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 11,
+          "unique_urls": 11,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 450,
+            "followup_query": 1302,
+            "followup_search": 613,
+            "classify": 11713
+          },
+          "urls": [
+            "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+            "https://cdck-file-uploads-europe1.s3.dualstack.eu-west-1.amazonaws.com/flex013/uploads/aave/original/2X/1/15794b6badb0f903aabda34f028593899319123d.pdf",
+            "https://chainsecurity.com/security-audit/aave-v4",
+            "https://code4rena.com/reports/2022-02-aave-lens",
+            "https://consensys.net/diligence/audits/2020/09/aave-protocol-v2",
+            "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Umbrella/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/protocol%20v2/README.md",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf"
+          ],
+          "recall": 0.3438,
+          "missed_vs_union": [
+            "https://aave.com/security",
+            "https://aave.org/security",
+            "https://audits.sherlock.xyz/bug-bounties/300",
+            "https://audits.sherlock.xyz/contests/1209",
+            "https://audits.sherlock.xyz/contests/747",
+            "https://blog.openzeppelin.com/aave-protocol-audit",
+            "https://certora.com/reports/aave-v3-risk-steward",
+            "https://chainsecurity.com/security-audit/aave-cowswap-adapters",
+            "https://chainsecurity.com/security-audit/aave-vault-revenue-splitter",
+            "https://code4rena.com/audits/2022-02-aave-lens-contest",
+            "https://diligence.security/audits/2020/09/aave-protocol-v2",
+            "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+            "https://github.com/aave/aave-horizon-price-feeds/blob/main/security/SigmaPrime/audit-report.md",
+            "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+            "https://halborn.com/audits/jigsaw-finance/aave-strategies-v1",
+            "https://halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+            "https://scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021",
+            "https://sherlock.xyz/case-studies/aave",
+            "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review",
+            "https://veritasprotocol.com/audits/aave",
+            "https://x.com/sherlockdefi/status/2034611365516841426"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 8,
+          "unique_urls": 8,
+          "raw_count": 19,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1073,
+            "followup_query": 949,
+            "followup_search": 738,
+            "classify": 15478
+          },
+          "urls": [
+            "https://aave.com/security",
+            "https://chainsecurity.com/security-audit/aave-v4",
+            "https://code4rena.com/audits/2022-02-aave-lens-contest",
+            "https://code4rena.com/reports/2022-02-aave-lens",
+            "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+            "https://halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+            "https://scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021"
+          ],
+          "recall": 0.25,
+          "missed_vs_union": [
+            "https://aave.org/security",
+            "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+            "https://audits.sherlock.xyz/bug-bounties/300",
+            "https://audits.sherlock.xyz/contests/1209",
+            "https://audits.sherlock.xyz/contests/747",
+            "https://blog.openzeppelin.com/aave-protocol-audit",
+            "https://cdck-file-uploads-europe1.s3.dualstack.eu-west-1.amazonaws.com/flex013/uploads/aave/original/2X/1/15794b6badb0f903aabda34f028593899319123d.pdf",
+            "https://certora.com/reports/aave-v3-risk-steward",
+            "https://chainsecurity.com/security-audit/aave-cowswap-adapters",
+            "https://chainsecurity.com/security-audit/aave-vault-revenue-splitter",
+            "https://consensys.net/diligence/audits/2020/09/aave-protocol-v2",
+            "https://diligence.security/audits/2020/09/aave-protocol-v2",
+            "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+            "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+            "https://github.com/aave/aave-horizon-price-feeds/blob/main/security/SigmaPrime/audit-report.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Umbrella/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/protocol%20v2/README.md",
+            "https://halborn.com/audits/jigsaw-finance/aave-strategies-v1",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+            "https://sherlock.xyz/case-studies/aave",
+            "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review",
+            "https://veritasprotocol.com/audits/aave",
+            "https://x.com/sherlockdefi/status/2034611365516841426"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 14,
+          "unique_urls": 14,
+          "raw_count": 19,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1133,
+            "followup_query": 615,
+            "followup_search": 854,
+            "classify": 10605
+          },
+          "urls": [
+            "https://aave.org/security",
+            "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+            "https://audits.sherlock.xyz/bug-bounties/300",
+            "https://audits.sherlock.xyz/contests/1209",
+            "https://audits.sherlock.xyz/contests/747",
+            "https://blog.openzeppelin.com/aave-protocol-audit",
+            "https://chainsecurity.com/security-audit/aave-cowswap-adapters",
+            "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+            "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+            "https://sherlock.xyz/case-studies/aave",
+            "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review"
+          ],
+          "recall": 0.4375,
+          "missed_vs_union": [
+            "https://aave.com/security",
+            "https://cdck-file-uploads-europe1.s3.dualstack.eu-west-1.amazonaws.com/flex013/uploads/aave/original/2X/1/15794b6badb0f903aabda34f028593899319123d.pdf",
+            "https://certora.com/reports/aave-v3-risk-steward",
+            "https://chainsecurity.com/security-audit/aave-v4",
+            "https://chainsecurity.com/security-audit/aave-vault-revenue-splitter",
+            "https://code4rena.com/audits/2022-02-aave-lens-contest",
+            "https://code4rena.com/reports/2022-02-aave-lens",
+            "https://consensys.net/diligence/audits/2020/09/aave-protocol-v2",
+            "https://diligence.security/audits/2020/09/aave-protocol-v2",
+            "https://github.com/aave/aave-horizon-price-feeds/blob/main/security/SigmaPrime/audit-report.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Umbrella/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/protocol%20v2/README.md",
+            "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+            "https://halborn.com/audits/jigsaw-finance/aave-strategies-v1",
+            "https://halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+            "https://scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021",
+            "https://veritasprotocol.com/audits/aave",
+            "https://x.com/sherlockdefi/status/2034611365516841426"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 9,
+          "unique_urls": 9,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 3278,
+            "followup_query": 713,
+            "followup_search": 2385,
+            "classify": 7837
+          },
+          "urls": [
+            "https://aave.com/security",
+            "https://chainsecurity.com/security-audit/aave-v4",
+            "https://code4rena.com/audits/2022-02-aave-lens-contest",
+            "https://code4rena.com/reports/2022-02-aave-lens",
+            "https://diligence.security/audits/2020/09/aave-protocol-v2",
+            "https://github.com/aave/aave-horizon-price-feeds/blob/main/security/SigmaPrime/audit-report.md",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+            "https://scribd.com/document/937271860/SigmaPrime-aave-v2-01-2021",
+            "https://veritasprotocol.com/audits/aave"
+          ],
+          "recall": 0.2812,
+          "missed_vs_union": [
+            "https://aave.org/security",
+            "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+            "https://audits.sherlock.xyz/bug-bounties/300",
+            "https://audits.sherlock.xyz/contests/1209",
+            "https://audits.sherlock.xyz/contests/747",
+            "https://blog.openzeppelin.com/aave-protocol-audit",
+            "https://cdck-file-uploads-europe1.s3.dualstack.eu-west-1.amazonaws.com/flex013/uploads/aave/original/2X/1/15794b6badb0f903aabda34f028593899319123d.pdf",
+            "https://certora.com/reports/aave-v3-risk-steward",
+            "https://chainsecurity.com/security-audit/aave-cowswap-adapters",
+            "https://chainsecurity.com/security-audit/aave-vault-revenue-splitter",
+            "https://consensys.net/diligence/audits/2020/09/aave-protocol-v2",
+            "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+            "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/Umbrella/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/AAVE/protocol%20v2/README.md",
+            "https://github.com/pashov/audits/blob/master/team/md/Aave-security-review.md",
+            "https://halborn.com/audits/jigsaw-finance/aave-strategies-v1",
+            "https://halborn.com/audits/tea-fi/aave-v3-origin-9e0e92",
+            "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+            "https://sherlock.xyz/case-studies/aave",
+            "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review",
+            "https://x.com/sherlockdefi/status/2034611365516841426"
+          ]
+        }
+      }
+    },
+    "aerodrome": {
+      "union_size": 7,
+      "union_urls": [
+        "https://aerodrome.finance/security",
+        "https://aerodrome.limo/secure.html",
+        "https://basescan.org/address/0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+        "https://basescan.org/token/0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+        "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit",
+        "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+        "https://slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 4,
+          "unique_urls": 4,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 589,
+            "followup_query": 609,
+            "followup_search": 668,
+            "classify": 9465
+          },
+          "urls": [
+            "https://basescan.org/address/0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+            "https://basescan.org/token/0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+            "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit",
+            "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf"
+          ],
+          "recall": 0.5714,
+          "missed_vs_union": [
+            "https://aerodrome.finance/security",
+            "https://aerodrome.limo/secure.html",
+            "https://slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 3,
+          "unique_urls": 3,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 462,
+            "followup_query": 837,
+            "followup_search": 412,
+            "classify": 7244
+          },
+          "urls": [
+            "https://aerodrome.limo/secure.html",
+            "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit",
+            "https://slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723"
+          ],
+          "recall": 0.4286,
+          "missed_vs_union": [
+            "https://aerodrome.finance/security",
+            "https://basescan.org/address/0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+            "https://basescan.org/token/0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+            "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 897,
+            "followup_query": 659,
+            "followup_search": 1029,
+            "classify": 7999
+          },
+          "urls": [
+            "https://aerodrome.finance/security",
+            "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit"
+          ],
+          "recall": 0.2857,
+          "missed_vs_union": [
+            "https://aerodrome.limo/secure.html",
+            "https://basescan.org/address/0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+            "https://basescan.org/token/0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+            "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+            "https://slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 4,
+          "unique_urls": 4,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1098,
+            "followup_query": 595,
+            "followup_search": 1183,
+            "classify": 8416
+          },
+          "urls": [
+            "https://aerodrome.finance/security",
+            "https://aerodrome.limo/secure.html",
+            "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit",
+            "https://slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723"
+          ],
+          "recall": 0.5714,
+          "missed_vs_union": [
+            "https://basescan.org/address/0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+            "https://basescan.org/token/0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+            "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 19,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 3445,
+            "followup_query": 932,
+            "followup_search": 4568,
+            "classify": 10261
+          },
+          "urls": [
+            "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit",
+            "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf"
+          ],
+          "recall": 0.2857,
+          "missed_vs_union": [
+            "https://aerodrome.finance/security",
+            "https://aerodrome.limo/secure.html",
+            "https://basescan.org/address/0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+            "https://basescan.org/token/0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+            "https://slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723"
+          ]
+        }
+      }
+    },
+    "avantis": {
+      "union_size": 11,
+      "union_urls": [
+        "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf",
+        "https://docs.avantisfi.com/security/audits",
+        "https://docs.avantprotocol.com/security/contract-and-opsec-audits",
+        "https://github.com/Zellic/publications",
+        "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+        "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9",
+        "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/manual-review",
+        "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/scope",
+        "https://omniscia.io/reports/avant-protocol-cross-chain-erc20-token-bridge-67e15059a8c91c0018aa8383/scope",
+        "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+        "https://threesigma.xyz/case-studies/derivatives/avantis"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 1,
+          "unique_urls": 1,
+          "raw_count": 14,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 549,
+            "followup_query": 728,
+            "followup_search": 642,
+            "classify": 6791
+          },
+          "urls": [
+            "https://docs.avantisfi.com/security/audits"
+          ],
+          "recall": 0.0909,
+          "missed_vs_union": [
+            "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf",
+            "https://docs.avantprotocol.com/security/contract-and-opsec-audits",
+            "https://github.com/Zellic/publications",
+            "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/manual-review",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/scope",
+            "https://omniscia.io/reports/avant-protocol-cross-chain-erc20-token-bridge-67e15059a8c91c0018aa8383/scope",
+            "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+            "https://threesigma.xyz/case-studies/derivatives/avantis"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 6,
+          "unique_urls": 6,
+          "raw_count": 18,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 663,
+            "followup_query": 783,
+            "followup_search": 733,
+            "classify": 9129
+          },
+          "urls": [
+            "https://docs.avantisfi.com/security/audits",
+            "https://docs.avantprotocol.com/security/contract-and-opsec-audits",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/manual-review",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/scope",
+            "https://omniscia.io/reports/avant-protocol-cross-chain-erc20-token-bridge-67e15059a8c91c0018aa8383/scope"
+          ],
+          "recall": 0.5455,
+          "missed_vs_union": [
+            "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf",
+            "https://github.com/Zellic/publications",
+            "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+            "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+            "https://threesigma.xyz/case-studies/derivatives/avantis"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 804,
+            "followup_query": 749,
+            "followup_search": 970,
+            "classify": 11098
+          },
+          "urls": [
+            "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf",
+            "https://docs.avantisfi.com/security/audits"
+          ],
+          "recall": 0.1818,
+          "missed_vs_union": [
+            "https://docs.avantprotocol.com/security/contract-and-opsec-audits",
+            "https://github.com/Zellic/publications",
+            "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/manual-review",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/scope",
+            "https://omniscia.io/reports/avant-protocol-cross-chain-erc20-token-bridge-67e15059a8c91c0018aa8383/scope",
+            "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+            "https://threesigma.xyz/case-studies/derivatives/avantis"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 6,
+          "unique_urls": 6,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1245,
+            "followup_query": 667,
+            "followup_search": 1000,
+            "classify": 11569
+          },
+          "urls": [
+            "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf",
+            "https://docs.avantisfi.com/security/audits",
+            "https://github.com/Zellic/publications",
+            "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+            "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+            "https://threesigma.xyz/case-studies/derivatives/avantis"
+          ],
+          "recall": 0.5455,
+          "missed_vs_union": [
+            "https://docs.avantprotocol.com/security/contract-and-opsec-audits",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/manual-review",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/scope",
+            "https://omniscia.io/reports/avant-protocol-cross-chain-erc20-token-bridge-67e15059a8c91c0018aa8383/scope"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1927,
+            "followup_query": 727,
+            "followup_search": 13023,
+            "classify": 9721
+          },
+          "urls": [
+            "https://docs.avantisfi.com/security/audits",
+            "https://github.com/Zellic/publications"
+          ],
+          "recall": 0.1818,
+          "missed_vs_union": [
+            "https://586275454-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2F76vAZHPcNKY10NzuKsC4%2Fuploads%2Fap10BwpWhzNMappneMgr%2FAvantis%20audit%20report.pdf",
+            "https://docs.avantprotocol.com/security/contract-and-opsec-audits",
+            "https://github.com/Zellic/publications/blob/master/Avantis%20-%20Zellic%20Audit%20Report.pdf",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/manual-review",
+            "https://omniscia.io/reports/avant-protocol-avusd-system-667c1e7026467900183ec9e9/scope",
+            "https://omniscia.io/reports/avant-protocol-cross-chain-erc20-token-bridge-67e15059a8c91c0018aa8383/scope",
+            "https://reports.zellic.io/publications/avantis/sections/vault-manager-cannot-access-entire-junior-tranche-17-sendusdctotrader-runs-out-early",
+            "https://threesigma.xyz/case-studies/derivatives/avantis"
+          ]
+        }
+      }
+    },
+    "compound v3": {
+      "union_size": 13,
+      "union_urls": [
+        "https://arxiv.org/abs/2410.04085",
+        "https://blog.openzeppelin.com/compound-iii-audit",
+        "https://certora.com/reports/compound-v3-extended-pause",
+        "https://certora.com/reports/compound-v3-multiplier-plugin",
+        "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+        "https://chainsecurity.com/security-audit/compound-iii",
+        "https://defisafety.com/app/pqrs/582",
+        "https://github.com/Decurity/audits",
+        "https://github.com/compound-finance/quark",
+        "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+        "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+        "https://openzeppelin.com/news/compound-iii-audit",
+        "https://researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 5,
+          "unique_urls": 5,
+          "raw_count": 14,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 555,
+            "followup_query": 784,
+            "followup_search": 571,
+            "classify": 6469
+          },
+          "urls": [
+            "https://arxiv.org/abs/2410.04085",
+            "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+            "https://github.com/Decurity/audits",
+            "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+            "https://researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report"
+          ],
+          "recall": 0.3846,
+          "missed_vs_union": [
+            "https://blog.openzeppelin.com/compound-iii-audit",
+            "https://certora.com/reports/compound-v3-extended-pause",
+            "https://certora.com/reports/compound-v3-multiplier-plugin",
+            "https://chainsecurity.com/security-audit/compound-iii",
+            "https://defisafety.com/app/pqrs/582",
+            "https://github.com/compound-finance/quark",
+            "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+            "https://openzeppelin.com/news/compound-iii-audit"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 3,
+          "unique_urls": 3,
+          "raw_count": 19,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 564,
+            "followup_query": 889,
+            "followup_search": 471,
+            "classify": 9378
+          },
+          "urls": [
+            "https://blog.openzeppelin.com/compound-iii-audit",
+            "https://certora.com/reports/compound-v3-multiplier-plugin",
+            "https://chainsecurity.com/security-audit/compound-iii"
+          ],
+          "recall": 0.2308,
+          "missed_vs_union": [
+            "https://arxiv.org/abs/2410.04085",
+            "https://certora.com/reports/compound-v3-extended-pause",
+            "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+            "https://defisafety.com/app/pqrs/582",
+            "https://github.com/Decurity/audits",
+            "https://github.com/compound-finance/quark",
+            "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+            "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+            "https://openzeppelin.com/news/compound-iii-audit",
+            "https://researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 15,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1230,
+            "followup_query": 892,
+            "followup_search": 961,
+            "classify": 7174
+          },
+          "urls": [
+            "https://certora.com/reports/compound-v3-extended-pause",
+            "https://researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report"
+          ],
+          "recall": 0.1538,
+          "missed_vs_union": [
+            "https://arxiv.org/abs/2410.04085",
+            "https://blog.openzeppelin.com/compound-iii-audit",
+            "https://certora.com/reports/compound-v3-multiplier-plugin",
+            "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+            "https://chainsecurity.com/security-audit/compound-iii",
+            "https://defisafety.com/app/pqrs/582",
+            "https://github.com/Decurity/audits",
+            "https://github.com/compound-finance/quark",
+            "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+            "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+            "https://openzeppelin.com/news/compound-iii-audit"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 3,
+          "unique_urls": 3,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1183,
+            "followup_query": 655,
+            "followup_search": 938,
+            "classify": 9699
+          },
+          "urls": [
+            "https://certora.com/reports/compound-v3-extended-pause",
+            "https://certora.com/reports/compound-v3-multiplier-plugin",
+            "https://researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report"
+          ],
+          "recall": 0.2308,
+          "missed_vs_union": [
+            "https://arxiv.org/abs/2410.04085",
+            "https://blog.openzeppelin.com/compound-iii-audit",
+            "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+            "https://chainsecurity.com/security-audit/compound-iii",
+            "https://defisafety.com/app/pqrs/582",
+            "https://github.com/Decurity/audits",
+            "https://github.com/compound-finance/quark",
+            "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+            "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+            "https://openzeppelin.com/news/compound-iii-audit"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 6,
+          "unique_urls": 6,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 4684,
+            "followup_query": 954,
+            "followup_search": 5931,
+            "classify": 10343
+          },
+          "urls": [
+            "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+            "https://chainsecurity.com/security-audit/compound-iii",
+            "https://defisafety.com/app/pqrs/582",
+            "https://github.com/compound-finance/quark",
+            "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+            "https://openzeppelin.com/news/compound-iii-audit"
+          ],
+          "recall": 0.4615,
+          "missed_vs_union": [
+            "https://arxiv.org/abs/2410.04085",
+            "https://blog.openzeppelin.com/compound-iii-audit",
+            "https://certora.com/reports/compound-v3-extended-pause",
+            "https://certora.com/reports/compound-v3-multiplier-plugin",
+            "https://github.com/Decurity/audits",
+            "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+            "https://researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report"
+          ]
+        }
+      }
+    },
+    "ethena": {
+      "union_size": 22,
+      "union_urls": [
+        "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FGZbd1DrrG3YmnTlJnTHa%2FEthena%20-%20Zellic%20Audit%20Report%20Draft.pdf",
+        "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf",
+        "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+        "https://code4rena.com/audits/2023-10-ethena-labs",
+        "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+        "https://code4rena.com/reports/2023-10-ethena",
+        "https://code4rena.com/reports/2024-11-ethena-labs",
+        "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals",
+        "https://cyberscope.io/audits/coin-ethena",
+        "https://docs.ethena.fi/resources/audits",
+        "https://ethena-labs.gitbook.io/ethena-labs/resources/audits",
+        "https://ethena-labs.gitbook.io/resources/audits",
+        "https://github.com/code-423n4/2023-10-ethena",
+        "https://github.com/code-423n4/2023-10-ethena-findings",
+        "https://github.com/code-423n4/2023-10-ethena-findings/blob/main/data/twicek-Q.md",
+        "https://github.com/code-423n4/2024-11-ethena-labs/tree/main",
+        "https://github.com/ethena-labs/code4arena-contest/tree/7a123a26d230236c581a34793263b6c99d98e6d0",
+        "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+        "https://reports.zellic.io/publications/ethena",
+        "https://resources.cryptocompare.com/asset-management/13710/1727949425896.pdf",
+        "https://scribd.com/document/768915634/Ethena-security-review-february",
+        "https://veritasprotocol.com/audits/ethena-ena-audit"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 7,
+          "unique_urls": 7,
+          "raw_count": 19,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 564,
+            "followup_query": 719,
+            "followup_search": 632,
+            "classify": 7929
+          },
+          "urls": [
+            "https://code4rena.com/audits/2023-10-ethena-labs",
+            "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+            "https://code4rena.com/reports/2023-10-ethena",
+            "https://code4rena.com/reports/2024-11-ethena-labs",
+            "https://docs.ethena.fi/resources/audits",
+            "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+            "https://veritasprotocol.com/audits/ethena-ena-audit"
+          ],
+          "recall": 0.3182,
+          "missed_vs_union": [
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FGZbd1DrrG3YmnTlJnTHa%2FEthena%20-%20Zellic%20Audit%20Report%20Draft.pdf",
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf",
+            "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+            "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals",
+            "https://cyberscope.io/audits/coin-ethena",
+            "https://ethena-labs.gitbook.io/ethena-labs/resources/audits",
+            "https://ethena-labs.gitbook.io/resources/audits",
+            "https://github.com/code-423n4/2023-10-ethena",
+            "https://github.com/code-423n4/2023-10-ethena-findings",
+            "https://github.com/code-423n4/2023-10-ethena-findings/blob/main/data/twicek-Q.md",
+            "https://github.com/code-423n4/2024-11-ethena-labs/tree/main",
+            "https://github.com/ethena-labs/code4arena-contest/tree/7a123a26d230236c581a34793263b6c99d98e6d0",
+            "https://reports.zellic.io/publications/ethena",
+            "https://resources.cryptocompare.com/asset-management/13710/1727949425896.pdf",
+            "https://scribd.com/document/768915634/Ethena-security-review-february"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 9,
+          "unique_urls": 9,
+          "raw_count": 13,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 415,
+            "followup_query": 752,
+            "followup_search": 498,
+            "classify": 7064
+          },
+          "urls": [
+            "https://code4rena.com/audits/2023-10-ethena-labs",
+            "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+            "https://code4rena.com/reports/2023-10-ethena",
+            "https://ethena-labs.gitbook.io/ethena-labs/resources/audits",
+            "https://github.com/code-423n4/2023-10-ethena",
+            "https://github.com/code-423n4/2024-11-ethena-labs/tree/main",
+            "https://github.com/ethena-labs/code4arena-contest/tree/7a123a26d230236c581a34793263b6c99d98e6d0",
+            "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+            "https://veritasprotocol.com/audits/ethena-ena-audit"
+          ],
+          "recall": 0.4091,
+          "missed_vs_union": [
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FGZbd1DrrG3YmnTlJnTHa%2FEthena%20-%20Zellic%20Audit%20Report%20Draft.pdf",
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf",
+            "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+            "https://code4rena.com/reports/2024-11-ethena-labs",
+            "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals",
+            "https://cyberscope.io/audits/coin-ethena",
+            "https://docs.ethena.fi/resources/audits",
+            "https://ethena-labs.gitbook.io/resources/audits",
+            "https://github.com/code-423n4/2023-10-ethena-findings",
+            "https://github.com/code-423n4/2023-10-ethena-findings/blob/main/data/twicek-Q.md",
+            "https://reports.zellic.io/publications/ethena",
+            "https://resources.cryptocompare.com/asset-management/13710/1727949425896.pdf",
+            "https://scribd.com/document/768915634/Ethena-security-review-february"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 8,
+          "unique_urls": 8,
+          "raw_count": 18,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 951,
+            "followup_query": 722,
+            "followup_search": 768,
+            "classify": 8887
+          },
+          "urls": [
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf",
+            "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+            "https://code4rena.com/reports/2023-10-ethena",
+            "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals",
+            "https://docs.ethena.fi/resources/audits",
+            "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+            "https://scribd.com/document/768915634/Ethena-security-review-february",
+            "https://veritasprotocol.com/audits/ethena-ena-audit"
+          ],
+          "recall": 0.3636,
+          "missed_vs_union": [
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FGZbd1DrrG3YmnTlJnTHa%2FEthena%20-%20Zellic%20Audit%20Report%20Draft.pdf",
+            "https://code4rena.com/audits/2023-10-ethena-labs",
+            "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+            "https://code4rena.com/reports/2024-11-ethena-labs",
+            "https://cyberscope.io/audits/coin-ethena",
+            "https://ethena-labs.gitbook.io/ethena-labs/resources/audits",
+            "https://ethena-labs.gitbook.io/resources/audits",
+            "https://github.com/code-423n4/2023-10-ethena",
+            "https://github.com/code-423n4/2023-10-ethena-findings",
+            "https://github.com/code-423n4/2023-10-ethena-findings/blob/main/data/twicek-Q.md",
+            "https://github.com/code-423n4/2024-11-ethena-labs/tree/main",
+            "https://github.com/ethena-labs/code4arena-contest/tree/7a123a26d230236c581a34793263b6c99d98e6d0",
+            "https://reports.zellic.io/publications/ethena",
+            "https://resources.cryptocompare.com/asset-management/13710/1727949425896.pdf"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 14,
+          "unique_urls": 14,
+          "raw_count": 18,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1073,
+            "followup_query": 673,
+            "followup_search": 902,
+            "classify": 9619
+          },
+          "urls": [
+            "https://code4rena.com/audits/2023-10-ethena-labs",
+            "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+            "https://code4rena.com/reports/2023-10-ethena",
+            "https://code4rena.com/reports/2024-11-ethena-labs",
+            "https://cyberscope.io/audits/coin-ethena",
+            "https://docs.ethena.fi/resources/audits",
+            "https://ethena-labs.gitbook.io/ethena-labs/resources/audits",
+            "https://ethena-labs.gitbook.io/resources/audits",
+            "https://github.com/code-423n4/2023-10-ethena-findings",
+            "https://github.com/code-423n4/2023-10-ethena-findings/blob/main/data/twicek-Q.md",
+            "https://github.com/code-423n4/2024-11-ethena-labs/tree/main",
+            "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+            "https://reports.zellic.io/publications/ethena",
+            "https://veritasprotocol.com/audits/ethena-ena-audit"
+          ],
+          "recall": 0.6364,
+          "missed_vs_union": [
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FGZbd1DrrG3YmnTlJnTHa%2FEthena%20-%20Zellic%20Audit%20Report%20Draft.pdf",
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf",
+            "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+            "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals",
+            "https://github.com/code-423n4/2023-10-ethena",
+            "https://github.com/ethena-labs/code4arena-contest/tree/7a123a26d230236c581a34793263b6c99d98e6d0",
+            "https://resources.cryptocompare.com/asset-management/13710/1727949425896.pdf",
+            "https://scribd.com/document/768915634/Ethena-security-review-february"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 7,
+          "unique_urls": 7,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 5801,
+            "followup_query": 818,
+            "followup_search": 2730,
+            "classify": 11992
+          },
+          "urls": [
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FGZbd1DrrG3YmnTlJnTHa%2FEthena%20-%20Zellic%20Audit%20Report%20Draft.pdf",
+            "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf",
+            "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+            "https://docs.ethena.fi/resources/audits",
+            "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+            "https://resources.cryptocompare.com/asset-management/13710/1727949425896.pdf",
+            "https://veritasprotocol.com/audits/ethena-ena-audit"
+          ],
+          "recall": 0.3182,
+          "missed_vs_union": [
+            "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+            "https://code4rena.com/audits/2023-10-ethena-labs",
+            "https://code4rena.com/reports/2023-10-ethena",
+            "https://code4rena.com/reports/2024-11-ethena-labs",
+            "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals",
+            "https://cyberscope.io/audits/coin-ethena",
+            "https://ethena-labs.gitbook.io/ethena-labs/resources/audits",
+            "https://ethena-labs.gitbook.io/resources/audits",
+            "https://github.com/code-423n4/2023-10-ethena",
+            "https://github.com/code-423n4/2023-10-ethena-findings",
+            "https://github.com/code-423n4/2023-10-ethena-findings/blob/main/data/twicek-Q.md",
+            "https://github.com/code-423n4/2024-11-ethena-labs/tree/main",
+            "https://github.com/ethena-labs/code4arena-contest/tree/7a123a26d230236c581a34793263b6c99d98e6d0",
+            "https://reports.zellic.io/publications/ethena",
+            "https://scribd.com/document/768915634/Ethena-security-review-february"
+          ]
+        }
+      }
+    },
+    "ether.fi": {
+      "union_size": 12,
+      "union_urls": [
+        "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf",
+        "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf",
+        "https://cyberscope.io/audits/coin-ether-fi-ethfi",
+        "https://cyberscope.io/audits/coin-etherfi-ebtc",
+        "https://etherfi.gitbook.io/etherfi/security/audits",
+        "https://github.com/Zellic/publications/blob/master/ether.fi%20-%20Zellic%20Audit%20Report.pdf",
+        "https://github.com/etherfi-protocol/smart-contracts/tree/master/audits",
+        "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+        "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20ether.fi.pdf",
+        "https://halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+        "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb",
+        "https://skynet.certik.com/projects/etherfi"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 7,
+          "unique_urls": 7,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 585,
+            "followup_query": 732,
+            "followup_search": 615,
+            "classify": 9349
+          },
+          "urls": [
+            "https://cyberscope.io/audits/coin-ether-fi-ethfi",
+            "https://cyberscope.io/audits/coin-etherfi-ebtc",
+            "https://etherfi.gitbook.io/etherfi/security/audits",
+            "https://github.com/Zellic/publications/blob/master/ether.fi%20-%20Zellic%20Audit%20Report.pdf",
+            "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+            "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb",
+            "https://skynet.certik.com/projects/etherfi"
+          ],
+          "recall": 0.5833,
+          "missed_vs_union": [
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf",
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf",
+            "https://github.com/etherfi-protocol/smart-contracts/tree/master/audits",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20ether.fi.pdf",
+            "https://halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 4,
+          "unique_urls": 4,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 443,
+            "followup_query": 1055,
+            "followup_search": 515,
+            "classify": 13728
+          },
+          "urls": [
+            "https://etherfi.gitbook.io/etherfi/security/audits",
+            "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+            "https://halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+            "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb"
+          ],
+          "recall": 0.3333,
+          "missed_vs_union": [
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf",
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf",
+            "https://cyberscope.io/audits/coin-ether-fi-ethfi",
+            "https://cyberscope.io/audits/coin-etherfi-ebtc",
+            "https://github.com/Zellic/publications/blob/master/ether.fi%20-%20Zellic%20Audit%20Report.pdf",
+            "https://github.com/etherfi-protocol/smart-contracts/tree/master/audits",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20ether.fi.pdf",
+            "https://skynet.certik.com/projects/etherfi"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 5,
+          "unique_urls": 5,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 2071,
+            "followup_query": 987,
+            "followup_search": 762,
+            "classify": 12332
+          },
+          "urls": [
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf",
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf",
+            "https://etherfi.gitbook.io/etherfi/security/audits",
+            "https://halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+            "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb"
+          ],
+          "recall": 0.4167,
+          "missed_vs_union": [
+            "https://cyberscope.io/audits/coin-ether-fi-ethfi",
+            "https://cyberscope.io/audits/coin-etherfi-ebtc",
+            "https://github.com/Zellic/publications/blob/master/ether.fi%20-%20Zellic%20Audit%20Report.pdf",
+            "https://github.com/etherfi-protocol/smart-contracts/tree/master/audits",
+            "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20ether.fi.pdf",
+            "https://skynet.certik.com/projects/etherfi"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 4,
+          "unique_urls": 4,
+          "raw_count": 19,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1065,
+            "followup_query": 727,
+            "followup_search": 919,
+            "classify": 11727
+          },
+          "urls": [
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf",
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf",
+            "https://etherfi.gitbook.io/etherfi/security/audits",
+            "https://github.com/etherfi-protocol/smart-contracts/tree/master/audits"
+          ],
+          "recall": 0.3333,
+          "missed_vs_union": [
+            "https://cyberscope.io/audits/coin-ether-fi-ethfi",
+            "https://cyberscope.io/audits/coin-etherfi-ebtc",
+            "https://github.com/Zellic/publications/blob/master/ether.fi%20-%20Zellic%20Audit%20Report.pdf",
+            "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20ether.fi.pdf",
+            "https://halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+            "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb",
+            "https://skynet.certik.com/projects/etherfi"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 4,
+          "unique_urls": 4,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 6309,
+            "followup_query": 1143,
+            "followup_search": 6180,
+            "classify": 11718
+          },
+          "urls": [
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FFgdNivH2FNNe7JwkZXtd%2FNM0093-FINAL-ETHER-FI.pdf",
+            "https://246895607-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FG3Lk76lfvw9ecPIg0mK8%2Fuploads%2FZgymtAAi8L1kkuuzrT9E%2FAudit_Report_-_ether.fi_26.10.2023.pdf",
+            "https://etherfi.gitbook.io/etherfi/security/audits",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20ether.fi.pdf"
+          ],
+          "recall": 0.3333,
+          "missed_vs_union": [
+            "https://cyberscope.io/audits/coin-ether-fi-ethfi",
+            "https://cyberscope.io/audits/coin-etherfi-ebtc",
+            "https://github.com/Zellic/publications/blob/master/ether.fi%20-%20Zellic%20Audit%20Report.pdf",
+            "https://github.com/etherfi-protocol/smart-contracts/tree/master/audits",
+            "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+            "https://halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+            "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb",
+            "https://skynet.certik.com/projects/etherfi"
+          ]
+        }
+      }
+    },
+    "gains network": {
+      "union_size": 5,
+      "union_urls": [
+        "https://cyberscope.io/audits/coin-gains-network",
+        "https://defisafety.com/app/pqrs/518",
+        "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+        "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md",
+        "https://hacken.io/audits/gains-associates"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 12,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 537,
+            "followup_query": 664,
+            "followup_search": 644,
+            "classify": 5649
+          },
+          "urls": [
+            "https://cyberscope.io/audits/coin-gains-network",
+            "https://defisafety.com/app/pqrs/518"
+          ],
+          "recall": 0.4,
+          "missed_vs_union": [
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md",
+            "https://hacken.io/audits/gains-associates"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 1,
+          "unique_urls": 1,
+          "raw_count": 11,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 440,
+            "followup_query": 852,
+            "followup_search": 1002,
+            "classify": 4523
+          },
+          "urls": [
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md"
+          ],
+          "recall": 0.2,
+          "missed_vs_union": [
+            "https://cyberscope.io/audits/coin-gains-network",
+            "https://defisafety.com/app/pqrs/518",
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+            "https://hacken.io/audits/gains-associates"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1114,
+            "followup_query": 934,
+            "followup_search": 730,
+            "classify": 10547
+          },
+          "urls": [
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md"
+          ],
+          "recall": 0.4,
+          "missed_vs_union": [
+            "https://cyberscope.io/audits/coin-gains-network",
+            "https://defisafety.com/app/pqrs/518",
+            "https://hacken.io/audits/gains-associates"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 16,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1256,
+            "followup_query": 722,
+            "followup_search": 1058,
+            "classify": 7704
+          },
+          "urls": [
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md"
+          ],
+          "recall": 0.4,
+          "missed_vs_union": [
+            "https://cyberscope.io/audits/coin-gains-network",
+            "https://defisafety.com/app/pqrs/518",
+            "https://hacken.io/audits/gains-associates"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 2,
+          "unique_urls": 2,
+          "raw_count": 15,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 6114,
+            "followup_query": 845,
+            "followup_search": 11737,
+            "classify": 7816
+          },
+          "urls": [
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md",
+            "https://hacken.io/audits/gains-associates"
+          ],
+          "recall": 0.4,
+          "missed_vs_union": [
+            "https://cyberscope.io/audits/coin-gains-network",
+            "https://defisafety.com/app/pqrs/518",
+            "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md"
+          ]
+        }
+      }
+    },
+    "gmx": {
+      "union_size": 23,
+      "union_urls": [
+        "https://audits.sherlock.xyz/contests/6",
+        "https://audits.sherlock.xyz/contests/74",
+        "https://certora.com/reports/gmx",
+        "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+        "https://code4rena.com/reports/2023-08-gmx-fv",
+        "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022",
+        "https://docs.gmx.io/docs/category/security",
+        "https://docs.gmx.io/docs/security",
+        "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+        "https://github.com/GuardianAudits/Audits/tree/main/GMX",
+        "https://github.com/GuardianAudits/GMX",
+        "https://github.com/GuardianAudits/GMX_2",
+        "https://github.com/gmx-io/gmx-contracts/tree/master/audits",
+        "https://github.com/gmx-io/gmx-synthetics/tree/main/audits",
+        "https://github.com/sherlock-audit/2023-02-gmx",
+        "https://github.com/sherlock-audit/2023-02-gmx-judging",
+        "https://github.com/sherlock-audit/2023-02-gmx-judging/blob/main/README.md",
+        "https://github.com/sherlock-audit/2023-04-gmx",
+        "https://github.com/sherlock-audit/2023-04-gmx-judging",
+        "https://guardianaudits.com/casestudies/gmx-case-study",
+        "https://hackmd.io/Y2_u4rNbSSe9bsLdvGOkYg",
+        "https://raw.githubusercontent.com/gmx-io/gmx-contracts/master/audits/Quantstamp_Audit_Report.pdf",
+        "https://sourcehat.com/audits/GMXV2Vault"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 8,
+          "unique_urls": 8,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 598,
+            "followup_query": 717,
+            "followup_search": 552,
+            "classify": 8882
+          },
+          "urls": [
+            "https://audits.sherlock.xyz/contests/6",
+            "https://audits.sherlock.xyz/contests/74",
+            "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+            "https://code4rena.com/reports/2023-08-gmx-fv",
+            "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022",
+            "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+            "https://github.com/GuardianAudits/GMX",
+            "https://guardianaudits.com/casestudies/gmx-case-study"
+          ],
+          "recall": 0.3478,
+          "missed_vs_union": [
+            "https://certora.com/reports/gmx",
+            "https://docs.gmx.io/docs/category/security",
+            "https://docs.gmx.io/docs/security",
+            "https://github.com/GuardianAudits/Audits/tree/main/GMX",
+            "https://github.com/GuardianAudits/GMX_2",
+            "https://github.com/gmx-io/gmx-contracts/tree/master/audits",
+            "https://github.com/gmx-io/gmx-synthetics/tree/main/audits",
+            "https://github.com/sherlock-audit/2023-02-gmx",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging/blob/main/README.md",
+            "https://github.com/sherlock-audit/2023-04-gmx",
+            "https://github.com/sherlock-audit/2023-04-gmx-judging",
+            "https://hackmd.io/Y2_u4rNbSSe9bsLdvGOkYg",
+            "https://raw.githubusercontent.com/gmx-io/gmx-contracts/master/audits/Quantstamp_Audit_Report.pdf",
+            "https://sourcehat.com/audits/GMXV2Vault"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 10,
+          "unique_urls": 10,
+          "raw_count": 18,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 451,
+            "followup_query": 1014,
+            "followup_search": 390,
+            "classify": 9442
+          },
+          "urls": [
+            "https://certora.com/reports/gmx",
+            "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022",
+            "https://docs.gmx.io/docs/security",
+            "https://github.com/GuardianAudits/Audits/tree/main/GMX",
+            "https://github.com/GuardianAudits/GMX",
+            "https://github.com/GuardianAudits/GMX_2",
+            "https://github.com/gmx-io/gmx-contracts/tree/master/audits",
+            "https://github.com/gmx-io/gmx-synthetics/tree/main/audits",
+            "https://github.com/sherlock-audit/2023-02-gmx",
+            "https://github.com/sherlock-audit/2023-04-gmx"
+          ],
+          "recall": 0.4348,
+          "missed_vs_union": [
+            "https://audits.sherlock.xyz/contests/6",
+            "https://audits.sherlock.xyz/contests/74",
+            "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+            "https://code4rena.com/reports/2023-08-gmx-fv",
+            "https://docs.gmx.io/docs/category/security",
+            "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging/blob/main/README.md",
+            "https://github.com/sherlock-audit/2023-04-gmx-judging",
+            "https://guardianaudits.com/casestudies/gmx-case-study",
+            "https://hackmd.io/Y2_u4rNbSSe9bsLdvGOkYg",
+            "https://raw.githubusercontent.com/gmx-io/gmx-contracts/master/audits/Quantstamp_Audit_Report.pdf",
+            "https://sourcehat.com/audits/GMXV2Vault"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 9,
+          "unique_urls": 9,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 827,
+            "followup_query": 943,
+            "followup_search": 815,
+            "classify": 9330
+          },
+          "urls": [
+            "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022",
+            "https://docs.gmx.io/docs/security",
+            "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+            "https://github.com/GuardianAudits/GMX",
+            "https://github.com/sherlock-audit/2023-02-gmx",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging",
+            "https://github.com/sherlock-audit/2023-04-gmx",
+            "https://guardianaudits.com/casestudies/gmx-case-study",
+            "https://sourcehat.com/audits/GMXV2Vault"
+          ],
+          "recall": 0.3913,
+          "missed_vs_union": [
+            "https://audits.sherlock.xyz/contests/6",
+            "https://audits.sherlock.xyz/contests/74",
+            "https://certora.com/reports/gmx",
+            "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+            "https://code4rena.com/reports/2023-08-gmx-fv",
+            "https://docs.gmx.io/docs/category/security",
+            "https://github.com/GuardianAudits/Audits/tree/main/GMX",
+            "https://github.com/GuardianAudits/GMX_2",
+            "https://github.com/gmx-io/gmx-contracts/tree/master/audits",
+            "https://github.com/gmx-io/gmx-synthetics/tree/main/audits",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging/blob/main/README.md",
+            "https://github.com/sherlock-audit/2023-04-gmx-judging",
+            "https://hackmd.io/Y2_u4rNbSSe9bsLdvGOkYg",
+            "https://raw.githubusercontent.com/gmx-io/gmx-contracts/master/audits/Quantstamp_Audit_Report.pdf"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 11,
+          "unique_urls": 11,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1028,
+            "followup_query": 806,
+            "followup_search": 920,
+            "classify": 7058
+          },
+          "urls": [
+            "https://docs.gmx.io/docs/category/security",
+            "https://docs.gmx.io/docs/security",
+            "https://github.com/GuardianAudits/GMX",
+            "https://github.com/GuardianAudits/GMX_2",
+            "https://github.com/sherlock-audit/2023-02-gmx",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging/blob/main/README.md",
+            "https://github.com/sherlock-audit/2023-04-gmx",
+            "https://github.com/sherlock-audit/2023-04-gmx-judging",
+            "https://guardianaudits.com/casestudies/gmx-case-study",
+            "https://sourcehat.com/audits/GMXV2Vault"
+          ],
+          "recall": 0.4783,
+          "missed_vs_union": [
+            "https://audits.sherlock.xyz/contests/6",
+            "https://audits.sherlock.xyz/contests/74",
+            "https://certora.com/reports/gmx",
+            "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+            "https://code4rena.com/reports/2023-08-gmx-fv",
+            "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022",
+            "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+            "https://github.com/GuardianAudits/Audits/tree/main/GMX",
+            "https://github.com/gmx-io/gmx-contracts/tree/master/audits",
+            "https://github.com/gmx-io/gmx-synthetics/tree/main/audits",
+            "https://hackmd.io/Y2_u4rNbSSe9bsLdvGOkYg",
+            "https://raw.githubusercontent.com/gmx-io/gmx-contracts/master/audits/Quantstamp_Audit_Report.pdf"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 6,
+          "unique_urls": 6,
+          "raw_count": 19,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 4102,
+            "followup_query": 725,
+            "followup_search": 5934,
+            "classify": 10001
+          },
+          "urls": [
+            "https://code4rena.com/reports/2023-08-gmx-fv",
+            "https://docs.gmx.io/docs/security",
+            "https://guardianaudits.com/casestudies/gmx-case-study",
+            "https://hackmd.io/Y2_u4rNbSSe9bsLdvGOkYg",
+            "https://raw.githubusercontent.com/gmx-io/gmx-contracts/master/audits/Quantstamp_Audit_Report.pdf",
+            "https://sourcehat.com/audits/GMXV2Vault"
+          ],
+          "recall": 0.2609,
+          "missed_vs_union": [
+            "https://audits.sherlock.xyz/contests/6",
+            "https://audits.sherlock.xyz/contests/74",
+            "https://certora.com/reports/gmx",
+            "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+            "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022",
+            "https://docs.gmx.io/docs/category/security",
+            "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+            "https://github.com/GuardianAudits/Audits/tree/main/GMX",
+            "https://github.com/GuardianAudits/GMX",
+            "https://github.com/GuardianAudits/GMX_2",
+            "https://github.com/gmx-io/gmx-contracts/tree/master/audits",
+            "https://github.com/gmx-io/gmx-synthetics/tree/main/audits",
+            "https://github.com/sherlock-audit/2023-02-gmx",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging",
+            "https://github.com/sherlock-audit/2023-02-gmx-judging/blob/main/README.md",
+            "https://github.com/sherlock-audit/2023-04-gmx",
+            "https://github.com/sherlock-audit/2023-04-gmx-judging"
+          ]
+        }
+      }
+    },
+    "lido": {
+      "union_size": 32,
+      "union_urls": [
+        "https://ackee.xyz/blog/lido-csm-audit-summary",
+        "https://ackee.xyz/blog/lido-simple-delegation-audit-summary",
+        "https://ackee.xyz/blog/lido-steth-on-optimism-audit-summary",
+        "https://certora.com/reports/lido-dual-governance-security-audit-and-formal-verification-report",
+        "https://certora.com/reports/lido-v2",
+        "https://certora.com/reports/lido-v3-audit-01-2026",
+        "https://chainsecurity.com/security-audit/lido",
+        "https://chainsecurity.com/security-audit/lido-lip-23-rebase-check-smart-contracts",
+        "https://chainsecurity.com/security-audit/lido-staking-router",
+        "https://code4rena.com/audits/2025-07-lido-finance",
+        "https://code4rena.com/reports/2025-07-lido-finance",
+        "https://diligence.security/audits/2025/08/lido-v3",
+        "https://docs.lido.fi/earn/audits",
+        "https://docs.lido.fi/security/audits",
+        "https://github.com/lidofinance/audits",
+        "https://github.com/lidofinance/audits/blob/main/ChainSecurity%20Code%20Assessment%20of%20the%20Lido%20Smart%20Contracts%20Report%2008-22.pdf",
+        "https://github.com/lidofinance/audits/blob/main/Hexens%20Lido%20V2%20Smart%20Contract%20Audit%20Report%2004-23.pdf",
+        "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+        "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+        "https://github.com/lidofinance/docs/blob/main/docs/security/audits.md",
+        "https://github.com/mixbytes/audits_public/blob/master/Lido/Deposit%20Security%20Module/README.md",
+        "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20Protocol/README.md",
+        "https://immunefi.com/audit-competition/lido-v3-bug-bounty-competition/information",
+        "https://neodyme.io/reports/Lido-2.pdf",
+        "https://neodyme.io/reports/Lido.pdf",
+        "https://oxor-io.github.io/public_audits/Lido/Lido%20Easytrack%20Audit%20Report.pdf",
+        "https://oxor-io.github.io/public_audits/Lido/Lido%20v2%20off-chain%20Audit%20Report.pdf",
+        "https://oxor-io.github.io/public_audits/Lido/Lido-Earn-Audit-Report.pdf",
+        "https://raw.githubusercontent.com/ZealynxSecurity/Zealynx/main/Zealynx-portfolio/audit-portfolio/Lido-Finance-Report.pdf",
+        "https://resources.cryptocompare.com/asset-management/62/1698743635877.pdf",
+        "https://resources.cryptocompare.com/asset-management/62/1698743993396.pdf",
+        "https://resources.cryptocompare.com/asset-management/62/1698744729820.pdf"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 7,
+          "unique_urls": 7,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 587,
+            "followup_query": 629,
+            "followup_search": 609,
+            "classify": 8741
+          },
+          "urls": [
+            "https://chainsecurity.com/security-audit/lido",
+            "https://chainsecurity.com/security-audit/lido-staking-router",
+            "https://code4rena.com/audits/2025-07-lido-finance",
+            "https://docs.lido.fi/security/audits",
+            "https://github.com/lidofinance/audits",
+            "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+            "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf"
+          ],
+          "recall": 0.2188,
+          "missed_vs_union": [
+            "https://ackee.xyz/blog/lido-csm-audit-summary",
+            "https://ackee.xyz/blog/lido-simple-delegation-audit-summary",
+            "https://ackee.xyz/blog/lido-steth-on-optimism-audit-summary",
+            "https://certora.com/reports/lido-dual-governance-security-audit-and-formal-verification-report",
+            "https://certora.com/reports/lido-v2",
+            "https://certora.com/reports/lido-v3-audit-01-2026",
+            "https://chainsecurity.com/security-audit/lido-lip-23-rebase-check-smart-contracts",
+            "https://code4rena.com/reports/2025-07-lido-finance",
+            "https://diligence.security/audits/2025/08/lido-v3",
+            "https://docs.lido.fi/earn/audits",
+            "https://github.com/lidofinance/audits/blob/main/ChainSecurity%20Code%20Assessment%20of%20the%20Lido%20Smart%20Contracts%20Report%2008-22.pdf",
+            "https://github.com/lidofinance/audits/blob/main/Hexens%20Lido%20V2%20Smart%20Contract%20Audit%20Report%2004-23.pdf",
+            "https://github.com/lidofinance/docs/blob/main/docs/security/audits.md",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Deposit%20Security%20Module/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20Protocol/README.md",
+            "https://immunefi.com/audit-competition/lido-v3-bug-bounty-competition/information",
+            "https://neodyme.io/reports/Lido-2.pdf",
+            "https://neodyme.io/reports/Lido.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20Easytrack%20Audit%20Report.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20v2%20off-chain%20Audit%20Report.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido-Earn-Audit-Report.pdf",
+            "https://raw.githubusercontent.com/ZealynxSecurity/Zealynx/main/Zealynx-portfolio/audit-portfolio/Lido-Finance-Report.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743635877.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743993396.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698744729820.pdf"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 10,
+          "unique_urls": 10,
+          "raw_count": 10,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 460,
+            "followup_query": 1005,
+            "followup_search": 1369,
+            "classify": 5554
+          },
+          "urls": [
+            "https://ackee.xyz/blog/lido-simple-delegation-audit-summary",
+            "https://ackee.xyz/blog/lido-steth-on-optimism-audit-summary",
+            "https://certora.com/reports/lido-v2",
+            "https://certora.com/reports/lido-v3-audit-01-2026",
+            "https://chainsecurity.com/security-audit/lido-staking-router",
+            "https://code4rena.com/reports/2025-07-lido-finance",
+            "https://docs.lido.fi/earn/audits",
+            "https://docs.lido.fi/security/audits",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Deposit%20Security%20Module/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20Protocol/README.md"
+          ],
+          "recall": 0.3125,
+          "missed_vs_union": [
+            "https://ackee.xyz/blog/lido-csm-audit-summary",
+            "https://certora.com/reports/lido-dual-governance-security-audit-and-formal-verification-report",
+            "https://chainsecurity.com/security-audit/lido",
+            "https://chainsecurity.com/security-audit/lido-lip-23-rebase-check-smart-contracts",
+            "https://code4rena.com/audits/2025-07-lido-finance",
+            "https://diligence.security/audits/2025/08/lido-v3",
+            "https://github.com/lidofinance/audits",
+            "https://github.com/lidofinance/audits/blob/main/ChainSecurity%20Code%20Assessment%20of%20the%20Lido%20Smart%20Contracts%20Report%2008-22.pdf",
+            "https://github.com/lidofinance/audits/blob/main/Hexens%20Lido%20V2%20Smart%20Contract%20Audit%20Report%2004-23.pdf",
+            "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+            "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+            "https://github.com/lidofinance/docs/blob/main/docs/security/audits.md",
+            "https://immunefi.com/audit-competition/lido-v3-bug-bounty-competition/information",
+            "https://neodyme.io/reports/Lido-2.pdf",
+            "https://neodyme.io/reports/Lido.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20Easytrack%20Audit%20Report.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20v2%20off-chain%20Audit%20Report.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido-Earn-Audit-Report.pdf",
+            "https://raw.githubusercontent.com/ZealynxSecurity/Zealynx/main/Zealynx-portfolio/audit-portfolio/Lido-Finance-Report.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743635877.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743993396.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698744729820.pdf"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 9,
+          "unique_urls": 9,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 963,
+            "followup_query": 680,
+            "followup_search": 800,
+            "classify": 9517
+          },
+          "urls": [
+            "https://certora.com/reports/lido-v3-audit-01-2026",
+            "https://chainsecurity.com/security-audit/lido-lip-23-rebase-check-smart-contracts",
+            "https://code4rena.com/audits/2025-07-lido-finance",
+            "https://code4rena.com/reports/2025-07-lido-finance",
+            "https://diligence.security/audits/2025/08/lido-v3",
+            "https://docs.lido.fi/security/audits",
+            "https://github.com/lidofinance/audits",
+            "https://github.com/lidofinance/audits/blob/main/Hexens%20Lido%20V2%20Smart%20Contract%20Audit%20Report%2004-23.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20Easytrack%20Audit%20Report.pdf"
+          ],
+          "recall": 0.2812,
+          "missed_vs_union": [
+            "https://ackee.xyz/blog/lido-csm-audit-summary",
+            "https://ackee.xyz/blog/lido-simple-delegation-audit-summary",
+            "https://ackee.xyz/blog/lido-steth-on-optimism-audit-summary",
+            "https://certora.com/reports/lido-dual-governance-security-audit-and-formal-verification-report",
+            "https://certora.com/reports/lido-v2",
+            "https://chainsecurity.com/security-audit/lido",
+            "https://chainsecurity.com/security-audit/lido-staking-router",
+            "https://docs.lido.fi/earn/audits",
+            "https://github.com/lidofinance/audits/blob/main/ChainSecurity%20Code%20Assessment%20of%20the%20Lido%20Smart%20Contracts%20Report%2008-22.pdf",
+            "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+            "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+            "https://github.com/lidofinance/docs/blob/main/docs/security/audits.md",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Deposit%20Security%20Module/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20Protocol/README.md",
+            "https://immunefi.com/audit-competition/lido-v3-bug-bounty-competition/information",
+            "https://neodyme.io/reports/Lido-2.pdf",
+            "https://neodyme.io/reports/Lido.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20v2%20off-chain%20Audit%20Report.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido-Earn-Audit-Report.pdf",
+            "https://raw.githubusercontent.com/ZealynxSecurity/Zealynx/main/Zealynx-portfolio/audit-portfolio/Lido-Finance-Report.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743635877.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743993396.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698744729820.pdf"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 15,
+          "unique_urls": 13,
+          "raw_count": 18,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1527,
+            "followup_query": 738,
+            "followup_search": 1171,
+            "classify": 9607
+          },
+          "urls": [
+            "https://certora.com/reports/lido-dual-governance-security-audit-and-formal-verification-report",
+            "https://certora.com/reports/lido-v3-audit-01-2026",
+            "https://chainsecurity.com/security-audit/lido",
+            "https://chainsecurity.com/security-audit/lido-staking-router",
+            "https://code4rena.com/audits/2025-07-lido-finance",
+            "https://code4rena.com/reports/2025-07-lido-finance",
+            "https://diligence.security/audits/2025/08/lido-v3",
+            "https://docs.lido.fi/earn/audits",
+            "https://docs.lido.fi/security/audits",
+            "https://github.com/lidofinance/audits",
+            "https://github.com/lidofinance/audits/blob/main/Hexens%20Lido%20V2%20Smart%20Contract%20Audit%20Report%2004-23.pdf",
+            "https://github.com/lidofinance/docs/blob/main/docs/security/audits.md",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20Easytrack%20Audit%20Report.pdf"
+          ],
+          "recall": 0.4062,
+          "missed_vs_union": [
+            "https://ackee.xyz/blog/lido-csm-audit-summary",
+            "https://ackee.xyz/blog/lido-simple-delegation-audit-summary",
+            "https://ackee.xyz/blog/lido-steth-on-optimism-audit-summary",
+            "https://certora.com/reports/lido-v2",
+            "https://chainsecurity.com/security-audit/lido-lip-23-rebase-check-smart-contracts",
+            "https://github.com/lidofinance/audits/blob/main/ChainSecurity%20Code%20Assessment%20of%20the%20Lido%20Smart%20Contracts%20Report%2008-22.pdf",
+            "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+            "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Deposit%20Security%20Module/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20Protocol/README.md",
+            "https://immunefi.com/audit-competition/lido-v3-bug-bounty-competition/information",
+            "https://neodyme.io/reports/Lido-2.pdf",
+            "https://neodyme.io/reports/Lido.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20v2%20off-chain%20Audit%20Report.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido-Earn-Audit-Report.pdf",
+            "https://raw.githubusercontent.com/ZealynxSecurity/Zealynx/main/Zealynx-portfolio/audit-portfolio/Lido-Finance-Report.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743635877.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743993396.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698744729820.pdf"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 14,
+          "unique_urls": 14,
+          "raw_count": 16,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 2668,
+            "followup_query": 748,
+            "followup_search": 2268,
+            "classify": 9882
+          },
+          "urls": [
+            "https://ackee.xyz/blog/lido-csm-audit-summary",
+            "https://diligence.security/audits/2025/08/lido-v3",
+            "https://github.com/lidofinance/audits",
+            "https://github.com/lidofinance/audits/blob/main/ChainSecurity%20Code%20Assessment%20of%20the%20Lido%20Smart%20Contracts%20Report%2008-22.pdf",
+            "https://immunefi.com/audit-competition/lido-v3-bug-bounty-competition/information",
+            "https://neodyme.io/reports/Lido-2.pdf",
+            "https://neodyme.io/reports/Lido.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20Easytrack%20Audit%20Report.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido%20v2%20off-chain%20Audit%20Report.pdf",
+            "https://oxor-io.github.io/public_audits/Lido/Lido-Earn-Audit-Report.pdf",
+            "https://raw.githubusercontent.com/ZealynxSecurity/Zealynx/main/Zealynx-portfolio/audit-portfolio/Lido-Finance-Report.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743635877.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698743993396.pdf",
+            "https://resources.cryptocompare.com/asset-management/62/1698744729820.pdf"
+          ],
+          "recall": 0.4375,
+          "missed_vs_union": [
+            "https://ackee.xyz/blog/lido-simple-delegation-audit-summary",
+            "https://ackee.xyz/blog/lido-steth-on-optimism-audit-summary",
+            "https://certora.com/reports/lido-dual-governance-security-audit-and-formal-verification-report",
+            "https://certora.com/reports/lido-v2",
+            "https://certora.com/reports/lido-v3-audit-01-2026",
+            "https://chainsecurity.com/security-audit/lido",
+            "https://chainsecurity.com/security-audit/lido-lip-23-rebase-check-smart-contracts",
+            "https://chainsecurity.com/security-audit/lido-staking-router",
+            "https://code4rena.com/audits/2025-07-lido-finance",
+            "https://code4rena.com/reports/2025-07-lido-finance",
+            "https://docs.lido.fi/earn/audits",
+            "https://docs.lido.fi/security/audits",
+            "https://github.com/lidofinance/audits/blob/main/Hexens%20Lido%20V2%20Smart%20Contract%20Audit%20Report%2004-23.pdf",
+            "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+            "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+            "https://github.com/lidofinance/docs/blob/main/docs/security/audits.md",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Deposit%20Security%20Module/README.md",
+            "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20Protocol/README.md"
+          ]
+        }
+      }
+    },
+    "morpho": {
+      "union_size": 40,
+      "union_urls": [
+        "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+        "https://cdn.morpho.org/documents/Lexfo_250523.pdf",
+        "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+        "https://cdn.morpho.org/documents/MorphoAaveV3_Audit_ChainSecurity.pdf",
+        "https://cdn.morpho.org/documents/Pessimistic_061022.pdf",
+        "https://cdn.morpho.org/documents/Pessimistic_080322.pdf",
+        "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+        "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+        "https://cdn.morpho.org/documents/Solidified_041121.pdf",
+        "https://cdn.morpho.org/documents/Spearbit_19062023.pdf",
+        "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+        "https://chainsecurity.com/security-audit/morpho-aave-v3",
+        "https://chainsecurity.com/security-audit/morpho-vault-v2",
+        "https://docs.morpho.org/get-started/resources/audits",
+        "https://docs.morpho.org/security-reviews",
+        "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho",
+        "https://github.com/Audit-Ace/Audits-Smart-Contracts/blob/main/Morpho%20Network%20Audit%20Report.pdf",
+        "https://github.com/morpho-dao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+        "https://github.com/morpho-dao/morpho-tokenized-vaults/tree/main/audits",
+        "https://github.com/morpho-org/bundler3/tree/main/audits",
+        "https://github.com/morpho-org/metamorpho-v1.1/tree/main/audits",
+        "https://github.com/morpho-org/metamorpho/tree/main/audits",
+        "https://github.com/morpho-org/morpho-blue-irm/blob/main/audits/2024-03-11-morpho-fixed-rate-irm-cantina-managed.pdf",
+        "https://github.com/morpho-org/morpho-blue/blob/main/audits/2024-01-05-morpho-blue-cantina-competition.pdf",
+        "https://github.com/morpho-org/morpho-blue/tree/main/audits",
+        "https://github.com/morpho-org/morpho-optimizer-deprecated/tree/main/audits",
+        "https://github.com/morpho-org/pre-liquidation/tree/main/audits",
+        "https://github.com/morpho-org/public-allocator/tree/main/audits",
+        "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-chainsecurity.pdf",
+        "https://github.com/morpho-org/vault-v2/tree/main/audits",
+        "https://github.com/morphodao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+        "https://github.com/runtimeverification/publications/blob/main/reports/smart-contracts/Morpho-Audit-Report.pdf",
+        "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20Morpho%20Protocol%20%5B04.11.2021%5D.pdf",
+        "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits",
+        "https://mintlify.com/morpho-org/vault-v2/security/audits",
+        "https://morpho-org-vault-v2.mintlify.app/security/audits",
+        "https://omniscia.io/reports/morpho-labs-tokenized-vaults",
+        "https://omniscia.io/reports/morpho-transaction-builder",
+        "https://reports.chainsecurity.com/Morpho/ChainSecurity_Morpho_MorphoVaultV2_Audit.pdf",
+        "https://xianganhe.com/assets/morpho.pdf"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 15,
+          "unique_urls": 15,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 579,
+            "followup_query": 678,
+            "followup_search": 569,
+            "classify": 11521
+          },
+          "urls": [
+            "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+            "https://cdn.morpho.org/documents/MorphoAaveV3_Audit_ChainSecurity.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+            "https://chainsecurity.com/security-audit/morpho-aave-v3",
+            "https://chainsecurity.com/security-audit/morpho-vault-v2",
+            "https://docs.morpho.org/get-started/resources/audits",
+            "https://github.com/Audit-Ace/Audits-Smart-Contracts/blob/main/Morpho%20Network%20Audit%20Report.pdf",
+            "https://github.com/morpho-dao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/morpho-org/morpho-blue-irm/blob/main/audits/2024-03-11-morpho-fixed-rate-irm-cantina-managed.pdf",
+            "https://github.com/morpho-org/morpho-blue/blob/main/audits/2024-01-05-morpho-blue-cantina-competition.pdf",
+            "https://github.com/morpho-org/morpho-optimizer-deprecated/tree/main/audits",
+            "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-chainsecurity.pdf",
+            "https://github.com/morphodao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/runtimeverification/publications/blob/main/reports/smart-contracts/Morpho-Audit-Report.pdf",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20Morpho%20Protocol%20%5B04.11.2021%5D.pdf"
+          ],
+          "recall": 0.375,
+          "missed_vs_union": [
+            "https://cdn.morpho.org/documents/Lexfo_250523.pdf",
+            "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_061022.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_080322.pdf",
+            "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+            "https://cdn.morpho.org/documents/Solidified_041121.pdf",
+            "https://cdn.morpho.org/documents/Spearbit_19062023.pdf",
+            "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+            "https://docs.morpho.org/security-reviews",
+            "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho",
+            "https://github.com/morpho-dao/morpho-tokenized-vaults/tree/main/audits",
+            "https://github.com/morpho-org/bundler3/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho-v1.1/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho/tree/main/audits",
+            "https://github.com/morpho-org/morpho-blue/tree/main/audits",
+            "https://github.com/morpho-org/pre-liquidation/tree/main/audits",
+            "https://github.com/morpho-org/public-allocator/tree/main/audits",
+            "https://github.com/morpho-org/vault-v2/tree/main/audits",
+            "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits",
+            "https://mintlify.com/morpho-org/vault-v2/security/audits",
+            "https://morpho-org-vault-v2.mintlify.app/security/audits",
+            "https://omniscia.io/reports/morpho-labs-tokenized-vaults",
+            "https://omniscia.io/reports/morpho-transaction-builder",
+            "https://reports.chainsecurity.com/Morpho/ChainSecurity_Morpho_MorphoVaultV2_Audit.pdf",
+            "https://xianganhe.com/assets/morpho.pdf"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 7,
+          "unique_urls": 7,
+          "raw_count": 10,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 569,
+            "followup_query": 842,
+            "followup_search": 1372,
+            "classify": 4264
+          },
+          "urls": [
+            "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+            "https://chainsecurity.com/security-audit/morpho-vault-v2",
+            "https://docs.morpho.org/security-reviews",
+            "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho",
+            "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits",
+            "https://morpho-org-vault-v2.mintlify.app/security/audits",
+            "https://xianganhe.com/assets/morpho.pdf"
+          ],
+          "recall": 0.175,
+          "missed_vs_union": [
+            "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+            "https://cdn.morpho.org/documents/Lexfo_250523.pdf",
+            "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+            "https://cdn.morpho.org/documents/MorphoAaveV3_Audit_ChainSecurity.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_061022.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_080322.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+            "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+            "https://cdn.morpho.org/documents/Solidified_041121.pdf",
+            "https://cdn.morpho.org/documents/Spearbit_19062023.pdf",
+            "https://chainsecurity.com/security-audit/morpho-aave-v3",
+            "https://docs.morpho.org/get-started/resources/audits",
+            "https://github.com/Audit-Ace/Audits-Smart-Contracts/blob/main/Morpho%20Network%20Audit%20Report.pdf",
+            "https://github.com/morpho-dao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/morpho-dao/morpho-tokenized-vaults/tree/main/audits",
+            "https://github.com/morpho-org/bundler3/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho-v1.1/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho/tree/main/audits",
+            "https://github.com/morpho-org/morpho-blue-irm/blob/main/audits/2024-03-11-morpho-fixed-rate-irm-cantina-managed.pdf",
+            "https://github.com/morpho-org/morpho-blue/blob/main/audits/2024-01-05-morpho-blue-cantina-competition.pdf",
+            "https://github.com/morpho-org/morpho-blue/tree/main/audits",
+            "https://github.com/morpho-org/morpho-optimizer-deprecated/tree/main/audits",
+            "https://github.com/morpho-org/pre-liquidation/tree/main/audits",
+            "https://github.com/morpho-org/public-allocator/tree/main/audits",
+            "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-chainsecurity.pdf",
+            "https://github.com/morpho-org/vault-v2/tree/main/audits",
+            "https://github.com/morphodao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/runtimeverification/publications/blob/main/reports/smart-contracts/Morpho-Audit-Report.pdf",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20Morpho%20Protocol%20%5B04.11.2021%5D.pdf",
+            "https://mintlify.com/morpho-org/vault-v2/security/audits",
+            "https://omniscia.io/reports/morpho-labs-tokenized-vaults",
+            "https://omniscia.io/reports/morpho-transaction-builder",
+            "https://reports.chainsecurity.com/Morpho/ChainSecurity_Morpho_MorphoVaultV2_Audit.pdf"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 7,
+          "unique_urls": 7,
+          "raw_count": 8,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 961,
+            "followup_query": 659,
+            "followup_search": 916,
+            "classify": 4884
+          },
+          "urls": [
+            "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+            "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+            "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+            "https://chainsecurity.com/security-audit/morpho-aave-v3",
+            "https://chainsecurity.com/security-audit/morpho-vault-v2",
+            "https://docs.morpho.org/get-started/resources/audits"
+          ],
+          "recall": 0.175,
+          "missed_vs_union": [
+            "https://cdn.morpho.org/documents/Lexfo_250523.pdf",
+            "https://cdn.morpho.org/documents/MorphoAaveV3_Audit_ChainSecurity.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_061022.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_080322.pdf",
+            "https://cdn.morpho.org/documents/Solidified_041121.pdf",
+            "https://cdn.morpho.org/documents/Spearbit_19062023.pdf",
+            "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+            "https://docs.morpho.org/security-reviews",
+            "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho",
+            "https://github.com/Audit-Ace/Audits-Smart-Contracts/blob/main/Morpho%20Network%20Audit%20Report.pdf",
+            "https://github.com/morpho-dao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/morpho-dao/morpho-tokenized-vaults/tree/main/audits",
+            "https://github.com/morpho-org/bundler3/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho-v1.1/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho/tree/main/audits",
+            "https://github.com/morpho-org/morpho-blue-irm/blob/main/audits/2024-03-11-morpho-fixed-rate-irm-cantina-managed.pdf",
+            "https://github.com/morpho-org/morpho-blue/blob/main/audits/2024-01-05-morpho-blue-cantina-competition.pdf",
+            "https://github.com/morpho-org/morpho-blue/tree/main/audits",
+            "https://github.com/morpho-org/morpho-optimizer-deprecated/tree/main/audits",
+            "https://github.com/morpho-org/pre-liquidation/tree/main/audits",
+            "https://github.com/morpho-org/public-allocator/tree/main/audits",
+            "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-chainsecurity.pdf",
+            "https://github.com/morpho-org/vault-v2/tree/main/audits",
+            "https://github.com/morphodao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/runtimeverification/publications/blob/main/reports/smart-contracts/Morpho-Audit-Report.pdf",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20Morpho%20Protocol%20%5B04.11.2021%5D.pdf",
+            "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits",
+            "https://mintlify.com/morpho-org/vault-v2/security/audits",
+            "https://morpho-org-vault-v2.mintlify.app/security/audits",
+            "https://omniscia.io/reports/morpho-labs-tokenized-vaults",
+            "https://omniscia.io/reports/morpho-transaction-builder",
+            "https://reports.chainsecurity.com/Morpho/ChainSecurity_Morpho_MorphoVaultV2_Audit.pdf",
+            "https://xianganhe.com/assets/morpho.pdf"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 17,
+          "unique_urls": 17,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1059,
+            "followup_query": 779,
+            "followup_search": 858,
+            "classify": 11361
+          },
+          "urls": [
+            "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+            "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+            "https://chainsecurity.com/security-audit/morpho-aave-v3",
+            "https://chainsecurity.com/security-audit/morpho-vault-v2",
+            "https://docs.morpho.org/get-started/resources/audits",
+            "https://docs.morpho.org/security-reviews",
+            "https://github.com/morpho-dao/morpho-tokenized-vaults/tree/main/audits",
+            "https://github.com/morpho-org/bundler3/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho-v1.1/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho/tree/main/audits",
+            "https://github.com/morpho-org/morpho-blue/tree/main/audits",
+            "https://github.com/morpho-org/pre-liquidation/tree/main/audits",
+            "https://github.com/morpho-org/public-allocator/tree/main/audits",
+            "https://github.com/morpho-org/vault-v2/tree/main/audits",
+            "https://mintlify.com/morpho-org/vault-v2/security/audits",
+            "https://omniscia.io/reports/morpho-labs-tokenized-vaults",
+            "https://omniscia.io/reports/morpho-transaction-builder"
+          ],
+          "recall": 0.425,
+          "missed_vs_union": [
+            "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+            "https://cdn.morpho.org/documents/Lexfo_250523.pdf",
+            "https://cdn.morpho.org/documents/MorphoAaveV3_Audit_ChainSecurity.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_061022.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_080322.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+            "https://cdn.morpho.org/documents/Solidified_041121.pdf",
+            "https://cdn.morpho.org/documents/Spearbit_19062023.pdf",
+            "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+            "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho",
+            "https://github.com/Audit-Ace/Audits-Smart-Contracts/blob/main/Morpho%20Network%20Audit%20Report.pdf",
+            "https://github.com/morpho-dao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/morpho-org/morpho-blue-irm/blob/main/audits/2024-03-11-morpho-fixed-rate-irm-cantina-managed.pdf",
+            "https://github.com/morpho-org/morpho-blue/blob/main/audits/2024-01-05-morpho-blue-cantina-competition.pdf",
+            "https://github.com/morpho-org/morpho-optimizer-deprecated/tree/main/audits",
+            "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-chainsecurity.pdf",
+            "https://github.com/morphodao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/runtimeverification/publications/blob/main/reports/smart-contracts/Morpho-Audit-Report.pdf",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20Morpho%20Protocol%20%5B04.11.2021%5D.pdf",
+            "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits",
+            "https://morpho-org-vault-v2.mintlify.app/security/audits",
+            "https://reports.chainsecurity.com/Morpho/ChainSecurity_Morpho_MorphoVaultV2_Audit.pdf",
+            "https://xianganhe.com/assets/morpho.pdf"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 15,
+          "unique_urls": 15,
+          "raw_count": 17,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 5697,
+            "followup_query": 718,
+            "followup_search": 2437,
+            "classify": 10124
+          },
+          "urls": [
+            "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+            "https://cdn.morpho.org/documents/Lexfo_250523.pdf",
+            "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+            "https://cdn.morpho.org/documents/MorphoAaveV3_Audit_ChainSecurity.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_061022.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_080322.pdf",
+            "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+            "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+            "https://cdn.morpho.org/documents/Solidified_041121.pdf",
+            "https://cdn.morpho.org/documents/Spearbit_19062023.pdf",
+            "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+            "https://chainsecurity.com/security-audit/morpho-aave-v3",
+            "https://chainsecurity.com/security-audit/morpho-vault-v2",
+            "https://docs.morpho.org/get-started/resources/audits",
+            "https://reports.chainsecurity.com/Morpho/ChainSecurity_Morpho_MorphoVaultV2_Audit.pdf"
+          ],
+          "recall": 0.375,
+          "missed_vs_union": [
+            "https://docs.morpho.org/security-reviews",
+            "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho",
+            "https://github.com/Audit-Ace/Audits-Smart-Contracts/blob/main/Morpho%20Network%20Audit%20Report.pdf",
+            "https://github.com/morpho-dao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/morpho-dao/morpho-tokenized-vaults/tree/main/audits",
+            "https://github.com/morpho-org/bundler3/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho-v1.1/tree/main/audits",
+            "https://github.com/morpho-org/metamorpho/tree/main/audits",
+            "https://github.com/morpho-org/morpho-blue-irm/blob/main/audits/2024-03-11-morpho-fixed-rate-irm-cantina-managed.pdf",
+            "https://github.com/morpho-org/morpho-blue/blob/main/audits/2024-01-05-morpho-blue-cantina-competition.pdf",
+            "https://github.com/morpho-org/morpho-blue/tree/main/audits",
+            "https://github.com/morpho-org/morpho-optimizer-deprecated/tree/main/audits",
+            "https://github.com/morpho-org/pre-liquidation/tree/main/audits",
+            "https://github.com/morpho-org/public-allocator/tree/main/audits",
+            "https://github.com/morpho-org/vault-v2/blob/main/audits/2025-09-15-chainsecurity.pdf",
+            "https://github.com/morpho-org/vault-v2/tree/main/audits",
+            "https://github.com/morphodao/morpho-core-v1/blob/main/audits/Morpho%20Labs%20Final%20Report.pdf",
+            "https://github.com/runtimeverification/publications/blob/main/reports/smart-contracts/Morpho-Audit-Report.pdf",
+            "https://github.com/solidified-platform/audits/blob/master/Audit%20Report%20-%20Morpho%20Protocol%20%5B04.11.2021%5D.pdf",
+            "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits",
+            "https://mintlify.com/morpho-org/vault-v2/security/audits",
+            "https://morpho-org-vault-v2.mintlify.app/security/audits",
+            "https://omniscia.io/reports/morpho-labs-tokenized-vaults",
+            "https://omniscia.io/reports/morpho-transaction-builder",
+            "https://xianganhe.com/assets/morpho.pdf"
+          ]
+        }
+      }
+    },
+    "sky": {
+      "union_size": 20,
+      "union_urls": [
+        "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+        "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+        "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+        "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+        "https://chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+        "https://chainsecurity.com/security-audit/maker-endgame-toolkit",
+        "https://chainsecurity.com/security-audit/makerdao-dss-flappers",
+        "https://chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+        "https://chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+        "https://chainsecurity.com/security-audit/makerdao-votedelegate-smart-contracts",
+        "https://chainsecurity.com/security-audit/sky-chief-smart-contracts",
+        "https://chainsecurity.com/security-audit/sky-dss-exec-lib",
+        "https://chainsecurity.com/security-audit/sky-lz-governance-relay",
+        "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+        "https://chainsecurity.com/security-audit/sky-sp-beam-module",
+        "https://chainsecurity.com/security-audit/sky-stusds",
+        "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+        "https://github.com/sky-ecosystem/audits",
+        "https://hacken.io/audits/sky-coin-xso/sca-sky-coin-xso-aug2025",
+        "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 3,
+          "unique_urls": 3,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 593,
+            "followup_query": 744,
+            "followup_search": 711,
+            "classify": 9244
+          },
+          "urls": [
+            "https://chainsecurity.com/security-audit/sky-chief-smart-contracts",
+            "https://github.com/sky-ecosystem/audits",
+            "https://hacken.io/audits/sky-coin-xso/sca-sky-coin-xso-aug2025"
+          ],
+          "recall": 0.15,
+          "missed_vs_union": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+            "https://chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+            "https://chainsecurity.com/security-audit/maker-endgame-toolkit",
+            "https://chainsecurity.com/security-audit/makerdao-dss-flappers",
+            "https://chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+            "https://chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+            "https://chainsecurity.com/security-audit/makerdao-votedelegate-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-dss-exec-lib",
+            "https://chainsecurity.com/security-audit/sky-lz-governance-relay",
+            "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+            "https://chainsecurity.com/security-audit/sky-sp-beam-module",
+            "https://chainsecurity.com/security-audit/sky-stusds",
+            "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+            "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 6,
+          "unique_urls": 6,
+          "raw_count": 12,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 534,
+            "followup_query": 800,
+            "followup_search": 431,
+            "classify": 6903
+          },
+          "urls": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+            "https://chainsecurity.com/security-audit/sky-dss-exec-lib",
+            "https://chainsecurity.com/security-audit/sky-lz-governance-relay",
+            "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+            "https://chainsecurity.com/security-audit/sky-sp-beam-module",
+            "https://chainsecurity.com/security-audit/sky-stusds"
+          ],
+          "recall": 0.3,
+          "missed_vs_union": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+            "https://chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+            "https://chainsecurity.com/security-audit/maker-endgame-toolkit",
+            "https://chainsecurity.com/security-audit/makerdao-dss-flappers",
+            "https://chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+            "https://chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+            "https://chainsecurity.com/security-audit/makerdao-votedelegate-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-chief-smart-contracts",
+            "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+            "https://github.com/sky-ecosystem/audits",
+            "https://hacken.io/audits/sky-coin-xso/sca-sky-coin-xso-aug2025",
+            "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 3,
+          "unique_urls": 3,
+          "raw_count": 9,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 888,
+            "followup_query": 760,
+            "followup_search": 648,
+            "classify": 4405
+          },
+          "urls": [
+            "https://chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+            "https://chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+            "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf"
+          ],
+          "recall": 0.15,
+          "missed_vs_union": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+            "https://chainsecurity.com/security-audit/maker-endgame-toolkit",
+            "https://chainsecurity.com/security-audit/makerdao-dss-flappers",
+            "https://chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+            "https://chainsecurity.com/security-audit/makerdao-votedelegate-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-chief-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-dss-exec-lib",
+            "https://chainsecurity.com/security-audit/sky-lz-governance-relay",
+            "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+            "https://chainsecurity.com/security-audit/sky-sp-beam-module",
+            "https://chainsecurity.com/security-audit/sky-stusds",
+            "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+            "https://github.com/sky-ecosystem/audits",
+            "https://hacken.io/audits/sky-coin-xso/sca-sky-coin-xso-aug2025"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 12,
+          "unique_urls": 12,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 993,
+            "followup_query": 872,
+            "followup_search": 1088,
+            "classify": 11307
+          },
+          "urls": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+            "https://chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+            "https://chainsecurity.com/security-audit/maker-endgame-toolkit",
+            "https://chainsecurity.com/security-audit/makerdao-dss-flappers",
+            "https://chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+            "https://chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-sp-beam-module",
+            "https://chainsecurity.com/security-audit/sky-stusds",
+            "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+            "https://github.com/sky-ecosystem/audits",
+            "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf"
+          ],
+          "recall": 0.6,
+          "missed_vs_union": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+            "https://chainsecurity.com/security-audit/makerdao-votedelegate-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-chief-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-dss-exec-lib",
+            "https://chainsecurity.com/security-audit/sky-lz-governance-relay",
+            "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+            "https://hacken.io/audits/sky-coin-xso/sca-sky-coin-xso-aug2025"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 6,
+          "unique_urls": 6,
+          "raw_count": 18,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 3601,
+            "followup_query": 627,
+            "followup_search": 5028,
+            "classify": 9191
+          },
+          "urls": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+            "https://chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+            "https://chainsecurity.com/security-audit/makerdao-votedelegate-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-chief-smart-contracts",
+            "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf"
+          ],
+          "recall": 0.3,
+          "missed_vs_union": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/67f3881327ec9d86b4174e80_ChainSecurity_Sky_SP-BEAM_Module_audit.pdf",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+            "https://chainsecurity.com/reports/Sky/ChainSecurity_Sky_EndgameToolkit_Audit.pdf",
+            "https://chainsecurity.com/security-audit/maker-endgame-toolkit",
+            "https://chainsecurity.com/security-audit/makerdao-dss-flappers",
+            "https://chainsecurity.com/security-audit/makerdao-protego-smart-contracts",
+            "https://chainsecurity.com/security-audit/sky-dss-exec-lib",
+            "https://chainsecurity.com/security-audit/sky-lz-governance-relay",
+            "https://chainsecurity.com/security-audit/sky-permissioned-action-system",
+            "https://chainsecurity.com/security-audit/sky-sp-beam-module",
+            "https://chainsecurity.com/security-audit/sky-stusds",
+            "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+            "https://github.com/sky-ecosystem/audits",
+            "https://hacken.io/audits/sky-coin-xso/sca-sky-coin-xso-aug2025"
+          ]
+        }
+      }
+    },
+    "uniswap": {
+      "union_size": 40,
+      "union_urls": [
+        "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+        "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+        "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+        "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+        "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+        "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+        "https://chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+        "https://chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+        "https://chainsecurity.com/security-audit/uniswap-permit2",
+        "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+        "https://code4rena.com/reports/2024-02-uniswap-foundation",
+        "https://dapp.org.uk/reports/uniswapv2.html",
+        "https://developers.uniswap.org/docs/protocols/v2/audits",
+        "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+        "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+        "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+        "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+        "https://github.com/Uniswap/UniswapX/tree/main/audit",
+        "https://github.com/Uniswap/calibur/tree/main/audits",
+        "https://github.com/Uniswap/permit2/tree/main/audits",
+        "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+        "https://github.com/Uniswap/universal-router/tree/main/audit",
+        "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+        "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+        "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+        "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+        "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c",
+        "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+        "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007",
+        "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+        "https://openzeppelin.com/news/uniswap-erc20eth-audit",
+        "https://openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+        "https://openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+        "https://openzeppelin.com/news/uniswap-v4-core-audit",
+        "https://openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+        "https://openzeppelin.com/news/uniswapx-audit",
+        "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+        "https://slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833",
+        "https://trailofbits.com/documents/UniswapV3Core.pdf",
+        "https://veritasprotocol.com/audits/uniswap-v3"
+      ],
+      "per_config": {
+        "brave__default": {
+          "classified_count": 12,
+          "unique_urls": 12,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 563,
+            "followup_query": 1535,
+            "followup_search": 574,
+            "classify": 11510
+          },
+          "urls": [
+            "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+            "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+            "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+            "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+            "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+            "https://chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+            "https://chainsecurity.com/security-audit/uniswap-permit2",
+            "https://code4rena.com/reports/2024-02-uniswap-foundation",
+            "https://dapp.org.uk/reports/uniswapv2.html",
+            "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+            "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007"
+          ],
+          "recall": 0.3,
+          "missed_vs_union": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+            "https://chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+            "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+            "https://developers.uniswap.org/docs/protocols/v2/audits",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/Uniswap/UniswapX/tree/main/audit",
+            "https://github.com/Uniswap/calibur/tree/main/audits",
+            "https://github.com/Uniswap/permit2/tree/main/audits",
+            "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+            "https://github.com/Uniswap/universal-router/tree/main/audit",
+            "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+            "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+            "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+            "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+            "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c",
+            "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+            "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+            "https://openzeppelin.com/news/uniswap-erc20eth-audit",
+            "https://openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+            "https://openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+            "https://openzeppelin.com/news/uniswap-v4-core-audit",
+            "https://openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+            "https://openzeppelin.com/news/uniswapx-audit",
+            "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+            "https://slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833",
+            "https://trailofbits.com/documents/UniswapV3Core.pdf",
+            "https://veritasprotocol.com/audits/uniswap-v3"
+          ]
+        },
+        "exa__deep": {
+          "classified_count": 18,
+          "unique_urls": 18,
+          "raw_count": 19,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 397,
+            "followup_query": 1002,
+            "followup_search": 461,
+            "classify": 9835
+          },
+          "urls": [
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+            "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+            "https://github.com/Uniswap/UniswapX/tree/main/audit",
+            "https://github.com/Uniswap/calibur/tree/main/audits",
+            "https://github.com/Uniswap/permit2/tree/main/audits",
+            "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+            "https://github.com/Uniswap/universal-router/tree/main/audit",
+            "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+            "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+            "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+            "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+            "https://openzeppelin.com/news/uniswap-erc20eth-audit",
+            "https://openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+            "https://openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+            "https://openzeppelin.com/news/uniswap-v4-core-audit",
+            "https://openzeppelin.com/news/uniswapx-audit",
+            "https://trailofbits.com/documents/UniswapV3Core.pdf"
+          ],
+          "recall": 0.45,
+          "missed_vs_union": [
+            "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+            "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+            "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+            "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+            "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+            "https://chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+            "https://chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+            "https://chainsecurity.com/security-audit/uniswap-permit2",
+            "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+            "https://code4rena.com/reports/2024-02-uniswap-foundation",
+            "https://dapp.org.uk/reports/uniswapv2.html",
+            "https://developers.uniswap.org/docs/protocols/v2/audits",
+            "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+            "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c",
+            "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+            "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007",
+            "https://openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+            "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+            "https://slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833",
+            "https://veritasprotocol.com/audits/uniswap-v3"
+          ]
+        },
+        "exa__instant": {
+          "classified_count": 9,
+          "unique_urls": 9,
+          "raw_count": 18,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 775,
+            "followup_query": 1000,
+            "followup_search": 891,
+            "classify": 10270
+          },
+          "urls": [
+            "https://chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+            "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+            "https://code4rena.com/reports/2024-02-uniswap-foundation",
+            "https://developers.uniswap.org/docs/protocols/v2/audits",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+            "https://openzeppelin.com/news/uniswap-v4-core-audit",
+            "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+            "https://slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833"
+          ],
+          "recall": 0.225,
+          "missed_vs_union": [
+            "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+            "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+            "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+            "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+            "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+            "https://chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+            "https://chainsecurity.com/security-audit/uniswap-permit2",
+            "https://dapp.org.uk/reports/uniswapv2.html",
+            "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+            "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+            "https://github.com/Uniswap/UniswapX/tree/main/audit",
+            "https://github.com/Uniswap/calibur/tree/main/audits",
+            "https://github.com/Uniswap/permit2/tree/main/audits",
+            "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+            "https://github.com/Uniswap/universal-router/tree/main/audit",
+            "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+            "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+            "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+            "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c",
+            "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+            "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007",
+            "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+            "https://openzeppelin.com/news/uniswap-erc20eth-audit",
+            "https://openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+            "https://openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+            "https://openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+            "https://openzeppelin.com/news/uniswapx-audit",
+            "https://trailofbits.com/documents/UniswapV3Core.pdf",
+            "https://veritasprotocol.com/audits/uniswap-v3"
+          ]
+        },
+        "exa__regular": {
+          "classified_count": 13,
+          "unique_urls": 13,
+          "raw_count": 20,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 1014,
+            "followup_query": 704,
+            "followup_search": 831,
+            "classify": 11522
+          },
+          "urls": [
+            "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+            "https://chainsecurity.com/security-audit/uniswap-permit2",
+            "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+            "https://code4rena.com/reports/2024-02-uniswap-foundation",
+            "https://developers.uniswap.org/docs/protocols/v2/audits",
+            "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+            "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c",
+            "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+            "https://openzeppelin.com/news/uniswap-erc20eth-audit",
+            "https://openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+            "https://openzeppelin.com/news/uniswap-v4-core-audit",
+            "https://openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+            "https://trailofbits.com/documents/UniswapV3Core.pdf"
+          ],
+          "recall": 0.325,
+          "missed_vs_union": [
+            "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+            "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+            "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+            "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+            "https://chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+            "https://chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+            "https://dapp.org.uk/reports/uniswapv2.html",
+            "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+            "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/Uniswap/UniswapX/tree/main/audit",
+            "https://github.com/Uniswap/calibur/tree/main/audits",
+            "https://github.com/Uniswap/permit2/tree/main/audits",
+            "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+            "https://github.com/Uniswap/universal-router/tree/main/audit",
+            "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+            "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+            "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+            "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007",
+            "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+            "https://openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+            "https://openzeppelin.com/news/uniswapx-audit",
+            "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+            "https://slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833",
+            "https://veritasprotocol.com/audits/uniswap-v3"
+          ]
+        },
+        "tavily__default": {
+          "classified_count": 4,
+          "unique_urls": 4,
+          "raw_count": 10,
+          "errors": 0,
+          "timings_ms": {
+            "broad_search": 2248,
+            "followup_query": 705,
+            "followup_search": 1146,
+            "classify": 6470
+          },
+          "urls": [
+            "https://developers.uniswap.org/docs/protocols/v2/audits",
+            "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+            "https://slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833",
+            "https://veritasprotocol.com/audits/uniswap-v3"
+          ],
+          "recall": 0.1,
+          "missed_vs_union": [
+            "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+            "https://blog.openzeppelin.com/uniswap-v4-periphery-and-universal-router-audit",
+            "https://cantina.xyz/blog/cantina-x-uniswap-2025-onchain-security",
+            "https://cantina.xyz/competitions/e2cf6906-ec8b-4c78-a585-74ac90615659",
+            "https://cantina.xyz/portfolio/c2fe4e46-66a3-416e-ab26-40dd4b437ff6",
+            "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+            "https://chainsecurity.com/security-audit/arrakis-uniswap-v4-module",
+            "https://chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+            "https://chainsecurity.com/security-audit/uniswap-permit2",
+            "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+            "https://code4rena.com/reports/2024-02-uniswap-foundation",
+            "https://dapp.org.uk/reports/uniswapv2.html",
+            "https://docs.uniswap.org/contracts/v2/concepts/advanced-topics/security",
+            "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+            "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+            "https://github.com/Uniswap/UniswapX/tree/main/audit",
+            "https://github.com/Uniswap/calibur/tree/main/audits",
+            "https://github.com/Uniswap/permit2/tree/main/audits",
+            "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+            "https://github.com/Uniswap/universal-router/tree/main/audit",
+            "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+            "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+            "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+            "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+            "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c",
+            "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+            "https://medium.com/consensys-diligence/uniswap-audit-b90335ac007",
+            "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+            "https://openzeppelin.com/news/uniswap-erc20eth-audit",
+            "https://openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+            "https://openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+            "https://openzeppelin.com/news/uniswap-v4-core-audit",
+            "https://openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+            "https://openzeppelin.com/news/uniswapx-audit",
+            "https://trailofbits.com/documents/UniswapV3Core.pdf"
+          ]
+        }
+      }
+    }
+  },
+  "overall": {
+    "brave__default": {
+      "total_classified_urls": 79,
+      "recall_vs_union": 0.3074
+    },
+    "exa__deep": {
+      "total_classified_urls": 88,
+      "recall_vs_union": 0.3424
+    },
+    "exa__instant": {
+      "total_classified_urls": 66,
+      "recall_vs_union": 0.2568
+    },
+    "exa__regular": {
+      "total_classified_urls": 113,
+      "recall_vs_union": 0.4397
+    },
+    "tavily__default": {
+      "total_classified_urls": 77,
+      "recall_vs_union": 0.2996
+    }
+  },
+  "global_union_size": 257
+}

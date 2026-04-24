@@ -1,0 +1,197 @@
+{
+  "protocol": "morpho",
+  "backend": "exa",
+  "mode": "deep",
+  "broad_query": "\"morpho\" smart contract security audit report",
+  "followup_query": "Morpho protocol audit site:.github.com OR site:.medium.com OR site:.mirror.xyz",
+  "broad_results": [
+    {
+      "url": "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+      "title": "",
+      "content": "Morpho Protocol V1\nSecurity Assessment\nJuly 21, 2022\nPrepared for:\nPaul Frambot and Merlin Egalite\nMorpho Labs\nPrepared by: Michael Colburn, Felipe Manzano, and Bo Henderson\nAbout Trail of Bits\nFounded in 2012 and headquartered in New York, Trail of Bits provides technical security\nassessment and ad",
+      "score": 1
+    },
+    {
+      "url": "https://docs.morpho.org/security-reviews",
+      "title": "Audits - Security Reviews \u2013 Morpho Docs",
+      "content": "Audits - Security Reviews \u2013 Morpho Docs Are you an LLM? Read llms.txt for a summary of the docs, or llms-full.txt for the full context.\n\nSkip to content\n\nSearch...\n\nGet Started\n\nAudits - Security Reviews\n\nOn this page\n\nMorpho is known for its industry-leading security practices and follows a multi-f",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://xianganhe.com/assets/morpho.pdf",
+      "title": "",
+      "content": "yAcademy Morpho review\nReview Resources:\nA protocol yellowpaper and documentation were provided\nResidents:\nPeep (xiangan.eth)\nTable of Contents\nyAcademy Morpho review\nTable of Contents\nReview Summary\nScope\nCode Evaluation Matrix\nFindings Explanation\nCritical Findings\n1. Critical - P2P market can be ",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/535",
+      "title": "Morpho - detailed report | DeFiSafety",
+      "content": "Morpho - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Morpho\n\n93%\n\nOverview\n\nSecurity IncidentScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the smart ",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://morpho-org-vault-v2.mintlify.app/security/audits",
+      "title": "Security audits - Morpho Vault V2",
+      "content": "> ## Documentation Index\n> \n> Fetch the complete documentation index at: https://mintlify.com/morpho-org/vault-v2/llms.txt\n> Use this file to discover all available pages before exploring further.\n\n# Security audits\n\n> Overview of security audits conducted on Morpho Vault V2 and its adapters\n\nMorpho",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-vault-v2",
+      "title": "Morpho Vault V2",
+      "content": "Smart Contract Audit - Morpho Vault V2 - ChainSecurity\n\nBack to Overview\n\n# Morpho Vault V2\n\ndownload report\n\nWe greatly value the extra time and commitment ChainSecurity dedicated to our project, which required more time and iterations than expected. We highly value this in security firms.\n\nMorpho\n",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits/",
+      "title": "Morpho Optimizers Security reviews | Morpho",
+      "content": "Morpho Optimizers Security reviews | Morpho\n\nOn this page\n\n# Security Reviews\n\nHere is the list of all security reviews conducted on Morpho Optimizers smart contracts.\n\nThe protocol offers better rates while preserving the same liquidity and liquidation parameters. Yet, this requires adding an extra",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://taichiaudit.com/blog/morpho-internals-part-5-integration",
+      "title": "Morpho Internals Part 5: Integration Security Guide",
+      "content": "Morpho Internals Part 5: Integration Security Guide\n\nAfter the long journey from Part 1 to Part 4, we\u2019ve gained a deep understanding of the Morpho ecosystem (markets, IRMs, oracles, vaults). That context makes the official integration checklist much easier to reason about. In Part 5 we expand the ch",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho/",
+      "title": "Morpho Audit",
+      "content": "Morpho Audit | Volt Protocol\n[Skip to main content](#docusaurus_skipToContent_fallback)\nOn this page\n# Morpho Audit\nThe Volt Protocol team conducted a security review of the Morpho protocol. Morpho is a protocol to match suppliers and borrowers in a peer to peer manner. Compared to markets like Comp",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/morpheus-mor-oft-token-audit",
+      "title": "Morpheus MOR OFT Token Audit",
+      "content": "Morpheus MOR OFT Token Audit\n\nResearch/ Security Audits/\n\nMorpheus MOR OFT Token Audit\n\n# Morpheus MOR OFT Token Audit\n\nTable of Content\n\n## Table of Contents\n\n## Summary\n\nType DeFi Timeline From 2024-03-27 To 2024-03-27 Languages Solidity Total Issues 4 (4 resolved) Critical Severity Issues 0 (0 re",
+      "score": 0
+    }
+  ],
+  "followup_results": [],
+  "all_results_deduped": [
+    {
+      "url": "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+      "title": "",
+      "content": "Morpho Protocol V1\nSecurity Assessment\nJuly 21, 2022\nPrepared for:\nPaul Frambot and Merlin Egalite\nMorpho Labs\nPrepared by: Michael Colburn, Felipe Manzano, and Bo Henderson\nAbout Trail of Bits\nFounded in 2012 and headquartered in New York, Trail of Bits provides technical security\nassessment and ad",
+      "score": 1
+    },
+    {
+      "url": "https://docs.morpho.org/security-reviews",
+      "title": "Audits - Security Reviews \u2013 Morpho Docs",
+      "content": "Audits - Security Reviews \u2013 Morpho Docs Are you an LLM? Read llms.txt for a summary of the docs, or llms-full.txt for the full context.\n\nSkip to content\n\nSearch...\n\nGet Started\n\nAudits - Security Reviews\n\nOn this page\n\nMorpho is known for its industry-leading security practices and follows a multi-f",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://xianganhe.com/assets/morpho.pdf",
+      "title": "",
+      "content": "yAcademy Morpho review\nReview Resources:\nA protocol yellowpaper and documentation were provided\nResidents:\nPeep (xiangan.eth)\nTable of Contents\nyAcademy Morpho review\nTable of Contents\nReview Summary\nScope\nCode Evaluation Matrix\nFindings Explanation\nCritical Findings\n1. Critical - P2P market can be ",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/535",
+      "title": "Morpho - detailed report | DeFiSafety",
+      "content": "Morpho - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Morpho\n\n93%\n\nOverview\n\nSecurity IncidentScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the smart ",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://morpho-org-vault-v2.mintlify.app/security/audits",
+      "title": "Security audits - Morpho Vault V2",
+      "content": "> ## Documentation Index\n> \n> Fetch the complete documentation index at: https://mintlify.com/morpho-org/vault-v2/llms.txt\n> Use this file to discover all available pages before exploring further.\n\n# Security audits\n\n> Overview of security audits conducted on Morpho Vault V2 and its adapters\n\nMorpho",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-vault-v2",
+      "title": "Morpho Vault V2",
+      "content": "Smart Contract Audit - Morpho Vault V2 - ChainSecurity\n\nBack to Overview\n\n# Morpho Vault V2\n\ndownload report\n\nWe greatly value the extra time and commitment ChainSecurity dedicated to our project, which required more time and iterations than expected. We highly value this in security firms.\n\nMorpho\n",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits/",
+      "title": "Morpho Optimizers Security reviews | Morpho",
+      "content": "Morpho Optimizers Security reviews | Morpho\n\nOn this page\n\n# Security Reviews\n\nHere is the list of all security reviews conducted on Morpho Optimizers smart contracts.\n\nThe protocol offers better rates while preserving the same liquidity and liquidation parameters. Yet, this requires adding an extra",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://taichiaudit.com/blog/morpho-internals-part-5-integration",
+      "title": "Morpho Internals Part 5: Integration Security Guide",
+      "content": "Morpho Internals Part 5: Integration Security Guide\n\nAfter the long journey from Part 1 to Part 4, we\u2019ve gained a deep understanding of the Morpho ecosystem (markets, IRMs, oracles, vaults). That context makes the official integration checklist much easier to reason about. In Part 5 we expand the ch",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho/",
+      "title": "Morpho Audit",
+      "content": "Morpho Audit | Volt Protocol\n[Skip to main content](#docusaurus_skipToContent_fallback)\nOn this page\n# Morpho Audit\nThe Volt Protocol team conducted a security review of the Morpho protocol. Morpho is a protocol to match suppliers and borrowers in a peer to peer manner. Compared to markets like Comp",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/morpheus-mor-oft-token-audit",
+      "title": "Morpheus MOR OFT Token Audit",
+      "content": "Morpheus MOR OFT Token Audit\n\nResearch/ Security Audits/\n\nMorpheus MOR OFT Token Audit\n\n# Morpheus MOR OFT Token Audit\n\nTable of Content\n\n## Table of Contents\n\n## Summary\n\nType DeFi Timeline From 2024-03-27 To 2024-03-27 Languages Solidity Total Issues 4 (4 resolved) Critical Severity Issues 0 (0 re",
+      "score": 0
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://cdn.morpho.org/documents/TrailOfBits_210722.pdf",
+      "auditor": "Trail of Bits",
+      "title": "Morpho Protocol V1 Security Assessment",
+      "date": "2022-07-21",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://docs.morpho.org/security-reviews",
+      "auditor": null,
+      "title": "Audits - Security Reviews",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://xianganhe.com/assets/morpho.pdf",
+      "auditor": "yAcademy",
+      "title": "yAcademy Morpho review",
+      "date": null,
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://morpho-org-vault-v2.mintlify.app/security/audits",
+      "auditor": null,
+      "title": "Security audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-vault-v2",
+      "auditor": "ChainSecurity",
+      "title": "Morpho Vault V2",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits/",
+      "auditor": null,
+      "title": "Morpho Optimizers Security reviews",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://docs.voltprotocol.io/docs/security/Audits/venue-audits/morpho/",
+      "auditor": "Volt Protocol",
+      "title": "Morpho Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 569,
+    "followup_query": 842,
+    "followup_search": 1372,
+    "classify": 4264
+  },
+  "errors": []
+}

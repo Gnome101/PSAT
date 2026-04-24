@@ -1,0 +1,87 @@
+{
+  "protocol": "lido",
+  "backend": "brave",
+  "mode": "default",
+  "elapsed_ms": 104649,
+  "reports": [
+    {
+      "url": "https://github.com/solodit/solodit_content/blob/main/reports/Hexens/2023-04-14-Lido.md",
+      "pdf_url": null,
+      "auditor": "Hexens",
+      "title": "Hexens Lido Audit",
+      "date": "2023-04-14",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:26:14.589366+00:00"
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20Protocol/README.md#1-opportunity-to-add-bufferedeth-without-submitting-to-lido",
+      "pdf_url": null,
+      "auditor": "MixBytes",
+      "title": "MixBytes Lido Audit",
+      "date": "2022-05-24",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:26:14.589366+00:00"
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/Lido/Lido%20KSM/README.md#6-possible-zero-balance-on-lido",
+      "pdf_url": null,
+      "auditor": "MixBytes",
+      "title": "MixBytes Lido Audit",
+      "date": "2022-02-08",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:26:14.589366+00:00"
+    },
+    {
+      "url": "https://docs.lido.fi/security/audits/",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "Lido Protocol Audits | Lido Docs",
+      "date": null,
+      "source_url": "https://docs.lido.fi/security/audits/",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T02:26:14.589366+00:00"
+    },
+    {
+      "url": "https://www.chainsecurity.com/reports/Lido/ChainSecurity_Lido_StakingRouter_Audit.pdf",
+      "pdf_url": "https://www.chainsecurity.com/reports/Lido/ChainSecurity_Lido_StakingRouter_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Lido Staking Router Security Audit",
+      "date": null,
+      "source_url": "https://www.chainsecurity.com/security-audit/lido-staking-router",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T02:26:14.589366+00:00"
+    },
+    {
+      "url": "https://www.chainsecurity.com/reports/Lido/ChainSecurity_Lido_Lido_Audit.pdf",
+      "pdf_url": "https://www.chainsecurity.com/reports/Lido/ChainSecurity_Lido_Lido_Audit.pdf",
+      "auditor": "Chainsecurity",
+      "title": "Lido Security Audit",
+      "date": null,
+      "source_url": "https://www.chainsecurity.com/security-audit/lido",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T02:26:14.589366+00:00"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/lidofinance/audits/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/lidofinance/audits/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+      "auditor": "Sigma Prime",
+      "title": "Lido Easy Track Smart Contract Security Review Report v2.0",
+      "date": "2021-10",
+      "source_url": "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T02:26:14.589366+00:00"
+    }
+  ],
+  "queries_used": 1,
+  "errors": [],
+  "notes": [
+    "Solodit: 4 audit(s)",
+    "Search returned 10 unique result(s)",
+    "LLM classified 6 result(s) as audit reports",
+    "Extracted 7 audit report(s)",
+    "Tavily queries used: 1/4"
+  ]
+}

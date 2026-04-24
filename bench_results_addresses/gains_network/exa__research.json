@@ -1,0 +1,372 @@
+{
+  "protocol": "gains network",
+  "backend": "exa",
+  "mode": "research",
+  "instructions": "Find the main deployed smart contract addresses for the gains network protocol. List the core production contracts (not peripheral helpers) with their names and 0x-prefixed on-chain addresses. Include the chain where each is deployed. Prioritize contracts the protocol team themselves publish on their official docs or governance pages.",
+  "contracts": [
+    {
+      "name": "GNS Token",
+      "address": "0x18c11fd286c5ec11c3b683caa813b77f5163a122",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Token",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "ERC20 Bridge",
+      "address": "0x01caaaa682ceba8cd6c02f93bb1393fb415fa5e2",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Bridge",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "ERC721 (Minting) Bridge",
+      "address": "0x0f9e4375facbeb90daa850f677819b438ce50827",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Bridge",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "ProxyAdmin",
+      "address": "0xe18be0113c38c91b3b429d04fdeb84359fbcb2eb",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Admin Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNSTimelockOwner (14-day)",
+      "address": "0x5f5e4892bab94d94dc57a3edea3c138167c4df0f",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Admin Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNSTimelockManager (3-day)",
+      "address": "0x1632c38cb208df8409753729dbfba5c58626f637",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Admin Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNSMultiCollatDiamond",
+      "address": "0xff162c694eaa571f685030649814282ea457f169",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Core Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNSStaking",
+      "address": "0x7edde7e5900633f698eab0dbc97de640fc5dc015",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Core Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gGNS",
+      "address": "0x4beef1113f968326905224d2ca272f3032a9a9f4",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gGNS OpenPnlFeed",
+      "address": "0x4ca1638754be8060e544aca4a4f43702be30e0d1",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gDAI",
+      "address": "0xd85e038593d7a098614721eae955ec2022b9b91b",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gDAI OpenPnlFeed",
+      "address": "0x990ba9edd8a9615a23e4c452e63a80e519a4a23d",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gETH",
+      "address": "0x5977a9682d7af81d347cfc338c61692163a2784c",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gETH OpenPnlFeed",
+      "address": "0x018d9a3f0d06ccb7c305b7c9219a4307e1f9f27e",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gUSDC",
+      "address": "0xd3443ee1e91af28e5fb858fbd0d72a63ba8046e0",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gUSDC OpenPnlFeed",
+      "address": "0xbf55c78132ab06a2b217040b7a7f20b5cbd47982",
+      "chains": [
+        "Arbitrum"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNS Token",
+      "address": "0xe5417af564e4bfda1c483642db72007871397896",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Token",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "ERC20 Bridge",
+      "address": "0xdf774a4f3ea5095535f5b8f5b9149caf90ff75bd",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Bridge",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "ERC721 (Locking) Bridge",
+      "address": "0xa33f7069f075a54481868e4c0b8d26925a218362",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Bridge",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "ProxyAdmin",
+      "address": "0xdbcd002f96f62781bbe65fbe24f4d6265d416bad",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Admin Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNSTimelockOwner (14-day)",
+      "address": "0x322e18fdb5d0b0221e4724dcc5883c4b7896da0e",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Admin Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNSTimelockManager (3-day)",
+      "address": "0xf0a8531505f96b8decce7857ca3ab57490f44a40",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Admin Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNSMultiCollatDiamond",
+      "address": "0x209a9a01980377916851af2ca075c2b170452018",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Core Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "GNSStaking",
+      "address": "0x8c74b2256ffb6705f14ada8e86fbd654e0e2beca",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Core Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gDAI",
+      "address": "0x91993f2101cc758d0deb7279d41e880f7defe827",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gDAI OpenPnlFeed",
+      "address": "0x8d687276543b92819f2f2b5c3faad4ad27f4440c",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gETH",
+      "address": "0x1544e1ff1a6f6bdbfb901622c12bb352a43464fb",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gETH OpenPnlFeed",
+      "address": "0xf07f4507dd6a057aea509cb9b218b7c4d1894473",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gUSDC",
+      "address": "0x29019fe2e72e8d4d2118e8d0318bef389ffe2c81",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "gUSDC OpenPnlFeed",
+      "address": "0xff84e736a15f80e7e104e153d7f7d6c9bd6fe822",
+      "chains": [
+        "Polygon"
+      ],
+      "role": "Collateral Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    }
+  ],
+  "errors": [],
+  "notes": [],
+  "task_id": "01kpzc1hycbghnjsv4h951e3wz",
+  "elapsed_ms": 32013
+}

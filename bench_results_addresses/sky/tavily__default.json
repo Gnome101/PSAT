@@ -1,0 +1,14 @@
+{
+  "protocol": "sky",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 4384,
+  "contracts": [],
+  "official_domain": null,
+  "errors": [],
+  "notes": [
+    "Domain candidates: developers.sky.money, bankless.com, docs.roninchain.com, github.com, hexn.io",
+    "Could not identify an official domain",
+    "Tavily queries used: 1/4"
+  ]
+}

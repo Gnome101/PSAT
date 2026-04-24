@@ -1,0 +1,368 @@
+{
+  "protocol": "aave",
+  "backend": "exa",
+  "mode": "regular",
+  "broad_query": "\"aave\" smart contract security audit report",
+  "followup_query": "Aave audit contest",
+  "broad_results": [
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "title": "[PDF] AAVE V3.3.0 SMART CONTRACTS SECURITY AUDIT REPORT",
+      "content": "JANUARY 29, 2025\nAAVE V3.3.0\nSMART\nCONTRACTS\nSECURITY\nAUDIT REPORT\nCODE DEVElOPED bY\nEXECUTIVE 1 SUMMARY\nEXECUTIVE SUMMARY 3\n1.1 EXECUTIVE SUMMARY\nThis document presents the smart contracts security audit conducted by Oxorio for BGD\nLabs\u2019s Aave v3.3.0 Update.\nBGD Labs (Bored Ghosts Developing Labs) ",
+      "score": null
+    },
+    {
+      "url": "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+      "title": "Aave Umbrella Audit Summary - Ackee Blockchain",
+      "content": "Aave Umbrella Audit Summary - Ackee Blockchain \n\n## Declaration about the use of cookies\n\nIn accordance with the law our websites store data files called cookies on your device.\n\n### Which cookies do we use?\n\nWe use third-party cookies, specifically Google Analytics, to measure website traffic. Thes",
+      "score": null
+    },
+    {
+      "url": "https://www.aave.org/security",
+      "title": "Security | Aave",
+      "content": "Security | Aave\n\nBug BountyReport responsibly and get rewarded.\n\nGitHubThe Aave Protocol codebase.\n\n### V4 Audits\n\n#### Security Audit\n\n#### Security Review\n\n#### Collaborative Audit Report\n\n### V3.6 Audits\n\n#### Security Review\n\n#### Security Assessment & Formal Verification Report\n\n#### Security A",
+      "score": null
+    },
+    {
+      "url": "https://blog.openzeppelin.com/aave-protocol-audit",
+      "title": "Aave Protocol Audit - OpenZeppelin blog",
+      "content": "Aave Protocol Audit - OpenZeppelin blog\n\nResearch/ Security Audits/\n\nAave Protocol Audit\n\n# Aave Protocol Audit\n\nTable of Content\n\nThe Aave team asked us to review and audit a pre-production version of their protocol. We looked at the code and now publish our results.\n\nThe audited commit is`1f8e5e65",
+      "score": null
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+      "title": "",
+      "content": "SEPTEMBER 12, 2024\nAAVE V3\nLIQUID\nEMODES\nSMART\nCONTRACTS\nSECURITY\nAUDIT REPORT\nEXECUTIVE 1 SUMMARY\nEXECUTIVE SUMMARY 3\n1.1 EXECUTIVE SUMMARY\nThis document presents the smart contracts security audit conducted by Oxorio for BGD\nLabs\u2019s Aave V3 Liquid eModes Update.\nBGD Labs (Bored Ghosts Developing La",
+      "score": null
+    },
+    {
+      "url": "https://www.defisafety.com/app/pqrs/597",
+      "title": "AAVE V3 - detailed report | DeFiSafety",
+      "content": "AAVE V3 - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### AAVE V3\n\n93 %\n\nOverview\n\nScoring AppendixSummaryDisclaimer\n\nCode and Team\n\n1. Are the smart contract addresses easy",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/aave-cowswap-adapters",
+      "title": "Smart Contract Audit - Aave CowSwap Adapters - ChainSecurity",
+      "content": "Smart Contract Audit - Aave CowSwap Adapters - ChainSecurity\n\nBack to Overview\n\n# Aave CowSwap Adapters\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe code is well structured and written. We carefully assessed if the protocol interactions are correct, amounts are passed correctly and there is any ",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+      "title": "audits/2025-06-11_Stermi_Aave-v3.4_Report.md at 74412e2b6e0b1973fac6837b6a488f8eaaeac4b1 \u00b7 aave-dao/aave-v3-origin",
+      "content": "# File: aave-dao/aave-v3-origin/audits/2025-06-11_Stermi_Aave-v3.4_Report.md\n\n- Repository: aave-dao/aave-v3-origin | Aave v3.6 protocol | 276 stars | Solidity\n- Branch: 74412e2b6e0b1973fac6837b6a488f8eaaeac4b1\n\n```md\n<table>\n    <tr><th></th><th></th></tr>\n    <tr>\n        <td><img src=\"https://raw",
+      "score": null
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+      "title": "AAVE/Aave%20v%203.1.0/README.md at master \u00b7 mixbytes/audits_public",
+      "content": "# File: mixbytes/audits_public/AAVE/Aave%20v%203.1.0/README.md\n\n- Repository: mixbytes/audits_public | MixBytes Team public security audits | 502 stars | JavaScript\n- Branch: master\n\n```md\n# Aave v3.1.0 Security Audit Report\n\n###### tags: `Aave`\n\n## 1. INTRODUCTION\n\n### 1.1 Disclaimer\nThe audit make",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+      "title": "audits/2025-07-17_StErMi_Aave-v3.5.md at main \u00b7 aave-dao/aave-v3-origin",
+      "content": "# File: aave-dao/aave-v3-origin/audits/2025-07-17_StErMi_Aave-v3.5.md\n\n- Repository: aave-dao/aave-v3-origin | Aave v3.6 protocol | 276 stars | Solidity\n- Branch: main\n\n```md\n\n<table>\n    <tr><th></th><th></th></tr>\n    <tr>\n        <td><img src=\"https://raw.githubusercontent.com/aave-dao/aave-brand",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://www.theblock.co/press-releases/397376/sherlock-and-ripple-launch-550k-security-audit-contest-to-secure-upcoming-features-on-the-xrp-ledger",
+      "title": "Sherlock and Ripple Launch $550K Security Audit Contest to Secure Upcoming Features on the XRP Ledger - The Block",
+      "content": "# Sherlock and Ripple Launch $550K Security Audit Contest to Secure Upcoming Features on the XRP Ledger - The Block | The Block\n\nPublished: 2026-04-14T09:06:42-04:00\nType: Press Release\n\n## Summary\n\nSherlock, a leading Web3 audit provider, has partnered with Ripple to conduct a security audit contes",
+      "score": null
+    },
+    {
+      "url": "https://sherlock.xyz/case-studies/aave",
+      "title": "Sherlock \u2014 Securing Aave V4: A New Architecture Demands a New Security Standard",
+      "content": "Sherlock \u2014 Securing Aave V4: A New Architecture Demands a New Security Standard\n\nCase Study\n\n# Securing Aave V4: A New Architecture Demands a New Security Standard\n\n11\n\nCollaborative Audit Findings\n\n930+\n\nAudit Contest Participants\n\nCase Study\n\n# Securing Aave V4: A New Architecture Demands a New Se",
+      "score": null
+    },
+    {
+      "url": "https://www.aave.org/security",
+      "title": "Security | Aave",
+      "content": "Security | Aave\n\nBug BountyReport responsibly and get rewarded.\n\nGitHubThe Aave Protocol codebase.\n\n### V4 Audits\n\n#### Security Audit\n\n#### Security Review\n\n#### Collaborative Audit Report\n\n### V3.6 Audits\n\n#### Security Review\n\n#### Security Assessment & Formal Verification Report\n\n#### Security A",
+      "score": null
+    },
+    {
+      "url": "https://governance.aave.com/t/aave-v4-security-contest/23559",
+      "title": "Aave V4 Security Contest - Development",
+      "content": "Aave V4 Security Contest - Development - Aave",
+      "score": null
+    },
+    {
+      "url": "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review/",
+      "title": "Aave V4 Security Audit Clears Code After $1.5M, 345-Day Review",
+      "content": "Aave V4 Security Audit Clears Code After $1.5M, 345-Day Review\n\nSHARE\n\nThis article was first published on The Bit Journal.\n\nContents\n\n- Sources:\n- Were any critical vulnerabilities found in the audit?\n- Which companies helped review the Aave V4 code?\n- How many researchers tested the Aave V4 code?\n",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/747",
+      "title": "Aave v3.3 Contest - 200,000 USDC",
+      "content": "Aave v3.3 Contest - 200,000 USDC\n\n \n\n Contests\n\n Bug BountiesFeatured\n\n Leaderboards\n\n Help Center\n\n \n\n Contests \n\nTotal Rewards\n\nStatus\n\nScope\n\nStart Time\n\nEnd Time\n\nLead Senior Watson\n\nLead Judge\n\n \n\n \n\n \n\n",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/1209",
+      "title": "Aave V4 Contest - 365,000 USDC",
+      "content": "Aave V4 Contest - 365,000 USDC\n\nContests\n\nBug BountiesFeatured\n\nLeaderboards\n\nHelp Center\n\nConnect\n\nContests\n\nTotal Rewards\n\nStatus\n\nScope\n\nStart Time\n\nEnd Time\n\nLead Senior Watson\n\nLead Judge\n\nAave V4 Contest - 365,000 USDC\n[\nContests\n](https://audits.sherlock.xyz/contests)[\nBug Bounties\nFeatured\n]",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/bug-bounties/300",
+      "title": "Aave V4 Bug Bounty - Sherlock",
+      "content": "Aave V4 Bug Bounty - Sherlock\n\n### Aave V4\n\nAave V4\n\nDetails\n\nScope\n\nMy Submission\n\nMax Rewards\n\n500,000 USD\n\nStatus\n\nLive since\n\nLast updated\n\nLIVE\n\nApr 3, 2026, 7:00 PM\n\nApr 3, 2026, 7:00 PM\n\nAave V4 Bug Bounty - Sherlock\n[\nContests\n](https://audits.sherlock.xyz/contests)[\nBug Bounties\nFeatured\n](",
+      "score": null
+    },
+    {
+      "url": "https://cryptonews.net/news/defi/32581700/",
+      "title": "Aave V4 Partners With Sherlock for a Three-Phase Security Process and a $365K Audit Contest",
+      "content": "Aave V4 Partners With Sherlock for a Three-Phase Security Process and a $365K Audit Contest\n\nMore...\n\n- Latest news\n- Video\n- Bitcoin\n- DeFi\n- NFT\n- Ethereum\n- Altcoins\n- Blockchain\n- Mining\n- Finance\n- Metaverse\n- Legal\n- Security\n- Analytics\n- Exchange\n- Other\n- GameFi\n- ICO\n\nLatest news Video Bit",
+      "score": null
+    },
+    {
+      "url": "https://news.nbtc.finance/aave-v4-partners-with-sherlock-for-a-three-phase-security-process-and-a-365k-audit-contest/",
+      "title": "Aave V4 Partners With Sherlock for a Three-Phase Security Process and a $365K Audit Contest \u2013 NBTC News",
+      "content": "Aave V4 Partners With Sherlock for a Three-Phase Security Process and a $365K Audit Contest \u2013 NBTC News \n\nClose Menu\n\nFacebook X (Twitter) Instagram\n\nX (Twitter) Telegram Facebook LinkedIn RSS\n\nShare\n\nFacebook Twitter LinkedIn Pinterest Email\n\n \n\nThe Aave team partners with Sherlock across the V4 up",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "title": "[PDF] AAVE V3.3.0 SMART CONTRACTS SECURITY AUDIT REPORT",
+      "content": "JANUARY 29, 2025\nAAVE V3.3.0\nSMART\nCONTRACTS\nSECURITY\nAUDIT REPORT\nCODE DEVElOPED bY\nEXECUTIVE 1 SUMMARY\nEXECUTIVE SUMMARY 3\n1.1 EXECUTIVE SUMMARY\nThis document presents the smart contracts security audit conducted by Oxorio for BGD\nLabs\u2019s Aave v3.3.0 Update.\nBGD Labs (Bored Ghosts Developing Labs) ",
+      "score": null
+    },
+    {
+      "url": "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+      "title": "Aave Umbrella Audit Summary - Ackee Blockchain",
+      "content": "Aave Umbrella Audit Summary - Ackee Blockchain \n\n## Declaration about the use of cookies\n\nIn accordance with the law our websites store data files called cookies on your device.\n\n### Which cookies do we use?\n\nWe use third-party cookies, specifically Google Analytics, to measure website traffic. Thes",
+      "score": null
+    },
+    {
+      "url": "https://www.aave.org/security",
+      "title": "Security | Aave",
+      "content": "Security | Aave\n\nBug BountyReport responsibly and get rewarded.\n\nGitHubThe Aave Protocol codebase.\n\n### V4 Audits\n\n#### Security Audit\n\n#### Security Review\n\n#### Collaborative Audit Report\n\n### V3.6 Audits\n\n#### Security Review\n\n#### Security Assessment & Formal Verification Report\n\n#### Security A",
+      "score": null
+    },
+    {
+      "url": "https://blog.openzeppelin.com/aave-protocol-audit",
+      "title": "Aave Protocol Audit - OpenZeppelin blog",
+      "content": "Aave Protocol Audit - OpenZeppelin blog\n\nResearch/ Security Audits/\n\nAave Protocol Audit\n\n# Aave Protocol Audit\n\nTable of Content\n\nThe Aave team asked us to review and audit a pre-production version of their protocol. We looked at the code and now publish our results.\n\nThe audited commit is`1f8e5e65",
+      "score": null
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+      "title": "",
+      "content": "SEPTEMBER 12, 2024\nAAVE V3\nLIQUID\nEMODES\nSMART\nCONTRACTS\nSECURITY\nAUDIT REPORT\nEXECUTIVE 1 SUMMARY\nEXECUTIVE SUMMARY 3\n1.1 EXECUTIVE SUMMARY\nThis document presents the smart contracts security audit conducted by Oxorio for BGD\nLabs\u2019s Aave V3 Liquid eModes Update.\nBGD Labs (Bored Ghosts Developing La",
+      "score": null
+    },
+    {
+      "url": "https://www.defisafety.com/app/pqrs/597",
+      "title": "AAVE V3 - detailed report | DeFiSafety",
+      "content": "AAVE V3 - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### AAVE V3\n\n93 %\n\nOverview\n\nScoring AppendixSummaryDisclaimer\n\nCode and Team\n\n1. Are the smart contract addresses easy",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/aave-cowswap-adapters",
+      "title": "Smart Contract Audit - Aave CowSwap Adapters - ChainSecurity",
+      "content": "Smart Contract Audit - Aave CowSwap Adapters - ChainSecurity\n\nBack to Overview\n\n# Aave CowSwap Adapters\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe code is well structured and written. We carefully assessed if the protocol interactions are correct, amounts are passed correctly and there is any ",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+      "title": "audits/2025-06-11_Stermi_Aave-v3.4_Report.md at 74412e2b6e0b1973fac6837b6a488f8eaaeac4b1 \u00b7 aave-dao/aave-v3-origin",
+      "content": "# File: aave-dao/aave-v3-origin/audits/2025-06-11_Stermi_Aave-v3.4_Report.md\n\n- Repository: aave-dao/aave-v3-origin | Aave v3.6 protocol | 276 stars | Solidity\n- Branch: 74412e2b6e0b1973fac6837b6a488f8eaaeac4b1\n\n```md\n<table>\n    <tr><th></th><th></th></tr>\n    <tr>\n        <td><img src=\"https://raw",
+      "score": null
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+      "title": "AAVE/Aave%20v%203.1.0/README.md at master \u00b7 mixbytes/audits_public",
+      "content": "# File: mixbytes/audits_public/AAVE/Aave%20v%203.1.0/README.md\n\n- Repository: mixbytes/audits_public | MixBytes Team public security audits | 502 stars | JavaScript\n- Branch: master\n\n```md\n# Aave v3.1.0 Security Audit Report\n\n###### tags: `Aave`\n\n## 1. INTRODUCTION\n\n### 1.1 Disclaimer\nThe audit make",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+      "title": "audits/2025-07-17_StErMi_Aave-v3.5.md at main \u00b7 aave-dao/aave-v3-origin",
+      "content": "# File: aave-dao/aave-v3-origin/audits/2025-07-17_StErMi_Aave-v3.5.md\n\n- Repository: aave-dao/aave-v3-origin | Aave v3.6 protocol | 276 stars | Solidity\n- Branch: main\n\n```md\n\n<table>\n    <tr><th></th><th></th></tr>\n    <tr>\n        <td><img src=\"https://raw.githubusercontent.com/aave-dao/aave-brand",
+      "score": null
+    },
+    {
+      "url": "https://www.theblock.co/press-releases/397376/sherlock-and-ripple-launch-550k-security-audit-contest-to-secure-upcoming-features-on-the-xrp-ledger",
+      "title": "Sherlock and Ripple Launch $550K Security Audit Contest to Secure Upcoming Features on the XRP Ledger - The Block",
+      "content": "# Sherlock and Ripple Launch $550K Security Audit Contest to Secure Upcoming Features on the XRP Ledger - The Block | The Block\n\nPublished: 2026-04-14T09:06:42-04:00\nType: Press Release\n\n## Summary\n\nSherlock, a leading Web3 audit provider, has partnered with Ripple to conduct a security audit contes",
+      "score": null
+    },
+    {
+      "url": "https://sherlock.xyz/case-studies/aave",
+      "title": "Sherlock \u2014 Securing Aave V4: A New Architecture Demands a New Security Standard",
+      "content": "Sherlock \u2014 Securing Aave V4: A New Architecture Demands a New Security Standard\n\nCase Study\n\n# Securing Aave V4: A New Architecture Demands a New Security Standard\n\n11\n\nCollaborative Audit Findings\n\n930+\n\nAudit Contest Participants\n\nCase Study\n\n# Securing Aave V4: A New Architecture Demands a New Se",
+      "score": null
+    },
+    {
+      "url": "https://governance.aave.com/t/aave-v4-security-contest/23559",
+      "title": "Aave V4 Security Contest - Development",
+      "content": "Aave V4 Security Contest - Development - Aave",
+      "score": null
+    },
+    {
+      "url": "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review/",
+      "title": "Aave V4 Security Audit Clears Code After $1.5M, 345-Day Review",
+      "content": "Aave V4 Security Audit Clears Code After $1.5M, 345-Day Review\n\nSHARE\n\nThis article was first published on The Bit Journal.\n\nContents\n\n- Sources:\n- Were any critical vulnerabilities found in the audit?\n- Which companies helped review the Aave V4 code?\n- How many researchers tested the Aave V4 code?\n",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/747",
+      "title": "Aave v3.3 Contest - 200,000 USDC",
+      "content": "Aave v3.3 Contest - 200,000 USDC\n\n \n\n Contests\n\n Bug BountiesFeatured\n\n Leaderboards\n\n Help Center\n\n \n\n Contests \n\nTotal Rewards\n\nStatus\n\nScope\n\nStart Time\n\nEnd Time\n\nLead Senior Watson\n\nLead Judge\n\n \n\n \n\n \n\n",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/1209",
+      "title": "Aave V4 Contest - 365,000 USDC",
+      "content": "Aave V4 Contest - 365,000 USDC\n\nContests\n\nBug BountiesFeatured\n\nLeaderboards\n\nHelp Center\n\nConnect\n\nContests\n\nTotal Rewards\n\nStatus\n\nScope\n\nStart Time\n\nEnd Time\n\nLead Senior Watson\n\nLead Judge\n\nAave V4 Contest - 365,000 USDC\n[\nContests\n](https://audits.sherlock.xyz/contests)[\nBug Bounties\nFeatured\n]",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/bug-bounties/300",
+      "title": "Aave V4 Bug Bounty - Sherlock",
+      "content": "Aave V4 Bug Bounty - Sherlock\n\n### Aave V4\n\nAave V4\n\nDetails\n\nScope\n\nMy Submission\n\nMax Rewards\n\n500,000 USD\n\nStatus\n\nLive since\n\nLast updated\n\nLIVE\n\nApr 3, 2026, 7:00 PM\n\nApr 3, 2026, 7:00 PM\n\nAave V4 Bug Bounty - Sherlock\n[\nContests\n](https://audits.sherlock.xyz/contests)[\nBug Bounties\nFeatured\n](",
+      "score": null
+    },
+    {
+      "url": "https://cryptonews.net/news/defi/32581700/",
+      "title": "Aave V4 Partners With Sherlock for a Three-Phase Security Process and a $365K Audit Contest",
+      "content": "Aave V4 Partners With Sherlock for a Three-Phase Security Process and a $365K Audit Contest\n\nMore...\n\n- Latest news\n- Video\n- Bitcoin\n- DeFi\n- NFT\n- Ethereum\n- Altcoins\n- Blockchain\n- Mining\n- Finance\n- Metaverse\n- Legal\n- Security\n- Analytics\n- Exchange\n- Other\n- GameFi\n- ICO\n\nLatest news Video Bit",
+      "score": null
+    },
+    {
+      "url": "https://news.nbtc.finance/aave-v4-partners-with-sherlock-for-a-three-phase-security-process-and-a-365k-audit-contest/",
+      "title": "Aave V4 Partners With Sherlock for a Three-Phase Security Process and a $365K Audit Contest \u2013 NBTC News",
+      "content": "Aave V4 Partners With Sherlock for a Three-Phase Security Process and a $365K Audit Contest \u2013 NBTC News \n\nClose Menu\n\nFacebook X (Twitter) Instagram\n\nX (Twitter) Telegram Facebook LinkedIn RSS\n\nShare\n\nFacebook Twitter LinkedIn Pinterest Email\n\n \n\nThe Aave team partners with Sherlock across the V4 up",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "auditor": "Oxorio",
+      "title": "AAVE V3.3.0 SMART CONTRACTS SECURITY AUDIT REPORT",
+      "date": "2025-01-29",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+      "auditor": "Ackee Blockchain",
+      "title": "Aave Umbrella Audit Summary",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.aave.org/security",
+      "auditor": null,
+      "title": "Security",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://blog.openzeppelin.com/aave-protocol-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Aave Protocol Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+      "auditor": "Oxorio",
+      "title": "AAVE V3 LIQUID EMODES SMART CONTRACTS SECURITY AUDIT REPORT",
+      "date": "2024-09-12",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/aave-cowswap-adapters",
+      "auditor": "ChainSecurity",
+      "title": "Smart Contract Audit - Aave CowSwap Adapters",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/aave-dao/aave-v3-origin/blob/74412e2b6e0b1973fac6837b6a488f8eaaeac4b1/audits/2025-06-11_Stermi_Aave-v3.4_Report.md",
+      "auditor": "StErMi",
+      "title": "Stermi Aave-v3.4 Report",
+      "date": "2025-06-11",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+      "auditor": "MixBytes",
+      "title": "Aave v3.1.0 Security Audit Report",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/aave-dao/aave-v3-origin/blob/main/audits/2025-07-17_StErMi_Aave-v3.5.md",
+      "auditor": "StErMi",
+      "title": "StErMi Aave-v3.5",
+      "date": "2025-07-17",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://sherlock.xyz/case-studies/aave",
+      "auditor": "Sherlock",
+      "title": "Securing Aave V4: A New Architecture Demands a New Security Standard",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://thebitjournal.com/aave-v4-security-audit-clears-code-after-1-5m-345-day-review/",
+      "auditor": null,
+      "title": "Aave V4 Security Audit Clears Code After $1.5M, 345-Day Review",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/747",
+      "auditor": "Sherlock",
+      "title": "Aave v3.3 Contest",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/1209",
+      "auditor": "Sherlock",
+      "title": "Aave V4 Contest",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://audits.sherlock.xyz/bug-bounties/300",
+      "auditor": "Sherlock",
+      "title": "Aave V4 Bug Bounty",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 1133,
+    "followup_query": 615,
+    "followup_search": 854,
+    "classify": 10605
+  },
+  "errors": []
+}

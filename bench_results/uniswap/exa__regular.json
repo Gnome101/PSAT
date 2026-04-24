@@ -1,0 +1,366 @@
+{
+  "protocol": "uniswap",
+  "backend": "exa",
+  "mode": "regular",
+  "broad_query": "\"uniswap\" smart contract security audit report",
+  "followup_query": "Uniswap audit Code4rena",
+  "broad_results": [
+    {
+      "url": "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+      "title": "v3-core/audits/abdk/audit.pdf at main \u00b7 Uniswap/v3-core - GitHub",
+      "content": "v3-core/audits/abdk/audit.pdf at main \u00b7 Uniswap/v3-core \u00b7 GitHub\n[Skip to content](#start-of-content)\n## Navigation Menu\nToggle navigation\n[\n](https://github.com/)\n[\nSign in\n](https://github.com/login?return_to=https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf)\nSearch or jump to...\n",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit - OpenZeppelin",
+      "content": "Uniswap v4 Core Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Core Audit\n\n# Uniswap v4 Core Audit\n\nTable of Content\n\n## Table of Contents\n\n \n\n## Summary\n\n Type DeFi Timeline From 2024-05-27 To 2024-06-21 Languages Solidity, Yul Total Issues 24 (18 resolved, 2 partially resolved) Critical Severity I",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-permit2",
+      "title": "Uniswap - Permit2 Smart Contract Audit - Chainsecurity",
+      "content": "Uniswap - Permit2 Smart Contract Audit - Chainsecurity\n\nBack to Overview\n\n# Uniswap \u2013 Permit2 Security Audi\n\ndownload report\n\nexternal-link\n\n## Summary\n\nUniswap implements Permit2 and Permit2Lib which are smart contracts that enable permit-style approvals and transfers using signatures for ERC20 tok",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+      "title": "Uniswap v4 Periphery and Universal Router Audit",
+      "content": "Uniswap v4 Periphery and Universal Router Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Periphery and Universal Router Audit\n\n# Uniswap v4 Periphery and Universal Router Audit\n\nTable of Content\n\nThe report\u2019s contents may change until the listed findings are fully evaluated and addressed. The corres",
+      "score": null
+    },
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "title": "",
+      "content": "Uniswap V3 Core\nSecurity Assessment\nMarch 12, 2021 \nPrepared For:\nHayden Adams | Uniswap\nhayden@uniswap.org\nPrepared By:\nAlexander Remie | Trail of Bits\nalexander.remie@trailofbits.com\nDominik Teiml | Trail of Bits\ndominik.teiml@trailofbits.com\nJosselin Feist | Trail of Bits\njosselin.feist@trailofbi",
+      "score": null
+    },
+    {
+      "url": "https://developers.uniswap.org/docs/protocols/v2/audits",
+      "title": "Audits | Uniswap Developers",
+      "content": "Uniswap DevelopersAudits | Uniswap Developers\n\nCopy MarkdownOpen in...\n\n# Audits\n\nLearn about the audits for Uniswap v2\n\n## Audits\n\nBetween January 8 and April 30, a team of six engineers reviewed and formally verified crucial components of the smart contracts for Uniswap v2.\n\nTheir past work includ",
+      "score": null
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+      "title": "",
+      "content": "Code Assessment\n\nof the Uniswap V4 Module\n~ Smart Contracts\n\nDecember 13, 2024\n\nProduced for\n\nQO srrsxrs\n\nby\nCHAINSECURITY\n\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Findings 11\n6 Resolved Findings 15\n7 Informational 26\n8 Notes 30\nArr",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-erc20eth-audit",
+      "title": "Uniswap ERC20ETH Audit",
+      "content": "Uniswap ERC20ETH Audit\n\nResearch/ Security Audits/\n\nUniswap ERC20ETH Audit\n\n# Uniswap ERC20ETH Audit\n\nTable of Content\n\n## Table of Contents\n\nSummary\n\nType: DeFiTimeline: From 2025-06-16 \u2192 To 2025-06-18Languages: Solidity\n\nFindingsTotal issues: 6 (6 resolved)Critical: 0 (0 resolved) \u00b7 High: 0 (0 res",
+      "score": null
+    },
+    {
+      "url": "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c/",
+      "title": "AI Audit Report for Uniswap V2 token  \u2013 Automated Security Analysis",
+      "content": "AI Audit Report for Uniswap V2 token \u2013 Automated Security Analysis\n\nU\n\n# Uniswap V2 (UNI-V2)\n\n## Project summary\n\nAudit created\n\n20 Aug 2025\n\nAudit updated\n\n20 Aug 2025\n\nChain\n\nEthereum\n\nLanguage\n\nSolidity\n\nAddress\n\n0xcfb26df385d790aa7e417394ec1196a3bd56aa8c\n\n5Total Issues\n\nCritical\n\n0\n\nHigh\n\n1\n\nMed",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+      "title": "Uniswap Labs UNIfication Fees UNIVesting Audit",
+      "content": "Uniswap Labs UNIfication Fees UNIVesting Audit \n\nResearch/ Security Audits/\n\nUniswap Labs UNIfication Fees UNIVesting Audit\n\n# Uniswap Labs UNIfication Fees UNIVesting Audit\n\nTable of Content\n\nSummary\n\n \n\nType: DeFiTimeline: From 2025-11-13 \u2192 To 2025-11-14Languages: Solidity\n\nFindingsTotal issues: 1",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "title": "UniStaker Infrastructure - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionUniStaker Infrastructure\n\n# UniStaker Infrastructure Findings & Analysis Report\n\n#### 2024-04-11\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nLow Risk and Non-Critical Issues\n\n- 01 Adapting UniStaker test infrastructure to UNI token\n-",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+      "title": "UniStaker Infrastructure Audit - Code4rena",
+      "content": "UniStaker Infrastructure Audit | Code4rena\n\n# UniStaker Infrastructure\n\nStaking infrastructure to empower Uniswap Governance.\n\nView repo View report\n\n- Duration11 days\n- Total awards$92,000 in USDC\n- End date5 Mar 2024\n- Start date23 Feb 2024\n\n- Details\n- Results\n\n- Gas\n- (Solo)\n- Med\n- (Solo)\n- Hig",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2026-02-panoptic-next-core-mitigation-review",
+      "title": "Panoptic: Next Core Mitigation Review Audit | Code4rena",
+      "content": "Panoptic: Next Core Mitigation Review Audit | Code4rena\n\n \n\nReport in progress\n\n# Panoptic: Next Core Mitigation Review\n\nPanoptic is a DeFi options protocol designed to enhance LPing and trading. It transforms Uniswap LP positions into onchain options, enabling traders to access liquidity in a new, ",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-10-ronin",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of productionRonin\n\n \n\n# Ronin Findings & Analysis Report\n\n#### 2024-11-25\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nLow Risk and Non-Critical Issues\n\n- 01 Use of Uniswap\u2019s`slot0` value in Quoter may lead to volatile estimates\n- 02`Payable` fun",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-08-basin-invitational",
+      "title": "Basin Invitational Audit | Code4rena",
+      "content": "Basin Invitational Audit | Code4rena\n\nCompleted\n\n# Basin Invitational\n\nA composable EVM-native decentralized exchange protocol.\n\nView report\n\n- Duration4 days\n- Total awards$7,750 in USDC\n- End date27 Aug 2024\n- Start date23 Aug 2024\n\n- Details\n\n# Basin audit details\n\nTotal Prize Pool: $7,750 in USD",
+      "score": null
+    },
+    {
+      "url": "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+      "title": "The Ones in the Arena: Uniswap Foundation | by aramas - Medium",
+      "content": "The Ones in the Arena: Uniswap Foundation | by aramas | Code4rena | Medium\n[Open in app](https://rsci.app.link/?$canonical_url=https://medium.com/p/401845759623&~feature=LoOpenInAppButton&~channel=ShowPostUnderCollection&source=post_page---top_nav_layout_nav-----------------------------------------)",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of production\n\nSecure your smart contracts.\n\nTop auditors compete to keep high severity bugs out of production.\n\n600+ auditors per contest. Zero platform fees.\n\n1,607\n\nunique high-severity vulns\n\n26,898\n\nunique findings\n\n16,600+\n\nregistered wardens\n\n510\n\nau",
+      "score": null
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit",
+      "content": "Uniswap v4 Core Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Core Audit\n\n# Uniswap v4 Core Audit\n\nTable of Content\n\n## Table of Contents\n\n \n\n## Summary\n\n Type DeFi Timeline From 2024-05-27 To 2024-06-21 Languages Solidity, Yul Total Issues 24 (18 resolved, 2 partially resolved) Critical Severity I",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-12-particle-leverage-amm-protocol-invitational",
+      "title": "Particle Leverage AMM Protocol Invitational Audit - Code4rena",
+      "content": "Particle Leverage AMM Protocol Invitational Audit | Code4rena\n\n# Particle Leverage AMM Protocol Invitational\n\nA permissionless protocol to leverage trade any ERC20 tokens.\n\nView report\n\n- Duration10 days\n- Total awards$24,150 in USDC\n- End date21 Dec 2023\n- Start date11 Dec 2023\n\n- Details\n\n# Partic",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+      "title": "v3-core/audits/abdk/audit.pdf at main \u00b7 Uniswap/v3-core - GitHub",
+      "content": "v3-core/audits/abdk/audit.pdf at main \u00b7 Uniswap/v3-core \u00b7 GitHub\n[Skip to content](#start-of-content)\n## Navigation Menu\nToggle navigation\n[\n](https://github.com/)\n[\nSign in\n](https://github.com/login?return_to=https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf)\nSearch or jump to...\n",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit - OpenZeppelin",
+      "content": "Uniswap v4 Core Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Core Audit\n\n# Uniswap v4 Core Audit\n\nTable of Content\n\n## Table of Contents\n\n \n\n## Summary\n\n Type DeFi Timeline From 2024-05-27 To 2024-06-21 Languages Solidity, Yul Total Issues 24 (18 resolved, 2 partially resolved) Critical Severity I",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-permit2",
+      "title": "Uniswap - Permit2 Smart Contract Audit - Chainsecurity",
+      "content": "Uniswap - Permit2 Smart Contract Audit - Chainsecurity\n\nBack to Overview\n\n# Uniswap \u2013 Permit2 Security Audi\n\ndownload report\n\nexternal-link\n\n## Summary\n\nUniswap implements Permit2 and Permit2Lib which are smart contracts that enable permit-style approvals and transfers using signatures for ERC20 tok",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+      "title": "Uniswap v4 Periphery and Universal Router Audit",
+      "content": "Uniswap v4 Periphery and Universal Router Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Periphery and Universal Router Audit\n\n# Uniswap v4 Periphery and Universal Router Audit\n\nTable of Content\n\nThe report\u2019s contents may change until the listed findings are fully evaluated and addressed. The corres",
+      "score": null
+    },
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "title": "",
+      "content": "Uniswap V3 Core\nSecurity Assessment\nMarch 12, 2021 \nPrepared For:\nHayden Adams | Uniswap\nhayden@uniswap.org\nPrepared By:\nAlexander Remie | Trail of Bits\nalexander.remie@trailofbits.com\nDominik Teiml | Trail of Bits\ndominik.teiml@trailofbits.com\nJosselin Feist | Trail of Bits\njosselin.feist@trailofbi",
+      "score": null
+    },
+    {
+      "url": "https://developers.uniswap.org/docs/protocols/v2/audits",
+      "title": "Audits | Uniswap Developers",
+      "content": "Uniswap DevelopersAudits | Uniswap Developers\n\nCopy MarkdownOpen in...\n\n# Audits\n\nLearn about the audits for Uniswap v2\n\n## Audits\n\nBetween January 8 and April 30, a team of six engineers reviewed and formally verified crucial components of the smart contracts for Uniswap v2.\n\nTheir past work includ",
+      "score": null
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+      "title": "",
+      "content": "Code Assessment\n\nof the Uniswap V4 Module\n~ Smart Contracts\n\nDecember 13, 2024\n\nProduced for\n\nQO srrsxrs\n\nby\nCHAINSECURITY\n\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Findings 11\n6 Resolved Findings 15\n7 Informational 26\n8 Notes 30\nArr",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-erc20eth-audit",
+      "title": "Uniswap ERC20ETH Audit",
+      "content": "Uniswap ERC20ETH Audit\n\nResearch/ Security Audits/\n\nUniswap ERC20ETH Audit\n\n# Uniswap ERC20ETH Audit\n\nTable of Content\n\n## Table of Contents\n\nSummary\n\nType: DeFiTimeline: From 2025-06-16 \u2192 To 2025-06-18Languages: Solidity\n\nFindingsTotal issues: 6 (6 resolved)Critical: 0 (0 resolved) \u00b7 High: 0 (0 res",
+      "score": null
+    },
+    {
+      "url": "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c/",
+      "title": "AI Audit Report for Uniswap V2 token  \u2013 Automated Security Analysis",
+      "content": "AI Audit Report for Uniswap V2 token \u2013 Automated Security Analysis\n\nU\n\n# Uniswap V2 (UNI-V2)\n\n## Project summary\n\nAudit created\n\n20 Aug 2025\n\nAudit updated\n\n20 Aug 2025\n\nChain\n\nEthereum\n\nLanguage\n\nSolidity\n\nAddress\n\n0xcfb26df385d790aa7e417394ec1196a3bd56aa8c\n\n5Total Issues\n\nCritical\n\n0\n\nHigh\n\n1\n\nMed",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+      "title": "Uniswap Labs UNIfication Fees UNIVesting Audit",
+      "content": "Uniswap Labs UNIfication Fees UNIVesting Audit \n\nResearch/ Security Audits/\n\nUniswap Labs UNIfication Fees UNIVesting Audit\n\n# Uniswap Labs UNIfication Fees UNIVesting Audit\n\nTable of Content\n\nSummary\n\n \n\nType: DeFiTimeline: From 2025-11-13 \u2192 To 2025-11-14Languages: Solidity\n\nFindingsTotal issues: 1",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "title": "UniStaker Infrastructure - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionUniStaker Infrastructure\n\n# UniStaker Infrastructure Findings & Analysis Report\n\n#### 2024-04-11\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nLow Risk and Non-Critical Issues\n\n- 01 Adapting UniStaker test infrastructure to UNI token\n-",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+      "title": "UniStaker Infrastructure Audit - Code4rena",
+      "content": "UniStaker Infrastructure Audit | Code4rena\n\n# UniStaker Infrastructure\n\nStaking infrastructure to empower Uniswap Governance.\n\nView repo View report\n\n- Duration11 days\n- Total awards$92,000 in USDC\n- End date5 Mar 2024\n- Start date23 Feb 2024\n\n- Details\n- Results\n\n- Gas\n- (Solo)\n- Med\n- (Solo)\n- Hig",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2026-02-panoptic-next-core-mitigation-review",
+      "title": "Panoptic: Next Core Mitigation Review Audit | Code4rena",
+      "content": "Panoptic: Next Core Mitigation Review Audit | Code4rena\n\n \n\nReport in progress\n\n# Panoptic: Next Core Mitigation Review\n\nPanoptic is a DeFi options protocol designed to enhance LPing and trading. It transforms Uniswap LP positions into onchain options, enabling traders to access liquidity in a new, ",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-10-ronin",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of productionRonin\n\n \n\n# Ronin Findings & Analysis Report\n\n#### 2024-11-25\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nLow Risk and Non-Critical Issues\n\n- 01 Use of Uniswap\u2019s`slot0` value in Quoter may lead to volatile estimates\n- 02`Payable` fun",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-08-basin-invitational",
+      "title": "Basin Invitational Audit | Code4rena",
+      "content": "Basin Invitational Audit | Code4rena\n\nCompleted\n\n# Basin Invitational\n\nA composable EVM-native decentralized exchange protocol.\n\nView report\n\n- Duration4 days\n- Total awards$7,750 in USDC\n- End date27 Aug 2024\n- Start date23 Aug 2024\n\n- Details\n\n# Basin audit details\n\nTotal Prize Pool: $7,750 in USD",
+      "score": null
+    },
+    {
+      "url": "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+      "title": "The Ones in the Arena: Uniswap Foundation | by aramas - Medium",
+      "content": "The Ones in the Arena: Uniswap Foundation | by aramas | Code4rena | Medium\n[Open in app](https://rsci.app.link/?$canonical_url=https://medium.com/p/401845759623&~feature=LoOpenInAppButton&~channel=ShowPostUnderCollection&source=post_page---top_nav_layout_nav-----------------------------------------)",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of production\n\nSecure your smart contracts.\n\nTop auditors compete to keep high severity bugs out of production.\n\n600+ auditors per contest. Zero platform fees.\n\n1,607\n\nunique high-severity vulns\n\n26,898\n\nunique findings\n\n16,600+\n\nregistered wardens\n\n510\n\nau",
+      "score": null
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit",
+      "content": "Uniswap v4 Core Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Core Audit\n\n# Uniswap v4 Core Audit\n\nTable of Content\n\n## Table of Contents\n\n \n\n## Summary\n\n Type DeFi Timeline From 2024-05-27 To 2024-06-21 Languages Solidity, Yul Total Issues 24 (18 resolved, 2 partially resolved) Critical Severity I",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-12-particle-leverage-amm-protocol-invitational",
+      "title": "Particle Leverage AMM Protocol Invitational Audit - Code4rena",
+      "content": "Particle Leverage AMM Protocol Invitational Audit | Code4rena\n\n# Particle Leverage AMM Protocol Invitational\n\nA permissionless protocol to leverage trade any ERC20 tokens.\n\nView report\n\n- Duration10 days\n- Total awards$24,150 in USDC\n- End date21 Dec 2023\n- Start date11 Dec 2023\n\n- Details\n\n# Partic",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+      "auditor": "ABDK Consulting",
+      "title": "Uniswap V3 Core Audit",
+      "date": null,
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap v4 Core Audit",
+      "date": "2024-05-27",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-permit2",
+      "auditor": "Chainsecurity",
+      "title": "Uniswap - Permit2 Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-periphery-and-universal-router-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap v4 Periphery and Universal Router Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "auditor": "Trail of Bits",
+      "title": "Uniswap V3 Core Security Assessment",
+      "date": "2021-03-12",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://developers.uniswap.org/docs/protocols/v2/audits",
+      "auditor": null,
+      "title": "Audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-erc20eth-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap ERC20ETH Audit",
+      "date": "2025-06-16",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://hashex.org/auto-audits/ethereum/0xcfb26df385d790aa7e417394ec1196a3bd56aa8c/",
+      "auditor": null,
+      "title": "AI Audit Report for Uniswap V2 token",
+      "date": "2025-08-20",
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap Labs UNIfication Fees UNIVesting Audit",
+      "date": "2025-11-13",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "auditor": "Code4rena",
+      "title": "UniStaker Infrastructure Findings & Analysis Report",
+      "date": "2024-04-11",
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+      "auditor": "Code4rena",
+      "title": "UniStaker Infrastructure Audit",
+      "date": "2024-02",
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://medium.com/code4rena/the-ones-in-the-arena-uniswap-foundation-401845759623",
+      "auditor": "Code4rena",
+      "title": "The Ones in the Arena: Uniswap Foundation",
+      "date": null,
+      "type": "report",
+      "confidence": 0.7
+    },
+    {
+      "url": "https://blog.openzeppelin.com/uniswap-v4-core-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap v4 Core Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 1014,
+    "followup_query": 704,
+    "followup_search": 831,
+    "classify": 11522
+  },
+  "errors": []
+}

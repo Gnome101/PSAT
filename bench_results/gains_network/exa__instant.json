@@ -1,0 +1,278 @@
+{
+  "protocol": "gains network",
+  "backend": "exa",
+  "mode": "instant",
+  "broad_query": "\"gains network\" smart contract security audit report",
+  "followup_query": "Gains Network audit report Code4rena",
+  "broad_results": [
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+      "title": "GainsNetwork-security-July2.md - pashov/audits - GitHub",
+      "content": "# File: pashov/audits/team/md/GainsNetwork-security-July2.md\n\n- Repository: pashov/audits | 1K stars\n- Branch: master\n\n```md\n# About\n\nPashov Audit Group consists of multiple teams of some of the best smart contract security researchers in the space. Having a combined reported security vulnerabilitie",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md",
+      "title": "audits/team/md/GainsNetwork-security-review-July.md at master",
+      "content": "# File: pashov/audits/team/md/GainsNetwork-security-review-July.md\n\n- Repository: pashov/audits | 1K stars\n- Branch: master\n\n```md\n# About\n\nPashov Audit Group consists of multiple teams of some of the best smart contract security researchers in the space. Having a combined reported security vulnerab",
+      "score": null
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/518",
+      "title": "Gains Network - detailed report | DeFiSafety",
+      "content": "Gains Network - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Gains Network\n\n38%\n\nOverview\n\nScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the smart con",
+      "score": null
+    },
+    {
+      "url": "https://immunefi.com/bug-bounty/gainsnetwork/information/",
+      "title": "Gains Network Bug Bounties - Immunefi",
+      "content": "Gains Network Bug Bounties | Immunefi\n\nBack to Explore\n\n# Gains Network\n\nGains Network is building the decentralized finance ecosystem of the future. Their first product, gTrade is a capital-efficient decentralized leveraged trading platform on Polygon and Arbitrum.\n\nArbitrum\n\nPolygon\n\nDefi\n\nNFT\n\nBr",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/posts/pashov_claude-opus-46-wrote-vulnerable-code-activity-7429823645478424576-cqEu",
+      "title": "Krum Krasimirov Pashov's Post - LinkedIn",
+      "content": "\ud83d\udea8 Claude Opus 4.6 wrote vulnerable code that lead to a smart contract exploit with ~$1.8M loss PR shows commits were co-authored by Claude. This might be the first big hack of vibe-coded Solidity\u2026 | Krum Krasimirov Pashov | 36 comments\n\nAgree & Join LinkedIn\n\nBy clicking Continue to join or sign in",
+      "score": null
+    },
+    {
+      "url": "https://gov.gains.trade/t/autogains-gcgp-automated-trading/68",
+      "title": "[AutoGains] - GCGP Automated Trading - Gains Network - gTrade",
+      "content": "[AutoGains] - GCGP Automated Trading - GCGP-Bridge - Gains Network",
+      "score": null
+    },
+    {
+      "url": "https://onekey.so/blog/ecosystem/gns-deep-dive-report-token-future-and-price-outlook/",
+      "title": "GNS Deep Dive Report: Token Future and Price Outlook - OneKey",
+      "content": "GNS Deep Dive Report: Token Future and Price Outlook - OneKey Blog\n\n## Key Takeaways\n\n\u2022 Recent tokenomics changes have increased staking rewards for GNS holders.\n\n\u2022 gTrade's infrastructure supports high-throughput derivatives trading.\n\n\u2022 Regulatory pressures and macro crypto cycles pose significant ",
+      "score": null
+    },
+    {
+      "url": "https://medium.com/@sharkteam/chainaegis-on-chain-data-analysis-for-gains-network-8b4d40df3e3b",
+      "title": "ChainAegis: On-Chain Data Analysis for Gains Network - Medium",
+      "content": "ChainAegis: On-Chain Data Analysis for Gains Network | by SharkTeam | Medium\n\nSitemap\n\nOpen in app\n\nSign up\n\nSign in\n\nMedium Logo\n\nGet app\n\nWrite\n\nSearch\n\nSign up\n\nSign in\n\nPress enter or click to view image in full size\n\n# ChainAegis: On-Chain Data Analysis for Gains Network\n\nSharkTeam\n\n10 min read",
+      "score": null
+    },
+    {
+      "url": "https://www.vaasblock.com/banking/gains/",
+      "title": "GAINS | - VaaSBlock",
+      "content": "GAINS: \u2705 - Audited & Proven Excellent\n\n# GAINS\n\n#### Risk Management\n\n?\n\n##### Risk Management\n\nThe RMA\u2122 is a blockchain credibility certification assessing governance, transparency, security, and results, providing trusted verification for businesses in Web3.\n\nAnalysis based on information collecte",
+      "score": null
+    },
+    {
+      "url": "https://www.zellic.io/blog/choosing-a-defi-protocol",
+      "title": "Choosing a DeFi Protocol: Risks, Red Flags, and Recommendations",
+      "content": "Choosing a DeFi Protocol: Risks, Red Flags, and Recommendations | Zellic \u2014 Research\n\nTable of contents\n\n1. Review the Audit Report\n\n2. Read the Docs\n\n3. Evaluate the Community\n\n4. Assess the Risks\n\n5. Learn Who Pays Your Gains\n\n6. Decide Your Investment\n\nAbout Us\n\nNumerous rug pulls and hacks have m",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports",
+      "title": "Security Audit Reports - Code4rena",
+      "content": "Security Audit Reports | Code4rena\n\n# Audit Reports\n\nSort By:\n\nDate Range:\n\nSecurity Audit Reports | Code4rena\n[Skip Navigation](#skip-link)\n# Audit Reports\nSort By:\nDate Range:",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-01-decent",
+      "title": "Keeping high severity bugs out of production - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionDecent\n\n# Decent Findings & Analysis Report\n\n#### 2024-03-22\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (4)\n\n- [H-01] Anyone can update the address of the Router in the DcntEth contract to any address they would l",
+      "score": null
+    },
+    {
+      "url": "https://docs.code4rena.com/awarding",
+      "title": "Awarding - Code4rena",
+      "content": "# Awarding\n\nTo incentivize wardens, C4 uses a unique scoring system with two primary goals: reward participants for finding unique vulnerabilities and also to make the audit resistant to Sybil attack. A secondary goal of the scoring system is to encourage participants to form teams and collaborate.\n",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2021-06-tracer-contest",
+      "title": "Tracer contest Audit | Code4rena",
+      "content": "Tracer contest Audit | Code4rena\n[Skip Navigation](#skip-link)\nCompleted\n[![Tracer](https://code4rena.com/_next/image?url=https%3A%2F%2Fcode4-api-v0-public-storage.s3.us-east-1.amazonaws.com%2Fupload-KmK9B6wyBJS&w=3840&q=75)](https://twitter.com/TracerDAO)\n# Tracer contest\nBuild and trade with Trace",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of production\n\nSecure your smart contracts.\n\nTop auditors compete to keep high severity bugs out of production.\n\n600+ auditors per contest. Zero platform fees.\n\n1,607\n\nunique high-severity vulns\n\n26,898\n\nunique findings\n\n16,600+\n\nregistered wardens\n\n510\n\nau",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-06-chainlink-rewards",
+      "title": "Chainlink Rewards Audit - Code4rena",
+      "content": "Chainlink Rewards Audit | Code4rena\n\n \n\nCompleted\n\n# Chainlink Rewards\n\nA community engagement and rewards program designed to incentivize active participation in the Chainlink Network\n\nView repo View dashboard\n\n- Start date16 Jun 2025\n- End date16 Jul 2025\n- Total awards$200,000 in USDC\n- Durationa",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2025-04-virtuals-protocol",
+      "title": "Virtuals Protocol Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionVirtuals Protocol\n\n# Virtuals Protocol Findings & Analysis Report\n\n#### 2025-08-04\n\n## Table of contents\n\nOverview\n\n- About C4\n\nHigh Risk Findings (6)\n\n- [H-01] Lack of access control in`AgentNftV2::addValidator()` enables unauthorized validato",
+      "score": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=iKO5IySYrFk",
+      "title": "Shadow Audit + Code4rena report | Asymmetry Smart contracts",
+      "content": "- YouTube\n\nAbout Press Copyright Contact us Creators Advertise Developers Terms Privacy Policy & Safety How YouTube works Test new features\n\n- YouTube\n[](https://www.youtube.com/)[](https://www.youtube.com/)\n[About](https://www.youtube.com/about/)[Press](https://www.youtube.com/about/press/)[Copyrig",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-04-jpegd",
+      "title": "JPEG'd contest Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionJPEG'd contest\n\n \n\n# JPEG'd contest Findings & Analysis Report\n\n#### 2022-06-10\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (9)\n\n- [H-01] yVault: First depositor can break minting of shares\n- [H-02] Existing user\u2019s",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+      "title": "GainsNetwork-security-July2.md - pashov/audits - GitHub",
+      "content": "# File: pashov/audits/team/md/GainsNetwork-security-July2.md\n\n- Repository: pashov/audits | 1K stars\n- Branch: master\n\n```md\n# About\n\nPashov Audit Group consists of multiple teams of some of the best smart contract security researchers in the space. Having a combined reported security vulnerabilitie",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md",
+      "title": "audits/team/md/GainsNetwork-security-review-July.md at master",
+      "content": "# File: pashov/audits/team/md/GainsNetwork-security-review-July.md\n\n- Repository: pashov/audits | 1K stars\n- Branch: master\n\n```md\n# About\n\nPashov Audit Group consists of multiple teams of some of the best smart contract security researchers in the space. Having a combined reported security vulnerab",
+      "score": null
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/518",
+      "title": "Gains Network - detailed report | DeFiSafety",
+      "content": "Gains Network - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Gains Network\n\n38%\n\nOverview\n\nScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the smart con",
+      "score": null
+    },
+    {
+      "url": "https://immunefi.com/bug-bounty/gainsnetwork/information/",
+      "title": "Gains Network Bug Bounties - Immunefi",
+      "content": "Gains Network Bug Bounties | Immunefi\n\nBack to Explore\n\n# Gains Network\n\nGains Network is building the decentralized finance ecosystem of the future. Their first product, gTrade is a capital-efficient decentralized leveraged trading platform on Polygon and Arbitrum.\n\nArbitrum\n\nPolygon\n\nDefi\n\nNFT\n\nBr",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/posts/pashov_claude-opus-46-wrote-vulnerable-code-activity-7429823645478424576-cqEu",
+      "title": "Krum Krasimirov Pashov's Post - LinkedIn",
+      "content": "\ud83d\udea8 Claude Opus 4.6 wrote vulnerable code that lead to a smart contract exploit with ~$1.8M loss PR shows commits were co-authored by Claude. This might be the first big hack of vibe-coded Solidity\u2026 | Krum Krasimirov Pashov | 36 comments\n\nAgree & Join LinkedIn\n\nBy clicking Continue to join or sign in",
+      "score": null
+    },
+    {
+      "url": "https://gov.gains.trade/t/autogains-gcgp-automated-trading/68",
+      "title": "[AutoGains] - GCGP Automated Trading - Gains Network - gTrade",
+      "content": "[AutoGains] - GCGP Automated Trading - GCGP-Bridge - Gains Network",
+      "score": null
+    },
+    {
+      "url": "https://onekey.so/blog/ecosystem/gns-deep-dive-report-token-future-and-price-outlook/",
+      "title": "GNS Deep Dive Report: Token Future and Price Outlook - OneKey",
+      "content": "GNS Deep Dive Report: Token Future and Price Outlook - OneKey Blog\n\n## Key Takeaways\n\n\u2022 Recent tokenomics changes have increased staking rewards for GNS holders.\n\n\u2022 gTrade's infrastructure supports high-throughput derivatives trading.\n\n\u2022 Regulatory pressures and macro crypto cycles pose significant ",
+      "score": null
+    },
+    {
+      "url": "https://medium.com/@sharkteam/chainaegis-on-chain-data-analysis-for-gains-network-8b4d40df3e3b",
+      "title": "ChainAegis: On-Chain Data Analysis for Gains Network - Medium",
+      "content": "ChainAegis: On-Chain Data Analysis for Gains Network | by SharkTeam | Medium\n\nSitemap\n\nOpen in app\n\nSign up\n\nSign in\n\nMedium Logo\n\nGet app\n\nWrite\n\nSearch\n\nSign up\n\nSign in\n\nPress enter or click to view image in full size\n\n# ChainAegis: On-Chain Data Analysis for Gains Network\n\nSharkTeam\n\n10 min read",
+      "score": null
+    },
+    {
+      "url": "https://www.vaasblock.com/banking/gains/",
+      "title": "GAINS | - VaaSBlock",
+      "content": "GAINS: \u2705 - Audited & Proven Excellent\n\n# GAINS\n\n#### Risk Management\n\n?\n\n##### Risk Management\n\nThe RMA\u2122 is a blockchain credibility certification assessing governance, transparency, security, and results, providing trusted verification for businesses in Web3.\n\nAnalysis based on information collecte",
+      "score": null
+    },
+    {
+      "url": "https://www.zellic.io/blog/choosing-a-defi-protocol",
+      "title": "Choosing a DeFi Protocol: Risks, Red Flags, and Recommendations",
+      "content": "Choosing a DeFi Protocol: Risks, Red Flags, and Recommendations | Zellic \u2014 Research\n\nTable of contents\n\n1. Review the Audit Report\n\n2. Read the Docs\n\n3. Evaluate the Community\n\n4. Assess the Risks\n\n5. Learn Who Pays Your Gains\n\n6. Decide Your Investment\n\nAbout Us\n\nNumerous rug pulls and hacks have m",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports",
+      "title": "Security Audit Reports - Code4rena",
+      "content": "Security Audit Reports | Code4rena\n\n# Audit Reports\n\nSort By:\n\nDate Range:\n\nSecurity Audit Reports | Code4rena\n[Skip Navigation](#skip-link)\n# Audit Reports\nSort By:\nDate Range:",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-01-decent",
+      "title": "Keeping high severity bugs out of production - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionDecent\n\n# Decent Findings & Analysis Report\n\n#### 2024-03-22\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (4)\n\n- [H-01] Anyone can update the address of the Router in the DcntEth contract to any address they would l",
+      "score": null
+    },
+    {
+      "url": "https://docs.code4rena.com/awarding",
+      "title": "Awarding - Code4rena",
+      "content": "# Awarding\n\nTo incentivize wardens, C4 uses a unique scoring system with two primary goals: reward participants for finding unique vulnerabilities and also to make the audit resistant to Sybil attack. A secondary goal of the scoring system is to encourage participants to form teams and collaborate.\n",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2021-06-tracer-contest",
+      "title": "Tracer contest Audit | Code4rena",
+      "content": "Tracer contest Audit | Code4rena\n[Skip Navigation](#skip-link)\nCompleted\n[![Tracer](https://code4rena.com/_next/image?url=https%3A%2F%2Fcode4-api-v0-public-storage.s3.us-east-1.amazonaws.com%2Fupload-KmK9B6wyBJS&w=3840&q=75)](https://twitter.com/TracerDAO)\n# Tracer contest\nBuild and trade with Trace",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of production\n\nSecure your smart contracts.\n\nTop auditors compete to keep high severity bugs out of production.\n\n600+ auditors per contest. Zero platform fees.\n\n1,607\n\nunique high-severity vulns\n\n26,898\n\nunique findings\n\n16,600+\n\nregistered wardens\n\n510\n\nau",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-06-chainlink-rewards",
+      "title": "Chainlink Rewards Audit - Code4rena",
+      "content": "Chainlink Rewards Audit | Code4rena\n\n \n\nCompleted\n\n# Chainlink Rewards\n\nA community engagement and rewards program designed to incentivize active participation in the Chainlink Network\n\nView repo View dashboard\n\n- Start date16 Jun 2025\n- End date16 Jul 2025\n- Total awards$200,000 in USDC\n- Durationa",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2025-04-virtuals-protocol",
+      "title": "Virtuals Protocol Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionVirtuals Protocol\n\n# Virtuals Protocol Findings & Analysis Report\n\n#### 2025-08-04\n\n## Table of contents\n\nOverview\n\n- About C4\n\nHigh Risk Findings (6)\n\n- [H-01] Lack of access control in`AgentNftV2::addValidator()` enables unauthorized validato",
+      "score": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=iKO5IySYrFk",
+      "title": "Shadow Audit + Code4rena report | Asymmetry Smart contracts",
+      "content": "- YouTube\n\nAbout Press Copyright Contact us Creators Advertise Developers Terms Privacy Policy & Safety How YouTube works Test new features\n\n- YouTube\n[](https://www.youtube.com/)[](https://www.youtube.com/)\n[About](https://www.youtube.com/about/)[Press](https://www.youtube.com/about/press/)[Copyrig",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2022-04-jpegd",
+      "title": "JPEG'd contest Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionJPEG'd contest\n\n \n\n# JPEG'd contest Findings & Analysis Report\n\n#### 2022-06-10\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (9)\n\n- [H-01] yVault: First depositor can break minting of shares\n- [H-02] Existing user\u2019s",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+      "auditor": "Pashov",
+      "title": "GainsNetwork-security-July2.md",
+      "date": null,
+      "type": "report",
+      "confidence": 0.95
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md",
+      "auditor": "Pashov",
+      "title": "GainsNetwork-security-review-July.md",
+      "date": null,
+      "type": "report",
+      "confidence": 0.95
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 1114,
+    "followup_query": 934,
+    "followup_search": 730,
+    "classify": 10547
+  },
+  "errors": []
+}

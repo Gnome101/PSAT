@@ -1,0 +1,68 @@
+{
+  "protocol": "morpho",
+  "backend": "exa",
+  "mode": "neural",
+  "elapsed_ms": 45481,
+  "reports": [
+    {
+      "url": "https://docs.morpho.org/security-reviews",
+      "pdf_url": null,
+      "auditor": "Certora",
+      "title": "Vaults V2 - MarketV1AdapterV2",
+      "date": "2025-12-15",
+      "source_url": "https://docs.morpho.org/security-reviews",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:29:50.949344+00:00"
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/Lexfo_250523.pdf",
+      "pdf_url": "https://cdn.morpho.org/documents/Lexfo_250523.pdf",
+      "auditor": "Lexfo",
+      "title": "Morpho-related DNS's & Morpho-related Github's",
+      "date": "2023-05-10",
+      "source_url": "https://docs.morpho.org/security-reviews",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:29:50.949344+00:00"
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/MorphoDAO_Frontend_04042022.pdf",
+      "pdf_url": "https://cdn.morpho.org/documents/MorphoDAO_Frontend_04042022.pdf",
+      "auditor": "Securing",
+      "title": "[Beta] Morpho Association dApp",
+      "date": "2022-04-04",
+      "source_url": "https://docs.morpho.org/security-reviews",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:29:50.949344+00:00"
+    },
+    {
+      "url": "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits/",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "Morpho Optimizers Security reviews",
+      "date": null,
+      "source_url": "https://legacy.docs.morpho.org/morpho-optimizers/concepts/security/audits/",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:29:50.949344+00:00"
+    },
+    {
+      "url": "https://github.com/morpho-org/metamorpho-v1.1/tree/main/audits",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "metamorpho-v1.1/audits at main \u00b7 morpho-org/metamorpho-v1.1 \u00b7 GitHub",
+      "date": null,
+      "source_url": "https://github.com/morpho-org/metamorpho-v1.1/tree/main/audits",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:29:50.949344+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 20 unique result(s)",
+    "LLM classified 16 result(s) as audit reports",
+    "Cross-source dedup: collapsed 1 filename-duplicate(s)",
+    "LLM validation unavailable; heuristic mirror dedup collapsed 1 entry(ies)",
+    "Extracted 5 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

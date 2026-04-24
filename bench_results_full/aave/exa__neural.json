@@ -1,0 +1,66 @@
+{
+  "protocol": "aave",
+  "backend": "exa",
+  "mode": "neural",
+  "elapsed_ms": 54957,
+  "reports": [
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "pdf_url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "auditor": "Oxorio",
+      "title": "Aave v3.3.0 Smart Contracts Security Audit Report",
+      "date": "2025-01-29",
+      "source_url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:34:40.489123+00:00"
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+      "pdf_url": null,
+      "auditor": "MixBytes",
+      "title": "Aave v 3.1.0",
+      "date": null,
+      "source_url": "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:34:40.489123+00:00"
+    },
+    {
+      "url": "https://consensys.net/diligence/audits/2020/09/aave-protocol-v2",
+      "pdf_url": null,
+      "auditor": "Consensys Diligence",
+      "title": "Aave Protocol V2",
+      "date": "2020-09",
+      "source_url": "https://consensys.net/diligence/audits/2020/09/aave-protocol-v2",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:34:40.489123+00:00"
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+      "pdf_url": "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+      "auditor": "Oxorio",
+      "title": "Aave V3 Liquid eModes Smart Contracts Security Audit Report",
+      "date": "2024-09-12",
+      "source_url": "https://oxor-io.github.io/public_audits/Aave/Aave-Liquid-eModes-Audit-Report.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:34:40.489123+00:00"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aave-dao/aave-umbrella/main/audits/Ackee/ackee-blockchain-aave-umbrella-report.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/aave-dao/aave-umbrella/main/audits/Ackee/ackee-blockchain-aave-umbrella-report.pdf",
+      "auditor": "Ackee Blockchain Security",
+      "title": "Aave Umbrella Audit",
+      "date": "2025-03-21",
+      "source_url": "https://ackee.xyz/blog/aave-umbrella-audit-summary",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:34:40.489123+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 20 unique result(s)",
+    "LLM classified 11 result(s) as audit reports",
+    "Extracted 5 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

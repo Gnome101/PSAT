@@ -1,0 +1,68 @@
+{
+  "protocol": "gmx",
+  "backend": "exa",
+  "mode": "research",
+  "instructions": "Find all third-party smart contract security audit reports published for the gmx protocol. Include pre-launch audits, formal verification reports, contest reports (Code4rena/Sherlock/Cantina), audit-firm blog posts, and PDF reports on GitHub or auditor websites. For each, provide the auditor name, a URL to the audit document, and the date if known.",
+  "reports": [
+    {
+      "url": "https://github.com/GuardianAudits/Audits/tree/main/GMX",
+      "auditor": "Guardian",
+      "title": "Guardian GMX Audit Reports",
+      "date": "2022-10 to 2026 ongoing",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022",
+      "auditor": "Dedaub",
+      "title": "GMX Synthetics Audit Report",
+      "date": "2022-11-20",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2023-04-gmx",
+      "auditor": "Sherlock",
+      "title": "Sherlock GMX Audit Contest Repository",
+      "date": "2023-04",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-08-gmx-fv",
+      "auditor": "Code4rena / Certora",
+      "title": "Certora-GMX Formal Verification Findings & Analysis Report",
+      "date": "2024-02-13",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://github.com/gmx-io/gmx-contracts/blob/master/audits/Quantstamp_Audit_Report.pdf",
+      "auditor": "Quantstamp",
+      "title": "Quantstamp GMX Audit Report",
+      "date": "unknown",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://github.com/gmx-io/gmx-contracts/blob/master/audits/ABDK_Gambit_Solidity.pdf",
+      "auditor": "ABDK",
+      "title": "ABDK GMX Audit Report",
+      "date": "unknown",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://github.com/Frankcastleauditor/public-audits/blob/main/reports/GMX%20Solana%20Protocol%20-%20Zenith%20Audit%20Report.pdf",
+      "auditor": "Cantina / FrankCastle",
+      "title": "GMX Solana Protocol Audit Report by FrankCastle",
+      "date": "unknown",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    }
+  ],
+  "errors": [],
+  "notes": [],
+  "task_id": "01kpyp52dt7aefqgc3yj7qby5n",
+  "elapsed_ms": 42531
+}

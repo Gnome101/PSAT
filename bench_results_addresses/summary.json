@@ -1,0 +1,122 @@
+[
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/etherfi/exa__deep-reasoning.json",
+    "contracts": 60,
+    "errors": 1,
+    "elapsed_ms": 102488,
+    "protocol": "ether.fi",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/uniswap/exa__deep-reasoning.json",
+    "contracts": 0,
+    "errors": 0,
+    "elapsed_ms": 18928,
+    "protocol": "uniswap",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/sky/exa__deep-reasoning.json",
+    "contracts": 18,
+    "errors": 0,
+    "elapsed_ms": 39939,
+    "protocol": "sky",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/lido/exa__deep-reasoning.json",
+    "contracts": 324,
+    "errors": 0,
+    "elapsed_ms": 43129,
+    "protocol": "lido",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/morpho/exa__deep-reasoning.json",
+    "contracts": 0,
+    "errors": 0,
+    "elapsed_ms": 23872,
+    "protocol": "morpho",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/aave/exa__deep-reasoning.json",
+    "contracts": 36,
+    "errors": 0,
+    "elapsed_ms": 86820,
+    "protocol": "aave",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/avantis/exa__deep-reasoning.json",
+    "contracts": 0,
+    "errors": 0,
+    "elapsed_ms": 24363,
+    "protocol": "avantis",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/gains_network/exa__deep-reasoning.json",
+    "contracts": 50,
+    "errors": 0,
+    "elapsed_ms": 53674,
+    "protocol": "gains network",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/gmx/exa__deep-reasoning.json",
+    "contracts": 44,
+    "errors": 0,
+    "elapsed_ms": 69302,
+    "protocol": "gmx",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/compound_v3/exa__deep-reasoning.json",
+    "contracts": 0,
+    "errors": 2,
+    "elapsed_ms": 109539,
+    "protocol": "compound v3",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/aerodrome/exa__deep-reasoning.json",
+    "contracts": 14,
+    "errors": 2,
+    "elapsed_ms": 86481,
+    "protocol": "aerodrome",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  },
+  {
+    "status": "ok",
+    "path": "/home/gnome2/asu/capstone/PSAT/bench_results_addresses/ethena/exa__deep-reasoning.json",
+    "contracts": 31,
+    "errors": 0,
+    "elapsed_ms": 30096,
+    "protocol": "ethena",
+    "backend": "exa",
+    "mode": "deep-reasoning"
+  }
+]

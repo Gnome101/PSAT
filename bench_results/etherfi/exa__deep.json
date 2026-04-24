@@ -1,0 +1,294 @@
+{
+  "protocol": "ether.fi",
+  "backend": "exa",
+  "mode": "deep",
+  "broad_query": "\"ether.fi\" smart contract security audit report",
+  "followup_query": "ether.fi audit report Code4rena OR Sherlock OR Cantina",
+  "broad_results": [
+    {
+      "url": "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb/",
+      "title": "AI Audit Report for ether.fi governance token token  \u2013 Automated Security Analysis",
+      "content": "AI Audit Report for ether.fi governance token token \u2013 Automated Security Analysis\n\ne\n\n# ether.fi governance token (ETHFI)\n\n## Project summary\n\nAudit created\n\n16 Jan 2025\n\nAudit updated\n\n16 Jan 2025\n\nChain\n\nEthereum\n\nLanguage\n\nSolidity\n\nAddress\n\n0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb\n\n11Total Iss",
+      "score": 1
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/590",
+      "title": "Ether.fi - detailed report | DeFiSafety",
+      "content": "Ether.fi - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Ether.fi\n\n54 %\n\nOverview\n\nScoring AppendixSummaryDisclaimer\n\nCode and Team\n\n1. Are the smart contract addresses ea",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+      "title": "report.md at master \u00b7 hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4",
+      "content": "# File: hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/report.md\n\n- Repository: hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4 | Smart Contracts for Ether Fi dapp | 1 stars | Solidity\n- Branch: master\n\n```md\n# **Ether.fi Audit Competition on Hats.finance**\n\n## **I",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "http://github.com/etherfi-protocol/shallow-smart-contracts",
+      "title": "etherfi-protocol/smart-contracts",
+      "content": "# Repository: etherfi-protocol/smart-contracts\n\nether.fi protocol smart contracts\n\n- Stars: 128\n- Forks: 52\n- Watchers: 128\n- Open issues: 8\n- Primary language: Solidity\n- Languages: Solidity (87.7%), Python (9.4%), Shell (2.6%), Ruby (0.3%), JavaScript\n- Default branch: master\n- Homepage: https://w",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+      "title": "Case Study: Enhancing Security for Ether.fi\u2019s Liquid Staking Protocol with Halborn",
+      "content": "Case Study: Enhancing Security for Ether.fi\u2019s Liquid Staking Protocol with Halborn\n\n \n\n \n\ncase studies \n\n# Case Study: Enhancing Security for Ether.fi\u2019s Liquid Staking Protocol with Halborn\n\nFEATURED PARTNER:\n\n## Client Overview\n\nEther.fi is a groundbreaking liquid staking protocol that enables user",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://github.com/etherfi-protocol/cash-v3",
+      "title": "etherfi-protocol/cash-v3",
+      "content": "# Repository: etherfi-protocol/cash-v3\n\n- Stars: 10\n- Forks: 8\n- Watchers: 10\n- Open issues: 2\n- Primary language: Solidity\n- Languages: Solidity (99.3%), JSON5 (0.5%), TypeScript (0.2%), Shell\n- Default branch: master\n- Created: 2025-02-19T22:52:15Z\n- Last push: 2026-03-27T18:16:21Z\n- Contributors:",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4",
+      "title": "hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4",
+      "content": "# Repository: hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4 (fork of [marjon-call/dappContracts](https://github.com/marjon-call/dappContracts))\n\nSmart Contracts for Ether Fi dapp\n\n- Stars: 1\n- Forks: 1\n- Watchers: 1\n- Open issues: 56\n- Primary language: Solidity\n- Languages: Solid",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://etherfi.gitbook.io/etherfi/security/audits",
+      "title": "Audits | ether.fi",
+      "content": "# Audits\n\nYou can find the audit reports in our github repo \nhttps://github.com/etherfi-protocol/smart-contracts/tree/master/audits\n\nBug Bounty Program\n\n- Hats Finance",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://sharpe.ai/crypto-rug-check/eth/ether-fi",
+      "title": "Is Ether.fi (ETHFI) a Scam? Ether.fi (ETHFI) Rug Check, Honeypot Detector & Security Analysis | Sharpe AI",
+      "content": "# Sharpe AI Terminal\n\n> Detailed context: llms-full.txt\n> GEO note: this file lists canonical product URLs; legacy slugs are preserved via 301 redirects.\n\n## Summary\n\n- AI Policy\n- AI Services\n- AI FAQ\n- AI Summary\n\n## Core Product Routes\n\n- News Aggregator\n- Blog\n- Research\n- Narratives\n- Katana\n- ",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://reports.immunefi.com/alchemix-v3/57740-sc-high-eulereth-strategy-will-have-weth-locked-in-the-strategy-contract",
+      "title": "57740 sc high eulereth strategy will have weth locked in the strategy contract | Immunefi Audit Competitions",
+      "content": "# 57740 sc high eulereth strategy will have weth locked in the strategy contract\n\nSubmitted on Oct 28th 2025 at 15:28:01 UTC by @oxrex for Audit Comp | Alchemix V3\n\n- Impacts: Permanent freezing of funds\n- Target: https://github.com/alchemix-finance/v3-poc/blob/immunefi\\\\_audit/src/strategies/mainne",
+      "score": 0
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+      "title": "Ethena Labs Invitational Audit | Code4rena",
+      "content": "Ethena Labs Invitational Audit | Code4rena\n\nCompleted\n\n# Ethena Labs Invitational\n\nEnabling The Internet Bond.\n\n- Start date4 Nov 2024\n- End date11 Nov 2024\n- Total awards$20,000 in USDC\n- Duration7 days\n\n- Details\n\n# Ethena Labs Invitational audit details\n\nTotal Prize Pool: $20,000 in USDC\n\n- HM aw",
+      "score": 1
+    },
+    {
+      "url": "https://github.com/code-423n4/2024-11-ethena-labs/tree/main",
+      "title": "GitHub - code-423n4/2024-11-ethena-labs \u00b7 GitHub",
+      "content": "GitHub - code-423n4/2024-11-ethena-labs \u00b7 GitHub\n\nmain\n\nGo to file\n\nCode\n\nLast commit message\n\nLast commit date\n\nView all files\n\n| Name | Name |\n| --- | --- |\n\n## Repository files navigation\n\n# Ethena Labs Invitational audit details\n\nTotal Prize Pool: $20,000 in USDC\n\n- HM awards: $15,800 in USDC*\n-",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://github.com/code-423n4/2024-07-benddao-findings/issues/55",
+      "title": "Unhandled request invalidation by the owner of Etherfi will lead to stuck debt \u00b7 Issue #55 \u00b7 code-423n4/2024-07-benddao-findings",
+      "content": "# Issue: code-423n4/2024-07-benddao-findings #55\n\n- Repository: code-423n4/2024-07-benddao-findings | 9 stars\n\n## Unhandled request invalidation by the owner of Etherfi will lead to stuck debt\n\n- Author: [@c4-bot-2](https://github.com/c4-bot-2)\n- Association: CONTRIBUTOR\n- State: open\n- Labels: bug,",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-06-leveraged-vaults-judging/issues/43",
+      "title": "ZeroTrust - `EtherFiLib::_initiateWithdrawImpl` will revert because rebase tokens transfer 1-2 less wei \u00b7 Issue #43 \u00b7 sherlock-audit/2024-06-leveraged-vaults-judging",
+      "content": "# Issue: sherlock-audit/2024-06-leveraged-vaults-judging #43\n\n- Repository: sherlock-audit/2024-06-leveraged-vaults-judging | 11 stars | Python\n\n## ZeroTrust - `EtherFiLib::_initiateWithdrawImpl` will revert because rebase tokens transfer 1-2 less wei\n\n- Author: [@sherlock-admin3](https://github.com",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://github.com/code-423n4/2023-10-ethena",
+      "title": "code-423n4/2023-10-ethena",
+      "content": "# Repository: code-423n4/2023-10-ethena\n\n- Stars: 9\n- Forks: 8\n- Watchers: 9\n- Open issues: 0\n- Primary language: Solidity\n- Languages: Solidity (59.1%), JavaScript (26.2%), HTML (8.5%), Ruby (5.9%), Shell (0.2%), Makefile, Python, Nix\n- Default branch: main\n- Created: 2023-10-19T15:12:21Z\n- Last pu",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/48fc9b98-ded3-43fa-80a2-5aedb3a5a51e",
+      "title": "Etherex Contracts | Cantina",
+      "content": "Etherex Contracts | Cantina\n\n# Etherex Contracts\n\nCantina Security Report\n\nDownload Report\n\nOrganization\n\n@etherex-exchange\n\nEngagement Type\n\nSpearbit Web3\n\nPeriod\n\n26 August 2025 - 14 October 2025\n\nResearchers\n\nAnurag Jain\n\nhyh\n\nHickupHH3\n\nm4rio\n\nT1MOH\n\n---\n\n## Findings\n\nLow Risk\n\n14 findings\n\n11 f",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-10-ethena-labs",
+      "title": "Ethena Labs Audit | Code4rena",
+      "content": "Ethena Labs Audit | Code4rena\n\n# Ethena Labs\n\nEnabling The Internet Bond\n\nView repo View report\n\n- Duration6 days\n- Total awards$36,500 USDC\n- End date30 Oct 2023\n- Start date24 Oct 2023\n\n- Details\n- Results\n\n- Gas\n- (Solo)\n- Med\n- (Solo)\n- High\n- Total\n- USD\n- Competitor\n- # \u25b2\n\n1\n\npeanuts\n\n- 0\n- 0\n",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of productionEthena Labs\n\n# Ethena Labs Findings & Analysis Report\n\n#### 2023-12-21\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nMedium Risk Findings (4)\n\n- [M-01]`FULL_RESTRICTED` Stakers can bypass restriction through approvals\n- [M-02] Soft Res",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-05-sophon-judging/issues/67",
+      "title": "Audinarey - ETH deposits into SophonFarming via etherfi `weETH` pools are made at a loss to the user \u00b7 Issue #67 \u00b7 sherlock-audit/2024-05-sophon-judging",
+      "content": "# Issue: sherlock-audit/2024-05-sophon-judging #67\n\n- Repository: sherlock-audit/2024-05-sophon-judging | 7 stars | Python\n\n## Audinarey - ETH deposits into SophonFarming via etherfi `weETH` pools are made at a loss to the user\n\n- Author: [@sherlock-admin3](https://github.com/sherlock-admin3)\n- Asso",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-11-ethos-network-ii",
+      "title": "sherlock-audit/2024-11-ethos-network-ii",
+      "content": "# Repository: sherlock-audit/2024-11-ethos-network-ii\n\n- Stars: 0\n- Forks: 0\n- Watchers: 0\n- Open issues: 1\n- Primary language: TypeScript\n- Languages: TypeScript (81.7%), Solidity (17.2%), Shell (1.0%), Python (0.1%), JavaScript\n- Default branch: main\n- Created: 2024-11-20T17:14:23Z\n- Last push: 20",
+      "score": 0
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb/",
+      "title": "AI Audit Report for ether.fi governance token token  \u2013 Automated Security Analysis",
+      "content": "AI Audit Report for ether.fi governance token token \u2013 Automated Security Analysis\n\ne\n\n# ether.fi governance token (ETHFI)\n\n## Project summary\n\nAudit created\n\n16 Jan 2025\n\nAudit updated\n\n16 Jan 2025\n\nChain\n\nEthereum\n\nLanguage\n\nSolidity\n\nAddress\n\n0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb\n\n11Total Iss",
+      "score": 1
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/590",
+      "title": "Ether.fi - detailed report | DeFiSafety",
+      "content": "Ether.fi - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Ether.fi\n\n54 %\n\nOverview\n\nScoring AppendixSummaryDisclaimer\n\nCode and Team\n\n1. Are the smart contract addresses ea",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+      "title": "report.md at master \u00b7 hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4",
+      "content": "# File: hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/report.md\n\n- Repository: hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4 | Smart Contracts for Ether Fi dapp | 1 stars | Solidity\n- Branch: master\n\n```md\n# **Ether.fi Audit Competition on Hats.finance**\n\n## **I",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "http://github.com/etherfi-protocol/shallow-smart-contracts",
+      "title": "etherfi-protocol/smart-contracts",
+      "content": "# Repository: etherfi-protocol/smart-contracts\n\nether.fi protocol smart contracts\n\n- Stars: 128\n- Forks: 52\n- Watchers: 128\n- Open issues: 8\n- Primary language: Solidity\n- Languages: Solidity (87.7%), Python (9.4%), Shell (2.6%), Ruby (0.3%), JavaScript\n- Default branch: master\n- Homepage: https://w",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+      "title": "Case Study: Enhancing Security for Ether.fi\u2019s Liquid Staking Protocol with Halborn",
+      "content": "Case Study: Enhancing Security for Ether.fi\u2019s Liquid Staking Protocol with Halborn\n\n \n\n \n\ncase studies \n\n# Case Study: Enhancing Security for Ether.fi\u2019s Liquid Staking Protocol with Halborn\n\nFEATURED PARTNER:\n\n## Client Overview\n\nEther.fi is a groundbreaking liquid staking protocol that enables user",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://github.com/etherfi-protocol/cash-v3",
+      "title": "etherfi-protocol/cash-v3",
+      "content": "# Repository: etherfi-protocol/cash-v3\n\n- Stars: 10\n- Forks: 8\n- Watchers: 10\n- Open issues: 2\n- Primary language: Solidity\n- Languages: Solidity (99.3%), JSON5 (0.5%), TypeScript (0.2%), Shell\n- Default branch: master\n- Created: 2025-02-19T22:52:15Z\n- Last push: 2026-03-27T18:16:21Z\n- Contributors:",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4",
+      "title": "hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4",
+      "content": "# Repository: hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4 (fork of [marjon-call/dappContracts](https://github.com/marjon-call/dappContracts))\n\nSmart Contracts for Ether Fi dapp\n\n- Stars: 1\n- Forks: 1\n- Watchers: 1\n- Open issues: 56\n- Primary language: Solidity\n- Languages: Solid",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://etherfi.gitbook.io/etherfi/security/audits",
+      "title": "Audits | ether.fi",
+      "content": "# Audits\n\nYou can find the audit reports in our github repo \nhttps://github.com/etherfi-protocol/smart-contracts/tree/master/audits\n\nBug Bounty Program\n\n- Hats Finance",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://sharpe.ai/crypto-rug-check/eth/ether-fi",
+      "title": "Is Ether.fi (ETHFI) a Scam? Ether.fi (ETHFI) Rug Check, Honeypot Detector & Security Analysis | Sharpe AI",
+      "content": "# Sharpe AI Terminal\n\n> Detailed context: llms-full.txt\n> GEO note: this file lists canonical product URLs; legacy slugs are preserved via 301 redirects.\n\n## Summary\n\n- AI Policy\n- AI Services\n- AI FAQ\n- AI Summary\n\n## Core Product Routes\n\n- News Aggregator\n- Blog\n- Research\n- Narratives\n- Katana\n- ",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://reports.immunefi.com/alchemix-v3/57740-sc-high-eulereth-strategy-will-have-weth-locked-in-the-strategy-contract",
+      "title": "57740 sc high eulereth strategy will have weth locked in the strategy contract | Immunefi Audit Competitions",
+      "content": "# 57740 sc high eulereth strategy will have weth locked in the strategy contract\n\nSubmitted on Oct 28th 2025 at 15:28:01 UTC by @oxrex for Audit Comp | Alchemix V3\n\n- Impacts: Permanent freezing of funds\n- Target: https://github.com/alchemix-finance/v3-poc/blob/immunefi\\\\_audit/src/strategies/mainne",
+      "score": 0
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+      "title": "Ethena Labs Invitational Audit | Code4rena",
+      "content": "Ethena Labs Invitational Audit | Code4rena\n\nCompleted\n\n# Ethena Labs Invitational\n\nEnabling The Internet Bond.\n\n- Start date4 Nov 2024\n- End date11 Nov 2024\n- Total awards$20,000 in USDC\n- Duration7 days\n\n- Details\n\n# Ethena Labs Invitational audit details\n\nTotal Prize Pool: $20,000 in USDC\n\n- HM aw",
+      "score": 1
+    },
+    {
+      "url": "https://github.com/code-423n4/2024-11-ethena-labs/tree/main",
+      "title": "GitHub - code-423n4/2024-11-ethena-labs \u00b7 GitHub",
+      "content": "GitHub - code-423n4/2024-11-ethena-labs \u00b7 GitHub\n\nmain\n\nGo to file\n\nCode\n\nLast commit message\n\nLast commit date\n\nView all files\n\n| Name | Name |\n| --- | --- |\n\n## Repository files navigation\n\n# Ethena Labs Invitational audit details\n\nTotal Prize Pool: $20,000 in USDC\n\n- HM awards: $15,800 in USDC*\n-",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://github.com/code-423n4/2024-07-benddao-findings/issues/55",
+      "title": "Unhandled request invalidation by the owner of Etherfi will lead to stuck debt \u00b7 Issue #55 \u00b7 code-423n4/2024-07-benddao-findings",
+      "content": "# Issue: code-423n4/2024-07-benddao-findings #55\n\n- Repository: code-423n4/2024-07-benddao-findings | 9 stars\n\n## Unhandled request invalidation by the owner of Etherfi will lead to stuck debt\n\n- Author: [@c4-bot-2](https://github.com/c4-bot-2)\n- Association: CONTRIBUTOR\n- State: open\n- Labels: bug,",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-06-leveraged-vaults-judging/issues/43",
+      "title": "ZeroTrust - `EtherFiLib::_initiateWithdrawImpl` will revert because rebase tokens transfer 1-2 less wei \u00b7 Issue #43 \u00b7 sherlock-audit/2024-06-leveraged-vaults-judging",
+      "content": "# Issue: sherlock-audit/2024-06-leveraged-vaults-judging #43\n\n- Repository: sherlock-audit/2024-06-leveraged-vaults-judging | 11 stars | Python\n\n## ZeroTrust - `EtherFiLib::_initiateWithdrawImpl` will revert because rebase tokens transfer 1-2 less wei\n\n- Author: [@sherlock-admin3](https://github.com",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://github.com/code-423n4/2023-10-ethena",
+      "title": "code-423n4/2023-10-ethena",
+      "content": "# Repository: code-423n4/2023-10-ethena\n\n- Stars: 9\n- Forks: 8\n- Watchers: 9\n- Open issues: 0\n- Primary language: Solidity\n- Languages: Solidity (59.1%), JavaScript (26.2%), HTML (8.5%), Ruby (5.9%), Shell (0.2%), Makefile, Python, Nix\n- Default branch: main\n- Created: 2023-10-19T15:12:21Z\n- Last pu",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/48fc9b98-ded3-43fa-80a2-5aedb3a5a51e",
+      "title": "Etherex Contracts | Cantina",
+      "content": "Etherex Contracts | Cantina\n\n# Etherex Contracts\n\nCantina Security Report\n\nDownload Report\n\nOrganization\n\n@etherex-exchange\n\nEngagement Type\n\nSpearbit Web3\n\nPeriod\n\n26 August 2025 - 14 October 2025\n\nResearchers\n\nAnurag Jain\n\nhyh\n\nHickupHH3\n\nm4rio\n\nT1MOH\n\n---\n\n## Findings\n\nLow Risk\n\n14 findings\n\n11 f",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-10-ethena-labs",
+      "title": "Ethena Labs Audit | Code4rena",
+      "content": "Ethena Labs Audit | Code4rena\n\n# Ethena Labs\n\nEnabling The Internet Bond\n\nView repo View report\n\n- Duration6 days\n- Total awards$36,500 USDC\n- End date30 Oct 2023\n- Start date24 Oct 2023\n\n- Details\n- Results\n\n- Gas\n- (Solo)\n- Med\n- (Solo)\n- High\n- Total\n- USD\n- Competitor\n- # \u25b2\n\n1\n\npeanuts\n\n- 0\n- 0\n",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "title": "Code4rena | Keeping high severity bugs out of production",
+      "content": "Code4rena | Keeping high severity bugs out of productionEthena Labs\n\n# Ethena Labs Findings & Analysis Report\n\n#### 2023-12-21\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nMedium Risk Findings (4)\n\n- [M-01]`FULL_RESTRICTED` Stakers can bypass restriction through approvals\n- [M-02] Soft Res",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-05-sophon-judging/issues/67",
+      "title": "Audinarey - ETH deposits into SophonFarming via etherfi `weETH` pools are made at a loss to the user \u00b7 Issue #67 \u00b7 sherlock-audit/2024-05-sophon-judging",
+      "content": "# Issue: sherlock-audit/2024-05-sophon-judging #67\n\n- Repository: sherlock-audit/2024-05-sophon-judging | 7 stars | Python\n\n## Audinarey - ETH deposits into SophonFarming via etherfi `weETH` pools are made at a loss to the user\n\n- Author: [@sherlock-admin3](https://github.com/sherlock-admin3)\n- Asso",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-11-ethos-network-ii",
+      "title": "sherlock-audit/2024-11-ethos-network-ii",
+      "content": "# Repository: sherlock-audit/2024-11-ethos-network-ii\n\n- Stars: 0\n- Forks: 0\n- Watchers: 0\n- Open issues: 1\n- Primary language: TypeScript\n- Languages: TypeScript (81.7%), Solidity (17.2%), Shell (1.0%), Python (0.1%), JavaScript\n- Default branch: main\n- Created: 2024-11-20T17:14:23Z\n- Last push: 20",
+      "score": 0
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://hashex.org/auto-audits/ethereum/0xfe0c30065b384f05761f15d0cc899d4f9f9cc0eb/",
+      "auditor": null,
+      "title": "AI Audit Report for ether.fi governance token",
+      "date": "2025-01-16",
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://github.com/hats-finance/ether-fi-0x36c3b77853dec9c4a237a692623293223d4b9bc4/blob/master/report.md",
+      "auditor": "Hats Finance",
+      "title": "Ether.fi Audit Competition on Hats.finance",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://www.halborn.com/case-studies/post/case-study-enhancing-security-for-etherfi-s-liquid-staking-protocol-with-halborn",
+      "auditor": "Halborn",
+      "title": "Case Study: Enhancing Security for Ether.fi\u2019s Liquid Staking Protocol with Halborn",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://etherfi.gitbook.io/etherfi/security/audits",
+      "auditor": null,
+      "title": "Audits | ether.fi",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.95
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 443,
+    "followup_query": 1055,
+    "followup_search": 515,
+    "classify": 13728
+  },
+  "errors": []
+}

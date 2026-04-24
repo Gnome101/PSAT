@@ -1,0 +1,173 @@
+{
+  "protocol": "morpho",
+  "backend": "exa",
+  "mode": "instant",
+  "broad_query": "\"morpho\" smart contract security audit report",
+  "followup_query": "Morpho site:github.com filetype:pdf audit report",
+  "broad_results": [
+    {
+      "url": "https://docs.morpho.org/get-started/resources/audits/",
+      "title": "Audits - Security Reviews - Morpho Docs",
+      "content": "Audits - Security Reviews \u2013 Morpho Docs Are you an LLM? Read llms.txt for a summary of the docs, or llms-full.txt for the full context.\n\nSearch...\n\nGet Started\n\nAudits - Security Reviews\n\nOn this page\n\nMorpho is known for its industry-leading security practices and follows a multi-faceted approach t",
+      "score": null
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+      "title": "[PDF] Audit Report - Morpho",
+      "content": "Audit Report\nMorpho\nDelivered: May 2, 2023\nPrepared for Morpho Labs by Runtime Verification, Inc.\nDisclaimer\nSummary\nProtocol Model\nTrust Model\nContract Invariants\nGeneral Assumptions\nInternal Balances\nI1: Total P2P supply\nI2: Total pool supply\nI3: Total P2P borrow amount\nI4: Total pool borrow amoun",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-aave-v3",
+      "title": "Morpho (Aave V3) Security Audit - ChainSecurity",
+      "content": "Morpho (Aave V3) Smart Contract Audit - Chainsecurity\n\n# Morpho (Aave V3) Security Audit\n\nChainSecurity did a rigorous and thorough report of Morpho\u2019s contracts in spite of its inherent complexity and uniqueness. We enjoyed such professionalism and attention to details. We are confident this audit w",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+      "title": "Morpho Blue IRM Smart Contract Audit - Cantina",
+      "content": "Morpho Blue IRM Smart Contract Audit | Cantina\n\n# Morpho Blue IRM Smart Contract Audit\n\nCantina Security Report\n\nDownload Report\n\nOrganization\n\nEngagement Type\n\nCantina Reviews\n\nPeriod\n\n28 September 2023 - 16 October 2023\n\nRepositories\n\nResearchers\n\n---\n\n## Variable Rate IRM Contract Review of Morph",
+      "score": null
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+      "title": "[PDF] Morpho Vaults Security Analysis",
+      "content": "Morpho Vaults\nSecurity Analysis\nby Pessimistic\nThis report is public\nFebruary 20, 2023\nAbstract ...................................................................................................................................2..\nDisclaimer ..........................................................",
+      "score": null
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/535",
+      "title": "Morpho - detailed report | DeFiSafety",
+      "content": "Morpho - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Morpho\n\n93%\n\nOverview\n\nSecurity IncidentScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the smart ",
+      "score": null
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+      "title": "[PDF] Morpho Aave V2 Security Analysis",
+      "content": "Morpho Aave V2\nSecurity Analysis\nby Pessimistic\nThis report is public\nJuly 25, 2022\nAbstract ...................................................................................................................................2..\nDisclaimer .............................................................",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-vault-v2",
+      "title": "Morpho Vault V2 - Smart Contract Audit - ChainSecurity",
+      "content": "Smart Contract Audit - Morpho Vault V2 - ChainSecurity\n\nBack to Overview\n\n# Morpho Vault V2\n\ndownload report\n\nWe greatly value the extra time and commitment ChainSecurity dedicated to our project, which required more time and iterations than expected. We highly value this in security firms.\n\nMorpho\n",
+      "score": null
+    }
+  ],
+  "followup_results": [],
+  "all_results_deduped": [
+    {
+      "url": "https://docs.morpho.org/get-started/resources/audits/",
+      "title": "Audits - Security Reviews - Morpho Docs",
+      "content": "Audits - Security Reviews \u2013 Morpho Docs Are you an LLM? Read llms.txt for a summary of the docs, or llms-full.txt for the full context.\n\nSearch...\n\nGet Started\n\nAudits - Security Reviews\n\nOn this page\n\nMorpho is known for its industry-leading security practices and follows a multi-faceted approach t",
+      "score": null
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+      "title": "[PDF] Audit Report - Morpho",
+      "content": "Audit Report\nMorpho\nDelivered: May 2, 2023\nPrepared for Morpho Labs by Runtime Verification, Inc.\nDisclaimer\nSummary\nProtocol Model\nTrust Model\nContract Invariants\nGeneral Assumptions\nInternal Balances\nI1: Total P2P supply\nI2: Total pool supply\nI3: Total P2P borrow amount\nI4: Total pool borrow amoun",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-aave-v3",
+      "title": "Morpho (Aave V3) Security Audit - ChainSecurity",
+      "content": "Morpho (Aave V3) Smart Contract Audit - Chainsecurity\n\n# Morpho (Aave V3) Security Audit\n\nChainSecurity did a rigorous and thorough report of Morpho\u2019s contracts in spite of its inherent complexity and uniqueness. We enjoyed such professionalism and attention to details. We are confident this audit w",
+      "score": null
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+      "title": "Morpho Blue IRM Smart Contract Audit - Cantina",
+      "content": "Morpho Blue IRM Smart Contract Audit | Cantina\n\n# Morpho Blue IRM Smart Contract Audit\n\nCantina Security Report\n\nDownload Report\n\nOrganization\n\nEngagement Type\n\nCantina Reviews\n\nPeriod\n\n28 September 2023 - 16 October 2023\n\nRepositories\n\nResearchers\n\n---\n\n## Variable Rate IRM Contract Review of Morph",
+      "score": null
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+      "title": "[PDF] Morpho Vaults Security Analysis",
+      "content": "Morpho Vaults\nSecurity Analysis\nby Pessimistic\nThis report is public\nFebruary 20, 2023\nAbstract ...................................................................................................................................2..\nDisclaimer ..........................................................",
+      "score": null
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/535",
+      "title": "Morpho - detailed report | DeFiSafety",
+      "content": "Morpho - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Morpho\n\n93%\n\nOverview\n\nSecurity IncidentScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the smart ",
+      "score": null
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+      "title": "[PDF] Morpho Aave V2 Security Analysis",
+      "content": "Morpho Aave V2\nSecurity Analysis\nby Pessimistic\nThis report is public\nJuly 25, 2022\nAbstract ...................................................................................................................................2..\nDisclaimer .............................................................",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-vault-v2",
+      "title": "Morpho Vault V2 - Smart Contract Audit - ChainSecurity",
+      "content": "Smart Contract Audit - Morpho Vault V2 - ChainSecurity\n\nBack to Overview\n\n# Morpho Vault V2\n\ndownload report\n\nWe greatly value the extra time and commitment ChainSecurity dedicated to our project, which required more time and iterations than expected. We highly value this in security firms.\n\nMorpho\n",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://docs.morpho.org/get-started/resources/audits/",
+      "auditor": null,
+      "title": "Audits - Security Reviews - Morpho Docs",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/Runtime_02052023.pdf",
+      "auditor": "Runtime Verification",
+      "title": "Audit Report - Morpho",
+      "date": "2023-05-02",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-aave-v3",
+      "auditor": "ChainSecurity",
+      "title": "Morpho (Aave V3) Security Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/2c9a9dc9-d39d-4018-a61b-d7b43619180e",
+      "auditor": "Cantina",
+      "title": "Morpho Blue IRM Smart Contract Audit",
+      "date": "2023-10-16",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/Pessimistic_200223.pdf",
+      "auditor": "Pessimistic",
+      "title": "Morpho Vaults Security Analysis",
+      "date": "2023-02-20",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cdn.morpho.org/documents/MorphoAaveV2_Audit_Pessimistic.pdf",
+      "auditor": "Pessimistic",
+      "title": "Morpho Aave V2 Security Analysis",
+      "date": "2022-07-25",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/morpho-vault-v2",
+      "auditor": "ChainSecurity",
+      "title": "Morpho Vault V2 - Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 961,
+    "followup_query": 659,
+    "followup_search": 916,
+    "classify": 4884
+  },
+  "errors": []
+}

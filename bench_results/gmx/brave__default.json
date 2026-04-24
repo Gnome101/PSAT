@@ -1,0 +1,326 @@
+{
+  "protocol": "gmx",
+  "backend": "brave",
+  "mode": "default",
+  "broad_query": "\"gmx\" smart contract security audit report",
+  "followup_query": "GMX audit report site:code4rena.com OR site:sherlock.xyz OR site:cantina.xyz",
+  "broad_results": [
+    {
+      "url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022/",
+      "title": "GMX smart contract audit report | Dedaub Audit Reports",
+      "content": "This audit report covers the contracts of the repository gmx-io/gmx-synthetics, at commit hash 3b38da007ab0e4407cb38c06afb9e35e4cf4cb2c. ... The audit\u2019s main target is security threats, i.e., what the community understanding would likely call &quot;hacking&quot;, rather than the regular use of the protocol.",
+      "score": null
+    },
+    {
+      "url": "https://guardianaudits.com/casestudies/gmx-case-study",
+      "title": "Comprehensive Smart Contract Audits | Guardian",
+      "content": "In addition to reviewing all updates and additions in the GMX system, Guardian has actively secured 5 protocols integrating with the GMX V2 system: Dolomite, IVX, Abracadabra Money, Umami DAO, and Jones. From Guardian\u2019s Arbitrum ecosystem GMX V2 integration reviews, 21 Critical, 27 High, 76 Medium, and 54 Low findings were uncovered and prevented. \u201cGuardian is amongst the most effective teams in the whole industry. They have a clear attention to detail that most auditors don\u2019t have.\u201d",
+      "score": null
+    },
+    {
+      "url": "https://dedaub.com/audits/rysk/rysk-gmx-hedging-reactor-dec-09-2022/",
+      "title": "Rysk GMX Hedging Reactor Smart Contract Security Audit Report | Dedaub Audit Reports",
+      "content": "Can be profitably exploited by any knowledgeable third-party attacker to drain a portion of the system\u2019s or users\u2019 funds OR the contract does not function as intended and severe loss of funds may result. ... Third-party attackers or faulty functionality may block the system or cause the system or users to lose funds. Important system invariants can be violated. ... Issue resolution includes \u201cdismissed\u201d or \u201cacknowledged\u201d but no action taken, by the client, or \u201cresolved\u201d, per the auditors. ... The function GmxHedgingReactor::gmxPositionCallback, which updates the internalDelta storage variable of the reactor as part of the two step process used by GMX to execute positions, does not impose a limit on the msg.sender or the amount of times that it may be called.",
+      "score": null
+    },
+    {
+      "url": "https://gov.gmx.io/t/exploring-the-evaluation-of-a-proactive-smart-contract-security-layer-to-complement-gmx-s-existing-audits-and-monitoring/5028",
+      "title": "Exploring the Evaluation of a Proactive Smart Contract Security Layer to Complement GMX\u2019s Existing Audits and Monitoring - Proposals - GMX",
+      "content": "TL;DR This proposal explores evaluating a proactive smart contract security layer to complement GMX\u2019s existing audits and monitoring by applying continuous static analysis, unit test generation, mutation testing, and an internal audit agent leveraging deterministic architecture to surface ...",
+      "score": null
+    },
+    {
+      "url": "https://www.thestandard.io/blog/gmx-revolutionizing-defi-with-layer-2-scaling-governance-and-liquidity-innovation-in-2025-9",
+      "title": "GMX: Revolutionizing DeFi with Layer 2 Scaling, Governance, and Liquidity Innovation In 2025 - TheStandard.io | DeFi Blog",
+      "content": "Dedaub Audit Report \u2013 GMX Synthetics (V2) Audit Summary (Audit in Nov 2022 found minor reentrancy &amp; logic issues, all fixed; highlights two-step execution with keepers) (GMX smart contract audit report | Dedaub Audit Reports) Guardian Audits \u2013 GMX Security Case Study (84 researcher-weeks of audits; 351 issues fixed incl.",
+      "score": null
+    },
+    {
+      "url": "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+      "title": "Security Audit Email: contact@dwebox.com Website: https://dwebox.com Dwebox.com",
+      "content": "The audit will be conducted by experienced security professionals who will use a \u00b7 combination of manual and automated testing techniques to identify potential \u00b7 vulnerabilities. The audit report documents any issues found and provides \u00b7 recommendations for remediation. Dwebox.com \u00b7 Background information on the smart contract(s) GMX: 0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://blog.solidityscan.com/gmx-v1-hack-analysis-ed0ab0c0dd0f",
+      "title": "GMX v1 Hack Analysis. Overview: | by Shashank | SolidityScan",
+      "content": "GMX Team is working with security partners and lead auditors to conduct a full investigation. A detailed post-mortem will be published after the review is complete. Preliminary analysis can be found here: ... Never assume an address is an EOA. Always validate inputs like _account to avoid smart contract callbacks.",
+      "score": null
+    },
+    {
+      "url": "https://www.cyberscope.io/audits/coin-gmx",
+      "title": "GMX Smart Contract Audit | Cyberscope",
+      "content": "Stay informed about the latest security updates for GMX, including smart contract audit reports, security ratings, KYC verifications, on-chain monitoring, and more.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/GuardianAudits/GMX",
+      "title": "GitHub - GuardianAudits/GMX",
+      "content": "Guardian has prepared a comprehensive test suite for GMX, all findings are included in the final audit report here. ... Testing the smart contracts against both common and uncommon attack vectors.",
+      "score": null
+    },
+    {
+      "url": "https://www.defisafety.com/app/pqrs/427",
+      "title": "GMX V1 - detailed report | DeFiSafety",
+      "content": "15. Were the smart contracts deployed to a testnet? (Y/N) ... GMX documents their previous testnet deployments here. ... This section looks at the 3rd party software audits done.",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://code4rena.com/reports/2023-08-gmx-fv",
+      "title": "Certora-GMX Formal Verification Findings & Analysis Report",
+      "content": "During the formal verification competition outlined in this document, Wardens utilized the Certora Prover (verification tool) to conduct formal verification of the GMX smart contract system. The formal verification competition took place between August 7\u2014August 28 2023. 39 Wardens contributed reports to the GMX Formal Verification competition:",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+      "title": "Certora-GMX Formal Verification Audit | Code4rena",
+      "content": "Certora-GMX Formal Verification audit on Code4rena. $40,000 USDC, from 7 Aug 2023 to 28 Aug 2023. Decentralized Perpetual Exchange",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/6",
+      "title": "GMX Contest - 225,000 USDC",
+      "content": "GMX is a decentralized spot and perpetual exchange that supports low swap fees and zero price impact trades.",
+      "score": null
+    },
+    {
+      "url": "https://sherlock.xyz/post/gmx-exchange-hack-explained",
+      "title": "Sherlock \u2014 GMX Exchange Hack Explained",
+      "content": "Panprog was also asked how the exploitable code remained despite numerous auditors looking into the code back in 2022. \u201cI&#x27;ve seen many reentrancy possibilities in live contracts or in contests, where you can reenter, but can&#x27;t do much damage. Like you can change the order of event emissions, or do something unintended, but harmless, like letting zero size order pass, which isn&#x27;t allowed but doesn&#x27;t cause any issues.. These are often at most low severity and so might not be reported.\u201d",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2022-11-redacted-cartel-contest",
+      "title": "Redacted Cartel contest Audit | Code4rena",
+      "content": "<strong>Redacted Cartel contest audit on Code4rena</strong>. $90,500 USDC, from 21 Nov 2022 to 28 Nov 2022. Boosted GMX assets from your favorite liquid token wrapper, Pirex - brought to you by Redacted Cartel.",
+      "score": null
+    },
+    {
+      "url": "https://sherlock.xyz/post/top-10-best-smart-contract-auditing-companies-in-2026",
+      "title": "Sherlock \u2014 Top 10 Best Smart Contract Auditing Companies in 2026",
+      "content": "Clients: GMX, Dolomite, Poolshark, Orderly Network, Umami DAO. Strengths: Dual independent review teams are a genuine structural quality advantage. Deep perpetuals and derivatives expertise. Advanced stateful fuzzing is a real technical investment. Pay-per-vulnerability pricing option aligns incentives. Weaknesses: Smaller team limits concurrent capacity. Limited public audit report ...",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/74",
+      "title": "GMX Update Contest - 200,000 USDC",
+      "content": "GMX is a decentralized spot and perpetual exchange that supports low swap fees and zero price impact trades.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports",
+      "title": "Security Audit Reports | Code4rena",
+      "content": "Interested in learning more from past Code4rena competitive audits? View all Code4rena audit reports in one convenient location.",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/74/report",
+      "title": "Issue H-1: MarketUtils.getPoolValueInfo() does not ... - Contests",
+      "content": "Contests \u00b7 Bug Bounties \u00b7 Featured \u00b7 Leaderboards \u00b7 Help Center \u00b7 Active \u00b7 Upcoming \u00b7 Juging Contests \u00b7 Escalations Open",
+      "score": null
+    },
+    {
+      "url": "https://sherlock.xyz/post/what-is-smart-contract-auditing",
+      "title": "Sherlock \u2014 What Is Smart Contract Auditing? A Complete Guide for 2026",
+      "content": "It also produces clear, reproducible findings that help the development team strengthen their security practices long after the report is delivered. One of the most respected names in Web3 security, Bernhard Mueller, is now part of the team shaping its future. ... Sherlock AI V2 is live - faster, smarter, and built for modern Web3 development. Keep security high priority during development and secure your code with confidence. ... GMX Exchange Hack Explained: $42M Drained via Re-Entrancy Exploit.",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022/",
+      "title": "GMX smart contract audit report | Dedaub Audit Reports",
+      "content": "This audit report covers the contracts of the repository gmx-io/gmx-synthetics, at commit hash 3b38da007ab0e4407cb38c06afb9e35e4cf4cb2c. ... The audit\u2019s main target is security threats, i.e., what the community understanding would likely call &quot;hacking&quot;, rather than the regular use of the protocol.",
+      "score": null
+    },
+    {
+      "url": "https://guardianaudits.com/casestudies/gmx-case-study",
+      "title": "Comprehensive Smart Contract Audits | Guardian",
+      "content": "In addition to reviewing all updates and additions in the GMX system, Guardian has actively secured 5 protocols integrating with the GMX V2 system: Dolomite, IVX, Abracadabra Money, Umami DAO, and Jones. From Guardian\u2019s Arbitrum ecosystem GMX V2 integration reviews, 21 Critical, 27 High, 76 Medium, and 54 Low findings were uncovered and prevented. \u201cGuardian is amongst the most effective teams in the whole industry. They have a clear attention to detail that most auditors don\u2019t have.\u201d",
+      "score": null
+    },
+    {
+      "url": "https://dedaub.com/audits/rysk/rysk-gmx-hedging-reactor-dec-09-2022/",
+      "title": "Rysk GMX Hedging Reactor Smart Contract Security Audit Report | Dedaub Audit Reports",
+      "content": "Can be profitably exploited by any knowledgeable third-party attacker to drain a portion of the system\u2019s or users\u2019 funds OR the contract does not function as intended and severe loss of funds may result. ... Third-party attackers or faulty functionality may block the system or cause the system or users to lose funds. Important system invariants can be violated. ... Issue resolution includes \u201cdismissed\u201d or \u201cacknowledged\u201d but no action taken, by the client, or \u201cresolved\u201d, per the auditors. ... The function GmxHedgingReactor::gmxPositionCallback, which updates the internalDelta storage variable of the reactor as part of the two step process used by GMX to execute positions, does not impose a limit on the msg.sender or the amount of times that it may be called.",
+      "score": null
+    },
+    {
+      "url": "https://gov.gmx.io/t/exploring-the-evaluation-of-a-proactive-smart-contract-security-layer-to-complement-gmx-s-existing-audits-and-monitoring/5028",
+      "title": "Exploring the Evaluation of a Proactive Smart Contract Security Layer to Complement GMX\u2019s Existing Audits and Monitoring - Proposals - GMX",
+      "content": "TL;DR This proposal explores evaluating a proactive smart contract security layer to complement GMX\u2019s existing audits and monitoring by applying continuous static analysis, unit test generation, mutation testing, and an internal audit agent leveraging deterministic architecture to surface ...",
+      "score": null
+    },
+    {
+      "url": "https://www.thestandard.io/blog/gmx-revolutionizing-defi-with-layer-2-scaling-governance-and-liquidity-innovation-in-2025-9",
+      "title": "GMX: Revolutionizing DeFi with Layer 2 Scaling, Governance, and Liquidity Innovation In 2025 - TheStandard.io | DeFi Blog",
+      "content": "Dedaub Audit Report \u2013 GMX Synthetics (V2) Audit Summary (Audit in Nov 2022 found minor reentrancy &amp; logic issues, all fixed; highlights two-step execution with keepers) (GMX smart contract audit report | Dedaub Audit Reports) Guardian Audits \u2013 GMX Security Case Study (84 researcher-weeks of audits; 351 issues fixed incl.",
+      "score": null
+    },
+    {
+      "url": "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+      "title": "Security Audit Email: contact@dwebox.com Website: https://dwebox.com Dwebox.com",
+      "content": "The audit will be conducted by experienced security professionals who will use a \u00b7 combination of manual and automated testing techniques to identify potential \u00b7 vulnerabilities. The audit report documents any issues found and provides \u00b7 recommendations for remediation. Dwebox.com \u00b7 Background information on the smart contract(s) GMX: 0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://blog.solidityscan.com/gmx-v1-hack-analysis-ed0ab0c0dd0f",
+      "title": "GMX v1 Hack Analysis. Overview: | by Shashank | SolidityScan",
+      "content": "GMX Team is working with security partners and lead auditors to conduct a full investigation. A detailed post-mortem will be published after the review is complete. Preliminary analysis can be found here: ... Never assume an address is an EOA. Always validate inputs like _account to avoid smart contract callbacks.",
+      "score": null
+    },
+    {
+      "url": "https://www.cyberscope.io/audits/coin-gmx",
+      "title": "GMX Smart Contract Audit | Cyberscope",
+      "content": "Stay informed about the latest security updates for GMX, including smart contract audit reports, security ratings, KYC verifications, on-chain monitoring, and more.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/GuardianAudits/GMX",
+      "title": "GitHub - GuardianAudits/GMX",
+      "content": "Guardian has prepared a comprehensive test suite for GMX, all findings are included in the final audit report here. ... Testing the smart contracts against both common and uncommon attack vectors.",
+      "score": null
+    },
+    {
+      "url": "https://www.defisafety.com/app/pqrs/427",
+      "title": "GMX V1 - detailed report | DeFiSafety",
+      "content": "15. Were the smart contracts deployed to a testnet? (Y/N) ... GMX documents their previous testnet deployments here. ... This section looks at the 3rd party software audits done.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-08-gmx-fv",
+      "title": "Certora-GMX Formal Verification Findings & Analysis Report",
+      "content": "During the formal verification competition outlined in this document, Wardens utilized the Certora Prover (verification tool) to conduct formal verification of the GMX smart contract system. The formal verification competition took place between August 7\u2014August 28 2023. 39 Wardens contributed reports to the GMX Formal Verification competition:",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+      "title": "Certora-GMX Formal Verification Audit | Code4rena",
+      "content": "Certora-GMX Formal Verification audit on Code4rena. $40,000 USDC, from 7 Aug 2023 to 28 Aug 2023. Decentralized Perpetual Exchange",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/6",
+      "title": "GMX Contest - 225,000 USDC",
+      "content": "GMX is a decentralized spot and perpetual exchange that supports low swap fees and zero price impact trades.",
+      "score": null
+    },
+    {
+      "url": "https://sherlock.xyz/post/gmx-exchange-hack-explained",
+      "title": "Sherlock \u2014 GMX Exchange Hack Explained",
+      "content": "Panprog was also asked how the exploitable code remained despite numerous auditors looking into the code back in 2022. \u201cI&#x27;ve seen many reentrancy possibilities in live contracts or in contests, where you can reenter, but can&#x27;t do much damage. Like you can change the order of event emissions, or do something unintended, but harmless, like letting zero size order pass, which isn&#x27;t allowed but doesn&#x27;t cause any issues.. These are often at most low severity and so might not be reported.\u201d",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2022-11-redacted-cartel-contest",
+      "title": "Redacted Cartel contest Audit | Code4rena",
+      "content": "<strong>Redacted Cartel contest audit on Code4rena</strong>. $90,500 USDC, from 21 Nov 2022 to 28 Nov 2022. Boosted GMX assets from your favorite liquid token wrapper, Pirex - brought to you by Redacted Cartel.",
+      "score": null
+    },
+    {
+      "url": "https://sherlock.xyz/post/top-10-best-smart-contract-auditing-companies-in-2026",
+      "title": "Sherlock \u2014 Top 10 Best Smart Contract Auditing Companies in 2026",
+      "content": "Clients: GMX, Dolomite, Poolshark, Orderly Network, Umami DAO. Strengths: Dual independent review teams are a genuine structural quality advantage. Deep perpetuals and derivatives expertise. Advanced stateful fuzzing is a real technical investment. Pay-per-vulnerability pricing option aligns incentives. Weaknesses: Smaller team limits concurrent capacity. Limited public audit report ...",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/74",
+      "title": "GMX Update Contest - 200,000 USDC",
+      "content": "GMX is a decentralized spot and perpetual exchange that supports low swap fees and zero price impact trades.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports",
+      "title": "Security Audit Reports | Code4rena",
+      "content": "Interested in learning more from past Code4rena competitive audits? View all Code4rena audit reports in one convenient location.",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/74/report",
+      "title": "Issue H-1: MarketUtils.getPoolValueInfo() does not ... - Contests",
+      "content": "Contests \u00b7 Bug Bounties \u00b7 Featured \u00b7 Leaderboards \u00b7 Help Center \u00b7 Active \u00b7 Upcoming \u00b7 Juging Contests \u00b7 Escalations Open",
+      "score": null
+    },
+    {
+      "url": "https://sherlock.xyz/post/what-is-smart-contract-auditing",
+      "title": "Sherlock \u2014 What Is Smart Contract Auditing? A Complete Guide for 2026",
+      "content": "It also produces clear, reproducible findings that help the development team strengthen their security practices long after the report is delivered. One of the most respected names in Web3 security, Bernhard Mueller, is now part of the team shaping its future. ... Sherlock AI V2 is live - faster, smarter, and built for modern Web3 development. Keep security high priority during development and secure your code with confidence. ... GMX Exchange Hack Explained: $42M Drained via Re-Entrancy Exploit.",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022/",
+      "auditor": "Dedaub",
+      "title": "GMX smart contract audit report",
+      "date": "2022-11-20",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://guardianaudits.com/casestudies/gmx-case-study",
+      "auditor": "Guardian",
+      "title": "Comprehensive Smart Contract Audits",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://dwebox.com/assets/audits/GMX%20Audit.pdf",
+      "auditor": null,
+      "title": "GMX Audit",
+      "date": null,
+      "type": "pdf",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://github.com/GuardianAudits/GMX",
+      "auditor": "Guardian",
+      "title": "GMX",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-08-gmx-fv",
+      "auditor": "Certora",
+      "title": "Certora-GMX Formal Verification Findings & Analysis Report",
+      "date": "2023-08",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/audits/2023-08-certora-gmx-formal-verification",
+      "auditor": "Certora",
+      "title": "Certora-GMX Formal Verification Audit",
+      "date": "2023-08",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/6",
+      "auditor": "Sherlock",
+      "title": "GMX Contest",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://audits.sherlock.xyz/contests/74",
+      "auditor": "Sherlock",
+      "title": "GMX Update Contest",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 598,
+    "followup_query": 717,
+    "followup_search": 552,
+    "classify": 8882
+  },
+  "errors": []
+}

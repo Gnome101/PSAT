@@ -1,0 +1,16 @@
+{
+  "protocol": "gmx",
+  "backend": "exa",
+  "mode": "research",
+  "instructions": "Find the main deployed smart contract addresses for the gmx protocol. List the core production contracts (not peripheral helpers) with their names and 0x-prefixed on-chain addresses. Include the chain where each is deployed. Prioritize contracts the protocol team themselves publish on their official docs or governance pages.",
+  "contracts": [],
+  "errors": [
+    {
+      "stage": "deep_research",
+      "error": "ExaError('Exa /research task 01kpzc3nx1dgay5zrj4mj366hm status=failed')",
+      "trace": "Traceback (most recent call last):\n  File \"/home/gnome2/asu/capstone/PSAT/scripts/bench_ai_addresses.py\", line 171, in run_deep_research\n    r = exa.deep_research(instructions, schema=_ADDRESS_RESEARCH_SCHEMA, timeout_seconds=900)\n  File \"/home/gnome2/asu/capstone/PSAT/utils/exa.py\", line 247, in deep_research\n    raise ExaError(\nutils.exa.ExaError: Exa /research task 01kpzc3nx1dgay5zrj4mj366hm status=failed\n"
+    }
+  ],
+  "notes": [],
+  "elapsed_ms": 142157
+}

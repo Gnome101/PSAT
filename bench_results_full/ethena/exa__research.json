@@ -1,0 +1,132 @@
+{
+  "protocol": "ethena",
+  "backend": "exa",
+  "mode": "research",
+  "instructions": "Find all third-party smart contract security audit reports published for the ethena protocol. Include pre-launch audits, formal verification reports, contest reports (Code4rena/Sherlock/Cantina), audit-firm blog posts, and PDF reports on GitHub or auditor websites. For each, provide the auditor name, a URL to the audit document, and the date if known.",
+  "reports": [
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/GZbd1DrrG3YmnTlJnTHa/Ethena%20-%20Zellic%20Audit%20Report%20Draft.pdf?alt=media&token=2e65890c-6724-49b7-97f4-6d2223ba086e",
+      "auditor": "Zellic",
+      "title": "Zellic Audit on v1 of contracts",
+      "date": "2023-07-03",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/17Ucep7IYMBZ6mAHGLyw/Ethena%20Final%20Report%20(1).pdf?alt=media&token=51a6a101-516e-4984-8360-14daf860a961",
+      "auditor": "Quantstamp",
+      "title": "Quantstamp Audit on v1 of contracts",
+      "date": "2023-10-18",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/sX7xO54StGnS6RlZM0Qa/Spearbit%20_Ethena_v2_Final_report-ethena__1_.pdf?alt=media&token=d0968065-7e4d-4661-b53f-a1d5181c30bd",
+      "auditor": "Spearbit",
+      "title": "Spearbit Audit on v1 of contracts",
+      "date": "2023-10-18",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/zUZDAQ77jrhUOIMqFka9/Ethena-security-review%20(1).pdf?alt=media&token=0358ec8b-36fe-4169-a159-2c782a9f8d40",
+      "auditor": "Pashov",
+      "title": "Independent Audit by Pashov on v1 of contracts",
+      "date": "2023-10-22",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "auditor": "Code4rena",
+      "title": "Public Code4rena Audit on v1 of contracts",
+      "date": "2023-11-13",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/BCV8xxvUneCO2WlUk2KS/Ethena-security-review%20(1).pdf?alt=media&token=c552507e-b245-43b7-8cc6-cd51a6a92005",
+      "auditor": "Pashov",
+      "title": "Independent Audit by Pashov on ENA and LP staking contracts",
+      "date": "2023-12-22",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/JHbdthPqKCPoZFzrpryW/v2-audit.pdf?alt=media&token=68bbdbae-4fcf-4e90-ad20-8c4d6a5a29a0",
+      "auditor": "Pashov",
+      "title": "Independent Audit by Pashov on V2 of contracts",
+      "date": "2024-05-23",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/S8e4wljMcMDkw6fMcnby/Chaos%20Labs%20-%20Ethena%20LST%20Market%20Risk%20Analysis%20(1).pdf?alt=media&token=071b4952-5995-4805-8904-2e617176396e",
+      "auditor": "Chaos Labs",
+      "title": "Economics Audit and Risk Analysis by Chaos Labs on System Design",
+      "date": "2024",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/Xx0DNbv33KWqybLS4HvU/Chaos%20Labs%20-%20Ethena%20Perpetual%20Assessment%20Report%20Final.pdf?alt=media&token=0d167789-ee8b-4135-9ebd-d5e07033aa48",
+      "auditor": "Chaos Labs",
+      "title": "Economics Audit and Risk Analysis by Chaos Labs on System Design",
+      "date": "2024",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/xB8Qp1VgHy3GN2aJ57JO/Chaos_Labs___USDe_On_chain_Liquidity_Assessment.pdf?alt=media&token=636dddfd-9861-4378-9f1e-d59c85bf2aca",
+      "auditor": "Chaos Labs",
+      "title": "Economics Audit and Risk Analysis by Chaos Labs on System Design",
+      "date": "2024",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/tqsJW7hPQMXv80sibsUK/Ethena%20x%20Pashov%20-%20SENA%20Audit%20Report.pdf?alt=media&token=9b05cbba-cd3f-4252-9940-ba35b5408b9c",
+      "auditor": "Pashov",
+      "title": "Independent Audit by Pashov on Staked ENA (sENA)",
+      "date": "2024-09-02",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/uyJ6FDS2CVacoHv303Cw/Ethena%20x%20Quantstamp%20-%20USTB.pdf?alt=media&token=df9b8f23-54bc-4879-8016-096b966124cc",
+      "auditor": "Quantstamp",
+      "title": "Quantstamp Audit on USDTB",
+      "date": "2024-10-25",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/d7jvu5NZ9eh8thYYRBmP/Ethena%20x%20Cyfrin%20-%20USTB.pdf?alt=media&token=9d693945-8baf-4373-bb4c-12cdee038db2",
+      "auditor": "Cyfrin",
+      "title": "Cyfrin Audit on USDTB",
+      "date": "2024-10-31",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces/sBsPyff5ft3inFy9jyjt/uploads/vjn1dqCWVE3YWhLFTFFU/Ethena%20x%20Pashov%20-%20USTB.pdf?alt=media&token=b0e93bf7-e95d-44df-8c25-270e21ec2582",
+      "auditor": "Pashov",
+      "title": "Independent Audit by Pashov on USDTB",
+      "date": "2024-10-20",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-11-ethena-labs-invitational",
+      "auditor": "Code4rena",
+      "title": "Ethena Labs Invitational Audit",
+      "date": "2024-11-04",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    }
+  ],
+  "errors": [],
+  "notes": [],
+  "task_id": "01kpypw3qm7m96mp3n4r1cte9z",
+  "elapsed_ms": 185668
+}

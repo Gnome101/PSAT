@@ -1,0 +1,38 @@
+{
+  "protocol": "gains network",
+  "backend": "exa",
+  "mode": "research_plus",
+  "elapsed_ms": 63668,
+  "reports": [
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md",
+      "pdf_url": null,
+      "auditor": "Pashov Audit Group",
+      "title": "GainsNetwork-org/gTrade-contracts security review",
+      "date": "2023-07",
+      "source_url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-review-July.md",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T08:32:46.487107+00:00"
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+      "pdf_url": null,
+      "auditor": "Pashov Audit Group",
+      "title": "GainsNetwork-org/gTrade-contracts",
+      "date": null,
+      "source_url": "https://github.com/pashov/audits/blob/master/team/md/GainsNetwork-security-July2.md",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T08:32:46.487107+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 4 unique result(s)",
+    "LLM classified 4 result(s) as audit reports",
+    "Extracted 2 audit report(s)",
+    "Tavily queries used: 2/4"
+  ],
+  "research_task_id": "01kpz9we7nd25qkw9en4a70y5s",
+  "research_seed_count": 4
+}

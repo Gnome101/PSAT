@@ -1,0 +1,276 @@
+{
+  "protocol": "aerodrome",
+  "backend": "exa",
+  "mode": "regular",
+  "broad_query": "\"aerodrome\" smart contract security audit report",
+  "followup_query": "Aerodrome Finance audit report Code4rena Sherlock Cantina",
+  "broad_results": [
+    {
+      "url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority",
+      "content": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority \n\nService\n\n- Smart Contract Audit\n- Smart Contract Development\n- Public Blockchain Development\n- KYC\n\nX\n\nRequest a Quote\n\n \n\n \n\n## Project Background\n\nWebsite Details\n\n- Blog\n- Aerodrome Finance is a decentralized finance (DeFi) platform f",
+      "score": null
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723",
+      "title": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority | PDF",
+      "content": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority | PDF\n\nUploaded by EtherAuthority\n\n9 views\n\n# Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority\n\nAerodrome Finance is a decentralized finance (DeFi) platform focused on providing various fin",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aerodrome-finance/contracts/security",
+      "title": "Overview \u00b7 aerodrome-finance/contracts \u00b7 GitHub",
+      "content": "Overview \u00b7 aerodrome-finance/contracts \u00b7 GitHub\n\n/ contracts Public\n\nStar 115\n\n- Pricing\n- Notifications\n- Fork 106\n\n## Security\n\n### No security policy detected\n\nThis project has not set up a SECURITY.md file yet.\n\n## There aren\u2019t any published security advisories",
+      "score": null
+    },
+    {
+      "url": "https://app.kryll.io/x-ray/aerodrome-finance",
+      "title": "Kryll\u00b3 | $AERO (Aerodrome Finance) X-Ray Score \u2013 Trusted Token Audit, On-Chain DYOR & Financial Insights",
+      "content": "Kryll\u00b3 | $AERO (Aerodrome Finance) X-Ray Score \u2013 Trusted Token Audit, On-Chain DYOR & Financial Insights\n\nFinancial 70%Fundamental 68%Social 58%Security 64%OnChain 58%\n\nSee all audited projects\n\nAerodrome Finance\n\n$aero\n\nAudit Report\n\n$0.337\n\n+3.52%\n\n6.3\n\nAerodrome Finance is a next-generation AMM d",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aerodrome-finance/contracts",
+      "title": "aerodrome-finance/contracts",
+      "content": "# Repository: aerodrome-finance/contracts\n\nAerodrome Finance Smart Contracts\n\n- Stars: 113\n- Forks: 105\n- Watchers: 113\n- Open issues: 5\n- Primary language: Solidity\n- Languages: Solidity (98.9%), TypeScript (1.1%), JavaScript\n- License: Other (NOASSERTION)\n- Topics: amm, defi, dex, smart-contracts\n",
+      "score": null
+    },
+    {
+      "url": "https://aerodrome.finance/security",
+      "title": "Security Overview - Aerodrome Finance",
+      "content": "Aerodrome Finance\n\nSecurity index:\n\nOverview\n\nEmergency Council\n\nContracts\n\nSecurity\n\nIndex\n\n# Security Overview\n\nAerodrome Finance inherits the contract architecture and full security maintenance from Velodrome V2. Velodrome V2 has been audited and runs a bug-bounty program.\n\nTo review the current ",
+      "score": null
+    },
+    {
+      "url": "https://aerodrome.limo/secure.html",
+      "title": "Aerodrome Security Overview | Audits, Bug Bounty, Emergency Council & Contract Addresses",
+      "content": "Aerodrome Security Overview | Audits, Bug Bounty, Emergency Council & Contract Addresses\n\nSecurity\n\nIndex\n\nDocumentation\n\nSecurity\n\nSecurity index:\n\nOverview\n\nEmergency Council\n\nContracts\n\n# Security Overview\n\nBuilt on the proven Velodrome V2 foundation, Aerodrome Finance mirrors its smart-contract ",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aerodrome-finance/contracts/blob/main/contracts/Minter.sol",
+      "title": "contracts/Minter.sol at main \u00b7 aerodrome-finance/contracts",
+      "content": "# File: aerodrome-finance/contracts/contracts/Minter.sol\n\n- Repository: aerodrome-finance/contracts | Aerodrome Finance Smart Contracts | 115 stars | Solidity\n- Branch: main\n\n```sol\n// SPDX-License-Identifier: GPL-3.0-or-later\npragma solidity 0.8.19;\n\nimport {Math} from \"@openzeppelin/contracts/util",
+      "score": null
+    },
+    {
+      "url": "https://assets-cms.kraken.com/files/51n36hrp/facade/87d23270a5a77f27a4bed341bc96fa98ba67f37e.pdf",
+      "title": "[PDF] Aerodrome Finance (AERO) White paper In accordance ... - Kraken",
+      "content": "Aerodrome Finance (AERO)\nWhite paper\nIn accordance with Title II of Regulation (EU) 2023/1114 (MiCA)\nBeyond publication required by Kraken's regulators and the European Securities and\nMarkets Authority (for inclusion in its register on behalf of Kraken), no part of this\npublication may be reproduced",
+      "score": null
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/556",
+      "title": "Aerodrome - detailed report - DefiSafety",
+      "content": "Aerodrome - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Aerodrome\n\n15%\n\nOverview\n\nSecurity IncidentScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the ",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports",
+      "title": "Security Audit Reports - Code4rena",
+      "content": "Security Audit Reports | Code4rena\n\n# Audit Reports\n\nSort By:\n\nDate Range:\n\nSecurity Audit Reports | Code4rena\n[Skip Navigation](#skip-link)\n# Audit Reports\nSort By:\nDate Range:",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aerodrome-finance/contracts",
+      "title": "aerodrome-finance/contracts",
+      "content": "# Repository: aerodrome-finance/contracts\n\nAerodrome Finance Smart Contracts\n\n- Stars: 113\n- Forks: 105\n- Watchers: 113\n- Open issues: 5\n- Primary language: Solidity\n- Languages: Solidity (98.9%), TypeScript (1.1%), JavaScript\n- License: Other (NOASSERTION)\n- Topics: amm, defi, dex, smart-contracts\n",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-04-arcadia-pricing-module-judging/issues/22",
+      "title": "PUSH0 - Max exposure cap can be bypassed on assets using WrappedAerodromeAM.sol \u00b7 Issue #22 \u00b7 sherlock-audit/2024-04-arcadia-pricing-module-judging",
+      "content": "# Issue: sherlock-audit/2024-04-arcadia-pricing-module-judging #22\n\n- Repository: sherlock-audit/2024-04-arcadia-pricing-module-judging | 4 stars | Python\n\n## PUSH0 - Max exposure cap can be bypassed on assets using WrappedAerodromeAM.sol\n\n- Author: [@sherlock-admin3](https://github.com/sherlock-adm",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-10-debita-judging/issues/151",
+      "title": "0x37 - veAERO owner may lose some airdrop from veAERO \u00b7 Issue #151 \u00b7 sherlock-audit/2024-10-debita-judging",
+      "content": "# Issue: sherlock-audit/2024-10-debita-judging #151\n\n- Repository: sherlock-audit/2024-10-debita-judging | 1 stars | Python\n\n## 0x37 - veAERO owner may lose some airdrop from veAERO\n\n- Author: [@sherlock-admin3](https://github.com/sherlock-admin3)\n- State: open\n- Locked: true\n- Created: 2024-11-25T1",
+      "score": null
+    },
+    {
+      "url": "https://soloaudit.com/auditor/alix40",
+      "title": "alix40 - SoloAudit",
+      "content": "alix40 - SoloAudit\n\n### Connect\n\nTelegram Twitter GitHub\n\n# alix40\n\nKYC\n\nKYCed by Code4rena & Cantina\n\nLending protocol specialist \u2014 30+ audits, 200+ medium/high severity lending vulnerabilities (Aave, Euler, Morpho). LSW @Sherlock.\n\nAvailable\n\n3 years experience\n\nVetted\n\n#### Programming Languages\n",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-04-arcadia-pricing-module-judging/issues",
+      "title": "Issues \u00b7 sherlock-audit/2024-04-arcadia-pricing-module-judging \u00b7 GitHub",
+      "content": "Issues \u00b7 sherlock-audit/2024-04-arcadia-pricing-module-judging \u00b7 GitHub\n\nThis repository was archived by the owner on Oct 27, 2024. It is now read-only.\n\n/ 2024-04-arcadia-pricing-module-judging Public archive\n\n### merlin - WrappedAerodromeAM.sol is not compatible with the Revert on Zero Value Token",
+      "score": null
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723",
+      "title": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority | PDF",
+      "content": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority | PDF\n\nUploaded by EtherAuthority\n\n9 views\n\n# Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority\n\nAerodrome Finance is a decentralized finance (DeFi) platform focused on providing various fin",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/pulse/complete-audit-competitions-guide-strategies-cantina-code4rena-time-q3wdc",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina ... - LinkedIn",
+      "content": "Complete Audit Competitions Guide & Strategies: Cantina, Code4rena, Sherlock & More \n\nAgree & Join LinkedIn\n\nBy clicking Continue to join or sign in, you agree to LinkedIn\u2019s User Agreement, Privacy Policy, and Cookie Policy.\n\n` `` `` `` `` `` `` `\n\n \n\n \n\n \n\n` `` `` `` `` `` `` ` \n\n \n\n ` `` `` `` `\n\n",
+      "score": null
+    },
+    {
+      "url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority",
+      "content": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority \n\nService\n\n- Smart Contract Audit\n- Smart Contract Development\n- Public Blockchain Development\n- KYC\n\nX\n\nRequest a Quote\n\n \n\n \n\n## Project Background\n\nWebsite Details\n\n- Blog\n- Aerodrome Finance is a decentralized finance (DeFi) platform f",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority",
+      "content": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority \n\nService\n\n- Smart Contract Audit\n- Smart Contract Development\n- Public Blockchain Development\n- KYC\n\nX\n\nRequest a Quote\n\n \n\n \n\n## Project Background\n\nWebsite Details\n\n- Blog\n- Aerodrome Finance is a decentralized finance (DeFi) platform f",
+      "score": null
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723",
+      "title": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority | PDF",
+      "content": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority | PDF\n\nUploaded by EtherAuthority\n\n9 views\n\n# Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority\n\nAerodrome Finance is a decentralized finance (DeFi) platform focused on providing various fin",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aerodrome-finance/contracts/security",
+      "title": "Overview \u00b7 aerodrome-finance/contracts \u00b7 GitHub",
+      "content": "Overview \u00b7 aerodrome-finance/contracts \u00b7 GitHub\n\n/ contracts Public\n\nStar 115\n\n- Pricing\n- Notifications\n- Fork 106\n\n## Security\n\n### No security policy detected\n\nThis project has not set up a SECURITY.md file yet.\n\n## There aren\u2019t any published security advisories",
+      "score": null
+    },
+    {
+      "url": "https://app.kryll.io/x-ray/aerodrome-finance",
+      "title": "Kryll\u00b3 | $AERO (Aerodrome Finance) X-Ray Score \u2013 Trusted Token Audit, On-Chain DYOR & Financial Insights",
+      "content": "Kryll\u00b3 | $AERO (Aerodrome Finance) X-Ray Score \u2013 Trusted Token Audit, On-Chain DYOR & Financial Insights\n\nFinancial 70%Fundamental 68%Social 58%Security 64%OnChain 58%\n\nSee all audited projects\n\nAerodrome Finance\n\n$aero\n\nAudit Report\n\n$0.337\n\n+3.52%\n\n6.3\n\nAerodrome Finance is a next-generation AMM d",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aerodrome-finance/contracts",
+      "title": "aerodrome-finance/contracts",
+      "content": "# Repository: aerodrome-finance/contracts\n\nAerodrome Finance Smart Contracts\n\n- Stars: 113\n- Forks: 105\n- Watchers: 113\n- Open issues: 5\n- Primary language: Solidity\n- Languages: Solidity (98.9%), TypeScript (1.1%), JavaScript\n- License: Other (NOASSERTION)\n- Topics: amm, defi, dex, smart-contracts\n",
+      "score": null
+    },
+    {
+      "url": "https://aerodrome.finance/security",
+      "title": "Security Overview - Aerodrome Finance",
+      "content": "Aerodrome Finance\n\nSecurity index:\n\nOverview\n\nEmergency Council\n\nContracts\n\nSecurity\n\nIndex\n\n# Security Overview\n\nAerodrome Finance inherits the contract architecture and full security maintenance from Velodrome V2. Velodrome V2 has been audited and runs a bug-bounty program.\n\nTo review the current ",
+      "score": null
+    },
+    {
+      "url": "https://aerodrome.limo/secure.html",
+      "title": "Aerodrome Security Overview | Audits, Bug Bounty, Emergency Council & Contract Addresses",
+      "content": "Aerodrome Security Overview | Audits, Bug Bounty, Emergency Council & Contract Addresses\n\nSecurity\n\nIndex\n\nDocumentation\n\nSecurity\n\nSecurity index:\n\nOverview\n\nEmergency Council\n\nContracts\n\n# Security Overview\n\nBuilt on the proven Velodrome V2 foundation, Aerodrome Finance mirrors its smart-contract ",
+      "score": null
+    },
+    {
+      "url": "https://github.com/aerodrome-finance/contracts/blob/main/contracts/Minter.sol",
+      "title": "contracts/Minter.sol at main \u00b7 aerodrome-finance/contracts",
+      "content": "# File: aerodrome-finance/contracts/contracts/Minter.sol\n\n- Repository: aerodrome-finance/contracts | Aerodrome Finance Smart Contracts | 115 stars | Solidity\n- Branch: main\n\n```sol\n// SPDX-License-Identifier: GPL-3.0-or-later\npragma solidity 0.8.19;\n\nimport {Math} from \"@openzeppelin/contracts/util",
+      "score": null
+    },
+    {
+      "url": "https://assets-cms.kraken.com/files/51n36hrp/facade/87d23270a5a77f27a4bed341bc96fa98ba67f37e.pdf",
+      "title": "[PDF] Aerodrome Finance (AERO) White paper In accordance ... - Kraken",
+      "content": "Aerodrome Finance (AERO)\nWhite paper\nIn accordance with Title II of Regulation (EU) 2023/1114 (MiCA)\nBeyond publication required by Kraken's regulators and the European Securities and\nMarkets Authority (for inclusion in its register on behalf of Kraken), no part of this\npublication may be reproduced",
+      "score": null
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/556",
+      "title": "Aerodrome - detailed report - DefiSafety",
+      "content": "Aerodrome - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Aerodrome\n\n15%\n\nOverview\n\nSecurity IncidentScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the ",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports",
+      "title": "Security Audit Reports - Code4rena",
+      "content": "Security Audit Reports | Code4rena\n\n# Audit Reports\n\nSort By:\n\nDate Range:\n\nSecurity Audit Reports | Code4rena\n[Skip Navigation](#skip-link)\n# Audit Reports\nSort By:\nDate Range:",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-04-arcadia-pricing-module-judging/issues/22",
+      "title": "PUSH0 - Max exposure cap can be bypassed on assets using WrappedAerodromeAM.sol \u00b7 Issue #22 \u00b7 sherlock-audit/2024-04-arcadia-pricing-module-judging",
+      "content": "# Issue: sherlock-audit/2024-04-arcadia-pricing-module-judging #22\n\n- Repository: sherlock-audit/2024-04-arcadia-pricing-module-judging | 4 stars | Python\n\n## PUSH0 - Max exposure cap can be bypassed on assets using WrappedAerodromeAM.sol\n\n- Author: [@sherlock-admin3](https://github.com/sherlock-adm",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-10-debita-judging/issues/151",
+      "title": "0x37 - veAERO owner may lose some airdrop from veAERO \u00b7 Issue #151 \u00b7 sherlock-audit/2024-10-debita-judging",
+      "content": "# Issue: sherlock-audit/2024-10-debita-judging #151\n\n- Repository: sherlock-audit/2024-10-debita-judging | 1 stars | Python\n\n## 0x37 - veAERO owner may lose some airdrop from veAERO\n\n- Author: [@sherlock-admin3](https://github.com/sherlock-admin3)\n- State: open\n- Locked: true\n- Created: 2024-11-25T1",
+      "score": null
+    },
+    {
+      "url": "https://soloaudit.com/auditor/alix40",
+      "title": "alix40 - SoloAudit",
+      "content": "alix40 - SoloAudit\n\n### Connect\n\nTelegram Twitter GitHub\n\n# alix40\n\nKYC\n\nKYCed by Code4rena & Cantina\n\nLending protocol specialist \u2014 30+ audits, 200+ medium/high severity lending vulnerabilities (Aave, Euler, Morpho). LSW @Sherlock.\n\nAvailable\n\n3 years experience\n\nVetted\n\n#### Programming Languages\n",
+      "score": null
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2024-04-arcadia-pricing-module-judging/issues",
+      "title": "Issues \u00b7 sherlock-audit/2024-04-arcadia-pricing-module-judging \u00b7 GitHub",
+      "content": "Issues \u00b7 sherlock-audit/2024-04-arcadia-pricing-module-judging \u00b7 GitHub\n\nThis repository was archived by the owner on Oct 27, 2024. It is now read-only.\n\n/ 2024-04-arcadia-pricing-module-judging Public archive\n\n### merlin - WrappedAerodromeAM.sol is not compatible with the Revert on Zero Value Token",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/pulse/complete-audit-competitions-guide-strategies-cantina-code4rena-time-q3wdc",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina ... - LinkedIn",
+      "content": "Complete Audit Competitions Guide & Strategies: Cantina, Code4rena, Sherlock & More \n\nAgree & Join LinkedIn\n\nBy clicking Continue to join or sign in, you agree to LinkedIn\u2019s User Agreement, Privacy Policy, and Cookie Policy.\n\n` `` `` `` `` `` `` `\n\n \n\n \n\n \n\n` `` `` `` `` `` `` ` \n\n \n\n ` `` `` `` `\n\n",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723",
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://aerodrome.finance/security",
+      "auditor": null,
+      "title": "Security Overview",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://aerodrome.limo/secure.html",
+      "auditor": null,
+      "title": "Aerodrome Security Overview",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.9
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 1098,
+    "followup_query": 595,
+    "followup_search": 1183,
+    "classify": 8416
+  },
+  "errors": []
+}

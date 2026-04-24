@@ -1,0 +1,16 @@
+{
+  "protocol": "aerodrome",
+  "backend": "exa",
+  "mode": "regular",
+  "elapsed_ms": 6216,
+  "contracts": [],
+  "official_domain": "aerodrome.finance",
+  "errors": [],
+  "notes": [
+    "Domain candidates: github.com, aerodrome.finance, aerodrome.limited, aerodrome.limo",
+    "Official domain: aerodrome.finance",
+    "Selected pages: 3",
+    "No inventory contracts extracted from selected pages",
+    "Tavily queries used: 3/4"
+  ]
+}

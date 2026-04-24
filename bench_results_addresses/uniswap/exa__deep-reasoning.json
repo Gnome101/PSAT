@@ -1,0 +1,14 @@
+{
+  "protocol": "uniswap",
+  "backend": "exa",
+  "mode": "deep-reasoning",
+  "elapsed_ms": 18928,
+  "contracts": [],
+  "official_domain": null,
+  "errors": [],
+  "notes": [
+    "Domain candidates: docs.uniswap.org, developers.uniswap.org, dev.to, support.uniswap.org",
+    "Could not identify an official domain",
+    "Tavily queries used: 1/4"
+  ]
+}

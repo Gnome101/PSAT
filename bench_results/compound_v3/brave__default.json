@@ -1,0 +1,230 @@
+{
+  "protocol": "compound v3",
+  "backend": "brave",
+  "mode": "default",
+  "broad_query": "\"compound v3\" smart contract security audit report",
+  "followup_query": "Compound III audit report site:github.com OR site:code4rena.com OR site:sherlock.xyz",
+  "broad_results": [
+    {
+      "url": "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+      "title": "Compound V3 Economic Audit Report",
+      "content": "Compound Finance is a decentralized ... smart contracts and dynamic interest rates based on supply and demand to facilitate transactions. The protocol enables users to supply different crypto assets and accrue interest, while borrowers can avail themselves of loans secured by collateralized assets. Our collaboration with Compound Finance focuses on harnessing the power of the Chainrisk simulation engine to optimize risk parameters of the Compound V3 (Comet) ...",
+      "score": null
+    },
+    {
+      "url": "https://www.researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report",
+      "title": "(PDF) Compound V3 Economic Audit Report",
+      "content": "F3B mitigates front-running attacks because an adversary can no longer read the content of a transaction before commitment, thus preventing the adversary from benefiting from advance knowledge of pending transactions. We design F3B to be agnostic to the underlying consensus algorithm and compatible with legacy smart contracts by addressing front-running at the blockchain architecture level.",
+      "score": null
+    },
+    {
+      "url": "https://arxiv.org/abs/2410.04085",
+      "title": "[2410.04085] Compound V3 Economic Audit Report",
+      "content": "View a PDF of the paper titled ... Abstract:<strong>Compound Finance is a decentralized lending protocol that enables the secure and efficient borrowing and lending of cryptocurrencies, utilizing smart contracts and dynamic</strong> ...",
+      "score": null
+    },
+    {
+      "url": "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+      "title": "Compound V3 Economic Audit Announcement",
+      "content": "<strong>The VaR calculation provided a comprehensive view of the potential risk exposure of the Compound V3 protocol</strong>. The simulation-based VaR approach allowed Chainrisk to: Identify risk exposure across different assets and market conditions, enabling ...",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://github.com/volt-protocol/volt-protocol-core/blob/develop/audits/venue-audits/compound.md",
+      "title": "volt-protocol-core/audits/venue-audits/compound.md at develop \u00b7 volt-protocol/volt-protocol-core",
+      "content": "One of the largest security concerns ... to be moved from place to place. A key outcome of this report was <strong>verifying that this category of attack was not allowed</strong>....",
+      "score": null
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/C.R.E.A.M.%20Finance/Compound%20Protocol/README.md",
+      "title": "audits_public/C.R.E.A.M. Finance/Compound Protocol/README.md at master \u00b7 mixbytes/audits_public",
+      "content": "<strong>During audit no critical or major issues were identified</strong>. Several issues were marked as warnings and comments. After working on audit report all issues were fixed or acknowledged(if the issue is not critical) by client, so contracts assumed ...",
+      "score": null
+    },
+    {
+      "url": "https://github.com/HalbornSecurity/PublicReports/blob/master/Algorand%20Smart%20Contract%20Audit/Yieldly_Finance_Compound_Algorand_Smart_Contract_Security_Audit_Report_Halborn_Final.pdf",
+      "title": "PublicReports/Algorand Smart Contract Audit/Yieldly_Finance_Compound_Algorand_Smart_Contract_Security_Audit_Report_Halborn_Final.pdf at master \u00b7 HalbornSecurity/PublicReports",
+      "content": "Contribute to HalbornSecurity/PublicReports development by creating an account on GitHub.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/compound-finance/comet/commit/4d1c1a42fc31b4b26129fe79e3d97ef637da9520",
+      "title": "Add indexed keyword to event in rewards contract (#442) \u00b7 compound-finance/comet@4d1c1a4",
+      "content": "Add indexed keyword to event in rewards contract (#442)Based on OZ&#x27;s latest response to our audit response to #389.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/hamen/compose_skill",
+      "title": "GitHub - hamen/compose_skill: A strict, evidence-based audit skill for Android Jetpack Compose repositories. \u00b7 GitHub",
+      "content": "<strong>Audit this Compose repo</strong>. Score the :app module for Compose quality. Run a Compose performance review on core/ui. The compiler-report build runs automatically and typically takes 1-5 minutes depending on the target.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Decurity/audits",
+      "title": "GitHub - Decurity/audits: Security Audit reports by Decurity",
+      "content": "Compound (Comet, v3) DevSecOps, Semgrep, Lending \u00b7 March 2023 \u00b7 EAST (v2) Docker, CDP, TypeScript, Scala \u00b7 March 2023 \u00b7 NDA \u00b7 Avalanche, Golang, L1 \u00b7 February 2023 \u00b7 Tokenlon (Limit Order Protocol) DEX, Solidity \u00b7 January 2023 \u00b7 Symbiosis Finance (relayers) Bridge, MPC, DKG, Golang \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://github.com/abdk-consulting/audits",
+      "title": "GitHub - abdk-consulting/audits: Database of public audits made by ABDK Consulting \u00b7 GitHub",
+      "content": "1. Tk Spring Part I 2. Tk Spring Part II 2.TermMax. Phase I 3.TermMax. Phase II 4.TermMax. Phase III",
+      "score": null
+    },
+    {
+      "url": "https://github.com/demis1997/secureum/blob/master/7.%20Audit%20Findings%20101.md",
+      "title": "secureum/7. Audit Findings 101.md at master \u00b7 demis1997/secureum",
+      "content": "Error codes of Compound\u2019s Comptroller.enterMarket, Comptroller.exitMarket are not checked \u00b7 Reversed order of parameters in allowance function call \u00b7 Token approvals can be stolen in DAOfiV1RouteraddLiquidity() swapExactTokensForETH checks the wrong return value \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pgaudit/pgaudit/commit/c214a2ead388c89a57254d82ac6be2b5292a0b4d",
+      "title": "Improve logging of compound statements. \u00b7 pgaudit/pgaudit@c214a2e",
+      "content": "This improves the situation where compound statements are sent to PostgreSQL. Previously, all the statements would be output for each audit entry, which is less useful for auditing and wasteful of ...",
+      "score": null
+    },
+    {
+      "url": "https://github.com/comdex-official/audit-reports",
+      "title": "GitHub - comdex-official/audit-reports",
+      "content": "Report for both comdex core lend and liquidation modules audits by Oak security.",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+      "title": "Compound V3 Economic Audit Report",
+      "content": "Compound Finance is a decentralized ... smart contracts and dynamic interest rates based on supply and demand to facilitate transactions. The protocol enables users to supply different crypto assets and accrue interest, while borrowers can avail themselves of loans secured by collateralized assets. Our collaboration with Compound Finance focuses on harnessing the power of the Chainrisk simulation engine to optimize risk parameters of the Compound V3 (Comet) ...",
+      "score": null
+    },
+    {
+      "url": "https://www.researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report",
+      "title": "(PDF) Compound V3 Economic Audit Report",
+      "content": "F3B mitigates front-running attacks because an adversary can no longer read the content of a transaction before commitment, thus preventing the adversary from benefiting from advance knowledge of pending transactions. We design F3B to be agnostic to the underlying consensus algorithm and compatible with legacy smart contracts by addressing front-running at the blockchain architecture level.",
+      "score": null
+    },
+    {
+      "url": "https://arxiv.org/abs/2410.04085",
+      "title": "[2410.04085] Compound V3 Economic Audit Report",
+      "content": "View a PDF of the paper titled ... Abstract:<strong>Compound Finance is a decentralized lending protocol that enables the secure and efficient borrowing and lending of cryptocurrencies, utilizing smart contracts and dynamic</strong> ...",
+      "score": null
+    },
+    {
+      "url": "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+      "title": "Compound V3 Economic Audit Announcement",
+      "content": "<strong>The VaR calculation provided a comprehensive view of the potential risk exposure of the Compound V3 protocol</strong>. The simulation-based VaR approach allowed Chainrisk to: Identify risk exposure across different assets and market conditions, enabling ...",
+      "score": null
+    },
+    {
+      "url": "https://github.com/volt-protocol/volt-protocol-core/blob/develop/audits/venue-audits/compound.md",
+      "title": "volt-protocol-core/audits/venue-audits/compound.md at develop \u00b7 volt-protocol/volt-protocol-core",
+      "content": "One of the largest security concerns ... to be moved from place to place. A key outcome of this report was <strong>verifying that this category of attack was not allowed</strong>....",
+      "score": null
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/C.R.E.A.M.%20Finance/Compound%20Protocol/README.md",
+      "title": "audits_public/C.R.E.A.M. Finance/Compound Protocol/README.md at master \u00b7 mixbytes/audits_public",
+      "content": "<strong>During audit no critical or major issues were identified</strong>. Several issues were marked as warnings and comments. After working on audit report all issues were fixed or acknowledged(if the issue is not critical) by client, so contracts assumed ...",
+      "score": null
+    },
+    {
+      "url": "https://github.com/HalbornSecurity/PublicReports/blob/master/Algorand%20Smart%20Contract%20Audit/Yieldly_Finance_Compound_Algorand_Smart_Contract_Security_Audit_Report_Halborn_Final.pdf",
+      "title": "PublicReports/Algorand Smart Contract Audit/Yieldly_Finance_Compound_Algorand_Smart_Contract_Security_Audit_Report_Halborn_Final.pdf at master \u00b7 HalbornSecurity/PublicReports",
+      "content": "Contribute to HalbornSecurity/PublicReports development by creating an account on GitHub.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/compound-finance/comet/commit/4d1c1a42fc31b4b26129fe79e3d97ef637da9520",
+      "title": "Add indexed keyword to event in rewards contract (#442) \u00b7 compound-finance/comet@4d1c1a4",
+      "content": "Add indexed keyword to event in rewards contract (#442)Based on OZ&#x27;s latest response to our audit response to #389.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/hamen/compose_skill",
+      "title": "GitHub - hamen/compose_skill: A strict, evidence-based audit skill for Android Jetpack Compose repositories. \u00b7 GitHub",
+      "content": "<strong>Audit this Compose repo</strong>. Score the :app module for Compose quality. Run a Compose performance review on core/ui. The compiler-report build runs automatically and typically takes 1-5 minutes depending on the target.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Decurity/audits",
+      "title": "GitHub - Decurity/audits: Security Audit reports by Decurity",
+      "content": "Compound (Comet, v3) DevSecOps, Semgrep, Lending \u00b7 March 2023 \u00b7 EAST (v2) Docker, CDP, TypeScript, Scala \u00b7 March 2023 \u00b7 NDA \u00b7 Avalanche, Golang, L1 \u00b7 February 2023 \u00b7 Tokenlon (Limit Order Protocol) DEX, Solidity \u00b7 January 2023 \u00b7 Symbiosis Finance (relayers) Bridge, MPC, DKG, Golang \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://github.com/abdk-consulting/audits",
+      "title": "GitHub - abdk-consulting/audits: Database of public audits made by ABDK Consulting \u00b7 GitHub",
+      "content": "1. Tk Spring Part I 2. Tk Spring Part II 2.TermMax. Phase I 3.TermMax. Phase II 4.TermMax. Phase III",
+      "score": null
+    },
+    {
+      "url": "https://github.com/demis1997/secureum/blob/master/7.%20Audit%20Findings%20101.md",
+      "title": "secureum/7. Audit Findings 101.md at master \u00b7 demis1997/secureum",
+      "content": "Error codes of Compound\u2019s Comptroller.enterMarket, Comptroller.exitMarket are not checked \u00b7 Reversed order of parameters in allowance function call \u00b7 Token approvals can be stolen in DAOfiV1RouteraddLiquidity() swapExactTokensForETH checks the wrong return value \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pgaudit/pgaudit/commit/c214a2ead388c89a57254d82ac6be2b5292a0b4d",
+      "title": "Improve logging of compound statements. \u00b7 pgaudit/pgaudit@c214a2e",
+      "content": "This improves the situation where compound statements are sent to PostgreSQL. Previously, all the statements would be output for each audit entry, which is less useful for auditing and wasteful of ...",
+      "score": null
+    },
+    {
+      "url": "https://github.com/comdex-official/audit-reports",
+      "title": "GitHub - comdex-official/audit-reports",
+      "content": "Report for both comdex core lend and liquidation modules audits by Oak security.",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://ideas.repec.org/p/arx/papers/2410.04085.html",
+      "auditor": null,
+      "title": "Compound V3 Economic Audit Report",
+      "date": "2024-10",
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://www.researchgate.net/publication/384700238_Compound_V3_Economic_Audit_Report",
+      "auditor": null,
+      "title": "Compound V3 Economic Audit Report",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://arxiv.org/abs/2410.04085",
+      "auditor": null,
+      "title": "Compound V3 Economic Audit Report",
+      "date": "2024-10",
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://chainrisk.xyz/blog-posts/compound-v3-economic-audit-announcement",
+      "auditor": "Chainrisk",
+      "title": "Compound V3 Economic Audit Announcement",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://github.com/Decurity/audits",
+      "auditor": "Decurity",
+      "title": "Security Audit reports by Decurity",
+      "date": null,
+      "type": "listing",
+      "confidence": 0.8
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 555,
+    "followup_query": 784,
+    "followup_search": 571,
+    "classify": 6469
+  },
+  "errors": []
+}

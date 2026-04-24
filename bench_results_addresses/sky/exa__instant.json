@@ -1,0 +1,17 @@
+{
+  "protocol": "sky",
+  "backend": "exa",
+  "mode": "instant",
+  "elapsed_ms": 9135,
+  "contracts": [],
+  "official_domain": "developers.sky.money",
+  "errors": [],
+  "notes": [
+    "Domain candidates: developers.sky.money, docs.spark.fi, github.com, makerdao.com, skyprotocol.org",
+    "Official domain: developers.sky.money",
+    "LLM page selection unavailable; fell back to top in-domain page candidates",
+    "Selected pages: 3",
+    "No inventory contracts extracted from selected pages",
+    "Tavily queries used: 2/4"
+  ]
+}

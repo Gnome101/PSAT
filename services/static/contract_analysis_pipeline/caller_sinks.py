@@ -112,15 +112,14 @@ class MsgSenderTaint:
         return frozenset(self._tainted)
 
     def propagate_through_node(self, node: Any) -> None:
-        # Assignment/TypeConversion/Phi propagate taint to the lvalue.
-        # Index uses are classified at the sink, not propagated — the
-        # value of `mapping[msg.sender]` is the mapping-value, not the caller.
-        # Call lvalues are not propagated: the return isn't msg.sender except
-        # for the _CALLEE_NAMES_RETURNING_CALLER set handled below.
         for ir in getattr(node, "irs", []) or []:
             kind = _ir_name(ir)
-            if kind in ("Assignment", "TypeConversion"):
+            if kind == "Assignment":
                 rhs = getattr(ir, "rvalue", None)
+                if rhs is not None and self.is_tainted(rhs):
+                    self.add(getattr(ir, "lvalue", None))
+            elif kind == "TypeConversion":
+                rhs = getattr(ir, "variable", None) or getattr(ir, "rvalue", None)
                 if rhs is not None and self.is_tainted(rhs):
                     self.add(getattr(ir, "lvalue", None))
             elif kind == "Phi":
@@ -526,6 +525,8 @@ def sinks_to_external_call_guards(sinks: list[CallerSink]) -> list[dict]:
     out: list[dict] = []
     for sink in sinks:
         if sink.get("kind") != "caller_external_call":
+            continue
+        if not sink.get("revert_on_mismatch"):
             continue
         target_var = sink.get("external_target_state_var", "") or ""
         method = sink.get("external_method", "") or ""

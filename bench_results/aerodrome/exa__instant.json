@@ -1,0 +1,242 @@
+{
+  "protocol": "aerodrome",
+  "backend": "exa",
+  "mode": "instant",
+  "broad_query": "\"aerodrome\" smart contract security audit report",
+  "followup_query": "Aerodrome Finance audit Code4rena Sherlock Cantina GitHub",
+  "broad_results": [
+    {
+      "url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority",
+      "content": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority \n\nService\n\n- Smart Contract Audit\n- Smart Contract Development\n- Public Blockchain Development\n- KYC\n\nX\n\nRequest a Quote\n\n \n\n \n\n## Project Background\n\nWebsite Details\n\n- Blog\n- Aerodrome Finance is a decentralized finance (DeFi) platform f",
+      "score": null
+    },
+    {
+      "url": "https://aerodrome.finance/security",
+      "title": "Security Overview - Aerodrome Finance",
+      "content": "Aerodrome Finance\n\nSecurity index:\n\nOverview\n\nEmergency Council\n\nContracts\n\nSecurity\n\nIndex\n\n# Security Overview\n\nAerodrome Finance inherits the contract architecture and full security maintenance from Velodrome V2. Velodrome V2 has been audited and runs a bug-bounty program.\n\nTo review the current ",
+      "score": null
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/556",
+      "title": "Aerodrome - detailed report - DefiSafety",
+      "content": "Aerodrome - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Aerodrome\n\n15%\n\nOverview\n\nSecurity IncidentScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the ",
+      "score": null
+    },
+    {
+      "url": "https://dgld.ch/news/post-incident-report-february-2026-exploit",
+      "title": "Post-Incident Report: February 2026 Exploit - DGLD",
+      "content": "DGLD | Post-Incident Report: February 2026 Exploit\n\nBack to all News\n\n# Post-Incident Report: February 2026 Exploit\n\n21 March 2026\n\nShare\n\nShare\n\nShare\n\nCopy Success\n\nShare\n\nTL;DR - On February 23rd, 2026, an exploit of the DGLD Ethereum smart contract led to the unauthorized creation of illicit, un",
+      "score": null
+    },
+    {
+      "url": "https://www.halborn.com/audits/kickofffun/smart-contract-assessment-b6a722",
+      "title": "Smart Contract Assessment Audit | Kickoff.fun | Halborn Audit Reports",
+      "content": "Smart Contract Assessment Audit | Kickoff.fun | Halborn Audit Reports\n\n \n\n \n\n// Security Assessment\n\n02.03.2026 - 02.11.2026\n\n### Smart Contract Assessment\n\n### Kickoff.fun\n\nPrepared by:\n\nHALBORN\n\nLast Updated 02/13/2026\n\nDate of Engagement: February 3rd, 2026 - February 11th, 2026\n\n---\n\n#### Table ",
+      "score": null
+    },
+    {
+      "url": "https://assets-cms.kraken.com/files/51n36hrp/facade/87d23270a5a77f27a4bed341bc96fa98ba67f37e.pdf",
+      "title": "[PDF] Aerodrome Finance (AERO) White paper In accordance ... - Kraken",
+      "content": "Aerodrome Finance (AERO)\nWhite paper\nIn accordance with Title II of Regulation (EU) 2023/1114 (MiCA)\nBeyond publication required by Kraken's regulators and the European Securities and\nMarkets Authority (for inclusion in its register on behalf of Kraken), no part of this\npublication may be reproduced",
+      "score": null
+    },
+    {
+      "url": "https://autopilot-5.gitbook.io/autopilot/protocol/audit-and-security",
+      "title": "Audit & Security | Autopilot - GitBook",
+      "content": "# Audit & Security\n\nAutopilot has undergone multiple independent smart contract audits as part of our commitment to safety and transparency.\n\nBelow you\u2019ll find links to completed and ongoing audit reports:\n\nAerodrome:\n\nArcadia Security Audit \nSherlock Security Audit\n\nVelodrome:\n\nSherlock Security Au",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://github.com/0xSlowbug/audit-portfolio",
+      "title": "0xSlowbug/audit-portfolio - GitHub",
+      "content": "GitHub - 0xSlowbug/audit-portfolio \u00b7 GitHub\n\n/ audit-portfolio Public\n\nStar 0\n\n- Fork 0\n- Notifications\n- Pricing\n\nmain\n\nBranches Tags\n\nGo to file\n\nCode\n\nLast commit message\n\nLast commit date\n\n16 Commits\n\nassets\n\nassets\n\nREADME.md\n\nREADME.md\n\nView all files\n\n| Name | Name |\n| --- | --- |\n\n## Reposit",
+      "score": null
+    },
+    {
+      "url": "https://github.com/cvetanovv/Audits",
+      "title": "cvetanovv/Audits: About tsvetanovv - GitHub",
+      "content": "# Repository: cvetanovv/Audits\n\nAbout tsvetanovv\n\n- Stars: 12\n- Forks: 0\n- Watchers: 12\n- Open issues: 0\n- License: MIT License (MIT)\n- Default branch: main\n- Created: 2024-03-15T14:50:44Z\n- Last push: 2024-09-16T09:24:45Z\n- Contributors: 1 (top: cvetanovv)\n\n---\n\n## About tsvetanovv\n\nI am a dedicate",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Ch-301/audits",
+      "title": "GitHub - Ch-301/audits: Public profile of my smart contract security ...",
+      "content": "# Repository: Ch-301/audits\n\nPublic profile of my smart contract security auditing journey!\n\n- Stars: 4\n- Forks: 2\n- Watchers: 4\n- Open issues: 0\n- License: MIT License (MIT)\n- Default branch: main\n- Created: 2023-05-02T19:12:00Z\n- Last push: 2026-01-28T10:16:22Z\n- Contributors: 1 (top: Ch-301)\n\n---",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/watson/Rhaydden",
+      "title": "Rhaydden - Sherlock",
+      "content": "Rhaydden - Sherlock",
+      "score": null
+    },
+    {
+      "url": "https://github.com/evokid/code4rena-audits",
+      "title": "evokid/code4rena-audits - GitHub",
+      "content": "GitHub - evokid/code4rena-audits: Code4rena Audits I have done \u00b7 GitHub\n\n/ code4rena-audits Public\n\nStar 3\n\n- Pricing\n- Notifications\n- Fork 0\n\n \n\n main\n\nBranches Tags\n\n \n\nGo to file\n\nCode\n\nLast commit message\n\nLast commit date\n\n31 Commits\n\nAjna-audit.md\n\nAjna-audit.md\n\nAsymmetry-audit.md\n\nAsymmetry",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2022-01-sherlock-contest",
+      "title": "Sherlock contest Audit | Code4rena",
+      "content": "Sherlock contest Audit | Code4rena\n\n \n\nCompleted\n\n# Sherlock contest\n\nDecentralized exploit protection.\n\nView repo View report\n\n- Start date20 Jan 2022\n- End date26 Jan 2022\n- Total awards$80,000 USDC\n- Duration7 days\n\n- Results\n- Details\n\n- # \u25b2\n- Competitor\n- USD\n- Total\n- High\n- (Solo)\n- Med\n- (So",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Tri-pathi/Audits",
+      "title": "GitHub - Tri-pathi/Audits: All my submitted reports in C4 and Sherlock",
+      "content": "# Repository: Tri-pathi/Audits\n\nAll my submitted reports in C4 and Sherlock\n\n- Stars: 1\n- Forks: 0\n- Watchers: 1\n- Open issues: 0\n- Default branch: main\n- Created: 2023-07-12T16:29:50Z\n- Last push: 2025-06-11T21:00:08Z\n- Contributors: 1 (top: Tri-pathi)\n\n---\n\n# About Me\n\nNamaskar friends. I'm Tripat",
+      "score": null
+    },
+    {
+      "url": "https://github.com/0xlemonAudits/audits",
+      "title": "0xlemonAudits/audits - GitHub",
+      "content": "# Repository: 0xlemonAudits/audits\n\n- Stars: 3\n- Forks: 0\n- Watchers: 3\n- Open issues: 0\n- Default branch: main\n- Created: 2025-01-10T16:59:15Z\n- Last push: 2025-06-23T17:16:26Z\n- Contributors: 1 (top: 0xlemonAudits)\n\n---\n\n## About me\n\nI am a dedicated smart contract security researcher with a passi",
+      "score": null
+    },
+    {
+      "url": "https://github.com/code-423n4",
+      "title": "Code4rena - GitHub",
+      "content": "# Organization: Code4rena (@code-423n4)\n\n- Website: https://code4rena.com/\n- Twitter: @code4rena\n- Followers: 1270\n- Public Repos: 878\n- Created: 2021-02-15\n\n---\n\n## Top Repositories\n\n| Repository | Description | Stars | Language | Last Updated |\n| --- | --- | --- | --- | --- |\n| code423n4.com | Dep",
+      "score": null
+    },
+    {
+      "url": "https://github.com/MiloTruck/audits/blob/main/contests.md",
+      "title": "audits/contests.md at main - MiloTruck - GitHub",
+      "content": "# File: MiloTruck/audits/contests.md\n\n- Repository: MiloTruck/audits | Audits and findings by MiloTruck | 176 stars\n- Branch: main\n\n```md\n# 2023\n\n## Code4rena\n\n| Contest | Findings | Ranking | Payout | Language | Report |\n|:--:|:--:|:--:|:--:|:--:|:--:|\n| [Ethos Reserve](https://code4rena.com/contes",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority",
+      "content": "Aerodrome (AERO) Token Smart Contract Audit - EtherAuthority \n\nService\n\n- Smart Contract Audit\n- Smart Contract Development\n- Public Blockchain Development\n- KYC\n\nX\n\nRequest a Quote\n\n \n\n \n\n## Project Background\n\nWebsite Details\n\n- Blog\n- Aerodrome Finance is a decentralized finance (DeFi) platform f",
+      "score": null
+    },
+    {
+      "url": "https://aerodrome.finance/security",
+      "title": "Security Overview - Aerodrome Finance",
+      "content": "Aerodrome Finance\n\nSecurity index:\n\nOverview\n\nEmergency Council\n\nContracts\n\nSecurity\n\nIndex\n\n# Security Overview\n\nAerodrome Finance inherits the contract architecture and full security maintenance from Velodrome V2. Velodrome V2 has been audited and runs a bug-bounty program.\n\nTo review the current ",
+      "score": null
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/556",
+      "title": "Aerodrome - detailed report - DefiSafety",
+      "content": "Aerodrome - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Aerodrome\n\n15%\n\nOverview\n\nSecurity IncidentScoring AppendixSummaryDisclaimer\n\nSmart Contracts & Team\n\n1. Are the ",
+      "score": null
+    },
+    {
+      "url": "https://dgld.ch/news/post-incident-report-february-2026-exploit",
+      "title": "Post-Incident Report: February 2026 Exploit - DGLD",
+      "content": "DGLD | Post-Incident Report: February 2026 Exploit\n\nBack to all News\n\n# Post-Incident Report: February 2026 Exploit\n\n21 March 2026\n\nShare\n\nShare\n\nShare\n\nCopy Success\n\nShare\n\nTL;DR - On February 23rd, 2026, an exploit of the DGLD Ethereum smart contract led to the unauthorized creation of illicit, un",
+      "score": null
+    },
+    {
+      "url": "https://www.halborn.com/audits/kickofffun/smart-contract-assessment-b6a722",
+      "title": "Smart Contract Assessment Audit | Kickoff.fun | Halborn Audit Reports",
+      "content": "Smart Contract Assessment Audit | Kickoff.fun | Halborn Audit Reports\n\n \n\n \n\n// Security Assessment\n\n02.03.2026 - 02.11.2026\n\n### Smart Contract Assessment\n\n### Kickoff.fun\n\nPrepared by:\n\nHALBORN\n\nLast Updated 02/13/2026\n\nDate of Engagement: February 3rd, 2026 - February 11th, 2026\n\n---\n\n#### Table ",
+      "score": null
+    },
+    {
+      "url": "https://assets-cms.kraken.com/files/51n36hrp/facade/87d23270a5a77f27a4bed341bc96fa98ba67f37e.pdf",
+      "title": "[PDF] Aerodrome Finance (AERO) White paper In accordance ... - Kraken",
+      "content": "Aerodrome Finance (AERO)\nWhite paper\nIn accordance with Title II of Regulation (EU) 2023/1114 (MiCA)\nBeyond publication required by Kraken's regulators and the European Securities and\nMarkets Authority (for inclusion in its register on behalf of Kraken), no part of this\npublication may be reproduced",
+      "score": null
+    },
+    {
+      "url": "https://autopilot-5.gitbook.io/autopilot/protocol/audit-and-security",
+      "title": "Audit & Security | Autopilot - GitBook",
+      "content": "# Audit & Security\n\nAutopilot has undergone multiple independent smart contract audits as part of our commitment to safety and transparency.\n\nBelow you\u2019ll find links to completed and ongoing audit reports:\n\nAerodrome:\n\nArcadia Security Audit \nSherlock Security Audit\n\nVelodrome:\n\nSherlock Security Au",
+      "score": null
+    },
+    {
+      "url": "https://github.com/0xSlowbug/audit-portfolio",
+      "title": "0xSlowbug/audit-portfolio - GitHub",
+      "content": "GitHub - 0xSlowbug/audit-portfolio \u00b7 GitHub\n\n/ audit-portfolio Public\n\nStar 0\n\n- Fork 0\n- Notifications\n- Pricing\n\nmain\n\nBranches Tags\n\nGo to file\n\nCode\n\nLast commit message\n\nLast commit date\n\n16 Commits\n\nassets\n\nassets\n\nREADME.md\n\nREADME.md\n\nView all files\n\n| Name | Name |\n| --- | --- |\n\n## Reposit",
+      "score": null
+    },
+    {
+      "url": "https://github.com/cvetanovv/Audits",
+      "title": "cvetanovv/Audits: About tsvetanovv - GitHub",
+      "content": "# Repository: cvetanovv/Audits\n\nAbout tsvetanovv\n\n- Stars: 12\n- Forks: 0\n- Watchers: 12\n- Open issues: 0\n- License: MIT License (MIT)\n- Default branch: main\n- Created: 2024-03-15T14:50:44Z\n- Last push: 2024-09-16T09:24:45Z\n- Contributors: 1 (top: cvetanovv)\n\n---\n\n## About tsvetanovv\n\nI am a dedicate",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Ch-301/audits",
+      "title": "GitHub - Ch-301/audits: Public profile of my smart contract security ...",
+      "content": "# Repository: Ch-301/audits\n\nPublic profile of my smart contract security auditing journey!\n\n- Stars: 4\n- Forks: 2\n- Watchers: 4\n- Open issues: 0\n- License: MIT License (MIT)\n- Default branch: main\n- Created: 2023-05-02T19:12:00Z\n- Last push: 2026-01-28T10:16:22Z\n- Contributors: 1 (top: Ch-301)\n\n---",
+      "score": null
+    },
+    {
+      "url": "https://audits.sherlock.xyz/watson/Rhaydden",
+      "title": "Rhaydden - Sherlock",
+      "content": "Rhaydden - Sherlock",
+      "score": null
+    },
+    {
+      "url": "https://github.com/evokid/code4rena-audits",
+      "title": "evokid/code4rena-audits - GitHub",
+      "content": "GitHub - evokid/code4rena-audits: Code4rena Audits I have done \u00b7 GitHub\n\n/ code4rena-audits Public\n\nStar 3\n\n- Pricing\n- Notifications\n- Fork 0\n\n \n\n main\n\nBranches Tags\n\n \n\nGo to file\n\nCode\n\nLast commit message\n\nLast commit date\n\n31 Commits\n\nAjna-audit.md\n\nAjna-audit.md\n\nAsymmetry-audit.md\n\nAsymmetry",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2022-01-sherlock-contest",
+      "title": "Sherlock contest Audit | Code4rena",
+      "content": "Sherlock contest Audit | Code4rena\n\n \n\nCompleted\n\n# Sherlock contest\n\nDecentralized exploit protection.\n\nView repo View report\n\n- Start date20 Jan 2022\n- End date26 Jan 2022\n- Total awards$80,000 USDC\n- Duration7 days\n\n- Results\n- Details\n\n- # \u25b2\n- Competitor\n- USD\n- Total\n- High\n- (Solo)\n- Med\n- (So",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Tri-pathi/Audits",
+      "title": "GitHub - Tri-pathi/Audits: All my submitted reports in C4 and Sherlock",
+      "content": "# Repository: Tri-pathi/Audits\n\nAll my submitted reports in C4 and Sherlock\n\n- Stars: 1\n- Forks: 0\n- Watchers: 1\n- Open issues: 0\n- Default branch: main\n- Created: 2023-07-12T16:29:50Z\n- Last push: 2025-06-11T21:00:08Z\n- Contributors: 1 (top: Tri-pathi)\n\n---\n\n# About Me\n\nNamaskar friends. I'm Tripat",
+      "score": null
+    },
+    {
+      "url": "https://github.com/0xlemonAudits/audits",
+      "title": "0xlemonAudits/audits - GitHub",
+      "content": "# Repository: 0xlemonAudits/audits\n\n- Stars: 3\n- Forks: 0\n- Watchers: 3\n- Open issues: 0\n- Default branch: main\n- Created: 2025-01-10T16:59:15Z\n- Last push: 2025-06-23T17:16:26Z\n- Contributors: 1 (top: 0xlemonAudits)\n\n---\n\n## About me\n\nI am a dedicated smart contract security researcher with a passi",
+      "score": null
+    },
+    {
+      "url": "https://github.com/code-423n4",
+      "title": "Code4rena - GitHub",
+      "content": "# Organization: Code4rena (@code-423n4)\n\n- Website: https://code4rena.com/\n- Twitter: @code4rena\n- Followers: 1270\n- Public Repos: 878\n- Created: 2021-02-15\n\n---\n\n## Top Repositories\n\n| Repository | Description | Stars | Language | Last Updated |\n| --- | --- | --- | --- | --- |\n| code423n4.com | Dep",
+      "score": null
+    },
+    {
+      "url": "https://github.com/MiloTruck/audits/blob/main/contests.md",
+      "title": "audits/contests.md at main - MiloTruck - GitHub",
+      "content": "# File: MiloTruck/audits/contests.md\n\n- Repository: MiloTruck/audits | Audits and findings by MiloTruck | 176 stars\n- Branch: main\n\n```md\n# 2023\n\n## Code4rena\n\n| Contest | Findings | Ranking | Payout | Language | Report |\n|:--:|:--:|:--:|:--:|:--:|:--:|\n| [Ethos Reserve](https://code4rena.com/contes",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://aerodrome.finance/security",
+      "auditor": null,
+      "title": "Security Overview",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 897,
+    "followup_query": 659,
+    "followup_search": 1029,
+    "classify": 7999
+  },
+  "errors": []
+}

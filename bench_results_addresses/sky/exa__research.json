@@ -1,0 +1,228 @@
+{
+  "protocol": "sky",
+  "backend": "exa",
+  "mode": "research",
+  "instructions": "Find the main deployed smart contract addresses for the sky protocol. List the core production contracts (not peripheral helpers) with their names and 0x-prefixed on-chain addresses. Include the chain where each is deployed. Prioritize contracts the protocol team themselves publish on their official docs or governance pages.",
+  "contracts": [
+    {
+      "name": "SKY Token",
+      "address": "0x56072c95faa701256059aa122697b133aded9279",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Governance Token",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MKR-SKY One Way Converter V2",
+      "address": "0xa1ea1ba18e88c381c724a75f23a130420c403f9a",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Token Converter",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Chronicle SKY USD Price Feed",
+      "address": "0xc2ffbbdccf1466eb8968a846179191cb881ecdff",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Price Feed",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "SKY USD Price Feed with Delay",
+      "address": "0x511485bbd96e7e3a056a8d1b84c5071071c52d6f",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Price Feed",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "MKR Token",
+      "address": "0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Core Token",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Staked SKY Token (lssky)",
+      "address": "0xf9a9cfd3229e985b91f99bc866d42938044ffa1c",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Staked Token",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Chief V3 (SKY)",
+      "address": "0x929d9a1435662357f54adcf64dcee4d6b867a6f9",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Governance Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Chief V2 (MKR)",
+      "address": "0x0a3f6849f78076aefadf113f5bed87720274ddc0",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Governance Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Chief V1 (Single Collateral Dai & Multi Collateral Dai, 2017)",
+      "address": "0x8e2a84d6ade1e7fffee039a35ef5f19f13057152",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Governance Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Vote Delegate V3 (supports SKY + Chief V3)",
+      "address": "0x4cf3daefa2683cd18df00f7aff5169c00a9eccd5",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Governance Voting Delegate",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Vote Delegate V2 (supports MKR + Chief V2)",
+      "address": "0xc3d809e87a2c9da4f6d98fecea9135d834d6f5a0",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Governance Voting Delegate",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Vote Delegate V1 (supports MKR + Chief V2)",
+      "address": "0xd897f108670903d1d6070fcf818f9db3615af272",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Governance Voting Delegate",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Staking Engine (supports Chief V3 SKY)",
+      "address": "0xce01c90de7fd1bcfa39e237fe6d8d9f569e8a6a3",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Staking Engine",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "SKY USDS Rewards (Staking Engine)",
+      "address": "0x38e4254bd82ed5ee97cd1c4278faae748d998865",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Staking Rewards Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Staking Engine Debt Position Migrator",
+      "address": "0x473d777f608c3c24b441ab6bd4bbca6b7f9af90b",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Debt Position Migrator",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Clipper",
+      "address": "0x35526314f18feb5b7f124e40d6a99d64f7d7e89a",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Core Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "ClipperCalc",
+      "address": "0xb8f8c7caabfa320717e3e848948450e120f0d9bb",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Core Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    },
+    {
+      "name": "Seal Engine V1 (supports Chief V2 MKR)",
+      "address": "0x2b16c07d5fd5cc701a0a871eae2aad6da5fc8f12",
+      "chains": [
+        "Ethereum"
+      ],
+      "role": "Core Engine Contract",
+      "source": [
+        "exa_deep_research"
+      ],
+      "confidence": 1.0
+    }
+  ],
+  "errors": [],
+  "notes": [],
+  "task_id": "01kpzbk0cqe9ra9ntbm43m7p12",
+  "elapsed_ms": 66117
+}

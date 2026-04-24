@@ -1,0 +1,310 @@
+{
+  "protocol": "uniswap",
+  "backend": "exa",
+  "mode": "instant",
+  "broad_query": "\"uniswap\" smart contract security audit report",
+  "followup_query": "Uniswap audit report site:code4rena.com OR site:sherlock.xyz OR site:cantina.xyz",
+  "broad_results": [
+    {
+      "url": "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+      "title": "v3-core/audits/abdk/audit.pdf at main \u00b7 Uniswap/v3-core - GitHub",
+      "content": "v3-core/audits/abdk/audit.pdf at main \u00b7 Uniswap/v3-core \u00b7 GitHub\n[Skip to content](#start-of-content)\n## Navigation Menu\nToggle navigation\n[\n](https://github.com/)\n[\nSign in\n](https://github.com/login?return_to=https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf)\nSearch or jump to...\n",
+      "score": null
+    },
+    {
+      "url": "https://developers.uniswap.org/docs/protocols/v2/audits",
+      "title": "Audits | Uniswap Developers",
+      "content": "Uniswap DevelopersAudits | Uniswap Developers\n\nCopy MarkdownOpen in...\n\n# Audits\n\nLearn about the audits for Uniswap v2\n\n## Audits\n\nBetween January 8 and April 30, a team of six engineers reviewed and formally verified crucial components of the smart contracts for Uniswap v2.\n\nTheir past work includ",
+      "score": null
+    },
+    {
+      "url": "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+      "title": "[PDF] Uniswap V2 Audit Report - CryptoCompare",
+      "content": "Uniswap V2 Audit Report\ndapp.org\nfv@dapp.org.uk\nTable of Contents\nSummary\nScope\nFormal verification of the core smart contracts\nCode review of core smart contracts\nNumerical error analysis\nCode review of periphery smart contracts (during ongoing development)\nTeam\nFindings\nBugs\nRouter: incompatible w",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit - OpenZeppelin",
+      "content": "Uniswap v4 Core Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Core Audit\n\n# Uniswap v4 Core Audit\n\nTable of Content\n\n## Table of Contents\n\n \n\n## Summary\n\n Type DeFi Timeline From 2024-05-27 To 2024-06-21 Languages Solidity, Yul Total Issues 24 (18 resolved, 2 partially resolved) Critical Severity I",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+      "title": "Uniswap Franchiser Smart Contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Uniswap Franchiser Smart Contracts - ChainSecurity \n\nBack to Overview\n\n# Uniswap Franchiser Smart Contracts\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe most critical subjects covered in our audit are asset solvency and front-running resistance. Security regarding all the ",
+      "score": null
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833",
+      "title": "Uniswap Token \u2013 Smart Contract Security Audit Report by ...",
+      "content": "Uniswap Token \u2013 Smart Contract Security Audit Report by EtherAuthority | PDF\n\n4 views\n\n# Uniswap Token \u2013 Smart Contract Security Audit Report by EtherAuthority\n\nThis Solidity code defines a contract named `Uni`, which represents a token with functionalities like minting, transferring, approvals, and",
+      "score": null
+    },
+    {
+      "url": "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "title": "Uniswap-audit-report-2018-12/Uniswap-final.md at master - GitHub",
+      "content": "# File: ConsenSysDiligence/Uniswap-audit-report-2018-12/Uniswap-final.md\n\n- Repository: ConsenSysDiligence/Uniswap-audit-report-2018-12 | 54 stars\n- Branch: master\n\n```md\n# Uniswap Audit\r\n\r\n\r\n<img height=\"100px\" Hspace=\"30\" Vspace=\"10\" align=\"right\" src=\"static-content/diligence.png\"/> \r\n\r\n<!-- Don'",
+      "score": null
+    },
+    {
+      "url": "https://hacken.io/discover/uniswap-v2-core-contracts-security/",
+      "title": "Uniswap V2 Core Contracts: Technical Details & Risks - Hacken.io",
+      "content": "Uniswap V2 Core Contracts: Technical Details & Risks - Hacken\n\nThe Hacken 2025 Yearly Security ReportCovers major Web3 breaches, their root causes, prevention insights, and key regulatory trends for 2026.Learn more\n\n- Hacken\n- Blog\n- Discover\n- Uniswap V2 Core Contracts: Technical Details & Risks\n\nU",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "title": "UniStaker Infrastructure - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionUniStaker Infrastructure\n\n# UniStaker Infrastructure Findings & Analysis Report\n\n#### 2024-04-11\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nLow Risk and Non-Critical Issues\n\n- 01 Adapting UniStaker test infrastructure to UNI token\n-",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-06-panoptic-hypovault",
+      "title": "Panoptic Hypovault Audit - Code4rena",
+      "content": "Panoptic Hypovault Audit | Code4rena\n\nCompleted\n\n# Panoptic Hypovault\n\nPanoptic is a DeFi options protocol designed to enhance LPing and trading. It transforms Uniswap LP positions into onchain options, enabling traders to access liquidity in a new, flexible way.\n\nView repo View dashboard View repor",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+      "title": "UniStaker Infrastructure Audit - Code4rena",
+      "content": "UniStaker Infrastructure Audit | Code4rena\n\n# UniStaker Infrastructure\n\nStaking infrastructure to empower Uniswap Governance.\n\nView repo View report\n\n- Duration11 days\n- Total awards$92,000 in USDC\n- End date5 Mar 2024\n- Start date23 Feb 2024\n\n- Details\n- Results\n\n- Gas\n- (Solo)\n- Med\n- (Solo)\n- Hig",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-08-goodentry",
+      "title": "Good Entry Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionGood Entry\n\n \n\n# Good Entry Findings & Analysis Report\n\n#### 2023-10-02\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (6)\n\n- [H-01] When price is within position\u2019s range,`deposit` at TokenisableRange can cause loss o",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-12-unruggable-invitational",
+      "title": "Unruggable Invitational Audit - Code4rena",
+      "content": "Unruggable Invitational Audit | Code4rena\n\nCompleted\n\n# Unruggable Invitational\n\nTrustless gateways for ENS cross chain reverse resolution.\n\nView dashboard View report\n\n- Duration14 days\n- Total awards$38,000 in USDC\n- End date20 Dec 2024\n- Start date6 Dec 2024\n\n- Details\n\n# Unruggable audit details",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2022-03-timeswap-contest",
+      "title": "Timeswap contest Audit | Code4rena",
+      "content": "Timeswap contest Audit | Code4rena\n\nCompleted\n\n# Timeswap contest\n\nLike Uniswap, but for lending & borrowing.\n\nView repo View report\n\n- Start date4 Mar 2022\n- End date6 Mar 2022\n- Total awards$30,000 USDC\n- Duration3 days\n\n- Results\n- Details\n\n- # \u25b2\n- Competitor\n- USD\n- Total\n- High\n- (Solo)\n- Med\n-",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-10-ramses-exchange",
+      "title": "Ramses Exchange Audit | Code4rena",
+      "content": "Ramses Exchange Audit | Code4rena\n\nCompleted\n\n# Ramses Exchange\n\nThe Ramses Kingdom is a next-generation decentralized exchange (DEX) suite, enhancing Uniswap V3's concentrated liquidity model. With advanced liquidity mining & a community-driven governance system, it delivers a seamless, innovative ",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-03-revert-lend",
+      "title": "Revert Lend Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionRevert Lend\n\n# Revert Lend Findings & Analysis Report\n\n#### 2024-05-22\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (6)\n\n- [H-01]`V3Vault.sol` permit signature does not check receiving token address is USDC\n- [H-02]",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-09-panoptic-invitational",
+      "title": "Panoptic Invitational Audit - Code4rena",
+      "content": "Panoptic Invitational Audit | Code4rena\n\nCompleted\n\n# Panoptic Invitational\n\nPermissionless, perpetual options trading on any token, any strike, any size.\n\nView report\n\n- Duration7 days\n- Total awards$20,000 in USDC\n- End date3 Oct 2024\n- Start date26 Sep 2024\n\n- Details\n\n# Panoptic audit details\n\nT",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+      "title": "v3-core/audits/abdk/audit.pdf at main \u00b7 Uniswap/v3-core - GitHub",
+      "content": "v3-core/audits/abdk/audit.pdf at main \u00b7 Uniswap/v3-core \u00b7 GitHub\n[Skip to content](#start-of-content)\n## Navigation Menu\nToggle navigation\n[\n](https://github.com/)\n[\nSign in\n](https://github.com/login?return_to=https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf)\nSearch or jump to...\n",
+      "score": null
+    },
+    {
+      "url": "https://developers.uniswap.org/docs/protocols/v2/audits",
+      "title": "Audits | Uniswap Developers",
+      "content": "Uniswap DevelopersAudits | Uniswap Developers\n\nCopy MarkdownOpen in...\n\n# Audits\n\nLearn about the audits for Uniswap v2\n\n## Audits\n\nBetween January 8 and April 30, a team of six engineers reviewed and formally verified crucial components of the smart contracts for Uniswap v2.\n\nTheir past work includ",
+      "score": null
+    },
+    {
+      "url": "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+      "title": "[PDF] Uniswap V2 Audit Report - CryptoCompare",
+      "content": "Uniswap V2 Audit Report\ndapp.org\nfv@dapp.org.uk\nTable of Contents\nSummary\nScope\nFormal verification of the core smart contracts\nCode review of core smart contracts\nNumerical error analysis\nCode review of periphery smart contracts (during ongoing development)\nTeam\nFindings\nBugs\nRouter: incompatible w",
+      "score": null
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit - OpenZeppelin",
+      "content": "Uniswap v4 Core Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Core Audit\n\n# Uniswap v4 Core Audit\n\nTable of Content\n\n## Table of Contents\n\n \n\n## Summary\n\n Type DeFi Timeline From 2024-05-27 To 2024-06-21 Languages Solidity, Yul Total Issues 24 (18 resolved, 2 partially resolved) Critical Severity I",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+      "title": "Uniswap Franchiser Smart Contracts - ChainSecurity",
+      "content": "Smart Contract Audit - Uniswap Franchiser Smart Contracts - ChainSecurity \n\nBack to Overview\n\n# Uniswap Franchiser Smart Contracts\n\ndownload report\n\nexternal-link\n\n## Summary\n\nThe most critical subjects covered in our audit are asset solvency and front-running resistance. Security regarding all the ",
+      "score": null
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833",
+      "title": "Uniswap Token \u2013 Smart Contract Security Audit Report by ...",
+      "content": "Uniswap Token \u2013 Smart Contract Security Audit Report by EtherAuthority | PDF\n\n4 views\n\n# Uniswap Token \u2013 Smart Contract Security Audit Report by EtherAuthority\n\nThis Solidity code defines a contract named `Uni`, which represents a token with functionalities like minting, transferring, approvals, and",
+      "score": null
+    },
+    {
+      "url": "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "title": "Uniswap-audit-report-2018-12/Uniswap-final.md at master - GitHub",
+      "content": "# File: ConsenSysDiligence/Uniswap-audit-report-2018-12/Uniswap-final.md\n\n- Repository: ConsenSysDiligence/Uniswap-audit-report-2018-12 | 54 stars\n- Branch: master\n\n```md\n# Uniswap Audit\r\n\r\n\r\n<img height=\"100px\" Hspace=\"30\" Vspace=\"10\" align=\"right\" src=\"static-content/diligence.png\"/> \r\n\r\n<!-- Don'",
+      "score": null
+    },
+    {
+      "url": "https://hacken.io/discover/uniswap-v2-core-contracts-security/",
+      "title": "Uniswap V2 Core Contracts: Technical Details & Risks - Hacken.io",
+      "content": "Uniswap V2 Core Contracts: Technical Details & Risks - Hacken\n\nThe Hacken 2025 Yearly Security ReportCovers major Web3 breaches, their root causes, prevention insights, and key regulatory trends for 2026.Learn more\n\n- Hacken\n- Blog\n- Discover\n- Uniswap V2 Core Contracts: Technical Details & Risks\n\nU",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "title": "UniStaker Infrastructure - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionUniStaker Infrastructure\n\n# UniStaker Infrastructure Findings & Analysis Report\n\n#### 2024-04-11\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nLow Risk and Non-Critical Issues\n\n- 01 Adapting UniStaker test infrastructure to UNI token\n-",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits",
+      "title": "Audits | Code4rena",
+      "content": "Audits | Code4rena\n\nActive audits\n\nEnds AuditK2K2 brings sophisticated DeFi lending to Stellar through pooled, isolated, and gated markets. Built for RWAs, AI agents, and institutions, with an integrated UI and real-time risk dashboards.StellarRust17 Apr 8:00 PM - 27 May 8:00 PM$135,000 in USDC\n\nSub",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-06-panoptic-hypovault",
+      "title": "Panoptic Hypovault Audit - Code4rena",
+      "content": "Panoptic Hypovault Audit | Code4rena\n\nCompleted\n\n# Panoptic Hypovault\n\nPanoptic is a DeFi options protocol designed to enhance LPing and trading. It transforms Uniswap LP positions into onchain options, enabling traders to access liquidity in a new, flexible way.\n\nView repo View dashboard View repor",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+      "title": "UniStaker Infrastructure Audit - Code4rena",
+      "content": "UniStaker Infrastructure Audit | Code4rena\n\n# UniStaker Infrastructure\n\nStaking infrastructure to empower Uniswap Governance.\n\nView repo View report\n\n- Duration11 days\n- Total awards$92,000 in USDC\n- End date5 Mar 2024\n- Start date23 Feb 2024\n\n- Details\n- Results\n\n- Gas\n- (Solo)\n- Med\n- (Solo)\n- Hig",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-08-goodentry",
+      "title": "Good Entry Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionGood Entry\n\n \n\n# Good Entry Findings & Analysis Report\n\n#### 2023-10-02\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (6)\n\n- [H-01] When price is within position\u2019s range,`deposit` at TokenisableRange can cause loss o",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-12-unruggable-invitational",
+      "title": "Unruggable Invitational Audit - Code4rena",
+      "content": "Unruggable Invitational Audit | Code4rena\n\nCompleted\n\n# Unruggable Invitational\n\nTrustless gateways for ENS cross chain reverse resolution.\n\nView dashboard View report\n\n- Duration14 days\n- Total awards$38,000 in USDC\n- End date20 Dec 2024\n- Start date6 Dec 2024\n\n- Details\n\n# Unruggable audit details",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2022-03-timeswap-contest",
+      "title": "Timeswap contest Audit | Code4rena",
+      "content": "Timeswap contest Audit | Code4rena\n\nCompleted\n\n# Timeswap contest\n\nLike Uniswap, but for lending & borrowing.\n\nView repo View report\n\n- Start date4 Mar 2022\n- End date6 Mar 2022\n- Total awards$30,000 USDC\n- Duration3 days\n\n- Results\n- Details\n\n- # \u25b2\n- Competitor\n- USD\n- Total\n- High\n- (Solo)\n- Med\n-",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-10-ramses-exchange",
+      "title": "Ramses Exchange Audit | Code4rena",
+      "content": "Ramses Exchange Audit | Code4rena\n\nCompleted\n\n# Ramses Exchange\n\nThe Ramses Kingdom is a next-generation decentralized exchange (DEX) suite, enhancing Uniswap V3's concentrated liquidity model. With advanced liquidity mining & a community-driven governance system, it delivers a seamless, innovative ",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-03-revert-lend",
+      "title": "Revert Lend Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionRevert Lend\n\n# Revert Lend Findings & Analysis Report\n\n#### 2024-05-22\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nHigh Risk Findings (6)\n\n- [H-01]`V3Vault.sol` permit signature does not check receiving token address is USDC\n- [H-02]",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-09-panoptic-invitational",
+      "title": "Panoptic Invitational Audit - Code4rena",
+      "content": "Panoptic Invitational Audit | Code4rena\n\nCompleted\n\n# Panoptic Invitational\n\nPermissionless, perpetual options trading on any token, any strike, any size.\n\nView report\n\n- Duration7 days\n- Total awards$20,000 in USDC\n- End date3 Oct 2024\n- Start date26 Sep 2024\n\n- Details\n\n# Panoptic audit details\n\nT",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://github.com/Uniswap/v3-core/blob/main/audits/abdk/audit.pdf",
+      "auditor": "ABDK Consulting",
+      "title": "Uniswap V3 Core Audit",
+      "date": null,
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://developers.uniswap.org/docs/protocols/v2/audits",
+      "auditor": null,
+      "title": "Uniswap V2 Audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://resources.cryptocompare.com/asset-management/40/1682605994217.pdf",
+      "auditor": null,
+      "title": "Uniswap V2 Audit Report",
+      "date": null,
+      "type": "pdf",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap v4 Core Audit",
+      "date": "2024-05",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/uniswap-franchiser-smart-contracts",
+      "auditor": "ChainSecurity",
+      "title": "Uniswap Franchiser Smart Contracts",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/uniswap-token-smart-contract-security-audit-report-by-etherauthority/284703833",
+      "auditor": null,
+      "title": "Uniswap Token \u2013 Smart Contract Security Audit Report by EtherAuthority",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "auditor": "ConsenSys Diligence",
+      "title": "Uniswap Audit",
+      "date": "2018-12",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/reports/2024-02-uniswap-foundation",
+      "auditor": "Code4rena",
+      "title": "UniStaker Infrastructure Findings & Analysis Report",
+      "date": "2024-04-11",
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://code4rena.com/audits/2024-02-unistaker-infrastructure",
+      "auditor": "Code4rena",
+      "title": "UniStaker Infrastructure",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 775,
+    "followup_query": 1000,
+    "followup_search": 891,
+    "classify": 10270
+  },
+  "errors": []
+}

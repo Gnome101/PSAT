@@ -1,0 +1,280 @@
+{
+  "protocol": "compound v3",
+  "backend": "exa",
+  "mode": "deep",
+  "broad_query": "\"compound v3\" smart contract security audit report",
+  "followup_query": "Compound v3 audit site:github.com filetype:pdf",
+  "broad_results": [
+    {
+      "url": "https://www.chainsecurity.com/security-audit/compound-iii",
+      "title": "Smart contract audit of Compound III by ChainSecurity",
+      "content": "Smart contract audit of Compound III by ChainSecurity \n\nBack to Overview\n\n# Compound III Security Audit\n\ndownload report\n\nWe\u2019ve worked with several auditing firms over the years, and ChainSecurity stands out as the most thorough and technically rigorous. Their team consistently delivers deep, high-q",
+      "score": 1
+    },
+    {
+      "url": "https://blog.openzeppelin.com/compound-iii-audit",
+      "title": "Compound III Audit - OpenZeppelin blog",
+      "content": "Compound III Audit - OpenZeppelin blog \n\nResearch/ Security Audits/\n\nCompound III Audit\n\n# Compound III Audit\n\nTable of Content\n\nDelivered to Compound on June 14th, 2022. Fix updates will be added to this document periodically.\n\n \n\n---\n\nThis security assessment was prepared by OpenZeppelin, protecti",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/582",
+      "title": "Compound III - detailed report | DeFiSafety",
+      "content": "Compound III - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Compound III\n\n80%\n\nOverview\n\nScoring AppendixSummaryDisclaimer\n\nCode and Team\n\n1. Are the smart contract addre",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://www.certora.com/reports/compound-v3-multiplier-plugin",
+      "title": "Compound V3 - Multiplier Plugin",
+      "content": "Compound V3 - Multiplier Plugin\n\n## V3 Multiplier Plugin\n\n### Compound\n\n#### January 7, 2026\n\nCompound V3 (Comet) is a DeFi lending protocol that allows users to supply collateral assets and borrow a base token. This audit scope concentrated on the new Compound Multiplier Plugin, which facilitates t",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/across-v3-and-oval-incremental-audit",
+      "title": "Across V3 and Oval Incremental Audit",
+      "content": "Across V3 and Oval Incremental Audit\n\nResearch/ Security Audits/\n\nAcross V3 and Oval Incremental Audit\n\n# Across V3 and Oval Incremental Audit\n\nTable of Content\n\nSummaryScopeSystem OverviewSecurity Model and Trust AssumptionsPrivileged RolesMedium SeverityLow SeverityNotes & Additional InformationCo",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "title": "",
+      "content": "JANUARY 29, 2025\nAAVE V3.3.0\nSMART\nCONTRACTS\nSECURITY\nAUDIT REPORT\nCODE DEVElOPED bY\nEXECUTIVE 1 SUMMARY\nEXECUTIVE SUMMARY 3\n1.1 EXECUTIVE SUMMARY\nThis document presents the smart contracts security audit conducted by Oxorio for BGD\nLabs\u2019s Aave v3.3.0 Update.\nBGD Labs (Bored Ghosts Developing Labs) ",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+      "title": "ratings/Compound-USDT.md at master \u00b7 stakingrewards/defi-risk-rating",
+      "content": "# File: stakingrewards/defi-risk-rating/ratings/Compound-USDT.md\n\n- Repository: stakingrewards/defi-risk-rating | 1 stars\n- Branch: master\n\n```md\n# Compound v3 - USDT (Ethereum Mainnet) Risk Rating\n\n**Rating Date**: 2026-04-01\n**Final Grade**: BB\n**Total Score**: 780.8/900 points\n**Framework**: Stak",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "title": "",
+      "content": "Uniswap V3 Core\nSecurity Assessment\nMarch 12, 2021 \nPrepared For:\nHayden Adams | Uniswap\nhayden@uniswap.org\nPrepared By:\nAlexander Remie | Trail of Bits\nalexander.remie@trailofbits.com\nDominik Teiml | Trail of Bits\ndominik.teiml@trailofbits.com\nJosselin Feist | Trail of Bits\njosselin.feist@trailofbi",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/compound-comprehensive-protocol-audit",
+      "title": "Compound Comprehensive Protocol Audit - OpenZeppelin blog",
+      "content": "Compound Comprehensive Protocol Audit - OpenZeppelin blog \n\nResearch/ Security Audits/\n\nCompound Comprehensive Protocol Audit\n\n# Compound Comprehensive Protocol Audit\n\nTable of Content\n\nDelivered to Compound on March 4th, 2022. Fix updates will be added to this document periodically.\n\n \n\n---\n\n## Tab",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://docs.curve.finance/assets/pdf/audits/ChainSecurity_Curve_Curve_Stablecoin_audit_250221.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the Curve Stablecoin\nSmart Contracts\nFebruary 21, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 14\n4 Terminology 15\n5 Open Findings 16\n6 Resolved Findings 27\n7 Informational 49\n8 Notes 55\nCurve - Curve Stablecoin",
+      "score": 0
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+      "title": "v3-core/audits/tob at main \u00b7 Uniswap/v3-core \u00b7 GitHub",
+      "content": "v3-core/audits/tob at main \u00b7 Uniswap/v3-core \u00b7 GitHub\n\n/ v3-core Public\n\nStar 5k\n\n- Pricing\n- Notifications\n- Fork 3k\n\n \n\n## Files\n\n main\n\n# tob\n\nHistory\n\n main\n\n# tob\n\nTop\n\nLast commit message\n\nLast commit date\n\ncontracts/crytic\n\ncontracts/crytic\n\nREADME.md\n\nREADME.md\n\naudit.pdf\n\naudit.pdf\n\nView al",
+      "score": 1
+    },
+    {
+      "url": "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+      "title": "ratings/Compound-USDT.md at master \u00b7 stakingrewards/defi-risk-rating",
+      "content": "# File: stakingrewards/defi-risk-rating/ratings/Compound-USDT.md\n\n- Repository: stakingrewards/defi-risk-rating | 1 stars\n- Branch: master\n\n```md\n# Compound v3 - USDT (Ethereum Mainnet) Risk Rating\n\n**Rating Date**: 2026-04-01\n**Final Grade**: BB\n**Total Score**: 780.8/900 points\n**Framework**: Stak",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://github.com/yearn/yearn-security/tree/master/audits/20240504_ChainSecurity_Yearn_V3",
+      "title": "yearn-security/audits/20240504_ChainSecurity_Yearn_V3 at master \u00b7 yearn/yearn-security \u00b7 GitHub",
+      "content": "yearn-security/audits/20240504_ChainSecurity_Yearn_V3 at master \u00b7 yearn/yearn-security \u00b7 GitHub\n\n/ yearn-security Public\n\nStar 229\n\n- Pricing\n- Notifications\n- Fork 71\n\n \n\n## Files\n\n master\n\n# 20240504_ChainSecurity_Yearn_V3\n\nHistory\n\n master\n\n# 20240504_ChainSecurity_Yearn_V3\n\nTop\n\nLast commit mess",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://github.com/alchemix-finance/v3-poc/blob/audit-contest/src/AlchemistV3.sol",
+      "title": "src/AlchemistV3.sol at audit-contest \u00b7 alchemix-finance/v3-poc",
+      "content": "# File: alchemix-finance/v3-poc/src/AlchemistV3.sol\n\n- Repository: alchemix-finance/v3-poc | repo for prototyping v3 | 5 stars | Solidity\n- Branch: audit-contest\n\n```sol\n// SPDX-License-Identifier: MIT\npragma solidity 0.8.26;\n\nimport \"./interfaces/IAlchemistV3.sol\";\nimport {ITokenAdapter} from \"./in",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+      "title": "AAVE/Aave%20v%203.1.0/README.md at master \u00b7 mixbytes/audits_public",
+      "content": "# File: mixbytes/audits_public/AAVE/Aave%20v%203.1.0/README.md\n\n- Repository: mixbytes/audits_public | MixBytes Team public security audits | 502 stars | JavaScript\n- Branch: master\n\n```md\n# Aave v3.1.0 Security Audit Report\n\n###### tags: `Aave`\n\n## 1. INTRODUCTION\n\n### 1.1 Disclaimer\nThe audit make",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://github.com/yearn/yearn-security/tree/master/audits/20240502_Statemind_Yearn_V3",
+      "title": "yearn-security/audits/20240502_Statemind_Yearn_V3 at master \u00b7 yearn/yearn-security \u00b7 GitHub",
+      "content": "yearn-security/audits/20240502_Statemind_Yearn_V3 at master \u00b7 yearn/yearn-security \u00b7 GitHub\n\n/ yearn-security Public\n\nStar 229\n\n- Pricing\n- Notifications\n- Fork 71\n\n \n\n## Files\n\n master\n\n# 20240502_Statemind_Yearn_V3\n\nHistory\n\n master\n\n# 20240502_Statemind_Yearn_V3\n\nTop\n\nLast commit message\n\nLast co",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://gist.github.com/kacperrams/0f961d746f53e2a000cd92c60410c685",
+      "title": "0f961d746f53e2a000cd92c60410c685",
+      "content": "# Gist: Review of Mainnet ETH Final Report (January 2023).md\n\n- Author: [@kacperrams](https://github.com/kacperrams)\n- Private gist (1 file)\n- Created: 2023-01-03T20:48:13Z\n- Updated: 2023-01-03T20:48:13Z\n\n## Review of Mainnet ETH Final Report (January 2023).md\n\n```md\n# Review of Mainnet ETH\n\n### Pe",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://github.com/IndexCoop/audits/blob/main/audits/IndexDIMv3AuditReport.md",
+      "title": "audits/IndexDIMv3AuditReport.md at main \u00b7 IndexCoop/audits",
+      "content": "# File: IndexCoop/audits/audits/IndexDIMv3AuditReport.md\n\n- Repository: IndexCoop/audits | Information about Index Coop's smart contract audits | 2 stars\n- Branch: main\n\n```md\n# Index DIMv3 Audit Report\r\n\r\n### Reviewed by: 0x52 ([@IAm0x52](https://twitter.com/IAm0x52))\r\n\r\n### Review Date(s): 5/8/24 ",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2025-01-aave-v3-3",
+      "title": "sherlock-audit/2025-01-aave-v3-3",
+      "content": "# Repository: sherlock-audit/2025-01-aave-v3-3\n\n- Stars: 1\n- Forks: 0\n- Watchers: 1\n- Open issues: 1\n- Primary language: Solidity\n- Languages: Solidity (85.7%), Python (10.8%), Ruby (2.7%), Shell (0.6%), Makefile (0.2%)\n- Default branch: main\n- Created: 2025-01-03T22:51:27Z\n- Last push: 2025-02-28T2",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/Yearn%20Finance/Stablecoins%203pool/README.md",
+      "title": "Yearn%20Finance/Stablecoins%203pool/README.md at master \u00b7 mixbytes/audits_public",
+      "content": "# File: mixbytes/audits_public/Yearn%20Finance/Stablecoins%203pool/README.md\n\n- Repository: mixbytes/audits_public | MixBytes Team public security audits | 502 stars | JavaScript\n- Branch: master\n\n```md\n# Yearn-stablecoins-3pool Security Audit Report (merged)\n\n###### tags: `Yearn`\n\n## Introduction\n\n",
+      "score": 0
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://www.chainsecurity.com/security-audit/compound-iii",
+      "title": "Smart contract audit of Compound III by ChainSecurity",
+      "content": "Smart contract audit of Compound III by ChainSecurity \n\nBack to Overview\n\n# Compound III Security Audit\n\ndownload report\n\nWe\u2019ve worked with several auditing firms over the years, and ChainSecurity stands out as the most thorough and technically rigorous. Their team consistently delivers deep, high-q",
+      "score": 1
+    },
+    {
+      "url": "https://blog.openzeppelin.com/compound-iii-audit",
+      "title": "Compound III Audit - OpenZeppelin blog",
+      "content": "Compound III Audit - OpenZeppelin blog \n\nResearch/ Security Audits/\n\nCompound III Audit\n\n# Compound III Audit\n\nTable of Content\n\nDelivered to Compound on June 14th, 2022. Fix updates will be added to this document periodically.\n\n \n\n---\n\nThis security assessment was prepared by OpenZeppelin, protecti",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://defisafety.com/app/pqrs/582",
+      "title": "Compound III - detailed report | DeFiSafety",
+      "content": "Compound III - detailed report | DeFiSafety\n\nReport an issue\n\nIf you notice some outdated information please let us know!\n\nName\n\nEmail\n\nYour message\n\nSend Message\n\nBack to the PQR list\n\n### Compound III\n\n80%\n\nOverview\n\nScoring AppendixSummaryDisclaimer\n\nCode and Team\n\n1. Are the smart contract addre",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://www.certora.com/reports/compound-v3-multiplier-plugin",
+      "title": "Compound V3 - Multiplier Plugin",
+      "content": "Compound V3 - Multiplier Plugin\n\n## V3 Multiplier Plugin\n\n### Compound\n\n#### January 7, 2026\n\nCompound V3 (Comet) is a DeFi lending protocol that allows users to supply collateral assets and borrow a base token. This audit scope concentrated on the new Compound Multiplier Plugin, which facilitates t",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/across-v3-and-oval-incremental-audit",
+      "title": "Across V3 and Oval Incremental Audit",
+      "content": "Across V3 and Oval Incremental Audit\n\nResearch/ Security Audits/\n\nAcross V3 and Oval Incremental Audit\n\n# Across V3 and Oval Incremental Audit\n\nTable of Content\n\nSummaryScopeSystem OverviewSecurity Model and Trust AssumptionsPrivileged RolesMedium SeverityLow SeverityNotes & Additional InformationCo",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "title": "",
+      "content": "JANUARY 29, 2025\nAAVE V3.3.0\nSMART\nCONTRACTS\nSECURITY\nAUDIT REPORT\nCODE DEVElOPED bY\nEXECUTIVE 1 SUMMARY\nEXECUTIVE SUMMARY 3\n1.1 EXECUTIVE SUMMARY\nThis document presents the smart contracts security audit conducted by Oxorio for BGD\nLabs\u2019s Aave v3.3.0 Update.\nBGD Labs (Bored Ghosts Developing Labs) ",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://github.com/stakingrewards/defi-risk-rating/blob/master/ratings/Compound-USDT.md",
+      "title": "ratings/Compound-USDT.md at master \u00b7 stakingrewards/defi-risk-rating",
+      "content": "# File: stakingrewards/defi-risk-rating/ratings/Compound-USDT.md\n\n- Repository: stakingrewards/defi-risk-rating | 1 stars\n- Branch: master\n\n```md\n# Compound v3 - USDT (Ethereum Mainnet) Risk Rating\n\n**Rating Date**: 2026-04-01\n**Final Grade**: BB\n**Total Score**: 780.8/900 points\n**Framework**: Stak",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "title": "",
+      "content": "Uniswap V3 Core\nSecurity Assessment\nMarch 12, 2021 \nPrepared For:\nHayden Adams | Uniswap\nhayden@uniswap.org\nPrepared By:\nAlexander Remie | Trail of Bits\nalexander.remie@trailofbits.com\nDominik Teiml | Trail of Bits\ndominik.teiml@trailofbits.com\nJosselin Feist | Trail of Bits\njosselin.feist@trailofbi",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/compound-comprehensive-protocol-audit",
+      "title": "Compound Comprehensive Protocol Audit - OpenZeppelin blog",
+      "content": "Compound Comprehensive Protocol Audit - OpenZeppelin blog \n\nResearch/ Security Audits/\n\nCompound Comprehensive Protocol Audit\n\n# Compound Comprehensive Protocol Audit\n\nTable of Content\n\nDelivered to Compound on March 4th, 2022. Fix updates will be added to this document periodically.\n\n \n\n---\n\n## Tab",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://docs.curve.finance/assets/pdf/audits/ChainSecurity_Curve_Curve_Stablecoin_audit_250221.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the Curve Stablecoin\nSmart Contracts\nFebruary 21, 2025\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 14\n4 Terminology 15\n5 Open Findings 16\n6 Resolved Findings 27\n7 Informational 49\n8 Notes 55\nCurve - Curve Stablecoin",
+      "score": 0
+    },
+    {
+      "url": "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+      "title": "v3-core/audits/tob at main \u00b7 Uniswap/v3-core \u00b7 GitHub",
+      "content": "v3-core/audits/tob at main \u00b7 Uniswap/v3-core \u00b7 GitHub\n\n/ v3-core Public\n\nStar 5k\n\n- Pricing\n- Notifications\n- Fork 3k\n\n \n\n## Files\n\n main\n\n# tob\n\nHistory\n\n main\n\n# tob\n\nTop\n\nLast commit message\n\nLast commit date\n\ncontracts/crytic\n\ncontracts/crytic\n\nREADME.md\n\nREADME.md\n\naudit.pdf\n\naudit.pdf\n\nView al",
+      "score": 1
+    },
+    {
+      "url": "https://github.com/yearn/yearn-security/tree/master/audits/20240504_ChainSecurity_Yearn_V3",
+      "title": "yearn-security/audits/20240504_ChainSecurity_Yearn_V3 at master \u00b7 yearn/yearn-security \u00b7 GitHub",
+      "content": "yearn-security/audits/20240504_ChainSecurity_Yearn_V3 at master \u00b7 yearn/yearn-security \u00b7 GitHub\n\n/ yearn-security Public\n\nStar 229\n\n- Pricing\n- Notifications\n- Fork 71\n\n \n\n## Files\n\n master\n\n# 20240504_ChainSecurity_Yearn_V3\n\nHistory\n\n master\n\n# 20240504_ChainSecurity_Yearn_V3\n\nTop\n\nLast commit mess",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://github.com/alchemix-finance/v3-poc/blob/audit-contest/src/AlchemistV3.sol",
+      "title": "src/AlchemistV3.sol at audit-contest \u00b7 alchemix-finance/v3-poc",
+      "content": "# File: alchemix-finance/v3-poc/src/AlchemistV3.sol\n\n- Repository: alchemix-finance/v3-poc | repo for prototyping v3 | 5 stars | Solidity\n- Branch: audit-contest\n\n```sol\n// SPDX-License-Identifier: MIT\npragma solidity 0.8.26;\n\nimport \"./interfaces/IAlchemistV3.sol\";\nimport {ITokenAdapter} from \"./in",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/AAVE/Aave%20v%203.1.0/README.md",
+      "title": "AAVE/Aave%20v%203.1.0/README.md at master \u00b7 mixbytes/audits_public",
+      "content": "# File: mixbytes/audits_public/AAVE/Aave%20v%203.1.0/README.md\n\n- Repository: mixbytes/audits_public | MixBytes Team public security audits | 502 stars | JavaScript\n- Branch: master\n\n```md\n# Aave v3.1.0 Security Audit Report\n\n###### tags: `Aave`\n\n## 1. INTRODUCTION\n\n### 1.1 Disclaimer\nThe audit make",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://github.com/yearn/yearn-security/tree/master/audits/20240502_Statemind_Yearn_V3",
+      "title": "yearn-security/audits/20240502_Statemind_Yearn_V3 at master \u00b7 yearn/yearn-security \u00b7 GitHub",
+      "content": "yearn-security/audits/20240502_Statemind_Yearn_V3 at master \u00b7 yearn/yearn-security \u00b7 GitHub\n\n/ yearn-security Public\n\nStar 229\n\n- Pricing\n- Notifications\n- Fork 71\n\n \n\n## Files\n\n master\n\n# 20240502_Statemind_Yearn_V3\n\nHistory\n\n master\n\n# 20240502_Statemind_Yearn_V3\n\nTop\n\nLast commit message\n\nLast co",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://gist.github.com/kacperrams/0f961d746f53e2a000cd92c60410c685",
+      "title": "0f961d746f53e2a000cd92c60410c685",
+      "content": "# Gist: Review of Mainnet ETH Final Report (January 2023).md\n\n- Author: [@kacperrams](https://github.com/kacperrams)\n- Private gist (1 file)\n- Created: 2023-01-03T20:48:13Z\n- Updated: 2023-01-03T20:48:13Z\n\n## Review of Mainnet ETH Final Report (January 2023).md\n\n```md\n# Review of Mainnet ETH\n\n### Pe",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://github.com/IndexCoop/audits/blob/main/audits/IndexDIMv3AuditReport.md",
+      "title": "audits/IndexDIMv3AuditReport.md at main \u00b7 IndexCoop/audits",
+      "content": "# File: IndexCoop/audits/audits/IndexDIMv3AuditReport.md\n\n- Repository: IndexCoop/audits | Information about Index Coop's smart contract audits | 2 stars\n- Branch: main\n\n```md\n# Index DIMv3 Audit Report\r\n\r\n### Reviewed by: 0x52 ([@IAm0x52](https://twitter.com/IAm0x52))\r\n\r\n### Review Date(s): 5/8/24 ",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://github.com/sherlock-audit/2025-01-aave-v3-3",
+      "title": "sherlock-audit/2025-01-aave-v3-3",
+      "content": "# Repository: sherlock-audit/2025-01-aave-v3-3\n\n- Stars: 1\n- Forks: 0\n- Watchers: 1\n- Open issues: 1\n- Primary language: Solidity\n- Languages: Solidity (85.7%), Python (10.8%), Ruby (2.7%), Shell (0.6%), Makefile (0.2%)\n- Default branch: main\n- Created: 2025-01-03T22:51:27Z\n- Last push: 2025-02-28T2",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://github.com/mixbytes/audits_public/blob/master/Yearn%20Finance/Stablecoins%203pool/README.md",
+      "title": "Yearn%20Finance/Stablecoins%203pool/README.md at master \u00b7 mixbytes/audits_public",
+      "content": "# File: mixbytes/audits_public/Yearn%20Finance/Stablecoins%203pool/README.md\n\n- Repository: mixbytes/audits_public | MixBytes Team public security audits | 502 stars | JavaScript\n- Branch: master\n\n```md\n# Yearn-stablecoins-3pool Security Audit Report (merged)\n\n###### tags: `Yearn`\n\n## Introduction\n\n",
+      "score": 0
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://www.chainsecurity.com/security-audit/compound-iii",
+      "auditor": "ChainSecurity",
+      "title": "Compound III Security Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://blog.openzeppelin.com/compound-iii-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Compound III Audit",
+      "date": "2022-06-14",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.certora.com/reports/compound-v3-multiplier-plugin",
+      "auditor": "Certora",
+      "title": "Compound V3 - Multiplier Plugin",
+      "date": "2026-01-07",
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 564,
+    "followup_query": 889,
+    "followup_search": 471,
+    "classify": 9378
+  },
+  "errors": []
+}

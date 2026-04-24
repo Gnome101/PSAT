@@ -1,0 +1,27 @@
+{
+  "protocol": "compound v3",
+  "backend": "exa",
+  "mode": "deep-reasoning",
+  "elapsed_ms": 109539,
+  "contracts": [],
+  "official_domain": "docs.compound.finance",
+  "errors": [
+    {
+      "provider": "exa",
+      "error": "Exa network error: HTTPSConnectionPool(host='api.exa.ai', port=443): Read timed out. (read timeout=30)",
+      "query": "site:docs.compound.finance compound v3 contract addresses deployments smart contracts"
+    },
+    {
+      "provider": "exa",
+      "error": "Exa network error: HTTPSConnectionPool(host='api.exa.ai', port=443): Read timed out. (read timeout=30)",
+      "query": "site:compound.finance compound v3 contract addresses deployments smart contracts"
+    }
+  ],
+  "notes": [
+    "Domain candidates: github.com, docs.compound.finance, compound.finance, dev.to",
+    "Official domain: docs.compound.finance",
+    "Selected pages: 1",
+    "No inventory contracts extracted from selected pages",
+    "Tavily queries used: 4/4"
+  ]
+}

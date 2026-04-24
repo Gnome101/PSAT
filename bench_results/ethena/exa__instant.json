@@ -1,0 +1,302 @@
+{
+  "protocol": "ethena",
+  "backend": "exa",
+  "mode": "instant",
+  "broad_query": "\"ethena\" smart contract security audit report",
+  "followup_query": "Ethena Labs site:github.com audit OR security PDF",
+  "broad_results": [
+    {
+      "url": "https://docs.ethena.fi/resources/audits",
+      "title": "Audits - Ethena Docs",
+      "content": "# Audits\n\nAt Ethena, the integrity of our smart contracts is paramount. We maintain this by conducting comprehensive audits, which help identify potential vulnerabilities, logical errors, or inefficiencies. These rigorous audits, carried out by industry experts, fortify our security and seek to incr",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+      "title": "Ethena-security-review-October.md - pashov/audits - GitHub",
+      "content": "# File: pashov/audits/team/md/Ethena-security-review-October.md\n\n- Repository: pashov/audits | 1K stars\n- Branch: master\n\n```md\n# About\n\nPashov Audit Group consists of multiple teams of some of the best smart contract security researchers in the space. Having a combined reported security vulnerabili",
+      "score": null
+    },
+    {
+      "url": "https://www.veritasprotocol.com/audits/ethena-ena-audit",
+      "title": "Ethena $ENA Token Audit by Veritas Protocol",
+      "content": "Ethena $ENA Token Audit by Veritas Protocol \n\nScroll\n\n[\n\n# Ethena $ENA\n\n]\n\n## Ethena (Ethereum Mainnet)\n\n0x57e114b691db790c35207b2e685d4a43181e6061\n\nSecurity Score:\n\nAVERAGE\n\nThe score is calculated based on lines of code and weights assigned to each issue depending on the severity and confidence. T",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "title": "Ethena Labs Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionEthena Labs\n\n# Ethena Labs Findings & Analysis Report\n\n#### 2023-12-21\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nMedium Risk Findings (4)\n\n- [M-01]`FULL_RESTRICTED` Stakers can bypass restriction through approvals\n- [M-02] Soft Res",
+      "score": null
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf?alt=media&token=0358ec8b-36fe-4166-a159-2c782a9f8d40",
+      "title": "[PDF] Ethena-security-review.md - GitBook",
+      "content": "Ethena-security-review.md 2023-10-21\n1 / 4\nIntroduction\nA time-boxed security review of the Ethena protocol was done by pashov, with a focus on the security\naspects of the application's smart contracts implementation.\nDisclaimer\nA smart contract security review can never verify the complete absence ",
+      "score": null
+    },
+    {
+      "url": "https://immunefi.com/bug-bounty/ethena/information/",
+      "title": "Ethena Bug Bounties - Immunefi",
+      "content": "Ethena Bug Bounties | Immunefi\n\n# Ethena\n\nEthena is a synthetic dollar protocol built on Ethereum that will provide a crypto-native solution for money not reliant on traditional banking system infrastructure, alongside a globally accessible dollar denominated savings instrument - the 'Internet Bond'",
+      "score": null
+    },
+    {
+      "url": "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+      "title": "Ethena UStb token and minting - Report - Quantstamp",
+      "content": "Quantstamp",
+      "score": null
+    },
+    {
+      "url": "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals/",
+      "title": "FULL_RESTRICTED stakers can bypass restriction through approvals",
+      "content": "Ethena - FULL_RESTRICTED stakers can bypass restriction through approvals - Smart Contract Audits - Composable Security \n\n\u2190 All Posts| findings| October 29, 2023\n\n# Ethena \u2013 FULL_RESTRICTED stakers can bypass restriction through approvals\n\nPawe\u0142 Kury\u0142owiczManaging Partner & Smart Contract Security A",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/posts/firmansiregar_web3-defi-blockchainsecurity-activity-7445373269387636736-Fq4t",
+      "title": "Web3 Security Expert Applies with Proof of Work to Ethena Labs ...",
+      "content": "credentials I\u2019m not coming from a traditional engineering background. I started late. I\u2019m still refining my edge. But I\u2019m building: \u2192 A security-first mindset \u2192 A body of public work \u2192 And the ability to think like an attacker Whether these applications convert or not is secondary. The real goal is ",
+      "score": null
+    },
+    {
+      "url": "https://www.scribd.com/document/768915634/Ethena-security-review-february",
+      "title": "Ethena Security Review February | PDF - Scribd",
+      "content": "Ethena Security Review February | PDF\n\nSkip to main content\n\nOpen navigation menu\n\nClose suggestionsSearchSearch\n\nenChange Language\n\nUpload\n\nSign in\n\nSign in\n\n0% found this document useful (0 votes)\n\n222 views7 pages\n\n# Ethena Security Review February\n\nDocument Information\n\n## Uploaded by\n\nAhmed Fas",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://github.com/ethena-labs/ethena-usdtb-contest",
+      "title": "ethena-labs/ethena-usdtb-contest - GitHub",
+      "content": "# Repository: ethena-labs/ethena-usdtb-contest\n\n- Stars: 3\n- Forks: 7\n- Watchers: 3\n- Open issues: 1\n- Primary language: Solidity\n- Languages: Solidity\n- Default branch: main\n- Created: 2024-10-31T17:26:24Z\n- Last push: 2024-11-25T16:58:27Z\n- Contributors: 1 (top: iethena)\n- Archived: true\n\n---\n\n# U",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Zellic/publications",
+      "title": "Zellic's audit reports and publications - GitHub",
+      "content": "# Repository: Zellic/publications\n\nZellic's audits, publications, and reports\n\n- Stars: 216\n- Forks: 28\n- Watchers: 216\n- Open issues: 2\n- Default branch: master\n- Homepage: https://reports.zellic.io\n- Created: 2022-03-17T15:29:31Z\n- Last push: 2026-03-24T18:39:48Z\n- Contributors: 7 (top: justin-cho",
+      "score": null
+    },
+    {
+      "url": "https://github.com/radeveth/private-audits",
+      "title": "radeveth/web3-security-portfolio \u00b7 GitHub - GitHub",
+      "content": "# Repository: radeveth/web3-security-portfolio\n\n- Stars: 21\n- Forks: 0\n- Watchers: 21\n- Open issues: 0\n- License: MIT License (MIT)\n- Default branch: main\n- Created: 2023-07-31T11:39:07Z\n- Last push: 2026-02-22T23:45:33Z\n- Contributors: 1 (top: radeveth)\n\n---\n\n# Radev's Smart Contract Security Portf",
+      "score": null
+    },
+    {
+      "url": "https://github.com/ethena-labs",
+      "title": "ethena-labs - GitHub",
+      "content": "# Organization: @ethena-labs\n\n- Followers: 492\n- Public Repos: 13\n- Created: 2023-04-06\n\n---\n\n## Top Repositories\n\n| Repository | Description | Stars | Language | Last Updated |\n| --- | --- | --- | --- | --- |\n| code4arena-contest | | 39 | Solidity | 2024-02-19 |\n| bbp-public-assets | | 35 | Solidit",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Hexens/Smart-Contract-Review-Public-Reports",
+      "title": "Hexens/Smart-Contract-Review-Public-Reports: List of the ... - GitHub",
+      "content": "# Repository: Hexens/Smart-Contract-Review-Public-Reports\n\nList of the public smart contract audit reports and security reviews performed by Hexens.\n\n- Stars: 56\n- Forks: 9\n- Watchers: 56\n- Open issues: 0\n- Topics: blockchain, blockchain-security, cybersecurity, smartcontract, smartcontract-security",
+      "score": null
+    },
+    {
+      "url": "https://github.com/code-423n4/2025-11-brix-money",
+      "title": "code-423n4/2025-11-brix-money - GitHub",
+      "content": "# Repository: code-423n4/2025-11-brix-money\n\n- Stars: 4\n- Forks: 15\n- Watchers: 4\n- Open issues: 0\n- Primary language: Solidity\n- Languages: Solidity (95.3%), HTML (3.7%), Makefile (1.0%)\n- License: MIT License (MIT)\n- Default branch: main\n- Created: 2025-11-14T14:49:10Z\n- Last push: 2026-03-13T16:2",
+      "score": null
+    },
+    {
+      "url": "https://github.com/blockchain-unica/blockapi/blob/master/queries/stateofthedapps/dapps.txt",
+      "title": "blockapi/queries/stateofthedapps/dapps.txt at master - GitHub",
+      "content": "# File: blockchain-unica/blockapi/queries/stateofthedapps/dapps.txt\n\n- Repository: blockchain-unica/blockapi | A general framework for blockchain analytics | 131 stars | Scala\n- Branch: master\n\n```txt\n\"ribbit\",\"shd101wyy\",\"live\",\"An experimental, decentralized, lightweight social media web applicati",
+      "score": null
+    },
+    {
+      "url": "https://github.com/maurobonfietti/remote-jobs/blob/main/README.md",
+      "title": "README.md - maurobonfietti/remote-jobs - GitHub",
+      "content": "# File: maurobonfietti/remote-jobs/README.md\n\n- Repository: maurobonfietti/remote-jobs | \ud83c\udf0e README collection of remote job opportunities from around the world. | 357 stars\n- Branch: main\n\n```md\n# REMOTE JOBS:\n\n## Total: 1540 jobs found.\n\n### Last updated: April 17, 2026.\n\nI would love to maintain t",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://docs.ethena.fi/resources/audits",
+      "title": "Audits - Ethena Docs",
+      "content": "# Audits\n\nAt Ethena, the integrity of our smart contracts is paramount. We maintain this by conducting comprehensive audits, which help identify potential vulnerabilities, logical errors, or inefficiencies. These rigorous audits, carried out by industry experts, fortify our security and seek to incr",
+      "score": null
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+      "title": "Ethena-security-review-October.md - pashov/audits - GitHub",
+      "content": "# File: pashov/audits/team/md/Ethena-security-review-October.md\n\n- Repository: pashov/audits | 1K stars\n- Branch: master\n\n```md\n# About\n\nPashov Audit Group consists of multiple teams of some of the best smart contract security researchers in the space. Having a combined reported security vulnerabili",
+      "score": null
+    },
+    {
+      "url": "https://www.veritasprotocol.com/audits/ethena-ena-audit",
+      "title": "Ethena $ENA Token Audit by Veritas Protocol",
+      "content": "Ethena $ENA Token Audit by Veritas Protocol \n\nScroll\n\n[\n\n# Ethena $ENA\n\n]\n\n## Ethena (Ethereum Mainnet)\n\n0x57e114b691db790c35207b2e685d4a43181e6061\n\nSecurity Score:\n\nAVERAGE\n\nThe score is calculated based on lines of code and weights assigned to each issue depending on the severity and confidence. T",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "title": "Ethena Labs Findings & Analysis Report - Code4rena",
+      "content": "Code4rena | Keeping high severity bugs out of productionEthena Labs\n\n# Ethena Labs Findings & Analysis Report\n\n#### 2023-12-21\n\n## Table of contents\n\nOverview\n\n- About C4\n- Wardens\n\nMedium Risk Findings (4)\n\n- [M-01]`FULL_RESTRICTED` Stakers can bypass restriction through approvals\n- [M-02] Soft Res",
+      "score": null
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf?alt=media&token=0358ec8b-36fe-4166-a159-2c782a9f8d40",
+      "title": "[PDF] Ethena-security-review.md - GitBook",
+      "content": "Ethena-security-review.md 2023-10-21\n1 / 4\nIntroduction\nA time-boxed security review of the Ethena protocol was done by pashov, with a focus on the security\naspects of the application's smart contracts implementation.\nDisclaimer\nA smart contract security review can never verify the complete absence ",
+      "score": null
+    },
+    {
+      "url": "https://immunefi.com/bug-bounty/ethena/information/",
+      "title": "Ethena Bug Bounties - Immunefi",
+      "content": "Ethena Bug Bounties | Immunefi\n\n# Ethena\n\nEthena is a synthetic dollar protocol built on Ethereum that will provide a crypto-native solution for money not reliant on traditional banking system infrastructure, alongside a globally accessible dollar denominated savings instrument - the 'Internet Bond'",
+      "score": null
+    },
+    {
+      "url": "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+      "title": "Ethena UStb token and minting - Report - Quantstamp",
+      "content": "Quantstamp",
+      "score": null
+    },
+    {
+      "url": "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals/",
+      "title": "FULL_RESTRICTED stakers can bypass restriction through approvals",
+      "content": "Ethena - FULL_RESTRICTED stakers can bypass restriction through approvals - Smart Contract Audits - Composable Security \n\n\u2190 All Posts| findings| October 29, 2023\n\n# Ethena \u2013 FULL_RESTRICTED stakers can bypass restriction through approvals\n\nPawe\u0142 Kury\u0142owiczManaging Partner & Smart Contract Security A",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/posts/firmansiregar_web3-defi-blockchainsecurity-activity-7445373269387636736-Fq4t",
+      "title": "Web3 Security Expert Applies with Proof of Work to Ethena Labs ...",
+      "content": "credentials I\u2019m not coming from a traditional engineering background. I started late. I\u2019m still refining my edge. But I\u2019m building: \u2192 A security-first mindset \u2192 A body of public work \u2192 And the ability to think like an attacker Whether these applications convert or not is secondary. The real goal is ",
+      "score": null
+    },
+    {
+      "url": "https://www.scribd.com/document/768915634/Ethena-security-review-february",
+      "title": "Ethena Security Review February | PDF - Scribd",
+      "content": "Ethena Security Review February | PDF\n\nSkip to main content\n\nOpen navigation menu\n\nClose suggestionsSearchSearch\n\nenChange Language\n\nUpload\n\nSign in\n\nSign in\n\n0% found this document useful (0 votes)\n\n222 views7 pages\n\n# Ethena Security Review February\n\nDocument Information\n\n## Uploaded by\n\nAhmed Fas",
+      "score": null
+    },
+    {
+      "url": "https://github.com/ethena-labs/ethena-usdtb-contest",
+      "title": "ethena-labs/ethena-usdtb-contest - GitHub",
+      "content": "# Repository: ethena-labs/ethena-usdtb-contest\n\n- Stars: 3\n- Forks: 7\n- Watchers: 3\n- Open issues: 1\n- Primary language: Solidity\n- Languages: Solidity\n- Default branch: main\n- Created: 2024-10-31T17:26:24Z\n- Last push: 2024-11-25T16:58:27Z\n- Contributors: 1 (top: iethena)\n- Archived: true\n\n---\n\n# U",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Zellic/publications",
+      "title": "Zellic's audit reports and publications - GitHub",
+      "content": "# Repository: Zellic/publications\n\nZellic's audits, publications, and reports\n\n- Stars: 216\n- Forks: 28\n- Watchers: 216\n- Open issues: 2\n- Default branch: master\n- Homepage: https://reports.zellic.io\n- Created: 2022-03-17T15:29:31Z\n- Last push: 2026-03-24T18:39:48Z\n- Contributors: 7 (top: justin-cho",
+      "score": null
+    },
+    {
+      "url": "https://github.com/radeveth/private-audits",
+      "title": "radeveth/web3-security-portfolio \u00b7 GitHub - GitHub",
+      "content": "# Repository: radeveth/web3-security-portfolio\n\n- Stars: 21\n- Forks: 0\n- Watchers: 21\n- Open issues: 0\n- License: MIT License (MIT)\n- Default branch: main\n- Created: 2023-07-31T11:39:07Z\n- Last push: 2026-02-22T23:45:33Z\n- Contributors: 1 (top: radeveth)\n\n---\n\n# Radev's Smart Contract Security Portf",
+      "score": null
+    },
+    {
+      "url": "https://github.com/ethena-labs",
+      "title": "ethena-labs - GitHub",
+      "content": "# Organization: @ethena-labs\n\n- Followers: 492\n- Public Repos: 13\n- Created: 2023-04-06\n\n---\n\n## Top Repositories\n\n| Repository | Description | Stars | Language | Last Updated |\n| --- | --- | --- | --- | --- |\n| code4arena-contest | | 39 | Solidity | 2024-02-19 |\n| bbp-public-assets | | 35 | Solidit",
+      "score": null
+    },
+    {
+      "url": "https://github.com/Hexens/Smart-Contract-Review-Public-Reports",
+      "title": "Hexens/Smart-Contract-Review-Public-Reports: List of the ... - GitHub",
+      "content": "# Repository: Hexens/Smart-Contract-Review-Public-Reports\n\nList of the public smart contract audit reports and security reviews performed by Hexens.\n\n- Stars: 56\n- Forks: 9\n- Watchers: 56\n- Open issues: 0\n- Topics: blockchain, blockchain-security, cybersecurity, smartcontract, smartcontract-security",
+      "score": null
+    },
+    {
+      "url": "https://github.com/code-423n4/2025-11-brix-money",
+      "title": "code-423n4/2025-11-brix-money - GitHub",
+      "content": "# Repository: code-423n4/2025-11-brix-money\n\n- Stars: 4\n- Forks: 15\n- Watchers: 4\n- Open issues: 0\n- Primary language: Solidity\n- Languages: Solidity (95.3%), HTML (3.7%), Makefile (1.0%)\n- License: MIT License (MIT)\n- Default branch: main\n- Created: 2025-11-14T14:49:10Z\n- Last push: 2026-03-13T16:2",
+      "score": null
+    },
+    {
+      "url": "https://github.com/blockchain-unica/blockapi/blob/master/queries/stateofthedapps/dapps.txt",
+      "title": "blockapi/queries/stateofthedapps/dapps.txt at master - GitHub",
+      "content": "# File: blockchain-unica/blockapi/queries/stateofthedapps/dapps.txt\n\n- Repository: blockchain-unica/blockapi | A general framework for blockchain analytics | 131 stars | Scala\n- Branch: master\n\n```txt\n\"ribbit\",\"shd101wyy\",\"live\",\"An experimental, decentralized, lightweight social media web applicati",
+      "score": null
+    },
+    {
+      "url": "https://github.com/maurobonfietti/remote-jobs/blob/main/README.md",
+      "title": "README.md - maurobonfietti/remote-jobs - GitHub",
+      "content": "# File: maurobonfietti/remote-jobs/README.md\n\n- Repository: maurobonfietti/remote-jobs | \ud83c\udf0e README collection of remote job opportunities from around the world. | 357 stars\n- Branch: main\n\n```md\n# REMOTE JOBS:\n\n## Total: 1540 jobs found.\n\n### Last updated: April 17, 2026.\n\nI would love to maintain t",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://docs.ethena.fi/resources/audits",
+      "auditor": null,
+      "title": "Audits - Ethena Docs",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/pashov/audits/blob/master/team/md/Ethena-security-review-October.md",
+      "auditor": "Pashov",
+      "title": "Ethena-security-review-October.md",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.veritasprotocol.com/audits/ethena-ena-audit",
+      "auditor": "Veritas Protocol",
+      "title": "Ethena $ENA Token Audit by Veritas Protocol",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/reports/2023-10-ethena",
+      "auditor": "Code4rena",
+      "title": "Ethena Labs Findings & Analysis Report",
+      "date": "2023-10",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://596495599-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FsBsPyff5ft3inFy9jyjt%2Fuploads%2FzUZDAQ77jrhUOIMqFka9%2FEthena-security-review%20(1).pdf?alt=media&token=0358ec8b-36fe-4166-a159-2c782a9f8d40",
+      "auditor": "Pashov",
+      "title": "Ethena-security-review",
+      "date": "2023-10-21",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://certificate.quantstamp.com/full/ethena-u-stb-token-and-minting/6cec4ac4-03e0-4949-ac0a-51d9c925d45a/index.html",
+      "auditor": "Quantstamp",
+      "title": "Ethena UStb token and minting",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://composable-security.com/blog/ethena-full_restricted-stakers-can-bypass-restriction-through-approvals/",
+      "auditor": null,
+      "title": "Ethena - FULL_RESTRICTED stakers can bypass restriction through approvals",
+      "date": "2023-10-29",
+      "type": "report",
+      "confidence": 0.9
+    },
+    {
+      "url": "https://www.scribd.com/document/768915634/Ethena-security-review-february",
+      "auditor": null,
+      "title": "Ethena Security Review February",
+      "date": null,
+      "type": "report",
+      "confidence": 0.9
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 951,
+    "followup_query": 722,
+    "followup_search": 768,
+    "classify": 8887
+  },
+  "errors": []
+}

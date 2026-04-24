@@ -1,0 +1,14 @@
+{
+  "protocol": "lido",
+  "backend": "exa",
+  "mode": "deep-lite",
+  "elapsed_ms": 9912,
+  "contracts": [],
+  "official_domain": null,
+  "errors": [],
+  "notes": [
+    "Domain candidates: docs.lido.fi, github.com, immunefi.com",
+    "Could not identify an official domain",
+    "Tavily queries used: 1/4"
+  ]
+}

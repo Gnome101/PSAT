@@ -1,0 +1,57 @@
+{
+  "protocol": "aave",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 26733,
+  "reports": [
+    {
+      "url": "https://codehawks.cyfrin.io/c/cm5w96e2f000012k5n46wdw43",
+      "pdf_url": null,
+      "auditor": "Codehawks",
+      "title": "Codehawks Aave DIVA Wrapper Contest",
+      "date": "2025-01-31",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:37:43.793872+00:00"
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/staked-aave-token-smart-contract-security-audit-report-by-etherauthority/284724432",
+      "pdf_url": null,
+      "auditor": "EtherAuthority",
+      "title": "Staked Aave Token \u2013 Smart Contract Security Audit Report by EtherAuthority",
+      "date": null,
+      "source_url": "https://www.slideshare.net/slideshow/staked-aave-token-smart-contract-security-audit-report-by-etherauthority/284724432",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:37:43.793872+00:00"
+    },
+    {
+      "url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "pdf_url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "auditor": "Unknown",
+      "title": "AAVE V3.3.0 SMART CONTRACTS SECURITY AUDIT REPORT",
+      "date": null,
+      "source_url": "https://oxor-io.github.io/public_audits/Aave/Aave-v3.3.0-Audit-Report.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:37:43.793872+00:00"
+    },
+    {
+      "url": "https://www.chainsecurity.com/reports/Aave/ChainSecurity_AaveLabs_AaveV4_Audit.pdf",
+      "pdf_url": "https://www.chainsecurity.com/reports/Aave/ChainSecurity_AaveLabs_AaveV4_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Aave V4 Smart Contracts",
+      "date": null,
+      "source_url": "https://www.chainsecurity.com/security-audit/aave-v4",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:37:43.793872+00:00"
+    }
+  ],
+  "queries_used": 1,
+  "errors": [],
+  "notes": [
+    "Solodit: 1 audit(s)",
+    "Search returned 10 unique result(s)",
+    "LLM classified 7 result(s) as audit reports",
+    "Extracted 4 audit report(s)",
+    "Tavily queries used: 1/4"
+  ]
+}

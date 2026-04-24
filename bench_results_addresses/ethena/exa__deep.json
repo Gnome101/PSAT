@@ -1,0 +1,14 @@
+{
+  "protocol": "ethena",
+  "backend": "exa",
+  "mode": "deep",
+  "elapsed_ms": 10103,
+  "contracts": [],
+  "official_domain": null,
+  "errors": [],
+  "notes": [
+    "Domain candidates: github.com, docs.ethena.fi, financefeeds.com",
+    "Could not identify an official domain",
+    "Tavily queries used: 1/4"
+  ]
+}

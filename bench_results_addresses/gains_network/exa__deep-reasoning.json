@@ -1,0 +1,1547 @@
+{
+  "protocol": "gains network",
+  "backend": "exa",
+  "mode": "deep-reasoning",
+  "elapsed_ms": 53674,
+  "contracts": [
+    {
+      "name": "ProxyAdmin",
+      "chains": [
+        "ethereum",
+        "base",
+        "arbitrum",
+        "polygon"
+      ],
+      "confidence": 0.9,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 4,
+        "named": 4,
+        "link": 2,
+        "text": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s27",
+        "s31",
+        "s28",
+        "s32",
+        "s41",
+        "s42",
+        "s46",
+        "s58",
+        "s59",
+        "s63",
+        "s74",
+        "s77"
+      ],
+      "deployments": [
+        {
+          "address": "0xd65be79fa0634656657df160267fa440ac13da9d",
+          "chains": [
+            "ethereum",
+            "base"
+          ]
+        },
+        {
+          "address": "0xe18be0113c38c91b3b429d04fdeb84359fbcb2eb",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xdbcd002f96f62781bbe65fbe24f4d6265d416bad",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x261292b273c918982820e30e9f24bfa41484296f",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "$GNS Token",
+      "chains": [
+        "arbitrum",
+        "base",
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s43",
+        "s27",
+        "s28",
+        "s29",
+        "s74",
+        "s75",
+        "s31",
+        "s73"
+      ],
+      "deployments": [
+        {
+          "address": "0x18c11fd286c5ec11c3b683caa813b77f5163a122",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xfb1aaba03c31ea98a3eec7591808acb1947ee7ac",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x551dfe38994ec53c9e7e18084d73893225eea3bf",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xe31c676d8235437597581b44c1c4f8a30e90b38a",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Bridgeable NFT Swap",
+      "address": "0x14e2f9b0381af4227d26bee7d8e4d424466a7f3f",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s26"
+      ]
+    },
+    {
+      "name": "ERC20 Bridge",
+      "chains": [
+        "arbitrum",
+        "polygon",
+        "base",
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s44",
+        "s58",
+        "s59",
+        "s61",
+        "s27",
+        "s28",
+        "s30",
+        "s74",
+        "s76",
+        "s31",
+        "s73"
+      ],
+      "deployments": [
+        {
+          "address": "0x01caaaa682ceba8cd6c02f93bb1393fb415fa5e2",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xdf774a4f3ea5095535f5b8f5b9149caf90ff75bd",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x1671e2265cbbb3f13dfbbf76661cbc19d82143a9",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xeb24c00442fd95d18ac8f62d498bef5e167e1a54",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xa16e00c26786b9861b3e105296197ea0f891c879",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ERC721 (Locking) Bridge",
+      "address": "0xa33f7069f075a54481868e4c0b8d26925a218362",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s58",
+        "s59",
+        "s62"
+      ]
+    },
+    {
+      "name": "ERC721 (Minting) Bridge",
+      "address": "0x0f9e4375facbeb90daa850f677819b438ce50827",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s45"
+      ]
+    },
+    {
+      "name": "GFARM2 -> GNS migration",
+      "address": "0xd285f881886505b9ef6684e1aaa7949a56b0c7da",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s11"
+      ]
+    },
+    {
+      "name": "GFARM2 Bridgeable NFT 1: 0x2Ac9E0171838877f3f37cDD7076B83523A29414",
+      "address": "0x2ac9e0171838877f3f37cdd7076b83523a294140",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s21"
+      ]
+    },
+    {
+      "name": "GFARM2 Bridgeable NFT 2",
+      "address": "0x580d1938074d48c34f2e2d1371af0bf02ac44701",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s22"
+      ]
+    },
+    {
+      "name": "GFARM2 Bridgeable NFT 3",
+      "address": "0xa443693255966f83e9ae6c6132858ccdf2f3ca50",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s23"
+      ]
+    },
+    {
+      "name": "GFARM2 Bridgeable NFT 4",
+      "address": "0xe5fa95e5b505452680072600f5a751010abe4377",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s24"
+      ]
+    },
+    {
+      "name": "GFARM2 Bridgeable NFT 5",
+      "address": "0xae3bc89bc71ca243a275a06ba0708cd166d31155",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s25"
+      ]
+    },
+    {
+      "name": "GFARM2 NFT 1",
+      "address": "0xf9a4c522e327935bd1f5a338c121e14e4cc1f898",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s6"
+      ]
+    },
+    {
+      "name": "GFARM2 NFT 2",
+      "address": "0x77cd42b925e1a82f41d852d6be727cfc88fddbbc",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s7"
+      ]
+    },
+    {
+      "name": "GFARM2 NFT 3",
+      "address": "0x3378ad81d09de23725ee9b9270635c97ed601921",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s8"
+      ]
+    },
+    {
+      "name": "GFARM2 NFT 4",
+      "address": "0x02e2c5825c1a3b69c0417706dbe1327c2af3e6c2",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s9"
+      ]
+    },
+    {
+      "name": "GFARM2 NFT 5",
+      "address": "0x2d266a94469d05c9e06d52a4d0d9c23b157767c2",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s10"
+      ]
+    },
+    {
+      "name": "GFARM2 NFTs",
+      "address": "0x43ccd9ea8f64b8918267f7ee4a071d3e9168f9cd",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s20"
+      ]
+    },
+    {
+      "name": "GFARM2 Token",
+      "chains": [
+        "ethereum",
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s19",
+        "s5"
+      ],
+      "deployments": [
+        {
+          "address": "0x831091da075665168e01898c6dac004a867f1e1b",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x7075cab6bcca06613e2d071bd918d1a0241379e2",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "GNS Token",
+      "address": "0xe5417af564e4bfda1c483642db72007871397896",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s58",
+        "s59",
+        "s60"
+      ]
+    },
+    {
+      "name": "GNSStaking",
+      "chains": [
+        "arbitrum",
+        "polygon",
+        "base",
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s49",
+        "s58",
+        "s59",
+        "s66",
+        "s27",
+        "s28",
+        "s35",
+        "s74",
+        "s81",
+        "s31",
+        "s73"
+      ],
+      "deployments": [
+        {
+          "address": "0x7edde7e5900633f698eab0dbc97de640fc5dc015",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x8c74b2256ffb6705f14ada8e86fbd654e0e2beca",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x28efaa11199daf45aa8fbf95f920e5bc090dcbf3",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x4f1d70a563c2ca96b076cc28e84ec25da8d6f486",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x6dcd75474f9bde2793cb3da00b8959fb27bfa9d5",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "GNSTimelockManager (3-day)",
+      "chains": [
+        "arbitrum",
+        "polygon",
+        "base",
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s48",
+        "s58",
+        "s59",
+        "s65",
+        "s27",
+        "s28",
+        "s34",
+        "s74",
+        "s79",
+        "s31",
+        "s73"
+      ],
+      "deployments": [
+        {
+          "address": "0x1632c38cb208df8409753729dbfba5c58626f637",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xf0a8531505f96b8decce7857ca3ab57490f44a40",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x03908e9aeba0a23c1c476f946b99b6e9ea0b8f08",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x93fba1b058f07173095ce109379ed00669474acf",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x190ff92e176bf8db2a494cf6f25451a7e259fb16",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "GNSTimelockOwner (14-day)",
+      "chains": [
+        "arbitrum",
+        "polygon",
+        "base",
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s47",
+        "s58",
+        "s59",
+        "s64",
+        "s27",
+        "s28",
+        "s33",
+        "s74",
+        "s78",
+        "s31",
+        "s73"
+      ],
+      "deployments": [
+        {
+          "address": "0x5f5e4892bab94d94dc57a3edea3c138167c4df0f",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x322e18fdb5d0b0221e4724dcc5883c4b7896da0e",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x3a00b1fa6cb7d07043fc2b2066066735f9419e7a",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xc38964af46708156a373295612fabdc3687a5d11",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x164bb61951a6c628a69e4b5af10e9c691221526d",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "GainsNetworkNft1",
+      "address": "0x75cbcc5414c539c2b302a5fa60e30b949d2d6f89",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s13"
+      ]
+    },
+    {
+      "name": "GainsNetworkNft2",
+      "address": "0xd1f024ba4dbb1593b486cb5031b3ac5ac28e8a4e",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s14"
+      ]
+    },
+    {
+      "name": "GainsNetworkNft3",
+      "address": "0x9834159eaf9811cf4c568294d5c7c9158f84b384",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s15"
+      ]
+    },
+    {
+      "name": "GainsNetworkNft4",
+      "address": "0x40f0aeab6383be2f254ce40b79089070fa1a21a1",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s16"
+      ]
+    },
+    {
+      "name": "GainsNetworkNft5",
+      "address": "0x5e3b541ad6acc4381c110247946c863e05ffc9be",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s17"
+      ]
+    },
+    {
+      "name": "Multi-sig ($ARB STIP)",
+      "address": "0xc5fca2c19c5ca269a10e15ee4a800ed82f53787d",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s4"
+      ]
+    },
+    {
+      "name": "Multi-sig ($ARB delegator)",
+      "address": "0xf8e93a7d954f7d31d5fa54bc0eb0e384412a158d",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s3"
+      ]
+    },
+    {
+      "name": "NFTs -> GNS redemption",
+      "chains": [
+        "arbitrum",
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2",
+        "s18",
+        "s12"
+      ],
+      "deployments": [
+        {
+          "address": "0x30d8c505516ab7693e2de491bdceb028d8ae7ebf",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xc7d91a130ad0521e212f04c2cfa2adaf926df6ae",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gBTCUSD",
+      "address": "0xb7cb7cb7c3cd96e251c9bf8800b9631134bbadc6",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s27",
+        "s28",
+        "s39"
+      ]
+    },
+    {
+      "name": "gBTCUSD OpenPnlFeed",
+      "address": "0xcec10c66d711250db67945254f79628457365cc8",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s27",
+        "s28",
+        "s40"
+      ]
+    },
+    {
+      "name": "gDAI",
+      "chains": [
+        "arbitrum",
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s52",
+        "s58",
+        "s59",
+        "s67"
+      ],
+      "deployments": [
+        {
+          "address": "0xd85e038593d7a098614721eae955ec2022b9b91b",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x91993f2101cc758d0deb7279d41e880f7defe827",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gDAI OpenPnlFeed",
+      "chains": [
+        "arbitrum",
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s53",
+        "s58",
+        "s59",
+        "s68"
+      ],
+      "deployments": [
+        {
+          "address": "0x990ba9edd8a9615a23e4c452e63a80e519a4a23d",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x8d687276543b92819f2f2b5c3faad4ad27f4440c",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gETH",
+      "chains": [
+        "arbitrum",
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s54",
+        "s58",
+        "s59",
+        "s69"
+      ],
+      "deployments": [
+        {
+          "address": "0x5977a9682d7af81d347cfc338c61692163a2784c",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x1544e1ff1a6f6bdbfb901622c12bb352a43464fb",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gETH OpenPnlFeed",
+      "chains": [
+        "arbitrum",
+        "polygon"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s55",
+        "s58",
+        "s59",
+        "s70"
+      ],
+      "deployments": [
+        {
+          "address": "0x018d9a3f0d06ccb7c305b7c9219a4307e1f9f27e",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xf07f4507dd6a057aea509cb9b218b7c4d1894473",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gGNS",
+      "address": "0x4beef1113f968326905224d2ca272f3032a9a9f4",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s50"
+      ]
+    },
+    {
+      "name": "gGNS OpenPnlFeed",
+      "address": "0x4ca1638754be8060e544aca4a4f43702be30e0d1",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s51"
+      ]
+    },
+    {
+      "name": "gUSDC",
+      "chains": [
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s56",
+        "s58",
+        "s59",
+        "s71",
+        "s27",
+        "s28",
+        "s36"
+      ],
+      "deployments": [
+        {
+          "address": "0xd3443ee1e91af28e5fb858fbd0d72a63ba8046e0",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x29019fe2e72e8d4d2118e8d0318bef389ffe2c81",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xad20523a7dc37babc1cc74897e4977232b3d02e5",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gUSDC LockedDepositNft",
+      "address": "0x7d0131aceefd2acc919d7b2ac32e8e6c81a05ceb",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s27",
+        "s28",
+        "s38"
+      ]
+    },
+    {
+      "name": "gUSDC OpenPnlFeed",
+      "chains": [
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s41",
+        "s42",
+        "s57",
+        "s58",
+        "s59",
+        "s72",
+        "s27",
+        "s28",
+        "s37"
+      ],
+      "deployments": [
+        {
+          "address": "0xbf55c78132ab06a2b217040b7a7f20b5cbd47982",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xff84e736a15f80e7e104e153d7f7d6c9bd6fe822",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xefa1c2753dad877bb6531bba9d9c589b5433be37",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "GNSMultiCollatDiamond",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "link": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s74",
+        "s80",
+        "s31",
+        "s73",
+        "s41",
+        "s42",
+        "s58",
+        "s59",
+        "s27",
+        "s28"
+      ],
+      "deployments": [
+        {
+          "address": "0x2d5b1ba6e2093a5b927fe5bf8c049b107de31eaf",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x2be5d7058adba14bc38e4a83e94a81f7491b0163",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xff162c694eaa571f685030649814282ea457f169",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x209a9a01980377916851af2ca075c2b170452018",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x6cd5ac19a07518a8092eeffda4f1174c72704eeb",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "gUSDm",
+      "address": "0x46344456f130e9dcdea7f98cdb0e02fb9f4ab72d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "link": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s74",
+        "s82"
+      ]
+    },
+    {
+      "name": "gUSDm LockedDepositNft",
+      "address": "0x1d0eff8bcfa6a10334a5caeca846c95d32cc5ba1",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "link": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s74",
+        "s84"
+      ]
+    },
+    {
+      "name": "gUSDm OpenPnlFeed",
+      "address": "0x637025a9f5e2380e3bbe744ed4ffb3191cf5ef4d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "link": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s74",
+        "s83"
+      ]
+    },
+    {
+      "name": "Multi-sig (Apechain)",
+      "address": "0x34f4911911a0883856e8d15e99fda2d8e0fdbf60",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.71,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "text": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2"
+      ]
+    },
+    {
+      "name": "Multi-sig (gov fund/treasury)",
+      "address": "0xc07eed650ab255190ca9766162cfb47cfdf72f3a",
+      "chains": [
+        "polygon"
+      ],
+      "confidence": 0.71,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "text": 2
+      },
+      "source_ids": [
+        "s1",
+        "s2"
+      ]
+    },
+    {
+      "name": "gAPE",
+      "address": "0xdd9c98e5022af88b9c991ab24f02b4a8be81d860",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.71,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "text": 2
+      },
+      "source_ids": [
+        "s31",
+        "s73"
+      ]
+    },
+    {
+      "name": "gAPEOpenPnlFeed",
+      "address": "0x33fe6f374c4a44c50f4362c93372f0eb09d968f5",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.71,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "text": 2
+      },
+      "source_ids": [
+        "s31",
+        "s73"
+      ]
+    }
+  ],
+  "official_domain": "docs.gains.trade",
+  "errors": [],
+  "notes": [
+    "Domain candidates: docs.gains.trade, gains-network.gitbook.io, dev.to",
+    "Official domain: docs.gains.trade",
+    "Selected pages: 11",
+    "Tavily queries used: 3/4"
+  ]
+}

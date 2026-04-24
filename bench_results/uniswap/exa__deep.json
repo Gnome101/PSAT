@@ -1,0 +1,400 @@
+{
+  "protocol": "uniswap",
+  "backend": "exa",
+  "mode": "deep",
+  "broad_query": "\"uniswap\" smart contract security audit report",
+  "followup_query": "Uniswap site:github.com audit report PDF",
+  "broad_results": [
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "title": "",
+      "content": "Uniswap V3 Core\nSecurity Assessment\nMarch 12, 2021 \nPrepared For:\nHayden Adams | Uniswap\nhayden@uniswap.org\nPrepared By:\nAlexander Remie | Trail of Bits\nalexander.remie@trailofbits.com\nDominik Teiml | Trail of Bits\ndominik.teiml@trailofbits.com\nJosselin Feist | Trail of Bits\njosselin.feist@trailofbi",
+      "score": 1
+    },
+    {
+      "url": "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "title": "Uniswap-final.md at master \u00b7 ConsenSysDiligence/Uniswap-audit-report-2018-12",
+      "content": "# File: ConsenSysDiligence/Uniswap-audit-report-2018-12/Uniswap-final.md\n\n- Repository: ConsenSysDiligence/Uniswap-audit-report-2018-12 | 54 stars\n- Branch: master\n\n```md\n# Uniswap Audit\r\n\r\n\r\n<img height=\"100px\" Hspace=\"30\" Vspace=\"10\" align=\"right\" src=\"static-content/diligence.png\"/> \r\n\r\n<!-- Don'",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+      "title": "Uniswap Labs UNIfication Fees UNIVesting Audit",
+      "content": "Uniswap Labs UNIfication Fees UNIVesting Audit \n\nResearch/ Security Audits/\n\nUniswap Labs UNIfication Fees UNIVesting Audit\n\n# Uniswap Labs UNIfication Fees UNIVesting Audit\n\nTable of Content\n\nSummary\n\n \n\nType: DeFiTimeline: From 2025-11-13 \u2192 To 2025-11-14Languages: Solidity\n\nFindingsTotal issues: 1",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://about.1hive.org/audit.html",
+      "title": "Uniswap V2 Audit Report",
+      "content": "Uniswap V2 Audit Report\n\n# Uniswap V2 Audit Report\n\ndapp.org\n\n[email protected]\n\n## Table of Contents\n\nSummary\n\nScope\n\n- Code review of periphery smart contracts (during ongoing development)\n- Numerical error analysis\n- Code review of core smart contracts\n- Formal verification of the core smart cont",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswapx-audit",
+      "title": "UniswapX Audit",
+      "content": "UniswapX Audit\n\nResearch/ Security Audits/\n\nUniswapX Audit\n\n# UniswapX Audit\n\nTable of Content\n\n## Table of Contents\n\n## Summary\n\nType DeFi Timeline From 2023-07-31 To 2023-08-11 Languages Solidity Total Issues 16 (10 resolved, 1 partially resolved) Critical Severity Issues 0 (0 resolved) High Sever",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+      "title": "",
+      "content": "Code Assessment\n\nof the Uniswap V4 Module\n~ Smart Contracts\n\nDecember 13, 2024\n\nProduced for\n\nQO srrsxrs\n\nby\nCHAINSECURITY\n\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Findings 11\n6 Resolved Findings 15\n7 Informational 26\n8 Notes 30\nArr",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-erc20eth-audit",
+      "title": "Uniswap ERC20ETH Audit",
+      "content": "Uniswap ERC20ETH Audit\n\nResearch/ Security Audits/\n\nUniswap ERC20ETH Audit\n\n# Uniswap ERC20ETH Audit\n\nTable of Content\n\n## Table of Contents\n\nSummary\n\nType: DeFiTimeline: From 2025-06-16 \u2192 To 2025-06-18Languages: Solidity\n\nFindingsTotal issues: 6 (6 resolved)Critical: 0 (0 resolved) \u00b7 High: 0 (0 res",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit",
+      "content": "Uniswap v4 Core Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Core Audit\n\n# Uniswap v4 Core Audit\n\nTable of Content\n\n## Table of Contents\n\n \n\n## Summary\n\n Type DeFi Timeline From 2024-05-27 To 2024-06-21 Languages Solidity, Yul Total Issues 24 (18 resolved, 2 partially resolved) Critical Severity I",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the Permit2\nSmart Contracts\nNovember 18, 2022\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Findings 11\n6 Resolved Findings 12\n7 Notes 14\nUniswap - Permit2 - ChainSecurity - \u00a9 Decentralized Securi",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+      "title": "Uniswap Labs UNIfication Fees Audit",
+      "content": "Uniswap Labs UNIfication Fees Audit\n\nResearch/ Security Audits/\n\nUniswap Labs UNIfication Fees Audit\n\n# Uniswap Labs UNIfication Fees Audit\n\nTable of Content\n\nSummary\n\nType: DeFiTimeline: From 2025-09-05 \u2192 To 2025-09-10Languages: Solidity\n\nFindingsTotal issues: 15 (11 resolved)Critical: 0 (0 resolve",
+      "score": 0
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "title": "Uniswap-final.md at master \u00b7 ConsenSysDiligence/Uniswap-audit-report-2018-12",
+      "content": "# File: ConsenSysDiligence/Uniswap-audit-report-2018-12/Uniswap-final.md\n\n- Repository: ConsenSysDiligence/Uniswap-audit-report-2018-12 | 54 stars\n- Branch: master\n\n```md\n# Uniswap Audit\r\n\r\n\r\n<img height=\"100px\" Hspace=\"30\" Vspace=\"10\" align=\"right\" src=\"static-content/diligence.png\"/> \r\n\r\n<!-- Don'",
+      "score": 1
+    },
+    {
+      "url": "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+      "title": "v3-core/audits/tob at main \u00b7 Uniswap/v3-core \u00b7 GitHub",
+      "content": "v3-core/audits/tob at main \u00b7 Uniswap/v3-core \u00b7 GitHub\n\n/ v3-core Public\n\nStar 5k\n\n- Pricing\n- Notifications\n- Fork 3k\n\n \n\n## Files\n\n main\n\n# tob\n\nHistory\n\n main\n\n# tob\n\nTop\n\nLast commit message\n\nLast commit date\n\ncontracts/crytic\n\ncontracts/crytic\n\nREADME.md\n\nREADME.md\n\naudit.pdf\n\naudit.pdf\n\nView al",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://github.com/Uniswap/universal-router/tree/main/audit",
+      "title": "universal-router/audit at main \u00b7 Uniswap/universal-router \u00b7 GitHub",
+      "content": "universal-router/audit at main \u00b7 Uniswap/universal-router \u00b7 GitHub\n\n/ universal-router Public\n\nStar 497\n\n- Pricing\n- Notifications\n- Fork 272\n\n \n\n## Files\n\n main\n\n# audit\n\nHistory\n\n main\n\n# audit\n\nTop\n\nLast commit message\n\nLast commit date\n\nABDK_Uniswap_UniversalRouter_v_2_0.pdf\n\nABDK_Uniswap_Univer",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+      "title": "v3-periphery/audits/abdk at main \u00b7 Uniswap/v3-periphery \u00b7 GitHub",
+      "content": "v3-periphery/audits/abdk at main \u00b7 Uniswap/v3-periphery \u00b7 GitHub\n\n/ v3-periphery Public\n\nStar 1.3k\n\n- Pricing\n- Notifications\n- Fork 1.2k\n\n \n\n## Files\n\n main\n\n# abdk\n\nHistory\n\n main\n\n# abdk\n\nTop\n\nLast commit message\n\nLast commit date\n\naudit.pdf\n\naudit.pdf\n\nView all files\n\n| Name | Name |\n| --- | ---",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://github.com/Uniswap/calibur/tree/main/audits",
+      "title": "calibur/audits at main \u00b7 Uniswap/calibur \u00b7 GitHub",
+      "content": "calibur/audits at main \u00b7 Uniswap/calibur \u00b7 GitHub\n\n/ calibur Public\n\nStar 62\n\n- Pricing\n- Notifications\n- Fork 22\n\n \n\n## Files\n\n main\n\n# audits\n\nHistory\n\n main\n\n# audits\n\nTop\n\nLast commit message\n\nLast commit date\n\nCantina_audit.pdf\n\nCantina_audit.pdf\n\nOpenZeppelin_audit.pdf\n\nOpenZeppelin_audit.pdf\n",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+      "title": "README.md at master \u00b7 ConsenSysDiligence/Uniswap-audit-report-2018-12",
+      "content": "# File: ConsenSysDiligence/Uniswap-audit-report-2018-12/README.md\n\n- Repository: ConsenSysDiligence/Uniswap-audit-report-2018-12 | 54 stars\n- Branch: master\n\n```md\nUniswap-final.md\n```",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+      "title": "audits/uniswap at main \u00b7 abdk-consulting/audits \u00b7 GitHub",
+      "content": "audits/uniswap at main \u00b7 abdk-consulting/audits \u00b7 GitHub\n\n/ audits Public\n\nStar 109\n\n- Pricing\n- Notifications\n- Fork 20\n\n \n\n## Files\n\n main\n\n# uniswap\n\nHistory\n\n main\n\n# uniswap\n\nTop\n\nLast commit message\n\nLast commit date\n\nABDK_UniswapV3_Solidity_PeripheralContractsPart1.pdf\n\nABDK_UniswapV3_Solidit",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://github.com/Uniswap/UniswapX/tree/main/audit",
+      "title": "UniswapX/audit at main \u00b7 Uniswap/UniswapX \u00b7 GitHub",
+      "content": "UniswapX/audit at main \u00b7 Uniswap/UniswapX \u00b7 GitHub\n\n/ UniswapX Public\n\nStar 446\n\n- Pricing\n- Notifications\n- Fork 127\n\n \n\n## Files\n\n main\n\n# audit\n\nHistory\n\n main\n\n# audit\n\nTop\n\nLast commit message\n\nLast commit date\n\nv1.1\n\nv1.1\n\nv1\n\nv1\n\nv2\n\nv2\n\nView all files\n\n| Name | Name |\n| --- | --- |\n| .. |\n\n",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://github.com/Uniswap/permit2/tree/main/audits",
+      "title": "permit2/audits at main \u00b7 Uniswap/permit2 \u00b7 GitHub",
+      "content": "permit2/audits at main \u00b7 Uniswap/permit2 \u00b7 GitHub\n\n/ permit2 Public\n\nStar 918\n\n- Pricing\n- Notifications\n- Fork 274\n\n \n\n## Files\n\n main\n\n# audits\n\nHistory\n\n main\n\n# audits\n\nTop\n\nLast commit message\n\nLast commit date\n\nABDKAudit.pdf\n\nABDKAudit.pdf\n\nChainsecurity Audit.pdf\n\nChainsecurity Audit.pdf\n\nVie",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+      "title": "v4-core/docs/security/audits at main \u00b7 Uniswap/v4-core \u00b7 GitHub",
+      "content": "v4-core/docs/security/audits at main \u00b7 Uniswap/v4-core \u00b7 GitHub\n\n/ v4-core Public\n\nStar 2.5k\n\n- Pricing\n- Notifications\n- Fork 1.3k\n\n \n\n## Files\n\n main\n\n# audits\n\nHistory\n\n main\n\n# audits\n\nTop\n\nLast commit message\n\nLast commit date\n\nDRAFT_ABDK_audit_core.pdf\n\nDRAFT_ABDK_audit_core.pdf\n\nDRAFT_Certora",
+      "score": 0
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "title": "",
+      "content": "Uniswap V3 Core\nSecurity Assessment\nMarch 12, 2021 \nPrepared For:\nHayden Adams | Uniswap\nhayden@uniswap.org\nPrepared By:\nAlexander Remie | Trail of Bits\nalexander.remie@trailofbits.com\nDominik Teiml | Trail of Bits\ndominik.teiml@trailofbits.com\nJosselin Feist | Trail of Bits\njosselin.feist@trailofbi",
+      "score": 1
+    },
+    {
+      "url": "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "title": "Uniswap-final.md at master \u00b7 ConsenSysDiligence/Uniswap-audit-report-2018-12",
+      "content": "# File: ConsenSysDiligence/Uniswap-audit-report-2018-12/Uniswap-final.md\n\n- Repository: ConsenSysDiligence/Uniswap-audit-report-2018-12 | 54 stars\n- Branch: master\n\n```md\n# Uniswap Audit\r\n\r\n\r\n<img height=\"100px\" Hspace=\"30\" Vspace=\"10\" align=\"right\" src=\"static-content/diligence.png\"/> \r\n\r\n<!-- Don'",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+      "title": "Uniswap Labs UNIfication Fees UNIVesting Audit",
+      "content": "Uniswap Labs UNIfication Fees UNIVesting Audit \n\nResearch/ Security Audits/\n\nUniswap Labs UNIfication Fees UNIVesting Audit\n\n# Uniswap Labs UNIfication Fees UNIVesting Audit\n\nTable of Content\n\nSummary\n\n \n\nType: DeFiTimeline: From 2025-11-13 \u2192 To 2025-11-14Languages: Solidity\n\nFindingsTotal issues: 1",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://about.1hive.org/audit.html",
+      "title": "Uniswap V2 Audit Report",
+      "content": "Uniswap V2 Audit Report\n\n# Uniswap V2 Audit Report\n\ndapp.org\n\n[email protected]\n\n## Table of Contents\n\nSummary\n\nScope\n\n- Code review of periphery smart contracts (during ongoing development)\n- Numerical error analysis\n- Code review of core smart contracts\n- Formal verification of the core smart cont",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswapx-audit",
+      "title": "UniswapX Audit",
+      "content": "UniswapX Audit\n\nResearch/ Security Audits/\n\nUniswapX Audit\n\n# UniswapX Audit\n\nTable of Content\n\n## Table of Contents\n\n## Summary\n\nType DeFi Timeline From 2023-07-31 To 2023-08-11 Languages Solidity Total Issues 16 (10 resolved, 1 partially resolved) Critical Severity Issues 0 (0 resolved) High Sever",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+      "title": "",
+      "content": "Code Assessment\n\nof the Uniswap V4 Module\n~ Smart Contracts\n\nDecember 13, 2024\n\nProduced for\n\nQO srrsxrs\n\nby\nCHAINSECURITY\n\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Findings 11\n6 Resolved Findings 15\n7 Informational 26\n8 Notes 30\nArr",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-erc20eth-audit",
+      "title": "Uniswap ERC20ETH Audit",
+      "content": "Uniswap ERC20ETH Audit\n\nResearch/ Security Audits/\n\nUniswap ERC20ETH Audit\n\n# Uniswap ERC20ETH Audit\n\nTable of Content\n\n## Table of Contents\n\nSummary\n\nType: DeFiTimeline: From 2025-06-16 \u2192 To 2025-06-18Languages: Solidity\n\nFindingsTotal issues: 6 (6 resolved)Critical: 0 (0 resolved) \u00b7 High: 0 (0 res",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "title": "Uniswap v4 Core Audit",
+      "content": "Uniswap v4 Core Audit \n\nResearch/ Security Audits/\n\nUniswap v4 Core Audit\n\n# Uniswap v4 Core Audit\n\nTable of Content\n\n## Table of Contents\n\n \n\n## Summary\n\n Type DeFi Timeline From 2024-05-27 To 2024-06-21 Languages Solidity, Yul Total Issues 24 (18 resolved, 2 partially resolved) Critical Severity I",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+      "title": "",
+      "content": "PUBLIC\nCode Assessment\nof the Permit2\nSmart Contracts\nNovember 18, 2022\nProduced for\nby\nContents\n1 Executive Summary 3\n2 Assessment Overview 5\n3 Limitations and use of report 9\n4 Terminology 10\n5 Findings 11\n6 Resolved Findings 12\n7 Notes 14\nUniswap - Permit2 - ChainSecurity - \u00a9 Decentralized Securi",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+      "title": "Uniswap Labs UNIfication Fees Audit",
+      "content": "Uniswap Labs UNIfication Fees Audit\n\nResearch/ Security Audits/\n\nUniswap Labs UNIfication Fees Audit\n\n# Uniswap Labs UNIfication Fees Audit\n\nTable of Content\n\nSummary\n\nType: DeFiTimeline: From 2025-09-05 \u2192 To 2025-09-10Languages: Solidity\n\nFindingsTotal issues: 15 (11 resolved)Critical: 0 (0 resolve",
+      "score": 0
+    },
+    {
+      "url": "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+      "title": "v3-core/audits/tob at main \u00b7 Uniswap/v3-core \u00b7 GitHub",
+      "content": "v3-core/audits/tob at main \u00b7 Uniswap/v3-core \u00b7 GitHub\n\n/ v3-core Public\n\nStar 5k\n\n- Pricing\n- Notifications\n- Fork 3k\n\n \n\n## Files\n\n main\n\n# tob\n\nHistory\n\n main\n\n# tob\n\nTop\n\nLast commit message\n\nLast commit date\n\ncontracts/crytic\n\ncontracts/crytic\n\nREADME.md\n\nREADME.md\n\naudit.pdf\n\naudit.pdf\n\nView al",
+      "score": 0.8888888888888888
+    },
+    {
+      "url": "https://github.com/Uniswap/universal-router/tree/main/audit",
+      "title": "universal-router/audit at main \u00b7 Uniswap/universal-router \u00b7 GitHub",
+      "content": "universal-router/audit at main \u00b7 Uniswap/universal-router \u00b7 GitHub\n\n/ universal-router Public\n\nStar 497\n\n- Pricing\n- Notifications\n- Fork 272\n\n \n\n## Files\n\n main\n\n# audit\n\nHistory\n\n main\n\n# audit\n\nTop\n\nLast commit message\n\nLast commit date\n\nABDK_Uniswap_UniversalRouter_v_2_0.pdf\n\nABDK_Uniswap_Univer",
+      "score": 0.7777777777777778
+    },
+    {
+      "url": "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+      "title": "v3-periphery/audits/abdk at main \u00b7 Uniswap/v3-periphery \u00b7 GitHub",
+      "content": "v3-periphery/audits/abdk at main \u00b7 Uniswap/v3-periphery \u00b7 GitHub\n\n/ v3-periphery Public\n\nStar 1.3k\n\n- Pricing\n- Notifications\n- Fork 1.2k\n\n \n\n## Files\n\n main\n\n# abdk\n\nHistory\n\n main\n\n# abdk\n\nTop\n\nLast commit message\n\nLast commit date\n\naudit.pdf\n\naudit.pdf\n\nView all files\n\n| Name | Name |\n| --- | ---",
+      "score": 0.6666666666666667
+    },
+    {
+      "url": "https://github.com/Uniswap/calibur/tree/main/audits",
+      "title": "calibur/audits at main \u00b7 Uniswap/calibur \u00b7 GitHub",
+      "content": "calibur/audits at main \u00b7 Uniswap/calibur \u00b7 GitHub\n\n/ calibur Public\n\nStar 62\n\n- Pricing\n- Notifications\n- Fork 22\n\n \n\n## Files\n\n main\n\n# audits\n\nHistory\n\n main\n\n# audits\n\nTop\n\nLast commit message\n\nLast commit date\n\nCantina_audit.pdf\n\nCantina_audit.pdf\n\nOpenZeppelin_audit.pdf\n\nOpenZeppelin_audit.pdf\n",
+      "score": 0.5555555555555556
+    },
+    {
+      "url": "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+      "title": "README.md at master \u00b7 ConsenSysDiligence/Uniswap-audit-report-2018-12",
+      "content": "# File: ConsenSysDiligence/Uniswap-audit-report-2018-12/README.md\n\n- Repository: ConsenSysDiligence/Uniswap-audit-report-2018-12 | 54 stars\n- Branch: master\n\n```md\nUniswap-final.md\n```",
+      "score": 0.4444444444444444
+    },
+    {
+      "url": "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+      "title": "audits/uniswap at main \u00b7 abdk-consulting/audits \u00b7 GitHub",
+      "content": "audits/uniswap at main \u00b7 abdk-consulting/audits \u00b7 GitHub\n\n/ audits Public\n\nStar 109\n\n- Pricing\n- Notifications\n- Fork 20\n\n \n\n## Files\n\n main\n\n# uniswap\n\nHistory\n\n main\n\n# uniswap\n\nTop\n\nLast commit message\n\nLast commit date\n\nABDK_UniswapV3_Solidity_PeripheralContractsPart1.pdf\n\nABDK_UniswapV3_Solidit",
+      "score": 0.33333333333333337
+    },
+    {
+      "url": "https://github.com/Uniswap/UniswapX/tree/main/audit",
+      "title": "UniswapX/audit at main \u00b7 Uniswap/UniswapX \u00b7 GitHub",
+      "content": "UniswapX/audit at main \u00b7 Uniswap/UniswapX \u00b7 GitHub\n\n/ UniswapX Public\n\nStar 446\n\n- Pricing\n- Notifications\n- Fork 127\n\n \n\n## Files\n\n main\n\n# audit\n\nHistory\n\n main\n\n# audit\n\nTop\n\nLast commit message\n\nLast commit date\n\nv1.1\n\nv1.1\n\nv1\n\nv1\n\nv2\n\nv2\n\nView all files\n\n| Name | Name |\n| --- | --- |\n| .. |\n\n",
+      "score": 0.2222222222222222
+    },
+    {
+      "url": "https://github.com/Uniswap/permit2/tree/main/audits",
+      "title": "permit2/audits at main \u00b7 Uniswap/permit2 \u00b7 GitHub",
+      "content": "permit2/audits at main \u00b7 Uniswap/permit2 \u00b7 GitHub\n\n/ permit2 Public\n\nStar 918\n\n- Pricing\n- Notifications\n- Fork 274\n\n \n\n## Files\n\n main\n\n# audits\n\nHistory\n\n main\n\n# audits\n\nTop\n\nLast commit message\n\nLast commit date\n\nABDKAudit.pdf\n\nABDKAudit.pdf\n\nChainsecurity Audit.pdf\n\nChainsecurity Audit.pdf\n\nVie",
+      "score": 0.11111111111111116
+    },
+    {
+      "url": "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+      "title": "v4-core/docs/security/audits at main \u00b7 Uniswap/v4-core \u00b7 GitHub",
+      "content": "v4-core/docs/security/audits at main \u00b7 Uniswap/v4-core \u00b7 GitHub\n\n/ v4-core Public\n\nStar 2.5k\n\n- Pricing\n- Notifications\n- Fork 1.3k\n\n \n\n## Files\n\n main\n\n# audits\n\nHistory\n\n main\n\n# audits\n\nTop\n\nLast commit message\n\nLast commit date\n\nDRAFT_ABDK_audit_core.pdf\n\nDRAFT_ABDK_audit_core.pdf\n\nDRAFT_Certora",
+      "score": 0
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://www.trailofbits.com/documents/UniswapV3Core.pdf",
+      "auditor": "Trail of Bits",
+      "title": "Uniswap V3 Core Security Assessment",
+      "date": "2021-03-12",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/ConsenSys/Uniswap-audit-report-2018-12/blob/master/Uniswap-final.md",
+      "auditor": "ConsenSys Diligence",
+      "title": "Uniswap Audit",
+      "date": "2018-12",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-unification-fees-univesting-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap Labs UNIfication Fees UNIVesting Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswapx-audit",
+      "auditor": "OpenZeppelin",
+      "title": "UniswapX Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/677d4757ee5ee90cea211e90_ChainSecurity_Arrakis_Finance_Uniswap_V4_Module_audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Uniswap V4 Module Code Assessment",
+      "date": "2024-12-13",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-erc20eth-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap ERC20ETH Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-v4-core-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap v4 Core Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://old.chainsecurity.com/wp-content/uploads/2022/11/ChainSecurity_Uniswap_Permit2_audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Uniswap Permit2 Code Assessment",
+      "date": "2022-11-18",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/uniswap-labs-phoenix-fees-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Uniswap Labs UNIfication Fees Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Uniswap/v3-core/tree/main/audits/tob",
+      "auditor": "Trail of Bits",
+      "title": "v3-core/audits/tob",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Uniswap/universal-router/tree/main/audit",
+      "auditor": "ABDK Consulting",
+      "title": "universal-router/audit",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Uniswap/uniswap-v3-periphery/tree/main/audits/abdk",
+      "auditor": "ABDK Consulting",
+      "title": "v3-periphery/audits/abdk",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Uniswap/calibur/tree/main/audits",
+      "auditor": "Cantina",
+      "title": "calibur/audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/ConsenSysDiligence/Uniswap-audit-report-2018-12/blob/master/README.md",
+      "auditor": "ConsenSys Diligence",
+      "title": "Uniswap Audit",
+      "date": "2018-12",
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/abdk-consulting/audits/tree/main/uniswap",
+      "auditor": "ABDK Consulting",
+      "title": "audits/uniswap",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Uniswap/UniswapX/tree/main/audit",
+      "auditor": null,
+      "title": "UniswapX/audit",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Uniswap/permit2/tree/main/audits",
+      "auditor": "ABDK Consulting",
+      "title": "permit2/audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/Uniswap/v4-core/tree/main/docs/security/audits",
+      "auditor": "ABDK Consulting",
+      "title": "v4-core/docs/security/audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 397,
+    "followup_query": 1002,
+    "followup_search": 461,
+    "classify": 9835
+  },
+  "errors": []
+}

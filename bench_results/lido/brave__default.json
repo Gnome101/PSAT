@@ -1,0 +1,300 @@
+{
+  "protocol": "lido",
+  "backend": "brave",
+  "mode": "default",
+  "broad_query": "\"lido\" smart contract security audit report",
+  "followup_query": "Lido smart contract audit Code4rena Sherlock Cantina",
+  "broad_results": [
+    {
+      "url": "https://github.com/lidofinance/audits",
+      "title": "GitHub - lidofinance/audits",
+      "content": "Lido has engaged Runtime Verification to formally verify the correctness and safety properties of the smart contracts that comprise the Lido Dual Governance mechanism. See full report for more details. ... See full report for more details. ... See full report for more details. A security audit for a hotfix to the Lido Oracle V5.",
+      "score": null
+    },
+    {
+      "url": "https://docs.lido.fi/security/audits/",
+      "title": "Lido Protocol Audits | Lido Docs",
+      "content": "See note contents for more details. ... See full report for more details. ... See full report for more details. <strong>Lido has engaged Runtime Verification to formally verify the correctness and safety properties of the smart contracts that comprise the Lido Dual Governance mechanism</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/lido",
+      "title": "Lido Smart Contract Audit - Chainsecurity",
+      "content": "Lido implements a staking protocol that allows users to stake their ETH while maintaining liquidity. In addition, it allows users to receive rewards for their staked ETH without running validator nodes. The inverse is true for node operators \u2013 they can run validator nodes and receive rewards without having to supply ETH themselves. The most critical subjects covered in our audit are functional correctness, the trust model, and security of user funds.",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/lido-staking-router",
+      "title": "Lido Smart contract audit by ChainSecurity - Lido Staking Router",
+      "content": "The most critical subjects covered in our audit are the security of the funds stored in the system, the distribution of the buffered ETH and the rewards to the various modules, the management of the modules, the node operators and the public keys of the validators, the correctness of the allocation algorithm, and the low-level handling of the storage and access control.",
+      "score": null
+    },
+    {
+      "url": "https://lido.fi/how-lido-works/security-practices-and-processes",
+      "title": "Security Practices and Processes",
+      "content": "Every component of the Lido protocol has gone through multiple layers of independent review by leading blockchain security firms. Over the years, experts from Certora, MixBytes, Statemind, Ackee, OpenZeppelin Consensys Diligence, ChainSecurity, Oxorio, Hexens, and SigmaPrime have examined Lido protocol\u2019s smart contracts, looking for ways to make them safer and more reliable. The results of these reviews are full audit reports and code-verification summaries, which are publicly available for anyone to explore here.",
+      "score": null
+    },
+    {
+      "url": "https://lido.fi/institutional",
+      "title": "Lido Institutional Liquid Staking",
+      "content": "The Lido code is open-sourced, audited, and covered by an extensive Immunefi bug bounty program to minimize this risk. To mitigate smart contract risks, all of the core Lido contracts are audited. <strong>Audit reports can be found here</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+      "title": "audits/Sigma Prime - Lido Easy Track Smart Contract Security Review Report v2.0 10-2021.pdf at main \u00b7 lidofinance/audits",
+      "content": "lidofinance / audits Public \u00b7 Notifications \u00b7 You must be signed in to change notification settings \u00b7 Fork 28 \u00b7 Star 104 \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://stake.lido.fi/",
+      "title": "Stake with Lido | Lido",
+      "content": "The Lido code is open-sourced, audited and covered by an extensive Immunefi bug bounty program to minimise this risk. To mitigate smart contract risks, all of the core Lido contracts are audited. <strong>Audit reports can be found here</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://research.lido.fi/t/proposal-infrastructure-security-audit/5982",
+      "title": "Proposal - Infrastructure Security Audit - Community Grants / Initiatives - Lido Governance",
+      "content": "TL;DR <strong>Lido has not undergone an annual infrastructure audit (aka pen test) yet this year</strong>. Of the top 50 hacks, 40% have occurred beyond the confines of smart contracts, with hackers identifying vulnerabilities in web apps, wallets, bridges, ...",
+      "score": null
+    },
+    {
+      "url": "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+      "title": "audits/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf at main \u00b7 lidofinance/audits",
+      "content": "lidofinance / audits Public \u00b7 Notifications \u00b7 You must be signed in to change notification settings \u00b7 Fork 21 \u00b7 Star 96 \u00b7 main \u00b7 / Copy path \u00b7 History \u00b7 386 KB \u00b7 main \u00b7 / Top \u00b7 386 KB \u00b7 Loading \u00b7",
+      "score": null
+    }
+  ],
+  "followup_results": [
+    {
+      "url": "https://www.youtube.com/watch?v=Y4zG8dmWe7M",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, Code4rena, Sherlock & More - YouTube",
+      "content": "Curious about how people are making real money in Web3? In this video, I break down everything you need to know about smart contract auditing\u2014why it\u2019s such a...",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/lido",
+      "title": "Lido Smart Contract Audit - Chainsecurity",
+      "content": "<strong>Lido implements a staking protocol that allows users to stake their ETH while maintaining liquidity</strong>. In addition, it allows users to receive rewards for their staked ETH without running validator nodes.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/lidofinance/audits",
+      "title": "GitHub - lidofinance/audits",
+      "content": "<strong>Lido has engaged Runtime Verification to formally verify the correctness and safety properties of the smart contracts that comprise the Lido Dual Governance mechanism</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://medium.com/@JohnnyTime/complete-audit-competitions-guide-strategies-cantina-code4rena-sherlock-more-bf55bdfe8542",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, Code4rena, Sherlock & More | by Johnny Time | May, 2025 | Medium",
+      "content": "Smart contract auditing is <strong>one of the most rewarding skills in the blockchain space, both intellectually and financially</strong>. If you\u2019re looking to break into the field, participating in auditing\u2026",
+      "score": null
+    },
+    {
+      "url": "https://docs.lido.fi/security/audits/",
+      "title": "Lido Protocol Audits | Lido Docs",
+      "content": "See note contents for more details. ... See full report for more details. ... See full report for more details. <strong>Lido has engaged Runtime Verification to formally verify the correctness and safety properties of the smart contracts that comprise the Lido Dual Governance mechanism</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/pulse/complete-audit-competitions-guide-strategies-cantina-code4rena-time-q3wdc",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, ...",
+      "content": "We cannot provide a description for this page right now",
+      "score": null
+    },
+    {
+      "url": "https://research.lido.fi/t/lido-on-ethereum-form-audits-committee/3481",
+      "title": "Lido on Ethereum: Form Audits Committee - Proposals - Lido Governance",
+      "content": "Abstract From the very start of Lido, external audits used to be one of the cornerstone quality standards for the code used in Lido products, specifically for the on-chain code. With Lido\u2019s growing success, audit report\u2026",
+      "score": null
+    },
+    {
+      "url": "https://www.reddit.com/r/ethdev/comments/1rcti9u/telegram_bot_for_audit_contest_updates_sherlock/",
+      "title": "r/ethdev on Reddit: Telegram bot for audit contest updates (Sherlock, Code4rena, Cantina, Immunefi)",
+      "content": "I got tired of checking Sherlock, Code4rena, Cantina, and Immunefi all the time and didn\u2019t want to depend on Discord, so I built a small bot for myself that sends audit contest updates to a Telegram channel.",
+      "score": null
+    },
+    {
+      "url": "https://milotruck.github.io/blog/A-year-of-Competitive-Audits/",
+      "title": "A year of Competitive Audits - Home",
+      "content": "Alternatively, you could ask for me on a Spearbit or Cantina Managed review with other security researchers. ... A cheatsheet for commonly used commands and cheatcodes in Foundry. ... This CTF had two smart contract challenges, Dragon Slayer and Diamond Heist.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-07-lido-finance",
+      "title": "Lido Finance Audit | Code4rena",
+      "content": "Lido Finance audit on Code4rena. <strong>$103,500 in USDC, from 16 Jul 2025 to 11 Aug 2025</strong>. CSM v2 is a permissionless staking module upgrade enabling customizable operator types, entry gates, strikes, EIP-7002 support, and performance-based scoring.",
+      "score": null
+    }
+  ],
+  "all_results_deduped": [
+    {
+      "url": "https://github.com/lidofinance/audits",
+      "title": "GitHub - lidofinance/audits",
+      "content": "Lido has engaged Runtime Verification to formally verify the correctness and safety properties of the smart contracts that comprise the Lido Dual Governance mechanism. See full report for more details. ... See full report for more details. ... See full report for more details. A security audit for a hotfix to the Lido Oracle V5.",
+      "score": null
+    },
+    {
+      "url": "https://docs.lido.fi/security/audits/",
+      "title": "Lido Protocol Audits | Lido Docs",
+      "content": "See note contents for more details. ... See full report for more details. ... See full report for more details. <strong>Lido has engaged Runtime Verification to formally verify the correctness and safety properties of the smart contracts that comprise the Lido Dual Governance mechanism</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/lido",
+      "title": "Lido Smart Contract Audit - Chainsecurity",
+      "content": "Lido implements a staking protocol that allows users to stake their ETH while maintaining liquidity. In addition, it allows users to receive rewards for their staked ETH without running validator nodes. The inverse is true for node operators \u2013 they can run validator nodes and receive rewards without having to supply ETH themselves. The most critical subjects covered in our audit are functional correctness, the trust model, and security of user funds.",
+      "score": null
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/lido-staking-router",
+      "title": "Lido Smart contract audit by ChainSecurity - Lido Staking Router",
+      "content": "The most critical subjects covered in our audit are the security of the funds stored in the system, the distribution of the buffered ETH and the rewards to the various modules, the management of the modules, the node operators and the public keys of the validators, the correctness of the allocation algorithm, and the low-level handling of the storage and access control.",
+      "score": null
+    },
+    {
+      "url": "https://lido.fi/how-lido-works/security-practices-and-processes",
+      "title": "Security Practices and Processes",
+      "content": "Every component of the Lido protocol has gone through multiple layers of independent review by leading blockchain security firms. Over the years, experts from Certora, MixBytes, Statemind, Ackee, OpenZeppelin Consensys Diligence, ChainSecurity, Oxorio, Hexens, and SigmaPrime have examined Lido protocol\u2019s smart contracts, looking for ways to make them safer and more reliable. The results of these reviews are full audit reports and code-verification summaries, which are publicly available for anyone to explore here.",
+      "score": null
+    },
+    {
+      "url": "https://lido.fi/institutional",
+      "title": "Lido Institutional Liquid Staking",
+      "content": "The Lido code is open-sourced, audited, and covered by an extensive Immunefi bug bounty program to minimize this risk. To mitigate smart contract risks, all of the core Lido contracts are audited. <strong>Audit reports can be found here</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+      "title": "audits/Sigma Prime - Lido Easy Track Smart Contract Security Review Report v2.0 10-2021.pdf at main \u00b7 lidofinance/audits",
+      "content": "lidofinance / audits Public \u00b7 Notifications \u00b7 You must be signed in to change notification settings \u00b7 Fork 28 \u00b7 Star 104 \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://stake.lido.fi/",
+      "title": "Stake with Lido | Lido",
+      "content": "The Lido code is open-sourced, audited and covered by an extensive Immunefi bug bounty program to minimise this risk. To mitigate smart contract risks, all of the core Lido contracts are audited. <strong>Audit reports can be found here</strong>.",
+      "score": null
+    },
+    {
+      "url": "https://research.lido.fi/t/proposal-infrastructure-security-audit/5982",
+      "title": "Proposal - Infrastructure Security Audit - Community Grants / Initiatives - Lido Governance",
+      "content": "TL;DR <strong>Lido has not undergone an annual infrastructure audit (aka pen test) yet this year</strong>. Of the top 50 hacks, 40% have occurred beyond the confines of smart contracts, with hackers identifying vulnerabilities in web apps, wallets, bridges, ...",
+      "score": null
+    },
+    {
+      "url": "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+      "title": "audits/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf at main \u00b7 lidofinance/audits",
+      "content": "lidofinance / audits Public \u00b7 Notifications \u00b7 You must be signed in to change notification settings \u00b7 Fork 21 \u00b7 Star 96 \u00b7 main \u00b7 / Copy path \u00b7 History \u00b7 386 KB \u00b7 main \u00b7 / Top \u00b7 386 KB \u00b7 Loading \u00b7",
+      "score": null
+    },
+    {
+      "url": "https://www.youtube.com/watch?v=Y4zG8dmWe7M",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, Code4rena, Sherlock & More - YouTube",
+      "content": "Curious about how people are making real money in Web3? In this video, I break down everything you need to know about smart contract auditing\u2014why it\u2019s such a...",
+      "score": null
+    },
+    {
+      "url": "https://medium.com/@JohnnyTime/complete-audit-competitions-guide-strategies-cantina-code4rena-sherlock-more-bf55bdfe8542",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, Code4rena, Sherlock & More | by Johnny Time | May, 2025 | Medium",
+      "content": "Smart contract auditing is <strong>one of the most rewarding skills in the blockchain space, both intellectually and financially</strong>. If you\u2019re looking to break into the field, participating in auditing\u2026",
+      "score": null
+    },
+    {
+      "url": "https://www.linkedin.com/pulse/complete-audit-competitions-guide-strategies-cantina-code4rena-time-q3wdc",
+      "title": "Complete Audit Competitions Guide & Strategies: Cantina, ...",
+      "content": "We cannot provide a description for this page right now",
+      "score": null
+    },
+    {
+      "url": "https://research.lido.fi/t/lido-on-ethereum-form-audits-committee/3481",
+      "title": "Lido on Ethereum: Form Audits Committee - Proposals - Lido Governance",
+      "content": "Abstract From the very start of Lido, external audits used to be one of the cornerstone quality standards for the code used in Lido products, specifically for the on-chain code. With Lido\u2019s growing success, audit report\u2026",
+      "score": null
+    },
+    {
+      "url": "https://www.reddit.com/r/ethdev/comments/1rcti9u/telegram_bot_for_audit_contest_updates_sherlock/",
+      "title": "r/ethdev on Reddit: Telegram bot for audit contest updates (Sherlock, Code4rena, Cantina, Immunefi)",
+      "content": "I got tired of checking Sherlock, Code4rena, Cantina, and Immunefi all the time and didn\u2019t want to depend on Discord, so I built a small bot for myself that sends audit contest updates to a Telegram channel.",
+      "score": null
+    },
+    {
+      "url": "https://milotruck.github.io/blog/A-year-of-Competitive-Audits/",
+      "title": "A year of Competitive Audits - Home",
+      "content": "Alternatively, you could ask for me on a Spearbit or Cantina Managed review with other security researchers. ... A cheatsheet for commonly used commands and cheatcodes in Foundry. ... This CTF had two smart contract challenges, Dragon Slayer and Diamond Heist.",
+      "score": null
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-07-lido-finance",
+      "title": "Lido Finance Audit | Code4rena",
+      "content": "Lido Finance audit on Code4rena. <strong>$103,500 in USDC, from 16 Jul 2025 to 11 Aug 2025</strong>. CSM v2 is a permissionless staking module upgrade enabling customizable operator types, entry gates, strikes, EIP-7002 support, and performance-based scoring.",
+      "score": null
+    }
+  ],
+  "classified": [
+    {
+      "url": "https://github.com/lidofinance/audits",
+      "auditor": null,
+      "title": "Lido Audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://docs.lido.fi/security/audits/",
+      "auditor": null,
+      "title": "Lido Protocol Audits",
+      "date": null,
+      "type": "listing",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/lido",
+      "auditor": "ChainSecurity",
+      "title": "Lido Smart Contract Audit",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://www.chainsecurity.com/security-audit/lido-staking-router",
+      "auditor": "ChainSecurity",
+      "title": "Lido Smart contract audit by ChainSecurity - Lido Staking Router",
+      "date": null,
+      "type": "report",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/lidofinance/audits/blob/main/Sigma%20Prime%20-%20Lido%20Easy%20Track%20Smart%20Contract%20Security%20Review%20Report%20v2.0%2010-2021.pdf",
+      "auditor": "Sigma Prime",
+      "title": "Lido Easy Track Smart Contract Security Review Report v2.0",
+      "date": "2021-10",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://github.com/lidofinance/audits/blob/main/L2/Lido-L2-2022-07-Oxorio-Smart-Contracts-Security-Audit-Report.pdf",
+      "auditor": "Oxorio",
+      "title": "Lido L2 Smart Contracts Security Audit Report",
+      "date": "2022-07",
+      "type": "pdf",
+      "confidence": 1.0
+    },
+    {
+      "url": "https://code4rena.com/audits/2025-07-lido-finance",
+      "auditor": "Code4rena",
+      "title": "Lido Finance Audit",
+      "date": "2025-07",
+      "type": "report",
+      "confidence": 1.0
+    }
+  ],
+  "timings_ms": {
+    "broad_search": 587,
+    "followup_query": 629,
+    "followup_search": 609,
+    "classify": 8741
+  },
+  "errors": []
+}

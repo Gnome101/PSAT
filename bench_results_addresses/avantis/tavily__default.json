@@ -1,0 +1,16 @@
+{
+  "protocol": "avantis",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 10287,
+  "contracts": [],
+  "official_domain": "docs.avantisfi.com",
+  "errors": [],
+  "notes": [
+    "Domain candidates: docs.avantisfi.com, docs.openzeppelin.com, docs.valantis.xyz, ethplorer.io, iq.wiki",
+    "Official domain: docs.avantisfi.com",
+    "Selected pages: 1",
+    "No inventory contracts extracted from selected pages",
+    "Tavily queries used: 3/4"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "protocol": "sky",
+  "backend": "brave",
+  "mode": "default",
+  "elapsed_ms": 6330,
+  "contracts": [],
+  "official_domain": null,
+  "errors": [],
+  "notes": [
+    "Domain candidates: developers.skyeco.com, developers.sky.money, ethplorer.io, github.com, messari.io",
+    "Could not identify an official domain",
+    "Tavily queries used: 1/4"
+  ]
+}

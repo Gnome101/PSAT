@@ -1,0 +1,16 @@
+{
+  "protocol": "compound v3",
+  "backend": "brave",
+  "mode": "default",
+  "elapsed_ms": 5171,
+  "contracts": [],
+  "official_domain": "github.com",
+  "errors": [],
+  "notes": [
+    "Domain candidates: github.com, rareskills.io, coindesk.com, comp.xyz, docs.protocolink.com",
+    "Official domain: github.com",
+    "Selected pages: 3",
+    "No inventory contracts extracted from selected pages",
+    "Tavily queries used: 3/4"
+  ]
+}

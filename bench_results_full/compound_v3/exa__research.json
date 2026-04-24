@@ -1,0 +1,84 @@
+{
+  "protocol": "compound v3",
+  "backend": "exa",
+  "mode": "research",
+  "instructions": "Find all third-party smart contract security audit reports published for the compound v3 protocol. Include pre-launch audits, formal verification reports, contest reports (Code4rena/Sherlock/Cantina), audit-firm blog posts, and PDF reports on GitHub or auditor websites. For each, provide the auditor name, a URL to the audit document, and the date if known.",
+  "reports": [
+    {
+      "url": "https://chainsecurity.com/reports/Compound/ChainSecurity_Compound_Comet_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Smart contract audit of Compound III (Comet)",
+      "date": "",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://www.openzeppelin.com/news/compound-iii-audit",
+      "auditor": "OpenZeppelin",
+      "title": "Compound III Audit - OpenZeppelin blog post",
+      "date": "2022-07-20",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://certora.cdn.prismic.io/certora/e7ca6508-fad8-4a41-8588-b3312d8b750e_Compound+Report.pdf",
+      "auditor": "Certora",
+      "title": "Certora's Audit & Formal Verification Report for Compound V3 (Comet)",
+      "date": "2022-07-06",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://arxiv.org/pdf/2410.04085",
+      "auditor": "Chainrisk",
+      "title": "Compound V3 Economic Audit Report",
+      "date": "2024-10-05",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://github.com/Certora/SecurityReports",
+      "auditor": "Certora",
+      "title": "Certora Formal Verification and Audit Portfolio (includes Compound V3 related reports)",
+      "date": "",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://www.certora.com/reports/compound-report",
+      "auditor": "Certora",
+      "title": "Certora's Audit & Formal Verification Report for Compound V3 (Comet)",
+      "date": "2022-07-06",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://github.com/Certora/SecurityReports/Reports/2026/01_07_2026_Compound_V3_Governor_Whitelist.pdf",
+      "auditor": "Certora",
+      "title": "Compound V3 Governor Whitelist Audit",
+      "date": "2026-01-07",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://github.com/Certora/SecurityReports/Reports/2026/01_07_2026_Compound_V3_Multiplier_Plugin.pdf",
+      "auditor": "Certora",
+      "title": "Compound V3 Multiplier Plugin Audit",
+      "date": "2026-01-07",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    },
+    {
+      "url": "https://github.com/Certora/SecurityReports/Reports/2026/01_06_2026_Compound_V3_Extended_Pause.pdf",
+      "auditor": "Certora",
+      "title": "Compound V3 Extended Pause Audit",
+      "date": "2026-01-06",
+      "confidence": 1.0,
+      "source": "exa_deep_research"
+    }
+  ],
+  "errors": [],
+  "notes": [],
+  "task_id": "01kpypdv281166k3xkabdj0wcr",
+  "elapsed_ms": 26642
+}

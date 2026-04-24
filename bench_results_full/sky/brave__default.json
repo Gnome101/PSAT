@@ -1,0 +1,48 @@
+{
+  "protocol": "sky",
+  "backend": "brave",
+  "mode": "default",
+  "elapsed_ms": 58690,
+  "reports": [
+    {
+      "url": "https://www.chainsecurity.com/reports/Sky/ChainSecurity_Sky_Chief_Audit.pdf",
+      "pdf_url": "https://www.chainsecurity.com/reports/Sky/ChainSecurity_Sky_Chief_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "ChainSecurity Sky Chief Audit",
+      "date": null,
+      "source_url": "https://www.chainsecurity.com/security-audit/sky-chief-smart-contracts",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:15:13.369198+00:00"
+    },
+    {
+      "url": "https://hacken.io/audits/sky-coin-xso/sca-sky-coin-xso-aug2025/",
+      "pdf_url": null,
+      "auditor": "Hacken",
+      "title": "Hacken Sky Coin (XSO) Audit",
+      "date": "2025-08-19",
+      "source_url": "https://hacken.io/audits/sky-coin-xso/sca-sky-coin-xso-aug2025/",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:15:13.369198+00:00"
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/5afcb016-c1e8-4e42-8245-87857f8e1e1a",
+      "pdf_url": null,
+      "auditor": "Cantina",
+      "title": "Cantina Sky Protocol Token Conversion Audit",
+      "date": "2025-04-17",
+      "source_url": "https://cantina.xyz/portfolio/5afcb016-c1e8-4e42-8245-87857f8e1e1a",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:15:13.369198+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 20 unique result(s)",
+    "LLM classified 4 result(s) as audit reports",
+    "Link following: 1 additional report(s) from 4 linked page(s)",
+    "LLM validate+cluster: 4 \u2192 3 (dropped=0, collapsed=1, auditor_filled=0, title_fixed=3)",
+    "Extracted 3 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

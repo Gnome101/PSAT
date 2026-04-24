@@ -1,0 +1,3340 @@
+{
+  "protocol": "uniswap",
+  "backend": "exa",
+  "mode": "instant",
+  "elapsed_ms": 22963,
+  "contracts": [
+    {
+      "name": "calling setFeeTo on the mainnet UniswapV2Factory and passing the AssetSink",
+      "address": "0x5c69bee701ef814a2b6a3edd4b1652cb9cc5aa6f",
+      "chains": [
+        "ethereum",
+        "arbitrum"
+      ],
+      "confidence": 0.99,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 3,
+        "named": 3,
+        "table": 3,
+        "link": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s8",
+        "s9",
+        "s10"
+      ],
+      "aliases": [
+        "Unichain\u00c2 Sepolia",
+        "WorldChain"
+      ]
+    },
+    {
+      "name": "Permit2",
+      "address": "0x000000000022d473030f116ddee9f6b43ac78ba3",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.96,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 4,
+        "named": 8,
+        "table": 8,
+        "explorer": 4
+      },
+      "source_ids": [
+        "s9",
+        "s11",
+        "s12",
+        "s13",
+        "s14"
+      ],
+      "aliases": [
+        "Unichain\u00c2 Sepolia"
+      ]
+    },
+    {
+      "name": "Universal\u00c2 Router",
+      "chains": [
+        "base",
+        "ethereum",
+        "polygon",
+        "arbitrum"
+      ],
+      "confidence": 0.9,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s11",
+        "s12",
+        "s43",
+        "s42",
+        "s76",
+        "s51",
+        "s57",
+        "s9",
+        "s68",
+        "s44",
+        "s89",
+        "s74"
+      ],
+      "deployments": [
+        {
+          "address": "0x492e6456d9528771018deb9e87ef7750ef184104",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x6ff5693b99212da76ad316178a184ab56d299b43",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x3a9d48ab9751398bbfa63ad67599bb04e4bdf98b",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x66a9893cc07d91d95644aedd05d03f95e1dba8af",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x851116d9223fabed8e56c0e6b8ad0c31d98b3507",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xef740bf23acae26f6492b10de645d6b98dc8eaf3",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xf70536b3bcc1bd1a972dc186a2cf84cc6da6be5d",
+          "chains": [
+            "ethereum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xa51afafe0263b40edaef0df8781ea9aa03e381a3",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xeabbcb3e8e415306207ef514f660a3f820025be3",
+          "chains": [
+            "arbitrum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xefd1d4bd4cf1e86da286bb4cb1b8bced9c10ba47",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x1095692a6237d83c6a72f3f5efedb9a670c49223",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x4a5c956e6626c552c9e830befddf8f5e02bbf60a",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x0d97dc33264bfc1c226207428a79b26757fb9dc3",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x112908dac86e20e7241b0927479ea3bf935d1fa0",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x1906c1d672b88cd1b9ac7593301ca990f94eae07",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x3315ef7ca28db74abadc6c44570efdf06b04b020",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x4cded7edf52c8aa5259a54ec6a3ce7c6d2a455df",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x8ac7bee993bb44dab564ea4bc9ea67bf9eb5e743",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x94b75331ae8d42c1b61065089b7d48fe14aa73b7",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xcb695bc5d3aa22cad1e6df07801b061a05a0233a",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xda00ae15d3a71466517129255255db7c0c0956d3",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "AddressManager",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s15",
+        "s28"
+      ],
+      "deployments": [
+        {
+          "address": "0x8098f676033a377b9defe302e9fe6877cd63d575",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xef1295ed471dfec101691b946fb6b4654e88f98a",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "AnchorStateRegistryProxy",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s16",
+        "s29"
+      ],
+      "deployments": [
+        {
+          "address": "0x318a642db9e24a85318b8bf18efd5287ba38643b",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xf971f1b0d80eb769577135b490b913825bfcf00b",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "DisputeGameFactoryProxy",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s17",
+        "s30"
+      ],
+      "deployments": [
+        {
+          "address": "0x2f12d621a16e2d3285929c9996f478508951dfe4",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xeff73e5aa3b9aec32c659aa3e00444d20a84394b",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Factory",
+      "chains": [
+        "ethereum",
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 1,
+        "table": 2
+      },
+      "source_ids": [
+        "s8",
+        "s9"
+      ],
+      "deployments": [
+        {
+          "address": "0x1f98400000000000000000000000000000000002",
+          "chains": [
+            "ethereum",
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x1f98400000000000000000000000000000000003",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "L1CrossDomainMessengerProxy",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s31",
+        "s18"
+      ],
+      "deployments": [
+        {
+          "address": "0x448a37330a60494e666f6dd60ad48d930aeba381",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x9a3d64e386c18cb1d6d5179a9596a4b5736e98a6",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "L1ERC721BridgeProxy",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s32",
+        "s19"
+      ],
+      "deployments": [
+        {
+          "address": "0x4696b5e042755103fe558738bcd1ecee7a45ebfe",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xd04d0d87e0bd4d2e50286760a3ef323fea6849cf",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "L1StandardBridgeProxy",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s20",
+        "s33"
+      ],
+      "deployments": [
+        {
+          "address": "0x81014f44b0a345033bb2b3b21c7a1a308b35feea",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xea58fca6849d79ead1f26608855c2d6407d54ce2",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Multicall",
+      "chains": [
+        "base",
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s11",
+        "s41",
+        "s44"
+      ],
+      "deployments": [
+        {
+          "address": "0x091e99cb1c49331a94dd62755d168e941abd0693",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xdc7f370de7631ce9e2c2e1dcda6b3b5744cf4705",
+          "chains": [
+            "arbitrum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "OptimismMintableERC20FactoryProxy | Ethereum\u00c2 Mainnet",
+      "address": "0xa2b597eaeacb6f627e088cbead319e934ed5edad",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s21"
+      ]
+    },
+    {
+      "name": "OptimismPortalProxy | Ethereum\u00c2 Mainnet",
+      "address": "0x0bd48f6b86a26d3a217d0fa6ffe2b491b956a7a2",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s22"
+      ]
+    },
+    {
+      "name": "PoolManager",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s12",
+        "s46",
+        "s9",
+        "s52",
+        "s75",
+        "s63",
+        "s88",
+        "s69",
+        "s82",
+        "s58"
+      ],
+      "deployments": [
+        {
+          "address": "0x000000000004444c5dc75cb358380d2e3de08a90",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x1f98400000000000000000000000000000000004",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x9a13f98cb987694c9f086b1f5eb990eea8264ec3",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xe03a1074c86cfedd5c142c4f04f1a1536e203543",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x360e68faccca8ca495c1b759fd9eee466db9fb32",
+          "chains": [
+            "arbitrum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xfb3e0c6f74eb1a21cc1da29aec80d2dfe6c9a317",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x67366782805870060151383f4bbff9dab53e5cd6",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x05e73354cfdd6745c338b50bcfdfa3aa6fa03408",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x498581ff718922c3f8e6a244956af099b2652b2b",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x9131b9084e6017be19c6a0ef23f73dbb1bf41f96",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x0575338e4c17006ae181b47900a84404247ca30f",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x06380c0e0912312b5150364b9dc4542ba0dbbc85",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x1631559198a9e474033433b2958dabc135ab6446",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x188d586ddcf52439676ca21a244753fa19f9ea8e",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x288dc841a52fca2707c6947b3a777c5e56cd87bc",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x28e2ea090877bf75740558f6bfb36a5ffee9e9df",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xb1860d529182ac3bc1f51fa2abd56662b7d13f33",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PoolModifyLiquidityTest",
+      "chains": [
+        "ethereum",
+        "polygon",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s12",
+        "s81",
+        "s9",
+        "s94",
+        "s87"
+      ],
+      "deployments": [
+        {
+          "address": "0x0c478023803a644c94c4ce1c1e7b9a087e411b0a",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x5fa728c0a5cfd51bee4b060773f50554c0c8a7ab",
+          "chains": [
+            "ethereum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x9a8ca723f5dccb7926d00b71dec55c2fea1f50f7",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x37429cd17cb1454c34e7f50b09725202fd533039",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PoolSwapTest",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s12",
+        "s80",
+        "s93",
+        "s86"
+      ],
+      "deployments": [
+        {
+          "address": "0x9b6b46e2c869aa39918db7f52f5557fe577b6eee",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xf3a39c86dbd13c45365e57fb90fe413371f65af8",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x8b5bcc363dde2614281ad875bad385e0a785d3b9",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PositionDescriptor",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "table": 2
+      },
+      "source_ids": [
+        "s9",
+        "s12",
+        "s47",
+        "s53",
+        "s64",
+        "s70",
+        "s59"
+      ],
+      "deployments": [
+        {
+          "address": "0x9fb28449a191cd8c03a1b7abfb0f5996ecf7f722",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xd1428ba554f4c8450b763a0b2040a4935c63f06c",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xedd81496169c46df161b8513a52ffecaaaa66743",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xe2023f3fa515cf070e07fd9d51c1d236e07843f4",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x0892771f0c1b78ad6013d6e5536007e1c16e6794",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x25d093633990dc94bedeed76c8f3cdaa75f3e7d5",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x0ebb8526647744204cda2edb3f6bded2ec56403f",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x0747ad2b2e1f5761b1dcf0d8672bd1ffc3676f97",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x2b1aed9445b05ac1a3b203eccc1e25dd9351f0a9",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x42e3ccd9b7f67b5b2ee0c12074b84ccf2a8e7f36",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x5727e22b25feee05e8dfa83c752b86f19d102d8a",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x5770d2914355a6d0a39a70aeea9bcce55df4201b",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x7d64630bbb4993b5578dbd65e400961c9e68d55a",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x7da419153bd420b689f312363756d76836aeace4",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x9e9fbbef0e1bd752e83de5acff3d0c936a9e5a4b",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xf0432f360703ec3d33931a8356a75a77d8d380e1",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PositionManager",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s12",
+        "s54",
+        "s77",
+        "s9",
+        "s48",
+        "s90",
+        "s65",
+        "s71",
+        "s83",
+        "s60"
+      ],
+      "deployments": [
+        {
+          "address": "0x3c3ea4b57a46241e54610e5f022e5c45859a1017",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x429ba70129df741b2ca2a85bc3a2a3328e5c09b4",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x4529a01c7a0410167c5740c487a8de60232617bf",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xbd216513d74c8cf14cf4747e6aaa6420ff64ee9e",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xac631556d3d4019c95769033b5e719dd77124bac",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xd88f38f930b7952f2db2432cb002e7abbf3dd869",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x1ec2ebf4f37e7363fdfe3551602425af0b3ceef9",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x4b2c77d209d3405f41a037ec6c77f7f5b8e2ca80",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x7c5f5a4bbd8fd63184577525326123b519429bdc",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x4498fe0b1df6b476453440664a16e269b7587d0f",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x1b35d13a2e2528f192637f14b05f0dc0e7deb566",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x4ad2f4cca2682cbb5b950d660dd458a1d3f1baad",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x5b7ec4a94ff9bedb700fb82ab09d5846972f4016",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x7a4a5c919ae2541aed11041a1aeee68f1287f95b",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xb74b1f14d2754acfcbbe1a221023a5cf50ab8acd",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xc585e0f504613b5fbf874f21af14c65260fb41fa",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xcf1eafc6928dc385a342e7c6491d371d2871458b",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xf66c7b99e2040f0d9b326b3b7c152e9663543d63",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xf7965f3981e4d5bc383bfbcb61501763e9068ca9",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PreimageOracle",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s23",
+        "s36"
+      ],
+      "deployments": [
+        {
+          "address": "0x9c065e11870b891d214bc2da7ef1f9ddfa1be277",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xad0a6f4f1503048c34d90df845c37c876407355a",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ProtocolVersionsProxy",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s24",
+        "s37"
+      ],
+      "deployments": [
+        {
+          "address": "0x8062abc286f5e7d9428a0ccb9abd71e50d93b935",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x8d8a20ccbeae2bf13f4e7e97970a979097858758",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ProxyAdmin",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s38",
+        "s25",
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0x2bf403e5353a7a082ef6bb3ae2be3b866d8d3ea4",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x3b73fa8d82f511a3cae17b5a26e4e1a2d5e2f2a4",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x7c9caa4ac84c8fad8bd504dbf90e791f91f41705",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x3334d83e224af5ef9c2e7dda7c7c98efd9621fa9",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Quoter",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s12",
+        "s55",
+        "s9",
+        "s49",
+        "s79",
+        "s66",
+        "s92",
+        "s72",
+        "s61",
+        "s85"
+      ],
+      "deployments": [
+        {
+          "address": "0x1f3131a13296fb91c90870043742c3cdbff1a8d7",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x333e3c607b141b18ff6de9f258db6e77fe7491e0",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x61b3f2011a92d183c7dbadbda940a7555ccf9227",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x3972c00f7ed4885e145823eb7c655375d275a1c5",
+          "chains": [
+            "arbitrum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x7de51022d70a725b508085468052e25e22b5c4c9",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xb3d5c3dfc3a7aebff71895a7191796bffc2c81b9",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x0d5e0f971ed27fbff6c2837bf31316121532048d",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x4a6513c898fe1b2d0e78d3b0e0a4a151589b1cba",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0x7c594d9b533ac43d3595dd4117549111ec48f8b2",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x28566da1093609182dff2cb2a91cfd72e61d66cd",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x55d235b3ff2daf7c3ede0defc9521f1d6fe6c5c0",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x5edaccc0660e0a2c44b06e07ce8b915e625dc2c6",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x6f71cdcb0d119ff72c6eb501abceb576fbf62bcf",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x8928074ca1b241d8ec02815881c1af11e8bc5219",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x9f75dd27d6664c475b90e105573e550ff69437b0",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xa222dd357a9076d1091ed6aa2e16c9742dd26891",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xbe40675bb704506a3c2ccfb762dcfd1e979845c2",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Releaser\u00c2 (Firepit)",
+      "address": "0x0d5cd355e2abeb8fb1552f56c965b867346d6721",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s4"
+      ]
+    },
+    {
+      "name": "Sepolia",
+      "chains": [
+        "ethereum",
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s35",
+        "s34",
+        "s8"
+      ],
+      "deployments": [
+        {
+          "address": "0x0d83dab629f0e0f9d36c0cbc89b69a489f0751bd",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xdf7977c3005730329a160637e8cb9f1675a4d9be",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xf62c03e08ada871a0beb309762e260a7a6a880e6",
+          "chains": [
+            "arbitrum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "StateView",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "polygon",
+        "base"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s12",
+        "s50",
+        "s9",
+        "s56",
+        "s78",
+        "s67",
+        "s91",
+        "s73",
+        "s84",
+        "s62"
+      ],
+      "deployments": [
+        {
+          "address": "0x7ffe42c4a5deea5b0fec41c94c136cf115597227",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x86e8631a016f9068c3f085faf484ee3f5fdee8f2",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xc18a3169788f4f75a170290584eca6395c75ecdb",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xe1dd9c3fa50edb962e442f60dfbc432e24537e4c",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x76fd297e2d437cd7f76d50f01afe6160f86e9990",
+          "chains": [
+            "arbitrum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x9d467fa9062b6e9b1a46e26007ad82db116c67cb",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x5ea1bd7974c8a611cbab0bdcafcb1d9cc9b3ba5a",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x571291b572ed32ce6751a2cb2486ebee8defb9b4",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xa3c0c9b65bad0b08107aa264b0f3db444b867a71",
+          "chains": [
+            "base"
+          ]
+        },
+        {
+          "address": "0xf3c2e547e8da2052e2fc997ee94d54fbe59a6375",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x12a88ae16f46dce4e8b15368008ab3380885df30",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x385785af07d63b50d0a0ea57c4ff89d06adf7328",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x51d394718bc09297262e368c1a481217fdeb71eb",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x77395f3b2e73ae90843717371294fa97cc419d64",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xbc21f8720babf4b20d195ee5c6e99c52b76f2bfb",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xc3c9e198c735a4b97e3e683f391ccbdd60b69286",
+          "chains": [
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xd13dd3d6e93f276fafc9db9e6bb47c1180aee0c4",
+          "chains": [
+            "polygon"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SuperchainConfigProxy",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s26",
+        "s39"
+      ],
+      "deployments": [
+        {
+          "address": "0x95703e0982140d16f8eba6d158fccede42f04a4c",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xe7e23eba32a6fd2ac79dd5ec72fe7f6217b41bdc",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SystemConfigProxy",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s9",
+        "s40",
+        "s27"
+      ],
+      "deployments": [
+        {
+          "address": "0xaee94b9ab7752d3f7704bde212c0c6a0b701571d",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xc407398d063f942febbcc6f80a156b47f3f1bda6",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "TokenJar\u00c2 (AssetSink)",
+      "address": "0xf38521f130fccf29db1961597bc5d2b60f995f85",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s3"
+      ]
+    },
+    {
+      "name": "UNI",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s6",
+        "s9"
+      ],
+      "deployments": [
+        {
+          "address": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x8f187aa05619a017077f5308904739877ce9ea21",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Unichain\u00c2 Sepolia",
+      "chains": [
+        "ethereum",
+        "polygon",
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "table": 2
+      },
+      "source_ids": [
+        "s9",
+        "s12",
+        "s8"
+      ],
+      "aliases": [
+        "PoolManager"
+      ],
+      "deployments": [
+        {
+          "address": "0x00b036b58a818b1bc34d502d3fe730db729e62ac",
+          "chains": [
+            "ethereum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x56dcd40a3f2d466f48e7f48bdbe5cc9b92ae4472",
+          "chains": [
+            "ethereum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x9140a78c1a137c7ff1c151ec8231272af78a99a4",
+          "chains": [
+            "ethereum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x9e5a52f57b3038f1b8eee45f28b3c1967e22799c",
+          "chains": [
+            "ethereum",
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xc199f1072a74d4e905aba1a84d9a45e2546b6222",
+          "chains": [
+            "ethereum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0xf969aee60879c54baaed9f3ed26147db216fd664",
+          "chains": [
+            "ethereum",
+            "polygon"
+          ]
+        },
+        {
+          "address": "0x1f98431c8ad98523631ae4a59f267346ea31f984",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x2b6221e68d48cdc10cf2e52d913f9380d62555ba",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x31d0220469e10c4e71834a79b1f276d740d3768f",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x5f739c790a48e97eec0efb81bab5d152c0a0eca0",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x6dd37329a1a225a6fca658265d460423dcafbf89",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x920b806e40a00e02e7d2b94ffc89860fdaed3640",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xb5fa244c9d6d04b2fbac84418b3c4910ed1ae5f2",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xbc708b192552e19a088b4c4b8772aeea83bcf760",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xd1aae39293221b77b0c71fbd6dcb7ea29bb5b166",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xd693d8df6cf768248c16f98745ee0c8e06460487",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "UniswapV2Router02",
+      "address": "0x284f11109359a7e1306c3e447ef14d38400063ff",
+      "chains": [
+        "ethereum",
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s8",
+        "s9"
+      ]
+    },
+    {
+      "name": "Universal Router\u00c2 v1.2",
+      "address": "0x8909dc15e40173ff4699343b6eb8132c65e18ec6",
+      "chains": [
+        "ethereum",
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "table": 3
+      },
+      "source_ids": [
+        "s8",
+        "s9"
+      ],
+      "aliases": [
+        "BNB\u00c2 Chain"
+      ]
+    },
+    {
+      "name": "V3FeeAdapter",
+      "address": "0x5e74c9f42eed283bff3744fbd1889d398d40867d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s5"
+      ]
+    },
+    {
+      "name": "WETH",
+      "chains": [
+        "ethereum",
+        "base",
+        "arbitrum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 4,
+        "table": 4
+      },
+      "source_ids": [
+        "s9",
+        "s11",
+        "s44"
+      ],
+      "aliases": [
+        "Unichain\u00c2 Sepolia",
+        "WETH9"
+      ],
+      "deployments": [
+        {
+          "address": "0x4200000000000000000000000000000000000006",
+          "chains": [
+            "ethereum",
+            "base"
+          ]
+        },
+        {
+          "address": "0x4300000000000000000000000000000000000004",
+          "chains": [
+            "arbitrum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Bonk\u00c2 (Wormhole)",
+      "address": "0xbbe97f3522101e5b6976cbf77376047097ba837f",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "Circle\u00c2 USDC",
+      "address": "0x078d782b760474a361dda0af3839290b0ef57ad6",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 2,
+        "table": 2
+      },
+      "source_ids": [
+        "s9"
+      ],
+      "aliases": [
+        "USDC"
+      ]
+    },
+    {
+      "name": "FOT\u00c2 Detector",
+      "address": "0x55e74a5c3310bbccdd0b655ade2309e0d0d25826",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "Hyperliquid\u00c2 (Wormhole)",
+      "address": "0x15d0e0c55a3e7ee67152ad7e89acf164253ff68d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "Jupiter\u00c2 (Wormhole)",
+      "address": "0xbe51a5e8fa434f09663e8fb4cce79d0b2381afad",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "NFTDescriptor",
+      "chains": [
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0xaa32bd3926097fd04d22b4433e9867417ee79333",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xf9d1077fd35670d4acbd27af82652a8d84577d9f",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "NFT\u00c2 Descriptor",
+      "address": "0x0dfa04b28ab68ffd0e6e17fac6ec16d4846a2004",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "NonfungiblePositionManager",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9",
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0x943e6e07a7e8e791dafc44083e54041d743c46e9",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xb7f724d6dddfd008eff5cc2834edde5f9ef0d075",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xb218e4f7cf0533d4696fdfc419a0023d33345f28",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x03a520b32c04bf3beef7beb72e919cf822ed34f1",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "NonfungibleTokenPositionDescriptor",
+      "chains": [
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0x497089d9450bb58f536c38c1c0d0a37472303508",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x4f225937edc33efd6109c4cef7b560b2d6401009",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Priority Order\u00c2 Reactor",
+      "address": "0x00000006021a6bce796be7ba509bbba71e956e37",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "QuoterV2",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9",
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0x385a5cf5f83e99f7bb2852b6a19c3538b9fa7658",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x6cdcd65e03c1cec3730aeecd45bc140d57a25c77",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x3d4e44eb1374240ce5f1b871ab261cd16335b76a",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sets the Uniswap Governance Timelock\u00e2\u0080\u0099s address as the initial thresholdSetter",
+      "address": "0x1a9c8182c09f50c8318d769245bea52c32be35bc",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 4,
+        "link": 4,
+        "explorer": 4
+      },
+      "source_ids": [
+        "s1",
+        "s7"
+      ],
+      "aliases": [
+        "Sets the Uniswap Governance Timelock\u00e2\u0080\u0099s address as the initial feeSetter",
+        "to the Uniswap Governance Timelock\u00e2\u0080\u0099s address",
+        "to the Uniswap Governance Timelock\u00e2\u0080\u0099s\u00c2 address"
+      ]
+    },
+    {
+      "name": "Solana\u00c2 (Wormhole)",
+      "address": "0xbde8a5331e8ac4831cf8ea9e42e229219eafab97",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "SwapRouter02",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9",
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0x73855d06de49d0fe4a9c42636ba96c62da12ff9c",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x549feb8c9bd4c12ad2ab27022da12492ac452b66",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x2626664c2603336e57b271c5c0b26f421741e481",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "TickLens",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9",
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0xd5d76fa166ab8d8ad4c9f61aaa81457b66cbe443",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x2e95185bcdd928a3e984b7e2d6560ab1b17d7274",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x0cdee061c75d43c82520ed998c23ac2991c9ac6d",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "TokenJar",
+      "address": "0xd576bdf6b560079a4c204f7644e556dbb19140b5",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "TransparentUpgradeableProxy",
+      "chains": [
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s12",
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0x73162af50bf62750ff1b28c926e092b55022324d",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0xb22ef02e13b1900ebf10391e57162402c11bff05",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x4615c383f85d0a2bbed973d83ccecf5cb7121463",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "USDS",
+      "address": "0x7e10036acc4b56d4dfca3b77810356ce52313f9c",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "USDT0",
+      "address": "0x9151434b16b9763660705744891fa906f660ecc5",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "UnichainDeployer",
+      "address": "0xd16c47bf3ae22e0b2bac5925d990b81416f18dea",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": "UniswapInterfaceMulticall",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ],
+      "deployments": [
+        {
+          "address": "0x9d0f15f2cf58655fddcd1ee6129c547fdaed01b1",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0xb7610f9b733e7d45184be3a1bc966960ccc54f0b",
+          "chains": [
+            "ethereum"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "UniswapV3Factory",
+      "chains": [
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0x792edade80af5fc680d96a2ed80a44247d2cf6fd",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x33128a8fc17869897dce68ed026d694621f6fdfd",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Universal Router\u00c2 v2.0",
+      "address": "0xca7577afb670147c7b211c798b97118bd36058f3",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "V3Migrator",
+      "chains": [
+        "ethereum",
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9",
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0xb9d0c246f306b1aaf02ae6ba112d5ef25e5b60dc",
+          "chains": [
+            "ethereum"
+          ]
+        },
+        {
+          "address": "0x15ca7043cd84c5d21ae76ba0a1a967d42c40ece0",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x23cf10b1ee3adfca73b0ef17c07f7577e7acd2d7",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "X\u00c2 Layer",
+      "address": "0xdf38f24fe153761634be942f9d859f3dba857e95",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": "Zora",
+      "address": "0x0f797dc7efaea995bb916f268d919d0a1950ee3c",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": "dogwifhat\u00c2 (Wormhole)",
+      "address": "0x97fadb3d000b953360fd011e173f12cddb5d70fa",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "ezETH (Renzo\u00c2 Restaked)",
+      "address": "0x2416092f143378750bb29b79ed961ab195cceea5",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "kBTC",
+      "address": "0x73e0c0d45e048d25fc26fa3159b0aa04bfa4db98",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "rsETH\u00c2 (KelpDao)",
+      "address": "0xc3eacf0612346366db554c991d7858716db09f58",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "sUSDC",
+      "address": "0x14d9143becc348920b68d123687045db49a016c6",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "sUSDS",
+      "address": "0xa06b10db9f390990364a3984c04fadf1c13691b5",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "v3StakerAddress",
+      "chains": [
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s44",
+        "s11"
+      ],
+      "deployments": [
+        {
+          "address": "0xecaf7c276f746170642e97de961f2f0361e1acc8",
+          "chains": [
+            "arbitrum"
+          ]
+        },
+        {
+          "address": "0x42be4d6527829fefa1493e1fb9f3676d2425c3c1",
+          "chains": [
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "wBTC\u00c2 OFT",
+      "address": "0x0555e30da8f98308edb960aa94c0db47230d2b9c",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "wBTC\u00c2 bridged",
+      "address": "0x927b51f251480a681271180da4de28d44ec4afb8",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "weETH (Wrapped\u00c2 eETH)",
+      "address": "0x7dcc39b4d1c53cb31e1abc0e358b43987fef80f7",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "wstETH",
+      "address": "0xc02fe7317d4eb8753a02c35fe019786854a92001",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.78,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1
+      },
+      "source_ids": [
+        "s9"
+      ]
+    },
+    {
+      "name": "getPool ( \" \" , \" \" , 3000 )",
+      "chains": [
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.71,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 2,
+        "text": 2
+      },
+      "source_ids": [
+        "s11",
+        "s44"
+      ],
+      "deployments": [
+        {
+          "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "chains": [
+            "arbitrum",
+            "base"
+          ]
+        },
+        {
+          "address": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+          "chains": [
+            "arbitrum",
+            "base"
+          ]
+        }
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.64,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 0,
+        "link": 2,
+        "explorer": 2
+      },
+      "source_ids": [
+        "s11",
+        "s44",
+        "s45"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xd3aa12b99892b7d95bbaa27aef222a8e2a038c0c",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.64,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s2"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xe0a780e9105ac10ee304448224eb4a2b11a77eeb",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.58,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "table": 1
+      },
+      "source_ids": [
+        "s1"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x0c3c1c532f1e39edf36be9fe0be1410313e074bf",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.58,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "table": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x182a927119d56008d921126764bf884221b10f59",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.58,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "table": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x5c346464d33f90babaf70db6388507cc889c1070",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.58,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "table": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xf1d7cc64fb4452f05c498126312ebe29f30fbcf9",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.58,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "table": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24",
+      "chains": [
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.51,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 0,
+        "text": 2
+      },
+      "source_ids": [
+        "s8",
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xedf6066a2b290c185783862c7f4776a2c8077ad1",
+      "chains": [
+        "arbitrum",
+        "base"
+      ],
+      "confidence": 0.51,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 2,
+        "named": 0,
+        "text": 2
+      },
+      "source_ids": [
+        "s8",
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x4a7b5da61326a6379179b40d00f57e5bbdc962c2",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x4b2ab38dbf28d31d467aa8993f6c2585981d6804",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x541ab7c31a119441ef3575f6973277de0ef460bd",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x7a250d5630b4cf539739df2c5dacb4c659f2488d",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xa00f34a632630efd15223b1968358ba4845beec7",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xbb66eb1c5e875933d44dae661dbd80e5d9b03035",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xee567fe1712faf6149d80da1e6934e354124cfe3",
+      "chains": [
+        "arbitrum"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s8"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x1e2a708040eb6ed08893e27e35d399e8e8e7857e",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x27f971cb582bf9e50f397e4d29a5c7a34f11faa2",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x4e0caff1df1ccd7cf782fdded77f020699b57f1a",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0x94cc0aac535ccdb3c01d6787d6413c739ae12bc4",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xc5290058841028f1614f3a6f0f5816cad0df5e27",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xcbf8b7f80800bd4888fbc7bf1713b80fe4e23e10",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xd7303474baca835743b54d73799688990f24a79d",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xd7c6e867591608d32fe476d0dbdc95d0cf584c8f",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    },
+    {
+      "name": null,
+      "address": "0xd867e273eabd6c853fcd0ca0bfb6a3ae6491d2c1",
+      "chains": [
+        "base"
+      ],
+      "confidence": 0.45,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 0,
+        "text": 1
+      },
+      "source_ids": [
+        "s11"
+      ]
+    }
+  ],
+  "official_domain": "docs.uniswap.org",
+  "errors": [],
+  "notes": [
+    "Domain candidates: docs.uniswap.org, developers.uniswap.org, docs.polkadot.com, docs.tally.xyz, github.com",
+    "Official domain: docs.uniswap.org",
+    "Selected pages: 7",
+    "Tavily queries used: 4/4"
+  ]
+}

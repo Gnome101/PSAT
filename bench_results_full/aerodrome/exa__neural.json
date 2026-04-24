@@ -1,0 +1,88 @@
+{
+  "protocol": "aerodrome",
+  "backend": "exa",
+  "mode": "neural",
+  "elapsed_ms": 38356,
+  "reports": [
+    {
+      "url": "https://app.sherlock.xyz/audits/contests/321",
+      "pdf_url": null,
+      "auditor": "Sherlock",
+      "title": "Sherlock Arcadia - Aerodrome integrations Contest",
+      "date": "2024-04-25",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:52:39.385777+00:00"
+    },
+    {
+      "url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "pdf_url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit",
+      "date": "2024-06-05",
+      "source_url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:52:39.385777+00:00"
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723",
+      "pdf_url": null,
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority",
+      "date": null,
+      "source_url": "https://www.slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:52:39.385777+00:00"
+    },
+    {
+      "url": "https://docs.iaero.finance/technical-documentation/audit-liqstakingdistributor",
+      "pdf_url": null,
+      "auditor": "Independent Security Review",
+      "title": "Audit LIQ Staking Distributor",
+      "date": "2025-09",
+      "source_url": "https://docs.iaero.finance/technical-documentation/audit-liqstakingdistributor",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:52:39.385777+00:00"
+    },
+    {
+      "url": "https://docs.iaero.finance/technical-documentation/audit-permalockvault_v5",
+      "pdf_url": null,
+      "auditor": "Independent Security Review",
+      "title": "Audit PermaLock Vault",
+      "date": "2025-09",
+      "source_url": "https://docs.iaero.finance/technical-documentation/audit-permalockvault_v5",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:52:39.385777+00:00"
+    },
+    {
+      "url": "https://docs.iaero.finance/technical-documentation/audit-votingmanageroptimised",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "Audit Voting Manager Optimised",
+      "date": "2025-09-05",
+      "source_url": "https://docs.iaero.finance/technical-documentation/audit-votingmanageroptimised",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:52:39.385777+00:00"
+    },
+    {
+      "url": "https://docs.iaero.finance/technical-documentation/audit-rewardsharvester",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "Audit Rewards Harvester",
+      "date": "2025-09-05",
+      "source_url": "https://docs.iaero.finance/technical-documentation/audit-rewardsharvester",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:52:39.385777+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Solodit: 1 audit(s)",
+    "Search returned 18 unique result(s)",
+    "LLM classified 4 result(s) as audit reports",
+    "Link following: 7 additional report(s) from 4 linked page(s)",
+    "Extracted 7 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

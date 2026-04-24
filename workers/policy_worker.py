@@ -59,9 +59,33 @@ def _method_to_role_for_address(address: str, control_graph_nodes: list[dict] | 
     return {}
 
 
-def _principals_for_role_from_graph(role: str, control_graph_nodes: list[dict] | None) -> list[dict]:
-    """Return the graph nodes whose `controller_label` matches `role` — the
-    resolver-enumerated principals (EOAs, Safes, Timelocks) holding it."""
+def _node_id_for_address(address: str) -> str:
+    return f"address:{address.lower()}"
+
+
+def _principals_for_role_from_graph(
+    role: str,
+    control_graph_nodes: list[dict] | None,
+    *,
+    authority_address: str | None = None,
+    control_graph_edges: list[dict] | None = None,
+) -> list[dict]:
+    scoped_node_ids: set[str] | None = None
+    if authority_address and control_graph_edges is not None:
+        authority = authority_address.lower()
+        authority_node_ids = {
+            str(node.get("id") or _node_id_for_address(str(node.get("address", ""))))
+            for node in control_graph_nodes or []
+            if str(node.get("address", "")).lower() == authority
+        }
+        authority_node_ids.add(_node_id_for_address(authority))
+        scoped_node_ids = {
+            str(edge.get("to_id") or "")
+            for edge in control_graph_edges
+            if str(edge.get("from_id") or "") in authority_node_ids
+            and str(edge.get("relation") or "") in {"role_principal", "mapping_member"}
+        }
+
     principals: list[dict] = []
     for node in control_graph_nodes or []:
         details = node.get("details") or {}
@@ -69,6 +93,9 @@ def _principals_for_role_from_graph(role: str, control_graph_nodes: list[dict] |
             continue
         address = str(node.get("address", "")).lower()
         if not (address.startswith("0x") and len(address) == 42):
+            continue
+        node_id = str(node.get("id") or _node_id_for_address(address))
+        if scoped_node_ids is not None and node_id not in scoped_node_ids:
             continue
         principals.append(
             {
@@ -134,6 +161,10 @@ def _apply_sink_bridge(
 
     for sink in sinks:
         kind = str(sink.get("kind") or "")
+        if kind in {"caller_equals", "caller_in_mapping", "caller_signature", "caller_merkle"} and not sink.get(
+            "revert_on_mismatch"
+        ):
+            continue
         if kind == "caller_equals":
             target_var = str(sink.get("target_state_var") or "")
             if not target_var:
@@ -195,6 +226,7 @@ def _apply_external_call_guard_bridge(
     function_record: dict[str, Any],
     control_snapshot: dict | ControlSnapshot | None,
     control_graph_nodes: list[dict] | None,
+    control_graph_edges: list[dict] | None = None,
 ) -> int:
     """For each `X.method(msg.sender)` guard, resolve X's authority
     address, map the method (or explicit `role_args`) to a role, and
@@ -203,7 +235,7 @@ def _apply_external_call_guard_bridge(
     if not guards:
         return 0
     added = 0
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, str]] = set()
     for guard in guards:
         target_var = str(guard.get("target_state_var") or "")
         method = str(guard.get("method") or "")
@@ -221,8 +253,13 @@ def _apply_external_call_guard_bridge(
             m2r = _method_to_role_for_address(authority_addr, control_graph_nodes)
             roles = list(m2r.get(method, []))
         for role in roles:
-            for principal in _principals_for_role_from_graph(role, control_graph_nodes):
-                key = (principal["address"], role, method)
+            for principal in _principals_for_role_from_graph(
+                role,
+                control_graph_nodes,
+                authority_address=authority_addr,
+                control_graph_edges=control_graph_edges,
+            ):
+                key = (principal["address"], role, method, authority_addr)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -429,12 +466,14 @@ class PolicyWorker(BaseWorker):
                                 )
                             )
                 graph_nodes = resolved_control_graph.get("nodes") if isinstance(resolved_control_graph, dict) else None
+                graph_edges = resolved_control_graph.get("edges") if isinstance(resolved_control_graph, dict) else None
                 _apply_external_call_guard_bridge(
                     session,
                     effective_function=ef,
                     function_record=fn,
                     control_snapshot=control_snapshot,
                     control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
+                    control_graph_edges=graph_edges if isinstance(graph_edges, list) else None,
                 )
                 _apply_sink_bridge(
                     session,

@@ -159,6 +159,14 @@ def test_taint_propagates_through_type_conversion():
     assert t.is_tainted(tmp0)
 
 
+def test_taint_propagates_through_slither_type_conversion_variable():
+    t = MsgSenderTaint()
+    tmp0 = _tmp("TMP_0")
+    conv = _named("TypeConversion", lvalue=tmp0, variable=_msg_sender())
+    t.propagate_through_node(_node([conv]))
+    assert t.is_tainted(tmp0)
+
+
 def test_taint_chain_propagation_across_ops_in_same_node():
     """`TMP_0 = msg.sender; TMP_1 = TMP_0` — both tainted."""
     t = MsgSenderTaint()

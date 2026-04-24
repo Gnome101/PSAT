@@ -1,0 +1,76 @@
+{
+  "protocol": "sky",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 25238,
+  "reports": [
+    {
+      "url": "https://raw.githubusercontent.com/makerdao/mcd-security/master/Audit%20Reports/TOB_MakerDAO_Final_Report.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/makerdao/mcd-security/master/Audit%20Reports/TOB_MakerDAO_Final_Report.pdf",
+      "auditor": "Trail of Bits",
+      "title": "Trail of Bits Final Audit Report",
+      "date": null,
+      "source_url": "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:48.132044+00:00"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/makerdao/mcd-security/master/Audit%20Reports/PeckShield_Final_Audit_Report.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/makerdao/mcd-security/master/Audit%20Reports/PeckShield_Final_Audit_Report.pdf",
+      "auditor": "PeckShield",
+      "title": "PeckShield Final Audit Report",
+      "date": null,
+      "source_url": "https://github.com/makerdao/mcd-security/blob/master/audit-reports.md",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:48.132044+00:00"
+    },
+    {
+      "url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "pdf_url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Code Assessment of the Sky Smart Contracts",
+      "date": null,
+      "source_url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:48.132044+00:00"
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+      "pdf_url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Code Assessment of the Sky stUSDS Smart Contracts",
+      "date": "2025-08-12",
+      "source_url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/68ac5a766872eefe642c9fc6_ChainSecurity_Sky_Sky_stUSDS_audit.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:48.132044+00:00"
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+      "pdf_url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Code Assessment of the Sky Smart Contracts",
+      "date": "2024-09-30",
+      "source_url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/66ff91b6a1e79cea9cf1f79b_ChainSecurity_MakerDAO_Sky_audit%201.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:48.132044+00:00"
+    },
+    {
+      "url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Chief_Audit.pdf",
+      "pdf_url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Chief_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Code Assessment of the Chief Smart Contracts",
+      "date": "2025-03-21",
+      "source_url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Chief_Audit.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:48.132044+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 18 unique result(s)",
+    "LLM classified 7 result(s) as audit reports",
+    "Extracted 6 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

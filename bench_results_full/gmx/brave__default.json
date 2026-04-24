@@ -1,0 +1,56 @@
+{
+  "protocol": "gmx",
+  "backend": "brave",
+  "mode": "default",
+  "elapsed_ms": 28634,
+  "reports": [
+    {
+      "url": "https://www.thestandard.io/blog/gmx-revolutionizing-defi-with-layer-2-scaling-governance-and-liquidity-innovation-in-2025-9",
+      "pdf_url": null,
+      "auditor": "Guardian Audits",
+      "title": "GMX Security Case Study",
+      "date": null,
+      "source_url": "https://www.thestandard.io/blog/gmx-revolutionizing-defi-with-layer-2-scaling-governance-and-liquidity-innovation-in-2025-9",
+      "confidence": 0.8,
+      "discovered_at": "2026-04-24T02:46:56.762908+00:00"
+    },
+    {
+      "url": "https://hacksafe.io/gmx/",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "GMX - Hacksafe",
+      "date": null,
+      "source_url": "https://hacksafe.io/gmx/",
+      "confidence": 0.7,
+      "discovered_at": "2026-04-24T02:46:56.762908+00:00"
+    },
+    {
+      "url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022/",
+      "pdf_url": null,
+      "auditor": "Dedaub",
+      "title": "GMX Synthetics Smart Contract Security Assessment",
+      "date": "2022-11-20",
+      "source_url": "https://dedaub.com/audits/gmx/gmx-synthetics-nov-20-2022/",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:46:56.762908+00:00"
+    },
+    {
+      "url": "https://guardianaudits.com/casestudies/gmx-case-study",
+      "pdf_url": null,
+      "auditor": "Guardian",
+      "title": "GMX V2 Security Reviews",
+      "date": "2022-10-04",
+      "source_url": "https://guardianaudits.com/casestudies/gmx-case-study",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:46:56.762908+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 20 unique result(s)",
+    "LLM classified 10 result(s) as audit reports",
+    "Extracted 4 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

@@ -1,9 +1,4 @@
-"""Generic mapping-allowlist principal enumeration via Hypersync event replay.
-
-Consumes `WriterEventSpec` records from the static pipeline and applies
-set-union/set-difference semantics to produce the current allowlist.
-Dispatches on `(event_signature, direction)` — no hardcoded event names.
-"""
+"""Replay mapping-writer events into current allowlist principals."""
 
 from __future__ import annotations
 
@@ -84,16 +79,10 @@ def _extract_key_address(
     *,
     indexed_positions: list[int] | None = None,
 ) -> str:
-    """Pull the mapping-key address from an event log.
-
-    Indexed parameters live in `topics[1..N]` in declaration order (topic0
-    is the signature). Non-indexed parameters are packed into `data` at
-    32-byte slots by their non-indexed rank.
-    """
     topics = _topics_from_log(log)
-    indexed_positions = indexed_positions or [key_position]
+    indexed_positions = sorted(set(indexed_positions or []))
     if key_position in indexed_positions:
-        indexed_rank = sorted(indexed_positions).index(key_position)
+        indexed_rank = indexed_positions.index(key_position)
         topic_index = 1 + indexed_rank
         if topic_index < len(topics):
             return _decode_address_topic(topics[topic_index])
@@ -116,12 +105,25 @@ async def enumerate_mapping_allowlist(
     client: Any = None,
     hypersync_module: Any = None,
 ) -> list[EnumeratedPrincipal]:
-    """Enumerate the current members of the writer-spec mappings on
-    `contract_address` by replaying every writer event's history.
-
-    Multiple specs on the same mapping collapse into one allowlist
-    (e.g. Rely=add + Deny=remove → current wards)."""
     if not writer_specs:
+        return []
+
+    topic0_to_specs: dict[str, list[WriterEventSpec]] = {}
+    for spec in writer_specs:
+        topic0 = _event_topic0(spec["event_signature"])
+        topic0_to_specs.setdefault(topic0, []).append(spec)
+    for topic0, specs in list(topic0_to_specs.items()):
+        directions = {spec["direction"] for spec in specs}
+        if len(directions) <= 1:
+            continue
+        logger.warning(
+            "mapping_enumerator: skipping ambiguous writer event topic0=%s directions=%s specs=%s",
+            topic0,
+            sorted(directions),
+            [(spec["event_signature"], spec["mapping_name"], spec["direction"]) for spec in specs],
+        )
+        del topic0_to_specs[topic0]
+    if not topic0_to_specs:
         return []
 
     if hypersync_module is None:
@@ -132,11 +134,6 @@ async def enumerate_mapping_allowlist(
         client = hypersync_module.HypersyncClient(
             hypersync_module.ClientConfig(url=hypersync_url, bearer_token=bearer_token)
         )
-
-    topic0_to_specs: dict[str, list[WriterEventSpec]] = {}
-    for spec in writer_specs:
-        topic0 = _event_topic0(spec["event_signature"])
-        topic0_to_specs.setdefault(topic0, []).append(spec)
 
     topic0s = sorted(topic0_to_specs.keys())
     logger.info(
@@ -155,8 +152,6 @@ async def enumerate_mapping_allowlist(
     while True:
         result = await client.get(query)
         page_count += 1
-        # Real Hypersync response nests logs under `result.data.logs`;
-        # test fakes use a flatter `result.logs`. Accept both.
         data_obj = getattr(result, "data", None)
         if data_obj is not None and hasattr(data_obj, "logs"):
             logs = list(getattr(data_obj, "logs", None) or [])
@@ -180,7 +175,11 @@ async def enumerate_mapping_allowlist(
             if not matching_specs:
                 continue
             for spec in matching_specs:
-                key_address = _extract_key_address(raw_log, spec["key_position"])
+                key_address = _extract_key_address(
+                    raw_log,
+                    spec["key_position"],
+                    indexed_positions=list(spec.get("indexed_positions") or []),
+                )
                 if not key_address.startswith("0x") or len(key_address) != 42:
                     continue
                 block = int(getattr(raw_log, "block_number", 0) or 0)
@@ -221,7 +220,4 @@ def enumerate_mapping_allowlist_sync(
     writer_specs: list[WriterEventSpec],
     **kwargs: Any,
 ) -> list[EnumeratedPrincipal]:
-    """Sync wrapper for callers (like `recursive.py`) that don't want
-    to manage an event loop. Uses `asyncio.run` — safe only when
-    called from a non-async context."""
     return asyncio.run(enumerate_mapping_allowlist(contract_address, writer_specs, **kwargs))

@@ -1,0 +1,16 @@
+{
+  "protocol": "compound v3",
+  "backend": "exa",
+  "mode": "deep",
+  "elapsed_ms": 30815,
+  "contracts": [],
+  "official_domain": "docs.compound.finance",
+  "errors": [],
+  "notes": [
+    "Domain candidates: github.com, compound.finance, dev.to, docs.compound.finance, docs.yearn.fi",
+    "Official domain: docs.compound.finance",
+    "Selected pages: 1",
+    "No inventory contracts extracted from selected pages",
+    "Tavily queries used: 4/4"
+  ]
+}

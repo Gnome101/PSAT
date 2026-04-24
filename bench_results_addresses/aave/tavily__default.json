@@ -1,0 +1,770 @@
+{
+  "protocol": "aave",
+  "backend": "tavily",
+  "mode": "default",
+  "elapsed_ms": 22120,
+  "contracts": [
+    {
+      "name": "Access Manager",
+      "address": "0x08ae3be30958cdd1847ec58fffd4c451a87fdf01",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s16"
+      ]
+    },
+    {
+      "name": "Bluechip Spoke",
+      "address": "0x973a023a77420ba610f06b3858ad991df6d85a08",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s6"
+      ]
+    },
+    {
+      "name": "Bluechip Spoke Oracle",
+      "address": "0xda1266a7b8620819dae3f8bd6b546da36e505bb8",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s28"
+      ]
+    },
+    {
+      "name": "Config Position Manager",
+      "address": "0x51305839ce822a7b4b12aa7d86ea7005052d575c",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s19"
+      ]
+    },
+    {
+      "name": "Core Hub",
+      "address": "0xcca852bc40e560adc3b1cc58ca5b55638ce826c9",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s2"
+      ]
+    },
+    {
+      "name": "Core Hub IR Strategy",
+      "address": "0xad88791b0f81d1fa242f637eb05bee0cbc53fe2f",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s24"
+      ]
+    },
+    {
+      "name": "Ethena Correlated Spoke",
+      "address": "0x58131e79531cab1d52301228d1f7b842f26b9649",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s7"
+      ]
+    },
+    {
+      "name": "Ethena Correlated Spoke Oracle",
+      "address": "0x9b91a0943cadf554742e8fb358b1cc4ae4f85f01",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s29"
+      ]
+    },
+    {
+      "name": "Ethena Ecosystem Spoke",
+      "address": "0xba1b3d55d249692b669a164024a838309b7508af",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s8"
+      ]
+    },
+    {
+      "name": "Ethena Ecosystem Spoke Oracle",
+      "address": "0xc390dbe9fc00d6db73c52d375642b47008c33c90",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s30"
+      ]
+    },
+    {
+      "name": "EtherFi eSpoke",
+      "address": "0xbf10bdfe177de0336afd7fccf80a904e15386219",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s9"
+      ]
+    },
+    {
+      "name": "EtherFi eSpoke Oracle",
+      "address": "0xd8b153faaa8f2b1bc774916fed333a4f3de48792",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s31"
+      ]
+    },
+    {
+      "name": "Forex Spoke",
+      "address": "0xd8b93635b8c6d0ff98cbe90b5988e3f2d1cd9da1",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s10"
+      ]
+    },
+    {
+      "name": "Forex Spoke Oracle",
+      "address": "0xb3ce6e7b6d389a66ea4a3777ba07219d00fb3a9d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s32"
+      ]
+    },
+    {
+      "name": "Giver Position Manager",
+      "address": "0x17a54b8d6d9c68e7fa1c7112ac998ea1ba51d11e",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s20"
+      ]
+    },
+    {
+      "name": "Gold Spoke",
+      "address": "0x65407b940966954b23dfa3caa5c0702bb42984dc",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s11"
+      ]
+    },
+    {
+      "name": "Gold Spoke Oracle",
+      "address": "0x0083421fd178749af2201dda5a7c3feb5790b80c",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s33"
+      ]
+    },
+    {
+      "name": "Hub Configurator",
+      "address": "0x1f0753480bb03eaa00863224602267b7e0525c3d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s17"
+      ]
+    },
+    {
+      "name": "Kelp eSpoke",
+      "address": "0x3131fe68c4722e726fe6b2819ed68e514395b9a4",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s12"
+      ]
+    },
+    {
+      "name": "Kelp eSpoke Oracle",
+      "address": "0x37c316996c714bf906743071e04e62220b3271ac",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s34"
+      ]
+    },
+    {
+      "name": "Lido eSpoke",
+      "address": "0xe1900480ac69f0b296841cd01cc37546d92f35cd",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s13"
+      ]
+    },
+    {
+      "name": "Lido eSpoke Oracle",
+      "address": "0x664d73b6c3591333fd79510f7ce9ef81228824f5",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s35"
+      ]
+    },
+    {
+      "name": "Lombard BTC Spoke",
+      "address": "0x7ec68b5695e803e98a21a9a05d744f28b0a7753d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s14"
+      ]
+    },
+    {
+      "name": "Lombard BTC Spoke Oracle",
+      "address": "0x198cac7f54ffc7d709ac0fec4b6454ce73e21d3d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s36"
+      ]
+    },
+    {
+      "name": "Main Spoke",
+      "address": "0x94e7a5dcbe816e498b89ab752661904e2f56c485",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s5"
+      ]
+    },
+    {
+      "name": "Main Spoke Oracle",
+      "address": "0x99b2b6cea9c3d2fd8f4d90f86741c44b212a6127",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s27"
+      ]
+    },
+    {
+      "name": "Native Token Gateway",
+      "address": "0xe68ab4f90fe026b9873f5f276ed2d7efbbbe42be",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s22"
+      ]
+    },
+    {
+      "name": "Plus Hub",
+      "address": "0x06002e9c4412cb7814a791ea3666d905871e536a",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s3"
+      ]
+    },
+    {
+      "name": "Plus Hub IR Strategy",
+      "address": "0x31280650661b8443723fa9739b3a164e3696af48",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s25"
+      ]
+    },
+    {
+      "name": "Prime Hub",
+      "address": "0x943827dca022d0f354a8a8c332da1e5eb9f9f931",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s4"
+      ]
+    },
+    {
+      "name": "Prime Hub IR Strategy",
+      "address": "0xdcd924047a4bdbfef9ccdde845e5d45373ad276d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s26"
+      ]
+    },
+    {
+      "name": "Signature Gateway",
+      "address": "0xfbc184337dc6595d8bf62968bda46e7de7af9c3d",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s23"
+      ]
+    },
+    {
+      "name": "Spoke Configurator",
+      "address": "0x9bfff48bfb5a7ae70c348d4d4cb97e8defa5389a",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s18"
+      ]
+    },
+    {
+      "name": "Taker Position Manager",
+      "address": "0x6c044c0d3801499bcabfad458b70880bc518e9f7",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s21"
+      ]
+    },
+    {
+      "name": "Treasury Spoke",
+      "address": "0xb9b0b8616f6bf6841972a52058132be08d723155",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.84,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "table": 1,
+        "explorer": 1
+      },
+      "source_ids": [
+        "s1",
+        "s15"
+      ]
+    },
+    {
+      "name": "console . log ( AaveV3Ethereum . POOL ) ; // \" \"",
+      "address": "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
+      "chains": [
+        "ethereum"
+      ],
+      "confidence": 0.65,
+      "source": [
+        "tavily_ai_inventory"
+      ],
+      "evidence": {
+        "official": 1,
+        "named": 1,
+        "text": 1
+      },
+      "source_ids": [
+        "s37"
+      ]
+    }
+  ],
+  "official_domain": "aave.com",
+  "errors": [],
+  "notes": [
+    "Domain candidates: aave.com, docs.pearprotocol.io, github.com, npmjs.com, updraft.cyfrin.io",
+    "Official domain: aave.com",
+    "Selected pages: 5",
+    "Tavily queries used: 4/4"
+  ]
+}

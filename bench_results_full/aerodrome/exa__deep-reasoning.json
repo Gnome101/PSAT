@@ -1,0 +1,91 @@
+{
+  "protocol": "aerodrome",
+  "backend": "exa",
+  "mode": "deep-reasoning",
+  "elapsed_ms": 98554,
+  "reports": [
+    {
+      "url": "https://app.sherlock.xyz/audits/contests/321",
+      "pdf_url": null,
+      "auditor": "Sherlock",
+      "title": "Sherlock Arcadia - Aerodrome integrations Contest",
+      "date": "2024-04-25",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T11:17:25.818760+00:00"
+    },
+    {
+      "url": "https://aerodrome.finance/security",
+      "pdf_url": null,
+      "auditor": "Code4rena",
+      "title": "Aerodrome Finance CTF",
+      "date": "2023-08",
+      "source_url": "https://aerodrome.finance/security",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T11:17:25.818760+00:00"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aerodrome-finance/aerodrome/main/audits/Trail%20of%20Bits%20-%20Aerodrome%20Finance%20Security%20Assessment.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/aerodrome-finance/aerodrome/main/audits/Trail%20of%20Bits%20-%20Aerodrome%20Finance%20Security%20Assessment.pdf",
+      "auditor": "Trail of Bits",
+      "title": "Aerodrome Finance Security Assessment",
+      "date": "2023-08-21",
+      "source_url": "https://aerodrome.finance/security",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T11:17:25.818760+00:00"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aerodrome-finance/aerodrome/main/audits/OpenZeppelin%20-%20Aerodrome%20Finance%20Security%20Review.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/aerodrome-finance/aerodrome/main/audits/OpenZeppelin%20-%20Aerodrome%20Finance%20Security%20Review.pdf",
+      "auditor": "OpenZeppelin",
+      "title": "Aerodrome Finance Security Review",
+      "date": "2023-08-18",
+      "source_url": "https://aerodrome.finance/security",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T11:17:25.818760+00:00"
+    },
+    {
+      "url": "https://aerodrome.limo/secure.html",
+      "pdf_url": null,
+      "auditor": "Unknown",
+      "title": "Aerodrome Security Overview",
+      "date": null,
+      "source_url": "https://aerodrome.limo/secure.html",
+      "confidence": 0.9,
+      "discovered_at": "2026-04-24T11:17:25.818760+00:00"
+    },
+    {
+      "url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "pdf_url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Audit Report",
+      "date": "2024-06-05",
+      "source_url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T11:17:25.818760+00:00"
+    },
+    {
+      "url": "https://www.slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723",
+      "pdf_url": null,
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Token \u2013 Smart Contract Security Audit Report by EtherAuthority",
+      "date": null,
+      "source_url": "https://www.slideshare.net/slideshow/aerodrome-aero-token-smart-contract-security-audit-report-by-etherauthority/284907723",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T11:17:25.818760+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Solodit: 1 audit(s)",
+    "Search returned 18 unique result(s)",
+    "LLM classified 6 result(s) as audit reports",
+    "Portfolio allowlist: 1/7 portfolio(s) had aerodrome-named report(s)",
+    "LLM validation unavailable; heuristic mirror dedup collapsed 1 entry(ies)",
+    "Extracted 7 audit report(s)",
+    "Tavily queries used: 2/4"
+  ],
+  "research_task_id": null,
+  "research_seed_count": 0
+}

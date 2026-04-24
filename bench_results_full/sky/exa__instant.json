@@ -1,0 +1,56 @@
+{
+  "protocol": "sky",
+  "backend": "exa",
+  "mode": "instant",
+  "elapsed_ms": 21102,
+  "reports": [
+    {
+      "url": "https://www.chainsecurity.com/reports/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "pdf_url": "https://www.chainsecurity.com/reports/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Sky smart contracts",
+      "date": null,
+      "source_url": "https://www.chainsecurity.com/security-audit/makerdao-sky-smart-contracts",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:27.031240+00:00"
+    },
+    {
+      "url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "pdf_url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Sky Smart Contracts Code Assessment",
+      "date": "2025-06-06",
+      "source_url": "https://reports.chainsecurity.com/Sky/ChainSecurity_Sky_Sky_Audit.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:27.031240+00:00"
+    },
+    {
+      "url": "https://cantina.xyz/portfolio/4a1d31e0-c429-4349-8aa0-2b38c4430acc",
+      "pdf_url": null,
+      "auditor": "Cantina",
+      "title": "Sky Vote Delegate Smart Contract Audit",
+      "date": "2025-04-16",
+      "source_url": "https://cantina.xyz/portfolio/4a1d31e0-c429-4349-8aa0-2b38c4430acc",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:27.031240+00:00"
+    },
+    {
+      "url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+      "pdf_url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+      "auditor": "ChainSecurity",
+      "title": "Sky Protego Smart Contracts Code Assessment",
+      "date": "2025-04-15",
+      "source_url": "https://cdn.prod.website-files.com/65d35b01a4034b72499019e8/6801254abd031ddcbc3a931e_ChainSecurity_Sky_Protego_audit.pdf",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:14:27.031240+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Search returned 15 unique result(s)",
+    "LLM classified 4 result(s) as audit reports",
+    "Extracted 4 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

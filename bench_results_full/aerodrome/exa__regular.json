@@ -1,0 +1,58 @@
+{
+  "protocol": "aerodrome",
+  "backend": "exa",
+  "mode": "regular",
+  "elapsed_ms": 24195,
+  "reports": [
+    {
+      "url": "https://app.sherlock.xyz/audits/contests/321",
+      "pdf_url": null,
+      "auditor": "Sherlock",
+      "title": "Sherlock Arcadia - Aerodrome integrations Contest",
+      "date": "2024-04-25",
+      "source_url": "https://solodit.cyfrin.io/",
+      "confidence": 0.95,
+      "discovered_at": "2026-04-24T02:53:17.741881+00:00"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aerodrome-finance/aerodrome/main/audits/Trail%20of%20Bits%20-%20Aerodrome%20Finance%20Security%20Assessment.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/aerodrome-finance/aerodrome/main/audits/Trail%20of%20Bits%20-%20Aerodrome%20Finance%20Security%20Assessment.pdf",
+      "auditor": "Trail of Bits",
+      "title": "Trail of Bits - Aerodrome Finance Security Assessment",
+      "date": "2023-08-21",
+      "source_url": "https://aerodrome.finance/security",
+      "confidence": 0.8,
+      "discovered_at": "2026-04-24T02:53:17.741881+00:00"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/aerodrome-finance/aerodrome/main/audits/OpenZeppelin%20-%20Aerodrome%20Finance%20Security%20Review.pdf",
+      "pdf_url": "https://raw.githubusercontent.com/aerodrome-finance/aerodrome/main/audits/OpenZeppelin%20-%20Aerodrome%20Finance%20Security%20Review.pdf",
+      "auditor": "OpenZeppelin",
+      "title": "OpenZeppelin - Aerodrome Finance Security Review",
+      "date": "2023-08-18",
+      "source_url": "https://aerodrome.finance/security",
+      "confidence": 0.8,
+      "discovered_at": "2026-04-24T02:53:17.741881+00:00"
+    },
+    {
+      "url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "pdf_url": "https://etherauthority.io/wp-content/uploads/2024/06/Aerodrome-AERO.pdf",
+      "auditor": "EtherAuthority",
+      "title": "Aerodrome (AERO) Token Smart Contract Audit",
+      "date": "2024-06-05",
+      "source_url": "https://etherauthority.io/aerodrome-aero-token-smart-contract-audit/",
+      "confidence": 1.0,
+      "discovered_at": "2026-04-24T02:53:17.741881+00:00"
+    }
+  ],
+  "queries_used": 2,
+  "errors": [],
+  "notes": [
+    "Solodit: 1 audit(s)",
+    "Search returned 18 unique result(s)",
+    "LLM classified 4 result(s) as audit reports",
+    "LLM validate+cluster: 7 \u2192 4 (dropped=2, collapsed=1, auditor_filled=0, title_fixed=2)",
+    "Extracted 4 audit report(s)",
+    "Tavily queries used: 2/4"
+  ]
+}

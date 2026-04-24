@@ -1,0 +1,14 @@
+{
+  "protocol": "compound v3",
+  "backend": "exa",
+  "mode": "deep-lite",
+  "elapsed_ms": 10265,
+  "contracts": [],
+  "official_domain": null,
+  "errors": [],
+  "notes": [
+    "Domain candidates: github.com, comp.xyz, compound.finance, dev.to, docs.protocolink.com",
+    "Could not identify an official domain",
+    "Tavily queries used: 1/4"
+  ]
+}
