@@ -1,0 +1,19 @@
+# SPA-bait protocols: JS-rendered docs sites that search backends can't
+# index because the content renders client-side. For these, we bypass
+# discovery search and seed the inventory pipeline directly.
+#
+# Add an entry here when a protocol's contract addresses or audit reports
+# live behind a Docusaurus/React SPA or similar.
+
+protocols:
+  gmx:
+    # docs.gmx.io is a Docusaurus SPA. Contract tables render client-side,
+    # so generic search backends return an empty shell.
+    contract_docs_urls:
+      - https://docs.gmx.io/docs/api/contracts/addresses/
+      - https://docs.gmx.io/docs/archived/contracts-v1/
+    contract_docs_raw_urls:
+      - https://github.com/gmx-io/gmx-synthetics/tree/main/docs
+    audit_urls:
+      - https://github.com/gmx-io/gmx-synthetics/tree/main/audits
+      - https://github.com/gmx-io/gmx-contracts/tree/master/audits
