@@ -477,7 +477,12 @@ def test_classify_single_with_bytecode_param(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Live RPC
+# Live RPC — spot-checks against real mainnet contracts.
+#
+# These tests are redundant with the mocked test_full_classification_pipeline
+# above for CI purposes — they exist only as manual validation that the
+# mocked behaviour still matches real mainnet state. They self-skip when
+# ETH_RPC is unset, so CI runs without secrets are unaffected.
 # ---------------------------------------------------------------------------
 
 
@@ -495,10 +500,6 @@ def _get_live_rpc():
     return rpc_url
 
 
-pytestmark_live = pytest.mark.live
-
-
-@pytestmark_live
 def test_live_classify_eip1967():
     """Aave V3 Pool is a standard EIP-1967 proxy."""
     rpc_url = _get_live_rpc()
@@ -508,7 +509,6 @@ def test_live_classify_eip1967():
     assert result.get("implementation"), "Expected a non-empty implementation address"
 
 
-@pytestmark_live
 def test_live_classify_beacon_proxy():
     """Euler eVault (USDC) is a beacon proxy."""
     rpc_url = _get_live_rpc()
@@ -519,7 +519,6 @@ def test_live_classify_beacon_proxy():
     assert result.get("implementation"), "Expected implementation resolved through beacon"
 
 
-@pytestmark_live
 def test_live_classify_oz_legacy():
     """USDC on Ethereum mainnet is a well-known OZ-legacy proxy."""
     rpc_url = _get_live_rpc()
@@ -529,7 +528,6 @@ def test_live_classify_oz_legacy():
     assert result.get("implementation"), "Expected implementation address"
 
 
-@pytestmark_live
 def test_live_classify_eip2535_diamond():
     """Li.Fi Diamond is an EIP-2535 diamond proxy with many facets."""
     rpc_url = _get_live_rpc()
@@ -540,7 +538,6 @@ def test_live_classify_eip2535_diamond():
     assert len(result["facets"]) > 1, "Diamond should have multiple facets"
 
 
-@pytestmark_live
 def test_live_classify_eip1167():
     """Yearn yDAI vault is an EIP-1167 minimal proxy clone."""
     rpc_url = _get_live_rpc()
@@ -550,7 +547,6 @@ def test_live_classify_eip1167():
     assert result.get("implementation"), "Expected implementation address embedded in bytecode"
 
 
-@pytestmark_live
 def test_live_classify_gnosis_safe():
     """GnosisSafe proxy detected via slot-0 bytecode pattern."""
     rpc_url = _get_live_rpc()
@@ -560,7 +556,6 @@ def test_live_classify_gnosis_safe():
     assert result.get("implementation"), "Expected masterCopy address from slot 0"
 
 
-@pytestmark_live
 def test_live_classify_compound():
     """Compound Unitroller detected via comptrollerImplementation() getter."""
     rpc_url = _get_live_rpc()
@@ -570,7 +565,6 @@ def test_live_classify_compound():
     assert result.get("implementation"), "Expected comptrollerImplementation address"
 
 
-@pytestmark_live
 def test_live_classify_synthetix():
     """Synthetix SNX token proxy detected via target() getter."""
     rpc_url = _get_live_rpc()
@@ -580,9 +574,10 @@ def test_live_classify_synthetix():
     assert result.get("implementation"), "Expected target address"
 
 
-@pytestmark_live
 def test_live_classify_compound_cross_chain():
     """Moonwell Unitroller on Base — validates Compound detection works cross-chain."""
+    if not os.environ.get("ETH_RPC"):
+        pytest.skip("Skipping cross-chain live test when ETH_RPC is unset.")
     result = cls.classify_single(
         "0xfbb21d0380bee3312b33c4353c8936a0f13ef26c",
         "https://base-rpc.publicnode.com",
@@ -592,7 +587,6 @@ def test_live_classify_compound_cross_chain():
     assert result.get("implementation"), "Expected comptrollerImplementation address"
 
 
-@pytestmark_live
 def test_live_classify_custom():
     """Lido stETH uses AppProxyUpgradeable (Aragon) with implementation() getter
     but a non-standard storage slot — classified as custom proxy."""
