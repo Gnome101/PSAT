@@ -43,12 +43,15 @@ PROTOCOLS = [
 ]
 
 CONFIGS: list[tuple[str, str]] = [
-    ("exa", "deep"),
+    ("exa", "neural"),
     ("exa", "regular"),
     ("exa", "instant"),
     ("tavily", "default"),
     ("brave", "default"),
     ("exa", "research"),
+    ("exa", "deep-lite"),
+    ("exa", "deep"),
+    ("exa", "deep-reasoning"),
 ]
 
 
