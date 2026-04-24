@@ -371,11 +371,9 @@ class SelectionWorker(BaseWorker):
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        force=True,
-    )
+    from utils.logging_setup import configure_logging
+
+    configure_logging(force=True)
     SelectionWorker().run_loop()
 
 
