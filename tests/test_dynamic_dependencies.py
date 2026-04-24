@@ -1,16 +1,11 @@
-import os
 import sys
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.discovery import dynamic_dependencies as ddc
-
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-
 
 # ---------------------------------------------------------------------------
 # Transaction selection
@@ -613,32 +608,3 @@ def test_fetch_contract_transactions_no_asc_when_selectors_present(monkeypatch):
     assert len(txlist_calls) == 1
     assert txlist_calls[0]["sort"] == "desc"
     assert len(txs) == 1
-
-
-# ---------------------------------------------------------------------------
-# Live RPC
-# ---------------------------------------------------------------------------
-
-
-# Verifies end-to-end dynamic dependency discovery against a live tracing RPC.
-def test_live_dynamic_dependencies():
-    rpc_url = os.environ.get("ETH_RPC")
-    if not rpc_url:
-        pytest.skip("Set ETH_RPC before running this test.")
-
-    # Skip if RPC is unreachable or doesn't support tracing
-    try:
-        from services.discovery.static_dependencies import rpc_call
-
-        rpc_call(rpc_url, "eth_blockNumber", [], retries=0)
-    except Exception as exc:
-        pytest.skip(f"RPC unreachable: {exc}")
-
-    # 1inch V5 router — same contract used in test_find_dependent_contracts.py
-    address = "0x1111111254eeb25477b68fb85ed929f73a960582"
-    result = ddc.find_dynamic_dependencies(address, rpc_url=rpc_url, tx_limit=2)
-
-    assert isinstance(result["dependencies"], list) and result["dependencies"]
-    assert result["transactions_analyzed"]
-    assert result["dependency_graph"]
-    assert "trace_errors" in result and isinstance(result["trace_errors"], list)

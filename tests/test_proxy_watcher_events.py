@@ -13,7 +13,6 @@ import uuid
 from pathlib import Path
 from typing import Iterable
 
-import pytest
 from sqlalchemy.orm import Session as SASession
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,7 +29,6 @@ from services.discovery.upgrade_history import (
     UPGRADED_TOPIC0,
 )
 from tests.conftest import requires_postgres
-
 
 # ---------------------------------------------------------------------------
 # Helpers
