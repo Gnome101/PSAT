@@ -67,7 +67,8 @@ def company_first_children(company_first_run, live_client: LiveClient) -> list[d
 
 @pytest.fixture(scope="module")
 def company_first_inventory(company_first_run, live_client: LiveClient) -> dict[str, Any] | None:
-    return live_client.artifact(company_first_run["name"], "contract_inventory")
+    art = live_client.artifact(company_first_run["name"], "contract_inventory")
+    return art if isinstance(art, dict) else None
 
 
 @pytest.fixture(scope="module")
@@ -121,9 +122,7 @@ def test_second_company_run_inventory_merged(
 
     if company_first_inventory is not None:
         addrs1 = {
-            c.get("address", "").lower()
-            for c in company_first_inventory.get("contracts", [])
-            if c.get("address")
+            c.get("address", "").lower() for c in company_first_inventory.get("contracts", []) if c.get("address")
         }
         addrs2 = {c.get("address", "").lower() for c in contracts2 if c.get("address")}
         assert len(addrs2) >= len(addrs1), (
