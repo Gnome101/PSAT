@@ -10,9 +10,9 @@ USDC_PROXY = "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48"  # USDC FiatTokenProxy
 
 
 @pytest.fixture(scope="module")
-def usdc_job(analyze_and_wait) -> dict:
-    # Module-scoped wrapper around the function-scoped factory to amortize the USDC run.
-    job = analyze_and_wait(USDC_PROXY, timeout=DEFAULT_SINGLE_TIMEOUT)
+def usdc_job(live_client: LiveClient) -> dict:
+    # Module-scoped so the USDC run is amortized across the four tests in this file.
+    job = live_client.submit_and_wait(USDC_PROXY, timeout=DEFAULT_SINGLE_TIMEOUT)
     if job["status"] != "completed":
         pytest.fail(f"USDC proxy analysis did not complete: {job.get('error')}")
     return job

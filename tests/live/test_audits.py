@@ -75,8 +75,8 @@ def test_audit_appears_in_pipeline(created_audit, live_client: LiveClient):
         ids: set[int] = set()
         for entries in bucket.values():
             for entry in entries:
-                if isinstance(entry, dict) and entry.get("id") is not None:
-                    ids.add(int(entry["id"]))
+                if isinstance(entry, dict) and entry.get("audit_id") is not None:
+                    ids.add(int(entry["audit_id"]))
         return ids
 
     text_ids = _ids(pipeline.get("text_extraction", {}))
