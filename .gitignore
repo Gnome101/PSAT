@@ -25,3 +25,4 @@ out/
 .db_snapshots/
 .claude/
 bench_results/
+bench_results_full/

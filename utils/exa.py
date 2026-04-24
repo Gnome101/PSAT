@@ -27,7 +27,11 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 EXA_SEARCH_URL = "https://api.exa.ai/search"
+EXA_RESEARCH_CREATE_URL = "https://api.exa.ai/research/v0/tasks"
+EXA_RESEARCH_GET_URL = "https://api.exa.ai/research/v0/tasks/{task_id}"
 REQUEST_TIMEOUT_SECONDS = 30
+DEEP_RESEARCH_POLL_INTERVAL_SECONDS = 5
+DEEP_RESEARCH_MAX_POLL_SECONDS = 600
 
 
 class ExaError(RuntimeError):
@@ -154,3 +158,96 @@ def search(
             }
         )
     return normalized
+
+
+_AUDIT_RESEARCH_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["auditReports"],
+    "additionalProperties": False,
+    "properties": {
+        "auditReports": {
+            "type": "array",
+            "description": "Audit reports with auditor + URL",
+            "items": {
+                "type": "object",
+                "required": ["auditor", "url"],
+                "additionalProperties": False,
+                "properties": {
+                    "auditor": {"type": "string"},
+                    "url": {"type": "string"},
+                    "title": {"type": "string"},
+                    "date": {"type": "string"},
+                },
+            },
+        }
+    },
+}
+
+
+def deep_research(
+    instructions: str,
+    *,
+    model: str = "exa-research",
+    schema: dict[str, Any] | None = None,
+    timeout_seconds: int = DEEP_RESEARCH_MAX_POLL_SECONDS,
+) -> dict[str, Any]:
+    """Run Exa's Deep Research endpoint (multi-step search + synthesis).
+
+    Returns ``{"data": <schema-typed>, "task_id": str, "status": str}``.
+    Pass ``schema`` to constrain output; defaults to an audit-report schema
+    suitable for this benchmark.
+    """
+    import time
+
+    api_key = _get_api_key()
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+
+    create_payload: dict[str, Any] = {"instructions": instructions, "model": model}
+    create_payload["output"] = {"schema": schema or _AUDIT_RESEARCH_SCHEMA}
+    resp = requests.post(
+        EXA_RESEARCH_CREATE_URL,
+        json=create_payload,
+        headers=headers,
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    if resp.status_code >= 400:
+        raise ExaError(
+            normalize_error(
+                f"Exa /research create HTTP {resp.status_code}",
+                status_code=resp.status_code,
+                detail=resp.text[:400],
+            )
+        )
+    task = resp.json()
+    task_id = str(task.get("id") or task.get("task_id") or "")
+    if not task_id:
+        raise ExaError(normalize_error("Exa /research returned no task id", detail=str(task)[:300]))
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        time.sleep(DEEP_RESEARCH_POLL_INTERVAL_SECONDS)
+        poll = requests.get(
+            EXA_RESEARCH_GET_URL.format(task_id=task_id),
+            headers=headers,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        if poll.status_code >= 400:
+            raise ExaError(
+                normalize_error(
+                    f"Exa /research poll HTTP {poll.status_code}",
+                    status_code=poll.status_code,
+                    detail=poll.text[:400],
+                )
+            )
+        resp_data = poll.json()
+        status = str(resp_data.get("status") or "").lower()
+        if status in ("completed", "done", "success"):
+            return {"data": resp_data.get("data") or {}, "task_id": task_id, "status": status}
+        if status in ("failed", "error", "cancelled"):
+            raise ExaError(
+                normalize_error(
+                    f"Exa /research task {task_id} status={status}",
+                    detail=str(resp_data.get("error") or resp_data)[:400],
+                )
+            )
+    raise ExaError(normalize_error(f"Exa /research task {task_id} timed out after {timeout_seconds}s"))
