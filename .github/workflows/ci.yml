@@ -97,6 +97,15 @@ jobs:
       - run: forge --version
       - name: Install Playwright browser
         run: uv run playwright install --with-deps chromium
+      - name: Install hevm and z3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3
+          curl -L -o /tmp/hevm https://github.com/ethereum/hevm/releases/latest/download/hevm-x86_64-linux
+          chmod +x /tmp/hevm
+          sudo mv /tmp/hevm /usr/local/bin/hevm
+          hevm version
+          z3 --version
       - name: Create test database
         run: PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
       - run: uv run pytest -m "not live" -q
@@ -172,6 +181,15 @@ jobs:
       - run: uv sync --dev
       - name: Install Playwright browser
         run: uv run playwright install --with-deps chromium
+      - name: Install hevm and z3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3
+          curl -L -o /tmp/hevm https://github.com/ethereum/hevm/releases/latest/download/hevm-x86_64-linux
+          chmod +x /tmp/hevm
+          sudo mv /tmp/hevm /usr/local/bin/hevm
+          hevm version
+          z3 --version
       - run: uv run --with coverage coverage run -m pytest -m "not live" -q
 
       - name: Coverage report

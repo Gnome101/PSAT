@@ -1,14 +1,24 @@
 name: PR preview
 
 # Triggered by CI success so we don't burn Fly + Neon on red builds.
+#
+# TODO(remove-in-follow-up-pr): the `pull_request` trigger below is a temporary
+# bootstrap. workflow_run can't fire until this file lands on main, so this PR
+# can't deploy its own branch via the CI-gated chain. Once this PR merges, open
+# a follow-up that deletes the `pull_request:` block so future PRs don't get
+# double-deployed (pull_request from branch copy + workflow_run from main).
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
 
-# Keyed on triggering CI run id — rapid pushes don't race; latest wins via ci.yml cancel-in-progress.
+# Keyed per-PR (pull_request path) or per-CI-run (workflow_run path).
+# Rapid pushes don't race; latest wins via ci.yml cancel-in-progress.
 concurrency:
-  group: preview-${{ github.event.workflow_run.id }}
+  group: preview-${{ github.event.pull_request.number || github.event.workflow_run.id }}
   cancel-in-progress: true
 
 permissions:
@@ -18,12 +28,16 @@ permissions:
 
 jobs:
   deploy:
-    # Require CI success, a PR event (main pushes go to prod-deploy), and a same-repo head
-    # (fork PRs don't get staging secrets).
+    # Fork PRs don't get secrets on either event — skip them in both paths.
+    # workflow_run path additionally requires CI green and a pull_request origin
+    # (main pushes go to prod-deploy).
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     environment: staging
     env:
@@ -33,27 +47,33 @@ jobs:
       NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
       NEON_STAGING_PASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
     steps:
-      # Checkout CI's SHA so deploy operates on the exact commit CI signed off on.
+      # Check out the PR head. On workflow_run, that's CI's signed-off SHA.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
 
       - name: Resolve PR number
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # workflow_run.pull_requests is populated for same-repo PRs; fall back to head-SHA lookup.
-          PR_NUM=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
+          # pull_request path: direct from payload.
+          # workflow_run path: try workflow_run.pull_requests (populated for
+          # same-repo PRs), then fall back to head-SHA lookup via gh.
+          PR_NUM="${{ github.event.pull_request.number }}"
+          if [ -z "$PR_NUM" ]; then
+            PR_NUM=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
+          fi
+          HEAD_SHA="${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}"
           if [ -z "$PR_NUM" ]; then
             PR_NUM=$(gh pr list \
               -R "${{ github.repository }}" \
-              --search "${{ github.event.workflow_run.head_sha }}" \
+              --search "$HEAD_SHA" \
               --json number \
               --jq '.[0].number // empty')
           fi
           if [ -z "$PR_NUM" ]; then
-            echo "::error::Could not resolve PR number for head SHA ${{ github.event.workflow_run.head_sha }}"
+            echo "::error::Could not resolve PR number for head SHA $HEAD_SHA"
             exit 1
           fi
           echo "number=$PR_NUM" >> $GITHUB_OUTPUT
