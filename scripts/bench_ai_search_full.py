@@ -54,6 +54,7 @@ CONFIGS: list[tuple[str, str]] = [
     ("tavily", "default"),
     ("brave", "default"),
     ("exa", "research"),
+    ("exa", "research_plus"),
 ]
 
 
@@ -61,9 +62,15 @@ def _slug(name: str) -> str:
     return name.replace(" ", "_").replace(".", "").lower()
 
 
-def _make_search_fn(backend: str, mode: str):
+def _make_search_fn(backend: str, mode: str, *, research_citations: list[dict] | None = None):
     """Return a drop-in replacement for `_tavily_search(query, max_results,
-    queries_used, max_queries, errors, debug) -> list[dict]`."""
+    queries_used, max_queries, errors, debug) -> list[dict]`.
+
+    For mode=='research_plus', the first call returns the pre-fetched Deep
+    Research citations, and subsequent calls (followup query, stage-3 hops)
+    fall through to exa.search(auto).
+    """
+    call_count = [0]
 
     def fn(
         query: str,
@@ -76,7 +83,12 @@ def _make_search_fn(backend: str, mode: str):
         if queries_used[0] >= max_queries:
             return []
         queries_used[0] += 1
+        call_count[0] += 1
         try:
+            if backend == "exa" and mode == "research_plus":
+                if call_count[0] == 1 and research_citations is not None:
+                    return research_citations[:max_results]
+                return exa.search(query, max_results=max_results, mode="auto")
             if backend == "exa":
                 return exa.search(query, max_results=max_results, mode=mode)
             if backend == "tavily":
@@ -102,9 +114,8 @@ def _make_search_fn(backend: str, mode: str):
     return fn
 
 
-def _patch_search(backend: str, mode: str):
-    """Monkeypatch `_tavily_search` in both modules that call it."""
-    fn = _make_search_fn(backend, mode)
+def _patch_search(backend: str, mode: str, *, research_citations: list[dict] | None = None):
+    fn = _make_search_fn(backend, mode, research_citations=research_citations)
     audit_reports_mod._tavily_search = fn  # type: ignore[attr-defined]
     inventory_domain_mod._tavily_search = fn  # type: ignore[attr-defined]
 
@@ -114,11 +125,43 @@ def _restore_search(original):
     inventory_domain_mod._tavily_search = original  # type: ignore[attr-defined]
 
 
+def _fetch_research_citations(protocol: str) -> tuple[list[dict], str | None]:
+    """Call Deep Research once and convert its output into tavily-shape
+    citations suitable for injecting into stage 1a."""
+    instructions = (
+        f"Find all third-party smart contract security audit reports published for the "
+        f"{protocol} protocol. Include pre-launch audits, formal verification reports, "
+        f"contest reports (Code4rena/Sherlock/Cantina), audit-firm blog posts, and PDF "
+        f"reports on GitHub or auditor websites. For each, provide the auditor name, "
+        f"a URL to the audit document, and the date if known."
+    )
+    r = exa.deep_research(instructions, timeout_seconds=600)
+    citations: list[dict] = []
+    for item in r.get("data", {}).get("auditReports", []):
+        url = str(item.get("url") or "").strip()
+        if not url:
+            continue
+        title = f"{item.get('auditor') or 'Audit'} — {protocol}"
+        citations.append(
+            {
+                "url": url,
+                "title": title,
+                "content": f"{item.get('auditor') or ''} audit report for {protocol}. {item.get('date') or ''}".strip(),
+                "score": 1.0,
+            }
+        )
+    return citations, r.get("task_id")
+
+
 def run_pipeline(protocol: str, backend: str, mode: str) -> dict[str, Any]:
     """Run full search_audit_reports() with backend patched in."""
     t0 = time.monotonic()
     original = inventory_domain_mod._tavily_search  # type: ignore[attr-defined]
-    _patch_search(backend, mode)
+    research_citations: list[dict] | None = None
+    research_task_id: str | None = None
+    if backend == "exa" and mode == "research_plus":
+        research_citations, research_task_id = _fetch_research_citations(protocol)
+    _patch_search(backend, mode, research_citations=research_citations)
     try:
         result = audit_reports_mod.search_audit_reports(
             protocol,
@@ -138,6 +181,8 @@ def run_pipeline(protocol: str, backend: str, mode: str) -> dict[str, Any]:
         "queries_used": result.get("queries_used"),
         "errors": result.get("errors", []),
         "notes": result.get("notes", []),
+        "research_task_id": research_task_id,
+        "research_seed_count": len(research_citations or []),
     }
 
 
