@@ -95,6 +95,8 @@ jobs:
           exit 1
       - run: uv sync --dev
       - run: forge --version
+      - name: Install Playwright browser
+        run: uv run playwright install --with-deps chromium
       - name: Create test database
         run: PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
       - run: uv run pytest -m "not live" -q
@@ -168,6 +170,8 @@ jobs:
           git checkout -
 
       - run: uv sync --dev
+      - name: Install Playwright browser
+        run: uv run playwright install --with-deps chromium
       - run: uv run --with coverage coverage run -m pytest -m "not live" -q
 
       - name: Coverage report

@@ -114,6 +114,78 @@ def _looks_like_external_authority_call(function_name: str, destination_name: st
     )
 
 
+def _role_identifiers_from_callee_body(ir, caller_aliases: set[str]) -> list[str]:
+    """For a view call like ``auth.z(msg.sender)``, descend into the callee's
+    concrete implementation and return role-identifier state-var names it reads
+    as mapping keys (e.g. ``roles[BREAK_GLASS][who]``).
+
+    Covers opaque external role helpers where the role isn't passed as an arg —
+    needed for authority checks that gate on a role constant baked into the
+    helper itself rather than the call site.
+    """
+    callee = getattr(ir, "function", None)
+    if callee is None or not hasattr(callee, "contract"):
+        return []
+    arguments = list(getattr(ir, "arguments", []) or [])
+    caller_positions = [i for i, arg in enumerate(arguments) if _variable_name(arg) in caller_aliases]
+    if not caller_positions:
+        return []
+    declared_contract = callee.contract
+    compilation_unit = getattr(declared_contract, "compilation_unit", None)
+    if compilation_unit is None:
+        return []
+    signature = getattr(callee, "full_name", None)
+    if not signature:
+        return []
+
+    implementations: list = []
+    for contract in getattr(compilation_unit, "contracts", []) or []:
+        if contract is declared_contract:
+            if getattr(callee, "nodes", None):
+                implementations.append(callee)
+            continue
+        inheritance = contract.inheritance or []
+        if declared_contract not in inheritance:
+            continue
+        for fn in contract.functions:
+            if fn.full_name == signature and getattr(fn, "nodes", None):
+                implementations.append(fn)
+
+    role_names: list[str] = []
+    for impl in implementations:
+        params = list(getattr(impl, "parameters", []) or [])
+        caller_params = {
+            params[i].name for i in caller_positions if i < len(params) and _type_name(params[i]) == "address"
+        }
+        if not caller_params:
+            continue
+        # Walk the body; collect role identifiers read alongside the caller param.
+        body_uses_caller_as_key = False
+        candidate_roles: list[str] = []
+        for node in getattr(impl, "nodes", []) or []:
+            for impl_ir in getattr(node, "irs", []) or []:
+                if type(impl_ir).__name__ != "Index":
+                    continue
+                reads = list(getattr(impl_ir, "read", []) or [])
+                for read in reads:
+                    read_name = _variable_name(read)
+                    if read_name in caller_params:
+                        body_uses_caller_as_key = True
+                    if type(read).__name__ != "StateVariable":
+                        continue
+                    if not _is_bytes32_typed(read):
+                        continue
+                    if not (getattr(read, "is_constant", False) or getattr(read, "is_immutable", False)):
+                        continue
+                    if read_name and read_name not in candidate_roles:
+                        candidate_roles.append(read_name)
+        if body_uses_caller_as_key:
+            for name in candidate_roles:
+                if name not in role_names:
+                    role_names.append(name)
+    return role_names
+
+
 def _looks_like_external_helper_guard_call(ir, caller_aliases: set[str], destination_name: str | None) -> bool:
     if type(ir).__name__ != "HighLevelCall":
         return False
@@ -517,6 +589,32 @@ def _direct_structural_guards(
                             ],
                             "evidence": evidence,
                             "details": [f"node:{node.node_id}", "external role guard"],
+                        }
+                    )
+                callee_role_sources = _role_identifiers_from_callee_body(ir, caller_aliases)
+                new_callee_roles = [name for name in callee_role_sources if name not in role_sources]
+                if new_callee_roles:
+                    callee_fn = getattr(ir, "function", None)
+                    guards.append(
+                        {
+                            "kind": "role_membership_check",
+                            "controllers": [
+                                {
+                                    "kind": "role_identifier",
+                                    "label": name,
+                                    "source": name,
+                                    "evidence": [
+                                        _source_evidence(
+                                            callee_fn or node,
+                                            project_dir,
+                                            detail=f"role source {name} (from callee body)",
+                                        )
+                                    ],
+                                }
+                                for name in new_callee_roles
+                            ],
+                            "evidence": evidence,
+                            "details": [f"node:{node.node_id}", "callee-body role guard"],
                         }
                     )
             _update_role_aliases_for_ir(ir, local_role_aliases)
