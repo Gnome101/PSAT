@@ -81,12 +81,8 @@ def _principals_for_role_from_graph(role: str, control_graph_nodes: list[dict] |
 
 
 def _principals_by_controller_label(label: str, control_graph_nodes: list[dict] | None) -> list[dict]:
-    """Collect every graph node tagged with `controller_label == label`.
-
-    Phase 3 writes one node per enumerated mapping member with
-    `controller_label=<mapping_name>`. This is the lookup the Phase 4
-    `caller_in_mapping` bridge uses to route `wards[msg.sender]` guards
-    back to the concrete addresses the mapping enumerator found."""
+    """Return every graph node tagged with `controller_label == label`
+    — the enumerated mapping-allowlist members for `label=<mapping_name>`."""
     out: list[dict] = []
     for node in control_graph_nodes or []:
         details = node.get("details") or {}
@@ -107,22 +103,11 @@ def _apply_sink_bridge(
     control_snapshot: dict | ControlSnapshot | None,
     control_graph_nodes: list[dict] | None,
 ) -> int:
-    """Dispatch each `CallerSink` kind to its principal resolver.
-
-    Handles the kinds the legacy external-call-guard bridge doesn't:
-
-    - `caller_equals` → `msg.sender == X` where X is a state variable.
-      The target's resolved address IS the principal (from
-      controller_values). Constant-compared (`msg.sender == ZERO`)
-      is skipped — not a real principal.
-    - `caller_in_mapping` → `X[msg.sender]` predicate. The current
-      members live as graph nodes with `controller_label=<mapping_name>`
-      (written by the resolver's Phase 3 enumerator). Attach each one
-      as a function principal.
-
-    `caller_external_call` is left to the existing v5 bridge; the
-    remaining kinds (internal_call, signature, merkle, unknown) are
-    Phase 5+/no-op here. Returns the count added."""
+    """Dispatch each `CallerSink` kind to its principal resolver:
+    `caller_equals` via `controller_values`, `caller_in_mapping` via
+    enumerated graph nodes, `caller_signature`/`caller_merkle` as
+    off_chain_witness descriptors. `caller_external_call` stays on the
+    legacy external-call-guard bridge."""
     sinks = function_record.get("sinks") or []
     if not sinks:
         return 0
@@ -180,19 +165,13 @@ def _apply_sink_bridge(
                     },
                 )
         elif kind in ("caller_signature", "caller_merkle"):
-            # Phase 5: off-chain witness. No finite principal set, but
-            # we can point at the storage slot that holds the authority
-            # (signer address, nonce map, Merkle root). The UI renders
-            # these as "callable by holder of <slot>" instead of silently
-            # dropping or claiming permissionless.
             source_var = str(
                 sink.get("signature_source_var") or sink.get("merkle_root_var") or sink.get("target_state_var") or ""
             )
             if not source_var:
                 continue
-            # Address field on FunctionPrincipal is NOT NULL — use the
-            # sentinel zero address to mark "descriptor, not real
-            # address". Details.source_slot carries the real pointer.
+            # FunctionPrincipal.address is NOT NULL — use zero address as a
+            # sentinel; details.source_slot is the real authority pointer.
             zero = "0x" + "0" * 40
             witness_kind = "signature" if kind == "caller_signature" else "merkle"
             _add(
@@ -457,10 +436,6 @@ class PolicyWorker(BaseWorker):
                     control_snapshot=control_snapshot,
                     control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
                 )
-                # Phase 4: unified sink-dispatch bridge — routes the
-                # caller_equals and caller_in_mapping sink kinds that the
-                # legacy external-call-guard bridge doesn't cover (wards
-                # mappings, owner-storage-var checks without external call).
                 _apply_sink_bridge(
                     session,
                     effective_function=ef,

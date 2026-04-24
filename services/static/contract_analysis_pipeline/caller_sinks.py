@@ -190,16 +190,8 @@ def _resolve_tmp_to_state_var(tmp_var: Any, recent_irs: list[Any]) -> tuple[str,
 
 
 def _resolve_ref_to_struct_field(ref_var: Any, recent_irs: list[Any]) -> tuple[str, str]:
-    """If `ref_var` is the lvalue of a preceding Member IR (struct
-    field access like `contracts.accountingOracle`), return
-    (`<base>.<field>`, base_type_or_empty). Otherwise ('', '').
-
-    Phase 6: accounting_proxy and friends gate functions with
-    `msg.sender != contracts.oracle`. Slither lowers `contracts.oracle`
-    into a Member IR producing a REF_N lvalue that the Binary compares
-    against. We rebuild the dotted name so the downstream resolver can
-    RPC-read the struct field on-chain.
-    """
+    """Resolve a REF from a preceding Member IR (struct field access like
+    `contracts.oracle`) to (`<base>.<field>`, base_type), or ('', '')."""
     ref_name = _var_name(ref_var)
     if not ref_name:
         return "", ""

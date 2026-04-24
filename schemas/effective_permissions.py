@@ -57,12 +57,6 @@ class EffectiveFunctionPermission(TypedDict):
     action_summary: str
     notes: list[str]
     external_call_guards: NotRequired[list[dict]]
-    # Phase 4: full CallerSink records carried through so the policy
-    # worker's sink-dispatch bridge can resolve principals for every
-    # sink kind (caller_equals, caller_in_mapping, caller_external_call,
-    # caller_internal_call, caller_signature, caller_merkle,
-    # caller_unknown). `external_call_guards` above is a legacy
-    # projection kept for backcompat.
     sinks: NotRequired[list[dict]]
 
 

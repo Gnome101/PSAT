@@ -24,10 +24,8 @@ ResolvedControllerType = Literal[
     "proxy_admin",
     "contract",
     "unknown",
-    # Phase 5: signature- and Merkle-gated functions have no finite
-    # enumerable principal set (whoever holds the signer key /
-    # produces a matching proof can call). Surface this honestly
-    # instead of silently dropping or claiming permissionless.
+    # Signature- and Merkle-gated functions: no finite on-chain
+    # principal set (whoever holds the signer key / matching proof).
     "off_chain_witness",
 ]
 
