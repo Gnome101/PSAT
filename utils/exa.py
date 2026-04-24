@@ -86,21 +86,23 @@ def search(
 ) -> list[dict[str, Any]]:
     """Search Exa and return Tavily-compatible result dicts.
 
-    Fields returned per result: ``url``, ``title``, ``content``, ``score``.
-    Supported modes (with aliases used in the benchmark todolist):
+    Supported modes:
 
-    - ``"deep"``     → ``"neural"``   — embedding-based, best recall on fuzzy slugs
-    - ``"regular"``  → ``"auto"``     — Exa picks neural vs keyword per-query
-    - ``"instant"``  → ``"keyword"``  — fastest, phrase-match only
+    - Native `/search` types: ``auto``, ``neural``, ``keyword``, ``fast``,
+      ``deep-lite``, ``deep``, ``deep-reasoning``
+    - Legacy aliases kept for backwards-compat with older benchmarks:
+      ``regular`` → ``auto``, ``instant`` → ``keyword``. (Note: ``deep``
+      is now the Exa-native deep search, NOT the old ``neural`` alias.)
     """
     clean_query = query.strip()
     if not clean_query:
         raise ValueError("query must not be empty")
     if max_results < 1:
         raise ValueError("max_results must be >= 1")
-    mode_aliases = {"deep": "neural", "regular": "auto", "instant": "keyword"}
+    mode_aliases = {"regular": "auto", "instant": "keyword"}
     resolved_mode = mode_aliases.get(mode, mode)
-    if resolved_mode not in ("auto", "neural", "keyword"):
+    native_modes = {"auto", "neural", "keyword", "fast", "deep-lite", "deep", "deep-reasoning"}
+    if resolved_mode not in native_modes:
         raise ValueError(f"unsupported mode: {mode!r}")
 
     payload: dict[str, Any] = {
