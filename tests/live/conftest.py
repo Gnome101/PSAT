@@ -69,6 +69,16 @@ class LiveClient:
         except requests.RequestException:
             return False
 
+    def config(self) -> dict[str, Any]:
+        r = self._session.get(self._url("/api/config"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def stats(self) -> dict[str, Any]:
+        r = self._session.get(self._url("/api/stats"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
     # -- analyze -------------------------------------------------------------
 
     def analyze(self, address: str) -> dict[str, Any]:
@@ -114,6 +124,170 @@ class LiveClient:
             return None
         r.raise_for_status()
         return r.json() if ext == ".json" else r.text
+
+    def analyses(self) -> list[dict[str, Any]]:
+        r = self._session.get(self._url("/api/analyses"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def analysis_detail(self, run_name: str) -> dict[str, Any]:
+        r = self._session.get(self._url(f"/api/analyses/{run_name}"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    # -- company -------------------------------------------------------------
+
+    def company_overview(self, company: str) -> dict[str, Any]:
+        r = self._session.get(self._url(f"/api/company/{company}"), timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+    def list_company_audits(self, company: str) -> dict[str, Any]:
+        r = self._session.get(self._url(f"/api/company/{company}/audits"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    # -- address labels ------------------------------------------------------
+
+    def list_address_labels(self) -> dict[str, Any]:
+        r = self._session.get(self._url("/api/address_labels"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def put_address_label(self, address: str, payload: dict[str, Any]) -> dict[str, Any]:
+        r = self._session.put(self._url(f"/api/address_labels/{address}"), json=payload, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def delete_address_label(self, address: str) -> dict[str, Any]:
+        r = self._session.delete(self._url(f"/api/address_labels/{address}"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    # -- monitoring ----------------------------------------------------------
+
+    def list_monitored_contracts(self) -> list[dict[str, Any]]:
+        r = self._session.get(self._url("/api/monitored-contracts"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def list_monitored_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        r = self._session.get(self._url("/api/monitored-events"), params={"limit": limit}, timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def list_proxy_events(self) -> list[dict[str, Any]]:
+        r = self._session.get(self._url("/api/proxy-events"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def contract_audit_timeline(self, contract_id: int) -> dict[str, Any]:
+        r = self._session.get(self._url(f"/api/contracts/{contract_id}/audit_timeline"), timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+    def audit_text(self, audit_id: int) -> requests.Response:
+        # Raw Response so tests can distinguish 200 (text ready) from 409
+        # (extraction still in progress) from 503 (storage offline).
+        return self._session.get(self._url(f"/api/audits/{audit_id}/text"), timeout=30)
+
+    def audit_pdf(self, audit_id: int) -> requests.Response:
+        return self._session.get(self._url(f"/api/audits/{audit_id}/pdf"), timeout=60)
+
+    # -- audits --------------------------------------------------------------
+
+    def add_audit(self, company: str, payload: dict[str, Any]) -> dict[str, Any]:
+        r = self._session.post(
+            self._url(f"/api/company/{company}/audits"),
+            json=payload,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def get_audit(self, audit_id: int) -> dict[str, Any]:
+        r = self._session.get(self._url(f"/api/audits/{audit_id}"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def audit_scope(self, audit_id: int) -> requests.Response:
+        # Returns the raw Response so callers can inspect 409 ("not ready yet")
+        # without the polling helper treating it as a hard error.
+        return self._session.get(self._url(f"/api/audits/{audit_id}/scope"), timeout=15)
+
+    def delete_audit(self, audit_id: int) -> dict[str, Any]:
+        r = self._session.delete(self._url(f"/api/audits/{audit_id}"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def audits_pipeline(self) -> dict[str, Any]:
+        r = self._session.get(self._url("/api/audits/pipeline"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def company_audit_coverage(self, company: str) -> dict[str, Any]:
+        r = self._session.get(self._url(f"/api/company/{company}/audit_coverage"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def poll_audit_until_scope(
+        self,
+        audit_id: int,
+        timeout: float = DEFAULT_COMPANY_TIMEOUT,
+        interval: float = DEFAULT_POLL_INTERVAL * 2,
+    ) -> dict[str, Any]:
+        """Poll ``/api/audits/{id}`` until scope extraction reaches success/failed.
+
+        Returns the final audit row. Raises ``TimeoutError`` if the workers
+        didn't produce a terminal status within ``timeout`` seconds.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            row = self.get_audit(audit_id)
+            if row.get("scope_extraction_status") in ("success", "failed"):
+                return row
+            time.sleep(interval)
+        raise TimeoutError(f"Audit {audit_id} did not finish scope extraction within {timeout}s")
+
+    # -- watched proxies -----------------------------------------------------
+
+    def add_watched_proxy(self, payload: dict[str, Any]) -> dict[str, Any]:
+        r = self._session.post(
+            self._url("/api/watched-proxies"),
+            json=payload,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def list_watched_proxies(self) -> list[dict[str, Any]]:
+        r = self._session.get(self._url("/api/watched-proxies"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def delete_watched_proxy(self, proxy_id: str) -> dict[str, Any]:
+        r = self._session.delete(self._url(f"/api/watched-proxies/{proxy_id}"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def list_subscriptions(self, proxy_id: str) -> list[dict[str, Any]]:
+        r = self._session.get(self._url(f"/api/watched-proxies/{proxy_id}/subscriptions"), timeout=15)
+        r.raise_for_status()
+        return r.json()
+
+    def add_subscription(self, proxy_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        r = self._session.post(
+            self._url(f"/api/watched-proxies/{proxy_id}/subscriptions"),
+            json=payload,
+            timeout=15,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def delete_subscription(self, subscription_id: str) -> dict[str, Any]:
+        r = self._session.delete(self._url(f"/api/subscriptions/{subscription_id}"), timeout=15)
+        r.raise_for_status()
+        return r.json()
 
     # -- polling -------------------------------------------------------------
 
@@ -244,3 +418,28 @@ def analyze_and_wait(live_client: LiveClient):
         return live_client.submit_and_wait(address, timeout=timeout)
 
     return _fn
+
+
+# Company used by tests that need a Protocol row in the DB (e.g. audits).
+# ``etherfi`` is the same company test_cache.py exercises, so the inventory
+# is typically already warm; ``limit=1`` keeps this fixture cheap when the
+# preview is cold.
+DEFAULT_TEST_COMPANY = "etherfi"
+
+
+@pytest.fixture(scope="session")
+def analyzed_company(live_client: LiveClient) -> dict[str, Any]:
+    """Ensure a Protocol row exists for ``DEFAULT_TEST_COMPANY``.
+
+    Tests that POST to ``/api/company/{name}/...`` endpoints need a protocol
+    in the DB or the endpoint 404s. This fixture guarantees one exists with
+    minimal overhead — ``limit=1`` caps analysis to a single contract, and
+    subsequent runs reuse cached static data from the first.
+    """
+    parent = live_client.submit_company_and_wait(DEFAULT_TEST_COMPANY, limit=1)
+    if parent["status"] != "completed":
+        pytest.fail(
+            f"Company fixture for '{DEFAULT_TEST_COMPANY}' did not complete "
+            f"on {live_client.base_url}: {parent.get('error')}"
+        )
+    return parent

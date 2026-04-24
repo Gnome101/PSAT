@@ -38,6 +38,8 @@ PSAT_ADMIN_KEY=... \
 
 - No `PSAT_ADMIN_KEY` → whole suite skips cleanly (session fixture). Not a bug.
 - `PSAT_LIVE_URL` defaults to `http://127.0.0.1:8000` — run `./start_local.sh` first if you want that.
+- `PSAT_LIVE_AUDIT_URL` overrides the default audit PDF used by `test_audits.py`. The default points at a Spearbit repo URL that will eventually rot — override rather than chase links.
+- `.github/workflows/live.yml` runs this suite on every PR after `pr-preview.yml` finishes, against the per-PR Fly preview. Sticky comment header is `psat-live-tests`.
 
 ## Writing new live tests
 
@@ -53,6 +55,7 @@ Available fixtures:
 
 - `analyzed_weth` — session-scoped; one completed WETH analysis, shared across all tests that request it. Use this whenever you just need "some finished job to inspect."
 - `analyze_and_wait(addr)` — factory when a test needs its own fresh analysis of a specific address.
+- `analyzed_company` — session-scoped; ensures `DEFAULT_TEST_COMPANY` (etherfi) has a Protocol row. Use this when a test POSTs to an endpoint that 404s without an existing company (audits, coverage).
 - `live_client` — the HTTP client. Methods:
   - `.analyze(addr)` / `.analyze_company(name, limit=)` — POST `/api/analyze` with admin-key header attached.
   - `.job(job_id)` / `.jobs()` / `.children_of(parent_id)` — job reads.
