@@ -18,7 +18,8 @@ PARALLEL_ADDRESSES = [
     "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48",  # USDC (proxy — also exercises impl spawn)
     "0x6B175474E89094C44Da98b954EedeAC495271d0F",  # DAI
     "0x514910771AF9Ca656af840dff83E8264EcF986CA",  # LINK
-    "0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2",  # MKR
+    "0xc00e94Cb662C3520282E6f5717214004A7f26888",  # COMP (MKR was pre-Solidity-0.5 and
+    # occasionally trips up Slither's CLI on the preview's compiler combo.)
 ]
 
 

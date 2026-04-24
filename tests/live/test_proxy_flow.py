@@ -47,13 +47,23 @@ def test_implementation_job_completed(usdc_job, live_client: LiveClient):
     impl = (flags.get("implementation") or "").lower()
     assert impl
 
-    # Parent can be "completed" before impl child finishes on cold previews — poll children.
-    children = live_client.poll_children_until_done(usdc_job["job_id"])
-    impl_jobs = [c for c in children if (c.get("address") or "").lower() == impl]
-    assert impl_jobs, (
-        f"No child job spawned for implementation {impl}. Children: {[c.get('address') for c in children]}"
-    )
-    impl_job = impl_jobs[0]
+    # The invariant is "the impl has a completed analysis job somewhere" — not "this
+    # specific parent spawned a new child for it". On a warm preview DB the static
+    # worker logs ``impl <addr> already has job <id>, skipping`` and reuses the
+    # existing impl analysis, so ``children_of(parent)`` is empty and polling it
+    # times out. Look up the impl by address across all jobs instead.
+    children = live_client.children_of(usdc_job["job_id"])
+    child_match = [c for c in children if (c.get("address") or "").lower() == impl]
+    if child_match:
+        impl_job = child_match[0]
+    else:
+        all_jobs = live_client.jobs()
+        candidates = [j for j in all_jobs if (j.get("address") or "").lower() == impl]
+        assert candidates, f"No analysis job of any age found for implementation {impl}"
+        # Prefer a completed job; fall back to the most recent so the error reports the real state.
+        completed = [j for j in candidates if j["status"] == "completed"]
+        impl_job = completed[0] if completed else candidates[0]
+
     assert impl_job["status"] == "completed", (
-        f"Implementation job did not complete: status={impl_job['status']} error={impl_job.get('error')}"
+        f"Implementation {impl} analysis is {impl_job['status']!r}: error={impl_job.get('error')}"
     )

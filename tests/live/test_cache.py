@@ -32,8 +32,21 @@ def test_first_run_has_artifacts(analyzed_weth, live_client: LiveClient):
 
 def test_second_run_uses_cache(analyzed_weth, weth_second_run, live_client: LiveClient):
     req2 = weth_second_run.get("request") or {}
-    assert req2.get("static_cached") is True
-    assert req2.get("cache_source_job_id") == analyzed_weth["job_id"]
+    assert req2.get("static_cached") is True, f"second WETH run did not hit cache: request={req2}"
+    # Previously pinned ``cache_source_job_id == analyzed_weth["job_id"]``; that breaks on a
+    # warm preview DB where an earlier session's WETH job is the most-recent completed source.
+    # The invariant we care about is "some prior WETH job was used" — validate it exists and
+    # completed successfully without pinning a specific id.
+    source_id = req2.get("cache_source_job_id")
+    assert source_id, f"static_cached=True but no cache_source_job_id on request={req2}"
+    source = live_client.job(source_id)
+    assert source["status"] == "completed", (
+        f"cache source job {source_id} has status={source['status']!r}, expected completed"
+    )
+    assert (source.get("address") or "").lower() == (analyzed_weth.get("address") or "").lower(), (
+        f"cache source {source_id} is for a different address ({source.get('address')}) "
+        f"than the second run ({analyzed_weth.get('address')})"
+    )
 
     a1 = live_client.artifact(analyzed_weth["name"], "contract_analysis")
     a2 = live_client.artifact(weth_second_run["name"], "contract_analysis")
@@ -103,9 +116,26 @@ def test_second_company_run_deduplicates(
     child_addrs2 = {c["address"].lower() for c in children2 if c.get("address")}
 
     # Proxies are re-queued every run for upgrade checks — only non-proxy dups are a cache miss.
-    proxy_addrs = {(j.get("address") or "").lower() for j in live_client.jobs() if j.get("is_proxy")}
+    all_jobs = live_client.jobs()
+    proxy_addrs = {(j.get("address") or "").lower() for j in all_jobs if j.get("is_proxy")}
     non_proxy_dup = (child_addrs1 & child_addrs2) - proxy_addrs
-    assert not non_proxy_dup, f"Run 2 re-spawned jobs for already-analyzed non-proxy addresses: {non_proxy_dup}"
+    if non_proxy_dup:
+        # Build a richer failure message: for each dup, which Run 1 and Run 2 jobs hit it,
+        # and whether any of their job rows claim ``is_proxy=True`` (flags change over time).
+        lines = []
+        for addr in sorted(non_proxy_dup):
+            r1 = [c for c in company_first_children if (c.get("address") or "").lower() == addr]
+            r2 = [c for c in children2 if (c.get("address") or "").lower() == addr]
+            hits = [j for j in all_jobs if (j.get("address") or "").lower() == addr]
+            is_proxy_flags = sorted({j.get("is_proxy") for j in hits})
+            lines.append(
+                f"  {addr}: r1_jobs={[c['job_id'] for c in r1]} "
+                f"r2_jobs={[c['job_id'] for c in r2]} "
+                f"all_is_proxy_flags={is_proxy_flags}"
+            )
+        raise AssertionError(
+            "Run 2 re-spawned jobs for already-analyzed non-proxy addresses:\n" + "\n".join(lines)
+        )
 
 
 def test_second_company_run_inventory_merged(
