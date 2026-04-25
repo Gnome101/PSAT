@@ -159,24 +159,8 @@ jobs:
           echo "minio failed to become ready"
           docker logs minio
           exit 1
-      - name: Create test databases
-        run: |
-          PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
-          PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test_baseline OWNER psat;"
-
-      - name: Baseline coverage (main)
-        if: github.event_name == 'pull_request'
-        env:
-          TEST_DATABASE_URL: postgresql://psat:psat@localhost:5432/psat_test_baseline
-        run: |
-          git checkout origin/main
-          uv sync --dev
-          # Baseline only needs the coverage number — tolerate pre-existing test failures on main.
-          uv run --with coverage coverage run -m pytest -m "not live" -q || true
-          MAIN_COV=$(uv run --with coverage coverage report --format=total)
-          echo "MAIN_COV=$MAIN_COV" >> $GITHUB_ENV
-          echo "Main coverage: ${MAIN_COV}%"
-          git checkout -
+      - name: Create test database
+        run: PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
 
       - run: uv sync --dev
       - name: Install Playwright browser
@@ -190,24 +174,34 @@ jobs:
           sudo mv /tmp/hevm /usr/local/bin/hevm
           hevm version
           z3 --version
-      - run: uv run --with coverage coverage run -m pytest -m "not live" -q
+      - run: uv run coverage run -m pytest -m "not live" -q
 
       - name: Coverage report
         run: |
-          uv run --with coverage coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
+          uv run coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          TOTAL=$(uv run --with coverage coverage report --format=total)
+          TOTAL=$(uv run coverage report --format=total)
           echo "**Total coverage: ${TOTAL}%** (minimum: 70%)" >> $GITHUB_STEP_SUMMARY
           echo "Total coverage: ${TOTAL}%"
-          uv run --with coverage coverage report
+          uv run coverage report
+          uv run coverage xml -o coverage.xml
 
-      - name: Coverage regression check
+      # Only gates lines this PR added/changed — refactors that drop total coverage
+      # don't fail the build, but new uncovered code does.
+      - name: Diff coverage check
         if: github.event_name == 'pull_request'
         run: |
-          PR_COV=$(uv run --with coverage coverage report --format=total)
-          echo "main: ${MAIN_COV}% → PR: ${PR_COV}%"
-          echo "**Coverage: ${MAIN_COV}% (main) → ${PR_COV}% (PR)**" >> $GITHUB_STEP_SUMMARY
-          if [ "$PR_COV" -lt "$MAIN_COV" ]; then
-            echo "::error::Coverage regression: ${MAIN_COV}% → ${PR_COV}%"
-            exit 1
-          fi
+          uv run diff-cover coverage.xml \
+            --compare-branch=origin/main \
+            --fail-under=80 \
+            --html-report diff-cover.html \
+            --markdown-report diff-cover.md
+          cat diff-cover.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload diff-cover HTML report
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diff-cover-report
+          path: diff-cover.html
+          if-no-files-found: ignore
