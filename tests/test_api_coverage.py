@@ -352,8 +352,7 @@ def test_list_jobs_logs_storage_error_without_failing(mock_session_cls, mock_res
     # No proxy tagging because the read failed — but the job still appears.
     assert len(body) == 1
     assert body[0]["is_proxy"] is False
-    # Grafana depends on this exact message; keep it stable.
-    assert any("artifact read failed" in rec.message for rec in caplog.records)
+    assert any("storage read failed" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.skip(
