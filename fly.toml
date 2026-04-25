@@ -34,9 +34,9 @@ kill_timeout = 30
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  # Previews idle for hours between PR pushes — let them suspend fully and
-  # wake on demand. live.yml's health probe absorbs the 30-60s cold start.
-  min_machines_running = 0
+  # Prod: keep ≥1 web machine warm so user requests don't hit a cold start.
+  # Previews override this to 0 via a derived config in pr-preview.yml.
+  min_machines_running = 1
   processes = ["web"]
 
   [http_service.concurrency]

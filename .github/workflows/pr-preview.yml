@@ -100,8 +100,13 @@ jobs:
             ARTIFACT_STORAGE_SECRET_KEY="${{ secrets.ARTIFACT_STORAGE_SECRET_KEY }}" \
             ARTIFACT_STORAGE_PREFIX="pr-${PR_NUMBER}/"
 
+      - name: Generate preview-specific fly config
+        # Identical to fly.toml except min_machines_running = 0 so idle previews
+        # suspend fully. Prod's fly.toml keeps ≥1 web machine warm.
+        run: sed 's/^  min_machines_running = 1$/  min_machines_running = 0/' fly.toml > fly-preview.toml
+
       - name: Deploy preview
-        run: flyctl deploy -a "${{ steps.fly.outputs.app }}" --remote-only
+        run: flyctl deploy -a "${{ steps.fly.outputs.app }}" --config fly-preview.toml --remote-only
 
       # marocchino/sticky-pull-request-comment@v2.9.4 pinned to SHA.
       - name: Post/update sticky preview comment
