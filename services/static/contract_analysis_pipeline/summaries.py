@@ -425,6 +425,85 @@ def _writes_hook_reference(function) -> bool:
     return False
 
 
+def _is_address_like_state_var(var) -> bool:
+    """Address or contract/interface-typed state var."""
+    type_str = str(getattr(var, "type", ""))
+    if "address" in type_str.lower():
+        return True
+    # User-defined contract/interface types start uppercase (e.g. "IHook", "AuthorityLike").
+    return bool(type_str) and type_str[0].isupper()
+
+
+def _writes_unclassified_address_pointer(function) -> bool:
+    """Bare setter that writes a single address/contract state var with no other effects
+    and no owner/authority/pause/impl role — e.g. ``function setHook(address h) { hook = h; }``."""
+    if _writes_owner_like_address(function):
+        return False
+    if _writes_authority_reference(function):
+        return False
+    if _writes_pause_like_bool(function):
+        return False
+    if _writes_delegatecall_target(function):
+        return False
+    if _writes_assembly_delegatecall_slot(function):
+        return False
+    written = list(function.all_state_variables_written())
+    if len(written) != 1 or not _is_address_like_state_var(written[0]):
+        return False
+    # Modifier auth calls don't count as effects; only inspect the body.
+    for node in function.nodes:
+        for ir in node.irs:
+            op = type(ir).__name__
+            if op in ("HighLevelCall", "LowLevelCall", "LibraryCall"):
+                return False
+    return True
+
+
+def _detect_supply_change_pattern(function) -> str | None:
+    """Mint/burn via pre/post totalSupply: X.totalSupply() twice around a non-totalSupply call
+    on X, compared with > (mint) or < (burn). Catches randomized method names."""
+
+    def _extract_dest(ir_str: str) -> str | None:
+        idx = ir_str.find("dest:")
+        if idx < 0:
+            return None
+        rest = ir_str[idx + 5 :]
+        paren = rest.find("(")
+        return rest[:paren] if paren > 0 else None
+
+    total_supply_dests: list[str] = []
+    other_dests: set[str] = set()
+    has_greater = False
+    has_less = False
+    for node in function.nodes:
+        for ir in node.irs:
+            op = type(ir).__name__
+            ir_str = str(ir)
+            if op == "HighLevelCall":
+                dest = _extract_dest(ir_str)
+                if not dest:
+                    continue
+                if "function:totalSupply" in ir_str:
+                    total_supply_dests.append(dest)
+                else:
+                    other_dests.add(dest)
+            elif op == "Binary":
+                if " > " in ir_str:
+                    has_greater = True
+                elif " < " in ir_str:
+                    has_less = True
+
+    from collections import Counter
+
+    for receiver, count in Counter(total_supply_dests).items():
+        if count >= 2 and receiver in other_dests:
+            if has_greater:
+                return "mint"
+            if has_less:
+                return "burn"
+    return None
+
+
 def _detect_encoded_selectors(function) -> set[str]:
     """Scan IR for abi.encodeWithSelector calls with known ERC20 selectors."""
     labels: set[str] = set()
@@ -517,6 +596,10 @@ def _effect_labels(function, effects: list[str], effect_targets: list[str], grap
     # Encoded selectors: abi.encodeWithSelector with known ERC20 selectors
     labels.update(_detect_encoded_selectors(function))
 
+    supply_change = _detect_supply_change_pattern(function)
+    if supply_change:
+        labels.add(supply_change)
+
     # --- Layer 3: Structural authority/hook + arbitrary call detection ---
     if any(target.endswith(".functioncallwithvalue") for target in targets_lower):
         labels.discard("external_contract_call")
@@ -558,6 +641,10 @@ def _effect_labels(function, effects: list[str], effect_targets: list[str], grap
     # Downgrade generic external_contract_call when a more specific label applies
     if labels.intersection({"asset_pull", "asset_send", "arbitrary_external_call", "mint", "burn"}):
         labels.discard("external_contract_call")
+
+    # Fallback: fires only if no more specific label matched.
+    if not labels and _writes_unclassified_address_pointer(function):
+        labels.add("hook_update")
 
     return _dedupe_strings(list(labels))
 

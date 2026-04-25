@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -23,6 +24,13 @@ from services.static.hevm_guard_analysis import refine_semantic_guards_with_hevm
 
 ANVIL_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 DEPLOYER = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+
+_REQUIRED_BINARIES = ("anvil", "forge", "hevm")
+_missing_binaries = [b for b in _REQUIRED_BINARIES if shutil.which(b) is None]
+requires_foundry_and_hevm = pytest.mark.skipif(
+    bool(_missing_binaries),
+    reason=f"Missing required binaries: {', '.join(_missing_binaries)}",
+)
 
 
 def _free_port() -> int:
@@ -56,7 +64,7 @@ def _deployed_address(output: str) -> str:
     return match.group(1)
 
 
-@pytest.mark.live
+@requires_foundry_and_hevm
 def test_hevm_role_helper_refines_and_resolves_local_project():
     with tempfile.TemporaryDirectory(prefix="psat_hevm_role_e2e_") as tmp:
         root = Path(tmp)

@@ -559,7 +559,6 @@ def test_permission_graph_tracks_external_call_in_internal_helper(tmp_path):
     assert any(sink_id.endswith(":external_call:target.ping") for sink_id in privileged["sink_ids"])
 
 
-@pytest.mark.xfail(reason="hook_update detection needs pipeline fix")
 def test_permission_graph_recovers_modifier_helper_auth_structure(tmp_path):
     project_dir = _write_project(
         tmp_path,
@@ -1020,7 +1019,6 @@ def test_opaque_external_void_helper_guard_would_need_semantic_execution(tmp_pat
     assert "gate" in privileged["controller_refs"]
 
 
-@pytest.mark.xfail(reason="opaque external role helpers are not reduced to canonical role-member predicates")
 def test_opaque_external_role_helper_would_need_semantic_execution(tmp_path):
     project_dir = _write_project(
         tmp_path,
