@@ -115,14 +115,9 @@ def _looks_like_external_authority_call(function_name: str, destination_name: st
 
 
 def _role_identifiers_from_callee_body(ir, caller_aliases: set[str]) -> list[str]:
-    """For a view call like ``auth.z(msg.sender)``, descend into the callee's
-    concrete implementation and return role-identifier state-var names it reads
-    as mapping keys (e.g. ``roles[BREAK_GLASS][who]``).
-
-    Covers opaque external role helpers where the role isn't passed as an arg —
-    needed for authority checks that gate on a role constant baked into the
-    helper itself rather than the call site.
-    """
+    """Descend into ``auth.z(msg.sender)``-style helpers and return bytes32 role constants
+    they read as mapping keys alongside the caller — the role is baked into the callee, not
+    passed as an arg."""
     callee = getattr(ir, "function", None)
     if callee is None or not hasattr(callee, "contract"):
         return []
@@ -159,7 +154,6 @@ def _role_identifiers_from_callee_body(ir, caller_aliases: set[str]) -> list[str
         }
         if not caller_params:
             continue
-        # Walk the body; collect role identifiers read alongside the caller param.
         body_uses_caller_as_key = False
         candidate_roles: list[str] = []
         for node in getattr(impl, "nodes", []) or []:

@@ -435,11 +435,8 @@ def _is_address_like_state_var(var) -> bool:
 
 
 def _writes_unclassified_address_pointer(function) -> bool:
-    """Config-pointer setter: writes a single address/contract state var with no
-    other effects, where the slot has no owner/authority/pause/impl role.
-
-    Covers "bare setter" hooks like ``function setHook(address h) { hook = h; }``
-    that have no in-contract consumer (callers are external)."""
+    """Bare setter that writes a single address/contract state var with no other effects
+    and no owner/authority/pause/impl role — e.g. ``function setHook(address h) { hook = h; }``."""
     if _writes_owner_like_address(function):
         return False
     if _writes_authority_reference(function):
@@ -453,7 +450,7 @@ def _writes_unclassified_address_pointer(function) -> bool:
     written = list(function.all_state_variables_written())
     if len(written) != 1 or not _is_address_like_state_var(written[0]):
         return False
-    # Only inspect the function body — modifier auth calls don't count as effects.
+    # Modifier auth calls don't count as effects; only inspect the body.
     for node in function.nodes:
         for ir in node.irs:
             op = type(ir).__name__
@@ -463,13 +460,8 @@ def _writes_unclassified_address_pointer(function) -> bool:
 
 
 def _detect_supply_change_pattern(function) -> str | None:
-    """Detect mint/burn by the pre/post totalSupply pattern.
-
-    Fires when the body calls ``X.totalSupply()`` at least twice on the same
-    receiver, makes a non-totalSupply call on X in between, and compares the
-    two return values with ``>`` (mint) or ``<`` (burn). Catches adversarial
-    callers where the mint/burn method itself has a randomized name.
-    """
+    """Mint/burn via pre/post totalSupply: X.totalSupply() twice around a non-totalSupply call
+    on X, compared with > (mint) or < (burn). Catches randomized method names."""
 
     def _extract_dest(ir_str: str) -> str | None:
         idx = ir_str.find("dest:")
@@ -604,7 +596,6 @@ def _effect_labels(function, effects: list[str], effect_targets: list[str], grap
     # Encoded selectors: abi.encodeWithSelector with known ERC20 selectors
     labels.update(_detect_encoded_selectors(function))
 
-    # Pre/post totalSupply check — catches mint/burn with a randomized method name
     supply_change = _detect_supply_change_pattern(function)
     if supply_change:
         labels.add(supply_change)
@@ -651,8 +642,7 @@ def _effect_labels(function, effects: list[str], effect_targets: list[str], grap
     if labels.intersection({"asset_pull", "asset_send", "arbitrary_external_call", "mint", "burn"}):
         labels.discard("external_contract_call")
 
-    # Fallback: bare setter of an un-role-classified address pointer.
-    # Runs last so it only fires when no more specific label matched.
+    # Fallback: fires only if no more specific label matched.
     if not labels and _writes_unclassified_address_pointer(function):
         labels.add("hook_update")
 

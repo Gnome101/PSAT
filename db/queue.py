@@ -571,13 +571,8 @@ def find_completed_static_cache(session: Session, address: str, chain: str | Non
         if not src_count:
             continue
 
-        # Look up contract by (address, chain) — not by job_id, because a
-        # prior copy_static_cache may have reassigned the row. Join on
-        # ContractSummary so that, when multiple Contract rows exist for
-        # the same address (e.g. one per chain, or one summaried + one
-        # stub), we only consider rows that actually carry the summary
-        # the cache hit needs — otherwise ``.limit(1)`` could pick a stub
-        # row and falsely report a cache miss.
+        # Look up by (address, chain), not job_id — copy_static_cache may have reassigned.
+        # Join ContractSummary so .limit(1) skips stub rows that lack the cached summary.
         contract_stmt = (
             select(Contract)
             .join(ContractSummary, ContractSummary.contract_id == Contract.id)
@@ -719,11 +714,7 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     src_req = src_job.request if isinstance(src_job.request, dict) else {}
     src_chain = src_req.get("chain")
 
-    # Match ``find_completed_static_cache``'s Contract lookup: join on
-    # ContractSummary so, when multiple Contract rows exist for this
-    # address (e.g. a summaried ``chain=NULL`` legacy row alongside a
-    # stub ``chain='ethereum'`` row), we copy from the row that actually
-    # carries the cached summary + contract_name rather than a stub.
+    # Join ContractSummary so we copy a summaried row, not a stub (mirrors find_completed_static_cache).
     src_contract_stmt = (
         select(Contract)
         .join(ContractSummary, ContractSummary.contract_id == Contract.id)

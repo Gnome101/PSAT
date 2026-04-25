@@ -15,8 +15,7 @@ on:
     workflows: ["CI"]
     types: [completed]
 
-# Keyed per-PR (pull_request path) or per-CI-run (workflow_run path).
-# Rapid pushes don't race; latest wins via ci.yml cancel-in-progress.
+# Keyed per-PR or per-CI-run; latest wins via ci.yml cancel-in-progress.
 concurrency:
   group: preview-${{ github.event.pull_request.number || github.event.workflow_run.id }}
   cancel-in-progress: true
@@ -28,9 +27,7 @@ permissions:
 
 jobs:
   deploy:
-    # Fork PRs don't get secrets on either event — skip them in both paths.
-    # workflow_run path additionally requires CI green and a pull_request origin
-    # (main pushes go to prod-deploy).
+    # Same-repo PRs only (forks lack secrets); workflow_run path also requires CI green.
     if: >-
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository) ||

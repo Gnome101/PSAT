@@ -33,10 +33,7 @@ def test_first_run_has_artifacts(analyzed_weth, live_client: LiveClient):
 def test_second_run_uses_cache(analyzed_weth, weth_second_run, live_client: LiveClient):
     req2 = weth_second_run.get("request") or {}
     assert req2.get("static_cached") is True, f"second WETH run did not hit cache: request={req2}"
-    # Previously pinned ``cache_source_job_id == analyzed_weth["job_id"]``; that breaks on a
-    # warm preview DB where an earlier session's WETH job is the most-recent completed source.
-    # The invariant we care about is "some prior WETH job was used" — validate it exists and
-    # completed successfully without pinning a specific id.
+    # Don't pin cache_source_job_id: a warm preview DB may reuse an earlier session's WETH job.
     source_id = req2.get("cache_source_job_id")
     assert source_id, f"static_cached=True but no cache_source_job_id on request={req2}"
     source = live_client.job(source_id)
@@ -57,7 +54,7 @@ def test_second_run_uses_cache(analyzed_weth, weth_second_run, live_client: Live
 def test_second_run_completed_faster(analyzed_weth, weth_second_run, live_client: LiveClient):
     t1 = live_client.job_duration_seconds(analyzed_weth)
     t2 = live_client.job_duration_seconds(weth_second_run)
-    # Below 30s fixed overhead dominates; assertion flaps either way.
+    # Below 30s fixed overhead dominates and the assertion flaps.
     if t1 > 30:
         assert t2 < t1, f"Second run ({t2:.1f}s) should be faster than first ({t1:.1f}s)"
 
@@ -111,10 +108,7 @@ def test_second_company_run_deduplicates(
     company_second_run,
     live_client: LiveClient,
 ):
-    # ``find_existing_job_for_address`` intentionally skips ``status='failed'`` jobs so the
-    # next run can retry transient discovery errors (Etherscan hiccup, throttle, etc.). Count
-    # an address as "already analyzed" only if Run 1 actually completed it; otherwise Run 2
-    # re-spawning that address is the intended retry path, not a dedup miss.
+    # find_existing_job_for_address skips failed jobs so Run 2 can retry; only count completed.
     child_addrs1 = {
         c["address"].lower() for c in company_first_children if c.get("address") and c["status"] == "completed"
     }
@@ -126,22 +120,18 @@ def test_second_company_run_deduplicates(
     proxy_addrs = {(j.get("address") or "").lower() for j in all_jobs if j.get("is_proxy")}
     non_proxy_dup = (child_addrs1 & child_addrs2) - proxy_addrs
     if non_proxy_dup:
-        # Build a richer failure message: for each dup, which Run 1 and Run 2 jobs hit it,
-        # and whether any of their job rows claim ``is_proxy=True`` (flags change over time).
         lines = []
         for addr in sorted(non_proxy_dup):
             r1 = [c for c in company_first_children if (c.get("address") or "").lower() == addr]
             r2 = [c for c in children2 if (c.get("address") or "").lower() == addr]
             hits = [j for j in all_jobs if (j.get("address") or "").lower() == addr]
-            is_proxy_flags = sorted({j.get("is_proxy") for j in hits})
+            is_proxy_flags = sorted({bool(j.get("is_proxy")) for j in hits})
             lines.append(
                 f"  {addr}: r1_jobs={[c['job_id'] for c in r1]} "
                 f"r2_jobs={[c['job_id'] for c in r2]} "
                 f"all_is_proxy_flags={is_proxy_flags}"
             )
-        raise AssertionError(
-            "Run 2 re-spawned jobs for already-analyzed non-proxy addresses:\n" + "\n".join(lines)
-        )
+        raise AssertionError("Run 2 re-spawned jobs for already-analyzed non-proxy addresses:\n" + "\n".join(lines))
 
 
 def test_second_company_run_inventory_merged(
@@ -161,9 +151,7 @@ def test_second_company_run_inventory_merged(
             c.get("address", "").lower() for c in company_first_inventory.get("contracts", []) if c.get("address")
         }
         addrs2 = {c.get("address", "").lower() for c in contracts2 if c.get("address")}
-        # Discovery is not deterministic — each run re-samples Tavily / DefiLlama / DApp crawls,
-        # and a single transient miss can shift the address count by one or two. We care that
-        # the two inventories substantially overlap, not that run 2 is a strict superset.
+        # Discovery (Tavily / DefiLlama / DApp crawl) isn't deterministic; assert overlap, not superset.
         overlap = len(addrs1 & addrs2)
         union = len(addrs1 | addrs2)
         jaccard = overlap / union if union else 1.0
