@@ -822,6 +822,97 @@ def refine_semantic_guards_with_hevm(
                 f"for {proved_role['role_source']}."
             )
 
+        for predicate in list(function.get("predicates", [])):
+            if predicate.get("kind") != "role_member" or predicate.get("proven_by"):
+                continue
+            helper_name = predicate.get("helper")
+            role_source = predicate.get("role_source")
+            authority_source_raw = predicate.get("authority_source")
+            authority_source = authority_source_raw if isinstance(authority_source_raw, str) else None
+            if not (
+                isinstance(helper_name, str)
+                and helper_name
+                and isinstance(role_source, str)
+                and role_source
+                and authority_source
+            ):
+                continue
+            authority_address = _resolve_authority_address(tracking_plan, rpc_url, authority_source)
+            if not authority_address:
+                fn_entry["attempts"].append(
+                    {
+                        "authority_source": authority_source,
+                        "helper": helper_name,
+                        "role_source": role_source,
+                        "status": "skipped",
+                        "reason": "authority_address_unresolved",
+                    }
+                )
+                continue
+            role_snapshot = _role_snapshot_from_source(authority_address, role_source, rpc_url)
+            if role_snapshot is None:
+                fn_entry["attempts"].append(
+                    {
+                        "authority_source": authority_source,
+                        "authority_address": authority_address,
+                        "helper": helper_name,
+                        "role_source": role_source,
+                        "status": "skipped",
+                        "reason": "role_snapshot_unavailable",
+                    }
+                )
+                continue
+            details = role_snapshot.get("details", {})
+            resolved_principals_raw = details.get("resolved_principals", [])
+            resolved_principals = resolved_principals_raw if isinstance(resolved_principals_raw, list) else []
+            members = [
+                str(principal.get("address", "")).lower()
+                for principal in resolved_principals
+                if isinstance(principal, dict) and str(principal.get("address", "")).startswith("0x")
+            ]
+            role_proof = _prove_role_helper(
+                authority_address=authority_address,
+                helper_name=helper_name,
+                members=members,
+                rpc_url=rpc_url,
+                hevm_bin=resolved_hevm_bin,
+            )
+            if role_proof["status"] != "proved":
+                role_proof = _prove_target_role_membership(
+                    target_address=str(semantic_guards.get("contract_address", "")),
+                    function_signature=function["function"],
+                    members=members,
+                    rpc_url=rpc_url,
+                    hevm_bin=resolved_hevm_bin,
+                )
+            fn_entry["attempts"].append(
+                {
+                    "authority_source": authority_source,
+                    "authority_address": authority_address,
+                    "helper": helper_name,
+                    "role_source": role_source,
+                    "role_id": role_snapshot.get("value"),
+                    "member_count": len(members),
+                    **role_proof,
+                }
+            )
+            if role_proof.get("status") == "proved":
+                predicate["proven_by"] = "hevm_role_helper"
+                predicate.pop("status", None)
+                predicate.setdefault(
+                    "read_spec",
+                    {
+                        "strategy": "getter_call",
+                        "target": role_source,
+                        "contract_source": authority_source,
+                    },
+                )
+                function["status"] = "resolved"
+                function.setdefault("notes", []).append(
+                    f"Resolved role-member predicate {authority_source}.{helper_name} via HEVM role-helper proof "
+                    f"for {role_source}."
+                )
+
         artifact["functions"].append(fn_entry)
 
     artifact["status"] = "ok"

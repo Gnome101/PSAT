@@ -121,9 +121,13 @@ def build_semantic_guards(analysis: ContractAnalysis) -> dict[str, Any]:
 
         if len(authority_sources) == 1:
             authority_source = next(iter(authority_sources))
+            helper = _helper_name_from_effect_targets(list(privileged.get("effect_targets", [])), authority_sources)
             for predicate in predicates:
                 if predicate["kind"] == "role_member" and predicate["authority_source"] is None:
                     predicate["authority_source"] = authority_source
+                    if helper:
+                        predicate["helper"] = helper
+                        predicate.setdefault("status", "unresolved")
 
         if not authority_sources:
             authority_sources = {

@@ -999,3 +999,59 @@ def test_company_audits_empty(mock_session_cls):
     body = response.json()
     assert body["audit_count"] == 0
     assert body["audits"] == []
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/company/{name}/queued-jobs — test-isolation teardown for
+# analyze-remaining flood
+# ---------------------------------------------------------------------------
+
+
+@patch("api.SessionLocal")
+def test_cancel_queued_company_jobs_unknown_company_404(mock_session_cls):
+    """404 when the company has never been registered as a Protocol."""
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+    mock_session.execute.return_value.scalar_one_or_none.return_value = None
+
+    response = client.delete("/api/company/psat-unknown-xyz/queued-jobs")
+    assert response.status_code == 404
+    # Pure lookup: no DELETE should have run.
+    assert mock_session.commit.call_count == 0
+
+
+@patch("api.SessionLocal")
+def test_cancel_queued_company_jobs_returns_deleted_ids(mock_session_cls):
+    """DELETE returns the list of cancelled job UUIDs + a count."""
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    protocol = MagicMock()
+    protocol.id = 7
+
+    fake_ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+
+    call_count = {"n": 0}
+
+    def route_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        result = MagicMock()
+        if call_count["n"] == 1:
+            # First call: SELECT Protocol
+            result.scalar_one_or_none.return_value = protocol
+        else:
+            # Second call: DELETE ... RETURNING id — iterator yields single-col rows
+            result.__iter__ = lambda self: iter((i,) for i in fake_ids)
+        return result
+
+    mock_session.execute.side_effect = route_execute
+
+    response = client.delete("/api/company/etherfi/queued-jobs")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["company"] == "etherfi"
+    assert body["cancelled"] == 3
+    assert set(body["job_ids"]) == {str(i) for i in fake_ids}
+    mock_session.commit.assert_called_once()

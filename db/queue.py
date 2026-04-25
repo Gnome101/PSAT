@@ -571,10 +571,12 @@ def find_completed_static_cache(session: Session, address: str, chain: str | Non
         if not src_count:
             continue
 
-        # Look up contract by (address, chain) — not by job_id, because a
-        # prior copy_static_cache may have reassigned the row.
-        contract_stmt = select(Contract).where(
-            func.lower(Contract.address) == address.lower(),
+        # Look up by (address, chain), not job_id — copy_static_cache may have reassigned.
+        # Join ContractSummary so .limit(1) skips stub rows that lack the cached summary.
+        contract_stmt = (
+            select(Contract)
+            .join(ContractSummary, ContractSummary.contract_id == Contract.id)
+            .where(func.lower(Contract.address) == address.lower())
         )
         if chain is not None:
             contract_stmt = contract_stmt.where(Contract.chain == chain)
@@ -712,8 +714,11 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     src_req = src_job.request if isinstance(src_job.request, dict) else {}
     src_chain = src_req.get("chain")
 
-    src_contract_stmt = select(Contract).where(
-        func.lower(Contract.address) == src_job.address.lower(),
+    # Join ContractSummary so we copy a summaried row, not a stub (mirrors find_completed_static_cache).
+    src_contract_stmt = (
+        select(Contract)
+        .join(ContractSummary, ContractSummary.contract_id == Contract.id)
+        .where(func.lower(Contract.address) == src_job.address.lower())
     )
     if src_chain is not None:
         src_contract_stmt = src_contract_stmt.where(Contract.chain == src_chain)
