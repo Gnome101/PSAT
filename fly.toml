@@ -34,8 +34,9 @@ kill_timeout = 30
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  # Keep >=1 web machine so cold-starts don't slow the first request.
-  min_machines_running = 1
+  # Previews idle for hours between PR pushes — let them suspend fully and
+  # wake on demand. live.yml's health probe absorbs the 30-60s cold start.
+  min_machines_running = 0
   processes = ["web"]
 
   [http_service.concurrency]

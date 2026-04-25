@@ -1,23 +1,14 @@
 name: PR preview
 
 # Triggered by CI success so we don't burn Fly + Neon on red builds.
-#
-# TODO(remove-in-follow-up-pr): the `pull_request` trigger below is a temporary
-# bootstrap. workflow_run can't fire until this file lands on main, so this PR
-# can't deploy its own branch via the CI-gated chain. Once this PR merges, open
-# a follow-up that deletes the `pull_request:` block so future PRs don't get
-# double-deployed (pull_request from branch copy + workflow_run from main).
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
 
-# Keyed per-PR or per-CI-run; latest wins via ci.yml cancel-in-progress.
+# Keyed per-CI-run; latest wins via ci.yml cancel-in-progress.
 concurrency:
-  group: preview-${{ github.event.pull_request.number || github.event.workflow_run.id }}
+  group: preview-${{ github.event.workflow_run.id }}
   cancel-in-progress: true
 
 permissions:
@@ -27,14 +18,11 @@ permissions:
 
 jobs:
   deploy:
-    # Same-repo PRs only (forks lack secrets); workflow_run path also requires CI green.
+    # Require CI green; same-repo PRs only (forks lack secrets).
     if: >-
-      (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository) ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'pull_request' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     environment: staging
     env:
@@ -44,24 +32,20 @@ jobs:
       NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
       NEON_STAGING_PASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
     steps:
-      # Check out the PR head. On workflow_run, that's CI's signed-off SHA.
+      # Check out CI's signed-off SHA.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Resolve PR number
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # pull_request path: direct from payload.
-          # workflow_run path: try workflow_run.pull_requests (populated for
-          # same-repo PRs), then fall back to head-SHA lookup via gh.
-          PR_NUM="${{ github.event.pull_request.number }}"
-          if [ -z "$PR_NUM" ]; then
-            PR_NUM=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
-          fi
-          HEAD_SHA="${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}"
+          # workflow_run.pull_requests is populated for same-repo PRs; fall
+          # back to a head-SHA lookup via gh if it isn't.
+          PR_NUM=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
           if [ -z "$PR_NUM" ]; then
             PR_NUM=$(gh pr list \
               -R "${{ github.repository }}" \
