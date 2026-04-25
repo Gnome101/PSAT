@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import asdict
 from typing import Callable
 
@@ -18,6 +19,15 @@ from services.crawlers.dapp.wallet import HoneypotWallet
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str], None]
+
+# Hard cap on a single ``crawl_dapp`` call. A stuck wallet-connect flow
+# (SDK hung on MetaMask modal, stalled network request, etc.) used to
+# wedge the DApp crawl worker until the 15-minute stale-job sweep ran —
+# and even then, the worker's blocked ``asyncio.run`` didn't release
+# playwright, so the next attempt sat on the re-queued row with nobody
+# polling. Enforcing a global timeout inside the async wrapper lets the
+# worker raise cleanly and mark the job failed.
+_DAPP_CRAWL_TIMEOUT_SECONDS = int(os.environ.get("PSAT_DAPP_CRAWL_TIMEOUT", "300"))
 
 
 async def _crawl_async(
@@ -66,14 +76,28 @@ def crawl_dapp(
             "session_start": "...",
         }
     """
-    interaction_log = asyncio.run(
-        _crawl_async(
-            urls,
-            chain_id=chain_id,
-            wait=wait,
-            progress=progress,
+    async def _bounded() -> InteractionLog:
+        return await asyncio.wait_for(
+            _crawl_async(
+                urls,
+                chain_id=chain_id,
+                wait=wait,
+                progress=progress,
+            ),
+            timeout=_DAPP_CRAWL_TIMEOUT_SECONDS,
         )
-    )
+
+    try:
+        interaction_log = asyncio.run(_bounded())
+    except asyncio.TimeoutError as exc:
+        logger.error(
+            "DApp crawl exceeded %ds limit — aborting so the worker can mark the job failed",
+            _DAPP_CRAWL_TIMEOUT_SECONDS,
+        )
+        raise RuntimeError(
+            f"DApp crawl exceeded {_DAPP_CRAWL_TIMEOUT_SECONDS}s — likely a hung wallet-connect "
+            f"or stalled page load on {urls!r}"
+        ) from exc
 
     addresses = interaction_log.get_contract_addresses()
     logger.info("Discovered %d unique contract addresses", len(addresses))
