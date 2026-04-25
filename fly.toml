@@ -35,7 +35,7 @@ kill_timeout = 30
   auto_stop_machines = "stop"
   auto_start_machines = true
   # Prod: keep ≥1 web machine warm so user requests don't hit a cold start.
-  # Previews override this to 0 via a derived config in pr-preview.yml.
+  # Previews override this to 0 via a derived config in pr.yml.
   min_machines_running = 1
   processes = ["web"]
 
