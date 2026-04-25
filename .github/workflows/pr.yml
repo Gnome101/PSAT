@@ -111,8 +111,6 @@ jobs:
     needs: deploy
     runs-on: ubuntu-latest
     environment: staging
-    env:
-      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -169,19 +167,27 @@ jobs:
             - **Preview:** ${{ needs.deploy.outputs.url }}
             - **Run:** [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
-      - name: Setup flyctl
-        if: always()
-        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-
-      - name: Stop preview worker machines
-        # Workers/browser/monitor have no autostop hook and contend on shared
-        # API quotas with other previews until the next push. Stop them after
-        # live tests; next push redeploys and restarts them.
-        if: always()
+  stop-preview-workers:
+    # Stop workers/browser/monitor whenever deploy actually ran. Skips only
+    # when deploy itself was skipped (fork PRs, CI failures). Own concurrency
+    # group with cancel-in-progress=false so a follow-up push can't cancel
+    # this cleanup mid-flight.
+    needs: [deploy, live-tests]
+    if: always() && needs.deploy.result != 'skipped'
+    concurrency:
+      group: pr-stop-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Stop machines
         run: |
-          APP="${{ needs.deploy.outputs.app }}"
+          APP="psat-pr-${{ github.event.pull_request.number }}"
           for proc in workers browser monitor; do
             flyctl machines list -a "$APP" --json \
               | jq -r ".[] | select(.config.metadata.fly_process_group == \"$proc\" and .state == \"started\") | .id" \
-              | xargs -r -I{} flyctl machines stop {} -a "$APP"
+              | xargs -r -I{} flyctl machines stop {} -a "$APP" || true
           done
