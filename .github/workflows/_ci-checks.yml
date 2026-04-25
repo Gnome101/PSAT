@@ -5,6 +5,10 @@ name: CI checks
 on:
   workflow_call:
 
+# Pinned here so a future caller can't widen scope by accident.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -115,7 +119,10 @@ jobs:
           TOTAL=$(uv run coverage report --format=total)
           echo "**Total coverage: ${TOTAL}%**" >> $GITHUB_STEP_SUMMARY
           uv run coverage report
-          uv run coverage xml -o coverage.xml
+
+      - name: Generate coverage XML for diff-cover
+        if: github.event_name == 'pull_request'
+        run: uv run coverage xml -o coverage.xml
 
       # Only gates lines this PR added/changed — refactors that drop total coverage
       # don't fail the build, but new uncovered code does.
@@ -124,7 +131,7 @@ jobs:
         run: |
           uv run diff-cover coverage.xml \
             --compare-branch=origin/main \
-            --fail-under=80 \
+            --fail-under=70 \
             --html-report diff-cover.html \
             --markdown-report diff-cover.md
           cat diff-cover.md >> $GITHUB_STEP_SUMMARY

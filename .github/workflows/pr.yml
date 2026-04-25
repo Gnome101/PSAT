@@ -109,6 +109,8 @@ jobs:
 
   live-tests:
     needs: deploy
+    # Explicit fork gate — don't rely solely on transitive skip from deploy.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     environment: staging
     steps:
@@ -184,6 +186,9 @@ jobs:
     steps:
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
       - name: Stop machines
+        # Stops background process groups only. `web` is intentionally excluded
+        # so the preview URL stays reachable for manual inspection (Fly will
+        # auto-suspend it via min_machines_running=0 once idle).
         run: |
           APP="psat-pr-${{ github.event.pull_request.number }}"
           for proc in workers browser monitor; do

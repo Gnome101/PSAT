@@ -37,6 +37,7 @@ dev = [
   "httpx>=0.28.1",
   "pytest-cov>=7.1.0",
   "responses>=0.25.0",
+  "coverage>=7.6.0",
   "diff-cover>=10.2.0",
 ]
 
