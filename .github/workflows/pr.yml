@@ -105,7 +105,7 @@ jobs:
           for proc in workers browser monitor; do
             flyctl machines list -a "$APP" --json \
               | jq -r ".[] | select(.config.metadata.fly_process_group == \"$proc\" and .state == \"stopped\") | .id" \
-              | xargs -r -I{} flyctl machines start {} -a "$APP" --wait-timeout 60s
+              | xargs -r -I{} flyctl machines start {} -a "$APP"
           done
 
       - name: Post sticky preview comment
