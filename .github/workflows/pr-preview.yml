@@ -1,14 +1,27 @@
-name: PR preview
+name: PR preview + live tests
 
-# Triggered by CI success so we don't burn Fly + Neon on red builds.
+# CI-gated via workflow_run; the pull_request leg below is a bootstrap.
+#
+# TODO(remove-in-follow-up-pr): the `pull_request` trigger is needed so this
+# PR's edits to pr-preview.yml (live tests inlined, gate fix, fly-preview.toml
+# override) execute *on this PR* — workflow_run runs from main, which has the
+# old file. Land this, then a follow-up that deletes the `pull_request:` block
+# and the per-event branching below so future PRs aren't double-deployed.
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
 
-# Keyed per-CI-run; latest wins via ci.yml cancel-in-progress.
+# Keyed per-event-and-PR so pull_request and workflow_run streams cancel within
+# themselves (newer push kills older run) but never cross-cancel — otherwise
+# the workflow_run firing at T+5min would kill the pull_request run that's
+# already running live tests. After the bootstrap is removed the event_name
+# disambiguator goes away too; only workflow_run will fire.
 concurrency:
-  group: preview-${{ github.event.workflow_run.id }}
+  group: preview-${{ github.event_name }}-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id }}
   cancel-in-progress: true
 
 permissions:
@@ -18,13 +31,21 @@ permissions:
 
 jobs:
   deploy:
-    # Require CI green; same-repo PRs only (forks lack secrets).
+    # Same-repo PRs only (forks lack secrets); workflow_run path also requires CI green.
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     environment: staging
+    outputs:
+      pr_number: ${{ steps.pr.outputs.number }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
+      app: ${{ steps.fly.outputs.app }}
+      url: ${{ steps.fly.outputs.url }}
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       NEON_STAGING_HOST: ${{ secrets.NEON_STAGING_HOST }}
@@ -32,44 +53,60 @@ jobs:
       NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
       NEON_STAGING_PASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
     steps:
-      # Check out CI's signed-off SHA.
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-
-      - name: Resolve PR number
+      - name: Resolve PR number + head SHA
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # workflow_run.pull_requests is populated for same-repo PRs; fall
-          # back to a head-SHA lookup via gh if it isn't.
-          PR_NUM=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
-          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+          # pull_request path: direct from payload.
+          # workflow_run path: workflow_run.pull_requests for same-repo PRs,
+          # then fall back to head-SHA lookup via gh.
+          PR_NUM="${{ github.event.pull_request.number }}"
+          PR_SHA="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$PR_NUM" ]; then
+            PR_NUM=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
+          fi
+          if [ -z "$PR_SHA" ]; then
+            PR_SHA=$(echo '${{ toJSON(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].head.sha // empty')
+          fi
+          UPSTREAM_SHA="${{ github.event.workflow_run.head_sha }}"
           if [ -z "$PR_NUM" ]; then
             PR_NUM=$(gh pr list \
               -R "${{ github.repository }}" \
-              --search "$HEAD_SHA" \
+              --search "$UPSTREAM_SHA" \
               --json number \
               --jq '.[0].number // empty')
           fi
           if [ -z "$PR_NUM" ]; then
-            echo "::error::Could not resolve PR number for head SHA $HEAD_SHA"
+            echo "::error::Could not resolve PR number"
+            exit 1
+          fi
+          if [ -z "$PR_SHA" ]; then
+            PR_SHA=$(gh pr view "$PR_NUM" -R "${{ github.repository }}" --json headRefOid --jq '.headRefOid')
+          fi
+          if [ -z "$PR_SHA" ]; then
+            echo "::error::Could not resolve PR head SHA for PR #$PR_NUM"
             exit 1
           fi
           echo "number=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "sha=$PR_SHA" >> $GITHUB_OUTPUT
 
-      - name: Set Fly app name
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.sha }}
+
+      - name: Set Fly app name + URL
         id: fly
-        run: echo "app=psat-pr-${{ steps.pr.outputs.number }}" >> $GITHUB_OUTPUT
+        run: |
+          APP="psat-pr-${{ steps.pr.outputs.number }}"
+          echo "app=$APP" >> $GITHUB_OUTPUT
+          echo "url=https://${APP}.fly.dev" >> $GITHUB_OUTPUT
 
-      # superfly/flyctl-actions has no release tags; pin to master SHA.
       - name: Setup flyctl
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
 
       - name: Create Fly app if missing
-        run: |
-          flyctl apps create "${{ steps.fly.outputs.app }}" --org personal || true
+        run: flyctl apps create "${{ steps.fly.outputs.app }}" --org personal || true
 
       - name: Create per-PR Neon database
         env:
@@ -87,7 +124,7 @@ jobs:
           flyctl secrets set --stage -a "${{ steps.fly.outputs.app }}" \
             DATABASE_URL="$DB_URL" \
             PSAT_ADMIN_KEY="${{ secrets.PSAT_ADMIN_KEY }}" \
-            PSAT_SITE_ORIGIN="https://${{ steps.fly.outputs.app }}.fly.dev" \
+            PSAT_SITE_ORIGIN="${{ steps.fly.outputs.url }}" \
             ETHERSCAN_API_KEY="${{ secrets.ETHERSCAN_API_KEY }}" \
             ETH_RPC="${{ secrets.ETH_RPC }}" \
             ENVIO_API_TOKEN="${{ secrets.ENVIO_API_TOKEN }}" \
@@ -108,7 +145,6 @@ jobs:
       - name: Deploy preview
         run: flyctl deploy -a "${{ steps.fly.outputs.app }}" --config fly-preview.toml --remote-only
 
-      # marocchino/sticky-pull-request-comment@v2.9.4 pinned to SHA.
       - name: Post/update sticky preview comment
         uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
         with:
@@ -117,10 +153,70 @@ jobs:
           message: |
             ### :rocket: PSAT preview deployed
 
-            - **URL:** https://${{ steps.fly.outputs.app }}.fly.dev
-            - **Health:** https://${{ steps.fly.outputs.app }}.fly.dev/api/health
+            - **URL:** ${{ steps.fly.outputs.url }}
+            - **Health:** ${{ steps.fly.outputs.url }}/api/health
             - **Fly app:** `${{ steps.fly.outputs.app }}`
             - **Neon DB:** `psat_pr_${{ steps.pr.outputs.number }}` (staging pooler)
             - **Artifact prefix:** `pr-${{ steps.pr.outputs.number }}/` (shared staging bucket)
 
             This environment is torn down automatically when the PR closes.
+
+  live-tests:
+    needs: deploy
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.deploy.outputs.pr_sha }}
+
+      - name: Wait for preview /api/health
+        run: |
+          URL="${{ needs.deploy.outputs.url }}/api/health"
+          # 2 min ceiling: cold-start is 30-60s; past that the deploy is unhealthy.
+          for i in $(seq 1 24); do
+            if curl -fsS --max-time 5 "$URL" >/dev/null; then
+              echo "preview healthy after attempt $i"
+              exit 0
+            fi
+            echo "attempt $i: $URL not healthy yet, sleeping 5s"
+            sleep 5
+          done
+          echo "::error::Preview never healthy at $URL"
+          curl -v --max-time 5 "$URL" || true
+          exit 1
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+
+      - name: Run live suite
+        env:
+          PSAT_LIVE_URL: ${{ needs.deploy.outputs.url }}
+          PSAT_ADMIN_KEY: ${{ secrets.PSAT_ADMIN_KEY }}
+          # Pin to PR head SHA via raw.github — stable in git history regardless of renames.
+          PSAT_LIVE_AUDIT_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ needs.deploy.outputs.pr_sha }}/tests/fixtures/audits/sample_audit.pdf
+        run: uv run pytest -m live -q
+
+      - name: Post sticky result (success)
+        if: success()
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
+        with:
+          number: ${{ needs.deploy.outputs.pr_number }}
+          header: psat-live-tests
+          message: |
+            ### :white_check_mark: Live integration tests passed
+
+            - **Preview:** ${{ needs.deploy.outputs.url }}
+            - **Run:** [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Post sticky result (failure)
+        if: failure()
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
+        with:
+          number: ${{ needs.deploy.outputs.pr_number }}
+          header: psat-live-tests
+          message: |
+            ### :x: Live integration tests failed
+
+            - **Preview:** ${{ needs.deploy.outputs.url }}
+            - **Run:** [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
