@@ -22,10 +22,12 @@ jobs:
   deploy:
     needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # `production` env gates FLY_PROD_API_TOKEN + manual approval (Settings → Environments).
     environment: production
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_PROD_API_TOKEN }}
+      PROD_URL: https://psat.fly.dev
     steps:
       - uses: actions/checkout@v4
 
@@ -34,4 +36,67 @@ jobs:
 
       - name: Deploy to production
         # Runtime secrets are managed manually via `fly secrets set -a psat ...`; this workflow doesn't touch them.
-        run: flyctl deploy -a psat --remote-only
+        # GIT_SHA is baked into the image so /api/version can return it for post-deploy smoke checks.
+        run: |
+          flyctl deploy -a psat --remote-only \
+            --build-arg GIT_SHA="${{ github.sha }}"
+
+      - name: Wait for /api/health
+        # /api/health is the deep probe — DB SELECT 1 + storage head_bucket. 503 on any failure.
+        # 2 min ceiling matches the PR live-tests pattern; cold-start on prod is normally faster
+        # because min_machines_running=1, but a release rolls a new machine.
+        run: |
+          for i in $(seq 1 24); do
+            if curl -fsS --max-time 10 "$PROD_URL/api/health" >/dev/null; then
+              echo "prod healthy after attempt $i"
+              exit 0
+            fi
+            echo "attempt $i: not healthy yet, sleeping 5s"
+            sleep 5
+          done
+          echo "::error::Prod never healthy at $PROD_URL/api/health"
+          curl -v --max-time 10 "$PROD_URL/api/health" || true
+          exit 1
+
+      - name: Verify deployed SHA matches commit
+        # Catches "deploy reported success but old image is still serving" — e.g. a partial
+        # rollout that left the previous release in place.
+        run: |
+          DEPLOYED=$(curl -fsS --max-time 10 "$PROD_URL/api/version" | jq -r .sha)
+          if [ "$DEPLOYED" != "${{ github.sha }}" ]; then
+            echo "::error::SHA mismatch: deployed=$DEPLOYED expected=${{ github.sha }}"
+            exit 1
+          fi
+          echo "deployed SHA matches: $DEPLOYED"
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+
+      - name: Run read-only smoke tests against prod
+        # `live and smoke` selects only files audited as pure-read in tests/live/conftest.py.
+        # No /api/analyze, no PUT/PATCH/DELETE — safe against real data.
+        env:
+          PSAT_LIVE_URL: ${{ env.PROD_URL }}
+          PSAT_ADMIN_KEY: ${{ secrets.PSAT_ADMIN_KEY }}
+        run: uv run pytest -m "live and smoke" -q
+
+      - name: Rollback prod on smoke failure
+        # Re-deploy the previous successful release's image. Only fires when one of the steps
+        # above (health, SHA, smoke) failed — the deploy itself is already done, so this is a
+        # roll-forward to the prior image, not a mid-flight abort.
+        # `flyctl releases` has no first-class `rollback` subcommand; --image is the canonical path.
+        if: failure()
+        run: |
+          echo "::warning::Smoke failed — rolling back psat to previous release"
+          PREV_IMAGE=$(flyctl releases -a psat --json \
+            | jq -r '[.[] | select(.Status == "complete")] | .[1].ImageRef // empty')
+          if [ -z "$PREV_IMAGE" ]; then
+            echo "::error::No previous successful release found; manual intervention required"
+            flyctl releases -a psat | head -20
+            exit 1
+          fi
+          echo "rolling back to $PREV_IMAGE"
+          flyctl deploy -a psat --image "$PREV_IMAGE" --remote-only --strategy immediate || {
+            echo "::error::Rollback deploy failed; manual intervention required"
+            exit 1
+          }

@@ -11,6 +11,11 @@ RUN npm run build
 
 FROM python:3.10-slim AS backend
 
+# Surfaced via /api/version for post-deploy smoke checks. CI passes
+# --build-arg GIT_SHA=<commit>; local builds default to "unknown".
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/root/.foundry/bin:/app/.venv/bin:${PATH}"
