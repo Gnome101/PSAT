@@ -95,6 +95,39 @@ jobs:
         with:
           ref: ${{ steps.pr.outputs.sha }}
 
+      - name: Wait for CI green
+        # Bootstrap leg only: workflow_run leg's if: already requires CI success.
+        # pull_request fires in parallel with CI, so without this step deploy
+        # could ship a red commit. 15-min ceiling covers CI's worst-case ~10min.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA="${{ steps.pr.outputs.sha }}"
+          for i in $(seq 1 90); do
+            RUN=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$SHA&event=pull_request" \
+              --jq '.workflow_runs[0] // empty')
+            if [ -z "$RUN" ]; then
+              echo "attempt $i: CI run for $SHA not yet queued, sleeping 10s"
+              sleep 10
+              continue
+            fi
+            STATUS=$(echo "$RUN" | jq -r '.status')
+            CONCLUSION=$(echo "$RUN" | jq -r '.conclusion // ""')
+            if [ "$STATUS" = "completed" ]; then
+              if [ "$CONCLUSION" = "success" ]; then
+                echo "CI green for $SHA"
+                exit 0
+              fi
+              echo "::error::CI concluded $CONCLUSION for $SHA — refusing to deploy"
+              exit 1
+            fi
+            echo "attempt $i: CI status=$STATUS, sleeping 10s"
+            sleep 10
+          done
+          echo "::error::CI did not complete within 15 min for $SHA"
+          exit 1
+
       - name: Set Fly app name + URL
         id: fly
         run: |
