@@ -441,12 +441,41 @@ class LiveClient:
 # ---------------------------------------------------------------------------
 
 
+# Files whose tests are provably read-only AND environment-agnostic — i.e. their
+# assertions don't depend on preview-specific config or pre-existing prod state.
+# These get @pytest.mark.smoke so `pytest -m "live and smoke"` can run against
+# prod post-deploy without touching real data and without false positives from
+# unrelated drift.
+#
+# Audited 2026-04-24:
+# - test_health.py: pure GETs (/api/health, /api/config, /api/stats, /, /assets)
+# - test_monitoring_reads.py: GET monitoring/event/proxy-event lists, shape-only
+# - test_auth_and_errors.py: 4 tests; 2 GETs, 2 POSTs that 401/400 BEFORE any
+#   DB write (admin-key dependency + 0x-prefix check both run pre-handler-body)
+#
+# Deliberately excluded from smoke (still run on PR previews via `live` marker):
+# - test_cors.py: asserts ACAO == preview's own origin; prod uses a custom origin
+# - test_pipeline_health.py: flags wedged jobs, which is pre-existing state, not
+#   a deploy regression — would cause false rollbacks
+SMOKE_SAFE_FILES = {
+    "test_health.py",
+    "test_monitoring_reads.py",
+    "test_auth_and_errors.py",
+}
+
+
 def pytest_collection_modifyitems(config, items):
-    """Auto-tag every test under ``tests/live/`` with @pytest.mark.live."""
+    """Auto-tag every test under ``tests/live/`` with @pytest.mark.live;
+    tag the read-only subset with @pytest.mark.smoke as well."""
     live_mark = pytest.mark.live
+    smoke_mark = pytest.mark.smoke
     for item in items:
-        if "/tests/live/" in str(item.fspath) or "\\tests\\live\\" in str(item.fspath):
-            item.add_marker(live_mark)
+        path = str(item.fspath)
+        if "/tests/live/" not in path and "\\tests\\live\\" not in path:
+            continue
+        item.add_marker(live_mark)
+        if os.path.basename(path) in SMOKE_SAFE_FILES:
+            item.add_marker(smoke_mark)
 
 
 @pytest.fixture(scope="session")
@@ -483,6 +512,21 @@ def analyzed_weth(live_client: LiveClient) -> dict[str, Any]:
     return job
 
 
+@pytest.fixture(scope="session")
+def cached_weth(analyzed_weth, live_client: LiveClient) -> dict[str, Any]:
+    """Second WETH submission — exercised by test_cache.py to verify the static cache.
+
+    Session-scoped and ordered before ``analyzed_company`` so the cache-hit run
+    doesn't queue behind etherfi child analyses on contended previews. A real
+    incident saw this submission sit 12min in worker queues behind concurrent
+    company children before completing; with this ordering it finishes in seconds.
+    """
+    job = live_client.submit_and_wait(WETH_ADDRESS)
+    if job["status"] != "completed":
+        pytest.fail(f"Cached WETH run did not complete on {live_client.base_url}: {job.get('error')}")
+    return job
+
+
 @pytest.fixture
 def analyze_and_wait(live_client: LiveClient):
     """Factory for tests that need their own fresh analysis of an address."""
@@ -498,8 +542,12 @@ DEFAULT_TEST_COMPANY = "etherfi"
 
 
 @pytest.fixture(scope="session")
-def analyzed_company(live_client: LiveClient) -> dict[str, Any]:
-    """Ensure a Protocol row exists for ``DEFAULT_TEST_COMPANY`` (else POSTs 404)."""
+def analyzed_company(cached_weth, live_client: LiveClient) -> dict[str, Any]:
+    """Ensure a Protocol row exists for ``DEFAULT_TEST_COMPANY`` (else POSTs 404).
+
+    Depends on ``cached_weth`` so the WETH cache-hit submission completes
+    before company children start saturating per-stage workers.
+    """
     parent = live_client.submit_company_and_wait(DEFAULT_TEST_COMPANY, limit=1)
     if parent["status"] != "completed":
         pytest.fail(

@@ -38,9 +38,9 @@ PSAT_ADMIN_KEY=... \
 
 - No `PSAT_ADMIN_KEY` → whole suite skips cleanly (session fixture). Not a bug.
 - `PSAT_LIVE_URL` defaults to `http://127.0.0.1:8000` — run `./start_local.sh` first if you want that.
-- `PSAT_LIVE_AUDIT_URL` overrides the default audit PDF used by `test_audits.py`. CI pins this to `tests/fixtures/audits/sample_audit.pdf` via `raw.githubusercontent.com/<repo>/<head_sha>/...` (see `live.yml`) — repo-owned, immune to upstream rot. Local runs fall back to the Spearbit URL.
+- `PSAT_LIVE_AUDIT_URL` overrides the default audit PDF used by `test_audits.py`. CI pins this to `tests/fixtures/audits/sample_audit.pdf` via `raw.githubusercontent.com/<repo>/<head_sha>/...` (see `pr.yml`'s `live-tests` job) — repo-owned, immune to upstream rot. Local runs fall back to the Spearbit URL.
 - `PSAT_LIVE_OTHER_PR=<n>` enables `test_artifact_tenancy.py`. Without it, the cross-PR check skips. Set to a sibling preview's PR number when you want CI to actively prove tenancy isolation.
-- `.github/workflows/live.yml` runs this suite on every PR after `pr-preview.yml` finishes, against the per-PR Fly preview. Sticky comment header is `psat-live-tests`.
+- `.github/workflows/pr.yml` runs this suite as the `live-tests` job, after `ci` and `deploy` succeed, against the per-PR Fly preview. Sticky comment header is `psat-live-tests`.
 
 ## Writing new live tests
 
