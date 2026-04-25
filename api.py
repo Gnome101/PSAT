@@ -1745,6 +1745,14 @@ def company_overview(company_name: str) -> dict:
         impl_name_by_addr = {
             (c.address or "").lower(): c.contract_name for c in all_contract_rows if c.address and c.contract_name
         }
+        job_ids = {cr.job_id for cr in all_contract_rows if cr.job_id is not None}
+        completed_job_ids: set = set()
+        if job_ids:
+            completed_job_ids = set(
+                session.execute(select(Job.id).where(Job.id.in_(job_ids), Job.status == JobStatus.completed))
+                .scalars()
+                .all()
+            )
         all_addresses = sorted(
             [
                 {
@@ -1752,7 +1760,7 @@ def company_overview(company_name: str) -> dict:
                     "name": cr.contract_name,
                     "source_verified": cr.source_verified,
                     "is_proxy": cr.is_proxy,
-                    "analyzed": cr.job_id is not None,
+                    "analyzed": cr.job_id is not None and cr.job_id in completed_job_ids,
                     "discovery_sources": list(cr.discovery_sources or []),
                     "discovery_url": cr.discovery_url,
                     "chain": cr.chain,

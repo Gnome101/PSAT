@@ -16,7 +16,18 @@ ChangeKind = Literal[
     "policy_event_observed",
     "permission_model_changed",
 ]
-ResolvedControllerType = Literal["zero", "eoa", "safe", "timelock", "proxy_admin", "contract", "unknown"]
+ResolvedControllerType = Literal[
+    "zero",
+    "eoa",
+    "safe",
+    "timelock",
+    "proxy_admin",
+    "contract",
+    "unknown",
+    # Signature- and Merkle-gated functions: no finite on-chain
+    # principal set (whoever holds the signer key / matching proof).
+    "off_chain_witness",
+]
 
 
 class EventWatch(TypedDict):
