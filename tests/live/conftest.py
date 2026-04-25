@@ -483,6 +483,21 @@ def analyzed_weth(live_client: LiveClient) -> dict[str, Any]:
     return job
 
 
+@pytest.fixture(scope="session")
+def cached_weth(analyzed_weth, live_client: LiveClient) -> dict[str, Any]:
+    """Second WETH submission — exercised by test_cache.py to verify the static cache.
+
+    Session-scoped and ordered before ``analyzed_company`` so the cache-hit run
+    doesn't queue behind etherfi child analyses on contended previews. A real
+    incident saw this submission sit 12min in worker queues behind concurrent
+    company children before completing; with this ordering it finishes in seconds.
+    """
+    job = live_client.submit_and_wait(WETH_ADDRESS)
+    if job["status"] != "completed":
+        pytest.fail(f"Cached WETH run did not complete on {live_client.base_url}: {job.get('error')}")
+    return job
+
+
 @pytest.fixture
 def analyze_and_wait(live_client: LiveClient):
     """Factory for tests that need their own fresh analysis of an address."""
@@ -498,8 +513,12 @@ DEFAULT_TEST_COMPANY = "etherfi"
 
 
 @pytest.fixture(scope="session")
-def analyzed_company(live_client: LiveClient) -> dict[str, Any]:
-    """Ensure a Protocol row exists for ``DEFAULT_TEST_COMPANY`` (else POSTs 404)."""
+def analyzed_company(cached_weth, live_client: LiveClient) -> dict[str, Any]:
+    """Ensure a Protocol row exists for ``DEFAULT_TEST_COMPANY`` (else POSTs 404).
+
+    Depends on ``cached_weth`` so the WETH cache-hit submission completes
+    before company children start saturating per-stage workers.
+    """
     parent = live_client.submit_company_and_wait(DEFAULT_TEST_COMPANY, limit=1)
     if parent["status"] != "completed":
         pytest.fail(

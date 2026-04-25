@@ -6,18 +6,10 @@ from typing import Any
 
 import pytest
 
-from tests.live.conftest import WETH_ADDRESS, LiveClient
+from tests.live.conftest import LiveClient
 
 COMPANY_NAME = "etherfi"
 COMPANY_LIMIT = 2
-
-
-@pytest.fixture(scope="module")
-def weth_second_run(analyzed_weth, live_client: LiveClient) -> dict[str, Any]:
-    """Second WETH submission reused across tests that inspect the cached run."""
-    job = live_client.submit_and_wait(WETH_ADDRESS)
-    assert job["status"] == "completed", f"Second run failed: {job.get('error')}"
-    return job
 
 
 def test_first_run_completes(analyzed_weth):
@@ -30,8 +22,8 @@ def test_first_run_has_artifacts(analyzed_weth, live_client: LiveClient):
     assert "subject" in analysis or "summary" in analysis
 
 
-def test_second_run_uses_cache(analyzed_weth, weth_second_run, live_client: LiveClient):
-    req2 = weth_second_run.get("request") or {}
+def test_second_run_uses_cache(analyzed_weth, cached_weth, live_client: LiveClient):
+    req2 = cached_weth.get("request") or {}
     assert req2.get("static_cached") is True, f"second WETH run did not hit cache: request={req2}"
     # Don't pin cache_source_job_id: a warm preview DB may reuse an earlier session's WETH job.
     source_id = req2.get("cache_source_job_id")
@@ -46,14 +38,14 @@ def test_second_run_uses_cache(analyzed_weth, weth_second_run, live_client: Live
     )
 
     a1 = live_client.artifact(analyzed_weth["name"], "contract_analysis")
-    a2 = live_client.artifact(weth_second_run["name"], "contract_analysis")
+    a2 = live_client.artifact(cached_weth["name"], "contract_analysis")
     assert isinstance(a1, dict) and isinstance(a2, dict)
     assert a1.get("subject", {}).get("name") == a2.get("subject", {}).get("name")
 
 
-def test_second_run_completed_faster(analyzed_weth, weth_second_run, live_client: LiveClient):
+def test_second_run_completed_faster(analyzed_weth, cached_weth, live_client: LiveClient):
     t1 = live_client.job_duration_seconds(analyzed_weth)
-    t2 = live_client.job_duration_seconds(weth_second_run)
+    t2 = live_client.job_duration_seconds(cached_weth)
     # Below 30s fixed overhead dominates and the assertion flaps.
     if t1 > 30:
         assert t2 < t1, f"Second run ({t2:.1f}s) should be faster than first ({t1:.1f}s)"
