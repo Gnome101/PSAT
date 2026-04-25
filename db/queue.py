@@ -572,9 +572,16 @@ def find_completed_static_cache(session: Session, address: str, chain: str | Non
             continue
 
         # Look up contract by (address, chain) — not by job_id, because a
-        # prior copy_static_cache may have reassigned the row.
-        contract_stmt = select(Contract).where(
-            func.lower(Contract.address) == address.lower(),
+        # prior copy_static_cache may have reassigned the row. Join on
+        # ContractSummary so that, when multiple Contract rows exist for
+        # the same address (e.g. one per chain, or one summaried + one
+        # stub), we only consider rows that actually carry the summary
+        # the cache hit needs — otherwise ``.limit(1)`` could pick a stub
+        # row and falsely report a cache miss.
+        contract_stmt = (
+            select(Contract)
+            .join(ContractSummary, ContractSummary.contract_id == Contract.id)
+            .where(func.lower(Contract.address) == address.lower())
         )
         if chain is not None:
             contract_stmt = contract_stmt.where(Contract.chain == chain)

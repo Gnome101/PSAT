@@ -37,6 +37,25 @@ class LiveClient:
         self.base_url = base_url.rstrip("/")
         self._session = requests.Session()
         self._session.headers.update({"X-PSAT-Admin-Key": admin_key})
+        # Retry idempotent reads on transient 5xx. Previews occasionally return
+        # a one-shot 500 when a worker commits and the read lands mid-refresh
+        # (e.g. ``/api/analyses`` right after a fixture finishes). 3 retries
+        # with exponential backoff erase the flake without masking real 5xx.
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+
+        retry = Retry(
+            total=3,
+            read=3,
+            connect=3,
+            backoff_factor=0.5,
+            status_forcelist=(500, 502, 503, 504),
+            allowed_methods=frozenset(["GET", "HEAD", "OPTIONS"]),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
 
     def _url(self, path: str) -> str:
         return f"{self.base_url}{path}"

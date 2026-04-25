@@ -111,7 +111,13 @@ def test_second_company_run_deduplicates(
     company_second_run,
     live_client: LiveClient,
 ):
-    child_addrs1 = {c["address"].lower() for c in company_first_children if c.get("address")}
+    # ``find_existing_job_for_address`` intentionally skips ``status='failed'`` jobs so the
+    # next run can retry transient discovery errors (Etherscan hiccup, throttle, etc.). Count
+    # an address as "already analyzed" only if Run 1 actually completed it; otherwise Run 2
+    # re-spawning that address is the intended retry path, not a dedup miss.
+    child_addrs1 = {
+        c["address"].lower() for c in company_first_children if c.get("address") and c["status"] == "completed"
+    }
     children2 = live_client.poll_children_until_done(company_second_run["job_id"])
     child_addrs2 = {c["address"].lower() for c in children2 if c.get("address")}
 
