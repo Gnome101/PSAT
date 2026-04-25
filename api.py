@@ -404,6 +404,13 @@ def health():
     return body
 
 
+@app.get("/api/version")
+def version() -> dict[str, str]:
+    """Returns the deployed git SHA. Used by post-deploy smoke checks to confirm
+    the running image matches the commit that triggered the deploy."""
+    return {"sha": os.environ.get("GIT_SHA", "unknown")}
+
+
 @app.get("/api/config")
 def config() -> dict[str, str]:
     return {"default_rpc_url": DEFAULT_RPC_URL}
