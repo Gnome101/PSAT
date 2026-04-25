@@ -719,8 +719,15 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     src_req = src_job.request if isinstance(src_job.request, dict) else {}
     src_chain = src_req.get("chain")
 
-    src_contract_stmt = select(Contract).where(
-        func.lower(Contract.address) == src_job.address.lower(),
+    # Match ``find_completed_static_cache``'s Contract lookup: join on
+    # ContractSummary so, when multiple Contract rows exist for this
+    # address (e.g. a summaried ``chain=NULL`` legacy row alongside a
+    # stub ``chain='ethereum'`` row), we copy from the row that actually
+    # carries the cached summary + contract_name rather than a stub.
+    src_contract_stmt = (
+        select(Contract)
+        .join(ContractSummary, ContractSummary.contract_id == Contract.id)
+        .where(func.lower(Contract.address) == src_job.address.lower())
     )
     if src_chain is not None:
         src_contract_stmt = src_contract_stmt.where(Contract.chain == src_chain)
