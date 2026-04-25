@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Latest commit wins; cancelled runs don't trigger the preview/prod chain (both gated on success).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -63,9 +68,7 @@ jobs:
       TEST_ARTIFACT_STORAGE_BUCKET: psat-artifacts-test
       TEST_ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
       TEST_ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
-      # Routes services.audits.scope_extraction._call_llm through fixture
-      # files instead of OpenRouter. Integration tests depend on this
-      # being set — without it they would attempt a real LLM call.
+      # Routes scope_extraction._call_llm to fixtures; without this, integration tests hit OpenRouter.
       PSAT_LLM_STUB_DIR: tests/fixtures/scope_extraction/llm_responses
     steps:
       - uses: actions/checkout@v4
@@ -92,9 +95,20 @@ jobs:
           exit 1
       - run: uv sync --dev
       - run: forge --version
+      - name: Install Playwright browser
+        run: uv run playwright install --with-deps chromium
+      - name: Install hevm and z3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3
+          curl -L -o /tmp/hevm https://github.com/ethereum/hevm/releases/latest/download/hevm-x86_64-linux
+          chmod +x /tmp/hevm
+          sudo mv /tmp/hevm /usr/local/bin/hevm
+          hevm version
+          z3 --version
       - name: Create test database
         run: PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
-      - run: uv run pytest -k "not live" -q
+      - run: uv run pytest -m "not live" -q
 
   coverage:
     runs-on: ubuntu-latest
@@ -157,14 +171,26 @@ jobs:
         run: |
           git checkout origin/main
           uv sync --dev
-          uv run --with coverage coverage run -m pytest -k "not live" -q
+          # Baseline only needs the coverage number — tolerate pre-existing test failures on main.
+          uv run --with coverage coverage run -m pytest -m "not live" -q || true
           MAIN_COV=$(uv run --with coverage coverage report --format=total)
           echo "MAIN_COV=$MAIN_COV" >> $GITHUB_ENV
           echo "Main coverage: ${MAIN_COV}%"
           git checkout -
 
       - run: uv sync --dev
-      - run: uv run --with coverage coverage run -m pytest -k "not live" -q
+      - name: Install Playwright browser
+        run: uv run playwright install --with-deps chromium
+      - name: Install hevm and z3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3
+          curl -L -o /tmp/hevm https://github.com/ethereum/hevm/releases/latest/download/hevm-x86_64-linux
+          chmod +x /tmp/hevm
+          sudo mv /tmp/hevm /usr/local/bin/hevm
+          hevm version
+          z3 --version
+      - run: uv run --with coverage coverage run -m pytest -m "not live" -q
 
       - name: Coverage report
         run: |

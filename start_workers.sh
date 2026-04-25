@@ -37,32 +37,28 @@ fi
 
 echo "Starting PSAT workers with: ${PYTHON_CMD[*]}"
 
-# Emit one spawn line per sub-worker (JSON so Loki `| json` indexes the
-# module and pid). When a sub-worker OOM-dies before its first Python-side
-# log, this is the only evidence it ever existed — invaluable for
-# distinguishing "never spawned" from "died silently."
-spawn() {
-  local module="$1"
-  "${PYTHON_CMD[@]}" -m "$module" &
-  local pid=$!
-  PIDS+=("$pid")
-  printf '{"ts":"%s","level":"INFO","logger":"start_workers","msg":"spawned sub-worker","module":"%s","pid":%d}\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "$module" "$pid"
-}
+"${PYTHON_CMD[@]}" -m workers.discovery &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.static_worker &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.static_worker &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.resolution_worker &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.policy_worker &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.coverage_worker &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.defillama_worker &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.selection_worker &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.audit_text_extraction &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.audit_scope_extraction &
+PIDS+=($!)
 
-spawn workers.discovery
-spawn workers.static_worker
-spawn workers.static_worker
-spawn workers.resolution_worker
-spawn workers.policy_worker
-spawn workers.coverage_worker
-spawn workers.defillama_worker
-spawn workers.selection_worker
-spawn workers.audit_text_extraction
-spawn workers.audit_scope_extraction
-
-printf '{"ts":"%s","level":"INFO","logger":"start_workers","msg":"all sub-workers spawned","pids":"%s","count":%d}\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)" "${PIDS[*]}" "${#PIDS[@]}"
+echo "All workers started: ${PIDS[*]}"
 # Exit on first death — Fly restarts the machine so every worker
 # relaunches. Silent-dead-worker is worse than a 30s restart.
 wait -n

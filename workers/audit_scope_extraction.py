@@ -342,9 +342,11 @@ class AuditScopeExtractionWorker(AuditRowWorker):
 
 
 def main() -> None:
-    from utils.logging_setup import configure_logging
-
-    configure_logging(force=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
     AuditScopeExtractionWorker().run_loop()
 
 

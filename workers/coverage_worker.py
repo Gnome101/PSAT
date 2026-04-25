@@ -205,9 +205,11 @@ class CoverageWorker(BaseWorker):
 
 
 def main() -> None:
-    from utils.logging_setup import configure_logging
-
-    configure_logging(force=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
     CoverageWorker().run_loop()
 
 

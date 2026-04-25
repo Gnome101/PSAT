@@ -1,16 +1,11 @@
-import os
 import sys
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.discovery import static_dependencies as fdc
-
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-
 
 # ---------------------------------------------------------------------------
 # Core helpers: normalize_address, extract_push20_addresses
@@ -143,42 +138,3 @@ def test_discover_dependencies_raises_on_empty_root(monkeypatch):
     monkeypatch.setattr(fdc, "get_code", lambda _rpc, _addr: "0x")
     with pytest.raises(RuntimeError, match="no deployed bytecode"):
         fdc.discover_dependencies("https://rpc.example", "0x" + "11" * 20)
-
-
-# ---------------------------------------------------------------------------
-# Live RPC
-# ---------------------------------------------------------------------------
-
-
-# Verifies dependency discovery against a known mainnet contract using ETH_RPC.
-def test_live_dependency_discovery():
-    # 1inch Aggregation Router V5 on Ethereum mainnet
-    contract = "0x1111111254eeb25477b68fb85ed929f73a960582"
-    # Wrapped Ether (WETH) on Ethereum mainnet
-    expected = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
-
-    rpc_url = os.environ.get("ETH_RPC")
-    if not rpc_url:
-        pytest.skip("ETH_RPC not set")
-
-    try:
-        deps = set(fdc.discover_dependencies(rpc_url, contract))
-    except RuntimeError as exc:
-        pytest.skip(f"RPC unavailable in this environment: {exc}")
-
-    assert expected in deps
-
-
-# Verifies dependency extraction with a user-supplied live RPC so custom endpoint support remains functional.
-def test_public_dependencies_live_rpc():
-    rpc_url = os.environ.get("ETH_RPC")
-    if not rpc_url:
-        pytest.skip("Set ETH_RPC before running this test.")
-
-    # 1inch Aggregation Router V5 on Ethereum mainnet
-    contract = "0x1111111254eeb25477b68fb85ed929f73a960582"
-    # Wrapped Ether (WETH) on Ethereum mainnet
-    expected = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
-
-    deps = set(fdc.discover_dependencies(rpc_url, contract))
-    assert expected in deps

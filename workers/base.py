@@ -9,22 +9,16 @@ import time
 import traceback
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage, JobStatus, SessionLocal
 from db.queue import advance_job, claim_job, fail_job, reclaim_stuck_jobs, update_job_detail
-from utils.logging_setup import process_rss_mb
 
 logger = logging.getLogger(__name__)
 
 DEBUG_TIMING = os.getenv("PSAT_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
 STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "180"))  # seconds
-# How often to emit an idle heartbeat when the worker finds no work. One per
-# minute is enough to prove liveness without drowning the log stream; any
-# shorter and a fleet of 10 sub-workers per machine × N machines generates
-# more noise than signal in Grafana.
-IDLE_HEARTBEAT_SECONDS = int(os.getenv("PSAT_IDLE_HEARTBEAT_SECONDS", "60"))
 
 
 class JobHandledDirectly(Exception):
@@ -33,28 +27,12 @@ class JobHandledDirectly(Exception):
     pass
 
 
-class ProcessBudgetExceeded(Exception):
-    """Raised by the SIGALRM watchdog when process() exceeds its stage budget.
-
-    We learned the hard way (RW stuck 20min on a poll() syscall inside a
-    third-party library with no socket timeout) that trusting every HTTP/
-    subprocess call to self-terminate is not enough. This exception flows
-    into the existing worker_id/job_id failure path, marks the job failed,
-    and lets the loop move on.
-    """
-
-
 class BaseWorker:
     """Poll-based worker that claims jobs for a specific pipeline stage."""
 
     stage: JobStage
     next_stage: JobStage
     poll_interval: float = 2.0
-    # Hard cap for a single `process()` invocation. If the default is wrong
-    # for a slow stage (static analysis can legitimately run 20+ min on big
-    # contracts), subclasses override via class attribute; env var is the
-    # global floor for everyone else. Only set to 0 to disable.
-    process_budget_seconds: int = int(os.getenv("PSAT_PROCESS_BUDGET_SECONDS", "900"))
 
     def __init__(self) -> None:
         self.worker_id = f"{self.__class__.__name__}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
@@ -65,19 +43,6 @@ class BaseWorker:
     def _handle_sigterm(self, signum: int, frame: object) -> None:
         logger.info("Worker %s received signal %s, shutting down gracefully", self.worker_id, signum)
         self._running = False
-
-    def _on_process_timeout(self, signum: int, frame: object) -> None:
-        """SIGALRM handler that trips the per-stage watchdog.
-
-        Raising from a signal handler works because SIGALRM is delivered to
-        the main (only) Python thread between opcodes. If process() is deep
-        in a C call, the signal pending flag gets set and the exception
-        fires as soon as Python regains control — which also interrupts
-        blocking syscalls with EINTR, unsticking `poll()`/`recv()` hangs.
-        """
-        raise ProcessBudgetExceeded(
-            f"process() exceeded {self.process_budget_seconds}s budget for stage={self.stage.value}"
-        )
 
     def process(self, session: Session, job: Job) -> None:
         """Subclasses implement this to run their pipeline stage."""
@@ -118,22 +83,12 @@ class BaseWorker:
             .all()
         )
         for job in stale:
-            # Capturing the previous worker_id BEFORE clearing it is the
-            # whole point of this log — operators correlate the id with the
-            # dead worker's last heartbeat to identify which machine/sub-
-            # worker crashed and why.
-            prior_worker = job.worker_id
             logger.warning(
-                "requeuing stale job",
-                extra={
-                    "reclaimed_by": self.worker_id,
-                    "job_id": str(job.id),
-                    "job_name": job.name or job.address,
-                    "stage": self.stage.value,
-                    "prior_worker_id": prior_worker,
-                    "stuck_since": job.updated_at.isoformat(),
-                    "stale_age_s": int((datetime.now(timezone.utc) - job.updated_at).total_seconds()),
-                },
+                "Worker %s: requeuing stale job %s (%s) — stuck since %s",
+                self.worker_id,
+                job.id,
+                job.name or job.address,
+                job.updated_at.isoformat(),
             )
             job.status = JobStatus.queued
             job.worker_id = None
@@ -142,17 +97,8 @@ class BaseWorker:
             session.commit()
 
     def run_loop(self) -> None:
-        logger.info(
-            "worker starting",
-            extra={
-                "worker_id": self.worker_id,
-                "stage": self.stage.value,
-                "poll_interval": self.poll_interval,
-                "rss_mb": process_rss_mb(),
-            },
-        )
+        logger.info("Worker %s starting (stage=%s)", self.worker_id, self.stage.value)
         recovery_counter = 0
-        last_idle_heartbeat = 0.0
         while self._running:
             session = SessionLocal()
             try:
@@ -161,66 +107,15 @@ class BaseWorker:
                 if recovery_counter >= 30:
                     recovery_counter = 0
                     self._recover_stale_jobs(session)
-                    # RSS heartbeat rides the same cadence — one log/minute/
-                    # worker is plenty to attribute OOMs to the hot sub-
-                    # worker without flooding Loki.
-                    logger.info(
-                        "worker heartbeat",
-                        extra={
-                            "worker_id": self.worker_id,
-                            "stage": self.stage.value,
-                            "rss_mb": process_rss_mb(),
-                        },
-                    )
 
                 job = self._claim_job(session)
                 if job is None:
-                    now = time.monotonic()
-                    # Prove liveness even when the worker has no work to do,
-                    # but only emit at most once per IDLE_HEARTBEAT_SECONDS
-                    # so an idle fleet doesn't spam the stream.
-                    if now - last_idle_heartbeat >= IDLE_HEARTBEAT_SECONDS:
-                        last_idle_heartbeat = now
-                        queued_here = (
-                            session.execute(
-                                select(func.count(Job.id)).where(
-                                    Job.stage == self.stage,
-                                    Job.status == JobStatus.queued,
-                                )
-                            ).scalar()
-                            or 0
-                        )
-                        logger.info(
-                            "worker idle",
-                            extra={
-                                "worker_id": self.worker_id,
-                                "stage": self.stage.value,
-                                "queued_at_stage": int(queued_here),
-                                "rss_mb": process_rss_mb(),
-                            },
-                        )
                     session.close()
                     time.sleep(self.poll_interval)
                     continue
 
-                logger.info(
-                    "worker claimed job",
-                    extra={
-                        "worker_id": self.worker_id,
-                        "stage": self.stage.value,
-                        "job_id": str(job.id),
-                        "job_name": job.name or job.address,
-                        "budget_s": self.process_budget_seconds,
-                    },
-                )
+                logger.info("Worker %s claimed job %s", self.worker_id, job.id)
                 t0 = time.monotonic()
-                # Arm the watchdog before process() runs. signal.alarm(0)
-                # in the finally clears it; signal.SIG_DFL reinstalls in
-                # case a library swapped our handler during the call.
-                budget = self.process_budget_seconds
-                if budget > 0:
-                    signal.signal(signal.SIGALRM, self._on_process_timeout)
-                    signal.alarm(budget)
                 try:
                     self.process(session, job)
                     if self.next_stage == JobStage.done:
@@ -229,111 +124,51 @@ class BaseWorker:
                         complete_job(session, job.id)
                     else:
                         advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
-                    elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    elapsed = time.monotonic() - t0
                     logger.info(
-                        "worker completed job",
-                        extra={
-                            "worker_id": self.worker_id,
-                            "stage": self.stage.value,
-                            "job_id": str(job.id),
-                            "duration_ms": elapsed_ms,
-                            "next_stage": self.next_stage.value,
-                        },
+                        "Worker %s completed job %s in %.1fs",
+                        self.worker_id,
+                        job.id,
+                        elapsed,
                     )
                 except JobHandledDirectly:
-                    elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    logger.info(
-                        "worker handled job directly",
-                        extra={
-                            "worker_id": self.worker_id,
-                            "stage": self.stage.value,
-                            "job_id": str(job.id),
-                            "duration_ms": elapsed_ms,
-                        },
-                    )
-                except ProcessBudgetExceeded:
-                    # Distinct log from the generic failure path so ops can
-                    # alert on budget trips specifically — they point at
-                    # third-party hangs (network, subprocess) rather than
-                    # logic errors in our code.
-                    elapsed_ms = int((time.monotonic() - t0) * 1000)
-                    logger.warning(
-                        "worker process() budget exceeded",
-                        extra={
-                            "worker_id": self.worker_id,
-                            "stage": self.stage.value,
-                            "job_id": str(job.id),
-                            "job_address": getattr(job, "address", None),
-                            "job_name": getattr(job, "name", None),
-                            "duration_ms": elapsed_ms,
-                            "budget_s": self.process_budget_seconds,
-                            "rss_mb": process_rss_mb(),
-                        },
-                    )
-                    try:
-                        session.rollback()
-                        fail_job(
-                            session,
-                            job.id,
-                            f"process() exceeded {self.process_budget_seconds}s budget",
-                        )
-                    except Exception:
-                        logger.exception(
-                            "fail_job after budget trip errored",
-                            extra={"worker_id": self.worker_id, "job_id": str(job.id)},
-                        )
+                    logger.info("Worker %s: job %s handled directly by process()", self.worker_id, job.id)
                 except Exception:
-                    elapsed_ms = int((time.monotonic() - t0) * 1000)
                     error = traceback.format_exc()
-                    # Single structured error record: Loki's `| json` surfaces
-                    # every field for alerting/dashboards. The plain-text
-                    # traceback rides along in `exc` for humans.
                     logger.error(
-                        "worker job failed",
-                        extra={
-                            "worker_id": self.worker_id,
-                            "stage": self.stage.value,
-                            "job_id": str(job.id),
-                            "job_address": getattr(job, "address", None),
-                            "job_name": getattr(job, "name", None),
-                            "duration_ms": elapsed_ms,
-                            "rss_mb": process_rss_mb(),
-                        },
-                        exc_info=True,
+                        "\n=================== WORKER FAILURE ===================\n"
+                        "Worker:   %s\n"
+                        "Job:      %s\n"
+                        "Address:  %s\n"
+                        "Name:     %s\n"
+                        "Stage:    %s\n"
+                        "-------------------------------------------------------\n"
+                        "%s"
+                        "=======================================================",
+                        self.worker_id,
+                        job.id,
+                        getattr(job, "address", "?"),
+                        getattr(job, "name", "?"),
+                        self.stage.value,
+                        error,
                     )
                     try:
                         session.rollback()
                         fail_job(session, job.id, error)
                     except Exception:
-                        logger.exception(
-                            "fail_job rollback path errored",
-                            extra={"worker_id": self.worker_id, "job_id": str(job.id)},
-                        )
+                        logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
                         try:
                             fresh = SessionLocal()
                             fail_job(fresh, job.id, error[-4000:])
                             fresh.close()
                         except Exception:
-                            logger.exception(
-                                "fail_job fresh-session path errored — job stays stuck",
-                                extra={"worker_id": self.worker_id, "job_id": str(job.id)},
-                            )
+                            logger.exception("Could not mark job %s as failed even with fresh session", job.id)
             except Exception:
-                logger.exception(
-                    "worker main loop error",
-                    extra={"worker_id": self.worker_id, "stage": self.stage.value},
-                )
+                logger.exception("Worker %s encountered error in main loop", self.worker_id)
             finally:
-                # Disarm the watchdog no matter how process() returned —
-                # an alarm that outlives its intended window would fire
-                # during the next idle-poll and crash the worker.
-                signal.alarm(0)
                 session.close()
 
-        logger.info(
-            "worker shut down",
-            extra={"worker_id": self.worker_id, "stage": self.stage.value},
-        )
+        logger.info("Worker %s shut down", self.worker_id)
 
     def update_detail(self, session: Session, job: Job, detail: str) -> None:
         """Update the job's progress detail message."""

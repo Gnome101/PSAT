@@ -1664,7 +1664,7 @@ def test_upsert_coverage_keccak_null_when_rpc_fails(db_session, seed_protocol, m
 # ---------------------------------------------------------------------------
 
 
-def test_live_findings_filters_fixed_status(db_session, seed_protocol, monkeypatch):
+def test_findings_filter_excludes_fixed_status(db_session, api_client, seed_protocol, monkeypatch):
     """Timeline endpoint exposes non-'fixed' findings, hides 'fixed' ones."""
     from db.models import AuditReport
 
@@ -1701,13 +1701,7 @@ def test_live_findings_filters_fixed_status(db_session, seed_protocol, monkeypat
 
     monkeypatch.setattr(rpc, "get_code", _stub_get_code({addr: "0xbeef"}))
 
-    # Call the endpoint's function directly via FastAPI TestClient.
-    from fastapi.testclient import TestClient
-
-    import api as api_module
-
-    client = TestClient(api_module.app)
-    resp = client.get(f"/api/contracts/{contract.id}/audit_timeline")
+    resp = api_client.get(f"/api/contracts/{contract.id}/audit_timeline")
     assert resp.status_code == 200
     payload = resp.json()
 

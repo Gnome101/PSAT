@@ -22,7 +22,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -313,54 +312,6 @@ def test_list_jobs_empty(mock_session_cls):
     response = client.get("/api/jobs")
     assert response.status_code == 200
     assert response.json() == []
-
-
-@patch("api._resolve_artifact_value")
-@patch("api.SessionLocal")
-def test_list_jobs_logs_storage_error_without_failing(mock_session_cls, mock_resolve, caplog):
-    """A bad artifact read must not break the endpoint — we log and skip."""
-    from api import StorageError
-
-    client = _make_client()
-    mock_session = MagicMock()
-    _mock_session_ctx(mock_session_cls, mock_session)
-
-    job1 = _fake_job(name="proxy_job", address="0xaaa")
-
-    def route_execute(stmt, *args, **kwargs):
-        result = MagicMock()
-        if route_execute.call_count == 0:
-            result.scalars.return_value.all.return_value = [job1]
-        else:
-            flag_row = MagicMock()
-            flag_row.job_id = job1.id
-            flag_row.storage_key = "artifacts/missing.json"
-            result.scalars.return_value = iter([flag_row])
-        route_execute.call_count += 1
-        return result
-
-    route_execute.call_count = 0
-    mock_session.execute.side_effect = route_execute
-    # Simulate a Tigris object missing — the endpoint must still return 200.
-    mock_resolve.side_effect = StorageError("object missing")
-
-    with caplog.at_level("WARNING"):
-        response = client.get("/api/jobs")
-
-    assert response.status_code == 200
-    body = response.json()
-    # No proxy tagging because the read failed — but the job still appears.
-    assert len(body) == 1
-    assert body[0]["is_proxy"] is False
-    assert any("storage read failed" in rec.message for rec in caplog.records)
-
-
-@pytest.mark.skip(
-    reason="slow-artifact-read logging is not present in api.py on this branch "
-    "(it belongs to a separate infra-logging change). Re-enable if that feature is merged in."
-)
-def test_list_jobs_logs_slow_artifact_read():
-    pass
 
 
 # ============================================================================

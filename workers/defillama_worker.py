@@ -141,9 +141,11 @@ class DefiLlamaWorker(BaseWorker):
 
 
 def main():
-    from utils.logging_setup import configure_logging
-
-    configure_logging(force=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
     DefiLlamaWorker().run_loop()
 
 
