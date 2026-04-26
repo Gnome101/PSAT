@@ -1337,7 +1337,13 @@ def test_analyses_company_from_parent_chain(mock_session_cls, mock_get_artifact)
 @patch("api.get_artifact")
 @patch("api.SessionLocal")
 def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls, mock_get_artifact):
-    """When a proxy's impl job has not completed, the proxy should be skipped."""
+    """A completed proxy is suppressed until its impl child also completes.
+
+    Showing the proxy alone would render a half-populated card (no
+    contract_analysis, generic proxy name) that mutates once the impl
+    lands. jobs_by_address holds completed jobs only, so a missing entry
+    is sufficient to suppress.
+    """
     client = _make_client()
 
     proxy_job = _fake_job(
@@ -1348,13 +1354,6 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls, mock_ge
     from db.models import JobStatus
 
     proxy_job.status = JobStatus.completed
-
-    incomplete_impl = _fake_job(
-        name="incomplete_impl",
-        address="0xbbbb",
-        status="processing",
-    )
-    incomplete_impl.status = JobStatus.processing
 
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
@@ -1372,9 +1371,6 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls, mock_ge
         elif call_count["n"] == 3:
             # Artifact names
             result.scalars.return_value.all.return_value = ["contract_flags", "contract_analysis"]
-        elif call_count["n"] == 4:
-            # impl job lookup
-            result.scalar_one_or_none.return_value = incomplete_impl
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
@@ -1394,7 +1390,6 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls, mock_ge
     response = client.get("/api/analyses")
     assert response.status_code == 200
     entries = response.json()
-    # The proxy should be skipped since impl is not completed
     assert not any(e.get("address") == "0xaaaa" for e in entries)
 
 

@@ -430,8 +430,7 @@ def test_analysis_detail_falls_back_to_proxy_artifacts(mock_session_cls, mock_ge
 
     mock_session.execute.side_effect = route_execute
 
-    # Impl job's artifacts: has contract_analysis but NOT dependency_graph_viz
-    mock_get_all_artifacts.return_value = {
+    impl_artifacts = {
         "contract_analysis": {
             "subject": {"name": "ImplContract"},
             "summary": {"control_model": "ownable"},
@@ -445,17 +444,21 @@ def test_analysis_detail_falls_back_to_proxy_artifacts(mock_session_cls, mock_ge
     proxy_dependencies = {
         "dependencies": ["0x4444444444444444444444444444444444444444"],
     }
+    proxy_artifacts = {
+        "dependency_graph_viz": proxy_dep_graph,
+        "dependencies": proxy_dependencies,
+    }
 
-    # get_artifact is called for proxy job's fallback artifacts
-    def fake_get_artifact(session, jid, name):
+    # get_all_artifacts is called once per job — return impl's artifacts for
+    # the impl job's job.id and proxy's artifacts for the proxy job's job.id
+    # (matches the batched proxy-fallback in analysis_detail).
+    def fake_get_all_artifacts(session, jid):
         if str(jid) == str(proxy_job_id):
-            if name == "dependency_graph_viz":
-                return proxy_dep_graph
-            if name == "dependencies":
-                return proxy_dependencies
-        return None
+            return proxy_artifacts
+        return impl_artifacts
 
-    mock_get_artifact.side_effect = fake_get_artifact
+    mock_get_all_artifacts.side_effect = fake_get_all_artifacts
+    mock_get_artifact.side_effect = lambda *a, **kw: None
 
     response = client.get("/api/analyses/impl_contract")
 
