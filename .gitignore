@@ -28,3 +28,4 @@ info-dont-add-to-git.txt
 bench_results/
 bench_results_full/
 bench_results_addresses/
+fly-bench.toml
