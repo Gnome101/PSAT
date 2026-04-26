@@ -82,13 +82,18 @@ def list_workers_machines(app: str) -> list[dict]:
 
 
 def apply_scale(app: str, *, vm_size: str | None, memory_mb: int | None, count: int | None) -> None:
-    """Apply scale changes to the workers process group. Each is independent."""
+    """Apply scale changes to the workers process group. Each is independent.
+
+    `fly scale vm` accepts `--vm-memory` to also resize memory in the same call,
+    but we keep them separate so the script can change one dimension at a time.
+    `fly scale count` is the only one that prompts, and `--yes` confirms it.
+    """
     if vm_size is not None:
-        run(["fly", "scale", "vm", vm_size, "--process-group", "workers", "-a", app, "-y"])
+        run(["fly", "scale", "vm", vm_size, "--process-group", "workers", "-a", app])
     if memory_mb is not None:
-        run(["fly", "scale", "memory", str(memory_mb), "--process-group", "workers", "-a", app, "-y"])
+        run(["fly", "scale", "memory", str(memory_mb), "--process-group", "workers", "-a", app])
     if count is not None:
-        run(["fly", "scale", "count", f"workers={count}", "-a", app, "-y"])
+        run(["fly", "scale", "count", f"workers={count}", "-a", app, "--yes"])
 
 
 def wait_for_workers_started(app: str, *, timeout_s: int = 180) -> None:
