@@ -1246,9 +1246,7 @@ def company_overview(company_name: str) -> dict:
         contracts_by_job_id: dict[Any, Contract] = {}
         if company_job_ids:
             for c in session.execute(
-                select(Contract)
-                .where(Contract.job_id.in_(company_job_ids))
-                .options(selectinload(Contract.summary))
+                select(Contract).where(Contract.job_id.in_(company_job_ids)).options(selectinload(Contract.summary))
             ).scalars():
                 contracts_by_job_id[c.job_id] = c
 
@@ -1298,16 +1296,14 @@ def company_overview(company_name: str) -> dict:
         impl_job_ids_needed = [ij.id for ij in impl_job_by_addr.values()]
         if impl_job_ids_needed:
             for c in session.execute(
-                select(Contract)
-                .where(Contract.job_id.in_(impl_job_ids_needed))
-                .options(selectinload(Contract.summary))
+                select(Contract).where(Contract.job_id.in_(impl_job_ids_needed)).options(selectinload(Contract.summary))
             ).scalars():
                 contracts_by_job_id[c.job_id] = c
 
         # Every contract_id we'll touch when populating per-row data.
-        relevant_contract_ids: set[int] = {
-            c.id for c in contracts_by_job_id.values() if c is not None
-        } | {c.id for c in contracts_by_addr_chain.values() if c is not None}
+        relevant_contract_ids: set[int] = {c.id for c in contracts_by_job_id.values() if c is not None} | {
+            c.id for c in contracts_by_addr_chain.values() if c is not None
+        }
 
         controller_values_by_cid: dict[int, list[ControllerValue]] = {}
         ef_rows_by_cid: dict[int, list[EffectiveFunction]] = {}
@@ -1333,9 +1329,7 @@ def company_overview(company_name: str) -> dict:
                 .group_by(UpgradeEvent.contract_id)
             ).all():
                 upgrade_events_count_by_cid[cid] = count
-            for b in session.execute(
-                select(_CB).where(_CB.contract_id.in_(id_list))
-            ).scalars():
+            for b in session.execute(select(_CB).where(_CB.contract_id.in_(id_list))).scalars():
                 balances_by_cid.setdefault(b.contract_id, []).append(b)
             for n in session.execute(
                 select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))
@@ -1397,9 +1391,7 @@ def company_overview(company_name: str) -> dict:
                         owner = cv.value.lower()
 
             # Upgrade count from prefetched aggregate.
-            upgrade_count = (
-                upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None
-            ) or None
+            upgrade_count = (upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None) or None
 
             # Effect labels — prefer impl when available.
             ef_contract_id = (impl_contract.id if impl_contract else None) or (
@@ -1471,9 +1463,7 @@ def company_overview(company_name: str) -> dict:
             # function_principals (issue #3).
             functions_list = []
             for ef in ef_rows_for_contract:
-                functions_list.append(
-                    _build_company_function_entry(ef, principals_by_fn_id.get(ef.id, []))
-                )
+                functions_list.append(_build_company_function_entry(ef, principals_by_fn_id.get(ef.id, [])))
 
             # Balances from prefetched ContractBalance rows.
             balance_contract = lookup_contract or contract_row
@@ -1768,11 +1758,7 @@ def company_overview(company_name: str) -> dict:
             lookup_c = lookup_contract_by_entry.get(target)
             if not lookup_c:
                 continue
-            fp_iter = (
-                fp
-                for ef in ef_rows_by_cid.get(lookup_c.id, [])
-                for fp in principals_by_fn_id.get(ef.id, [])
-            )
+            fp_iter = (fp for ef in ef_rows_by_cid.get(lookup_c.id, []) for fp in principals_by_fn_id.get(ef.id, []))
             for fp in fp_iter:
                 pa = (fp.address or "").lower()
                 if not pa or pa == target:
@@ -1819,9 +1805,7 @@ def company_overview(company_name: str) -> dict:
             fallback_job_ids = [j.id for j in company_jobs]
             if fallback_job_ids:
                 all_contract_rows = list(
-                    session.execute(
-                        select(Contract).where(Contract.job_id.in_(fallback_job_ids))
-                    ).scalars()
+                    session.execute(select(Contract).where(Contract.job_id.in_(fallback_job_ids))).scalars()
                 )
             else:
                 all_contract_rows = []

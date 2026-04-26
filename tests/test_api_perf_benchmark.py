@@ -40,9 +40,7 @@ from db.models import (
     Protocol,
     UpgradeEvent,
 )
-
 from tests.conftest import requires_postgres
-
 
 PROTOCOL_NAME = "perftest"
 N_CONTRACTS = 50
@@ -67,10 +65,7 @@ def _wipe_perf_data(session) -> None:
     plus a sweep of the company-tagged jobs.
     """
     session.execute(
-        text(
-            "DELETE FROM artifacts WHERE job_id IN "
-            "(SELECT id FROM jobs WHERE company = :c)"
-        ),
+        text("DELETE FROM artifacts WHERE job_id IN (SELECT id FROM jobs WHERE company = :c)"),
         {"c": PROTOCOL_NAME},
     )
     session.execute(
@@ -82,10 +77,7 @@ def _wipe_perf_data(session) -> None:
         {"n": PROTOCOL_NAME},
     )
     session.execute(
-        text(
-            "DELETE FROM contracts WHERE protocol_id IN "
-            "(SELECT id FROM protocols WHERE name = :n)"
-        ),
+        text("DELETE FROM contracts WHERE protocol_id IN (SELECT id FROM protocols WHERE name = :n)"),
         {"n": PROTOCOL_NAME},
     )
     session.execute(text("DELETE FROM jobs WHERE company = :c"), {"c": PROTOCOL_NAME})

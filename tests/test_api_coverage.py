@@ -1118,12 +1118,8 @@ def test_company_overview_basic(db_session, api_client):
         assert c["standards"] == ["ERC20"]
         assert "ownership_hierarchy" in body
     finally:
-        db_session.execute(
-            text("DELETE FROM contracts WHERE protocol_id = :p"), {"p": protocol.id}
-        )
-        db_session.execute(
-            text("DELETE FROM jobs WHERE company = :c"), {"c": "etherfi_basic_test"}
-        )
+        db_session.execute(text("DELETE FROM contracts WHERE protocol_id = :p"), {"p": protocol.id})
+        db_session.execute(text("DELETE FROM jobs WHERE company = :c"), {"c": "etherfi_basic_test"})
         db_session.execute(text("DELETE FROM protocols WHERE id = :p"), {"p": protocol.id})
         db_session.commit()
 
@@ -1826,12 +1822,8 @@ def test_company_overview_with_proxy_and_effects(db_session, api_client):
         assert any(p["address"] == "0x" + "3" * 40 for ctrl in fn["controllers"] for p in ctrl["principals"])
         assert len(c["balances"]) >= 1
     finally:
-        db_session.execute(
-            text("DELETE FROM contracts WHERE protocol_id = :p"), {"p": protocol.id}
-        )
-        db_session.execute(
-            text("DELETE FROM jobs WHERE company = :c"), {"c": "myproj_proxy_test"}
-        )
+        db_session.execute(text("DELETE FROM contracts WHERE protocol_id = :p"), {"p": protocol.id})
+        db_session.execute(text("DELETE FROM jobs WHERE company = :c"), {"c": "myproj_proxy_test"})
         db_session.execute(text("DELETE FROM protocols WHERE id = :p"), {"p": protocol.id})
         db_session.commit()
 
