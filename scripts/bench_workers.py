@@ -76,8 +76,11 @@ def http_get(url: str, admin_key: str) -> dict:
         return json.loads(resp.read())
 
 
-def submit(base_url: str, address: str, admin_key: str) -> dict:
-    return http_post(f"{base_url.rstrip('/')}/api/analyze", {"address": address}, admin_key)
+def submit(base_url: str, address: str, admin_key: str, *, force: bool = False) -> dict:
+    body: dict = {"address": address}
+    if force:
+        body["force"] = True
+    return http_post(f"{base_url.rstrip('/')}/api/analyze", body, admin_key)
 
 
 def poll_until_done(
@@ -232,6 +235,11 @@ def main() -> int:
     parser.add_argument("--poll-interval", type=float, default=1.0)
     parser.add_argument("--timeout", type=float, default=1800.0)
     parser.add_argument("--out", default=None, help="Output JSON path (auto if unset)")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force a cold-path run by skipping discovery's static-cache shortcut.",
+    )
     args = parser.parse_args()
 
     if not args.admin_key:
@@ -244,8 +252,8 @@ def main() -> int:
         print(f"[bench] starting fly logs tail for app={args.fly_app}")
         log_tail.start()
 
-    print(f"[bench] submitting {args.address} → {args.url}")
-    submit_resp = submit(args.url, args.address, args.admin_key)
+    print(f"[bench] submitting {args.address} → {args.url}{' (force=True)' if args.force else ''}")
+    submit_resp = submit(args.url, args.address, args.admin_key, force=args.force)
     job_id = submit_resp["job_id"]
     print(f"[bench] job_id={job_id}")
 

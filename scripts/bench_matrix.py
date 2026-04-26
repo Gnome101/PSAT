@@ -125,6 +125,7 @@ def run_one_bench(
     fly_app: str | None,
     out_path: Path,
     poll_interval: float,
+    force: bool = False,
 ) -> dict:
     """Invoke bench_workers.py as a subprocess. Returns its parsed JSON output."""
     here = Path(__file__).parent
@@ -146,6 +147,8 @@ def run_one_bench(
     ]
     if fly_app:
         cmd.extend(["--fly-app", fly_app])
+    if force:
+        cmd.append("--force")
     # Stream child output directly so the user sees progress.
     proc = subprocess.run(cmd, text=True, timeout=2400)
     if proc.returncode != 0:
@@ -252,7 +255,8 @@ def main() -> int:
             print(f"[matrix] warm-wait {warm_wait_s}s for workers to fully boot...")
             time.sleep(warm_wait_s)
 
-        # Multi-sample loop. First sample is cold-cache; later ones may hit static_cache.
+        # When force=true (set per-config or top-level), every sample bypasses cache.
+        force_per_run = bool(rc.get("force", cfg.get("force", False)))
         for sample_i in range(1, samples + 1):
             sample_label = label if samples == 1 else f"{label}_s{sample_i}"
             out_path = out_dir / f"{sample_label}.json"
@@ -265,6 +269,7 @@ def main() -> int:
                     fly_app=app,
                     out_path=out_path,
                     poll_interval=float(cfg.get("poll_interval", 0.5)),
+                    force=force_per_run,
                 )
             except Exception as e:
                 print(f"[matrix] run failed: {e}", file=sys.stderr)

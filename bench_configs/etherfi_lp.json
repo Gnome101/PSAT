@@ -6,6 +6,7 @@
   "warm_wait_s": 20,
   "poll_interval": 0.5,
   "samples_per_run": 1,
+  "force": true,
   "runs": [
     {
       "label": "shared-2x-2gb",

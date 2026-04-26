@@ -894,18 +894,20 @@ class StaticWorker(BaseWorker):
                     impl_entries.append((facet, f"facet {i + 1}"))
 
         base_name = job.name or contract_name
+        force = bool(request.get("force"))
         for impl_addr, label in impl_entries:
-            # Check if we already have a job for this implementation
-            existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
-            if existing:
-                logger.info(
-                    "Job %s: %s %s already has job %s, skipping",
-                    job.id,
-                    label,
-                    impl_addr,
-                    existing.id,
-                )
-                continue
+            # Skip dedup check under force — bench runs need a fresh impl job each time.
+            if not force:
+                existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
+                if existing:
+                    logger.info(
+                        "Job %s: %s %s already has job %s, skipping",
+                        job.id,
+                        label,
+                        impl_addr,
+                        existing.id,
+                    )
+                    continue
 
             impl_name = f"{base_name}: ({label})"
             child_request = {
@@ -920,6 +922,8 @@ class StaticWorker(BaseWorker):
                 child_request["chain"] = request.get("chain")
             if getattr(job, "protocol_id", None):
                 child_request["protocol_id"] = job.protocol_id
+            if force:
+                child_request["force"] = True
             child_job = create_job(session, child_request)
             logger.info(
                 "Job %s: created %s job %s for %s (%s)",

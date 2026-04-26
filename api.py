@@ -84,6 +84,10 @@ class AnalyzeRequest(BaseModel):
     wait: int | None = Field(default=None, ge=1, le=120)
     analyze_limit: int = Field(default=5, ge=1, le=200)
     rpc_url: str | None = None
+    force: bool = Field(
+        default=False,
+        description="Bench-only: skip the static-cache discovery shortcut so every stage re-runs cold.",
+    )
 
     @model_validator(mode="after")
     def _validate_target(self) -> "AnalyzeRequest":
