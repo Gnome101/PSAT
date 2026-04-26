@@ -69,6 +69,9 @@ class Job(Base):
     protocol_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
     )
+    # Mirror of the ``contract_flags.is_proxy`` artifact body. Maintained by
+    # ``store_artifact`` so /api/jobs can answer without per-row storage reads.
+    is_proxy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -93,6 +96,7 @@ class Job(Base):
             "request": self.request,
             "error": self.error,
             "worker_id": self.worker_id,
+            "is_proxy": self.is_proxy,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -460,6 +464,8 @@ class PrivilegedFunction(Base):
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="privileged_functions")
 
+    __table_args__ = (Index("ix_privileged_functions_contract_id", "contract_id"),)
+
 
 class RoleDefinition(Base):
     __tablename__ = "role_definitions"
@@ -470,6 +476,8 @@ class RoleDefinition(Base):
     declared_in: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="role_definitions")
+
+    __table_args__ = (Index("ix_role_definitions_contract_id", "contract_id"),)
 
 
 class ControllerValue(Base):
@@ -486,6 +494,8 @@ class ControllerValue(Base):
     observed_via: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="controller_values")
+
+    __table_args__ = (Index("ix_controller_values_contract_id", "contract_id"),)
 
 
 class ControlGraphNode(Base):
@@ -504,6 +514,8 @@ class ControlGraphNode(Base):
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="control_graph_nodes")
 
+    __table_args__ = (Index("ix_control_graph_nodes_contract_id", "contract_id"),)
+
 
 class ControlGraphEdge(Base):
     __tablename__ = "control_graph_edges"
@@ -518,6 +530,8 @@ class ControlGraphEdge(Base):
     notes: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="control_graph_edges")
+
+    __table_args__ = (Index("ix_control_graph_edges_contract_id", "contract_id"),)
 
 
 class UpgradeEvent(Base):
@@ -555,6 +569,8 @@ class EffectiveFunction(Base):
         "FunctionPrincipal", back_populates="function", cascade="all, delete-orphan"
     )
 
+    __table_args__ = (Index("ix_effective_functions_contract_id", "contract_id"),)
+
 
 class FunctionPrincipal(Base):
     __tablename__ = "function_principals"
@@ -570,6 +586,8 @@ class FunctionPrincipal(Base):
     details: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
     function: Mapped[EffectiveFunction] = relationship("EffectiveFunction", back_populates="principals")
+
+    __table_args__ = (Index("ix_function_principals_function_id", "function_id"),)
 
 
 class PrincipalLabel(Base):
@@ -587,6 +605,8 @@ class PrincipalLabel(Base):
     graph_context: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="principal_labels")
+
+    __table_args__ = (Index("ix_principal_labels_contract_id", "contract_id"),)
 
 
 class AddressLabel(Base):
@@ -625,6 +645,8 @@ class ContractDependency(Base):
     admin: Mapped[str | None] = mapped_column(String(42), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="dependencies")
+
+    __table_args__ = (Index("ix_contract_dependencies_contract_id", "contract_id"),)
 
 
 # ---------------------------------------------------------------------------
@@ -968,10 +990,52 @@ def apply_storage_migrations(target_engine=None) -> None:
         # proof_kind (Phase C): strength subtype for proven rows. See the
         # model comment for the full vocabulary.
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS proof_kind VARCHAR(30)"))
+        # jobs.is_proxy — denormalized mirror of the ``contract_flags`` artifact's
+        # ``is_proxy`` field, written by ``store_artifact`` going forward. Lets
+        # /api/jobs answer the proxy-flag question with a single SELECT instead
+        # of a per-job artifact resolve (which round-trips to object storage on
+        # most rows).
+        #
+        # Backfill: inline-data rows (legacy + dev/CI without ARTIFACT_STORAGE_*)
+        # are handled by the UPDATE below. Storage-backed legacy rows aren't
+        # readable from a SQL migration; they pick up the correct value the
+        # next time their contract_flags artifact is rewritten (re-analyze).
+        # Until then those rows show ``is_proxy=False`` in /api/jobs even if
+        # the artifact body says True — bounded gap, self-heals on re-analyze.
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_proxy BOOLEAN NOT NULL DEFAULT FALSE"))
+        conn.execute(
+            text(
+                "UPDATE jobs SET is_proxy = TRUE "
+                "FROM artifacts "
+                "WHERE artifacts.job_id = jobs.id "
+                "  AND artifacts.name = 'contract_flags' "
+                "  AND artifacts.data IS NOT NULL "
+                "  AND COALESCE((artifacts.data ->> 'is_proxy')::boolean, FALSE) = TRUE "
+                "  AND jobs.is_proxy = FALSE"
+            )
+        )
         # upgrade_events.contract_id — Postgres FKs don't auto-create an index,
         # and this column is scanned on every per-impl window computation in
         # services/audits/coverage.py + contract_audit_timeline.
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_upgrade_events_contract_id ON upgrade_events (contract_id)"))
+        # Same story for the rest of the contract-keyed child tables that
+        # company_overview / analysis_detail batch-prefetch. Postgres won't
+        # auto-index FK columns; without these the planner falls back to
+        # seq-scans on every protocol roll-up.
+        for table in (
+            "privileged_functions",
+            "role_definitions",
+            "controller_values",
+            "control_graph_nodes",
+            "control_graph_edges",
+            "effective_functions",
+            "principal_labels",
+            "contract_dependencies",
+        ):
+            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_contract_id ON {table} (contract_id)"))
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_function_principals_function_id ON function_principals (function_id)")
+        )
         # audit_contract_coverage ↔ proxy invariant. Scope names like
         # ``UUPSProxy`` match generic proxy Contract rows verbatim, but the
         # audit didn't review the proxy's code — it reviewed the impl's.

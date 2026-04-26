@@ -445,30 +445,11 @@ def list_jobs() -> list[dict[str, Any]]:
     with SessionLocal() as session:
         stmt = select(Job).order_by(Job.created_at.desc())
         jobs = session.execute(stmt).scalars().all()
-
-        # Batch-fetch contract_flags to tag proxy jobs.
-        # Artifacts may live inline (data) or in object storage (storage_key);
-        # _resolve_artifact_value() handles both transparently.
-        job_ids = [job.id for job in jobs]
-        proxy_ids: set[str] = set()
-        if job_ids:
-            flags_stmt = select(Artifact).where(Artifact.job_id.in_(job_ids), Artifact.name == "contract_flags")
-            for art in session.execute(flags_stmt).scalars():
-                try:
-                    value = _resolve_artifact_value(art)
-                except StorageError:
-                    # Storage object missing or unreachable — skip but don't block the list.
-                    logger.warning("contract_flags storage read failed for job %s", art.job_id)
-                    continue
-                if isinstance(value, dict) and value.get("is_proxy"):
-                    proxy_ids.add(str(art.job_id))
-
-        result = []
-        for job in jobs:
-            d = job.to_dict()
-            d["is_proxy"] = str(job.id) in proxy_ids
-            result.append(d)
-        return result
+        # ``Job.is_proxy`` is the denormalized mirror of the ``contract_flags``
+        # artifact's ``is_proxy`` field, written by ``store_artifact``. Reading
+        # it here avoids a per-job artifact resolve (which round-trips to
+        # object storage on the storage-backed rows that are now the norm).
+        return [job.to_dict() for job in jobs]
 
 
 @app.post("/api/analyze", dependencies=[Depends(require_admin_key)])
@@ -2634,15 +2615,12 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
                 # Current impl isn't in inventory. We can't tell.
                 return "unaudited_since_upgrade" if cov_rows else "never_audited"
 
-            current_cov = (
-                session.execute(
-                    select(AuditContractCoverage).where(
-                        AuditContractCoverage.contract_id == impl_contract.id,
-                    )
-                )
-                .scalars()
-                .all()
-            )
+            # cov_rows is already scoped to scope_contract_ids, which (for
+            # proxies) was built from the same protocol_id + impl_addrs lookup
+            # that resolves impl_contract here — so any row matching
+            # impl_contract.id is already in cov_rows. Filter in Python instead
+            # of re-querying.
+            current_cov = [r for r in cov_rows if r.contract_id == impl_contract.id]
             # 'audited' requires definitive coverage of the currently-open
             # impl window. Two paths:
             #   (a) any row on this impl has a cryptographic proof

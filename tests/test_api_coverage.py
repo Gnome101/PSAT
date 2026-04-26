@@ -52,6 +52,7 @@ def _fake_job(
     status="completed",
     stage="done",
     request=None,
+    is_proxy=False,
 ):
     job = MagicMock()
     uid = uuid.UUID(job_id) if job_id else uuid.uuid4()
@@ -65,6 +66,7 @@ def _fake_job(
     job.request = request or {}
     job.error = None
     job.worker_id = None
+    job.is_proxy = is_proxy
     job.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     job.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     job.to_dict.return_value = {
@@ -78,6 +80,7 @@ def _fake_job(
         "request": request or {},
         "error": None,
         "worker_id": None,
+        "is_proxy": is_proxy,
         "created_at": "2026-01-01T00:00:00+00:00",
         "updated_at": "2026-01-01T00:00:00+00:00",
     }
@@ -269,28 +272,13 @@ def test_list_jobs_with_proxy_flag(mock_session_cls):
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
-    job1 = _fake_job(name="proxy_job", address="0xaaa")
-    job2 = _fake_job(name="regular_job", address="0xbbb")
+    # /api/jobs reads ``Job.is_proxy`` directly — no per-row artifact
+    # resolve. The proxy flag is mirrored onto Job by ``store_artifact``
+    # whenever ``contract_flags`` gets written.
+    job1 = _fake_job(name="proxy_job", address="0xaaa", is_proxy=True)
+    job2 = _fake_job(name="regular_job", address="0xbbb", is_proxy=False)
 
-    call_count = {"n": 0}
-
-    def route_execute(stmt, *args, **kwargs):
-        call_count["n"] += 1
-        result = MagicMock()
-        if call_count["n"] == 1:
-            # First call: list jobs
-            result.scalars.return_value.all.return_value = [job1, job2]
-        else:
-            # Second call: batch-fetch contract_flags artifacts via .scalars()
-            flag_row = MagicMock()
-            flag_row.job_id = job1.id
-            flag_row.storage_key = None
-            flag_row.data = {"is_proxy": True}
-            flag_row.text_data = None
-            result.scalars.return_value = iter([flag_row])
-        return result
-
-    mock_session.execute.side_effect = route_execute
+    mock_session.execute.return_value.scalars.return_value.all.return_value = [job1, job2]
 
     response = client.get("/api/jobs")
     assert response.status_code == 200

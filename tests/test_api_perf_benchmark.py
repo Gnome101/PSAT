@@ -25,6 +25,8 @@ from sqlalchemy import event, text
 
 from db.models import (
     Artifact,
+    AuditContractCoverage,
+    AuditReport,
     Contract,
     ContractBalance,
     ContractSummary,
@@ -74,6 +76,17 @@ def _wipe_perf_data(session) -> None:
             "(SELECT id FROM contracts WHERE protocol_id IN "
             "(SELECT id FROM protocols WHERE name = :n))"
         ),
+        {"n": PROTOCOL_NAME},
+    )
+    session.execute(
+        text(
+            "DELETE FROM audit_contract_coverage WHERE protocol_id IN "
+            "(SELECT id FROM protocols WHERE name = :n)"
+        ),
+        {"n": PROTOCOL_NAME},
+    )
+    session.execute(
+        text("DELETE FROM audit_reports WHERE protocol_id IN (SELECT id FROM protocols WHERE name = :n)"),
         {"n": PROTOCOL_NAME},
     )
     session.execute(
@@ -283,8 +296,102 @@ def seeded(db_session):
             )
         )
 
+    # Proxy + impl + audit + coverage rows so the audit_timeline benchmark
+    # exercises the proxy/_current_status branch (where the unstaged
+    # cov_rows-filter optimization lives).
+    proxy_addr = _addr(900001)
+    impl_addr = _addr(900002)
+    proxy_job = Job(
+        id=uuid.uuid4(),
+        address=proxy_addr,
+        company=PROTOCOL_NAME,
+        name="perf_proxy",
+        status=JobStatus.completed,
+        stage=JobStage.done,
+        request={"chain": "ethereum"},
+        protocol_id=protocol.id,
+    )
+    impl_job = Job(
+        id=uuid.uuid4(),
+        address=impl_addr,
+        company=PROTOCOL_NAME,
+        name="perf_impl",
+        status=JobStatus.completed,
+        stage=JobStage.done,
+        request={"chain": "ethereum", "proxy_address": proxy_addr},
+        protocol_id=protocol.id,
+    )
+    db_session.add_all([proxy_job, impl_job])
+    db_session.flush()
+
+    proxy_contract = Contract(
+        job_id=proxy_job.id,
+        protocol_id=protocol.id,
+        address=proxy_addr,
+        chain="ethereum",
+        contract_name="PerfProxy",
+        is_proxy=True,
+        proxy_type="UUPS",
+        implementation=impl_addr,
+        source_verified=True,
+        discovery_sources=["seed"],
+    )
+    impl_contract = Contract(
+        job_id=impl_job.id,
+        protocol_id=protocol.id,
+        address=impl_addr,
+        chain="ethereum",
+        contract_name="PerfImpl",
+        is_proxy=False,
+        source_verified=True,
+        discovery_sources=["seed"],
+    )
+    db_session.add_all([proxy_contract, impl_contract])
+    db_session.flush()
+
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy_contract.id,
+            proxy_address=proxy_addr,
+            old_impl=None,
+            new_impl=impl_addr,
+            block_number=1_000_000,
+            tx_hash="0x" + "a" * 64,
+        )
+    )
+
+    audit = AuditReport(
+        protocol_id=protocol.id,
+        url="https://example.com/audit.pdf",
+        auditor="PerfAuditor",
+        title="Perf Audit",
+        date="2025-01-01",
+        scope_extraction_status="success",
+        scope_contracts=["PerfImpl"],
+    )
+    db_session.add(audit)
+    db_session.flush()
+
+    db_session.add(
+        AuditContractCoverage(
+            contract_id=impl_contract.id,
+            audit_report_id=audit.id,
+            protocol_id=protocol.id,
+            matched_name="PerfImpl",
+            match_type="direct",
+            match_confidence="high",
+            covered_from_block=1_000_000,
+            covered_to_block=None,
+        )
+    )
+
     db_session.commit()
-    yield {"protocol": protocol, "jobs": jobs, "contracts": contracts}
+    yield {
+        "protocol": protocol,
+        "jobs": jobs,
+        "contracts": contracts,
+        "proxy_contract_id": proxy_contract.id,
+    }
     _wipe_perf_data(db_session)
 
 
@@ -322,7 +429,13 @@ def _run(api_client, db_session, label: str, fn) -> dict:
 
 
 @requires_postgres
-def test_benchmark_high_impact_endpoints(seeded, api_client, db_session):
+def test_benchmark_high_impact_endpoints(seeded, api_client, db_session, monkeypatch):
+    # audit_timeline calls _fetch_bytecode_keccak via an RPC; stub it so the
+    # benchmark measures DB cost only.
+    import api as api_module
+
+    monkeypatch.setattr(api_module, "_bytecode_keccak_now_batch", lambda addrs: {a.lower(): None for a in addrs})
+
     results: list[dict] = []
 
     results.append(
@@ -353,6 +466,25 @@ def test_benchmark_high_impact_endpoints(seeded, api_client, db_session):
         )
     )
 
+    results.append(
+        _run(
+            api_client,
+            db_session,
+            "GET /api/jobs",
+            lambda: api_client.get("/api/jobs"),
+        )
+    )
+
+    proxy_contract_id = seeded["proxy_contract_id"]
+    results.append(
+        _run(
+            api_client,
+            db_session,
+            "GET /api/contracts/{id}/audit_timeline",
+            lambda: api_client.get(f"/api/contracts/{proxy_contract_id}/audit_timeline"),
+        )
+    )
+
     print()
     print("=" * 78)
     print(f"{'endpoint':<40} {'queries':>10} {'wall_ms':>10}")
@@ -366,12 +498,21 @@ def test_benchmark_high_impact_endpoints(seeded, api_client, db_session):
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
 
-    # Sanity assertions: every endpoint must return data.
+    # Sanity assertions: every endpoint must return data. Seed adds a
+    # proxy + impl pair on top of N_CONTRACTS regulars; the proxy-merge
+    # pass in /api/analyses depends on artifact flags we deliberately omit
+    # (the audit_timeline benchmark only needs UpgradeEvent + coverage),
+    # so just assert the listing carries at least the regulars.
     overview = api_client.get(f"/api/company/{PROTOCOL_NAME}").json()
-    assert overview["contract_count"] == N_CONTRACTS
+    assert overview["contract_count"] >= N_CONTRACTS
     analyses = api_client.get("/api/analyses").json()
-    assert len([a for a in analyses if a.get("company") == PROTOCOL_NAME]) == N_CONTRACTS
+    assert len([a for a in analyses if a.get("company") == PROTOCOL_NAME]) >= N_CONTRACTS
     detail = api_client.get(f"/api/analyses/{sample_run}").json()
     assert detail["run_name"] == sample_run
     assert "effective_permissions" in detail
     assert len(detail["effective_permissions"]["functions"]) == N_FUNCTIONS_PER_CONTRACT
+    timeline = api_client.get(f"/api/contracts/{seeded['proxy_contract_id']}/audit_timeline").json()
+    assert timeline["contract"]["is_proxy"] is True
+    assert len(timeline["coverage"]) == 1
+    jobs = api_client.get("/api/jobs").json()
+    assert any(j.get("company") == PROTOCOL_NAME for j in jobs)

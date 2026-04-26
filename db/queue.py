@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 from sqlalchemy import func, select, text
+from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -299,6 +300,18 @@ def _artifact_row_to_value(artifact: Artifact) -> dict | list | str | None:
     return artifact.text_data
 
 
+def _mirror_contract_flags_to_job(session: Session, job_id: Any, name: str, data: Any) -> None:
+    """Mirror ``contract_flags.is_proxy`` onto ``Job.is_proxy``.
+
+    /api/jobs reads the column directly so it can avoid a per-row storage
+    fetch just to learn whether the job analyzed a proxy. Same boolean
+    result as resolving the artifact, with no I/O.
+    """
+    if name != "contract_flags" or not isinstance(data, dict):
+        return
+    session.execute(sa_update(Job).where(Job.id == job_id).values(is_proxy=bool(data.get("is_proxy"))))
+
+
 def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, text_data: str | None = None) -> None:
     """Upsert an artifact for a job (unique on job_id + name).
 
@@ -341,6 +354,7 @@ def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, t
         )
         try:
             session.execute(stmt)
+            _mirror_contract_flags_to_job(session, job_id, name, data)
             session.commit()
         except Exception:
             session.rollback()
@@ -369,6 +383,7 @@ def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, t
         },
     )
     session.execute(stmt)
+    _mirror_contract_flags_to_job(session, job_id, name, data)
     session.commit()
 
 
