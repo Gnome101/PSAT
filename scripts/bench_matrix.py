@@ -104,6 +104,24 @@ def apply_scale(
         run(["fly", "scale", "count", f"{process_group}={count}", "-a", app, "--yes"])
 
 
+def apply_env_to_group(app: str, env: dict[str, str], process_group: str = "workers") -> None:
+    """Set runtime env vars on every machine in the process group.
+
+    Used for tunables like PSAT_STATIC_WORKERS that are read by start scripts
+    at boot. `fly machine update --env K=V <machine-id>` restarts that single
+    machine in-place (~30s) — much cheaper than a full deploy. Pair with a
+    `wait_for_group_started` afterwards.
+    """
+    if not env:
+        return
+    machines = list_machines_in_group(app, process_group)
+    env_args: list[str] = []
+    for k, v in env.items():
+        env_args.extend(["--env", f"{k}={v}"])
+    for m in machines:
+        run(["fly", "machine", "update", m["id"], "-a", app, "--yes", *env_args], timeout=180)
+
+
 def wait_for_group_started(app: str, group: str, *, timeout_s: int = 180) -> None:
     """Block until every machine in the given process group reports state=started.
 
@@ -338,6 +356,12 @@ def main() -> int:
                     memory_mb=rc.get("memory_mb"),
                     count=rc.get("count"),
                 )
+                wait_for_group_started(app, "workers")
+            # Apply per-run env vars (e.g. PSAT_STATIC_WORKERS) AFTER scaling, then
+            # wait again — `machine update --env` restarts the machine.
+            env_per_run: dict[str, str] = rc.get("env") or {}
+            if env_per_run:
+                apply_env_to_group(app, env_per_run, process_group="workers")
                 wait_for_group_started(app, "workers")
             print(f"[matrix] warm-wait {warm_wait_s}s for workers to fully boot...")
             time.sleep(warm_wait_s)

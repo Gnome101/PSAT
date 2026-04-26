@@ -37,12 +37,18 @@ fi
 
 echo "Starting PSAT workers with: ${PYTHON_CMD[*]}"
 
+# Static worker count is env-tunable so the bench harness can sweep it
+# without rebuilding the image. Default 2 matches the long-standing prod
+# fleet shape; cascade benches found 1-4 to be the useful range.
+STATIC_COUNT="${PSAT_STATIC_WORKERS:-2}"
+echo "  static workers: $STATIC_COUNT (set PSAT_STATIC_WORKERS to override)"
+
 "${PYTHON_CMD[@]}" -m workers.discovery &
 PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.static_worker &
-PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.static_worker &
-PIDS+=($!)
+for _ in $(seq 1 "$STATIC_COUNT"); do
+  "${PYTHON_CMD[@]}" -m workers.static_worker &
+  PIDS+=($!)
+done
 "${PYTHON_CMD[@]}" -m workers.resolution_worker &
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.policy_worker &
