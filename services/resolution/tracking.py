@@ -130,25 +130,17 @@ def _coerce_int(value: object) -> int:
     raise RuntimeError(f"Unsupported integer value: {value!r}")
 
 
-def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "latest") -> tuple[str, dict[str, object]]:
-    """Probe an address to learn what it is (EOA/Safe/timelock/proxy_admin/contract).
+def classify_resolved_address_with_status(
+    rpc_url: str, address: str, block_tag: str = "latest"
+) -> tuple[str, dict[str, object], bool]:
+    """Like ``classify_resolved_address`` but also reports whether the result
+    is safe for callers to cache. False if any underlying probe RPC errored
+    — caller-owned per-job/per-cascade caches must NOT persist such results,
+    otherwise a transient throttle/timeout cements a wrong classification.
 
-    Process-wide cache: classifications rarely change for a given address,
-    so caching across jobs in the same worker is safe and avoids 6-10 RPCs
-    per repeat lookup. Two safety mechanisms keep the cache honest:
-
-    1. Entries for ``latest``-block reads expire after
-       ``PSAT_CLASSIFY_CACHE_TTL_S`` seconds (default 30 min). Long enough
-       to amortise across a cascade, short enough that an upgraded Safe /
-       timelock owner won't be served stale forever.
-    2. Cache stores a deep copy of details and returns a deep copy on
-       hit. ``MappingProxyType`` was insufficient because nested lists
-       (e.g. Safe ``owners``) remained mutable; ``copy.deepcopy`` ensures
-       caller mutations cannot poison the cache.
-
-    If any underlying probe RPC errored (transient failure, throttle), the
-    classification is computed but NOT cached — otherwise a transient blip
-    could cement a wrong "contract" fallback for the worker's lifetime.
+    The process-wide cache here already uses this signal internally; this
+    helper exposes the same signal to upstream callers (resolve_control_graph
+    BFS, principal labeling) that maintain their own short-lived caches.
     """
     normalized = _normalize_hex(address)
     cache_key = (rpc_url, normalized, block_tag)
@@ -159,23 +151,33 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
         if cached is not None:
             kind, cached_details, inserted_at = cached
             if now - inserted_at < _CLASSIFY_CACHE_TTL_S:
-                return kind, copy.deepcopy(cached_details)
-            # Expired — drop and fall through to recompute.
+                # Cached values are by definition cacheable (we only insert
+                # error-free results — see below).
+                return kind, copy.deepcopy(cached_details), True
             del _CLASSIFY_CACHE[cache_key]
 
     kind, details, had_error = _classify_uncached(rpc_url, normalized, block_tag)
 
     if not had_error:
         with _CLASSIFY_CACHE_LOCK:
-            # FIFO eviction (insertion order): drop the oldest half when full.
-            # Hits don't refresh order, so this isn't true LRU, but for our
-            # workload (one cascade fills the cache, all entries roughly the
-            # same age) FIFO and LRU behave identically.
             if len(_CLASSIFY_CACHE) >= _CLASSIFY_CACHE_MAX:
                 for old_key in list(_CLASSIFY_CACHE.keys())[: _CLASSIFY_CACHE_MAX // 2]:
                     del _CLASSIFY_CACHE[old_key]
             _CLASSIFY_CACHE[cache_key] = (kind, copy.deepcopy(details), now)
 
+    return kind, details, not had_error
+
+
+def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "latest") -> tuple[str, dict[str, object]]:
+    """Backwards-compatible wrapper: see ``classify_resolved_address_with_status``.
+
+    Use this when you don't maintain a downstream cache (the process-wide
+    cache here handles freshness/safety automatically). Use the
+    ``_with_status`` form when you DO maintain a per-job dict that gets
+    persisted as an artifact, so you can skip propagating
+    transient-error-driven misclassifications.
+    """
+    kind, details, _cacheable = classify_resolved_address_with_status(rpc_url, address, block_tag)
     return kind, details
 
 

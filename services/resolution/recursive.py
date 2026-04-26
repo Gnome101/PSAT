@@ -22,6 +22,7 @@ from services.static import analyze, collect_contract_analysis
 from .tracking import (
     build_control_snapshot,
     classify_resolved_address,
+    classify_resolved_address_with_status,
 )
 from .tracking_plan import build_control_tracking_plan
 
@@ -457,9 +458,16 @@ def resolve_control_graph(
 
     def _cached_classify(addr: str) -> tuple[str, dict[str, object]]:
         key = addr.lower()
-        if key not in _classify_cache:
-            _classify_cache[key] = classify_resolved_address(rpc_url, addr)
-        return _classify_cache[key]
+        if key in _classify_cache:
+            return _classify_cache[key]
+        kind, details, cacheable = classify_resolved_address_with_status(rpc_url, addr)
+        # Only persist into the per-job cache (which gets serialized as the
+        # `classified_addresses` artifact and read by the policy worker) when
+        # the underlying probes succeeded. A transient RPC error otherwise
+        # cements a "contract" fallback in the artifact for downstream stages.
+        if cacheable:
+            _classify_cache[key] = (kind, details)
+        return kind, details
 
     nodes: dict[str, ResolvedGraphNode] = {}
     edges: dict[tuple, ResolvedGraphEdge] = {}

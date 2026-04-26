@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import Any
 
 from schemas.principal_labels import PrincipalLabels, PrincipalPermission, PrincipalProfile
-from services.resolution.tracking import classify_resolved_address
+from services.resolution.tracking import classify_resolved_address_with_status
 
 
 def _slug(value: str) -> str:
@@ -312,8 +312,11 @@ def build_principal_labels(
                 resolved_type, cached_details = classify_cache[cache_key]
                 details = dict(cached_details)
             else:
-                resolved_type, details = classify_resolved_address(rpc_url, address)
-                if classify_cache is not None:
+                resolved_type, details, cacheable = classify_resolved_address_with_status(rpc_url, address)
+                # Skip per-job cache write if any underlying probe errored —
+                # otherwise a transient blip during labeling would persist
+                # a wrong "contract" classification for the rest of the job.
+                if classify_cache is not None and cacheable:
                     classify_cache[cache_key] = (resolved_type, dict(details))
 
         if resolved_type == "contract" and node:
