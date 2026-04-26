@@ -79,10 +79,7 @@ def _wipe_perf_data(session) -> None:
         {"n": PROTOCOL_NAME},
     )
     session.execute(
-        text(
-            "DELETE FROM audit_contract_coverage WHERE protocol_id IN "
-            "(SELECT id FROM protocols WHERE name = :n)"
-        ),
+        text("DELETE FROM audit_contract_coverage WHERE protocol_id IN (SELECT id FROM protocols WHERE name = :n)"),
         {"n": PROTOCOL_NAME},
     )
     session.execute(
