@@ -43,9 +43,7 @@ STAGES = ["discovery", "static", "resolution", "policy", "coverage", "selection"
 
 # Matches the per-job timing line from workers/base.py:127.
 #   "Worker StaticWorker-653-... completed job <uuid> in 3.0s"
-TIMING_RE = re.compile(
-    r"Worker\s+(?P<worker>\S+)\s+completed job\s+(?P<job>[0-9a-f-]{36})\s+in\s+(?P<sec>[\d.]+)s"
-)
+TIMING_RE = re.compile(r"Worker\s+(?P<worker>\S+)\s+completed job\s+(?P<job>[0-9a-f-]{36})\s+in\s+(?P<sec>[\d.]+)s")
 # Worker class name → stage. Lowercase first chunk before "Worker".
 WORKER_TO_STAGE = {
     "discoveryworker": "discovery",
@@ -121,9 +119,7 @@ def poll_until_done(
     raise TimeoutError(f"job {job_id} did not finish within {timeout_s}s")
 
 
-def stage_elapsed_from_transitions(
-    transitions: list[dict], total_seconds: float
-) -> dict[str, float]:
+def stage_elapsed_from_transitions(transitions: list[dict], total_seconds: float) -> dict[str, float]:
     """Approximate per-stage elapsed by diffing consecutive transition offsets.
 
     Less precise than fly-logs scraping (poll cadence + queue latency
@@ -254,8 +250,11 @@ def main() -> int:
     print(f"[bench] job_id={job_id}")
 
     final_job, transitions = poll_until_done(
-        args.url, job_id, args.admin_key,
-        poll_interval=args.poll_interval, timeout_s=args.timeout,
+        args.url,
+        job_id,
+        args.admin_key,
+        poll_interval=args.poll_interval,
+        timeout_s=args.timeout,
     )
 
     total = transitions[-1]["first_seen_offset_s"] if transitions else 0.0
