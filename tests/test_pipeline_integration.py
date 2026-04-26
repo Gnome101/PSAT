@@ -653,6 +653,9 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
         call_count["n"] += 1
         result = MagicMock()
         stmt_str = str(stmt)
+        # api.py now iterates Result.scalars() directly in the batched
+        # prefetch paths, so MagicMock needs an explicit __iter__.
+        items: list = []
         if call_count["n"] == 1:
             # First call: select(Job) to find job by name
             result.scalar_one_or_none.return_value = fake_job
@@ -660,17 +663,15 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
             # Second call: select(Contract) for contract_row
             result.scalar_one_or_none.return_value = fake_contract_row
         elif "effective" in stmt_str.lower():
-            # EffectiveFunction query
-            result.scalars.return_value.all.return_value = [fake_ef]
+            items = [fake_ef]
         elif "function_principal" in stmt_str.lower():
-            # FunctionPrincipal query
-            result.scalars.return_value.all.return_value = [fake_fp]
+            items = [fake_fp]
         elif "principal_label" in stmt_str.lower():
-            # PrincipalLabel query
-            result.scalars.return_value.all.return_value = [fake_pl]
+            items = [fake_pl]
         else:
             result.scalar_one_or_none.return_value = None
-            result.scalars.return_value.all.return_value = []
+        result.scalars.return_value.all.return_value = items
+        result.scalars.return_value.__iter__ = lambda s: iter(items)
         return result
 
     mock_session.execute.side_effect = route_execute

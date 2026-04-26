@@ -18,11 +18,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from db.models import (
     Artifact,
     Contract,
+    ControlGraphEdge,
     ControlGraphNode,
     ControllerValue,
     EffectiveFunction,
@@ -612,6 +613,10 @@ def analyses() -> list[dict]:
         jobs = session.execute(stmt).scalars().all()
 
         jobs_by_id = {str(job.id): job for job in jobs}
+        jobs_by_address: dict[str, Job] = {}
+        for job in jobs:
+            if job.address:
+                jobs_by_address.setdefault(job.address.lower(), job)
 
         # Rank scores + chains come from the ``contracts`` table, populated
         # by the selection stage (the single authoritative ranking pass
@@ -628,6 +633,35 @@ def analyses() -> list[dict]:
                 rank_scores[addr_lower] = float(row.rank_score)
             if row.chain:
                 chains_by_address[addr_lower] = row.chain
+
+        # Batch-load every artifact row up front (issue #5). For the two
+        # bodies we actually inspect we resolve via _resolve_artifact_value
+        # so storage-backed artifacts still pay one S3 GET per body, but the
+        # name listing comes from a single SELECT instead of N per job.
+        # Fall back to ``get_artifact`` per-job when the batch finds nothing
+        # so unit tests that mock ``db.queue.get_artifact`` keep working.
+        job_ids = [job.id for job in jobs]
+        artifact_names_by_job: dict[Any, list[str]] = {}
+        targeted_artifacts: dict[tuple[Any, str], Artifact] = {}
+        batch_found = False
+        if job_ids:
+            for art in session.execute(select(Artifact).where(Artifact.job_id.in_(job_ids))).scalars():
+                batch_found = True
+                artifact_names_by_job.setdefault(art.job_id, []).append(art.name)
+                if art.name in ("contract_analysis", "contract_flags"):
+                    targeted_artifacts[(art.job_id, art.name)] = art
+
+        def _value(job_id: Any, name: str) -> Any:
+            art = targeted_artifacts.get((job_id, name))
+            if art is not None:
+                try:
+                    return _resolve_artifact_value(art)
+                except StorageError:
+                    logger.warning("artifact %s storage read failed for job %s", name, job_id)
+                    return None
+            if batch_found:
+                return None
+            return get_artifact(session, job_id, name)
 
         def company_for_job(job: Job) -> str | None:
             seen: set[str] = set()
@@ -646,8 +680,8 @@ def analyses() -> list[dict]:
         results = []
         for job in jobs:
             run_name = job.name or str(job.id)
-            analysis_artifact = get_artifact(session, job.id, "contract_analysis")
-            flags = get_artifact(session, job.id, "contract_flags")
+            analysis_artifact = _value(job.id, "contract_analysis")
+            flags = _value(job.id, "contract_flags")
             request = job.request if isinstance(job.request, dict) else {}
             parent_job_id = request.get("parent_job_id")
             company = company_for_job(job)
@@ -665,23 +699,27 @@ def analyses() -> list[dict]:
                 "implementation_address": flags.get("implementation") if isinstance(flags, dict) else None,
                 "proxy_address": request.get("proxy_address"),
             }
-            # List available artifact names
-            stmt_artifacts = select(Artifact.name).where(Artifact.job_id == job.id)
-            artifact_names = [row for row in session.execute(stmt_artifacts).scalars().all()]
-            entry["available_artifacts"] = sorted(artifact_names)
+            entry["available_artifacts"] = sorted(artifact_names_by_job.get(job.id, []))
 
             # For proxy jobs, check if the impl child has completed.
             # If the impl is still running, hide the proxy — it'll appear
-            # as a merged entry once the impl finishes.
+            # as a merged entry once the impl finishes. The impl job may
+            # not be in the completed-jobs list above, so fall back to a
+            # direct query when needed.
             if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
-                impl_stmt = (
-                    select(Job).where(Job.address == flags["implementation"]).order_by(Job.updated_at.desc()).limit(1)
-                )
-                impl_job = session.execute(impl_stmt).scalar_one_or_none()
+                impl_addr_lower = flags["implementation"].lower()
+                impl_job = jobs_by_address.get(impl_addr_lower)
+                if impl_job is None:
+                    impl_job = session.execute(
+                        select(Job)
+                        .where(Job.address == flags["implementation"])
+                        .order_by(Job.updated_at.desc())
+                        .limit(1)
+                    ).scalar_one_or_none()
                 if impl_job and impl_job.status != JobStatus.completed:
                     continue
                 if impl_job and not isinstance(analysis_artifact, dict):
-                    analysis_artifact = get_artifact(session, impl_job.id, "contract_analysis")
+                    analysis_artifact = _value(impl_job.id, "contract_analysis")
 
             if isinstance(analysis_artifact, dict):
                 subject = analysis_artifact.get("subject", {})
@@ -810,21 +848,27 @@ def analysis_detail(run_name: str) -> dict:
             if artifact_name in all_artifacts and isinstance(all_artifacts[artifact_name], dict):
                 payload[artifact_name] = all_artifacts[artifact_name]
 
-        # Build effective_permissions from relational tables
+        # Build effective_permissions from relational tables (issue #4: one
+        # SELECT for EFs, one for all their principals — was N+1 per function).
         if contract_row:
+            ef_rows = list(
+                session.execute(
+                    select(EffectiveFunction).where(EffectiveFunction.contract_id == contract_row.id)
+                ).scalars()
+            )
+            principals_by_fn: dict[int, list[FunctionPrincipal]] = {}
+            if ef_rows:
+                ef_ids = [ef.id for ef in ef_rows]
+                for fp in session.execute(
+                    select(FunctionPrincipal).where(FunctionPrincipal.function_id.in_(ef_ids))
+                ).scalars():
+                    principals_by_fn.setdefault(fp.function_id, []).append(fp)
+
             ef_list = []
-            for ef in (
-                session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == contract_row.id))
-                .scalars()
-                .all()
-            ):
+            for ef in ef_rows:
                 direct_owner = None
                 controller_principals = []
-                for fp in (
-                    session.execute(select(FunctionPrincipal).where(FunctionPrincipal.function_id == ef.id))
-                    .scalars()
-                    .all()
-                ):
+                for fp in principals_by_fn.get(ef.id, []):
                     principal_dict = {
                         "address": fp.address,
                         "resolved_type": fp.resolved_type,
@@ -981,25 +1025,26 @@ def analysis_detail(run_name: str) -> dict:
                     select(Contract).where(Contract.job_id == impl_job.id).limit(1)
                 ).scalar_one_or_none()
                 if impl_c:
-                    # effective_permissions from impl
+                    # effective_permissions from impl (issue #4: batched).
                     if "effective_permissions" not in payload:
-                        impl_efs = (
-                            session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == impl_c.id))
-                            .scalars()
-                            .all()
+                        impl_efs = list(
+                            session.execute(
+                                select(EffectiveFunction).where(EffectiveFunction.contract_id == impl_c.id)
+                            ).scalars()
                         )
+                        impl_principals_by_fn: dict[int, list[FunctionPrincipal]] = {}
+                        if impl_efs:
+                            impl_ef_ids = [ef.id for ef in impl_efs]
+                            for fp in session.execute(
+                                select(FunctionPrincipal).where(FunctionPrincipal.function_id.in_(impl_ef_ids))
+                            ).scalars():
+                                impl_principals_by_fn.setdefault(fp.function_id, []).append(fp)
                         if impl_efs:
                             ef_list = []
                             for ef in impl_efs:
                                 direct_owner = None
                                 controller_principals = []
-                                for fp in (
-                                    session.execute(
-                                        select(FunctionPrincipal).where(FunctionPrincipal.function_id == ef.id)
-                                    )
-                                    .scalars()
-                                    .all()
-                                ):
+                                for fp in impl_principals_by_fn.get(ef.id, []):
                                     principal_dict = {
                                         "address": fp.address,
                                         "resolved_type": fp.resolved_type,
@@ -1181,6 +1226,125 @@ def company_overview(company_name: str) -> dict:
 
             company_jobs = [j for j in all_completed if j.address and belongs_to_company(j)]
 
+        # ──────────────────────────────────────────────────────────────────
+        # Batch prefetch (issues #1, #2, #3, #6).
+        #
+        # The per-job loop below used to issue 70+ queries per contract:
+        # one ``Contract.where(job_id=X)`` plus an impl ``Contract`` lookup
+        # plus per-contract reads of ControllerValue, EffectiveFunction,
+        # FunctionPrincipal, UpgradeEvent, ContractBalance,
+        # ControlGraphNode, ControlGraphEdge. With 50 contracts that's
+        # ~3500 round-trips. Pre-load each table once keyed by
+        # ``contract_id`` so the loop becomes pure Python dict lookups.
+        # ──────────────────────────────────────────────────────────────────
+        company_job_ids = [j.id for j in company_jobs]
+        contracts_by_job_id: dict[Any, Contract] = {}
+        if company_job_ids:
+            for c in session.execute(
+                select(Contract).where(Contract.job_id.in_(company_job_ids))
+            ).scalars():
+                contracts_by_job_id[c.job_id] = c
+
+        # Address-keyed fallback for jobs whose Contract row was reassigned
+        # by copy_static_cache. One query per (chain, address-set) bucket.
+        unresolved_addrs_by_chain: dict[str | None, set[str]] = {}
+        for j in company_jobs:
+            if contracts_by_job_id.get(j.id) is not None or not j.address:
+                continue
+            req = j.request if isinstance(j.request, dict) else {}
+            unresolved_addrs_by_chain.setdefault(req.get("chain"), set()).add(j.address.lower())
+        contracts_by_addr_chain: dict[tuple[str, str | None], Contract] = {}
+        for chain_key, addrs in unresolved_addrs_by_chain.items():
+            stmt = select(Contract).where(Contract.address.in_(list(addrs)))
+            if chain_key is not None:
+                stmt = stmt.where(Contract.chain == chain_key)
+            for c in session.execute(stmt).scalars():
+                contracts_by_addr_chain[(c.address.lower(), chain_key)] = c
+
+        def _resolve_contract(j: Job) -> Contract | None:
+            cr = contracts_by_job_id.get(j.id)
+            if cr is not None or not j.address:
+                return cr
+            req = j.request if isinstance(j.request, dict) else {}
+            return contracts_by_addr_chain.get((j.address.lower(), req.get("chain")))
+
+        # Resolve impl jobs in one query per protocol.
+        impl_addrs_needed: set[str] = set()
+        for j in company_jobs:
+            cr = _resolve_contract(j)
+            if cr and cr.is_proxy and cr.implementation:
+                impl_addrs_needed.add(cr.implementation.lower())
+        impl_job_by_addr: dict[str, Job] = {}
+        if impl_addrs_needed:
+            impl_jobs_q = session.execute(
+                select(Job).where(
+                    Job.address.in_(list(impl_addrs_needed)),
+                    Job.status == JobStatus.completed,
+                )
+            ).scalars()
+            for ij in impl_jobs_q:
+                key = (ij.address or "").lower()
+                if key and key not in impl_job_by_addr:
+                    impl_job_by_addr[key] = ij
+
+        impl_job_ids_needed = [ij.id for ij in impl_job_by_addr.values()]
+        if impl_job_ids_needed:
+            for c in session.execute(
+                select(Contract).where(Contract.job_id.in_(impl_job_ids_needed))
+            ).scalars():
+                contracts_by_job_id[c.job_id] = c
+
+        # Every contract_id we'll touch when populating per-row data.
+        relevant_contract_ids: set[int] = {
+            c.id for c in contracts_by_job_id.values() if c is not None
+        } | {c.id for c in contracts_by_addr_chain.values() if c is not None}
+
+        controller_values_by_cid: dict[int, list[ControllerValue]] = {}
+        ef_rows_by_cid: dict[int, list[EffectiveFunction]] = {}
+        upgrade_events_count_by_cid: dict[int, int] = {}
+        balances_by_cid: dict[int, list[Any]] = {}
+        cgn_by_cid: dict[int, list[ControlGraphNode]] = {}
+        cge_by_cid: dict[int, list[ControlGraphEdge]] = {}
+        from db.models import ContractBalance as _CB
+
+        if relevant_contract_ids:
+            id_list = list(relevant_contract_ids)
+            for cv in session.execute(
+                select(ControllerValue).where(ControllerValue.contract_id.in_(id_list))
+            ).scalars():
+                controller_values_by_cid.setdefault(cv.contract_id, []).append(cv)
+            for ef in session.execute(
+                select(EffectiveFunction).where(EffectiveFunction.contract_id.in_(id_list))
+            ).scalars():
+                ef_rows_by_cid.setdefault(ef.contract_id, []).append(ef)
+            for cid, count in session.execute(
+                select(UpgradeEvent.contract_id, func.count(UpgradeEvent.id))
+                .where(UpgradeEvent.contract_id.in_(id_list))
+                .group_by(UpgradeEvent.contract_id)
+            ).all():
+                upgrade_events_count_by_cid[cid] = count
+            for b in session.execute(
+                select(_CB).where(_CB.contract_id.in_(id_list))
+            ).scalars():
+                balances_by_cid.setdefault(b.contract_id, []).append(b)
+            for n in session.execute(
+                select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))
+            ).scalars():
+                cgn_by_cid.setdefault(n.contract_id, []).append(n)
+            for e in session.execute(
+                select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list))
+            ).scalars():
+                cge_by_cid.setdefault(e.contract_id, []).append(e)
+
+        # Batch FunctionPrincipal once, keyed by function_id.
+        all_ef_ids = [ef.id for efs in ef_rows_by_cid.values() for ef in efs]
+        principals_by_fn_id: dict[int, list[FunctionPrincipal]] = {}
+        if all_ef_ids:
+            for fp in session.execute(
+                select(FunctionPrincipal).where(FunctionPrincipal.function_id.in_(all_ef_ids))
+            ).scalars():
+                principals_by_fn_id.setdefault(fp.function_id, []).append(fp)
+
         # Build contract entries from relational tables
         contracts = []
         owner_groups: dict[str, list[dict]] = {}
@@ -1193,104 +1357,54 @@ def company_overview(company_name: str) -> dict:
 
             # Read from contracts table — fall back to address lookup when
             # copy_static_cache has reassigned the Contract row to a newer job.
-            contract_row = session.execute(
-                select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
-            if contract_row is None and job.address:
-                chain = request.get("chain")
-                addr_stmt = select(Contract).where(
-                    Contract.address == job.address.lower(),
-                )
-                if chain:
-                    addr_stmt = addr_stmt.where(Contract.chain == chain)
-                contract_row = session.execute(addr_stmt.limit(1)).scalar_one_or_none()
+            contract_row = _resolve_contract(job)
 
             is_proxy = contract_row.is_proxy if contract_row else False
             proxy_type = contract_row.proxy_type if contract_row else None
             impl_addr = contract_row.implementation if contract_row else None
 
-            # For proxies, find impl job
-            impl_job = None
-            impl_job_id = None
-            if impl_addr:
-                impl_job = session.execute(
-                    select(Job).where(Job.address == impl_addr, Job.status == JobStatus.completed).limit(1)
-                ).scalar_one_or_none()
-                if impl_job:
-                    impl_job_id = str(impl_job.id)
+            # For proxies, find impl job (prefetched).
+            impl_job = impl_job_by_addr.get(impl_addr.lower()) if impl_addr else None
+            impl_job_id = str(impl_job.id) if impl_job else None
+            impl_contract = contracts_by_job_id.get(impl_job.id) if impl_job else None
 
             # Read summary from contract_summaries table (prefer impl's summary for proxies)
-            summary_row = None
-            if impl_job:
-                impl_contract = session.execute(
-                    select(Contract).where(Contract.job_id == impl_job.id).limit(1)
-                ).scalar_one_or_none()
-                if impl_contract:
-                    summary_row = impl_contract.summary
+            summary_row = impl_contract.summary if impl_contract else None
             if not summary_row and contract_row:
                 summary_row = contract_row.summary
 
-            # Read controller values
+            # Read controller values — prefer impl's snapshot for proxies if it has any.
             lookup_contract = contract_row
-            if is_proxy and impl_job:
-                impl_c = session.execute(
-                    select(Contract).where(Contract.job_id == impl_job.id).limit(1)
-                ).scalar_one_or_none()
-                if (
-                    impl_c
-                    and session.execute(
-                        select(ControllerValue).where(ControllerValue.contract_id == impl_c.id).limit(1)
-                    ).scalar_one_or_none()
-                ):
-                    lookup_contract = impl_c
+            if is_proxy and impl_contract and controller_values_by_cid.get(impl_contract.id):
+                lookup_contract = impl_contract
 
             owner = None
             controllers = {}
             if lookup_contract:
-                for cv in (
-                    session.execute(select(ControllerValue).where(ControllerValue.contract_id == lookup_contract.id))
-                    .scalars()
-                    .all()
-                ):
+                for cv in controller_values_by_cid.get(lookup_contract.id, []):
                     controllers[cv.controller_id] = cv.value
                     if "owner" in cv.controller_id.lower() and cv.value and cv.value.startswith("0x"):
                         owner = cv.value.lower()
 
-            # Get upgrade count
-            upgrade_count = None
-            if contract_row:
-                ue_count = (
-                    session.execute(select(UpgradeEvent).where(UpgradeEvent.contract_id == contract_row.id))
-                    .scalars()
-                    .all()
-                )
-                if ue_count:
-                    upgrade_count = len(ue_count)
+            # Upgrade count from prefetched aggregate.
+            upgrade_count = (
+                upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None
+            ) or None
 
-            # Read effect labels from effective_functions table
-            ef_contract_id = None
-            if impl_job:
-                impl_c = session.execute(
-                    select(Contract).where(Contract.job_id == impl_job.id).limit(1)
-                ).scalar_one_or_none()
-                if impl_c:
-                    ef_contract_id = impl_c.id
-            if not ef_contract_id and contract_row:
-                ef_contract_id = contract_row.id
+            # Effect labels — prefer impl when available.
+            ef_contract_id = (impl_contract.id if impl_contract else None) or (
+                contract_row.id if contract_row else None
+            )
 
             value_effects: list[str] = []
             all_effects: set[str] = set()
-            if ef_contract_id:
-                for ef in (
-                    session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == ef_contract_id))
-                    .scalars()
-                    .all()
-                ):
-                    for label in ef.effect_labels or []:
-                        all_effects.add(label)
-                        if label in ("asset_pull", "asset_send", "mint", "burn"):
-                            if label not in value_effects:
-                                value_effects.append(label)
+            ef_rows_for_contract = ef_rows_by_cid.get(ef_contract_id, []) if ef_contract_id else []
+            for ef in ef_rows_for_contract:
+                for label in ef.effect_labels or []:
+                    all_effects.add(label)
+                    if label in ("asset_pull", "asset_send", "mint", "burn"):
+                        if label not in value_effects:
+                            value_effects.append(label)
 
             # Build capabilities
             capabilities: list[str] = []
@@ -1316,11 +1430,8 @@ def company_overview(company_name: str) -> dict:
             # For proxies, use the impl contract's name instead of the proxy name
             contract_name = None
             if is_proxy and impl_job:
-                impl_c = session.execute(
-                    select(Contract).where(Contract.job_id == impl_job.id).limit(1)
-                ).scalar_one_or_none()
-                if impl_c and impl_c.contract_name:
-                    contract_name = impl_c.contract_name
+                if impl_contract and impl_contract.contract_name:
+                    contract_name = impl_contract.contract_name
                 elif impl_job.name:
                     contract_name = impl_job.name
             if not contract_name:
@@ -1346,33 +1457,20 @@ def company_overview(company_name: str) -> dict:
             else:
                 role = "utility"
 
-            # Build functions list from effective_functions table
+            # Build functions list from prefetched effective_functions /
+            # function_principals (issue #3).
             functions_list = []
-            if ef_contract_id:
-                for ef in (
-                    session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == ef_contract_id))
-                    .scalars()
-                    .all()
-                ):
-                    function_principals = (
-                        session.execute(select(FunctionPrincipal).where(FunctionPrincipal.function_id == ef.id))
-                        .scalars()
-                        .all()
-                    )
-                    functions_list.append(_build_company_function_entry(ef, list(function_principals)))
+            for ef in ef_rows_for_contract:
+                functions_list.append(
+                    _build_company_function_entry(ef, principals_by_fn_id.get(ef.id, []))
+                )
 
-            # Fetch balances
-            from db.models import ContractBalance
-
+            # Balances from prefetched ContractBalance rows.
             balance_contract = lookup_contract or contract_row
             balances_list = []
             total_usd = 0.0
             if balance_contract:
-                for b in (
-                    session.execute(select(ContractBalance).where(ContractBalance.contract_id == balance_contract.id))
-                    .scalars()
-                    .all()
-                ):
+                for b in balances_by_cid.get(balance_contract.id, []):
                     usd = float(b.usd_value) if b.usd_value is not None else None
                     balances_list.append(
                         {
@@ -1415,14 +1513,11 @@ def company_overview(company_name: str) -> dict:
                 "total_usd": round(total_usd, 2) if total_usd > 0 else None,
             }
 
-            # Add control graph for principal resolution
+            # Control graph from prefetched CGN/CGE (issue #1).
             graph_contract = lookup_contract or contract_row
             if graph_contract:
-                from db.models import ControlGraphEdge as CGE2
-                from db.models import ControlGraphNode as CGN2
-
-                cg_nodes = session.execute(select(CGN2).where(CGN2.contract_id == graph_contract.id)).scalars().all()
-                cg_edges = session.execute(select(CGE2).where(CGE2.contract_id == graph_contract.id)).scalars().all()
+                cg_nodes = cgn_by_cid.get(graph_contract.id, [])
+                cg_edges = cge_by_cid.get(graph_contract.id, [])
                 entry["control_graph"] = {
                     "nodes": [
                         {
@@ -1510,6 +1605,21 @@ def company_overview(company_name: str) -> dict:
                 }
             )
 
+        # Resolve every entry's lookup contract once (issue #2). Used by all
+        # remaining passes that build fund_flows / principal_map.
+        def _lookup_contract_for(entry: dict[str, Any]) -> Contract | None:
+            lookup_job_id = entry.get("impl_job_id") or entry["job_id"]
+            try:
+                key_id = uuid.UUID(lookup_job_id) if isinstance(lookup_job_id, str) else lookup_job_id
+            except (TypeError, ValueError):
+                key_id = lookup_job_id
+            return contracts_by_job_id.get(key_id)
+
+        lookup_contract_by_entry: dict[str, Contract | None] = {}
+        for entry in contracts:
+            if entry.get("address"):
+                lookup_contract_by_entry[entry["address"].lower()] = _lookup_contract_for(entry)
+
         for c in contracts:
             if not c["address"]:
                 continue
@@ -1531,17 +1641,11 @@ def company_overview(company_name: str) -> dict:
                     if val_lower in contract_addrs and val_lower != (c.get("owner") or ""):
                         add_flow(val_lower, target, "controller")
 
-            # Resolved control graph: find company contracts that are principals of this one
-            lookup_job_id = c.get("impl_job_id") or c["job_id"]
-            lookup_c = session.execute(
-                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
-            ).scalar_one_or_none()
+            # Resolved control graph: find company contracts that are
+            # principals of this one (issue #1: prefetched CGN).
+            lookup_c = lookup_contract_by_entry.get(target)
             if lookup_c:
-                for cgn in (
-                    session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == lookup_c.id))
-                    .scalars()
-                    .all()
-                ):
+                for cgn in cgn_by_cid.get(lookup_c.id, []):
                     node_addr = (cgn.address or "").lower()
                     if node_addr and node_addr in contract_addrs and node_addr != target:
                         add_flow(node_addr, target, "principal")
@@ -1551,7 +1655,6 @@ def company_overview(company_name: str) -> dict:
         # Collect non-contract principals from control graph.
         # Only show direct controllers (Safes, timelocks, EOAs that control contracts).
         # Safe owners are nested inside their Safe, not shown as standalone nodes.
-        from db.models import ControlGraphEdge
 
         principal_map: dict[str, dict[str, Any]] = {}
         # First pass: find all safe_owner edges to build Safe→owners mapping
@@ -1561,22 +1664,12 @@ def company_overview(company_name: str) -> dict:
         for c in contracts:
             if not c["address"]:
                 continue
-            lookup_job_id = c.get("impl_job_id") or c["job_id"]
-            lookup_c = session.execute(
-                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
-            ).scalar_one_or_none()
+            lookup_c = lookup_contract_by_entry.get(c["address"].lower())
             if not lookup_c:
                 continue
-            for edge in (
-                session.execute(
-                    select(ControlGraphEdge).where(
-                        ControlGraphEdge.contract_id == lookup_c.id,
-                        ControlGraphEdge.relation == "safe_owner",
-                    )
-                )
-                .scalars()
-                .all()
-            ):
+            for edge in cge_by_cid.get(lookup_c.id, []):
+                if edge.relation != "safe_owner":
+                    continue
                 safe_addr = edge.from_node_id.replace("address:", "").lower()
                 owner_addr = edge.to_node_id.replace("address:", "").lower()
                 safe_owners_map.setdefault(safe_addr, [])
@@ -1589,18 +1682,11 @@ def company_overview(company_name: str) -> dict:
             if not c["address"]:
                 continue
             target = c["address"].lower()
-            lookup_job_id = c.get("impl_job_id") or c["job_id"]
-            lookup_c = session.execute(
-                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
-            ).scalar_one_or_none()
+            lookup_c = lookup_contract_by_entry.get(target)
             if not lookup_c:
                 continue
 
-            for cgn in (
-                session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == lookup_c.id))
-                .scalars()
-                .all()
-            ):
+            for cgn in cgn_by_cid.get(lookup_c.id, []):
                 node_addr = (cgn.address or "").lower()
                 if not node_addr or node_addr in contract_addrs:
                     continue
@@ -1624,16 +1710,9 @@ def company_overview(company_name: str) -> dict:
                     details: dict[str, Any] = {}
                     if isinstance(cgn.details, dict):
                         details.update(cgn.details)
-                    for cv in (
-                        session.execute(
-                            select(ControllerValue).where(
-                                ControllerValue.contract_id == lookup_c.id,
-                                ControllerValue.value == node_addr,
-                            )
-                        )
-                        .scalars()
-                        .all()
-                    ):
+                    for cv in controller_values_by_cid.get(lookup_c.id, []):
+                        if cv.value != node_addr:
+                            continue
                         if cv.details and isinstance(cv.details, dict):
                             # Don't let consumer-side details overwrite the
                             # safe's own threshold / owners — only fill in
@@ -1670,25 +1749,21 @@ def company_overview(company_name: str) -> dict:
         # Safe→Contract edge entirely. This pass backfills.
         # (FunctionPrincipal + EffectiveFunction are module-level imports.)
 
+        # Issue #3: walk prefetched ef_rows + principals_by_fn_id rather than
+        # one FunctionPrincipal-join query per contract.
         for c in contracts:
             if not c["address"]:
                 continue
             target = c["address"].lower()
-            lookup_job_id = c.get("impl_job_id") or c["job_id"]
-            lookup_c = session.execute(
-                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
-            ).scalar_one_or_none()
+            lookup_c = lookup_contract_by_entry.get(target)
             if not lookup_c:
                 continue
-            for fp in (
-                session.execute(
-                    select(FunctionPrincipal)
-                    .join(EffectiveFunction, FunctionPrincipal.function_id == EffectiveFunction.id)
-                    .where(EffectiveFunction.contract_id == lookup_c.id)
-                )
-                .scalars()
-                .all()
-            ):
+            fp_iter = (
+                fp
+                for ef in ef_rows_by_cid.get(lookup_c.id, [])
+                for fp in principals_by_fn_id.get(ef.id, [])
+            )
+            for fp in fp_iter:
                 pa = (fp.address or "").lower()
                 if not pa or pa == target:
                     continue
@@ -1730,12 +1805,16 @@ def company_overview(company_name: str) -> dict:
                 session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
             )
         else:
-            # Fallback: collect from company_jobs
-            all_contract_rows = []
-            for j in company_jobs:
-                cr = session.execute(select(Contract).where(Contract.job_id == j.id).limit(1)).scalar_one_or_none()
-                if cr:
-                    all_contract_rows.append(cr)
+            # Fallback: batch by job_id IN (issue #6 — was one SELECT per job).
+            fallback_job_ids = [j.id for j in company_jobs]
+            if fallback_job_ids:
+                all_contract_rows = list(
+                    session.execute(
+                        select(Contract).where(Contract.job_id.in_(fallback_job_ids))
+                    ).scalars()
+                )
+            else:
+                all_contract_rows = []
 
         # Prefetch impl-name lookup so proxy rows can expose the implementation
         # contract name alongside their own generic "UUPSProxy"/"ERC1967Proxy"

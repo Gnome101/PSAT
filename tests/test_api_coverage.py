@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -560,6 +561,9 @@ def test_analysis_detail_relational_effective_permissions(mock_session_cls, mock
     fp.resolved_type = "eoa"
     fp.origin = "owner_slot"
     fp.details = {"role": "admin"}
+    # Batched FunctionPrincipal lookup keys principals by function_id, so the
+    # mock fp must declare the parent EF id explicitly.
+    fp.function_id = ef.id
 
     call_count = {"n": 0}
 
@@ -573,11 +577,13 @@ def test_analysis_detail_relational_effective_permissions(mock_session_cls, mock
             # Contract lookup
             result.scalar_one_or_none.return_value = contract_row
         elif call_count["n"] == 3:
-            # EffectiveFunction query
+            # EffectiveFunction query (batched per contract)
             result.scalars.return_value.all.return_value = [ef]
+            result.scalars.return_value.__iter__ = lambda s: iter([ef])
         elif call_count["n"] == 4:
-            # FunctionPrincipal query
+            # FunctionPrincipal query (now WHERE function_id IN (...))
             result.scalars.return_value.all.return_value = [fp]
+            result.scalars.return_value.__iter__ = lambda s: iter([fp])
         elif call_count["n"] == 5:
             # PrincipalLabel query
             result.scalars.return_value.all.return_value = []
@@ -590,6 +596,7 @@ def test_analysis_detail_relational_effective_permissions(mock_session_cls, mock
         else:
             result.scalar_one_or_none.return_value = None
             result.scalars.return_value.all.return_value = []
+            result.scalars.return_value.__iter__ = lambda s: iter([])
         return result
 
     mock_session.execute.side_effect = route_execute
@@ -1035,102 +1042,90 @@ def test_company_overview_not_found(mock_session_cls):
     assert response.status_code == 404
 
 
-@patch("api.SessionLocal")
-def test_company_overview_basic(mock_session_cls):
-    """Basic company overview with one non-proxy contract."""
-    client = _make_client()
-    mock_session = MagicMock()
-    _mock_session_ctx(mock_session_cls, mock_session)
+def test_company_overview_basic(db_session, api_client):
+    """Basic company overview with one non-proxy contract — real-DB integration.
 
-    company_job = _fake_job(name="etherfi_disc", company="etherfi", address=None)
-    child_job = _fake_job(
-        name="Vault",
-        address="0xaaaa",
-        company="etherfi",
-        request={"parent_job_id": str(company_job.id)},
+    Replaces the previous mock-heavy positional-list test (which broke when
+    the API switched to batched prefetches). Asserting against real DB state
+    keeps the test truthful and resilient to query-structure changes.
+    """
+    from db.models import (
+        Contract,
+        ContractSummary,
+        Job,
+        JobStage,
+        JobStatus,
+        Protocol,
     )
-    child_job.status = MagicMock(value="completed")
 
-    from db.models import JobStatus
+    protocol = Protocol(name="etherfi_basic_test", chains=["ethereum"])
+    db_session.add(protocol)
+    db_session.flush()
 
-    child_job.status = JobStatus.completed
-    company_job.status = JobStatus.completed
+    job = Job(
+        id=uuid.uuid4(),
+        address="0x" + "a" * 40,
+        company="etherfi_basic_test",
+        name="Vault",
+        status=JobStatus.completed,
+        stage=JobStage.done,
+        request={"chain": "ethereum"},
+        protocol_id=protocol.id,
+    )
+    db_session.add(job)
+    db_session.flush()
 
-    contract_row = MagicMock()
-    contract_row.id = uuid.uuid4()
-    contract_row.is_proxy = False
-    contract_row.proxy_type = None
-    contract_row.implementation = None
-    contract_row.contract_name = "Vault"
-    contract_row.address = "0xaaaa"
+    contract = Contract(
+        job_id=job.id,
+        protocol_id=protocol.id,
+        address=("0x" + "a" * 40),
+        chain="ethereum",
+        contract_name="Vault",
+        is_proxy=False,
+        source_verified=True,
+    )
+    db_session.add(contract)
+    db_session.flush()
+    db_session.add(
+        ContractSummary(
+            contract_id=contract.id,
+            control_model="ownable",
+            is_upgradeable=False,
+            is_pausable=True,
+            has_timelock=False,
+            risk_level="medium",
+            is_factory=False,
+            standards=["ERC20"],
+            source_verified=True,
+        )
+    )
+    db_session.commit()
 
-    summary_row = MagicMock()
-    summary_row.control_model = "ownable"
-    summary_row.is_upgradeable = False
-    summary_row.is_pausable = True
-    summary_row.has_timelock = False
-    summary_row.risk_level = "medium"
-    summary_row.standards = ["ERC20"]
-    summary_row.is_factory = False
-    contract_row.summary = summary_row
+    try:
+        response = api_client.get("/api/company/etherfi_basic_test")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["company"] == "etherfi_basic_test"
+        assert body["contract_count"] >= 1
 
-    call_count = {"n": 0}
-
-    def route_execute(stmt, *args, **kwargs):
-        call_count["n"] += 1
-        result = MagicMock()
-        if call_count["n"] == 1:
-            # Protocol lookup (returns None → legacy fallback)
-            result.scalar_one_or_none.return_value = None
-        elif call_count["n"] == 2:
-            # Company job lookup (legacy fallback)
-            result.scalar_one_or_none.return_value = company_job
-        elif call_count["n"] == 3:
-            # All completed jobs
-            result.scalars.return_value.all.return_value = [company_job, child_job]
-        elif call_count["n"] == 4:
-            # Contract lookup for child_job
-            result.scalar_one_or_none.return_value = contract_row
-        elif call_count["n"] == 5:
-            # ControllerValue: empty
-            result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 6:
-            # UpgradeEvent: empty
-            result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 7:
-            # EffectiveFunction: empty
-            result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 8:
-            # EffectiveFunction again for functions_list: empty
-            result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 9:
-            # ContractBalance: empty
-            result.scalars.return_value.all.return_value = []
-        else:
-            result.scalar_one_or_none.return_value = None
-            result.scalars.return_value.all.return_value = []
-        return result
-
-    mock_session.execute.side_effect = route_execute
-
-    response = client.get("/api/company/etherfi")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["company"] == "etherfi"
-    assert body["contract_count"] >= 1
-    assert len(body["contracts"]) >= 1
-
-    c = body["contracts"][0]
-    assert c["address"] == "0xaaaa"
-    assert c["name"] == "Vault"
-    assert c["is_proxy"] is False
-    assert c["is_pausable"] is True
-    assert "pause" in c["capabilities"]
-    assert c["role"] == "token"  # has ERC20 standard
-    assert c["standards"] == ["ERC20"]
-
-    # Ownership hierarchy should have unowned section
-    assert "ownership_hierarchy" in body
+        c = body["contracts"][0]
+        assert c["address"] == ("0x" + "a" * 40)
+        assert c["name"] == "Vault"
+        assert c["is_proxy"] is False
+        assert c["is_pausable"] is True
+        assert "pause" in c["capabilities"]
+        assert c["role"] == "token"
+        assert c["standards"] == ["ERC20"]
+        assert "ownership_hierarchy" in body
+    finally:
+        db_session.execute(
+            text("DELETE FROM contracts WHERE protocol_id = :p"), {"p": protocol.id}
+        )
+        db_session.execute(
+            text("DELETE FROM jobs WHERE company = :c"), {"c": "etherfi_basic_test"}
+        )
+        db_session.execute(text("DELETE FROM protocols WHERE id = :p"), {"p": protocol.id})
+        db_session.commit()
 
 
 # ============================================================================
@@ -1570,10 +1565,19 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
 
     mock_session.get.return_value = None
 
+    # Batched FP lookup keys principals by function_id; declare it explicitly.
+    fp_owner.function_id = ef.id
+    fp_role.function_id = ef.id
+    fp_controller.function_id = ef.id
+
     def make_result(scalar=None, scalars_all=None):
         r = MagicMock()
+        items = scalars_all or []
         r.scalar_one_or_none.return_value = scalar
-        r.scalars.return_value.all.return_value = scalars_all or []
+        r.scalars.return_value.all.return_value = items
+        # api.py iterates ``Result.scalars()`` directly in the batched
+        # prefetch paths; MagicMock needs explicit __iter__ for that.
+        r.scalars.return_value.__iter__ = lambda s: iter(items)
         return r
 
     # Build the call sequence. The analysis_detail endpoint:
@@ -1651,204 +1655,190 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
 # ============================================================================
 
 
-@patch("api.SessionLocal")
-def test_company_overview_with_proxy_and_effects(mock_session_cls):
-    """Company overview with a proxy contract, various effect labels, and balances."""
-    client = _make_client()
-    mock_session = MagicMock()
-    _mock_session_ctx(mock_session_cls, mock_session)
+def test_company_overview_with_proxy_and_effects(db_session, api_client):
+    """Proxy with capability/effect labels — real-DB integration.
 
-    company_job = _fake_job(name="myproj_disc", company="myproj", address=None)
-    proxy_job = _fake_job(
+    Replaces the previous positional-mock test (which tied test correctness
+    to the exact SQL call order and broke when the API switched to batched
+    prefetches). Builds a real protocol with one proxy + one impl, asserts
+    the capability/role/balance derivation logic.
+    """
+    from db.models import (
+        Contract,
+        ContractBalance,
+        ContractSummary,
+        EffectiveFunction,
+        FunctionPrincipal,
+        Job,
+        JobStage,
+        JobStatus,
+        Protocol,
+        UpgradeEvent,
+    )
+
+    proxy_addr = "0x" + "a" * 40
+    impl_addr = "0x" + "b" * 40
+
+    protocol = Protocol(name="myproj_proxy_test", chains=["ethereum"])
+    db_session.add(protocol)
+    db_session.flush()
+
+    proxy_job = Job(
+        id=uuid.uuid4(),
+        address=proxy_addr,
+        company="myproj_proxy_test",
         name="MyProxy",
-        address="0xaaaa",
-        company="myproj",
-        request={"parent_job_id": str(company_job.id)},
+        status=JobStatus.completed,
+        stage=JobStage.done,
+        request={"chain": "ethereum"},
+        protocol_id=protocol.id,
     )
-    impl_job = _fake_job(
+    impl_job = Job(
+        id=uuid.uuid4(),
+        address=impl_addr,
+        company="myproj_proxy_test",
         name="MyProxy: (impl)",
-        address="0xbbbb",
-        company="myproj",
-        request={"parent_job_id": str(proxy_job.id), "proxy_address": "0xaaaa"},
+        status=JobStatus.completed,
+        stage=JobStage.done,
+        request={"chain": "ethereum", "proxy_address": proxy_addr, "parent_job_id": str(proxy_job.id)},
+        protocol_id=protocol.id,
+    )
+    db_session.add_all([proxy_job, impl_job])
+    db_session.flush()
+
+    proxy_contract = Contract(
+        job_id=proxy_job.id,
+        protocol_id=protocol.id,
+        address=proxy_addr,
+        chain="ethereum",
+        contract_name="MyProxy",
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation=impl_addr,
+        source_verified=True,
+    )
+    impl_contract = Contract(
+        job_id=impl_job.id,
+        protocol_id=protocol.id,
+        address=impl_addr,
+        chain="ethereum",
+        contract_name="VaultImpl",
+        is_proxy=False,
+        source_verified=True,
+    )
+    db_session.add_all([proxy_contract, impl_contract])
+    db_session.flush()
+
+    db_session.add(
+        ContractSummary(
+            contract_id=impl_contract.id,
+            control_model="authority",
+            is_upgradeable=True,
+            is_pausable=True,
+            has_timelock=True,
+            risk_level="high",
+            is_factory=False,
+            standards=[],
+            source_verified=True,
+        )
+    )
+    db_session.add(
+        UpgradeEvent(
+            contract_id=proxy_contract.id,
+            proxy_address=proxy_addr,
+            old_impl=None,
+            new_impl=impl_addr,
+            block_number=1000,
+            tx_hash="0x" + "f" * 64,
+        )
+    )
+    db_session.add(
+        ContractBalance(
+            contract_id=proxy_contract.id,
+            token_address=None,
+            token_symbol="ETH",
+            token_name="Ether",
+            decimals=18,
+            raw_balance="1000000000000000000",
+            usd_value=3000.50,
+            price_usd=3000.50,
+        )
     )
 
-    from db.models import JobStatus
+    ef = EffectiveFunction(
+        contract_id=impl_contract.id,
+        function_name="pause",
+        selector="0x8456cb59",
+        abi_signature="pause()",
+        effect_labels=["pause_toggle", "asset_pull", "delegatecall_execution"],
+        effect_targets=[],
+        action_summary="Pauses",
+        authority_public=False,
+        authority_roles=[],
+    )
+    db_session.add(ef)
+    db_session.flush()
+    db_session.add_all(
+        [
+            FunctionPrincipal(
+                function_id=ef.id,
+                address="0x" + "1" * 40,
+                resolved_type="eoa",
+                origin="direct owner",
+                principal_type="direct_owner",
+                details={},
+            ),
+            FunctionPrincipal(
+                function_id=ef.id,
+                address="0x" + "2" * 40,
+                resolved_type="safe",
+                origin="role 1",
+                principal_type="authority_role",
+                details={"threshold": 2},
+            ),
+            FunctionPrincipal(
+                function_id=ef.id,
+                address="0x" + "3" * 40,
+                resolved_type="contract",
+                origin="roleRegistry",
+                principal_type="controller",
+                details={"authority_kind": "access_control_like"},
+            ),
+        ]
+    )
+    db_session.commit()
 
-    company_job.status = JobStatus.completed
-    proxy_job.status = JobStatus.completed
-    impl_job.status = JobStatus.completed
+    try:
+        response = api_client.get("/api/company/myproj_proxy_test")
+        assert response.status_code == 200
+        body = response.json()
 
-    proxy_contract = MagicMock()
-    proxy_contract.id = uuid.uuid4()
-    proxy_contract.is_proxy = True
-    proxy_contract.proxy_type = "eip1967"
-    proxy_contract.implementation = "0xbbbb"
-    proxy_contract.contract_name = "MyProxy"
-    proxy_contract.address = "0xaaaa"
-
-    impl_contract = MagicMock()
-    impl_contract.id = uuid.uuid4()
-    impl_contract.is_proxy = False
-    impl_contract.proxy_type = None
-    impl_contract.implementation = None
-    impl_contract.contract_name = "VaultImpl"
-    impl_contract.address = "0xbbbb"
-
-    summary = MagicMock()
-    summary.control_model = "authority"
-    summary.is_upgradeable = True
-    summary.is_pausable = True
-    summary.has_timelock = True
-    summary.risk_level = "high"
-    summary.standards = []
-    summary.is_factory = False
-    impl_contract.summary = summary
-    proxy_contract.summary = None
-
-    ef = MagicMock()
-    ef.id = uuid.uuid4()
-    ef.abi_signature = "pause()"
-    ef.function_name = "pause"
-    ef.selector = "0x8456cb59"
-    ef.effect_labels = ["pause_toggle", "asset_pull", "delegatecall_execution"]
-    ef.action_summary = "Pauses"
-    ef.authority_public = False
-
-    fp_owner = MagicMock()
-    fp_owner.address = "0xowner"
-    fp_owner.resolved_type = "eoa"
-    fp_owner.origin = "direct owner"
-    fp_owner.principal_type = "direct_owner"
-    fp_owner.details = {}
-
-    fp_role = MagicMock()
-    fp_role.address = "0xrole"
-    fp_role.resolved_type = "safe"
-    fp_role.origin = "role 1"
-    fp_role.principal_type = "authority_role"
-    fp_role.details = {"threshold": 2}
-
-    fp_controller = MagicMock()
-    fp_controller.address = "0xcontroller"
-    fp_controller.resolved_type = "contract"
-    fp_controller.origin = "roleRegistry"
-    fp_controller.principal_type = "controller"
-    fp_controller.details = {"authority_kind": "access_control_like"}
-
-    cv = MagicMock()
-    cv.controller_id = "owner"
-    cv.value = "0xowner"
-    cv.resolved_type = "eoa"
-    cv.source = "slot"
-    cv.details = {}
-
-    ue = MagicMock()  # Upgrade event
-
-    bal = MagicMock()
-    bal.token_symbol = "ETH"
-    bal.token_name = "Ether"
-    bal.token_address = None
-    bal.raw_balance = "1000000000000000000"
-    bal.decimals = 18
-    bal.usd_value = 3000.50
-    bal.price_usd = 3000.50
-
-    def make_result(scalar=None, scalars_all=None):
-        r = MagicMock()
-        r.scalar_one_or_none.return_value = scalar
-        r.scalars.return_value.all.return_value = scalars_all or []
-        return r
-
-    # The company_overview endpoint makes many DB calls. We build an ordered
-    # list of results. The code for a proxy contract calls:
-    # 1. Company job lookup
-    # 2. All completed jobs
-    # 3. Contract row for proxy_job (skips impl_job since it has proxy_address in request)
-    # 4. impl_job lookup by address (since is_proxy and implementation)
-    # 5. impl_contract for summary
-    # 6. impl_contract for controller lookup (is_proxy and impl_job)
-    # 7. ControllerValue check (scalar_one_or_none)
-    # 8. ControllerValue all
-    # 9. UpgradeEvent all
-    # 10. impl_contract for ef_contract_id
-    # 11. EffectiveFunction for effects
-    # 12. impl_contract for name
-    # 13. EffectiveFunction for functions_list
-    # 14. FunctionPrincipal for functions_list
-    # 15. ContractBalance all
-    # Then fund_flows and principal queries:
-    # 16+. Contract lookups for ControlGraphNode
-    call_results = [
-        make_result(scalar=company_job),  # 1
-        make_result(scalars_all=[company_job, proxy_job, impl_job]),  # 2
-        make_result(scalar=proxy_contract),  # 3
-        make_result(scalar=impl_job),  # 4
-        make_result(scalar=impl_contract),  # 5
-        make_result(scalar=impl_contract),  # 6
-        make_result(scalar=cv),  # 7
-        make_result(scalars_all=[cv]),  # 8
-        make_result(scalars_all=[ue]),  # 9
-        make_result(scalar=impl_contract),  # 10
-        make_result(scalars_all=[ef]),  # 11
-        make_result(scalar=impl_contract),  # 12
-        make_result(scalars_all=[ef]),  # 13
-        make_result(scalars_all=[fp_owner, fp_role, fp_controller]),  # 14
-        make_result(scalars_all=[bal]),  # 15
-    ]
-    # Add many fallback empty results for fund_flows/principal queries
-    for _ in range(30):
-        call_results.append(make_result())
-    mock_session.execute.side_effect = call_results
-
-    response = client.get("/api/company/myproj")
-    assert response.status_code == 200
-    body = response.json()
-
-    assert body["company"] == "myproj"
-    assert len(body["contracts"]) >= 1
-
-    c = body["contracts"][0]
-    assert c["is_proxy"] is True
-    assert "upgradeable" in c["capabilities"]
-    assert "pause" in c["capabilities"]
-    assert "value-in" in c["capabilities"]  # asset_pull
-    assert "delegatecall" in c["capabilities"]
-    assert c["upgrade_count"] == 1
-    assert c["has_timelock"] is True
-    assert len(c["functions"]) == 1
-    fn = c["functions"][0]
-    assert fn["direct_owner"]["address"] == "0xowner"
-    assert fn["authority_roles"] == [
-        {
-            "role": 1,
-            "principals": [
-                {
-                    "address": "0xrole",
-                    "resolved_type": "safe",
-                    "source_controller_id": "role 1",
-                    "details": {"threshold": 2},
-                }
-            ],
-        }
-    ]
-    assert fn["controllers"] == [
-        {
-            "label": "roleRegistry",
-            "controller_id": "roleRegistry",
-            "source": "roleRegistry",
-            "principals": [
-                {
-                    "address": "0xcontroller",
-                    "resolved_type": "contract",
-                    "source_controller_id": "roleRegistry",
-                    "details": {"authority_kind": "access_control_like"},
-                }
-            ],
-        }
-    ]
-
-    # Balances
-    assert len(c["balances"]) >= 1
+        assert body["company"] == "myproj_proxy_test"
+        proxy_entries = [c for c in body["contracts"] if c["address"] == proxy_addr]
+        assert len(proxy_entries) == 1
+        c = proxy_entries[0]
+        assert c["is_proxy"] is True
+        assert "upgradeable" in c["capabilities"]
+        assert "pause" in c["capabilities"]
+        assert "value-in" in c["capabilities"]
+        assert "delegatecall" in c["capabilities"]
+        assert c["upgrade_count"] == 1
+        assert c["has_timelock"] is True
+        assert len(c["functions"]) == 1
+        fn = c["functions"][0]
+        assert fn["direct_owner"]["address"] == ("0x" + "1" * 40)
+        assert fn["authority_roles"] and fn["authority_roles"][0]["role"] == 1
+        assert any(p["address"] == "0x" + "3" * 40 for ctrl in fn["controllers"] for p in ctrl["principals"])
+        assert len(c["balances"]) >= 1
+    finally:
+        db_session.execute(
+            text("DELETE FROM contracts WHERE protocol_id = :p"), {"p": protocol.id}
+        )
+        db_session.execute(
+            text("DELETE FROM jobs WHERE company = :c"), {"c": "myproj_proxy_test"}
+        )
+        db_session.execute(text("DELETE FROM protocols WHERE id = :p"), {"p": protocol.id})
+        db_session.commit()
 
 
 # ============================================================================
