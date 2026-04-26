@@ -122,6 +122,62 @@ def poll_until_done(
     raise TimeoutError(f"job {job_id} did not finish within {timeout_s}s")
 
 
+def follow_all_to_terminal(
+    base_url: str,
+    admin_key: str,
+    *,
+    poll_interval: float,
+    timeout_s: float,
+    started_monotonic: float,
+) -> list[dict]:
+    """Poll /api/jobs until every job in the DB is in a terminal state.
+
+    Use after a `force=true` submit + an empty DB: any job present here is part
+    of the cascade we triggered. Returns the final job records (sorted by
+    created_at). The wall clock starts from `started_monotonic` (typically the
+    moment we submitted the parent) so the caller can compute total cascade
+    time including any new jobs spawned mid-flight.
+    """
+    deadline = time.monotonic() + timeout_s
+    seen: dict[str, dict] = {}
+    last_print = -1.0
+    url = f"{base_url.rstrip('/')}/api/jobs?limit=200"
+    while time.monotonic() < deadline:
+        try:
+            data = http_get(url, admin_key)
+        except urllib.error.URLError as e:
+            print(f"[bench] cascade poll error (transient): {e}", file=sys.stderr)
+            time.sleep(poll_interval)
+            continue
+        items = data if isinstance(data, list) else data.get("items", data.get("jobs", []))
+        terminal_states = {"completed", "failed", "cancelled"}
+        active_jobs: list[dict] = []
+        for j in items:
+            jid = j.get("job_id")
+            if jid:
+                seen[jid] = j
+            if j.get("status") not in terminal_states:
+                active_jobs.append(j)
+
+        offset = round(time.monotonic() - started_monotonic, 1)
+        # Print state at most every 10s so the log stays readable on long cascades.
+        if offset - last_print >= 10:
+            terminal = len(seen) - len(active_jobs)
+            print(
+                f"[bench cascade] +{offset:>6.1f}s  jobs: {len(seen)} total, {terminal} done, {len(active_jobs)} active"
+            )
+            for j in active_jobs[:8]:
+                print(f"               · {j.get('stage'):<10} {j.get('status'):<10} {j.get('name', '')[:60]}")
+            last_print = offset
+
+        # Need at least one job ever seen, AND none currently active.
+        if seen and not active_jobs:
+            print(f"[bench cascade] all {len(seen)} jobs reached terminal at +{offset:.1f}s")
+            return sorted(seen.values(), key=lambda j: j.get("created_at", ""))
+        time.sleep(poll_interval)
+    raise TimeoutError(f"cascade did not finish within {timeout_s}s ({len(seen)} jobs seen)")
+
+
 def stage_elapsed_from_transitions(transitions: list[dict], total_seconds: float) -> dict[str, float]:
     """Approximate per-stage elapsed by diffing consecutive transition offsets.
 
@@ -240,6 +296,15 @@ def main() -> int:
         action="store_true",
         help="Force a cold-path run by skipping discovery's static-cache shortcut.",
     )
+    parser.add_argument(
+        "--follow-all-jobs",
+        action="store_true",
+        help=(
+            "After parent reaches terminal, wait until every job in /api/jobs "
+            "is also terminal. Use for proxies that cascade into impl + sibling "
+            "analyses (e.g. etherfi LP). Assumes empty bench DB at start."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.admin_key:
@@ -253,6 +318,7 @@ def main() -> int:
         log_tail.start()
 
     print(f"[bench] submitting {args.address} → {args.url}{' (force=True)' if args.force else ''}")
+    submit_started = time.monotonic()
     submit_resp = submit(args.url, args.address, args.admin_key, force=args.force)
     job_id = submit_resp["job_id"]
     print(f"[bench] job_id={job_id}")
@@ -269,11 +335,39 @@ def main() -> int:
     polled = stage_elapsed_from_transitions(transitions, total)
     worker_elapsed: dict[str, float] = {}
     raw_lines: list[str] = []
+
+    cascade_jobs: list[dict] = []
+    cascade_total_s: float | None = None
+    if args.follow_all_jobs:
+        cascade_jobs = follow_all_to_terminal(
+            args.url,
+            args.admin_key,
+            poll_interval=max(args.poll_interval * 4, 5.0),  # cascades are long; poll less frequently
+            timeout_s=args.timeout * 4,  # cascade can be 4-10x parent
+            started_monotonic=submit_started,
+        )
+        cascade_total_s = round(time.monotonic() - submit_started, 2)
+
     if log_tail is not None:
         log_text = log_tail.stop_and_read()
         worker_elapsed, raw_lines = stage_elapsed_from_log_text(log_text, job_id)
 
     summary = build_summary(args, submit_resp, final_job, transitions, polled, worker_elapsed, raw_lines)
+    if args.follow_all_jobs:
+        summary["cascade_total_seconds"] = cascade_total_s
+        summary["cascade_job_count"] = len(cascade_jobs)
+        summary["cascade_jobs"] = [
+            {
+                "job_id": j.get("job_id"),
+                "name": j.get("name"),
+                "address": j.get("address"),
+                "status": j.get("status"),
+                "stage": j.get("stage"),
+                "created_at": j.get("created_at"),
+                "updated_at": j.get("updated_at"),
+            }
+            for j in cascade_jobs
+        ]
 
     if args.out:
         out_path = Path(args.out)
@@ -286,7 +380,10 @@ def main() -> int:
     out_path.write_text(json.dumps(summary, indent=2))
 
     print()
-    print(f"[bench] final_status={summary['final_status']} total={summary['total_seconds']}s")
+    if cascade_total_s is not None:
+        cascade_failed = sum(1 for j in cascade_jobs if j.get("status") == "failed")
+        print(f"[bench] cascade total={cascade_total_s}s ({len(cascade_jobs)} jobs, {cascade_failed} failed)")
+    print(f"[bench] parent final_status={summary['final_status']} total={summary['total_seconds']}s")
     print(f"[bench] {'stage':<12} {'polled':>8s}  {'worker':>8s}")
     all_stages = list(polled.keys())
     for s in worker_elapsed:

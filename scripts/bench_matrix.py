@@ -131,6 +131,7 @@ def run_one_bench(
     out_path: Path,
     poll_interval: float,
     force: bool = False,
+    follow_all_jobs: bool = False,
 ) -> dict:
     """Invoke bench_workers.py as a subprocess. Returns its parsed JSON output."""
     here = Path(__file__).parent
@@ -154,6 +155,8 @@ def run_one_bench(
         cmd.extend(["--fly-app", fly_app])
     if force:
         cmd.append("--force")
+    if follow_all_jobs:
+        cmd.append("--follow-all-jobs")
     # Stream child output directly so the user sees progress.
     proc = subprocess.run(cmd, text=True, timeout=2400)
     if proc.returncode != 0:
@@ -162,10 +165,18 @@ def run_one_bench(
 
 
 def render_table(results: list[dict]) -> str:
-    """Markdown table for the comparison summary."""
+    """Markdown table for the comparison summary.
+
+    If any result has cascade_total_seconds, the table grows a `cascade` column
+    that shows the wall-clock to reach all-jobs-terminal (etherfi-LP-style runs).
+    """
+    has_cascade = any(r.get("bench", {}).get("cascade_total_seconds") is not None for r in results)
+    header = ["label", "vm", "mem", "count", "parent total", "discovery", "static", "resolution", "policy", "coverage"]
+    if has_cascade:
+        header.extend(["cascade total", "cascade jobs"])
     lines = [
-        "| label | vm | mem | count | total (polled) | discovery | static | resolution | policy | coverage |",
-        "|---|---|---|---|---|---|---|---|---|---|",
+        "| " + " | ".join(header) + " |",
+        "|" + "|".join(["---"] * len(header)) + "|",
     ]
     for r in results:
         cfg = r.get("config", {})
@@ -182,18 +193,24 @@ def render_table(results: list[dict]) -> str:
                 return f"{p:.1f}s ({w:.1f}w)"
             return f"{p or w:.1f}s"
 
-        lines.append(
-            f"| {r['label']} "
-            f"| {cfg.get('vm_size', '—')} "
-            f"| {cfg.get('memory_mb', '—')} "
-            f"| {cfg.get('count', '—')} "
-            f"| {bench.get('total_seconds', '—')}s "
-            f"| {fmt('discovery')} "
-            f"| {fmt('static')} "
-            f"| {fmt('resolution')} "
-            f"| {fmt('policy')} "
-            f"| {fmt('coverage')} |"
-        )
+        row = [
+            r["label"],
+            str(cfg.get("vm_size", "—")),
+            str(cfg.get("memory_mb", "—")),
+            str(cfg.get("count", "—")),
+            f"{bench.get('total_seconds', '—')}s",
+            fmt("discovery"),
+            fmt("static"),
+            fmt("resolution"),
+            fmt("policy"),
+            fmt("coverage"),
+        ]
+        if has_cascade:
+            cascade = bench.get("cascade_total_seconds")
+            cascade_n = bench.get("cascade_job_count")
+            row.append(f"{cascade}s" if cascade is not None else "—")
+            row.append(str(cascade_n) if cascade_n is not None else "—")
+        lines.append("| " + " | ".join(row) + " |")
     return "\n".join(lines)
 
 
@@ -275,6 +292,7 @@ def main() -> int:
                     out_path=out_path,
                     poll_interval=float(cfg.get("poll_interval", 0.5)),
                     force=force_per_run,
+                    follow_all_jobs=bool(cfg.get("follow_all_jobs", False)),
                 )
             except Exception as e:
                 print(f"[matrix] run failed: {e}", file=sys.stderr)
