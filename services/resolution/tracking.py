@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import copy
+import os
 import threading
-from types import MappingProxyType
+import time
 from typing import Any
 
 from eth_abi.abi import decode
@@ -28,20 +30,27 @@ from .controller_adapters import expand_role_identifier_principals, type_authori
 _PROBE_ERROR = object()
 
 # Process-wide cache for classify_resolved_address. Manual rather than
-# functools.lru_cache so we can skip caching when any underlying RPC probe
-# errored (lru_cache caches every return; we need conditional insert).
-# Keyed on (rpc_url, address.lower(), block_tag).
-_CLASSIFY_CACHE: dict[tuple[str, str, str], tuple[str, MappingProxyType]] = {}
+# functools.lru_cache so we can:
+#   - skip caching when any underlying probe errored (lru_cache caches every return)
+#   - apply a TTL for `latest`-block entries (otherwise a long-lived worker
+#     could serve stale owner/threshold/delay readings indefinitely)
+# Keyed on (rpc_url, address.lower(), block_tag). Value is
+# (kind, deep-copied details, monotonic insertion time).
+_CLASSIFY_CACHE: dict[tuple[str, str, str], tuple[str, dict[str, object], float]] = {}
 _CLASSIFY_CACHE_LOCK = threading.Lock()
 _CLASSIFY_CACHE_MAX = 4096
+# Default TTL: 30 minutes. Longer than a single etherfi-scale cascade
+# (~12 min) so sibling jobs share classifications, shorter than a worker
+# process lifetime so we eventually re-probe upgraded contracts.
+_CLASSIFY_CACHE_TTL_S = float(os.getenv("PSAT_CLASSIFY_CACHE_TTL_S", "1800"))
 
 
 def clear_classify_cache() -> None:
     """Clear the process-wide classify_resolved_address cache.
 
-    Use in tests or whenever the worker needs a fresh probe (e.g. after a
-    long pause where ``latest`` block state may have drifted enough to
-    matter for owner / threshold / delay readings).
+    Use in tests, or call between top-level jobs to bound staleness for
+    ``latest``-block entries (the worker base loop can call this on each
+    new claim if max-correctness is needed).
     """
     with _CLASSIFY_CACHE_LOCK:
         _CLASSIFY_CACHE.clear()
@@ -126,9 +135,16 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
 
     Process-wide cache: classifications rarely change for a given address,
     so caching across jobs in the same worker is safe and avoids 6-10 RPCs
-    per repeat lookup. The cache returns an immutable view of details
-    (MappingProxyType) so callers cannot accidentally poison subsequent
-    cache hits — they must copy if they need a mutable dict.
+    per repeat lookup. Two safety mechanisms keep the cache honest:
+
+    1. Entries for ``latest``-block reads expire after
+       ``PSAT_CLASSIFY_CACHE_TTL_S`` seconds (default 30 min). Long enough
+       to amortise across a cascade, short enough that an upgraded Safe /
+       timelock owner won't be served stale forever.
+    2. Cache stores a deep copy of details and returns a deep copy on
+       hit. ``MappingProxyType`` was insufficient because nested lists
+       (e.g. Safe ``owners``) remained mutable; ``copy.deepcopy`` ensures
+       caller mutations cannot poison the cache.
 
     If any underlying probe RPC errored (transient failure, throttle), the
     classification is computed but NOT cached — otherwise a transient blip
@@ -136,25 +152,29 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
     """
     normalized = _normalize_hex(address)
     cache_key = (rpc_url, normalized, block_tag)
+    now = time.monotonic()
 
     with _CLASSIFY_CACHE_LOCK:
         cached = _CLASSIFY_CACHE.get(cache_key)
-    if cached is not None:
-        # Return a fresh dict view — callers may mutate it without
-        # touching the cached MappingProxyType.
-        kind, frozen_details = cached
-        return kind, dict(frozen_details)
+        if cached is not None:
+            kind, cached_details, inserted_at = cached
+            if now - inserted_at < _CLASSIFY_CACHE_TTL_S:
+                return kind, copy.deepcopy(cached_details)
+            # Expired — drop and fall through to recompute.
+            del _CLASSIFY_CACHE[cache_key]
 
     kind, details, had_error = _classify_uncached(rpc_url, normalized, block_tag)
 
     if not had_error:
         with _CLASSIFY_CACHE_LOCK:
-            # Crude eviction: drop the oldest half if we hit capacity. A real
-            # LRU isn't worth the complexity for a worker process lifetime.
+            # FIFO eviction (insertion order): drop the oldest half when full.
+            # Hits don't refresh order, so this isn't true LRU, but for our
+            # workload (one cascade fills the cache, all entries roughly the
+            # same age) FIFO and LRU behave identically.
             if len(_CLASSIFY_CACHE) >= _CLASSIFY_CACHE_MAX:
                 for old_key in list(_CLASSIFY_CACHE.keys())[: _CLASSIFY_CACHE_MAX // 2]:
                     del _CLASSIFY_CACHE[old_key]
-            _CLASSIFY_CACHE[cache_key] = (kind, MappingProxyType(dict(details)))
+            _CLASSIFY_CACHE[cache_key] = (kind, copy.deepcopy(details), now)
 
     return kind, details
 
