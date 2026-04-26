@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import functools
+import threading
+from types import MappingProxyType
 from typing import Any
 
 from eth_abi.abi import decode
@@ -20,6 +21,30 @@ from utils.rpc import (
 )
 
 from .controller_adapters import expand_role_identifier_principals, type_authority_contract
+
+# Sentinel: distinguishes "RPC succeeded, function not present" (None) from
+# "RPC raised an exception" (transient failure, throttling, network blip).
+# Caching the latter would cement a misclassification process-wide.
+_PROBE_ERROR = object()
+
+# Process-wide cache for classify_resolved_address. Manual rather than
+# functools.lru_cache so we can skip caching when any underlying RPC probe
+# errored (lru_cache caches every return; we need conditional insert).
+# Keyed on (rpc_url, address.lower(), block_tag).
+_CLASSIFY_CACHE: dict[tuple[str, str, str], tuple[str, MappingProxyType]] = {}
+_CLASSIFY_CACHE_LOCK = threading.Lock()
+_CLASSIFY_CACHE_MAX = 4096
+
+
+def clear_classify_cache() -> None:
+    """Clear the process-wide classify_resolved_address cache.
+
+    Use in tests or whenever the worker needs a fresh probe (e.g. after a
+    long pause where ``latest`` block state may have drifted enough to
+    matter for owner / threshold / delay readings).
+    """
+    with _CLASSIFY_CACHE_LOCK:
+        _CLASSIFY_CACHE.clear()
 
 
 def _decode_controller_value(raw_value: Any, controller_kind: str) -> str:
@@ -65,13 +90,20 @@ def _decode_topic_value(raw_value: str, abi_type: str):
 def _try_eth_call_decoded(
     rpc_url: str, contract_address: str, signature: str, abi_type: str, block_tag: str = "latest"
 ) -> object | None:
+    """Returns decoded value, None (function legitimately absent), or the
+    `_PROBE_ERROR` sentinel (transient RPC issue — caller should not cache)."""
     try:
         raw = _eth_call_raw(rpc_url, contract_address, signature, block_tag)
         if _normalize_hex(raw) in {"0x", "0x0"}:
             return None
-        return _decode_abi_value(raw, abi_type)
+        try:
+            return _decode_abi_value(raw, abi_type)
+        except Exception:
+            # RPC returned data but it didn't decode as the expected type —
+            # treat as "function not present" (e.g. revert with reason data).
+            return None
     except Exception:
-        return None
+        return _PROBE_ERROR
 
 
 def _get_code(rpc_url: str, address: str, block_tag: str = "latest") -> str:
@@ -89,58 +121,113 @@ def _coerce_int(value: object) -> int:
     raise RuntimeError(f"Unsupported integer value: {value!r}")
 
 
-@functools.lru_cache(maxsize=4096)
 def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "latest") -> tuple[str, dict[str, object]]:
     """Probe an address to learn what it is (EOA/Safe/timelock/proxy_admin/contract).
 
-    Process-wide LRU cache: classifications rarely change for a given address,
+    Process-wide cache: classifications rarely change for a given address,
     so caching across jobs in the same worker is safe and avoids 6-10 RPCs
-    per repeat lookup. Capacity sized for cascade workloads (~hundreds of
-    addresses across 20+ sibling jobs).
+    per repeat lookup. The cache returns an immutable view of details
+    (MappingProxyType) so callers cannot accidentally poison subsequent
+    cache hits — they must copy if they need a mutable dict.
+
+    If any underlying probe RPC errored (transient failure, throttle), the
+    classification is computed but NOT cached — otherwise a transient blip
+    could cement a wrong "contract" fallback for the worker's lifetime.
     """
     normalized = _normalize_hex(address)
+    cache_key = (rpc_url, normalized, block_tag)
+
+    with _CLASSIFY_CACHE_LOCK:
+        cached = _CLASSIFY_CACHE.get(cache_key)
+    if cached is not None:
+        # Return a fresh dict view — callers may mutate it without
+        # touching the cached MappingProxyType.
+        kind, frozen_details = cached
+        return kind, dict(frozen_details)
+
+    kind, details, had_error = _classify_uncached(rpc_url, normalized, block_tag)
+
+    if not had_error:
+        with _CLASSIFY_CACHE_LOCK:
+            # Crude eviction: drop the oldest half if we hit capacity. A real
+            # LRU isn't worth the complexity for a worker process lifetime.
+            if len(_CLASSIFY_CACHE) >= _CLASSIFY_CACHE_MAX:
+                for old_key in list(_CLASSIFY_CACHE.keys())[: _CLASSIFY_CACHE_MAX // 2]:
+                    del _CLASSIFY_CACHE[old_key]
+            _CLASSIFY_CACHE[cache_key] = (kind, MappingProxyType(dict(details)))
+
+    return kind, details
+
+
+def _classify_uncached(rpc_url: str, normalized: str, block_tag: str) -> tuple[str, dict[str, object], bool]:
+    """The actual classifier. Returns (kind, details, had_rpc_error).
+
+    `had_rpc_error` is True if any underlying probe returned the
+    `_PROBE_ERROR` sentinel — caller should skip caching to avoid cementing
+    a transient-failure-driven misclassification.
+    """
     if normalized == "0x0000000000000000000000000000000000000000":
-        return "zero", {"address": normalized}
+        return "zero", {"address": normalized}, False
 
-    code = _get_code(rpc_url, normalized, block_tag)
+    try:
+        code = _get_code(rpc_url, normalized, block_tag)
+    except Exception:
+        # Even the basic getCode failed — return generic contract but flag
+        # the error so the caller doesn't cache.
+        return "contract", {"address": normalized}, True
     if code in {"0x", "0x0"}:
-        return "eoa", {"address": normalized}
+        return "eoa", {"address": normalized}, False
 
-    safe_owners = _try_eth_call_decoded(rpc_url, normalized, "getOwners()", "address[]", block_tag)
-    safe_threshold = _try_eth_call_decoded(rpc_url, normalized, "getThreshold()", "uint256", block_tag)
+    had_error = False
+
+    def _probe(signature: str, abi_type: str) -> object | None:
+        nonlocal had_error
+        result = _try_eth_call_decoded(rpc_url, normalized, signature, abi_type, block_tag)
+        if result is _PROBE_ERROR:
+            had_error = True
+            return None
+        return result
+
+    safe_owners = _probe("getOwners()", "address[]")
+    safe_threshold = _probe("getThreshold()", "uint256")
     if safe_owners is not None and safe_threshold is not None:
-        return "safe", {
-            "address": normalized,
-            "owners": [str(item).lower() for item in safe_owners] if isinstance(safe_owners, list) else [],
-            "threshold": _coerce_int(safe_threshold),
-        }
+        return (
+            "safe",
+            {
+                "address": normalized,
+                "owners": [str(item).lower() for item in safe_owners] if isinstance(safe_owners, list) else [],
+                "threshold": _coerce_int(safe_threshold),
+            },
+            had_error,
+        )
 
-    min_delay = _try_eth_call_decoded(rpc_url, normalized, "getMinDelay()", "uint256", block_tag)
+    min_delay = _probe("getMinDelay()", "uint256")
     if min_delay is None:
-        min_delay = _try_eth_call_decoded(rpc_url, normalized, "delay()", "uint256", block_tag)
+        min_delay = _probe("delay()", "uint256")
     if min_delay is not None:
-        owner = _try_eth_call_decoded(rpc_url, normalized, "owner()", "address", block_tag)
+        owner = _probe("owner()", "address")
         details: dict[str, object] = {"address": normalized, "delay": _coerce_int(min_delay)}
         if owner is not None:
             details["owner"] = owner
-        return "timelock", details
+        return "timelock", details, had_error
 
-    upgrade_interface_version = _try_eth_call_decoded(
-        rpc_url, normalized, "UPGRADE_INTERFACE_VERSION()", "string", block_tag
-    )
+    upgrade_interface_version = _probe("UPGRADE_INTERFACE_VERSION()", "string")
     if upgrade_interface_version is not None:
-        owner = _try_eth_call_decoded(rpc_url, normalized, "owner()", "address", block_tag)
+        owner = _probe("owner()", "address")
         details = {
             "address": normalized,
             "upgrade_interface_version": str(upgrade_interface_version),
         }
         if owner is not None:
             details["owner"] = owner
-        return "proxy_admin", details
+        return "proxy_admin", details, had_error
 
     details = {"address": normalized}
-    details.update(type_authority_contract(rpc_url, normalized, block_tag))
-    return "contract", details
+    try:
+        details.update(type_authority_contract(rpc_url, normalized, block_tag))
+    except Exception:
+        had_error = True
+    return "contract", details, had_error
 
 
 def _current_block_number(rpc_url: str) -> int:
