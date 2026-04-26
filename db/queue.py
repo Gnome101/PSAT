@@ -301,12 +301,8 @@ def _artifact_row_to_value(artifact: Artifact) -> dict | list | str | None:
 
 
 def _mirror_contract_flags_to_job(session: Session, job_id: Any, name: str, data: Any) -> None:
-    """Mirror ``contract_flags.is_proxy`` onto ``Job.is_proxy``.
-
-    /api/jobs reads the column directly so it can avoid a per-row storage
-    fetch just to learn whether the job analyzed a proxy. Same boolean
-    result as resolving the artifact, with no I/O.
-    """
+    """Mirror ``contract_flags.is_proxy`` onto ``Job.is_proxy`` so /api/jobs
+    can answer the proxy-flag question without resolving the artifact body."""
     if name != "contract_flags" or not isinstance(data, dict):
         return
     session.execute(sa_update(Job).where(Job.id == job_id).values(is_proxy=bool(data.get("is_proxy"))))

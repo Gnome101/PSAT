@@ -69,8 +69,7 @@ class Job(Base):
     protocol_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
     )
-    # Mirror of the ``contract_flags.is_proxy`` artifact body. Maintained by
-    # ``store_artifact`` so /api/jobs can answer without per-row storage reads.
+    # Mirrored from contract_flags by store_artifact; lets /api/jobs skip the artifact resolve.
     is_proxy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -990,18 +989,9 @@ def apply_storage_migrations(target_engine=None) -> None:
         # proof_kind (Phase C): strength subtype for proven rows. See the
         # model comment for the full vocabulary.
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS proof_kind VARCHAR(30)"))
-        # jobs.is_proxy — denormalized mirror of the ``contract_flags`` artifact's
-        # ``is_proxy`` field, written by ``store_artifact`` going forward. Lets
-        # /api/jobs answer the proxy-flag question with a single SELECT instead
-        # of a per-job artifact resolve (which round-trips to object storage on
-        # most rows).
-        #
-        # Backfill: inline-data rows (legacy + dev/CI without ARTIFACT_STORAGE_*)
-        # are handled by the UPDATE below. Storage-backed legacy rows aren't
-        # readable from a SQL migration; they pick up the correct value the
-        # next time their contract_flags artifact is rewritten (re-analyze).
-        # Until then those rows show ``is_proxy=False`` in /api/jobs even if
-        # the artifact body says True — bounded gap, self-heals on re-analyze.
+        # jobs.is_proxy mirrors contract_flags.is_proxy. The UPDATE below only
+        # backfills inline rows; storage-backed legacy rows stay False until
+        # their contract_flags artifact is rewritten (re-analyze).
         conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_proxy BOOLEAN NOT NULL DEFAULT FALSE"))
         conn.execute(
             text(
@@ -1014,14 +1004,9 @@ def apply_storage_migrations(target_engine=None) -> None:
                 "  AND jobs.is_proxy = FALSE"
             )
         )
-        # upgrade_events.contract_id — Postgres FKs don't auto-create an index,
-        # and this column is scanned on every per-impl window computation in
-        # services/audits/coverage.py + contract_audit_timeline.
+        # FK indexes — Postgres doesn't auto-create them, and these columns
+        # are the join keys for every per-contract batch prefetch.
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_upgrade_events_contract_id ON upgrade_events (contract_id)"))
-        # Same story for the rest of the contract-keyed child tables that
-        # company_overview / analysis_detail batch-prefetch. Postgres won't
-        # auto-index FK columns; without these the planner falls back to
-        # seq-scans on every protocol roll-up.
         for table in (
             "privileged_functions",
             "role_definitions",
