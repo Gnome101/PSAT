@@ -8,7 +8,9 @@
   "samples_per_run": 1,
   "force": true,
   "follow_all_jobs": true,
-  "_note": "Etherfi LP proxy — cascades into impl + ~10 sibling protocol contracts. follow_all_jobs waits for the entire DB to reach terminal, giving us total wall clock for the parallel workload. Tests whether shared-cpu CPU throttling matters under sustained multi-job load.",
+  "wipe_db_between_runs": true,
+  "subprocess_timeout_s": 7200,
+  "_note": "Etherfi LP proxy — cascades into impl + ~10 sibling protocol contracts. follow_all_jobs waits for the entire DB to reach terminal, giving us total wall clock for the parallel workload. wipe_db_between_runs ensures each VM config starts from empty queue. subprocess_timeout_s=2hr because shared-cpu can take 60+ min on the cascade.",
   "runs": [
     {
       "label": "shared-2x-2gb",

@@ -70,34 +70,42 @@ def run(cmd: list[str], *, check: bool = True, timeout: int = 120) -> subprocess
     return result
 
 
-def list_workers_machines(app: str) -> list[dict]:
-    """Return [{id, state}, ...] for all machines in the workers process group."""
+def list_machines_in_group(app: str, group: str) -> list[dict]:
+    """Return [{id, state}, ...] for all machines in the given process group."""
     out = run(["fly", "machines", "list", "-a", app, "--json"], check=True, timeout=30).stdout
     machines = json.loads(out)
     return [
         {"id": m["id"], "state": m["state"]}
         for m in machines
-        if m.get("config", {}).get("metadata", {}).get("fly_process_group") == "workers"
+        if m.get("config", {}).get("metadata", {}).get("fly_process_group") == group
     ]
 
 
-def apply_scale(app: str, *, vm_size: str | None, memory_mb: int | None, count: int | None) -> None:
-    """Apply scale changes to the workers process group. Each is independent.
+def apply_scale(
+    app: str,
+    *,
+    vm_size: str | None,
+    memory_mb: int | None,
+    count: int | None,
+    process_group: str = "workers",
+) -> None:
+    """Apply scale changes to a process group. Each dimension is independent.
 
-    `fly scale vm` accepts `--vm-memory` to also resize memory in the same call,
-    but we keep them separate so the script can change one dimension at a time.
-    `fly scale count` is the only one that prompts, and `--yes` confirms it.
+    Defaults to "workers" (the consolidated group from start_workers.sh). For
+    split-worker experiments using start_workers_heavy.sh + start_workers_light.sh,
+    the matrix config supplies a list of per-group scale specs and the runner
+    calls this once per group.
     """
     if vm_size is not None:
-        run(["fly", "scale", "vm", vm_size, "--process-group", "workers", "-a", app])
+        run(["fly", "scale", "vm", vm_size, "--process-group", process_group, "-a", app])
     if memory_mb is not None:
-        run(["fly", "scale", "memory", str(memory_mb), "--process-group", "workers", "-a", app])
+        run(["fly", "scale", "memory", str(memory_mb), "--process-group", process_group, "-a", app])
     if count is not None:
-        run(["fly", "scale", "count", f"workers={count}", "-a", app, "--yes"])
+        run(["fly", "scale", "count", f"{process_group}={count}", "-a", app, "--yes"])
 
 
-def wait_for_workers_started(app: str, *, timeout_s: int = 180) -> None:
-    """Block until every workers machine reports state=started.
+def wait_for_group_started(app: str, group: str, *, timeout_s: int = 180) -> None:
+    """Block until every machine in the given process group reports state=started.
 
     `fly scale vm/memory` recreates each machine — they go through
     stopped/starting before reaching started. With multiple machines this
@@ -105,12 +113,12 @@ def wait_for_workers_started(app: str, *, timeout_s: int = 180) -> None:
     """
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        machines = list_workers_machines(app)
+        machines = list_machines_in_group(app, group)
         if not machines:
-            print("[matrix] no workers machines yet, waiting...")
+            print(f"[matrix] no {group} machines yet, waiting...")
         else:
             states = {m["state"] for m in machines}
-            print(f"[matrix] workers states: {sorted(states)} ({len(machines)} machines)")
+            print(f"[matrix] {group} states: {sorted(states)} ({len(machines)} machines)")
             if states == {"started"}:
                 return
             # Kick any stragglers — `fly scale` doesn't always auto-start what it created.
@@ -132,6 +140,7 @@ def run_one_bench(
     poll_interval: float,
     force: bool = False,
     follow_all_jobs: bool = False,
+    subprocess_timeout_s: int = 2400,
 ) -> dict:
     """Invoke bench_workers.py as a subprocess. Returns its parsed JSON output."""
     here = Path(__file__).parent
@@ -158,10 +167,30 @@ def run_one_bench(
     if follow_all_jobs:
         cmd.append("--follow-all-jobs")
     # Stream child output directly so the user sees progress.
-    proc = subprocess.run(cmd, text=True, timeout=2400)
+    proc = subprocess.run(cmd, text=True, timeout=subprocess_timeout_s)
     if proc.returncode != 0:
         raise RuntimeError(f"bench_workers.py exited with {proc.returncode}")
     return json.loads(out_path.read_text())
+
+
+def wipe_bench_db(database_url: str) -> None:
+    """DELETE FROM jobs on the bench database. Idempotent.
+
+    Required between cascade matrix runs so each VM config starts from
+    an empty queue — otherwise inherited stragglers from the prior run
+    pollute the comparison.
+    """
+    print("[matrix] wiping bench DB jobs table for clean cascade start...")
+    proc = subprocess.run(
+        ["psql", database_url, "-c", "DELETE FROM jobs;"],
+        env={**os.environ, "PGCONNECT_TIMEOUT": "15"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"DB wipe failed: {proc.stderr.strip()}")
+    print(f"[matrix] {proc.stdout.strip() or 'DELETE issued'}")
 
 
 def render_table(results: list[dict]) -> str:
@@ -225,6 +254,14 @@ def main() -> int:
         help="Bypass the safety check that requires app=psat-bench (for prod/preview targeting)",
     )
     parser.add_argument("--skip-scale", action="store_true", help="Skip Fly scaling steps (just rerun bench)")
+    parser.add_argument(
+        "--database-url",
+        default=os.environ.get("PSAT_BENCH_DATABASE_URL"),
+        help=(
+            "Postgres URL for the bench DB. Used to wipe jobs between runs when "
+            "the config sets wipe_db_between_runs=true."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.admin_key:
@@ -262,18 +299,46 @@ def main() -> int:
     results: list[dict] = []
     matrix_started = now_iso()
 
+    wipe_db = bool(cfg.get("wipe_db_between_runs", False))
+    if wipe_db and not args.database_url:
+        print(
+            "error: config has wipe_db_between_runs=true but --database-url / PSAT_BENCH_DATABASE_URL not set",
+            file=sys.stderr,
+        )
+        return 2
+    subprocess_timeout_s = int(cfg.get("subprocess_timeout_s", 2400))
+
     for run_idx, rc in enumerate(runs, start=1):
         label = f"{label_prefix}_{rc['label']}"
         print(f"\n========== run {run_idx}/{len(runs)}: {label} ==========")
 
+        if wipe_db:
+            wipe_bench_db(args.database_url)
+
         if app and not args.skip_scale:
-            apply_scale(
-                app,
-                vm_size=rc.get("vm_size"),
-                memory_mb=rc.get("memory_mb"),
-                count=rc.get("count"),
-            )
-            wait_for_workers_started(app)
+            # Two shapes for `rc`:
+            #   - flat: vm_size/memory_mb/count target the default "workers" group
+            #   - groups: dict of {group_name: {vm_size, memory_mb, count}} for split-worker tests
+            groups_spec = rc.get("groups")
+            if groups_spec:
+                for group_name, spec in groups_spec.items():
+                    apply_scale(
+                        app,
+                        vm_size=spec.get("vm_size"),
+                        memory_mb=spec.get("memory_mb"),
+                        count=spec.get("count"),
+                        process_group=group_name,
+                    )
+                for group_name in groups_spec:
+                    wait_for_group_started(app, group_name)
+            else:
+                apply_scale(
+                    app,
+                    vm_size=rc.get("vm_size"),
+                    memory_mb=rc.get("memory_mb"),
+                    count=rc.get("count"),
+                )
+                wait_for_group_started(app, "workers")
             print(f"[matrix] warm-wait {warm_wait_s}s for workers to fully boot...")
             time.sleep(warm_wait_s)
 
@@ -293,6 +358,7 @@ def main() -> int:
                     poll_interval=float(cfg.get("poll_interval", 0.5)),
                     force=force_per_run,
                     follow_all_jobs=bool(cfg.get("follow_all_jobs", False)),
+                    subprocess_timeout_s=subprocess_timeout_s,
                 )
             except Exception as e:
                 print(f"[matrix] run failed: {e}", file=sys.stderr)

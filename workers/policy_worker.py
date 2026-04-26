@@ -347,6 +347,14 @@ class PolicyWorker(BaseWorker):
         resolved_control_graph = get_artifact(session, job.id, "resolved_control_graph")
         semantic_guards = get_artifact(session, job.id, "semantic_guards")
         tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
+        # Optional: classify cache populated by the resolution stage. Lets the
+        # refresh + labeling passes skip 6-10 RPCs per address.
+        classify_cache_raw = get_artifact(session, job.id, "classified_addresses")
+        classify_cache: dict[str, tuple[str, dict[str, object]]] = {}
+        if isinstance(classify_cache_raw, dict):
+            for addr, val in classify_cache_raw.items():
+                if isinstance(val, list) and len(val) == 2:
+                    classify_cache[addr] = (str(val[0]), dict(val[1]) if isinstance(val[1], dict) else {})
 
         if not isinstance(contract_analysis, dict):
             raise RuntimeError("contract_analysis artifact not found")
@@ -510,6 +518,9 @@ class PolicyWorker(BaseWorker):
             max_depth=RECURSION_MAX_DEPTH,
             workspace_prefix="recursive",
             nested_artifacts_override=nested_artifacts,
+            # Reuse the resolution stage's classification results — every
+            # entry here saves one classify_resolved_address call (6-10 RPCs).
+            classify_cache=classify_cache,
         )
         if refreshed_graph:
             resolved_control_graph = refreshed_graph
@@ -532,6 +543,11 @@ class PolicyWorker(BaseWorker):
                 cast(dict, resolved_control_graph) if isinstance(resolved_control_graph, dict) else None
             ),
             rpc_url=rpc_url,
+            # Same cache the resolution stage populated. Without this, labeling
+            # re-runs classify_resolved_address (6-10 RPCs each) for every
+            # principal — the dominant cost on big protocols (etherfi LP impl
+            # spent 14+ min here on shared-cpu-2x).
+            classify_cache=classify_cache,
         )
 
         # Write to principal_labels table

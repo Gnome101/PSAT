@@ -417,6 +417,7 @@ def resolve_control_graph(
     max_depth: int = DEFAULT_RECURSION_MAX_DEPTH,
     workspace_prefix: str = "recursive",
     nested_artifacts_override: dict[str, LoadedArtifacts] | None = None,
+    classify_cache: dict[str, tuple[str, dict[str, object]]] | None = None,
 ) -> tuple[ResolvedControlGraph, dict[str, LoadedArtifacts]]:
     """Walk the control chain breadth-first starting from a pre-loaded root.
 
@@ -427,6 +428,12 @@ def resolve_control_graph(
 
     ``nested_artifacts_override`` lets callers (e.g. the policy worker refresh
     path) supply pre-computed nested artifacts to skip remote fetches.
+
+    ``classify_cache`` is mutated in place so callers can reuse classification
+    results across stages (resolution → policy refresh → principal labeling).
+    Each ``classify_resolved_address`` call is 6-10 RPC roundtrips, so this
+    is the dominant cost on cascade workloads (etherfi LP impl: ~14 min in
+    principal labeling without it).
     """
     root_analysis = root_artifacts["analysis"]
     root_subject = root_analysis.get("subject", {})
@@ -443,7 +450,9 @@ def resolve_control_graph(
     )
     queued = {root_address}
     processed: set[str] = set()
-    _classify_cache: dict[str, tuple[str, dict[str, object]]] = {}
+    # Use the caller's cache if supplied so cross-stage reuse is possible;
+    # otherwise allocate a fresh per-call dict (legacy behavior).
+    _classify_cache: dict[str, tuple[str, dict[str, object]]] = classify_cache if classify_cache is not None else {}
     nested_artifacts: dict[str, LoadedArtifacts] = dict(nested_artifacts_override or {})
 
     def _cached_classify(addr: str) -> tuple[str, dict[str, object]]:

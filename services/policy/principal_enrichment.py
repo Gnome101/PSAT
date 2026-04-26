@@ -277,7 +277,16 @@ def build_principal_labels(
     *,
     resolved_control_graph: dict | None = None,
     rpc_url: str | None = None,
+    classify_cache: dict[str, tuple[str, dict[str, object]]] | None = None,
 ) -> PrincipalLabels:
+    """Construct principal records for every authority address.
+
+    ``classify_cache`` is mutated in place. When supplied, classification
+    results from prior pipeline stages (resolution, policy graph refresh)
+    are reused and any new classifications discovered here are added to
+    the same dict — so a caller threading the same cache through the whole
+    job sees fan-out of 6-10 RPCs per address collapse to one lookup.
+    """
     nodes_by_id = _node_by_id(resolved_control_graph or {})
     nodes_by_address = {node["address"].lower(): node for node in (resolved_control_graph or {}).get("nodes", [])}
     incoming_by_id = _incoming_edges(resolved_control_graph or {})
@@ -298,7 +307,14 @@ def build_principal_labels(
         details = dict(node.get("details", {})) if node else {}
 
         if resolved_type == "unknown" and rpc_url:
-            resolved_type, details = classify_resolved_address(rpc_url, address)
+            cache_key = address.lower()
+            if classify_cache is not None and cache_key in classify_cache:
+                resolved_type, cached_details = classify_cache[cache_key]
+                details = dict(cached_details)
+            else:
+                resolved_type, details = classify_resolved_address(rpc_url, address)
+                if classify_cache is not None:
+                    classify_cache[cache_key] = (resolved_type, dict(details))
 
         if resolved_type == "contract" and node:
             if str(details.get("controller_label", "")).strip() == "permissionController":

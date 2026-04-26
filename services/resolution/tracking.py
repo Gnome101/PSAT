@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from typing import Any
 
 from eth_abi.abi import decode
@@ -88,7 +89,15 @@ def _coerce_int(value: object) -> int:
     raise RuntimeError(f"Unsupported integer value: {value!r}")
 
 
+@functools.lru_cache(maxsize=4096)
 def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "latest") -> tuple[str, dict[str, object]]:
+    """Probe an address to learn what it is (EOA/Safe/timelock/proxy_admin/contract).
+
+    Process-wide LRU cache: classifications rarely change for a given address,
+    so caching across jobs in the same worker is safe and avoids 6-10 RPCs
+    per repeat lookup. Capacity sized for cascade workloads (~hundreds of
+    addresses across 20+ sibling jobs).
+    """
     normalized = _normalize_hex(address)
     if normalized == "0x0000000000000000000000000000000000000000":
         return "zero", {"address": normalized}
