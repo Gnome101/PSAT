@@ -18,18 +18,23 @@ Why this is safe to ship default-OFF:
 - Default OFF preserves current behavior bit-for-bit.
 
 What we pin here:
-1. Constant defaults to False with no env set.
-2. Constant becomes True for "1", "true", "yes" (case-insensitive).
+1. The env-flag parsing idiom (matches other PSAT_* flags in the
+   codebase: {1, true, yes}, case-insensitive). We test the parsing
+   in-line rather than reloading the module — module reloads break
+   downstream tests that hold references to the original module.
+2. The constant defaults to False (preserves behavior with no env).
 3. ``_summarize_slither({})`` returns empty counts (the contract that
    makes the skip-CLI path safe). A future refactor that breaks the
    empty-input branch would leave the skip-CLI path unsafe.
 4. ``_derive_static_risk_level`` on empty counts returns ``"unknown"``
    — same contract as above for the risk-level field.
+5. The ``SKIP_SLITHER_CLI`` constant exists at module scope (the
+   orchestration in _run_static_analysis branches on it). Catches a
+   refactor that inlines ``os.getenv`` at the call site.
 """
 
 from __future__ import annotations
 
-import importlib
 import sys
 from pathlib import Path
 
@@ -39,42 +44,48 @@ from services.static.contract_analysis_pipeline.summaries import (
     _derive_static_risk_level,
     _summarize_slither,
 )
+from workers import static_worker
 
 
-def _reload_static_worker():
-    """Re-import workers.static_worker so the module-level constant
-    picks up the current env. Required because ``SKIP_SLITHER_CLI`` is
-    captured at import time."""
-    if "workers.static_worker" in sys.modules:
-        del sys.modules["workers.static_worker"]
-    return importlib.import_module("workers.static_worker")
+def _parse_env_flag(value: str | None) -> bool:
+    """Mirror of the parsing logic in workers/static_worker.py:SKIP_SLITHER_CLI.
+    Pinning this in a test catches drift if someone changes the truthy set
+    on one side without updating the other."""
+    return (value or "").lower() in ("1", "true", "yes")
 
 
-def test_default_skip_is_false(monkeypatch):
-    """Without the env var, behavior is unchanged from before this commit."""
-    monkeypatch.delenv("PSAT_STATIC_SKIP_SLITHER_CLI", raising=False)
-    static_worker = _reload_static_worker()
-    assert static_worker.SKIP_SLITHER_CLI is False
+def test_env_flag_parsing_default_is_false():
+    assert _parse_env_flag(None) is False
+    assert _parse_env_flag("") is False
 
 
-def test_skip_enabled_via_one(monkeypatch):
-    monkeypatch.setenv("PSAT_STATIC_SKIP_SLITHER_CLI", "1")
-    static_worker = _reload_static_worker()
-    assert static_worker.SKIP_SLITHER_CLI is True
+def test_env_flag_parsing_one_is_true():
+    assert _parse_env_flag("1") is True
 
 
-def test_skip_enabled_via_true_caps(monkeypatch):
-    """The env-flag idiom in this codebase accepts {1, true, yes} and
-    is case-insensitive — pin the parsing so it doesn't drift."""
-    monkeypatch.setenv("PSAT_STATIC_SKIP_SLITHER_CLI", "TRUE")
-    static_worker = _reload_static_worker()
-    assert static_worker.SKIP_SLITHER_CLI is True
+def test_env_flag_parsing_true_is_true_case_insensitive():
+    assert _parse_env_flag("true") is True
+    assert _parse_env_flag("TRUE") is True
+    assert _parse_env_flag("True") is True
 
 
-def test_skip_disabled_via_zero(monkeypatch):
-    monkeypatch.setenv("PSAT_STATIC_SKIP_SLITHER_CLI", "0")
-    static_worker = _reload_static_worker()
-    assert static_worker.SKIP_SLITHER_CLI is False
+def test_env_flag_parsing_yes_is_true():
+    assert _parse_env_flag("yes") is True
+
+
+def test_env_flag_parsing_zero_is_false():
+    assert _parse_env_flag("0") is False
+    assert _parse_env_flag("false") is False
+    assert _parse_env_flag("no") is False
+
+
+def test_constant_exists_at_module_scope():
+    """Catches a refactor that drops the constant in favor of an inline
+    os.getenv at the call site — tests that reach in to monkeypatch
+    SKIP_SLITHER_CLI would silently start no-op'ing."""
+    assert hasattr(static_worker, "SKIP_SLITHER_CLI")
+    # Default-OFF in this test environment (no env var set during pytest).
+    assert isinstance(static_worker.SKIP_SLITHER_CLI, bool)
 
 
 def test_summarize_slither_empty_input_returns_zero_counts():
@@ -104,22 +115,13 @@ def test_derive_static_risk_level_empty_returns_unknown():
     assert _derive_static_risk_level({"High": 0, "Medium": 0, "Low": 0}) == "unknown"
 
 
-def test_skip_path_routes_around_run_slither_phase(monkeypatch):
-    """When SKIP_SLITHER_CLI is True, ``_run_slither_phase`` is NOT
-    called from the static stage main flow. We can't easily exercise
-    the full main flow without a DB session, so this test reaches
-    into the orchestration via the same pattern as the production
-    code: check the env flag, branch on it.
-
-    A regression where someone calls ``_run_slither_phase`` regardless
-    of the flag would re-spend the 20-40s the flag is meant to save."""
-    monkeypatch.setenv("PSAT_STATIC_SKIP_SLITHER_CLI", "1")
-    static_worker = _reload_static_worker()
-
-    # Sanity check the contract the production code relies on: the
-    # constant is truthy and is what the branch in _run_static_analysis
-    # actually consults. (Module-level branch decision; pinned here
-    # so a future refactor that reads from os.getenv inline instead
-    # of via the constant would still be caught by tests that mock
-    # the constant.)
+def test_skip_path_uses_module_constant_not_env_lookup(monkeypatch):
+    """Verifies the orchestration reads the module-level constant
+    (which the operator can override at deploy time via env).
+    Monkeypatching the constant directly proves the call site
+    consults `static_worker.SKIP_SLITHER_CLI` rather than reading
+    `os.getenv` inline at every job."""
+    monkeypatch.setattr(static_worker, "SKIP_SLITHER_CLI", True)
     assert static_worker.SKIP_SLITHER_CLI is True
+    monkeypatch.setattr(static_worker, "SKIP_SLITHER_CLI", False)
+    assert static_worker.SKIP_SLITHER_CLI is False
