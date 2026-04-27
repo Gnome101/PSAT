@@ -623,11 +623,12 @@ def get_job_stage_timings(job_id: str) -> dict[str, Any]:
         job = session.get(Job, job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
+        # Escape `_` so the legacy `stage_timings` artifact doesn't match this prefix scan.
         rows = (
             session.execute(
                 select(Artifact).where(
                     Artifact.job_id == job.id,
-                    Artifact.name.like("stage_timing_%"),
+                    Artifact.name.like(r"stage\_timing\_%", escape="\\"),
                 )
             )
             .scalars()

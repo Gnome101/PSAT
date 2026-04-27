@@ -60,7 +60,7 @@ DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 # TTL matches the classify cache (30 min default). Long enough to span a
 # long cascade, short enough to eventually re-fetch source if Etherscan
 # verifies a previously-unverified contract mid-window.
-_ARTIFACT_CACHE: dict[str, tuple[str, dict[str, Any], dict[str, Any], float]] = {}
+_ARTIFACT_CACHE: dict[tuple[str, str], tuple[str, dict[str, Any], dict[str, Any], float]] = {}
 _ARTIFACT_CACHE_BY_KECCAK: dict[str, tuple[str, dict[str, Any], dict[str, Any], float]] = {}
 _ARTIFACT_CACHE_LOCK = threading.Lock()
 _ARTIFACT_CACHE_MAX = 1024
@@ -75,7 +75,7 @@ def clear_artifact_cache() -> None:
 
 
 def _get_cached_static_artifacts(
-    effective_address: str, bytecode_keccak: str | None = None
+    effective_address: str, rpc_url: str = "", bytecode_keccak: str | None = None
 ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
     """Return (contract_name, analysis, plan) if cached and fresh; else None.
 
@@ -84,12 +84,17 @@ def _get_cached_static_artifacts(
     bytecode at a DIFFERENT address shares the cached analysis since
     contract_analysis is purely a function of source code, not address.
 
+    Address index is keyed by (rpc_url, address) so different chains
+    don't share the slot — the same address on Ethereum vs Polygon may
+    point at different bytecode and the keccak fallback handles only
+    the byte-exact case.
+
     Returns deepcopies so callers can mutate without poisoning the cache.
     """
-    key = effective_address.lower()
+    addr_key = (rpc_url, effective_address.lower())
     now = _time.monotonic()
     with _ARTIFACT_CACHE_LOCK:
-        entry = _ARTIFACT_CACHE.get(key)
+        entry = _ARTIFACT_CACHE.get(addr_key)
         if entry is None and bytecode_keccak:
             entry = _ARTIFACT_CACHE_BY_KECCAK.get(bytecode_keccak)
     if entry is None:
@@ -97,7 +102,7 @@ def _get_cached_static_artifacts(
     contract_name, analysis, plan, inserted_at = entry
     if now - inserted_at > _ARTIFACT_CACHE_TTL_S:
         with _ARTIFACT_CACHE_LOCK:
-            _ARTIFACT_CACHE.pop(key, None)
+            _ARTIFACT_CACHE.pop(addr_key, None)
             if bytecode_keccak:
                 _ARTIFACT_CACHE_BY_KECCAK.pop(bytecode_keccak, None)
         return None
@@ -109,9 +114,10 @@ def _store_cached_static_artifacts(
     contract_name: str,
     analysis: dict[str, Any],
     plan: dict[str, Any],
+    rpc_url: str = "",
     bytecode_keccak: str | None = None,
 ) -> None:
-    key = effective_address.lower()
+    addr_key = (rpc_url, effective_address.lower())
     with _ARTIFACT_CACHE_LOCK:
         if len(_ARTIFACT_CACHE) >= _ARTIFACT_CACHE_MAX:
             # Drop the oldest entry rather than randomly evicting — keeps
@@ -124,7 +130,7 @@ def _store_cached_static_artifacts(
             copy.deepcopy(plan),
             _time.monotonic(),
         )
-        _ARTIFACT_CACHE[key] = payload
+        _ARTIFACT_CACHE[addr_key] = payload
         if bytecode_keccak:
             # Bound the keccak index too. Same eviction policy.
             if len(_ARTIFACT_CACHE_BY_KECCAK) >= _ARTIFACT_CACHE_MAX:
@@ -256,7 +262,7 @@ def _materialize_contract_artifacts(
         _code, bytecode_keccak = get_code_with_keccak(rpc_url, effective_address)
     except Exception as exc:
         logger.debug("Recursive resolve: get_code_with_keccak failed for %s: %s", effective_address, exc)
-    cached = _get_cached_static_artifacts(effective_address, bytecode_keccak)
+    cached = _get_cached_static_artifacts(effective_address, rpc_url=rpc_url, bytecode_keccak=bytecode_keccak)
     if cached is not None:
         contract_name, analysis, plan = cached
         # Codex iter-4 P1: a keccak-index hit can return analysis+plan
@@ -283,7 +289,9 @@ def _materialize_contract_artifacts(
             analysis = cast(dict, collect_contract_analysis(project_dir))
 
         plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
-        _store_cached_static_artifacts(effective_address, contract_name, analysis, plan, bytecode_keccak)
+        _store_cached_static_artifacts(
+            effective_address, contract_name, analysis, plan, rpc_url=rpc_url, bytecode_keccak=bytecode_keccak
+        )
     if snapshot_address != effective_address:
         plan = {**plan, "contract_address": snapshot_address}
 

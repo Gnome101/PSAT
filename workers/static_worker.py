@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -890,8 +891,19 @@ class StaticWorker(BaseWorker):
         # while eliminating intra-cascade duplicates.
         root_job_id = request.get("root_job_id") or str(job.id)
         chain = request.get("chain")
+        from sqlalchemy import text as _sa_text
+
         for impl_addr, label in impl_entries:
             if force:
+                # Codex iter-7 P2: serialize the SELECT-then-INSERT against
+                # concurrent static workers (PSAT_STATIC_WORKERS > 1) so two
+                # peers on the same (root_job_id, chain, address) can't both
+                # observe "no existing job" and create duplicates. Lock
+                # auto-releases at transaction end.
+                lock_seed = f"impl-dedupe:{root_job_id}:{chain or '-'}:{impl_addr.lower()}"
+                lock_key = int(hashlib.sha1(lock_seed.encode()).hexdigest()[:15], 16)
+                session.execute(_sa_text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+
                 # Within-cascade dedupe: check for an existing job for this
                 # impl that's already part of the same root cascade AND
                 # the same chain. Codex iter-6 P2: in multi-chain company

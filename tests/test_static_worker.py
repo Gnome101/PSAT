@@ -159,7 +159,10 @@ def test_force_dedupes_impl_jobs_within_same_root_cascade(monkeypatch):
     existing_in_cascade = SimpleNamespace(id="prior-impl-in-same-cascade")
     call_count = {"n": 0}
 
-    def _fake_execute(_query):
+    def _fake_execute(query, *params):
+        # Skip the advisory_lock SELECT — it's a no-op in the mock.
+        if params:
+            return MagicMock()
         call_count["n"] += 1
         result = MagicMock()
         # Calls 1 (contract-row lookup) + 2 (impl dedupe) + 3 (contract-row
