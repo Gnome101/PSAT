@@ -31,6 +31,7 @@ from services.monitoring.event_topics import (
 )
 from services.monitoring.reanalysis import maybe_queue_reanalysis
 from utils.rpc import (
+    current_block_number,
     normalize_hex,
     parse_address_result,
     rpc_batch_request,
@@ -80,8 +81,7 @@ _POLL_FIELD_TO_SCAN_EVENTS: dict[str, frozenset[str]] = {
 
 
 def get_latest_block(rpc_url: str) -> int:
-    result = rpc_request(rpc_url, "eth_blockNumber", [])
-    return int(result, 16)
+    return current_block_number(rpc_url)
 
 
 def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:

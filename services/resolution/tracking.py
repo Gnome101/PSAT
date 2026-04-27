@@ -367,10 +367,9 @@ def _classify_uncached(rpc_url: str, normalized: str, block_tag: str) -> tuple[s
 
 
 def _current_block_number(rpc_url: str) -> int:
-    raw = _rpc_request(rpc_url, "eth_blockNumber", [])
-    if not isinstance(raw, str) or not raw.startswith("0x"):
-        raise RuntimeError(f"Unexpected eth_blockNumber result: {raw!r}")
-    return int(raw, 16)
+    from utils.rpc import current_block_number
+
+    return current_block_number(rpc_url)
 
 
 def _read_polling_source(
