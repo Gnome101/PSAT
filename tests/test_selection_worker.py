@@ -612,5 +612,3 @@ def test_stuck_job_escape_hatch_claims_past_timeout(db_session, worker, seed_pro
     claimed = worker._claim_stuck_job(db_session)
     assert claimed is not None
     assert claimed.id == job.id
-
-

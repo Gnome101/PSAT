@@ -201,16 +201,10 @@ def test_cache_keyed_by_effective_address_not_input(monkeypatch):
     def _classify_proxy_to_impl(_addr, _rpc):
         return {"type": "proxy", "implementation": impl_addr}
 
-    monkeypatch.setattr(
-        "services.discovery.classifier.classify_single", _classify_proxy_to_impl
-    )
+    monkeypatch.setattr("services.discovery.classifier.classify_single", _classify_proxy_to_impl)
 
-    _materialize_contract_artifacts(
-        "0x" + "AA" * 20, "http://rpc", workspace_prefix="test"
-    )  # proxy A → impl
-    _materialize_contract_artifacts(
-        "0x" + "BB" * 20, "http://rpc", workspace_prefix="test"
-    )  # proxy B → same impl
+    _materialize_contract_artifacts("0x" + "AA" * 20, "http://rpc", workspace_prefix="test")  # proxy A → impl
+    _materialize_contract_artifacts("0x" + "BB" * 20, "http://rpc", workspace_prefix="test")  # proxy B → same impl
 
     assert len(scaffold_calls) == 1, "same impl must be scaffolded once even for different proxies"
 
@@ -280,9 +274,7 @@ def test_address_index_preferred_over_keccak_index():
     # First store: address AA, keccak ZZ → both indices point to "v1"
     _store_cached_static_artifacts(addr, "v1-name", {"v": 1}, {}, bytecode_keccak="0x" + "ZZ".replace("Z", "z") * 32)
     # Second store: a totally different address, keccak XX → installed in keccak index too
-    _store_cached_static_artifacts(
-        "0x" + "DD" * 20, "v2-name", {"v": 2}, {}, bytecode_keccak="0x" + "XX".lower() * 32
-    )
+    _store_cached_static_artifacts("0x" + "DD" * 20, "v2-name", {"v": 2}, {}, bytecode_keccak="0x" + "XX".lower() * 32)
     # Lookup by addr AA + keccak XX should still get the v1 (address wins).
     cached = _get_cached_static_artifacts(addr, bytecode_keccak="0x" + "XX".lower() * 32)
     assert cached is not None
@@ -297,9 +289,7 @@ def test_keccak_index_respects_ttl(monkeypatch):
     monkeypatch.setattr(recursive._time, "monotonic", lambda: fake_now[0])
 
     keccak = "0x" + "ee" * 32
-    _store_cached_static_artifacts(
-        "0x" + "AA" * 20, "ImplE", {"v": 1}, {}, bytecode_keccak=keccak
-    )
+    _store_cached_static_artifacts("0x" + "AA" * 20, "ImplE", {"v": 1}, {}, bytecode_keccak=keccak)
     fake_now[0] += recursive._ARTIFACT_CACHE_TTL_S + 1
     # Keccak hit on a DIFFERENT address, after TTL → must miss.
     assert _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak=keccak) is None
@@ -308,9 +298,7 @@ def test_keccak_index_respects_ttl(monkeypatch):
 def test_clear_cache_clears_both_indices():
     """clear_artifact_cache must wipe the keccak index too — otherwise
     test isolation breaks (a stale keccak entry survives the helper)."""
-    _store_cached_static_artifacts(
-        "0x" + "AA" * 20, "Test", {}, {}, bytecode_keccak="0x" + "ff" * 32
-    )
+    _store_cached_static_artifacts("0x" + "AA" * 20, "Test", {}, {}, bytecode_keccak="0x" + "ff" * 32)
     recursive.clear_artifact_cache()
     assert _get_cached_static_artifacts("0x" + "AA" * 20) is None
     assert _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak="0x" + "ff" * 32) is None

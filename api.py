@@ -635,7 +635,7 @@ def get_job_stage_timings(job_id: str) -> dict[str, Any]:
         )
         timings: dict[str, Any] = {}
         for row in rows:
-            stage = row.name[len("stage_timing_"):]
+            stage = row.name[len("stage_timing_") :]
             value = _resolve_artifact_value(row)
             if isinstance(value, dict):
                 timings[stage] = value

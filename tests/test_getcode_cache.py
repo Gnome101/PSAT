@@ -389,8 +389,7 @@ def test_get_code_batch_evicts_when_over_ceiling(monkeypatch):
 
     # Cache must NOT have grown unboundedly.
     assert len(rpc._GETCODE_CACHE) <= rpc._GETCODE_CACHE_MAX, (
-        f"batch insert bypassed eviction: cache has {len(rpc._GETCODE_CACHE)} entries "
-        f"(max {rpc._GETCODE_CACHE_MAX})"
+        f"batch insert bypassed eviction: cache has {len(rpc._GETCODE_CACHE)} entries (max {rpc._GETCODE_CACHE_MAX})"
     )
 
 

@@ -255,9 +255,7 @@ def test_generic_contract_branch_parity(monkeypatch):
 def test_generic_contract_with_type_authority_failure_parity(monkeypatch):
     """type_authority_contract raised → both paths set had_error=True
     even though no probe returned _PROBE_ERROR."""
-    seq, batch = _both_paths(
-        monkeypatch, _probe_responses_for("contract_no_probes"), type_authority_raises=True
-    )
+    seq, batch = _both_paths(monkeypatch, _probe_responses_for("contract_no_probes"), type_authority_raises=True)
     assert seq == batch
     assert seq[0] == "contract"
     assert seq[2] is True
@@ -423,8 +421,7 @@ def test_whole_batch_failure_falls_back_to_sequential_path(monkeypatch):
     kind, details, had_error = _classify_uncached_batched("https://rpc", "0xab", "latest")
 
     assert kind == "safe", (
-        "whole-batch failure must fall back to sequential probes, which "
-        "would have classified correctly"
+        "whole-batch failure must fall back to sequential probes, which would have classified correctly"
     )
     assert details["owners"] == [ADDR_OWNER.lower()]
     assert details["threshold"] == 1

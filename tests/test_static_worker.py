@@ -164,9 +164,7 @@ def test_force_dedupes_impl_jobs_within_same_root_cascade(monkeypatch):
         result = MagicMock()
         # Calls 1 (contract-row lookup) + 2 (impl dedupe) + 3 (contract-row
         # lookup) → None. Call 4 (second impl dedupe) → existing.
-        result.scalar_one_or_none.return_value = (
-            existing_in_cascade if call_count["n"] >= 4 else None
-        )
+        result.scalar_one_or_none.return_value = existing_in_cascade if call_count["n"] >= 4 else None
         return result
 
     session.execute.side_effect = _fake_execute
@@ -174,8 +172,7 @@ def test_force_dedupes_impl_jobs_within_same_root_cascade(monkeypatch):
     created_jobs: list[dict] = []
     monkeypatch.setattr(
         "workers.static_worker.create_job",
-        lambda _session, request: created_jobs.append(request)
-        or SimpleNamespace(id=f"child-{len(created_jobs)}"),
+        lambda _session, request: created_jobs.append(request) or SimpleNamespace(id=f"child-{len(created_jobs)}"),
     )
     monkeypatch.setattr(
         "workers.static_worker.store_artifact",
@@ -204,9 +201,7 @@ def test_force_dedupes_impl_jobs_within_same_root_cascade(monkeypatch):
     worker._resolve_proxy(session, job2, job2.address, job2.name)
 
     # First proxy spawned its impl; second proxy in same cascade was deduped.
-    assert len(created_jobs) == 1, (
-        f"second proxy in same cascade must dedupe its impl; got {len(created_jobs)} jobs"
-    )
+    assert len(created_jobs) == 1, f"second proxy in same cascade must dedupe its impl; got {len(created_jobs)} jobs"
     # The created job carries root_job_id so downstream static_worker calls
     # in the same cascade can dedupe against it too.
     assert created_jobs[0]["root_job_id"] == "root-1"
@@ -224,8 +219,7 @@ def test_force_does_not_dedupe_across_different_root_cascades(monkeypatch):
     created_jobs: list[dict] = []
     monkeypatch.setattr(
         "workers.static_worker.create_job",
-        lambda _session, request: created_jobs.append(request)
-        or SimpleNamespace(id=f"child-{len(created_jobs)}"),
+        lambda _session, request: created_jobs.append(request) or SimpleNamespace(id=f"child-{len(created_jobs)}"),
     )
     monkeypatch.setattr(
         "workers.static_worker.store_artifact",
@@ -271,8 +265,7 @@ def test_no_force_uses_global_dedupe(monkeypatch):
     created_jobs: list[dict] = []
     monkeypatch.setattr(
         "workers.static_worker.create_job",
-        lambda _session, request: created_jobs.append(request)
-        or SimpleNamespace(id="should-not-be-created"),
+        lambda _session, request: created_jobs.append(request) or SimpleNamespace(id="should-not-be-created"),
     )
     monkeypatch.setattr(
         "workers.static_worker.store_artifact",

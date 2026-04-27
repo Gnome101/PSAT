@@ -53,6 +53,7 @@ def clear_getcode_cache() -> None:
 def _normalized_addr(address: str) -> str:
     return address.lower() if address.startswith("0x") else "0x" + address.lower()
 
+
 # Per-thread requests.Session so RPC calls reuse the underlying TCP/TLS
 # connection. Bare ``requests.post()`` opens a new socket per call —
 # that's a TCP handshake + TLS handshake (~50-200ms RTT each) on every
@@ -223,9 +224,7 @@ def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
     if not to_fetch:
         return out
 
-    calls: list[tuple[str, list[Any]]] = [
-        ("eth_getCode", [addr, "latest"]) for addr in to_fetch
-    ]
+    calls: list[tuple[str, list[Any]]] = [("eth_getCode", [addr, "latest"]) for addr in to_fetch]
     raw_results = rpc_batch_request_with_status(rpc_url, calls)
     with _GETCODE_CACHE_LOCK:
         for addr, (raw, had_error) in zip(to_fetch, raw_results):
@@ -286,9 +285,7 @@ def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[
     return results
 
 
-def rpc_batch_request_with_status(
-    rpc_url: str, calls: list[tuple[str, list[Any]]]
-) -> list[tuple[Any, bool]]:
+def rpc_batch_request_with_status(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[tuple[Any, bool]]:
     """Same as ``rpc_batch_request`` but distinguishes "RPC errored" from
     "RPC succeeded but returned None".
 

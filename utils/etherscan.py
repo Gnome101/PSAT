@@ -65,15 +65,19 @@ _PG_CACHE_ENABLED = os.getenv("ETHERSCAN_PG_CACHE", "1").lower() in ("1", "true"
 # stay out of the persistent cache, otherwise workers serve stale numbers
 # indefinitely. Codex iter-4 P1 — without this restriction, the first
 # balance lookup would cement that balance for every subsequent worker.
-_PG_CACHE_WHITELIST: frozenset[tuple[str, str]] = frozenset({
-    ("contract", "getsourcecode"),
-    ("contract", "getabi"),
-    ("contract", "getcontractcreation"),
-})
+_PG_CACHE_WHITELIST: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("contract", "getsourcecode"),
+        ("contract", "getabi"),
+        ("contract", "getcontractcreation"),
+    }
+)
 
 
 def _pg_cache_eligible(module: str, action: str) -> bool:
     return (module, action) in _PG_CACHE_WHITELIST
+
+
 _cache: dict[tuple, dict] = {}
 _cache_lock = threading.Lock()
 

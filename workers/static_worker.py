@@ -758,9 +758,7 @@ class StaticWorker(BaseWorker):
                     logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
 
                 if analysis_data is None:
-                    raise RuntimeError(
-                        f"Contract analysis failed for {contract_name} ({address})."
-                    )
+                    raise RuntimeError(f"Contract analysis failed for {contract_name} ({address}).")
 
                 # Phase 2: Control tracking plan
                 t0 = time.monotonic()
@@ -891,21 +889,26 @@ class StaticWorker(BaseWorker):
         # dedupe lets us preserve --force's "fresh impl per cascade" goal
         # while eliminating intra-cascade duplicates.
         root_job_id = request.get("root_job_id") or str(job.id)
+        chain = request.get("chain")
         for impl_addr, label in impl_entries:
             if force:
                 # Within-cascade dedupe: check for an existing job for this
-                # impl that's already part of the same root cascade.
-                existing = session.execute(
-                    select(Job).where(
-                        Job.address == impl_addr,
-                        Job.request["root_job_id"].as_string() == root_job_id,
-                    ).limit(1)
-                ).scalar_one_or_none()
+                # impl that's already part of the same root cascade AND
+                # the same chain. Codex iter-6 P2: in multi-chain company
+                # cascades the same proxy/impl address can exist on two
+                # chains (e.g., USDC on Ethereum vs Polygon); without the
+                # chain filter the first chain's impl would suppress the
+                # second chain's analysis.
+                stmt = select(Job).where(
+                    Job.address == impl_addr,
+                    Job.request["root_job_id"].as_string() == root_job_id,
+                )
+                if chain is not None:
+                    stmt = stmt.where(Job.request["chain"].as_string() == chain)
+                existing = session.execute(stmt.limit(1)).scalar_one_or_none()
             else:
                 # Global dedupe: any prior job for this impl wins.
-                existing = session.execute(
-                    select(Job).where(Job.address == impl_addr).limit(1)
-                ).scalar_one_or_none()
+                existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
             if existing:
                 logger.info(
                     "Job %s: %s %s already has job %s in this cascade, skipping",

@@ -404,9 +404,7 @@ def test_protocol_tvl_caps_days(mock_session_cls) -> None:
 
 @patch("api._resolve_artifact_value")
 @patch("api.SessionLocal")
-def test_stage_timings_endpoint_returns_per_stage_artifacts(
-    mock_session_cls, mock_resolve
-) -> None:
+def test_stage_timings_endpoint_returns_per_stage_artifacts(mock_session_cls, mock_resolve) -> None:
     """Bench harness needs a reliable per-stage timing source. The endpoint
     must collect every ``stage_timing_<stage>`` artifact for the job and
     return them keyed by stage name (the suffix after ``stage_timing_``).

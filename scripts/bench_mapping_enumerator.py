@@ -32,7 +32,6 @@ from services.resolution.mapping_enumerator import (
     enumerate_mapping_allowlist_sync,
 )
 
-
 # Each entry mimics the writer-event spec the static-analysis stage produces
 # for a contract whose mapping is mutated via Add/Remove-style events.
 FIXTURES = [
@@ -117,12 +116,18 @@ def _run_one(fixture: dict, *, timeout_s: float, max_pages: int, bearer_token: s
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--timeout-s", type=float, default=60.0,
-                        help="Wall-clock budget per contract (default 60s — production default)")
-    parser.add_argument("--max-pages", type=int, default=50,
-                        help="Page cap per contract (default 50 — production default)")
-    parser.add_argument("--filter", type=str, default=None,
-                        help="Substring filter on the label (run only matching fixtures)")
+    parser.add_argument(
+        "--timeout-s",
+        type=float,
+        default=60.0,
+        help="Wall-clock budget per contract (default 60s — production default)",
+    )
+    parser.add_argument(
+        "--max-pages", type=int, default=50, help="Page cap per contract (default 50 — production default)"
+    )
+    parser.add_argument(
+        "--filter", type=str, default=None, help="Substring filter on the label (run only matching fixtures)"
+    )
     args = parser.parse_args()
 
     bearer_token = os.getenv("ENVIO_API_TOKEN") or ""
@@ -169,10 +174,7 @@ def main() -> None:
     print(f"{'label':<70} {'elapsed_s':>10} {'pages':>6} {'status':>22}")
     print("-" * 100)
     for r in rows:
-        print(
-            f"{r['label'][:68]:<70} {r['elapsed_s']:>10} "
-            f"{r['pages_fetched']:>6} {r['status']:>22}"
-        )
+        print(f"{r['label'][:68]:<70} {r['elapsed_s']:>10} {r['pages_fetched']:>6} {r['status']:>22}")
 
 
 if __name__ == "__main__":

@@ -97,12 +97,20 @@ def test_each_stage_writes_its_own_artifact_name(monkeypatch):
         next_stage = JobStage.resolution
 
     _FakeWorker()._record_stage_timing(
-        MagicMock(), _job(),
-        started_at="t0", ended_at="t1", elapsed_s=1.0, status="success",
+        MagicMock(),
+        _job(),
+        started_at="t0",
+        ended_at="t1",
+        elapsed_s=1.0,
+        status="success",
     )
     _StaticWorker()._record_stage_timing(
-        MagicMock(), _job(),
-        started_at="t2", ended_at="t3", elapsed_s=2.0, status="success",
+        MagicMock(),
+        _job(),
+        started_at="t2",
+        ended_at="t3",
+        elapsed_s=2.0,
+        status="success",
     )
 
     names = [name for name, _ in writes]
@@ -148,6 +156,7 @@ def test_record_swallows_storage_errors():
     # Patch via direct attribute on the module so the call site's
     # store_artifact name resolves to the boom.
     import workers.base as base
+
     original = base.store_artifact
     base.store_artifact = _boom  # type: ignore[assignment]
     try:
@@ -222,6 +231,7 @@ def test_record_timing_runs_before_advance_in_run_loop(monkeypatch):
     monkeypatch.setattr(base.BaseWorker, "_claim_job", _fake_claim)
     monkeypatch.setattr(base, "advance_job", _fake_advance)
     import db.queue as db_queue
+
     monkeypatch.setattr(db_queue, "complete_job", _fake_complete)
     monkeypatch.setattr(base, "SessionLocal", lambda: MagicMock())
     monkeypatch.setattr(base.time, "sleep", lambda *_: None)

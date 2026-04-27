@@ -109,9 +109,7 @@ def test_single_dict_response_normalized_to_list():
     response = _make_response(200, {"jsonrpc": "2.0", "id": 0, "result": "0xsolo"})
     session = rpc._get_session()
     with patch.object(session, "post", return_value=response):
-        results = rpc.rpc_batch_request_with_status(
-            "https://example.invalid", [("eth_call", [{}, "latest"])]
-        )
+        results = rpc.rpc_batch_request_with_status("https://example.invalid", [("eth_call", [{}, "latest"])])
     assert results == [("0xsolo", False)]
 
 
@@ -141,9 +139,7 @@ def test_out_of_range_id_in_response_is_ignored():
     )
     session = rpc._get_session()
     with patch.object(session, "post", return_value=response):
-        results = rpc.rpc_batch_request_with_status(
-            "https://example.invalid", [("eth_call", [{}, "latest"])]
-        )
+        results = rpc.rpc_batch_request_with_status("https://example.invalid", [("eth_call", [{}, "latest"])])
     assert results == [("0xok", False)]
 
 
@@ -170,7 +166,5 @@ def test_successful_null_result_preserved_with_error_false():
     )
     session = rpc._get_session()
     with patch.object(session, "post", return_value=response):
-        results = rpc.rpc_batch_request_with_status(
-            "https://example.invalid", [("eth_call", [{}, "latest"])]
-        )
+        results = rpc.rpc_batch_request_with_status("https://example.invalid", [("eth_call", [{}, "latest"])])
     assert results == [("0x", False)]

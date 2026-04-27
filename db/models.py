@@ -871,12 +871,7 @@ def apply_storage_migrations(target_engine=None) -> None:
                 ")"
             )
         )
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS ix_etherscan_cache_cached_at "
-                "ON etherscan_cache (cached_at)"
-            )
-        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_etherscan_cache_cached_at ON etherscan_cache (cached_at)"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS size_bytes BIGINT"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS content_type VARCHAR(64)"))

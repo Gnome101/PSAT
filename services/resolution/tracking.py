@@ -239,10 +239,7 @@ def _batch_probe(rpc_url: str, address: str, block_tag: str) -> list[object]:
     sets ``had_error=True`` and skips caching, exactly as the sequential
     path does when ``_eth_call_raw`` raises.
     """
-    calls = [
-        ("eth_call", [{"to": address, "data": _selector(sig)}, block_tag])
-        for sig, _abi in _CLASSIFY_PROBE_SIGS
-    ]
+    calls = [("eth_call", [{"to": address, "data": _selector(sig)}, block_tag]) for sig, _abi in _CLASSIFY_PROBE_SIGS]
     raw_results = _rpc_batch_request_with_status(rpc_url, calls)
     decoded: list[object] = []
     for (raw, had_err), (_sig, abi_type) in zip(raw_results, _CLASSIFY_PROBE_SIGS):
@@ -253,9 +250,7 @@ def _batch_probe(rpc_url: str, address: str, block_tag: str) -> list[object]:
     return decoded
 
 
-def _classify_uncached_batched(
-    rpc_url: str, normalized: str, block_tag: str
-) -> tuple[str, dict[str, object], bool]:
+def _classify_uncached_batched(rpc_url: str, normalized: str, block_tag: str) -> tuple[str, dict[str, object], bool]:
     """Same contract as ``_classify_uncached`` but batches the 6 probes
     upfront. Saves 5 RTT for any contract that falls through to the
     generic-contract branch (most of them, in DeFi).

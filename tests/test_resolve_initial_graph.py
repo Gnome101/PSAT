@@ -157,8 +157,7 @@ def test_initial_graph_walk_projects_new_role_principal():
     # And a role_principal edge from root → that node.
     root_node_id = recursive._address_node_id(ROOT_ADDR)
     role_edges = [
-        e for e in second_graph["edges"]
-        if e.get("from_id") == root_node_id and e.get("relation") == "role_principal"
+        e for e in second_graph["edges"] if e.get("from_id") == root_node_id and e.get("relation") == "role_principal"
     ]
     assert len(role_edges) >= 1
     assert any(e["to_id"] == role_node_id for e in role_edges)
@@ -325,10 +324,9 @@ def test_initial_graph_dedupes_edges_on_re_walk():
 
     # Same edge appears exactly once.
     matching = [
-        e for e in graph["edges"]
-        if e["from_id"] == root_node_id
-        and e["to_id"] == nested_node_id
-        and e["relation"] == "controller_value"
+        e
+        for e in graph["edges"]
+        if e["from_id"] == root_node_id and e["to_id"] == nested_node_id and e["relation"] == "controller_value"
     ]
     assert len(matching) == 1
 

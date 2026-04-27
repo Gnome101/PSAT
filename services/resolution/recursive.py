@@ -283,9 +283,7 @@ def _materialize_contract_artifacts(
             analysis = cast(dict, collect_contract_analysis(project_dir))
 
         plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
-        _store_cached_static_artifacts(
-            effective_address, contract_name, analysis, plan, bytecode_keccak
-        )
+        _store_cached_static_artifacts(effective_address, contract_name, analysis, plan, bytecode_keccak)
     if snapshot_address != effective_address:
         plan = {**plan, "contract_address": snapshot_address}
 
