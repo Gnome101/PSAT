@@ -371,3 +371,99 @@ def test_classify_dispatch_uses_sequential_path_when_env_disabled(monkeypatch):
     )
     tracking.classify_resolved_address_with_status("https://rpc", addr)
     assert called == {"batched": 0, "sequential": 1}
+
+
+# ---------------------------------------------------------------------------
+# Codex-iter-1 finding: whole-batch failure must fall back to sequential
+# ---------------------------------------------------------------------------
+
+
+def test_whole_batch_failure_falls_back_to_sequential_path(monkeypatch):
+    """Codex review finding: when PSAT_CLASSIFY_BATCH=1 and a provider
+    rejects JSON-RPC batches (some private RPCs do), the batch helper
+    returns (None, True) for every slot. Without a fallback, the batched
+    classifier dumps out as ('contract', ..., had_error=True) — but the
+    SEQUENTIAL path may have classified correctly via individual eth_calls.
+
+    Enabling the flag must not silently degrade resolution accuracy on
+    providers that don't support batches. Verify that whole-batch failure
+    triggers a fallback to ``_classify_uncached`` and recovers the right
+    Safe classification."""
+    sequential_called = {"count": 0}
+
+    def _fake_get_code(_rpc_url, _addr, _block):
+        return "0x60"
+
+    def _fake_type_authority(*_a, **_kw):
+        return {}
+
+    # Batch helper: simulates a provider that rejects every JSON-RPC batch.
+    def _failing_batch(*_a, **_kw):
+        return [(None, True)] * len(tracking._CLASSIFY_PROBE_SIGS)
+
+    # Sequential helper: simulates a Safe contract responding correctly to
+    # individual eth_calls.
+    def _safe_seq_eth_call(_rpc_url, _addr, signature, _block):
+        sequential_called["count"] += 1
+        if signature == "getOwners()":
+            return _abi_encode_address_array([ADDR_OWNER])
+        if signature == "getThreshold()":
+            return _abi_encode_uint256(1)
+        # Other probes "succeed" but return empty (function absent).
+        return "0x"
+
+    monkeypatch.setattr(tracking, "_get_code", _fake_get_code)
+    monkeypatch.setattr(tracking, "_rpc_batch_request_with_status", _failing_batch)
+    monkeypatch.setattr(tracking, "_eth_call_raw", _safe_seq_eth_call)
+    monkeypatch.setattr(tracking, "type_authority_contract", _fake_type_authority)
+
+    kind, details, had_error = _classify_uncached_batched("https://rpc", "0xab", "latest")
+
+    assert kind == "safe", (
+        "whole-batch failure must fall back to sequential probes, which "
+        "would have classified correctly"
+    )
+    assert details["owners"] == [ADDR_OWNER.lower()]
+    assert details["threshold"] == 1
+    assert had_error is False, "fallback to sequential succeeded — must be cacheable"
+    assert sequential_called["count"] >= 1, "fallback must have actually invoked sequential probes"
+
+
+def test_partial_batch_failure_does_not_trigger_fallback(monkeypatch):
+    """The fallback fires ONLY on whole-batch failure. If even one probe
+    in the batch succeeded, we trust the batched dispatch — partial
+    failure is normal (e.g., a non-Safe contract returning ``"0x"`` for
+    getOwners and a real value for getMinDelay)."""
+    sequential_called = {"count": 0}
+
+    def _fake_get_code(_rpc_url, _addr, _block):
+        return "0x60"
+
+    def _fake_type_authority(*_a, **_kw):
+        return {}
+
+    def _partial_batch(*_a, **_kw):
+        # Only slot 2 (getMinDelay) errored — the rest "succeeded" with
+        # empty results. NOT a whole-batch failure.
+        return [
+            ("0x", False),
+            ("0x", False),
+            (None, True),
+            ("0x", False),
+            ("0x", False),
+            ("0x", False),
+        ]
+
+    def _seq_should_not_run(*_a, **_kw):
+        sequential_called["count"] += 1
+        raise AssertionError("sequential path should not be invoked on partial failure")
+
+    monkeypatch.setattr(tracking, "_get_code", _fake_get_code)
+    monkeypatch.setattr(tracking, "_rpc_batch_request_with_status", _partial_batch)
+    monkeypatch.setattr(tracking, "_eth_call_raw", _seq_should_not_run)
+    monkeypatch.setattr(tracking, "type_authority_contract", _fake_type_authority)
+
+    kind, _details, had_error = _classify_uncached_batched("https://rpc", "0xab", "latest")
+    assert kind == "contract"
+    assert had_error is True, "the one errored probe still propagates"
+    assert sequential_called["count"] == 0, "no fallback should fire on partial failure"

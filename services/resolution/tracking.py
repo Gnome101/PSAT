@@ -275,6 +275,15 @@ def _classify_uncached_batched(
         return "eoa", {"address": normalized}, False
 
     probes = _batch_probe(rpc_url, normalized, block_tag)
+    # Whole-batch failure (provider rejects JSON-RPC batches, transport
+    # error) marks every slot as _PROBE_ERROR. Without a fallback, the
+    # batched classifier would dump out as ("contract", ..., had_error=True)
+    # — but the SEQUENTIAL path may well have succeeded on individual
+    # eth_calls and produced the right Safe/Timelock/ProxyAdmin
+    # classification. Enabling the flag must not silently degrade
+    # resolution accuracy on providers that don't support batches.
+    if all(p is _PROBE_ERROR for p in probes):
+        return _classify_uncached(rpc_url, normalized, block_tag)
     safe_owners_raw, safe_threshold_raw, min_delay_a, min_delay_b, upgrade_iv, owner_raw = probes
 
     def _ok(v: object) -> object | None:
