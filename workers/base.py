@@ -8,12 +8,21 @@ import signal
 import time
 import traceback
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage, JobStatus, SessionLocal
-from db.queue import advance_job, claim_job, fail_job, reclaim_stuck_jobs, update_job_detail
+from db.queue import (
+    advance_job,
+    claim_job,
+    fail_job,
+    get_artifact,
+    reclaim_stuck_jobs,
+    store_artifact,
+    update_job_detail,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +125,7 @@ class BaseWorker:
 
                 logger.info("Worker %s claimed job %s", self.worker_id, job.id)
                 t0 = time.monotonic()
+                started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 try:
                     self.process(session, job)
                     if self.next_stage == JobStage.done:
@@ -125,6 +135,15 @@ class BaseWorker:
                     else:
                         advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
                     elapsed = time.monotonic() - t0
+                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    self._record_stage_timing(
+                        session,
+                        job,
+                        started_at=started_at_iso,
+                        ended_at=ended_at_iso,
+                        elapsed_s=elapsed,
+                        status="success",
+                    )
                     logger.info(
                         "Worker %s completed job %s in %.1fs",
                         self.worker_id,
@@ -132,8 +151,27 @@ class BaseWorker:
                         elapsed,
                     )
                 except JobHandledDirectly:
+                    elapsed = time.monotonic() - t0
+                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    # Use a fresh session — the worker's process() may have left
+                    # the original in an inconsistent state when raising.
+                    try:
+                        fresh_for_timing = SessionLocal()
+                        self._record_stage_timing(
+                            fresh_for_timing,
+                            job,
+                            started_at=started_at_iso,
+                            ended_at=ended_at_iso,
+                            elapsed_s=elapsed,
+                            status="handled_directly",
+                        )
+                        fresh_for_timing.close()
+                    except Exception:
+                        logger.exception("Worker %s: failed to record handled_directly timing", self.worker_id)
                     logger.info("Worker %s: job %s handled directly by process()", self.worker_id, job.id)
                 except Exception:
+                    elapsed = time.monotonic() - t0
+                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                     error = traceback.format_exc()
                     logger.error(
                         "\n=================== WORKER FAILURE ===================\n"
@@ -155,11 +193,27 @@ class BaseWorker:
                     try:
                         session.rollback()
                         fail_job(session, job.id, error)
+                        self._record_stage_timing(
+                            session,
+                            job,
+                            started_at=started_at_iso,
+                            ended_at=ended_at_iso,
+                            elapsed_s=elapsed,
+                            status="failed",
+                        )
                     except Exception:
                         logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
                         try:
                             fresh = SessionLocal()
                             fail_job(fresh, job.id, error[-4000:])
+                            self._record_stage_timing(
+                                fresh,
+                                job,
+                                started_at=started_at_iso,
+                                ended_at=ended_at_iso,
+                                elapsed_s=elapsed,
+                                status="failed",
+                            )
                             fresh.close()
                         except Exception:
                             logger.exception("Could not mark job %s as failed even with fresh session", job.id)
@@ -173,3 +227,59 @@ class BaseWorker:
     def update_detail(self, session: Session, job: Job, detail: str) -> None:
         """Update the job's progress detail message."""
         update_job_detail(session, job.id, detail)
+
+    def _record_stage_timing(
+        self,
+        session: Session,
+        job: Job,
+        *,
+        started_at: str,
+        ended_at: str,
+        elapsed_s: float,
+        status: str,
+    ) -> None:
+        """Append this stage's timing to the per-job ``stage_timings`` artifact.
+
+        Schema (v1):
+          {
+            "schema_version": "1",
+            "stages": [
+              {
+                "stage":      "discovery" | "static" | "resolution" | ...,
+                "started_at": ISO 8601 UTC,
+                "ended_at":   ISO 8601 UTC,
+                "elapsed_s":  float (monotonic),
+                "worker_id":  str,
+                "status":     "success" | "failed" | "handled_directly",
+              },
+              ...
+            ]
+          }
+
+        Append-only. Each stage worker writes one entry on its own job
+        when it advances/completes/fails the row. Lets the bench harness
+        read durations reliably without scraping Fly logs (which routinely
+        miss lines under buffering).
+
+        Best-effort: a failure here logs and swallows — we'd rather lose
+        a timing record than mark a job as failed for a metrics-only bug.
+        """
+        try:
+            existing = get_artifact(session, job.id, "stage_timings")
+            if isinstance(existing, dict) and isinstance(existing.get("stages"), list):
+                payload = {"schema_version": existing.get("schema_version", "1"), "stages": list(existing["stages"])}
+            else:
+                payload = {"schema_version": "1", "stages": []}
+            payload["stages"].append(
+                {
+                    "stage": self.stage.value,
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "elapsed_s": round(elapsed_s, 3),
+                    "worker_id": self.worker_id,
+                    "status": status,
+                }
+            )
+            store_artifact(session, job.id, "stage_timings", data=payload)
+        except Exception:
+            logger.exception("Worker %s: failed to record stage_timings (non-fatal)", self.worker_id)
