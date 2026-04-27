@@ -521,6 +521,13 @@ class PolicyWorker(BaseWorker):
             # Reuse the resolution stage's classification results — every
             # entry here saves one classify_resolved_address call (6-10 RPCs).
             classify_cache=classify_cache,
+            # Pre-seed with the resolution stage's graph: every nested
+            # contract was already analyzed in the first walk and has
+            # its effective_permissions baked in. The refresh's only job
+            # is projecting the root's now-computed role principals onto
+            # the existing graph, which the BFS handles by re-walking
+            # ONLY the root and any newly-discovered downstream nodes.
+            initial_graph=cast(Any, resolved_control_graph) if isinstance(resolved_control_graph, dict) else None,
         )
         if refreshed_graph:
             resolved_control_graph = refreshed_graph

@@ -499,6 +499,7 @@ def resolve_control_graph(
     workspace_prefix: str = "recursive",
     nested_artifacts_override: dict[str, LoadedArtifacts] | None = None,
     classify_cache: dict[str, tuple[str, dict[str, object]]] | None = None,
+    initial_graph: ResolvedControlGraph | None = None,
 ) -> tuple[ResolvedControlGraph, dict[str, LoadedArtifacts]]:
     """Walk the control chain breadth-first starting from a pre-loaded root.
 
@@ -551,6 +552,37 @@ def resolve_control_graph(
 
     nodes: dict[str, ResolvedGraphNode] = {}
     edges: dict[tuple, ResolvedGraphEdge] = {}
+
+    # Caller can pre-seed the graph from a prior walk so we project new
+    # discoveries onto the existing structure rather than rebuild from
+    # scratch. Used by the policy worker's refresh step: the resolution
+    # stage's graph + the now-computed root effective_permissions feed a
+    # second walk, but every nested contract has already been analyzed —
+    # only the root + any newly-discovered role principals need fresh work.
+    if initial_graph is not None:
+        for node in initial_graph.get("nodes", []):
+            if not isinstance(node, dict):
+                continue
+            node_id = node.get("id")
+            if isinstance(node_id, str):
+                nodes[node_id] = cast(ResolvedGraphNode, dict(node))
+        for edge in initial_graph.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            edges[_edge_key(cast(ResolvedGraphEdge, edge))] = cast(ResolvedGraphEdge, dict(edge))
+        # Pre-mark every analyzed contract from the prior walk as processed,
+        # EXCEPT the root. The root must be re-walked so role principals
+        # from its newly-populated effective_permissions get projected;
+        # everything else already had its effective_permissions computed
+        # during _materialize_contract_artifacts in the first walk.
+        for node in initial_graph.get("nodes", []):
+            if not isinstance(node, dict) or not node.get("analyzed"):
+                continue
+            node_address = (node.get("details") or {}).get("address")
+            if isinstance(node_address, str):
+                addr = node_address.lower()
+                if addr and addr != root_address:
+                    processed.add(addr)
 
     while queue:
         pending = queue.popleft()
