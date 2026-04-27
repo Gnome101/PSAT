@@ -14,9 +14,22 @@ import os
 from pathlib import Path
 
 _PROC_STATUS = Path("/proc/self/status")
+_PROC_MEMINFO = Path("/proc/meminfo")
+
+# cgroup v2 paths (modern hosts)
 _CGROUP_V2_MAX = Path("/sys/fs/cgroup/memory.max")
 _CGROUP_V2_CURRENT = Path("/sys/fs/cgroup/memory.current")
 _CGROUP_V2_PEAK = Path("/sys/fs/cgroup/memory.peak")
+
+# cgroup v1 paths (Fly machines as of 2026, plus older Linux containers)
+_CGROUP_V1_MAX = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+_CGROUP_V1_CURRENT = Path("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+_CGROUP_V1_PEAK = Path("/sys/fs/cgroup/memory/memory.max_usage_in_bytes")
+
+# v1 unset-sentinel: kernel reports a near-2^63 value when no limit is set
+# at this level (the actual cap lives on a parent cgroup). Treat anything
+# above this as "no limit visible here, look at /proc/meminfo instead".
+_CGROUP_V1_UNSET_SENTINEL = 1 << 60
 
 
 def current_rss_bytes() -> int:
@@ -44,19 +57,56 @@ def _read_cgroup_int(path: Path) -> int | None:
         return None
 
 
+def _meminfo_kb(field: str) -> int | None:
+    """Parse a kB value from /proc/meminfo. None if unreadable / field absent."""
+    try:
+        for line in _PROC_MEMINFO.read_text().splitlines():
+            if line.startswith(f"{field}:"):
+                return int(line.split()[1])  # kB
+    except Exception:
+        return None
+    return None
+
+
 def cgroup_memory_max_bytes() -> int | None:
-    """Container memory limit (cgroup v2). None on dev hosts / cgroup v1."""
-    return _read_cgroup_int(_CGROUP_V2_MAX)
+    """Container memory limit. Tries cgroup v2 → cgroup v1 → /proc/meminfo
+    MemTotal (which reflects the cgroup cap on most container runtimes).
+    Returns None only on hosts where none of these are readable."""
+    v2 = _read_cgroup_int(_CGROUP_V2_MAX)
+    if v2 is not None:
+        return v2
+    v1 = _read_cgroup_int(_CGROUP_V1_MAX)
+    if v1 is not None and v1 < _CGROUP_V1_UNSET_SENTINEL:
+        return v1
+    mem_total_kb = _meminfo_kb("MemTotal")
+    if mem_total_kb is not None:
+        return mem_total_kb * 1024
+    return None
 
 
 def cgroup_memory_current_bytes() -> int | None:
-    """Aggregate RSS across all processes in the cgroup. None outside a container."""
-    return _read_cgroup_int(_CGROUP_V2_CURRENT)
+    """Aggregate RSS across all processes in the cgroup. Tries cgroup v2 →
+    cgroup v1 → MemTotal-MemAvailable from /proc/meminfo."""
+    v2 = _read_cgroup_int(_CGROUP_V2_CURRENT)
+    if v2 is not None:
+        return v2
+    v1 = _read_cgroup_int(_CGROUP_V1_CURRENT)
+    if v1 is not None:
+        return v1
+    total_kb = _meminfo_kb("MemTotal")
+    avail_kb = _meminfo_kb("MemAvailable")
+    if total_kb is not None and avail_kb is not None:
+        return (total_kb - avail_kb) * 1024
+    return None
 
 
 def cgroup_memory_peak_bytes() -> int | None:
-    """High-water mark of cgroup memory since boot. None outside a container."""
-    return _read_cgroup_int(_CGROUP_V2_PEAK)
+    """High-water mark of cgroup memory since boot. cgroup v2 → cgroup v1.
+    /proc/meminfo doesn't track this, so falls through to None."""
+    v2 = _read_cgroup_int(_CGROUP_V2_PEAK)
+    if v2 is not None:
+        return v2
+    return _read_cgroup_int(_CGROUP_V1_PEAK)
 
 
 def count_sibling_python_procs() -> int:
