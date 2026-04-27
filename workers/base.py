@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 DEBUG_TIMING = os.getenv("PSAT_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
 STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "180"))  # seconds
 
+# Per-worker throttle for the stuck-job sweep that runs inside _claim_job.
+# Without it, every worker swept on every poll: 10 procs × poll_interval=2s
+# = 5 cross-stage UPDATE-with-SKIP-LOCKED queries per second, 24/7. With
+# this throttle each worker sweeps at most every N seconds, so the fleet
+# does ~10 sweeps per N (default ~1 every 3s) — still well under the
+# 900s stale_timeout, so recovery latency is unaffected.
+RECLAIM_INTERVAL_S = float(os.getenv("PSAT_RECLAIM_INTERVAL_S", "30"))
+
 
 class JobHandledDirectly(Exception):
     """Raised by process() when it has already completed/failed the job itself."""
@@ -46,6 +54,10 @@ class BaseWorker:
     def __init__(self) -> None:
         self.worker_id = f"{self.__class__.__name__}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._running = True
+        # Track when this worker last ran the cross-stage stuck-job sweep,
+        # so _claim_job can throttle to RECLAIM_INTERVAL_S instead of
+        # sweeping on every poll. Sentinel -inf = "never swept; sweep now".
+        self._last_reclaim_at: float = float("-inf")
         signal.signal(signal.SIGTERM, self._handle_sigterm)
         signal.signal(signal.SIGINT, self._handle_sigterm)
 
@@ -61,10 +73,15 @@ class BaseWorker:
         """Claim the next job for this stage. Default: stage + status match.
 
         Sweeps cross-stage stuck ``processing`` rows back to ``queued``
-        before claiming. That keeps worker-crash recovery cheap (a single
-        UPDATE per poll) and global — no single worker's stage is a
-        bottleneck on recovery — so a crashed discovery worker's job can
-        be picked up by any pollable peer on the very next tick.
+        before claiming, but throttled per-worker to once every
+        ``RECLAIM_INTERVAL_S`` seconds. With 10 worker procs this still
+        gives the fleet a sweep every ~3s — well under the 900s
+        stale_timeout — while cutting per-poll DB load 15×.
+
+        Recovery stays global: every worker is still eligible to sweep,
+        and ``SKIP LOCKED`` keeps concurrent sweeps from contending. A
+        crashed worker's stuck job is rescued within at most one
+        RECLAIM_INTERVAL_S window, then any pollable peer can claim it.
 
         Override in subclasses that need a readiness-gated claim (e.g.
         ``CoverageWorker`` waits for all audits in the protocol to settle)
@@ -72,7 +89,10 @@ class BaseWorker:
         escape hatch). Keeping this as a hook means the subclass never
         needs to copy-paste the run loop just to swap one line.
         """
-        reclaim_stuck_jobs(session)
+        now = time.monotonic()
+        if now - self._last_reclaim_at >= RECLAIM_INTERVAL_S:
+            reclaim_stuck_jobs(session)
+            self._last_reclaim_at = now
         return claim_job(session, self.stage, self.worker_id)
 
     def _recover_stale_jobs(self, session: Session) -> None:
