@@ -48,6 +48,23 @@ logger = logging.getLogger("workers.selection_worker")
 _STUCK_SELECTION_TIMEOUT = int(os.getenv("PSAT_SELECTION_STUCK_TIMEOUT", "1800"))
 
 
+def _existing_in_same_cascade(session: Session, addr: str, chain: str | None, root_job_id: str) -> bool:
+    """True if a job for ``addr`` already exists with the same root_job_id.
+
+    Used to suppress within-cascade proxy re-queueing under --force, where
+    multiple discovery sources surfacing the same proxy would otherwise
+    each spawn a copy via the upgrade-detection re-queue branch.
+    """
+    stmt = select(Job.id).where(
+        Job.address == addr,
+        Job.request["root_job_id"].as_string() == root_job_id,
+    )
+    if chain is not None:
+        stmt = stmt.where(Job.request["chain"].as_string() == chain)
+    stmt = stmt.limit(1)
+    return session.execute(stmt).scalar_one_or_none() is not None
+
+
 class SelectionWorker(BaseWorker):
     """Drains the ``selection`` stage with a readiness-gated two-phase claim."""
 
@@ -262,6 +279,14 @@ class SelectionWorker(BaseWorker):
             )
             return []
 
+        # Under --force, dedupe even known proxies if a job for them
+        # already exists IN THIS CASCADE. The known-proxy "re-queue for
+        # upgrade check" branch below makes sense in production (a
+        # cascade weeks later may want to re-detect upgrades) but
+        # during a single bench cascade it spawns N copies of the same
+        # proxy when multiple discovery sources surface it. Mirrors the
+        # static_worker dedupe pattern in commit 1a56dde.
+        force = bool(request.get("force"))
         selected: list[dict] = []
         for entry in ranked:
             if len(selected) >= remaining:
@@ -273,6 +298,15 @@ class SelectionWorker(BaseWorker):
                 if not is_known_proxy(session, addr, chain=chain):
                     logger.info(
                         "Selection job %s: address %s already has job %s, skipping",
+                        job.id,
+                        addr,
+                        existing.id,
+                    )
+                    continue
+                if force and _existing_in_same_cascade(session, addr, chain, root_job_id):
+                    logger.info(
+                        "Selection job %s: proxy %s already has job %s in this cascade, "
+                        "skipping (--force in-cascade dedupe)",
                         job.id,
                         addr,
                         existing.id,
