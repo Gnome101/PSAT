@@ -18,7 +18,6 @@ from db.queue import (
     advance_job,
     claim_job,
     fail_job,
-    get_artifact,
     reclaim_stuck_jobs,
     store_artifact,
     update_job_detail,
@@ -267,48 +266,57 @@ class BaseWorker:
         elapsed_s: float,
         status: str,
     ) -> None:
-        """Append this stage's timing to the per-job ``stage_timings`` artifact.
+        """Write this stage's timing as a ``stage_timing_<stage>`` artifact.
 
-        Schema (v1):
-          {
-            "schema_version": "1",
-            "stages": [
-              {
-                "stage":      "discovery" | "static" | "resolution" | ...,
-                "started_at": ISO 8601 UTC,
-                "ended_at":   ISO 8601 UTC,
-                "elapsed_s":  float (monotonic),
-                "worker_id":  str,
-                "status":     "success" | "failed" | "handled_directly",
-              },
-              ...
-            ]
-          }
+        Schema (v2):
+          artifact name: ``stage_timing_<stage>`` (e.g. ``stage_timing_discovery``)
+          payload:
+            {
+              "schema_version": "2",
+              "stage":      "discovery" | "static" | "resolution" | ...,
+              "started_at": ISO 8601 UTC,
+              "ended_at":   ISO 8601 UTC,
+              "elapsed_s":  float (monotonic),
+              "worker_id":  str,
+              "status":     "success" | "failed" | "handled_directly",
+            }
 
-        Append-only. Each stage worker writes one entry on its own job
-        when it advances/completes/fails the row. Lets the bench harness
-        read durations reliably without scraping Fly logs (which routinely
-        miss lines under buffering).
+        One artifact per stage means each worker writes its own slot — no
+        read-modify-write, no cross-stage race. Codex iter-1 + iter-2 both
+        flagged the previous shared-array schema: when ``advance_job``
+        commits before the artifact write (or when ``process()`` advances
+        before raising ``JobHandledDirectly``), the next-stage worker can
+        observe the row, complete its stage, and clobber this stage's
+        entry via the same get→append→store cycle.
 
-        Best-effort: a failure here logs and swallows — we'd rather lose
-        a timing record than mark a job as failed for a metrics-only bug.
+        Bench reads via prefix scan (``stage_timing_*``) and concatenates.
+
+        Best-effort: a failure here logs, ROLLS BACK the session (so the
+        next operation in the caller's transaction doesn't trip
+        ``PendingRollbackError``), and swallows. Losing a timing record
+        beats failing a real job over a metrics-only bug.
         """
+        artifact_name = f"stage_timing_{self.stage.value}"
+        payload = {
+            "schema_version": "2",
+            "stage": self.stage.value,
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "elapsed_s": round(elapsed_s, 3),
+            "worker_id": self.worker_id,
+            "status": status,
+        }
         try:
-            existing = get_artifact(session, job.id, "stage_timings")
-            if isinstance(existing, dict) and isinstance(existing.get("stages"), list):
-                payload = {"schema_version": existing.get("schema_version", "1"), "stages": list(existing["stages"])}
-            else:
-                payload = {"schema_version": "1", "stages": []}
-            payload["stages"].append(
-                {
-                    "stage": self.stage.value,
-                    "started_at": started_at,
-                    "ended_at": ended_at,
-                    "elapsed_s": round(elapsed_s, 3),
-                    "worker_id": self.worker_id,
-                    "status": status,
-                }
-            )
-            store_artifact(session, job.id, "stage_timings", data=payload)
+            store_artifact(session, job.id, artifact_name, data=payload)
         except Exception:
-            logger.exception("Worker %s: failed to record stage_timings (non-fatal)", self.worker_id)
+            logger.exception("Worker %s: failed to record %s (non-fatal)", self.worker_id, artifact_name)
+            # Codex iter-2 finding: if store_artifact failed mid-transaction,
+            # SQLAlchemy leaves the session needing rollback. Without this
+            # the success path's subsequent advance_job() raises
+            # PendingRollbackError → outer try marks the (otherwise
+            # successful) job as failed. Roll back so the caller can keep
+            # using the session.
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("Worker %s: failed to rollback after timing write failure", self.worker_id)

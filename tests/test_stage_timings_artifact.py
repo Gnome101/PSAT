@@ -1,22 +1,23 @@
-"""Regression tests for the per-job ``stage_timings`` artifact written by
-``workers.base.BaseWorker._record_stage_timing``.
+"""Regression tests for the per-job stage_timing_<stage> artifacts written
+by ``workers.base.BaseWorker._record_stage_timing``.
 
-The bench harness (scripts/bench_workers.py) used to derive per-stage
-durations by scraping Fly logs for the ``Worker X completed job Y in Zs``
-line. That line is buffered and routinely missed under load, so
-``worker_elapsed_seconds`` in bench JSON was empty about half the runs.
-Persisting timings as a structured artifact gives the harness a
-reliable source of truth that doesn't depend on log delivery.
+Originally a single shared ``stage_timings`` artifact with a ``stages``
+array. Codex iter-1 + iter-2 both flagged the read-modify-write race:
+when ``advance_job`` commits before the artifact write, the next-stage
+worker can claim, complete, and clobber this stage's entry. Same race
+applies to ``JobHandledDirectly`` paths where ``process()`` advances
+inside itself.
 
-Schema (v1):
-  {
-    "schema_version": "1",
-    "stages": [
-      {"stage": "...", "started_at": ISO, "ended_at": ISO, "elapsed_s": float,
-       "worker_id": str, "status": "success"|"failed"|"handled_directly"},
-      ...
-    ]
-  }
+Schema (v2):
+  artifact name: ``stage_timing_<stage>`` (one per stage, no array)
+  payload:
+    {"schema_version": "2",
+     "stage": "discovery"|"static"|"resolution"|...,
+     "started_at": ISO, "ended_at": ISO, "elapsed_s": float,
+     "worker_id": str, "status": "success"|"failed"|"handled_directly"}
+
+One artifact per stage means each worker owns its own slot. Bench reads
+via prefix scan over ``stage_timing_*`` and concatenates.
 """
 
 from __future__ import annotations
@@ -47,18 +48,16 @@ def _job(job_id: str = "job-1") -> Job:
     return cast(Job, SimpleNamespace(id=job_id, address="0xabc", name="test"))
 
 
-def test_record_stage_timing_creates_first_entry(monkeypatch):
+def test_record_writes_per_stage_artifact_with_flat_payload(monkeypatch):
+    """v2 schema: artifact name is per-stage, payload is a single record
+    (not a stages array). Eliminates the read-modify-write race entirely
+    because nothing else writes to the same artifact name."""
     captured: dict = {}
 
-    def _fake_get(*_a, **_kw):
-        # No prior artifact.
-        return None
-
-    def _fake_store(*_a, **kw):
-        captured["name"] = _a[2] if len(_a) > 2 else kw.get("name")
+    def _fake_store(*args, **kw):
+        captured["name"] = args[2] if len(args) > 2 else kw.get("name")
         captured["data"] = kw.get("data")
 
-    monkeypatch.setattr("workers.base.get_artifact", _fake_get)
     monkeypatch.setattr("workers.base.store_artifact", _fake_store)
 
     w = _FakeWorker()
@@ -71,98 +70,57 @@ def test_record_stage_timing_creates_first_entry(monkeypatch):
         status="success",
     )
 
-    assert captured["name"] == "stage_timings"
+    assert captured["name"] == "stage_timing_discovery"
     payload = captured["data"]
-    assert payload["schema_version"] == "1"
-    assert len(payload["stages"]) == 1
-    entry = payload["stages"][0]
-    assert entry["stage"] == "discovery"
-    assert entry["elapsed_s"] == 2.5
-    assert entry["status"] == "success"
-    assert entry["started_at"] == "2026-04-27T03:00:00.000Z"
-    assert entry["ended_at"] == "2026-04-27T03:00:02.500Z"
-    assert entry["worker_id"].startswith("_FakeWorker-")
+    assert payload["schema_version"] == "2"
+    assert payload["stage"] == "discovery"
+    assert payload["elapsed_s"] == 2.5
+    assert payload["status"] == "success"
+    assert payload["started_at"] == "2026-04-27T03:00:00.000Z"
+    assert payload["ended_at"] == "2026-04-27T03:00:02.500Z"
+    assert payload["worker_id"].startswith("_FakeWorker-")
 
 
-def test_record_stage_timing_appends_to_existing(monkeypatch):
-    """Multiple stages on the same job append rather than overwrite."""
-    existing = {
-        "schema_version": "1",
-        "stages": [
-            {
-                "stage": "discovery",
-                "started_at": "2026-04-27T03:00:00.000Z",
-                "ended_at": "2026-04-27T03:00:02.000Z",
-                "elapsed_s": 2.0,
-                "worker_id": "DiscoveryWorker-1-aaa",
-                "status": "success",
-            }
-        ],
-    }
-    captured: dict = {}
+def test_each_stage_writes_its_own_artifact_name(monkeypatch):
+    """Two different stages on the same job must produce two artifacts
+    with distinct names — proving there's no shared slot to race on."""
+    writes: list[tuple[str, dict]] = []
 
-    def _fake_get(*_a, **_kw):
-        return existing
+    def _fake_store(*args, **kw):
+        name = args[2] if len(args) > 2 else kw.get("name")
+        writes.append((name, kw.get("data")))
 
-    def _fake_store(*_a, **kw):
-        captured["data"] = kw.get("data")
-
-    monkeypatch.setattr("workers.base.get_artifact", _fake_get)
     monkeypatch.setattr("workers.base.store_artifact", _fake_store)
 
     class _StaticWorker(BaseWorker):
         stage = JobStage.static
         next_stage = JobStage.resolution
 
-    w = _StaticWorker()
-    w._record_stage_timing(
-        MagicMock(),
-        _job(),
-        started_at="2026-04-27T03:00:02.000Z",
-        ended_at="2026-04-27T03:00:42.000Z",
-        elapsed_s=40.0,
-        status="success",
+    _FakeWorker()._record_stage_timing(
+        MagicMock(), _job(),
+        started_at="t0", ended_at="t1", elapsed_s=1.0, status="success",
+    )
+    _StaticWorker()._record_stage_timing(
+        MagicMock(), _job(),
+        started_at="t2", ended_at="t3", elapsed_s=2.0, status="success",
     )
 
-    payload = captured["data"]
-    assert len(payload["stages"]) == 2
-    assert [s["stage"] for s in payload["stages"]] == ["discovery", "static"]
-    assert payload["stages"][1]["elapsed_s"] == 40.0
-    # Existing entry untouched.
-    assert payload["stages"][0]["elapsed_s"] == 2.0
+    names = [name for name, _ in writes]
+    assert names == ["stage_timing_discovery", "stage_timing_static"]
+    # Each payload is its own self-contained record (no shared array).
+    assert writes[0][1]["stage"] == "discovery"
+    assert writes[1][1]["stage"] == "static"
 
 
-def test_record_stage_timing_swallows_storage_errors(monkeypatch, caplog):
-    """A failing artifact write must NOT crash the worker — losing a
-    metrics record is much better than failing a real job."""
-
-    def _boom(*_a, **_kw):
-        raise RuntimeError("storage down")
-
-    monkeypatch.setattr("workers.base.get_artifact", _boom)
-
-    w = _FakeWorker()
-    # Should not raise.
-    w._record_stage_timing(
-        MagicMock(),
-        _job(),
-        started_at="2026-04-27T03:00:00.000Z",
-        ended_at="2026-04-27T03:00:01.000Z",
-        elapsed_s=1.0,
-        status="success",
-    )
-
-
-def test_record_stage_timing_failed_status_persists(monkeypatch):
+def test_record_failed_status_persists(monkeypatch):
     """The exception path in run_loop calls record with status='failed'.
     Ensures we capture timing for jobs that errored out — important for
     bench analysis ('which stage tends to fail and how long does it run
     before failing?')."""
     captured: dict = {}
-    monkeypatch.setattr("workers.base.get_artifact", lambda *a, **kw: None)
     monkeypatch.setattr(
         "workers.base.store_artifact",
-        lambda _s, _j, name, data=None, text_data=None: captured.update({"data": data}),
+        lambda *a, **kw: captured.update({"data": kw.get("data")}),
     )
 
     w = _FakeWorker()
@@ -174,34 +132,36 @@ def test_record_stage_timing_failed_status_persists(monkeypatch):
         elapsed_s=30.0,
         status="failed",
     )
-    assert captured["data"]["stages"][0]["status"] == "failed"
+    assert captured["data"]["status"] == "failed"
+    assert captured["data"]["stage"] == "discovery"
 
 
-def test_record_stage_timing_rejects_corrupt_existing_payload(monkeypatch):
-    """If the artifact exists but the schema is unrecognisable, start
-    fresh rather than crashing or dropping the new entry."""
-    captured: dict = {}
-    monkeypatch.setattr(
-        "workers.base.get_artifact",
-        lambda *a, **kw: {"unrelated_key": "garbage"},  # missing 'stages'
-    )
-    monkeypatch.setattr(
-        "workers.base.store_artifact",
-        lambda _s, _j, name, data=None, text_data=None: captured.update({"data": data}),
-    )
+def test_record_swallows_storage_errors():
+    """A failing artifact write must NOT crash the worker — losing a
+    metrics record beats failing a real job over a metrics-only bug."""
 
+    def _boom(*_a, **_kw):
+        raise RuntimeError("storage down")
+
+    fake_session = MagicMock()
     w = _FakeWorker()
-    w._record_stage_timing(
-        MagicMock(),
-        _job(),
-        started_at="2026-04-27T03:00:00.000Z",
-        ended_at="2026-04-27T03:00:01.000Z",
-        elapsed_s=1.0,
-        status="success",
-    )
-    # Wrote a fresh schema-v1 payload with just our entry.
-    assert captured["data"]["schema_version"] == "1"
-    assert len(captured["data"]["stages"]) == 1
+    # Patch via direct attribute on the module so the call site's
+    # store_artifact name resolves to the boom.
+    import workers.base as base
+    original = base.store_artifact
+    base.store_artifact = _boom  # type: ignore[assignment]
+    try:
+        # Should not raise.
+        w._record_stage_timing(
+            fake_session,
+            _job(),
+            started_at="2026-04-27T03:00:00.000Z",
+            ended_at="2026-04-27T03:00:01.000Z",
+            elapsed_s=1.0,
+            status="success",
+        )
+    finally:
+        base.store_artifact = original  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -210,22 +170,14 @@ def test_record_stage_timing_rejects_corrupt_existing_payload(monkeypatch):
 
 
 def test_record_timing_runs_before_advance_in_run_loop(monkeypatch):
-    """Codex review finding: if ``advance_job`` commits the next stage as
-    queued before ``_record_stage_timing`` writes, the next-stage worker
-    can claim the row, finish, and write its own ``stage_timings`` entry
-    concurrently. Both workers do read-modify-write on the same JSON
-    artifact — last-writer-wins drops one stage's entry under multi-worker
-    configs.
-
-    Verify the call order: stage_timings recording happens BEFORE
-    ``advance_job`` / ``complete_job`` so the artifact write is
-    fully owned by this worker before the row is exposed to the next
-    stage. Timing is best-effort (errors swallowed) so this re-ordering
-    does not delay or block the advance even when the artifact write
-    fails."""
+    """Codex iter-1 finding: if ``advance_job`` commits the next stage
+    before ``_record_stage_timing`` writes, the next-stage worker can
+    claim/finish concurrently. Even with the v2 per-stage schema,
+    recording-first is still the right call ordering — preserves the
+    invariant that this worker has exclusive control over the row when
+    its observability artifact lands."""
     from db.models import JobStatus
     from workers import base
-    from workers.base import BaseWorker, JobHandledDirectly  # noqa: F401
 
     call_order: list[str] = []
 
@@ -240,7 +192,6 @@ def test_record_timing_runs_before_advance_in_run_loop(monkeypatch):
         def _record_stage_timing(self, *_a, **_kw):
             call_order.append("record_stage_timing")
 
-    # Synthesize a job; never actually persisted.
     job = SimpleNamespace(
         id="job-ordering",
         address="0xabc",
@@ -250,8 +201,6 @@ def test_record_timing_runs_before_advance_in_run_loop(monkeypatch):
         stage=JobStage.discovery,
     )
 
-    # Patch claim/advance/complete: claim returns our fake job once, then
-    # signals shutdown so run_loop exits cleanly.
     claims = iter([job, None])
 
     def _fake_claim(self_, _session):
@@ -272,7 +221,6 @@ def test_record_timing_runs_before_advance_in_run_loop(monkeypatch):
 
     monkeypatch.setattr(base.BaseWorker, "_claim_job", _fake_claim)
     monkeypatch.setattr(base, "advance_job", _fake_advance)
-    # Patch the deferred import in run_loop too.
     import db.queue as db_queue
     monkeypatch.setattr(db_queue, "complete_job", _fake_complete)
     monkeypatch.setattr(base, "SessionLocal", lambda: MagicMock())
@@ -281,8 +229,60 @@ def test_record_timing_runs_before_advance_in_run_loop(monkeypatch):
     w = _OrderingWorker()
     w.run_loop()
 
-    # Filter out claim/no-job iterations; we care about the per-job sequence.
     relevant = [c for c in call_order if c in {"process", "record_stage_timing", "advance_job", "complete_job"}]
     assert relevant == ["process", "record_stage_timing", "advance_job"], (
         f"timing must record BEFORE advance_job; saw {relevant}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Codex-iter-2 finding: rollback session on artifact-write failure
+# ---------------------------------------------------------------------------
+
+
+def test_record_rolls_back_session_on_store_failure(monkeypatch):
+    """Codex iter-2 finding: when ``store_artifact`` fails mid-transaction
+    SQLAlchemy leaves the session needing rollback. Without explicit
+    cleanup, the success path's subsequent ``advance_job`` raises
+    ``PendingRollbackError`` → outer try marks the job as failed.
+
+    Verify that a failed timing write triggers ``session.rollback()`` so
+    the caller's session stays usable. Timing being best-effort means
+    the swallowed exception must not leave a footgun for the next op."""
+
+    def _boom(*_a, **_kw):
+        raise RuntimeError("artifact storage offline")
+
+    monkeypatch.setattr("workers.base.store_artifact", _boom)
+
+    fake_session = MagicMock()
+    w = _FakeWorker()
+    w._record_stage_timing(
+        fake_session,
+        _job(),
+        started_at="2026-04-27T03:00:00.000Z",
+        ended_at="2026-04-27T03:00:01.000Z",
+        elapsed_s=1.0,
+        status="success",
+    )
+    fake_session.rollback.assert_called_once()
+
+
+def test_record_does_not_rollback_on_successful_store(monkeypatch):
+    """Counterpoint: when the store succeeds, the session must NOT be
+    rolled back — that would discard the caller's pending writes
+    (e.g., updates from process() that haven't been advance_job-committed
+    yet). Rollback is strictly the failure-path cleanup."""
+    monkeypatch.setattr("workers.base.store_artifact", lambda *_a, **_kw: None)
+
+    fake_session = MagicMock()
+    w = _FakeWorker()
+    w._record_stage_timing(
+        fake_session,
+        _job(),
+        started_at="t0",
+        ended_at="t1",
+        elapsed_s=1.0,
+        status="success",
+    )
+    fake_session.rollback.assert_not_called()
