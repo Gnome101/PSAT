@@ -194,3 +194,61 @@ def test_pg_cache_whitelisted_actions_pass_through(monkeypatch):
     assert etherscan._pg_cache_eligible("contract", "getsourcecode") is True
     assert etherscan._pg_cache_eligible("contract", "getabi") is True
     assert etherscan._pg_cache_eligible("contract", "getcontractcreation") is True
+
+
+# ---------------------------------------------------------------------------
+# Codex iter-5 P2: skip caching empty-source / unverified responses
+# ---------------------------------------------------------------------------
+
+
+def test_is_persistable_skips_empty_getsourcecode():
+    """Etherscan returns status="1" for not-yet-verified contracts but
+    with an empty SourceCode field. Persisting that would poison the
+    cache after the contract gets verified."""
+    response = {
+        "status": "1",
+        "result": [
+            {
+                "SourceCode": "",
+                "ABI": "",
+                "ContractName": "",
+            }
+        ],
+    }
+    assert etherscan._is_persistable("contract", "getsourcecode", response) is False
+
+
+def test_is_persistable_accepts_real_source():
+    """Successful getsourcecode WITH source content must be persistable."""
+    response = {
+        "status": "1",
+        "result": [
+            {"SourceCode": "contract Foo {}", "ContractName": "Foo"},
+        ],
+    }
+    assert etherscan._is_persistable("contract", "getsourcecode", response) is True
+
+
+def test_is_persistable_other_actions_pass_through():
+    """Non-getsourcecode whitelisted actions don't have the empty-success
+    pattern; they always persist."""
+    assert etherscan._is_persistable("contract", "getabi", {"status": "1", "result": "[]"}) is True
+    assert etherscan._is_persistable("contract", "getcontractcreation", {"status": "1", "result": []}) is True
+
+
+def test_pg_cache_put_skips_unverified_source(monkeypatch):
+    """The full _pg_cache_put path: empty-source response must not
+    reach the DB at all (skips before SessionLocal is even imported)."""
+    monkeypatch.setattr(etherscan, "_PG_CACHE_ENABLED", True)
+
+    def _no_db(*_a, **_kw):
+        raise AssertionError("must not touch DB on empty-source response")
+
+    with patch.dict("sys.modules", {"db.models": MagicMock(SessionLocal=_no_db)}):
+        etherscan._pg_cache_put(
+            "contract",
+            "getsourcecode",
+            1,
+            {"address": "0xunverified"},
+            {"status": "1", "result": [{"SourceCode": "", "ContractName": ""}]},
+        )

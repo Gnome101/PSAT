@@ -160,17 +160,26 @@ def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
     keccak_hex = "0x" + keccak(code_bytes).hex()
 
     with _GETCODE_CACHE_LOCK:
-        # Bound the cache: drop the oldest 25% when we hit the ceiling.
-        # Better than random eviction for long-running workers because
-        # the recently-probed addresses tend to recur.
-        if len(_GETCODE_CACHE) >= _GETCODE_CACHE_MAX:
-            cutoff = sorted(
-                _GETCODE_CACHE.values(), key=lambda v: v[2]
-            )[len(_GETCODE_CACHE) // 4][2]
-            for k in [k for k, v in _GETCODE_CACHE.items() if v[2] <= cutoff]:
-                _GETCODE_CACHE.pop(k, None)
+        _evict_getcode_if_needed()
         _GETCODE_CACHE[key] = (code, keccak_hex, now)
     return code, keccak_hex
+
+
+def _evict_getcode_if_needed() -> None:
+    """Drop the oldest 25% of _GETCODE_CACHE entries when the bound is
+    reached. Caller must hold ``_GETCODE_CACHE_LOCK``.
+
+    Better than random eviction for long-running workers because the
+    recently-probed addresses tend to recur. Extracted into a helper
+    so both single-call (get_code_with_keccak) and batch insert
+    (get_code_batch) honour the same bound — codex iter-5 P2 flagged
+    that the batch path was bypassing eviction.
+    """
+    if len(_GETCODE_CACHE) < _GETCODE_CACHE_MAX:
+        return
+    cutoff = sorted(_GETCODE_CACHE.values(), key=lambda v: v[2])[len(_GETCODE_CACHE) // 4][2]
+    for k in [k for k, v in _GETCODE_CACHE.items() if v[2] <= cutoff]:
+        _GETCODE_CACHE.pop(k, None)
 
 
 def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
@@ -229,6 +238,10 @@ def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
                 code = "0x"
             code_bytes = bytes.fromhex(code[2:]) if len(code) > 2 else b""
             keccak_hex = "0x" + keccak(code_bytes).hex()
+            # Honour the cache bound — codex iter-5 P2: batch path was
+            # bypassing eviction, letting long-lived workers exceed
+            # _GETCODE_CACHE_MAX with full bytecode payloads.
+            _evict_getcode_if_needed()
             _GETCODE_CACHE[(rpc_url, addr)] = (code, keccak_hex, now)
             out[addr] = code
     return out

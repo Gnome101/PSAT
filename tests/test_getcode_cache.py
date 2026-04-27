@@ -361,3 +361,57 @@ def test_get_code_batch_handles_0x0_provider_response(monkeypatch):
     code, keccak_hex = rpc.get_code_with_keccak("https://rpc", addr)
     assert code == "0x"
     assert keccak_hex == "0x" + keccak(b"").hex()
+
+
+# ---------------------------------------------------------------------------
+# Codex iter-5 P2: batch insert path must honour the cache bound
+# ---------------------------------------------------------------------------
+
+
+def test_get_code_batch_evicts_when_over_ceiling(monkeypatch):
+    """Codex iter-5 P2 — get_code_batch was inserting directly into
+    _GETCODE_CACHE without running the oldest-quartile eviction that
+    the single-call path uses. Repeated large batches in a long-lived
+    worker would exceed _GETCODE_CACHE_MAX with full bytecode payloads.
+    Verify the bound now holds for the batch path too."""
+    rpc.clear_getcode_cache()
+    monkeypatch.setattr(rpc, "_GETCODE_CACHE_MAX", 8)
+
+    def _fake_batch(_url, calls_list):
+        return [("0x60", False) for _ in calls_list]
+
+    monkeypatch.setattr(rpc, "rpc_batch_request_with_status", _fake_batch)
+
+    # Insert 24 distinct addresses via successive batch calls.
+    for batch_n in range(3):
+        addrs = [f"0x{batch_n}{i:039x}" for i in range(8)]
+        rpc.get_code_batch("https://rpc", addrs)
+
+    # Cache must NOT have grown unboundedly.
+    assert len(rpc._GETCODE_CACHE) <= rpc._GETCODE_CACHE_MAX, (
+        f"batch insert bypassed eviction: cache has {len(rpc._GETCODE_CACHE)} entries "
+        f"(max {rpc._GETCODE_CACHE_MAX})"
+    )
+
+
+def test_get_code_batch_eviction_keeps_recent_entries(monkeypatch):
+    """The eviction policy (drop oldest 25%) must preserve the most
+    recently inserted entries — those are the ones likely to be re-hit
+    on the next BFS layer."""
+    rpc.clear_getcode_cache()
+    monkeypatch.setattr(rpc, "_GETCODE_CACHE_MAX", 4)
+
+    def _fake_batch(_url, calls_list):
+        return [("0x60", False) for _ in calls_list]
+
+    monkeypatch.setattr(rpc, "rpc_batch_request_with_status", _fake_batch)
+
+    older = [f"0x0{i:039x}" for i in range(4)]
+    rpc.get_code_batch("https://rpc", older)
+    newer = [f"0x9{i:039x}" for i in range(4)]
+    rpc.get_code_batch("https://rpc", newer)
+
+    # At least the newer addresses survived (eviction dropped older ones).
+    keys = {k[1] for k in rpc._GETCODE_CACHE.keys()}
+    for addr in newer:
+        assert addr.lower() in keys, f"recent {addr} should not have been evicted"

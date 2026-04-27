@@ -130,12 +130,48 @@ def _pg_cache_get(module: str, action: str, chain_id: int, params: dict) -> dict
     return None
 
 
+def _is_persistable(module: str, action: str, response: dict) -> bool:
+    """Decide whether a successful Etherscan response is worth persisting.
+
+    Codex iter-5 P2: ``contract/getsourcecode`` returns
+    ``status="1"`` even for not-yet-verified contracts, with an empty
+    ``SourceCode`` field. Whitelisting the action without inspecting
+    the body would persist that empty response indefinitely; after
+    the contract gets verified later, we'd keep serving stale empties
+    until the row is manually purged.
+
+    Fix: only persist ``getsourcecode`` when the response actually
+    carries non-empty source. Other whitelisted actions (getabi,
+    getcontractcreation) are fine — they don't have this empty-success
+    pattern. Best-effort heuristic; downstream consumers ultimately
+    decide what's a "useful" response.
+    """
+    if action != "getsourcecode":
+        return True
+    result = response.get("result")
+    if not isinstance(result, list) or not result:
+        return False
+    first = result[0]
+    if not isinstance(first, dict):
+        return False
+    source = first.get("SourceCode")
+    return bool(source)
+
+
 def _pg_cache_put(module: str, action: str, chain_id: int, params: dict, response: dict) -> None:
     """Upsert into the Postgres etherscan_cache. Best-effort — DB
     unavailability never raises (the in-memory cache + caller's retry
     loop are the safety net). Whitelist-gated: only effectively-immutable
-    actions persist (see _PG_CACHE_WHITELIST)."""
+    actions persist (see _PG_CACHE_WHITELIST). Empty-source responses
+    are skipped per ``_is_persistable``."""
     if not _PG_CACHE_ENABLED or not _pg_cache_eligible(module, action):
+        return
+    if not _is_persistable(module, action, response):
+        logger.debug(
+            "Etherscan PG cache: skipping persist of empty %s/%s response (likely unverified contract)",
+            module,
+            action,
+        )
         return
     try:
         from sqlalchemy import text
