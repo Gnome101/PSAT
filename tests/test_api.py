@@ -500,7 +500,7 @@ def test_stage_timings_endpoint_is_admin_protected() -> None:
     matching = [r for r in api.app.routes if getattr(r, "path", None) == target_path]
     assert matching, f"route {target_path} is not registered"
     route = matching[0]
-    deps = [dep.call for dep in route.dependant.dependencies]
+    deps = [dep.call for dep in route.dependant.dependencies]  # type: ignore[attr-defined]
     assert api.require_admin_key in deps, (
         "stage_timings endpoint must depend on require_admin_key — without "
         "it, per-job worker_id / runtime metadata would be public"

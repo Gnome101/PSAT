@@ -84,7 +84,7 @@ def test_record_writes_per_stage_artifact_with_flat_payload(monkeypatch):
 def test_each_stage_writes_its_own_artifact_name(monkeypatch):
     """Two different stages on the same job must produce two artifacts
     with distinct names — proving there's no shared slot to race on."""
-    writes: list[tuple[str, dict]] = []
+    writes: list[tuple[str | None, dict | None]] = []
 
     def _fake_store(*args, **kw):
         name = args[2] if len(args) > 2 else kw.get("name")
@@ -116,8 +116,10 @@ def test_each_stage_writes_its_own_artifact_name(monkeypatch):
     names = [name for name, _ in writes]
     assert names == ["stage_timing_discovery", "stage_timing_static"]
     # Each payload is its own self-contained record (no shared array).
-    assert writes[0][1]["stage"] == "discovery"
-    assert writes[1][1]["stage"] == "static"
+    payload0, payload1 = writes[0][1], writes[1][1]
+    assert payload0 is not None and payload1 is not None
+    assert payload0["stage"] == "discovery"
+    assert payload1["stage"] == "static"
 
 
 def test_record_failed_status_persists(monkeypatch):

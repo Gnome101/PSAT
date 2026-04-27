@@ -31,15 +31,16 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from schemas.resolved_control_graph import ResolvedControlGraph
 from services.resolution import recursive
-from services.resolution.recursive import resolve_control_graph
+from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 
 ROOT_ADDR = "0x" + "ab" * 20
 NESTED_ADDR = "0x" + "cd" * 20
@@ -53,7 +54,7 @@ def _isolated_caches():
     recursive.clear_artifact_cache()
 
 
-def _root_artifacts(*, with_role_principals: bool):
+def _root_artifacts(*, with_role_principals: bool) -> LoadedArtifacts:
     """Root LoadedArtifacts used for both walks. ``with_role_principals``
     adds an effective_permissions block referencing ROLE_PRINCIPAL_EOA —
     the second walk should pick that up; the first should not see it."""
@@ -86,7 +87,7 @@ def _root_artifacts(*, with_role_principals: bool):
                 }
             ]
         }
-    return bundle
+    return cast(LoadedArtifacts, bundle)
 
 
 def test_first_walk_then_initial_graph_walk_is_no_op_with_no_new_principals():
@@ -196,7 +197,7 @@ def test_initial_graph_skips_re_materialization_of_nested_contracts():
         "details": {"address": ROOT_ADDR},
         "artifacts": {},
     }
-    seed_graph = {"nodes": [root_node, nested_node], "edges": []}
+    seed_graph = cast(ResolvedControlGraph, {"nodes": [root_node, nested_node], "edges": []})
 
     materialize_calls: list[str] = []
 
@@ -260,7 +261,7 @@ def test_initial_graph_re_walks_root_so_new_permissions_are_projected():
             root_artifacts=_root_artifacts(with_role_principals=True),
             rpc_url="https://rpc",
             workspace_prefix="test",
-            initial_graph=seed_graph,
+            initial_graph=cast(ResolvedControlGraph, seed_graph),
         )
 
     # The role principal from the root's new permissions made it in.
@@ -319,7 +320,7 @@ def test_initial_graph_dedupes_edges_on_re_walk():
             root_artifacts=_root_artifacts(with_role_principals=False),
             rpc_url="https://rpc",
             workspace_prefix="test",
-            initial_graph=seed_graph,
+            initial_graph=cast(ResolvedControlGraph, seed_graph),
         )
 
     # Same edge appears exactly once.

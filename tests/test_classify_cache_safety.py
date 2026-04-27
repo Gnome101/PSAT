@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -104,7 +105,7 @@ def test_cached_details_are_isolated_from_caller_mutation(monkeypatch):
     _kind, details = classify_resolved_address("https://rpc", "0x" + "e" * 40)
     assert details["owners"] == ["0x" + "1" * 40, "0x" + "2" * 40]
     # Caller mutates returned details + nested list:
-    details["owners"].append("0xpoisoned")
+    cast(list, details["owners"]).append("0xpoisoned")
     details["address"] = "0xchanged"
 
     # Next call returns a clean copy.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -73,7 +74,7 @@ def _log(topic0: str, indexed_args: list[str] | None = None, data: str = "0x", b
     )
 
 
-def _fake_client(batches: list[tuple[list[Any], int | None]]):
+def _fake_client(batches: Sequence[tuple[Sequence[Any], int | None]]):
     calls: dict[str, int] = {"n": 0}
 
     class _Client:
