@@ -17,7 +17,7 @@ from services.discovery.upgrade_history import (
     parse_upgrade_log,
 )
 from services.monitoring.notifier import notify_upgrades
-from utils.rpc import current_block_number, normalize_hex, parse_address_result, rpc_batch_request, rpc_request
+from utils.rpc import normalize_hex, parse_address_result, rpc_batch_request, rpc_request
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
@@ -42,7 +42,8 @@ DEFAULT_SCAN_INTERVAL = int(os.getenv("PROTOCOL_SCAN_INTERVAL", "600"))
 
 
 def get_latest_block(rpc_url: str) -> int:
-    return current_block_number(rpc_url)
+    result = rpc_request(rpc_url, "eth_blockNumber", [])
+    return int(result, 16)
 
 
 def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]:

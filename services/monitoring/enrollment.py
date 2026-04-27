@@ -20,7 +20,7 @@ from db.models import (
     MonitoredContract,
     WatchedProxy,
 )
-from utils.rpc import current_block_number
+from utils.rpc import rpc_request
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,8 @@ def enroll_protocol_contracts(
 
     # Get current block number for last_scanned_block
     try:
-        current_block = current_block_number(rpc_url)
+        result = rpc_request(rpc_url, "eth_blockNumber", [])
+        current_block = int(result, 16)
     except Exception:
         logger.warning("Could not get current block, defaulting to 0")
         current_block = 0

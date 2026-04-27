@@ -9,9 +9,6 @@ from eth_abi.abi import decode
 from eth_utils.crypto import keccak
 
 from utils.rpc import (
-    current_block_number as _current_block_number,
-)
-from utils.rpc import (
     decode_address as _decode_address,
 )
 from utils.rpc import (
@@ -165,7 +162,10 @@ def _get_logs(rpc_url: str, filter_params: dict[str, Any]) -> list[dict[str, Any
 
     to_block_raw = filter_params.get("toBlock", "latest")
     if to_block_raw == "latest":
-        to_block = _current_block_number(rpc_url)
+        current = _rpc_request(rpc_url, "eth_blockNumber", [])
+        if not isinstance(current, str) or not current.startswith("0x"):
+            raise RuntimeError(f"Unexpected eth_blockNumber result: {current!r}")
+        to_block = int(current, 16)
     else:
         to_block = int(str(to_block_raw), 16)
     from_block = int(str(filter_params.get("fromBlock", "0x0")), 16)
@@ -191,11 +191,10 @@ def _get_code_at_block(rpc_url: str, address: str, block_number: int) -> str:
 
 @lru_cache(maxsize=256)
 def _code_start_block(rpc_url: str, address: str, block_tag: str = "latest") -> int:
-    try:
-        latest = _current_block_number(rpc_url)
-    except Exception:
+    current = _rpc_request(rpc_url, "eth_blockNumber", [])
+    if not isinstance(current, str) or not current.startswith("0x"):
         return 0
-    high = latest if block_tag == "latest" else int(block_tag, 16)
+    high = int(current, 16) if block_tag == "latest" else int(block_tag, 16)
     if _get_code_at_block(rpc_url, address, high) in {"0x", "0x0"}:
         return 0
 

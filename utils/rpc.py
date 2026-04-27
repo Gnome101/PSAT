@@ -31,42 +31,6 @@ def clear_getcode_cache() -> None:
         _GETCODE_CACHE.clear()
 
 
-# Process-wide eth_blockNumber TTL cache; block height is finalized state and a few seconds of staleness is harmless for
-# log-range upper bounds, snapshot block tagging, and binary-search-by-block.
-_BLOCK_NUMBER_CACHE: dict[str, tuple[int, float]] = {}
-_BLOCK_NUMBER_CACHE_LOCK = threading.Lock()
-_BLOCK_NUMBER_CACHE_TTL_S = float(os.getenv("PSAT_BLOCK_NUMBER_CACHE_TTL_S", "30"))
-
-
-def clear_block_number_cache() -> None:
-    """Clear the process-wide eth_blockNumber cache. For tests + manual reset."""
-    with _BLOCK_NUMBER_CACHE_LOCK:
-        _BLOCK_NUMBER_CACHE.clear()
-
-
-def current_block_number(rpc_url: str) -> int:
-    """Latest block number on ``rpc_url`` with a short TTL cache.
-
-    RPC errors propagate as RuntimeError and are NOT cached.
-    """
-    now = time.monotonic()
-    with _BLOCK_NUMBER_CACHE_LOCK:
-        cached = _BLOCK_NUMBER_CACHE.get(rpc_url)
-        if cached is not None:
-            block, inserted_at = cached
-            if now - inserted_at < _BLOCK_NUMBER_CACHE_TTL_S:
-                return block
-
-    raw = rpc_request(rpc_url, "eth_blockNumber", [])
-    if not isinstance(raw, str) or not raw.startswith("0x"):
-        raise RuntimeError(f"Unexpected eth_blockNumber result: {raw!r}")
-    block = int(raw, 16)
-
-    with _BLOCK_NUMBER_CACHE_LOCK:
-        _BLOCK_NUMBER_CACHE[rpc_url] = (block, now)
-    return block
-
-
 def _normalized_addr(address: str) -> str:
     return address.lower() if address.startswith("0x") else "0x" + address.lower()
 
