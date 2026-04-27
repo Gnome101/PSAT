@@ -23,13 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def _fake_artifact(job_id, name: str, data):
-    """Stand-in for an inline ``Artifact`` row for the /api/analyses batch query.
-
-    /api/analyses iterates ``select(Artifact).where(...)``.scalars()`` and
-    routes the rows through ``_artifact_row_to_value`` (storage_key first,
-    then data, then text_data). For tests we return inline rows so no
-    storage client is touched.
-    """
+    """Inline ``Artifact`` row stand-in for the /api/analyses batched select."""
     return SimpleNamespace(
         job_id=job_id,
         name=name,

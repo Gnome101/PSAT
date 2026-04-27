@@ -802,12 +802,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
 
-# PSAT runs a single uvicorn process (start_container.sh — psycopg2 sockets
-# aren't fork-safe), so pool_size + max_overflow IS the prod connection
-# budget. SQLAlchemy's stock 5+10 default serialized concurrent /api/company
-# hits; 10+20 keeps a Neon Free tenant comfortably under the 100-conn cap
-# while leaving room for the workers' own pools. Override via env when the
-# Postgres tier has a tighter quota.
+# Single uvicorn process (psycopg2 isn't fork-safe), so 10+20 is the prod connection budget.
+# Env-overridable for tight-quota Postgres.
 DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "10"))
 DB_MAX_OVERFLOW = int(os.environ.get("DB_MAX_OVERFLOW", "20"))
 DB_POOL_RECYCLE = int(os.environ.get("DB_POOL_RECYCLE", "1800"))
@@ -846,13 +842,8 @@ def apply_storage_migrations(target_engine=None) -> None:
         ac_conn.execute(text("SET statement_timeout = '30s'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'coverage' BEFORE 'done'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'selection' BEFORE 'static'"))
-        # FK indexes must build CONCURRENTLY so we don't block writes on
-        # the join-key columns during a rolling deploy. CONCURRENTLY can't
-        # run inside a transaction, hence the AUTOCOMMIT connection. On a
-        # fresh schema these are already created by Base.metadata.create_all
-        # via Index() declarations on the model — IF NOT EXISTS keeps it a
-        # no-op there. Bump statement_timeout for the build (SET LOCAL has
-        # no effect under AUTOCOMMIT) then restore the cap.
+        # CONCURRENTLY can't run in a transaction; FK indexes built here on the AUTOCOMMIT
+        # conn so rolling deploys don't block writes.
         ac_conn.execute(text("SET statement_timeout = '300s'"))
         for table in (
             "upgrade_events",
@@ -1031,10 +1022,8 @@ def apply_storage_migrations(target_engine=None) -> None:
         # proof_kind (Phase C): strength subtype for proven rows. See the
         # model comment for the full vocabulary.
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS proof_kind VARCHAR(30)"))
-        # jobs.is_proxy mirrors contract_flags.is_proxy. The SQL UPDATE
-        # below handles inline rows in one shot; the matching pass for
-        # storage-backed rows runs after this connection closes (see
-        # backfill_job_is_proxy_from_storage at the bottom of this fn).
+        # jobs.is_proxy mirrors contract_flags.is_proxy. Inline rows handled here;
+        # storage-backed rows handled by the post-commit backfill below.
         conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_proxy BOOLEAN NOT NULL DEFAULT FALSE"))
         conn.execute(
             text(
@@ -1047,9 +1036,7 @@ def apply_storage_migrations(target_engine=None) -> None:
                 "  AND jobs.is_proxy = FALSE"
             )
         )
-        # FK indexes for the per-contract batch prefetches live in the
-        # AUTOCOMMIT block above so they can build CONCURRENTLY without
-        # blocking writes on rolling deploys.
+        # FK indexes are created CONCURRENTLY in the AUTOCOMMIT block above.
         # audit_contract_coverage ↔ proxy invariant. Scope names like
         # ``UUPSProxy`` match generic proxy Contract rows verbatim, but the
         # audit didn't review the proxy's code — it reviewed the impl's.
@@ -1099,11 +1086,8 @@ def apply_storage_migrations(target_engine=None) -> None:
         )
         conn.commit()
 
-    # Storage-backed contract_flags rows (data IS NULL, body in S3/MinIO)
-    # weren't reachable from the SQL backfill above. Walk them via the
-    # storage client. No-op when storage isn't configured. Best-effort:
-    # any read failure is logged and skipped — /api/jobs is the only
-    # consumer and it tolerates a stale False.
+    # Storage-backed contract_flags rows can't be reached from the inline SQL UPDATE above
+    # — best-effort walk via the storage client.
     try:
         from .queue import backfill_job_is_proxy_from_storage
 
@@ -1113,10 +1097,7 @@ def apply_storage_migrations(target_engine=None) -> None:
     except Exception:
         import logging
 
-        logging.getLogger(__name__).warning(
-            "Storage-backed is_proxy backfill failed; /api/jobs may show stale flags for legacy proxies",
-            exc_info=True,
-        )
+        logging.getLogger(__name__).warning("Storage-backed is_proxy backfill failed", exc_info=True)
 
 
 def create_tables() -> None:

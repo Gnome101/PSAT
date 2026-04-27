@@ -394,20 +394,8 @@ def get_artifact(session: Session, job_id: Any, name: str) -> dict | list | str 
 
 
 def backfill_job_is_proxy_from_storage(session: Session) -> int:
-    """Resolve storage-backed ``contract_flags`` artifacts and flip
-    ``Job.is_proxy`` to TRUE where appropriate.
-
-    The SQL backfill in ``apply_storage_migrations`` only sees inline rows
-    (``artifacts.data IS NOT NULL``); historical rows whose body lives in
-    object storage stay False until something reads them. This walks the
-    storage-backed rows whose Job is still flagged False — once the flag
-    flips True it's only flipped back to False by ``store_artifact``'s
-    mirror, so we don't need to re-check those.
-
-    No-op when storage isn't configured. Returns the count of jobs updated.
-    """
-    client = get_storage_client()
-    if client is None:
+    """Flip ``Job.is_proxy`` for legacy storage-backed ``contract_flags`` rows the inline SQL backfill can't reach."""
+    if get_storage_client() is None:
         return 0
     rows = session.execute(
         select(Artifact)
@@ -421,15 +409,14 @@ def backfill_job_is_proxy_from_storage(session: Session) -> int:
     updated = 0
     for art in rows:
         try:
-            value = deserialize_artifact(client.get(art.storage_key), art.content_type)
+            value = _artifact_row_to_value(art)
         except StorageError:
             logger.warning("backfill: contract_flags storage read failed for job %s", art.job_id)
             continue
         if not isinstance(value, dict) or value.get("is_proxy") is not True:
             continue
-        result = session.execute(sa_update(Job).where(Job.id == art.job_id).values(is_proxy=True))
-        if result.rowcount:
-            updated += 1
+        session.execute(sa_update(Job).where(Job.id == art.job_id, Job.is_proxy.is_(False)).values(is_proxy=True))
+        updated += 1
     session.commit()
     return updated
 

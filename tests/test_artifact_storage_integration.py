@@ -270,10 +270,7 @@ def test_health_endpoint_reports_db_and_storage(api_with):
     resp = client.get("/api/health")
     assert resp.status_code == 200
     payload = resp.json()
-    # The pool block is QueuePool-only (NullPool used by some test setups
-    # has no counters); keep its presence loose so this test passes in both
-    # modes.
-    payload.pop("pool", None)
+    payload.pop("pool", None)  # only present under QueuePool
     assert payload == {"status": "ok", "db": "ok", "storage": "ok"}
 
 

@@ -227,9 +227,7 @@ def _read_existing_balances(session: Session, protocol_id: int) -> dict[str, dic
         return {}
     contract_ids = [c.id for c in contracts]
     rows_by_cid: dict[int, list[ContractBalance]] = {}
-    for b in session.execute(
-        select(ContractBalance).where(ContractBalance.contract_id.in_(contract_ids))
-    ).scalars():
+    for b in session.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(contract_ids))).scalars():
         rows_by_cid.setdefault(b.contract_id, []).append(b)
     breakdown: dict[str, dict] = {}
     for contract in contracts:
