@@ -916,19 +916,38 @@ class StaticWorker(BaseWorker):
 
         base_name = job.name or contract_name
         force = bool(request.get("force"))
+        # Compute the root_job_id for this cascade so we can dedupe within
+        # a single cascade even under --force. Without this, when a cascade
+        # discovers the same impl through multiple proxy paths (very common
+        # for shared infra contracts like UUPSProxy_308861A4 in etherfi),
+        # static_worker spawns N copies of the impl analysis. Within-cascade
+        # dedupe lets us preserve --force's "fresh impl per cascade" goal
+        # while eliminating intra-cascade duplicates.
+        root_job_id = request.get("root_job_id") or str(job.id)
         for impl_addr, label in impl_entries:
-            # Skip dedup check under force — bench runs need a fresh impl job each time.
-            if not force:
-                existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
-                if existing:
-                    logger.info(
-                        "Job %s: %s %s already has job %s, skipping",
-                        job.id,
-                        label,
-                        impl_addr,
-                        existing.id,
-                    )
-                    continue
+            if force:
+                # Within-cascade dedupe: check for an existing job for this
+                # impl that's already part of the same root cascade.
+                existing = session.execute(
+                    select(Job).where(
+                        Job.address == impl_addr,
+                        Job.request["root_job_id"].as_string() == root_job_id,
+                    ).limit(1)
+                ).scalar_one_or_none()
+            else:
+                # Global dedupe: any prior job for this impl wins.
+                existing = session.execute(
+                    select(Job).where(Job.address == impl_addr).limit(1)
+                ).scalar_one_or_none()
+            if existing:
+                logger.info(
+                    "Job %s: %s %s already has job %s in this cascade, skipping",
+                    job.id,
+                    label,
+                    impl_addr,
+                    existing.id,
+                )
+                continue
 
             impl_name = f"{base_name}: ({label})"
             child_request = {
@@ -936,6 +955,7 @@ class StaticWorker(BaseWorker):
                 "name": impl_name,
                 "rpc_url": rpc_url,
                 "parent_job_id": str(job.id),
+                "root_job_id": root_job_id,
                 "proxy_address": address,
                 "proxy_type": proxy_type,
             }
