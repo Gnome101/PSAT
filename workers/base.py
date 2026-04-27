@@ -148,14 +148,17 @@ class BaseWorker:
                 started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 try:
                     self.process(session, job)
-                    if self.next_stage == JobStage.done:
-                        from db.queue import complete_job
-
-                        complete_job(session, job.id)
-                    else:
-                        advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
                     elapsed = time.monotonic() - t0
                     ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    # Record timing BEFORE advancing/completing — otherwise
+                    # the next-stage worker can claim the row, finish, and
+                    # write its own stage_timings entry concurrently. Both
+                    # workers do read-modify-write on the same JSON
+                    # artifact, so the later commit drops the earlier
+                    # stage's entry. Recording first keeps the artifact
+                    # write inside this worker's exclusive ownership of
+                    # the row. Timing is best-effort (swallows errors)
+                    # so this does not delay or block the advance.
                     self._record_stage_timing(
                         session,
                         job,
@@ -164,6 +167,12 @@ class BaseWorker:
                         elapsed_s=elapsed,
                         status="success",
                     )
+                    if self.next_stage == JobStage.done:
+                        from db.queue import complete_job
+
+                        complete_job(session, job.id)
+                    else:
+                        advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
                     logger.info(
                         "Worker %s completed job %s in %.1fs",
                         self.worker_id,

@@ -202,3 +202,87 @@ def test_record_stage_timing_rejects_corrupt_existing_payload(monkeypatch):
     # Wrote a fresh schema-v1 payload with just our entry.
     assert captured["data"]["schema_version"] == "1"
     assert len(captured["data"]["stages"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Codex-iter-1 finding: timing must be recorded before advance/complete
+# ---------------------------------------------------------------------------
+
+
+def test_record_timing_runs_before_advance_in_run_loop(monkeypatch):
+    """Codex review finding: if ``advance_job`` commits the next stage as
+    queued before ``_record_stage_timing`` writes, the next-stage worker
+    can claim the row, finish, and write its own ``stage_timings`` entry
+    concurrently. Both workers do read-modify-write on the same JSON
+    artifact — last-writer-wins drops one stage's entry under multi-worker
+    configs.
+
+    Verify the call order: stage_timings recording happens BEFORE
+    ``advance_job`` / ``complete_job`` so the artifact write is
+    fully owned by this worker before the row is exposed to the next
+    stage. Timing is best-effort (errors swallowed) so this re-ordering
+    does not delay or block the advance even when the artifact write
+    fails."""
+    from db.models import JobStatus
+    from workers import base
+    from workers.base import BaseWorker, JobHandledDirectly  # noqa: F401
+
+    call_order: list[str] = []
+
+    class _OrderingWorker(BaseWorker):
+        stage = JobStage.discovery
+        next_stage = JobStage.static
+        poll_interval = 0.0
+
+        def process(self, _session, _job):
+            call_order.append("process")
+
+        def _record_stage_timing(self, *_a, **_kw):
+            call_order.append("record_stage_timing")
+
+    # Synthesize a job; never actually persisted.
+    job = SimpleNamespace(
+        id="job-ordering",
+        address="0xabc",
+        name="t",
+        status=JobStatus.processing,
+        worker_id="w",
+        stage=JobStage.discovery,
+    )
+
+    # Patch claim/advance/complete: claim returns our fake job once, then
+    # signals shutdown so run_loop exits cleanly.
+    claims = iter([job, None])
+
+    def _fake_claim(self_, _session):
+        call_order.append("claim")
+        try:
+            j = next(claims)
+        except StopIteration:
+            return None
+        if j is None:
+            self_._running = False
+        return j
+
+    def _fake_advance(_session, _job_id, _next_stage, _detail):
+        call_order.append("advance_job")
+
+    def _fake_complete(_session, _job_id):
+        call_order.append("complete_job")
+
+    monkeypatch.setattr(base.BaseWorker, "_claim_job", _fake_claim)
+    monkeypatch.setattr(base, "advance_job", _fake_advance)
+    # Patch the deferred import in run_loop too.
+    import db.queue as db_queue
+    monkeypatch.setattr(db_queue, "complete_job", _fake_complete)
+    monkeypatch.setattr(base, "SessionLocal", lambda: MagicMock())
+    monkeypatch.setattr(base.time, "sleep", lambda *_: None)
+
+    w = _OrderingWorker()
+    w.run_loop()
+
+    # Filter out claim/no-job iterations; we care about the per-job sequence.
+    relevant = [c for c in call_order if c in {"process", "record_stage_timing", "advance_job", "complete_job"}]
+    assert relevant == ["process", "record_stage_timing", "advance_job"], (
+        f"timing must record BEFORE advance_job; saw {relevant}"
+    )
