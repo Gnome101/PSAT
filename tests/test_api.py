@@ -395,3 +395,115 @@ def test_protocol_tvl_caps_days(mock_session_cls) -> None:
 
     assert hasattr(api, "MAX_TVL_HISTORY_DAYS"), "api.py should define MAX_TVL_HISTORY_DAYS"
     assert api.MAX_TVL_HISTORY_DAYS <= 365
+
+
+# ---------------------------------------------------------------------------
+# /api/jobs/{job_id}/stage_timings — bench harness consumer
+# ---------------------------------------------------------------------------
+
+
+@patch("api._resolve_artifact_value")
+@patch("api.SessionLocal")
+def test_stage_timings_endpoint_returns_per_stage_artifacts(
+    mock_session_cls, mock_resolve
+) -> None:
+    """Bench harness needs a reliable per-stage timing source. The endpoint
+    must collect every ``stage_timing_<stage>`` artifact for the job and
+    return them keyed by stage name (the suffix after ``stage_timing_``).
+    Mirrors what the worker writes via ``_record_stage_timing``."""
+    import api
+
+    client = make_client()
+    fake_job = _make_fake_job()
+
+    # Synthesize two artifacts: stage_timing_discovery + stage_timing_static.
+    # The session.execute().scalars().all() chain returns SimpleNamespaces
+    # that look like ORM Artifact rows.
+    art_discovery = SimpleNamespace(name="stage_timing_discovery")
+    art_static = SimpleNamespace(name="stage_timing_static")
+
+    def _fake_resolve(row):
+        if row is art_discovery:
+            return {
+                "schema_version": "2",
+                "stage": "discovery",
+                "elapsed_s": 4.2,
+                "started_at": "t0",
+                "ended_at": "t1",
+                "worker_id": "DiscoveryWorker-1-aaa",
+                "status": "success",
+            }
+        if row is art_static:
+            return {
+                "schema_version": "2",
+                "stage": "static",
+                "elapsed_s": 28.7,
+                "started_at": "t1",
+                "ended_at": "t2",
+                "worker_id": "StaticWorker-1-bbb",
+                "status": "success",
+            }
+        return None
+
+    mock_resolve.side_effect = _fake_resolve
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = fake_job
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = [art_discovery, art_static]
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value = mock_scalars
+    mock_session.execute.return_value = mock_execute_result
+    mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+    api.ADMIN_KEY = "test-admin-key"
+    resp = client.get(
+        f"/api/jobs/{fake_job.id}/stage_timings",
+        headers={"X-PSAT-Admin-Key": "test-admin-key"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["job_id"] == str(fake_job.id)
+    assert set(body["stage_timings"].keys()) == {"discovery", "static"}
+    assert body["stage_timings"]["discovery"]["elapsed_s"] == 4.2
+    assert body["stage_timings"]["static"]["elapsed_s"] == 28.7
+    assert body["stage_timings"]["discovery"]["status"] == "success"
+
+
+@patch("api.SessionLocal")
+def test_stage_timings_endpoint_404_for_unknown_job(mock_session_cls) -> None:
+    import api
+
+    client = make_client()
+    mock_session = MagicMock()
+    mock_session.get.return_value = None
+    mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+    api.ADMIN_KEY = "test-admin-key"
+    resp = client.get(
+        f"/api/jobs/{uuid.uuid4()}/stage_timings",
+        headers={"X-PSAT-Admin-Key": "test-admin-key"},
+    )
+    assert resp.status_code == 404
+
+
+def test_stage_timings_endpoint_is_admin_protected() -> None:
+    """Per-job timings expose internal worker_id / runtime metadata —
+    must be admin-protected so a public-facing analyzer doesn't leak
+    the worker fleet shape. Verified at the route-definition level
+    because conftest's ``_bypass_admin_key`` autouse fixture stubs
+    the auth dependency for every test, so an HTTP 401 assertion
+    can never fire."""
+    import api
+
+    target_path = "/api/jobs/{job_id}/stage_timings"
+    matching = [r for r in api.app.routes if getattr(r, "path", None) == target_path]
+    assert matching, f"route {target_path} is not registered"
+    route = matching[0]
+    deps = [dep.call for dep in route.dependant.dependencies]
+    assert api.require_admin_key in deps, (
+        "stage_timings endpoint must depend on require_admin_key — without "
+        "it, per-job worker_id / runtime metadata would be public"
+    )

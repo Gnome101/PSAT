@@ -608,6 +608,40 @@ def get_job(job_id: str) -> dict[str, Any]:
         return job.to_dict()
 
 
+@app.get("/api/jobs/{job_id}/stage_timings", dependencies=[Depends(require_admin_key)])
+def get_job_stage_timings(job_id: str) -> dict[str, Any]:
+    """Return all per-stage timing artifacts the worker fleet wrote for
+    this job, keyed by stage name. Schema-v2 layout (one
+    ``stage_timing_<stage>`` artifact per stage). Used by the bench
+    harness to populate ``worker_elapsed_seconds`` reliably without
+    scraping Fly logs.
+
+    Admin-protected because per-job timings expose internal worker_id /
+    runtime metadata.
+    """
+    with SessionLocal() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        rows = (
+            session.execute(
+                select(Artifact).where(
+                    Artifact.job_id == job.id,
+                    Artifact.name.like("stage_timing_%"),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        timings: dict[str, Any] = {}
+        for row in rows:
+            stage = row.name[len("stage_timing_"):]
+            value = _resolve_artifact_value(row)
+            if isinstance(value, dict):
+                timings[stage] = value
+        return {"job_id": str(job.id), "stage_timings": timings}
+
+
 @app.get("/api/analyses")
 def analyses() -> list[dict]:
     """List completed analyses with their available artifacts."""

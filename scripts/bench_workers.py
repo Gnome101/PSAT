@@ -243,7 +243,12 @@ class FlyLogTail:
 
 
 def stage_elapsed_from_log_text(log_text: str, job_id: str) -> tuple[dict[str, float], list[str]]:
-    """Extract per-worker elapsed seconds + raw lines for one job_id."""
+    """Extract per-worker elapsed seconds + raw lines for one job_id.
+
+    Legacy fallback path. Replaced by ``stage_elapsed_from_artifacts`` for
+    any deployment running the schema-v2 ``stage_timing_<stage>`` artifacts;
+    this remains for older deploys that don't expose
+    ``/api/jobs/{id}/stage_timings``."""
     matches: dict[str, float] = {}
     raw: list[str] = []
     for line in log_text.splitlines():
@@ -258,6 +263,33 @@ def stage_elapsed_from_log_text(log_text: str, job_id: str) -> tuple[dict[str, f
             matches[stage] = float(m.group("sec"))
             raw.append(line.strip())
     return matches, raw
+
+
+def stage_elapsed_from_artifacts(base_url: str, job_id: str, admin_key: str) -> dict[str, float]:
+    """Fetch per-stage worker elapsed seconds from the schema-v2
+    ``stage_timing_<stage>`` artifacts via /api/jobs/{id}/stage_timings.
+
+    Returns ``{stage: elapsed_s}``. Empty dict if the endpoint isn't
+    available (404 from older deploys) or no artifacts have been written
+    yet — caller falls back to ``stage_elapsed_from_log_text``.
+
+    The artifact-based path is reliable: persisted directly by the
+    worker, not buffered through Fly's log stream. Closes the
+    observability gap that left ``worker_elapsed_seconds`` mostly empty
+    in bench JSON when log lines were dropped under load."""
+    url = f"{base_url.rstrip('/')}/api/jobs/{job_id}/stage_timings"
+    try:
+        resp = http_get(url, admin_key)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return {}
+        raise
+    timings = resp.get("stage_timings") or {}
+    out: dict[str, float] = {}
+    for stage, payload in timings.items():
+        if isinstance(payload, dict) and isinstance(payload.get("elapsed_s"), (int, float)):
+            out[stage] = float(payload["elapsed_s"])
+    return out
 
 
 def build_summary(args, submit_resp, final_job, transitions, polled, worker, raw_lines):
@@ -348,11 +380,42 @@ def main() -> int:
         )
         cascade_total_s = round(time.monotonic() - submit_started, 2)
 
+    # Prefer the schema-v2 stage_timing_<stage> artifacts (reliable —
+    # written by the worker directly). Fall back to Fly log scraping
+    # only when the API endpoint isn't there (older deploys) or the
+    # artifacts are empty.
+    artifact_timings = stage_elapsed_from_artifacts(args.url, job_id, args.admin_key)
+    if artifact_timings:
+        worker_elapsed = artifact_timings
+        timing_source = "artifact"
+    else:
+        timing_source = "fly-log-fallback" if log_tail is not None else "none"
     if log_tail is not None:
         log_text = log_tail.stop_and_read()
-        worker_elapsed, raw_lines = stage_elapsed_from_log_text(log_text, job_id)
+        scraped, raw_lines = stage_elapsed_from_log_text(log_text, job_id)
+        if not artifact_timings:
+            worker_elapsed = scraped
+
+    # Per-cascade-job stage timings (only useful in --follow-all-jobs mode).
+    # Cheap: one HTTP call per child job, all cached server-side.
+    cascade_stage_timings: dict[str, dict[str, float]] = {}
+    if cascade_jobs:
+        for cj in cascade_jobs:
+            cj_id = cj.get("job_id")
+            if not cj_id:
+                continue
+            try:
+                t = stage_elapsed_from_artifacts(args.url, cj_id, args.admin_key)
+            except Exception as exc:
+                print(f"[bench] warn: stage_timings fetch failed for {cj_id}: {exc}", file=sys.stderr)
+                continue
+            if t:
+                cascade_stage_timings[cj_id] = t
 
     summary = build_summary(args, submit_resp, final_job, transitions, polled, worker_elapsed, raw_lines)
+    summary["worker_timing_source"] = timing_source
+    if cascade_stage_timings:
+        summary["cascade_stage_timings"] = cascade_stage_timings
     if args.follow_all_jobs:
         summary["cascade_total_seconds"] = cascade_total_s
         summary["cascade_job_count"] = len(cascade_jobs)
