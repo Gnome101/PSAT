@@ -8,6 +8,14 @@ cd "$(dirname "$0")"
 
 export PYTHONUNBUFFERED=1
 
+# Tighter DB pool for worker processes — each worker claims one job at a
+# time, so 2 base + 3 overflow is plenty. With ~10 worker procs per VM
+# this caps total worker DB connections at ~50, leaving headroom for
+# api + scripts under Neon's pool ceiling. Override per-process by
+# exporting PSAT_DB_POOL_SIZE / PSAT_DB_MAX_OVERFLOW before this script.
+export PSAT_DB_POOL_SIZE="${PSAT_DB_POOL_SIZE:-2}"
+export PSAT_DB_MAX_OVERFLOW="${PSAT_DB_MAX_OVERFLOW:-3}"
+
 PIDS=()
 
 cleanup() {

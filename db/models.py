@@ -781,8 +781,24 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
 
+# Pool sizing is env-tunable per process group. Defaults match SQLAlchemy's
+# historical 5+10 (preserves api/script behavior). start_workers.sh ships
+# tighter values for workers — each worker is mostly serial (claim job →
+# process → repeat), so a 2+3 pool is enough and 10 worker processes ×
+# 5 connections stays well under Neon's pool ceiling.
+#
+# pool_recycle (default 300s) protects against Neon idle-disconnects:
+# Neon closes idle connections at ~5 min, and a stale conn surfaces as
+# OperationalError on the *next* checkout — costing one job a retry.
+_POOL_SIZE = int(os.environ.get("PSAT_DB_POOL_SIZE", "5"))
+_MAX_OVERFLOW = int(os.environ.get("PSAT_DB_MAX_OVERFLOW", "10"))
+_POOL_RECYCLE = int(os.environ.get("PSAT_DB_POOL_RECYCLE", "300"))
+
 engine = create_engine(
     DATABASE_URL,
+    pool_size=_POOL_SIZE,
+    max_overflow=_MAX_OVERFLOW,
+    pool_recycle=_POOL_RECYCLE,
     pool_pre_ping=True,
     # psycopg2 defaults connect_timeout to infinity — would block every
     # session acquisition during a Neon cold-start.
