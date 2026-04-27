@@ -1,0 +1,227 @@
+"""Regression tests for the process-wide eth_getCode cache in
+``utils.rpc``.
+
+Bytecode at a deployed address is effectively immutable for the lifetime
+of a cascade. The cascade probes the same addresses across stages (
+discovery → resolution → policy) and across sibling jobs touching shared
+infra (OZ libraries, common impls). Caching the bytecode + its keccak
+saves the RTT on every repeat probe.
+
+What we pin:
+1. Repeat call within TTL hits the cache (no second RPC).
+2. RPC errors are NOT cached — must propagate, otherwise a transient
+   failure cements an empty bytecode reading.
+3. TTL expiry triggers re-fetch.
+4. Different addresses keep separate slots.
+5. ``get_code`` and ``get_code_with_keccak`` share the same cache (i.e.,
+   one call populates both).
+6. The keccak is computed correctly (matches eth_utils.keccak of the
+   raw bytecode bytes — load-bearing for B10 Slither result cache).
+7. Empty bytecode (``"0x"``) is cached; keccak is keccak of empty bytes.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+from eth_utils.crypto import keccak
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from utils import rpc
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cache():
+    rpc.clear_getcode_cache()
+    yield
+    rpc.clear_getcode_cache()
+
+
+def test_repeat_call_hits_cache(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_rpc(_url, _method, _params, retries=1):
+        calls["n"] += 1
+        return "0x6080604052"  # tiny EVM bytecode
+
+    monkeypatch.setattr(rpc, "rpc_request", _fake_rpc)
+
+    a = "0x" + "ab" * 20
+    rpc.get_code("https://rpc", a)
+    rpc.get_code("https://rpc", a)
+    rpc.get_code("https://rpc", a)
+    assert calls["n"] == 1, "second + third call must hit the cache"
+
+
+def test_different_addresses_keep_separate_slots(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_rpc(_url, _method, params, retries=1):
+        calls["n"] += 1
+        # Return different bytecode per address so we can detect mixups.
+        return "0x" + (params[0][2:4] * 32)
+
+    monkeypatch.setattr(rpc, "rpc_request", _fake_rpc)
+
+    a = "0x" + "11" * 20
+    b = "0x" + "22" * 20
+    code_a = rpc.get_code("https://rpc", a)
+    code_b = rpc.get_code("https://rpc", b)
+    assert code_a != code_b
+    assert calls["n"] == 2, "two distinct addresses must each hit the wire once"
+
+    # And both are cached.
+    rpc.get_code("https://rpc", a)
+    rpc.get_code("https://rpc", b)
+    assert calls["n"] == 2
+
+
+def test_rpc_error_does_not_cache(monkeypatch):
+    """Cementing a transient error as a cached value would cause the next
+    classify on this address to misread an EOA / wrong contract."""
+    raises = {"n": 0}
+
+    def _fake_rpc(_url, _method, _params, retries=1):
+        raises["n"] += 1
+        if raises["n"] == 1:
+            raise RuntimeError("RPC down")
+        return "0x60"
+
+    monkeypatch.setattr(rpc, "rpc_request", _fake_rpc)
+
+    addr = "0x" + "cc" * 20
+    with pytest.raises(RuntimeError):
+        rpc.get_code("https://rpc", addr)
+    # Second call MUST go back to the wire (no cached error).
+    code = rpc.get_code("https://rpc", addr)
+    assert code == "0x60"
+    assert raises["n"] == 2
+
+
+def test_ttl_expiry_triggers_refetch(monkeypatch):
+    calls = {"n": 0}
+
+    def _fake_rpc(_url, _method, _params, retries=1):
+        calls["n"] += 1
+        return "0x60"
+
+    monkeypatch.setattr(rpc, "rpc_request", _fake_rpc)
+
+    fake_now = [1000.0]
+    monkeypatch.setattr(rpc.time, "monotonic", lambda: fake_now[0])
+
+    addr = "0x" + "dd" * 20
+    rpc.get_code("https://rpc", addr)
+    fake_now[0] += rpc._GETCODE_CACHE_TTL_S + 1
+    rpc.get_code("https://rpc", addr)
+    assert calls["n"] == 2
+
+
+def test_get_code_and_get_code_with_keccak_share_cache(monkeypatch):
+    """One call populates the cache; the OTHER getter sees the same hit."""
+    calls = {"n": 0}
+
+    def _fake_rpc(_url, _method, _params, retries=1):
+        calls["n"] += 1
+        return "0xabcd"
+
+    monkeypatch.setattr(rpc, "rpc_request", _fake_rpc)
+
+    addr = "0x" + "ee" * 20
+    code = rpc.get_code("https://rpc", addr)
+    code2, keccak_hex = rpc.get_code_with_keccak("https://rpc", addr)
+    assert code == code2
+    assert calls["n"] == 1, "second getter must hit the cache populated by the first"
+    # And the keccak is correct.
+    assert keccak_hex == "0x" + keccak(bytes.fromhex("abcd")).hex()
+
+
+def test_keccak_matches_eth_utils_for_real_bytecode(monkeypatch):
+    """Load-bearing for B10 (content-addressed Slither cache): the keccak
+    we cache must equal eth_utils.keccak(bytes.fromhex(bytecode_no_prefix))."""
+    monkeypatch.setattr(rpc, "rpc_request", lambda *_a, **_kw: "0x60806040526001600055")
+    addr = "0x" + "ff" * 20
+    _code, keccak_hex = rpc.get_code_with_keccak("https://rpc", addr)
+    expected = "0x" + keccak(bytes.fromhex("60806040526001600055")).hex()
+    assert keccak_hex == expected
+
+
+def test_empty_bytecode_is_cached_with_correct_keccak(monkeypatch):
+    """EOA addresses return ``"0x"``. Caching this is fine — keccak of
+    empty bytes is well-defined and stable. Subsequent calls must hit
+    the cache (don't re-probe EOAs every classify)."""
+    calls = {"n": 0}
+
+    def _fake_rpc(_url, _method, _params, retries=1):
+        calls["n"] += 1
+        return "0x"
+
+    monkeypatch.setattr(rpc, "rpc_request", _fake_rpc)
+
+    addr = "0x" + "00" * 19 + "01"
+    code, keccak_hex = rpc.get_code_with_keccak("https://rpc", addr)
+    assert code == "0x"
+    assert keccak_hex == "0x" + keccak(b"").hex()
+
+    rpc.get_code_with_keccak("https://rpc", addr)
+    assert calls["n"] == 1
+
+
+def test_address_normalization_keys_lowercased(monkeypatch):
+    """``get_code(rpc, "0xABCD...")`` and ``get_code(rpc, "0xabcd...")``
+    must hit the same cache slot — Ethereum addresses are case-insensitive
+    and a checksummed-vs-lower mismatch would silently double the cache
+    pressure."""
+    calls = {"n": 0}
+
+    def _fake_rpc(_url, _method, _params, retries=1):
+        calls["n"] += 1
+        return "0x60"
+
+    monkeypatch.setattr(rpc, "rpc_request", _fake_rpc)
+
+    upper = "0x" + "AB" * 20
+    lower = upper.lower()
+    rpc.get_code("https://rpc", upper)
+    rpc.get_code("https://rpc", lower)
+    assert calls["n"] == 1, "case variations must share a single cache slot"
+
+
+def test_cache_eviction_under_ceiling(monkeypatch):
+    """Long-lived workers can probe many addresses. The bound + oldest-
+    quartile eviction must keep memory bounded without crashing."""
+    monkeypatch.setattr(rpc, "rpc_request", lambda *_a, **_kw: "0x60")
+    # Temporarily lower the ceiling so the test isn't slow.
+    monkeypatch.setattr(rpc, "_GETCODE_CACHE_MAX", 8)
+    for i in range(20):
+        rpc.get_code("https://rpc", f"0x{i:040x}")
+    # Cache size must stay under the ceiling.
+    assert len(rpc._GETCODE_CACHE) <= rpc._GETCODE_CACHE_MAX
+
+
+def test_clear_getcode_cache_empties_state():
+    rpc._GETCODE_CACHE[("https://rpc", "0xabc")] = ("0x60", "0x" + "0" * 64, 0.0)
+    assert len(rpc._GETCODE_CACHE) == 1
+    rpc.clear_getcode_cache()
+    assert len(rpc._GETCODE_CACHE) == 0
+
+
+def test_get_code_uses_cached_value_with_unrelated_get_code_with_keccak(monkeypatch):
+    """Belt-and-suspenders cross-API check: any future split that gives
+    each function its own private cache would silently double RPC load."""
+    calls = []
+
+    def _fake_rpc(_url, _method, params, retries=1):
+        calls.append(params[0])
+        return "0xdeadbeef"
+
+    monkeypatch.setattr(rpc, "rpc_request", _fake_rpc)
+    addr = "0x" + "11" * 20
+
+    rpc.get_code_with_keccak("https://rpc", addr)
+    rpc.get_code("https://rpc", addr)
+    rpc.get_code_with_keccak("https://rpc", addr)
+    assert len(calls) == 1
