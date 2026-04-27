@@ -35,5 +35,5 @@ def test_upgrade_events_contract_id_index_exists(db_session):
     assert row == "ix_upgrade_events_contract_id", (
         "Missing index ix_upgrade_events_contract_id on upgrade_events(contract_id) — "
         "this index is required by the coverage matcher and audit_timeline API; "
-        "re-add it to apply_storage_migrations() in db/models.py"
+        "re-add it via an Alembic revision."
     )

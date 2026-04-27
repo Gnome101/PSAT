@@ -109,6 +109,17 @@ jobs:
       - name: Create test database
         run: PGPASSWORD=psat psql -h localhost -U psat -d psat -c "CREATE DATABASE psat_test OWNER psat;"
 
+      # Migration parity: alembic upgrade head builds the schema from scratch,
+      # then `alembic check` fails the build if Base.metadata has drifted from
+      # the latest revision (i.e. someone changed a model without writing a
+      # migration).
+      - name: Alembic upgrade + drift check
+        env:
+          DATABASE_URL: postgresql://psat:psat@localhost:5432/psat_test
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+
       - name: Run tests with coverage
         run: uv run coverage run -m pytest -m "not live" -q
 
