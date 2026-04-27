@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -10,6 +11,8 @@ from typing import Any
 import requests
 from eth_utils.crypto import keccak
 from requests.adapters import HTTPAdapter
+
+logger = logging.getLogger(__name__)
 
 JSON_RPC_TIMEOUT_SECONDS = 10
 
@@ -27,8 +30,20 @@ _GETCODE_CACHE_TTL_S = float(os.getenv("PSAT_GETCODE_CACHE_TTL_S", "1800"))
 
 def clear_getcode_cache() -> None:
     """Clear the process-wide eth_getCode cache. For tests + manual reset."""
+    from utils.memory import reset_cache_pressure_state
+
     with _GETCODE_CACHE_LOCK:
         _GETCODE_CACHE.clear()
+    reset_cache_pressure_state("getcode")
+
+
+def _log_getcode_pressure() -> None:
+    """Log when _GETCODE_CACHE crosses 50/75/95% of its bound (caller holds the lock)."""
+    from utils.memory import cache_pressure_message
+
+    msg = cache_pressure_message("getcode", len(_GETCODE_CACHE), _GETCODE_CACHE_MAX)
+    if msg:
+        logger.info("[CACHE_PRESSURE] %s", msg)
 
 
 def _normalized_addr(address: str) -> str:
@@ -121,6 +136,7 @@ def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
     with _GETCODE_CACHE_LOCK:
         _evict_getcode_if_needed()
         _GETCODE_CACHE[key] = (code, keccak_hex, now)
+        _log_getcode_pressure()
     return code, keccak_hex
 
 
@@ -174,6 +190,7 @@ def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
             # _GETCODE_CACHE_MAX with full bytecode payloads.
             _evict_getcode_if_needed()
             _GETCODE_CACHE[(rpc_url, addr)] = (code, keccak_hex, now)
+            _log_getcode_pressure()
             out[addr] = code
     return out
 

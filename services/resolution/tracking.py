@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import os
 import threading
 import time
@@ -27,6 +28,8 @@ from utils.rpc import (
 
 from .controller_adapters import expand_role_identifier_principals, type_authority_contract
 
+logger = logging.getLogger(__name__)
+
 # Distinguishes "RPC succeeded, function absent" (None) from "RPC raised" — caching the latter would cement
 # misclassification.
 _PROBE_ERROR = object()
@@ -45,8 +48,20 @@ _CLASSIFY_BATCH_ENABLED = os.getenv("PSAT_CLASSIFY_BATCH", "1").lower() in ("1",
 
 def clear_classify_cache() -> None:
     """Clear the process-wide classify cache. For tests + manual reset."""
+    from utils.memory import reset_cache_pressure_state
+
     with _CLASSIFY_CACHE_LOCK:
         _CLASSIFY_CACHE.clear()
+    reset_cache_pressure_state("classify")
+
+
+def _log_classify_pressure() -> None:
+    """Log when _CLASSIFY_CACHE crosses 50/75/95% of bound (caller holds the lock)."""
+    from utils.memory import cache_pressure_message
+
+    msg = cache_pressure_message("classify", len(_CLASSIFY_CACHE), _CLASSIFY_CACHE_MAX)
+    if msg:
+        logger.info("[CACHE_PRESSURE] %s", msg)
 
 
 def _decode_controller_value(raw_value: Any, controller_kind: str) -> str:
@@ -148,6 +163,7 @@ def classify_resolved_address_with_status(
                 for old_key in list(_CLASSIFY_CACHE.keys())[: _CLASSIFY_CACHE_MAX // 2]:
                     del _CLASSIFY_CACHE[old_key]
             _CLASSIFY_CACHE[cache_key] = (kind, copy.deepcopy(details), now)
+            _log_classify_pressure()
 
     return kind, details, not had_error
 

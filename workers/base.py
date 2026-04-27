@@ -22,6 +22,13 @@ from db.queue import (
     store_artifact,
     update_job_detail,
 )
+from utils.memory import (
+    cgroup_memory_current_bytes,
+    cgroup_memory_max_bytes,
+    count_sibling_python_procs,
+    current_rss_bytes,
+    mb,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +60,20 @@ class BaseWorker:
         self._last_reclaim_at: float = float("-inf")
         signal.signal(signal.SIGTERM, self._handle_sigterm)
         signal.signal(signal.SIGINT, self._handle_sigterm)
+
+        # One-line boot banner per worker process so a fly-log scrape can
+        # reconstruct the fleet shape that hit OOM. Captures stage + RSS at
+        # boot + the cgroup memory limit + sibling python proc count.
+        logger.info(
+            "[BOOT] worker=%s pid=%d stage=%s rss_mb=%s cgroup_used_mb=%s/%s python_siblings=%d",
+            self.worker_id,
+            os.getpid(),
+            self.stage.value,
+            mb(current_rss_bytes()),
+            mb(cgroup_memory_current_bytes()),
+            mb(cgroup_memory_max_bytes()),
+            count_sibling_python_procs(),
+        )
 
     def _handle_sigterm(self, signum: int, frame: object) -> None:
         logger.info("Worker %s received signal %s, shutting down gracefully", self.worker_id, signum)
@@ -120,11 +141,24 @@ class BaseWorker:
 
                 logger.info("Worker %s claimed job %s", self.worker_id, job.id)
                 t0 = time.monotonic()
+                rss_before = current_rss_bytes()
                 started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 try:
                     self.process(session, job)
                     elapsed = time.monotonic() - t0
                     ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    rss_after = current_rss_bytes()
+                    rss_delta_mb = (rss_after - rss_before) / (1024 * 1024)
+                    logger.info(
+                        "[JOB] worker=%s job=%s stage=%s elapsed_s=%.1f rss_mb=%s delta_mb=%+.0f cgroup_used_mb=%s",
+                        self.worker_id,
+                        job.id,
+                        self.stage.value,
+                        elapsed,
+                        mb(rss_after),
+                        rss_delta_mb,
+                        mb(cgroup_memory_current_bytes()),
+                    )
                     # Record timing before advancing — otherwise the next-stage worker can race read-modify-write on the
                     # shared stage_timings artifact.
                     self._record_stage_timing(

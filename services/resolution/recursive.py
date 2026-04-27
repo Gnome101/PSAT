@@ -46,9 +46,25 @@ _ARTIFACT_CACHE_TTL_S = float(os.getenv("PSAT_RESOLUTION_ARTIFACT_CACHE_TTL_S", 
 
 def clear_artifact_cache() -> None:
     """Clear the process-wide static-artifact cache. For tests + manual reset."""
+    from utils.memory import reset_cache_pressure_state
+
     with _ARTIFACT_CACHE_LOCK:
         _ARTIFACT_CACHE.clear()
         _ARTIFACT_CACHE_BY_KECCAK.clear()
+    reset_cache_pressure_state("artifact_addr")
+    reset_cache_pressure_state("artifact_keccak")
+
+
+def _log_artifact_pressure() -> None:
+    """Log when either artifact cache crosses 50/75/95% (caller holds the lock)."""
+    from utils.memory import cache_pressure_message
+
+    msg = cache_pressure_message("artifact_addr", len(_ARTIFACT_CACHE), _ARTIFACT_CACHE_MAX)
+    if msg:
+        logger.info("[CACHE_PRESSURE] %s", msg)
+    msg = cache_pressure_message("artifact_keccak", len(_ARTIFACT_CACHE_BY_KECCAK), _ARTIFACT_CACHE_MAX)
+    if msg:
+        logger.info("[CACHE_PRESSURE] %s", msg)
 
 
 def _get_cached_static_artifacts(
@@ -98,6 +114,7 @@ def _store_cached_static_artifacts(
                 oldest = min(_ARTIFACT_CACHE_BY_KECCAK, key=lambda k: _ARTIFACT_CACHE_BY_KECCAK[k][3])
                 _ARTIFACT_CACHE_BY_KECCAK.pop(oldest, None)
             _ARTIFACT_CACHE_BY_KECCAK[bytecode_keccak] = payload
+        _log_artifact_pressure()
 
 
 class LoadedArtifacts(TypedDict):
