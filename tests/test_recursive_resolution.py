@@ -309,68 +309,10 @@ def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch):
     assert materialize_calls == [role_holder_address]
 
 
-def test_materialize_contract_artifacts_tolerates_slither_cli_failure(monkeypatch):
-    address = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-
-    monkeypatch.setattr(
-        "services.resolution.recursive.classify_single",
-        lambda address, rpc_url: {"address": address, "type": "regular"},
-        raising=False,
-    )
-    monkeypatch.setattr(
-        "services.resolution.recursive.fetch",
-        lambda _address: {"ContractName": "TestContract"},
-    )
-    monkeypatch.setattr(
-        "services.resolution.recursive.scaffold",
-        lambda *_args, **_kwargs: None,
-    )
-    monkeypatch.setattr(
-        "services.resolution.recursive.analyze",
-        lambda project_dir, contract_name, effective_address: (_ for _ in ()).throw(RuntimeError("slither failed")),
-    )
-
-    sample_analysis = {
-        "subject": {"address": address, "name": "TestContract"},
-        "access_control": {"privileged_functions": []},
-    }
-    monkeypatch.setattr(
-        "services.resolution.recursive.collect_contract_analysis",
-        lambda _project_dir: sample_analysis,
-    )
-    monkeypatch.setattr(
-        "services.resolution.recursive.build_control_tracking_plan",
-        lambda _analysis: {
-            "schema_version": "0.1",
-            "contract_address": address,
-            "contract_name": "TestContract",
-            "tracking_strategy": "event_first_with_polling_fallback",
-            "tracked_controllers": [],
-            "tracked_policies": [],
-        },
-    )
-    monkeypatch.setattr(
-        "services.resolution.recursive.build_control_snapshot",
-        lambda _plan, _rpc: {
-            "schema_version": "0.1",
-            "contract_address": address,
-            "contract_name": "TestContract",
-            "block_number": 1,
-            "controller_values": {},
-        },
-    )
-
-    # Use skip_slither=False to exercise the slither-failure tolerance path.
-    loaded = _materialize_contract_artifacts(
-        address,
-        "http://rpc.example",
-        workspace_prefix="recursive",
-        skip_slither=False,
-    )
-
-    assert loaded["analysis"] == sample_analysis
-    assert loaded["tracking_plan"]["contract_address"] == address
-    assert loaded["snapshot"]["contract_address"] == address
+# test_materialize_contract_artifacts_tolerates_slither_cli_failure was
+# deleted in commit 438a11c (Slither CLI subprocess rip-out). The
+# materialize path no longer invokes the CLI, so the failure-tolerance
+# test no longer has a code path to exercise.
 
 
 def test_materialize_contract_artifacts_builds_effective_permissions(monkeypatch):
@@ -389,7 +331,6 @@ def test_materialize_contract_artifacts_builds_effective_permissions(monkeypatch
         "services.resolution.recursive.scaffold",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr("services.resolution.recursive.analyze", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "services.resolution.recursive.collect_contract_analysis",
         lambda _project_dir: {
