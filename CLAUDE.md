@@ -73,4 +73,4 @@ MonitoredContract rows leak across runs: `WatchedProxy.delete` is `ON DELETE SET
 
 ## Style
 
-Keep comments and docstrings terse. Module docstrings: one line. Comments: only when the *why* is non-obvious. Don't narrate what the code already says — reviewers can read it.
+Keep comments and docstrings terse. Module docstrings: one line. Comments: only when the *why* is non-obvious. Don't narrate what the code already says — reviewers can read it. ABSOLUTELY DO NOT overexplain/make overly long comments unless explicitly asked to do so
