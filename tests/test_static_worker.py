@@ -139,23 +139,11 @@ def test_process_attempts_semantic_proxy_classification_for_non_obvious_names(mo
 
 
 def test_force_dedupes_impl_jobs_within_same_root_cascade(monkeypatch):
-    """Bench investigation finding: when --force=true bypasses the global
-    dedupe and a cascade discovers the same impl through multiple proxy
-    paths, static_worker used to spawn N copies of the impl analysis.
-
-    With the (address, root_job_id) dedupe under force: the same impl
-    inside the SAME root cascade is rejected on second submission, but
-    different root cascades still get fresh impl jobs (preserving the
-    bench's "fresh impl per cascade run" goal)."""
+    """Two proxy paths to the same impl in one cascade: second submission dedupes; new cascades still get fresh jobs."""
     worker = StaticWorker()
     session = MagicMock()
 
-    # _resolve_proxy issues two session.execute() calls per invocation:
-    # (1) sa_select(Contract).where(Contract.job_id == job.id) for the
-    # contracts-table row; (2) the impl dedupe lookup. So calls 1+2 are
-    # for the FIRST proxy and 3+4 are for the SECOND. The dedupe should
-    # find no prior job on call 2 (first proxy → create) and find the
-    # prior job on call 4 (second proxy in same cascade → dedupe).
+    # Calls 1+2 = first proxy (contract-row + dedupe), 3+4 = second proxy; only call 4 hits an existing prior job.
     existing_in_cascade = SimpleNamespace(id="prior-impl-in-same-cascade")
     call_count = {"n": 0}
 
@@ -165,8 +153,6 @@ def test_force_dedupes_impl_jobs_within_same_root_cascade(monkeypatch):
             return MagicMock()
         call_count["n"] += 1
         result = MagicMock()
-        # Calls 1 (contract-row lookup) + 2 (impl dedupe) + 3 (contract-row
-        # lookup) → None. Call 4 (second impl dedupe) → existing.
         result.scalar_one_or_none.return_value = existing_in_cascade if call_count["n"] >= 4 else None
         return result
 

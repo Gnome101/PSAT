@@ -27,42 +27,24 @@ from utils.rpc import (
 
 from .controller_adapters import expand_role_identifier_principals, type_authority_contract
 
-# Sentinel: distinguishes "RPC succeeded, function not present" (None) from
-# "RPC raised an exception" (transient failure, throttling, network blip).
-# Caching the latter would cement a misclassification process-wide.
+# Distinguishes "RPC succeeded, function absent" (None) from "RPC raised" — caching the latter would cement
+# misclassification.
 _PROBE_ERROR = object()
 
-# Process-wide cache for classify_resolved_address. Manual rather than
-# functools.lru_cache so we can:
-#   - skip caching when any underlying probe errored (lru_cache caches every return)
-#   - apply a TTL for `latest`-block entries (otherwise a long-lived worker
-#     could serve stale owner/threshold/delay readings indefinitely)
-# Keyed on (rpc_url, address.lower(), block_tag). Value is
-# (kind, deep-copied details, monotonic insertion time).
+# Process-wide classify cache keyed on (rpc_url, address, block_tag); skips error returns and applies a TTL so latest-
+# block reads eventually re-probe.
 _CLASSIFY_CACHE: dict[tuple[str, str, str], tuple[str, dict[str, object], float]] = {}
 _CLASSIFY_CACHE_LOCK = threading.Lock()
 _CLASSIFY_CACHE_MAX = 4096
-# Default TTL: 30 minutes. Longer than a single etherfi-scale cascade
-# (~12 min) so sibling jobs share classifications, shorter than a worker
-# process lifetime so we eventually re-probe upgraded contracts.
 _CLASSIFY_CACHE_TTL_S = float(os.getenv("PSAT_CLASSIFY_CACHE_TTL_S", "1800"))
 
-# Speculative single-batch classify probes (default ON). Saves 5 RTT per
-# cold classify by sending all 6 probes in one JSON-RPC roundtrip.
-# Whole-batch failure (e.g., a private RPC that rejects batches) falls
-# back to the sequential path automatically — see commit 7f07e3e for the
-# fallback regression test. Set PSAT_CLASSIFY_BATCH=0 to disable on a
-# specific environment if needed.
+# Single-batch classify probes (default ON); falls back to sequential on whole-batch failure. Toggle
+# PSAT_CLASSIFY_BATCH=0 to force sequential.
 _CLASSIFY_BATCH_ENABLED = os.getenv("PSAT_CLASSIFY_BATCH", "1").lower() in ("1", "true", "yes")
 
 
 def clear_classify_cache() -> None:
-    """Clear the process-wide classify_resolved_address cache.
-
-    Use in tests, or call between top-level jobs to bound staleness for
-    ``latest``-block entries (the worker base loop can call this on each
-    new claim if max-correctness is needed).
-    """
+    """Clear the process-wide classify cache. For tests + manual reset."""
     with _CLASSIFY_CACHE_LOCK:
         _CLASSIFY_CACHE.clear()
 
@@ -110,8 +92,8 @@ def _decode_topic_value(raw_value: str, abi_type: str):
 def _try_eth_call_decoded(
     rpc_url: str, contract_address: str, signature: str, abi_type: str, block_tag: str = "latest"
 ) -> object | None:
-    """Returns decoded value, None (function legitimately absent), or the
-    `_PROBE_ERROR` sentinel (transient RPC issue — caller should not cache)."""
+    """Decoded value, None (function absent / decode failure), or _PROBE_ERROR (transient RPC issue — caller should not
+    cache)."""
     try:
         raw = _eth_call_raw(rpc_url, contract_address, signature, block_tag)
         if _normalize_hex(raw) in {"0x", "0x0"}:
@@ -119,8 +101,6 @@ def _try_eth_call_decoded(
         try:
             return _decode_abi_value(raw, abi_type)
         except Exception:
-            # RPC returned data but it didn't decode as the expected type —
-            # treat as "function not present" (e.g. revert with reason data).
             return None
     except Exception:
         return _PROBE_ERROR
@@ -144,15 +124,7 @@ def _coerce_int(value: object) -> int:
 def classify_resolved_address_with_status(
     rpc_url: str, address: str, block_tag: str = "latest"
 ) -> tuple[str, dict[str, object], bool]:
-    """Like ``classify_resolved_address`` but also reports whether the result
-    is safe for callers to cache. False if any underlying probe RPC errored
-    — caller-owned per-job/per-cascade caches must NOT persist such results,
-    otherwise a transient throttle/timeout cements a wrong classification.
-
-    The process-wide cache here already uses this signal internally; this
-    helper exposes the same signal to upstream callers (resolve_control_graph
-    BFS, principal labeling) that maintain their own short-lived caches.
-    """
+    """Like ``classify_resolved_address`` but also returns a ``cacheable`` flag (False if any probe errored)."""
     normalized = _normalize_hex(address)
     cache_key = (rpc_url, normalized, block_tag)
     now = time.monotonic()
@@ -162,8 +134,6 @@ def classify_resolved_address_with_status(
         if cached is not None:
             kind, cached_details, inserted_at = cached
             if now - inserted_at < _CLASSIFY_CACHE_TTL_S:
-                # Cached values are by definition cacheable (we only insert
-                # error-free results — see below).
                 return kind, copy.deepcopy(cached_details), True
             del _CLASSIFY_CACHE[cache_key]
 
@@ -183,21 +153,13 @@ def classify_resolved_address_with_status(
 
 
 def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "latest") -> tuple[str, dict[str, object]]:
-    """Backwards-compatible wrapper: see ``classify_resolved_address_with_status``.
-
-    Use this when you don't maintain a downstream cache (the process-wide
-    cache here handles freshness/safety automatically). Use the
-    ``_with_status`` form when you DO maintain a per-job dict that gets
-    persisted as an artifact, so you can skip propagating
-    transient-error-driven misclassifications.
-    """
+    """Backwards-compatible wrapper that drops the cacheable flag; use the ``_with_status`` form if you maintain a
+    downstream cache."""
     kind, details, _cacheable = classify_resolved_address_with_status(rpc_url, address, block_tag)
     return kind, details
 
 
-# Probe set used by the batched classifier. Order matters: the dispatch
-# logic below indexes this list directly, so any reorder must update the
-# unpacking in `_classify_uncached_batched`.
+# Probe set for the batched classifier; order is load-bearing — `_classify_uncached_batched` unpacks by index.
 _CLASSIFY_PROBE_SIGS: tuple[tuple[str, str], ...] = (
     ("getOwners()", "address[]"),  # 0: Safe
     ("getThreshold()", "uint256"),  # 1: Safe
@@ -209,14 +171,8 @@ _CLASSIFY_PROBE_SIGS: tuple[tuple[str, str], ...] = (
 
 
 def _decode_probe_result(raw: object, abi_type: str) -> object | None:
-    """Apply the same per-probe decoding logic as ``_try_eth_call_decoded``
-    but to a pre-fetched raw result. Returns the decoded value, or None
-    when the call legitimately had no data (``"0x"`` / decode failure).
-
-    Caller is responsible for translating ``had_error=True`` into
-    ``_PROBE_ERROR`` BEFORE invoking this helper — this function does
-    not see the error flag, only the raw result string.
-    """
+    """Decode a pre-fetched probe result; returns None on empty/decode-failure (caller maps RPC errors to _PROBE_ERROR
+    before calling)."""
     if not isinstance(raw, str):
         return None
     if _normalize_hex(raw) in {"0x", "0x0"}:
@@ -228,17 +184,7 @@ def _decode_probe_result(raw: object, abi_type: str) -> object | None:
 
 
 def _batch_probe(rpc_url: str, address: str, block_tag: str) -> list[object]:
-    """Fire all 6 classify probes in one JSON-RPC batch.
-
-    Returns a list aligned with ``_CLASSIFY_PROBE_SIGS``: each slot is
-    the decoded value, ``None`` (function legitimately absent), or
-    ``_PROBE_ERROR`` (per-call RPC error or whole-batch failure).
-
-    Falling back to ``_PROBE_ERROR`` on whole-batch failure preserves the
-    sequential path's semantics: caller (``_classify_uncached_batched``)
-    sets ``had_error=True`` and skips caching, exactly as the sequential
-    path does when ``_eth_call_raw`` raises.
-    """
+    """Fire all 6 classify probes in one JSON-RPC batch; per-slot errors yield _PROBE_ERROR so callers skip caching."""
     calls = [("eth_call", [{"to": address, "data": _selector(sig)}, block_tag]) for sig, _abi in _CLASSIFY_PROBE_SIGS]
     raw_results = _rpc_batch_request_with_status(rpc_url, calls)
     decoded: list[object] = []
@@ -251,16 +197,8 @@ def _batch_probe(rpc_url: str, address: str, block_tag: str) -> list[object]:
 
 
 def _classify_uncached_batched(rpc_url: str, normalized: str, block_tag: str) -> tuple[str, dict[str, object], bool]:
-    """Same contract as ``_classify_uncached`` but batches the 6 probes
-    upfront. Saves 5 RTT for any contract that falls through to the
-    generic-contract branch (most of them, in DeFi).
-
-    Wasteful for early-terminating cases (Safes, Timelocks, ProxyAdmins
-    don't need every probe), but the wasted calls are cheap on a single
-    socket and providers handle them fine. The bigger cost would be
-    rebuilding all this dispatch logic to do a two-phase batch — not
-    worth the complexity for a minor RPC bandwidth saving.
-    """
+    """Same contract as ``_classify_uncached`` but batches the 6 probes upfront, saving 5 RTT in the common generic-
+    contract case."""
     if normalized == "0x0000000000000000000000000000000000000000":
         return "zero", {"address": normalized}, False
 
@@ -271,9 +209,7 @@ def _classify_uncached_batched(rpc_url: str, normalized: str, block_tag: str) ->
     if code in {"0x", "0x0"}:
         return "eoa", {"address": normalized}, False
 
-    # Bytecode-keccak shortcut: same as the sequential path; skips the
-    # batch round trip entirely when the contract's bytecode matches a
-    # canonical impl. See _KNOWN_BYTECODE_IMPLS for registry semantics.
+    # Bytecode-keccak shortcut: skip the batch round trip when bytecode matches a canonical impl.
     if _KNOWN_BYTECODE_IMPLS:
         try:
             from utils.rpc import get_code_with_keccak
@@ -290,21 +226,14 @@ def _classify_uncached_batched(rpc_url: str, normalized: str, block_tag: str) ->
                 return kind, details, False
 
     probes = _batch_probe(rpc_url, normalized, block_tag)
-    # Whole-batch failure (provider rejects JSON-RPC batches, transport
-    # error) marks every slot as _PROBE_ERROR. Without a fallback, the
-    # batched classifier would dump out as ("contract", ..., had_error=True)
-    # — but the SEQUENTIAL path may well have succeeded on individual
-    # eth_calls and produced the right Safe/Timelock/ProxyAdmin
-    # classification. Enabling the flag must not silently degrade
-    # resolution accuracy on providers that don't support batches.
+    # Whole-batch failure → fall back to sequential so providers that reject batches don't degrade classification
+    # accuracy.
     if all(p is _PROBE_ERROR for p in probes):
         return _classify_uncached(rpc_url, normalized, block_tag)
     safe_owners_raw, safe_threshold_raw, min_delay_a, min_delay_b, upgrade_iv, owner_raw = probes
 
     def _ok(v: object) -> object | None:
-        """Coerce probe result into the same shape ``_probe()`` returns
-        in the sequential path: error → None + sets had_error; legit
-        absent → None; success → value."""
+        """Map _PROBE_ERROR → None to match the sequential ``_probe()`` shape."""
         if v is _PROBE_ERROR:
             return None
         return v
@@ -352,53 +281,24 @@ def _classify_uncached_batched(rpc_url: str, normalized: str, block_tag: str) ->
     return "contract", details, had_error
 
 
-# Registry of canonical-impl bytecode keccaks → classifier shortcut.
-# Format: {keccak_hex_with_0x: (kind, partial_details)}
-#
-# When an address's bytecode keccak matches a registry entry, classify
-# returns immediately without issuing the 6-probe sequence. The 0x-
-# prefixed lowercase keccak format matches what utils.rpc.get_code_with_keccak
-# returns. Keccak match is byte-exact, so false positives are impossible —
-# the registry can grow over time without correctness risk; entries that
-# don't match simply don't fire the shortcut.
-#
-# Empty by default (ships infrastructure only). Production registry is
-# populated by manual mainnet-bytecode discovery; doc'd in code comments
-# above each entry: source mainnet address used to derive the keccak.
-#
-# Examples (left empty here — populate in a follow-up commit after
-# manually fetching + verifying each):
-#   "0x..." (Gnosis Safe v1.3.0 singleton bytecode keccak) → ("safe", {})
-#   "0x..." (OZ TimelockController v4.x bytecode keccak)   → ("timelock", {})
-#   "0x..." (OZ ProxyAdmin v4.x bytecode keccak)           → ("proxy_admin", {})
-#
-# Test-time entries can be injected via monkeypatch.
+# Canonical-impl bytecode keccak registry; matches short-circuit the 6-probe classifier (empty by default — populate via
+# follow-up or test monkeypatch).
 _KNOWN_BYTECODE_IMPLS: dict[str, tuple[str, dict[str, object]]] = {}
 
 
 def _classify_uncached(rpc_url: str, normalized: str, block_tag: str) -> tuple[str, dict[str, object], bool]:
-    """The actual classifier. Returns (kind, details, had_rpc_error).
-
-    `had_rpc_error` is True if any underlying probe returned the
-    `_PROBE_ERROR` sentinel — caller should skip caching to avoid cementing
-    a transient-failure-driven misclassification.
-    """
+    """The classifier. Returns ``(kind, details, had_rpc_error)``; caller must skip caching on had_rpc_error."""
     if normalized == "0x0000000000000000000000000000000000000000":
         return "zero", {"address": normalized}, False
 
     try:
         code = _get_code(rpc_url, normalized, block_tag)
     except Exception:
-        # Even the basic getCode failed — return generic contract but flag
-        # the error so the caller doesn't cache.
         return "contract", {"address": normalized}, True
     if code in {"0x", "0x0"}:
         return "eoa", {"address": normalized}, False
 
-    # Bytecode-keccak shortcut: skip the 6-probe sequence for canonical
-    # impls (Gnosis Safe singletons, OZ TimelockController, etc.). The
-    # registry is empty by default — populating it is a separate
-    # follow-up after fetching + verifying real mainnet bytecode keccaks.
+    # Bytecode-keccak shortcut: skip the 6-probe sequence when bytecode matches a registered canonical impl.
     if _KNOWN_BYTECODE_IMPLS:
         try:
             from utils.rpc import get_code_with_keccak
@@ -506,8 +406,7 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
     for controller in plan["tracked_controllers"]:
         controllers_by_source.setdefault(controller["source"], []).append(controller)
     in_progress: set[str] = set()
-    # Cache classify_resolved_address results to avoid duplicate RPC calls
-    # when multiple controllers resolve to the same address.
+    # Cache classify results so multiple controllers resolving the same address don't re-probe.
     _classification_cache: dict[str, tuple[str, dict[str, object]]] = {}
 
     def _cached_classify(address: str) -> tuple[str, dict[str, object]]:

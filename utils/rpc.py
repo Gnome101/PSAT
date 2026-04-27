@@ -18,26 +18,7 @@ MAX_BATCH_SIZE = 500
 
 RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
 
-# Process-wide cache for eth_getCode. Bytecode at a deployed address is
-# effectively immutable for the lifetime of any single cascade — once
-# the contract is deployed, only SELFDESTRUCT changes it (rare, and
-# any subsequent code at that address has its own `eth_getCode` reading
-# anyway). Caching saves the per-call RTT on repeated lookups, which
-# happen heavily across stages: discovery probes code, resolution
-# classifies (which probes code again), policy may re-classify, and
-# any cascade that crosses the same shared OZ library / common impl
-# repeats the same probe across jobs.
-#
-# Stored value is (bytecode_hex, keccak_hex, monotonic_insertion_time).
-# keccak is computed lazily on first cache MISS (B10 in roadmap will
-# key Slither result caching off it; computing once here avoids
-# recomputing per-job).
-#
-# Manual cache (not lru_cache) so we can:
-#   - skip caching when the underlying RPC raised (treats transient
-#     failures as un-cacheable to avoid cementing a bad classification)
-#   - apply a TTL (latest-block reads should eventually re-probe in
-#     case of SELFDESTRUCT or proxy upgrade redirecting at this address)
+# Process-wide cache for eth_getCode (bytecode + its keccak); skips caching on RPC error and applies a TTL for safety.
 _GETCODE_CACHE: dict[tuple[str, str], tuple[str, str, float]] = {}
 _GETCODE_CACHE_LOCK = threading.Lock()
 _GETCODE_CACHE_MAX = 8192
@@ -54,19 +35,8 @@ def _normalized_addr(address: str) -> str:
     return address.lower() if address.startswith("0x") else "0x" + address.lower()
 
 
-# Per-thread requests.Session so RPC calls reuse the underlying TCP/TLS
-# connection. Bare ``requests.post()`` opens a new socket per call —
-# that's a TCP handshake + TLS handshake (~50-200ms RTT each) on every
-# eth_call, which dominates the cost of RPC-heavy stages like the
-# resolution recursive walk.
-#
-# requests.Session is NOT thread-safe across calls, so we key by thread
-# rather than sharing a global one. Workers also use threadpools for
-# parallel cascades, so threading.local() is the safe primitive.
-#
-# HTTPAdapter pool sizes are intentionally generous — these are within
-# one thread, so the pool only holds connections to the few RPC URLs
-# this thread has hit recently.
+# Per-thread requests.Session for TCP/TLS reuse on RPC calls (Session is not thread-safe across calls, hence
+# threading.local()).
 _session_local = threading.local()
 
 
@@ -125,15 +95,8 @@ def get_code(rpc_url: str, address: str) -> str:
 
 
 def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
-    """Like ``get_code`` but also returns the keccak-256 of the bytecode.
-
-    Returns ``(bytecode_hex, keccak_hex)``. Both are cached together so
-    downstream content-addressed caches (Slither result by bytecode
-    keccak, etc.) get the keccak for free without re-hashing per job.
-
-    The keccak is computed once on cache miss; subsequent hits return
-    the same string without re-hashing.
-    """
+    """Return ``(bytecode_hex, keccak_hex)`` cached together so downstream content-addressed lookups get the keccak for
+    free."""
     addr = _normalized_addr(address)
     key = (rpc_url, addr)
     now = time.monotonic()
@@ -146,15 +109,10 @@ def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
             # TTL expired; fall through to re-fetch.
             del _GETCODE_CACHE[key]
 
-    # RPC call OUTSIDE the lock so concurrent misses for different
-    # addresses don't serialize. A redundant fetch under contention
-    # (two threads racing on the same address) is cheap; a held lock
-    # across an HTTP roundtrip is not.
+    # RPC outside the lock so concurrent misses for different addresses don't serialize.
     raw = rpc_request(rpc_url, "eth_getCode", [address, "latest"])
     code = raw if isinstance(raw, str) and raw.startswith("0x") else "0x"
-    # Some providers return "0x0" for empty bytecode (odd-length hex);
-    # normalize to "0x" so bytes.fromhex doesn't raise. Other callers in
-    # tracking.py already treat both as empty.
+    # Normalize "0x0" → "0x" so bytes.fromhex doesn't raise on odd-length hex.
     if code in {"0x", "0x0"}:
         code = "0x"
     code_bytes = bytes.fromhex(code[2:]) if len(code) > 2 else b""
@@ -167,15 +125,7 @@ def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
 
 
 def _evict_getcode_if_needed() -> None:
-    """Drop the oldest 25% of _GETCODE_CACHE entries when the bound is
-    reached. Caller must hold ``_GETCODE_CACHE_LOCK``.
-
-    Better than random eviction for long-running workers because the
-    recently-probed addresses tend to recur. Extracted into a helper
-    so both single-call (get_code_with_keccak) and batch insert
-    (get_code_batch) honour the same bound — codex iter-5 P2 flagged
-    that the batch path was bypassing eviction.
-    """
+    """Drop the oldest 25% of _GETCODE_CACHE entries when the bound is reached (caller holds _GETCODE_CACHE_LOCK)."""
     if len(_GETCODE_CACHE) < _GETCODE_CACHE_MAX:
         return
     cutoff = sorted(_GETCODE_CACHE.values(), key=lambda v: v[2])[len(_GETCODE_CACHE) // 4][2]
@@ -184,24 +134,7 @@ def _evict_getcode_if_needed() -> None:
 
 
 def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
-    """Fetch eth_getCode for multiple addresses in a single JSON-RPC batch.
-
-    Returns a ``{normalized_address: bytecode_hex}`` map. Cache-aware:
-    addresses already in the per-thread cache short-circuit and don't go
-    over the wire; only un-cached addresses get batched. Cache is populated
-    as a side effect for both the bytecode AND its keccak (so a follow-up
-    ``get_code_with_keccak`` call hits the cache for free).
-
-    Per-call errors → that address is omitted from the returned map (caller
-    should treat absence the same as ``"0x"`` if it needs a default).
-    Whole-batch failure (provider rejects batches, transport error) →
-    every address is omitted; caller can fall back to per-address
-    ``get_code()`` calls.
-
-    Used by the discovery static-dependency BFS where we know upfront
-    that we'll probe N addresses extracted from a contract's bytecode —
-    one batched roundtrip beats N sequential ones.
-    """
+    """Cache-aware batched eth_getCode; errored slots are omitted from the returned ``{address: bytecode}`` map."""
     if not addresses:
         return {}
 
@@ -209,7 +142,6 @@ def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
     now = time.monotonic()
     out: dict[str, str] = {}
 
-    # Pre-fill from cache; collect cache-misses for the batch RPC.
     to_fetch: list[str] = []
     with _GETCODE_CACHE_LOCK:
         for addr in normalized:
@@ -247,12 +179,7 @@ def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
 
 
 def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[Any]:
-    """Send a JSON-RPC batch request and return results in call order.
-
-    Each element of *calls* is ``(method, params)``.  Returns a list of the
-    same length where each position holds the ``result`` value from the
-    response, or ``None`` if that individual call errored.
-    """
+    """Send a JSON-RPC batch and return results in call order; per-call errors yield ``None``."""
     if not calls:
         return []
 
@@ -286,24 +213,8 @@ def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[
 
 
 def rpc_batch_request_with_status(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[tuple[Any, bool]]:
-    """Same as ``rpc_batch_request`` but distinguishes "RPC errored" from
-    "RPC succeeded but returned None".
-
-    Returns a list of ``(result, had_error)`` in call order:
-      - ``had_error=True``  → the JSON-RPC response carried an ``error``
-                              field for that call, OR the whole batch
-                              transport failed (network, HTTP 5xx, JSON
-                              parse, missing-id-in-response).
-      - ``had_error=False`` → the call succeeded; ``result`` may still be
-                              ``None`` (the function legitimately returned
-                              no data, e.g. eth_call to a method that
-                              isn't there returns ``"0x"``).
-
-    This split is what callers like classify_resolved_address need:
-    treating "RPC failed" as "function absent" cements transient
-    misclassifications in caches. The plain ``rpc_batch_request`` helper
-    above conflates both — keep it for sites that don't care.
-    """
+    """Like ``rpc_batch_request`` but returns ``(result, had_error)`` so callers can distinguish RPC failure from a
+    legitimate ``None`` result."""
     if not calls:
         return []
 

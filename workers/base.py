@@ -28,12 +28,8 @@ logger = logging.getLogger(__name__)
 DEBUG_TIMING = os.getenv("PSAT_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
 STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "180"))  # seconds
 
-# Per-worker throttle for the stuck-job sweep that runs inside _claim_job.
-# Without it, every worker swept on every poll: 10 procs × poll_interval=2s
-# = 5 cross-stage UPDATE-with-SKIP-LOCKED queries per second, 24/7. With
-# this throttle each worker sweeps at most every N seconds, so the fleet
-# does ~10 sweeps per N (default ~1 every 3s) — still well under the
-# 900s stale_timeout, so recovery latency is unaffected.
+# Per-worker throttle for the stuck-job sweep; default 30s keeps fleet sweeps well under the 900s stale_timeout while
+# cutting per-poll DB load.
 RECLAIM_INTERVAL_S = float(os.getenv("PSAT_RECLAIM_INTERVAL_S", "30"))
 
 
@@ -53,9 +49,7 @@ class BaseWorker:
     def __init__(self) -> None:
         self.worker_id = f"{self.__class__.__name__}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._running = True
-        # Track when this worker last ran the cross-stage stuck-job sweep,
-        # so _claim_job can throttle to RECLAIM_INTERVAL_S instead of
-        # sweeping on every poll. Sentinel -inf = "never swept; sweep now".
+        # -inf = "never swept; sweep now"; throttles _claim_job to RECLAIM_INTERVAL_S between sweeps.
         self._last_reclaim_at: float = float("-inf")
         signal.signal(signal.SIGTERM, self._handle_sigterm)
         signal.signal(signal.SIGINT, self._handle_sigterm)
@@ -69,25 +63,7 @@ class BaseWorker:
         raise NotImplementedError
 
     def _claim_job(self, session: Session) -> Job | None:
-        """Claim the next job for this stage. Default: stage + status match.
-
-        Sweeps cross-stage stuck ``processing`` rows back to ``queued``
-        before claiming, but throttled per-worker to once every
-        ``RECLAIM_INTERVAL_S`` seconds. With 10 worker procs this still
-        gives the fleet a sweep every ~3s — well under the 900s
-        stale_timeout — while cutting per-poll DB load 15×.
-
-        Recovery stays global: every worker is still eligible to sweep,
-        and ``SKIP LOCKED`` keeps concurrent sweeps from contending. A
-        crashed worker's stuck job is rescued within at most one
-        RECLAIM_INTERVAL_S window, then any pollable peer can claim it.
-
-        Override in subclasses that need a readiness-gated claim (e.g.
-        ``CoverageWorker`` waits for all audits in the protocol to settle)
-        or a multi-phase claim pattern (primary claim OR a stuck-job
-        escape hatch). Keeping this as a hook means the subclass never
-        needs to copy-paste the run loop just to swap one line.
-        """
+        """Throttled stuck-job sweep + claim; override for readiness-gated or multi-phase claim patterns."""
         now = time.monotonic()
         if now - self._last_reclaim_at >= RECLAIM_INTERVAL_S:
             reclaim_stuck_jobs(session)
@@ -149,15 +125,8 @@ class BaseWorker:
                     self.process(session, job)
                     elapsed = time.monotonic() - t0
                     ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                    # Record timing BEFORE advancing/completing — otherwise
-                    # the next-stage worker can claim the row, finish, and
-                    # write its own stage_timings entry concurrently. Both
-                    # workers do read-modify-write on the same JSON
-                    # artifact, so the later commit drops the earlier
-                    # stage's entry. Recording first keeps the artifact
-                    # write inside this worker's exclusive ownership of
-                    # the row. Timing is best-effort (swallows errors)
-                    # so this does not delay or block the advance.
+                    # Record timing before advancing — otherwise the next-stage worker can race read-modify-write on the
+                    # shared stage_timings artifact.
                     self._record_stage_timing(
                         session,
                         job,
@@ -181,8 +150,7 @@ class BaseWorker:
                 except JobHandledDirectly:
                     elapsed = time.monotonic() - t0
                     ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                    # Use a fresh session — the worker's process() may have left
-                    # the original in an inconsistent state when raising.
+                    # Fresh session — process() may have left the original in an inconsistent state.
                     try:
                         fresh_for_timing = SessionLocal()
                         self._record_stage_timing(
@@ -266,36 +234,8 @@ class BaseWorker:
         elapsed_s: float,
         status: str,
     ) -> None:
-        """Write this stage's timing as a ``stage_timing_<stage>`` artifact.
-
-        Schema (v2):
-          artifact name: ``stage_timing_<stage>`` (e.g. ``stage_timing_discovery``)
-          payload:
-            {
-              "schema_version": "2",
-              "stage":      "discovery" | "static" | "resolution" | ...,
-              "started_at": ISO 8601 UTC,
-              "ended_at":   ISO 8601 UTC,
-              "elapsed_s":  float (monotonic),
-              "worker_id":  str,
-              "status":     "success" | "failed" | "handled_directly",
-            }
-
-        One artifact per stage means each worker writes its own slot — no
-        read-modify-write, no cross-stage race. Codex iter-1 + iter-2 both
-        flagged the previous shared-array schema: when ``advance_job``
-        commits before the artifact write (or when ``process()`` advances
-        before raising ``JobHandledDirectly``), the next-stage worker can
-        observe the row, complete its stage, and clobber this stage's
-        entry via the same get→append→store cycle.
-
-        Bench reads via prefix scan (``stage_timing_*``) and concatenates.
-
-        Best-effort: a failure here logs, ROLLS BACK the session (so the
-        next operation in the caller's transaction doesn't trip
-        ``PendingRollbackError``), and swallows. Losing a timing record
-        beats failing a real job over a metrics-only bug.
-        """
+        """Write this stage's timing as a ``stage_timing_<stage>`` artifact (one slot per stage avoids cross-stage RMW
+        races); best-effort with session rollback on failure."""
         artifact_name = f"stage_timing_{self.stage.value}"
         payload = {
             "schema_version": "2",
@@ -310,12 +250,8 @@ class BaseWorker:
             store_artifact(session, job.id, artifact_name, data=payload)
         except Exception:
             logger.exception("Worker %s: failed to record %s (non-fatal)", self.worker_id, artifact_name)
-            # Codex iter-2 finding: if store_artifact failed mid-transaction,
-            # SQLAlchemy leaves the session needing rollback. Without this
-            # the success path's subsequent advance_job() raises
-            # PendingRollbackError → outer try marks the (otherwise
-            # successful) job as failed. Roll back so the caller can keep
-            # using the session.
+            # Mid-transaction failure leaves the session needing rollback or the success path's advance_job will raise
+            # PendingRollbackError.
             try:
                 session.rollback()
             except Exception:

@@ -50,21 +50,12 @@ def _get_api_key() -> str:
     return key
 
 
-# Response cache — keyed by (module, action, chain_id, sorted params).
-# Two layers: in-memory dict (per-process) + Postgres-backed (cross-process).
-# In-memory hits are free; Postgres hits cost one DB roundtrip but skip the
-# Etherscan API entirely. Both can be disabled (ETHERSCAN_CACHE=0,
-# ETHERSCAN_PG_CACHE=0) but defaults are on.
+# Two-layer cache: per-process in-memory dict + Postgres-backed cross-process; both default on.
 _CACHE_ENABLED = os.getenv("ETHERSCAN_CACHE", "1").lower() in ("1", "true", "yes")
 _PG_CACHE_ENABLED = os.getenv("ETHERSCAN_PG_CACHE", "1").lower() in ("1", "true", "yes")
 
-# (module, action) whitelist for the Postgres cache layer. Only effectively-
-# immutable Etherscan responses go to PG (verified source code, ABI, contract
-# creation tx — these never change for a deployed contract). Dynamic data
-# (account/balance, stats/ethprice, addresstokenbalance, tx history) MUST
-# stay out of the persistent cache, otherwise workers serve stale numbers
-# indefinitely. Codex iter-4 P1 — without this restriction, the first
-# balance lookup would cement that balance for every subsequent worker.
+# Whitelist of effectively-immutable (module, action) pairs eligible for the Postgres layer; dynamic data (balances,
+# prices, tx history) is excluded so workers don't serve stale state.
 _PG_CACHE_WHITELIST: frozenset[tuple[str, str]] = frozenset(
     {
         ("contract", "getsourcecode"),
@@ -87,12 +78,7 @@ def _cache_key(module: str, action: str, chain_id: int, params: dict) -> tuple:
 
 
 def _params_hash(module: str, action: str, chain_id: int, params: dict) -> str:
-    """Hash key for the Postgres etherscan_cache table.
-
-    Same equivalence class as ``_cache_key`` (module/action/chain_id +
-    sorted params), serialized to a stable string and hashed to a fixed
-    64-char hex so it fits the table's VARCHAR(64) primary-key column.
-    """
+    """SHA-256 of canonical JSON form of (module, action, chain_id, sorted params); fits the VARCHAR(64) PK column."""
     import hashlib
 
     canonical = _json.dumps(
@@ -103,9 +89,7 @@ def _params_hash(module: str, action: str, chain_id: int, params: dict) -> str:
 
 
 def _pg_cache_get(module: str, action: str, chain_id: int, params: dict) -> dict | None:
-    """Read-through from the Postgres etherscan_cache table. Returns None
-    on cache miss OR any DB unavailability (graceful degradation — CLI
-    tooling that imports utils.etherscan without a DB shouldn't crash)."""
+    """Postgres read-through; returns None on miss or DB unavailability so CLI usage without a DB still works."""
     if not _PG_CACHE_ENABLED or not _pg_cache_eligible(module, action):
         return None
     try:
@@ -135,21 +119,8 @@ def _pg_cache_get(module: str, action: str, chain_id: int, params: dict) -> dict
 
 
 def _is_persistable(module: str, action: str, response: dict) -> bool:
-    """Decide whether a successful Etherscan response is worth persisting.
-
-    Codex iter-5 P2: ``contract/getsourcecode`` returns
-    ``status="1"`` even for not-yet-verified contracts, with an empty
-    ``SourceCode`` field. Whitelisting the action without inspecting
-    the body would persist that empty response indefinitely; after
-    the contract gets verified later, we'd keep serving stale empties
-    until the row is manually purged.
-
-    Fix: only persist ``getsourcecode`` when the response actually
-    carries non-empty source. Other whitelisted actions (getabi,
-    getcontractcreation) are fine — they don't have this empty-success
-    pattern. Best-effort heuristic; downstream consumers ultimately
-    decide what's a "useful" response.
-    """
+    """Skip persisting empty-source ``getsourcecode`` responses (unverified contracts return status=1 with empty
+    SourceCode)."""
     if action != "getsourcecode":
         return True
     result = response.get("result")
@@ -163,11 +134,7 @@ def _is_persistable(module: str, action: str, response: dict) -> bool:
 
 
 def _pg_cache_put(module: str, action: str, chain_id: int, params: dict, response: dict) -> None:
-    """Upsert into the Postgres etherscan_cache. Best-effort — DB
-    unavailability never raises (the in-memory cache + caller's retry
-    loop are the safety net). Whitelist-gated: only effectively-immutable
-    actions persist (see _PG_CACHE_WHITELIST). Empty-source responses
-    are skipped per ``_is_persistable``."""
+    """Best-effort upsert into etherscan_cache; whitelist-gated and empty-source responses are skipped."""
     if not _PG_CACHE_ENABLED or not _pg_cache_eligible(module, action):
         return
     if not _is_persistable(module, action, response):
@@ -201,18 +168,7 @@ def _pg_cache_put(module: str, action: str, chain_id: int, params: dict, respons
 
 
 def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
-    """Make an Etherscan API call with automatic retry on rate-limit errors.
-
-    Two-tier cache:
-      1. Per-process in-memory dict (free; ETHERSCAN_CACHE=1)
-      2. Postgres-backed cross-process table (one DB roundtrip;
-         ETHERSCAN_PG_CACHE=1) — shares hits across the worker fleet
-         so cold cascades for shared infra contracts skip Etherscan
-         entirely. Falls through silently on DB unavailability.
-
-    Automatically throttled to ``ETHERSCAN_RATE_LIMIT`` req/s — callers
-    should not add their own sleeps.
-    """
+    """Etherscan API call with rate-limit retry; reads through in-memory then Postgres cache before the wire."""
     if _CACHE_ENABLED:
         key = _cache_key(module, action, chain_id, params)
         with _cache_lock:
@@ -220,7 +176,6 @@ def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
                 logger.debug("Etherscan in-memory cache hit: %s/%s %s", module, action, params.get("address", ""))
                 return _cache[key]
 
-    # Cross-process layer.
     pg_hit = _pg_cache_get(module, action, chain_id, params)
     if pg_hit is not None:
         logger.debug("Etherscan PG cache hit: %s/%s %s", module, action, params.get("address", ""))

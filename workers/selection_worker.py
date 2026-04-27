@@ -41,20 +41,14 @@ from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.selection_worker")
 
-# How long a selection job can sit queued before we bypass the readiness
-# predicate. Siblings (DApp crawl, DefiLlama scan) finish in minutes
-# under normal conditions; 30 min is long enough for a slow crawl
-# without leaving the protocol's analysis stranded on a wedge.
+# Bypass the sibling-readiness gate after this many seconds queued (default 30 min) so a wedged crawl doesn't strand the
+# protocol.
 _STUCK_SELECTION_TIMEOUT = int(os.getenv("PSAT_SELECTION_STUCK_TIMEOUT", "1800"))
 
 
 def _existing_in_same_cascade(session: Session, addr: str, chain: str | None, root_job_id: str) -> bool:
-    """True if a job for ``addr`` already exists with the same root_job_id.
-
-    Used to suppress within-cascade proxy re-queueing under --force, where
-    multiple discovery sources surfacing the same proxy would otherwise
-    each spawn a copy via the upgrade-detection re-queue branch.
-    """
+    """True if a job for ``addr`` already exists with the same root_job_id; suppresses within-cascade proxy re-queueing
+    under --force."""
     stmt = select(Job.id).where(
         Job.address == addr,
         Job.request["root_job_id"].as_string() == root_job_id,
@@ -79,14 +73,7 @@ class SelectionWorker(BaseWorker):
         return self._claim_ready_job(session) or self._claim_stuck_job(session)
 
     def _claim_ready_job(self, session: Session) -> Job | None:
-        """Claim a selection job whose DApp/DefiLlama siblings have finished.
-
-        Siblings are matched by ``request->>'root_job_id'`` because
-        ``_spawn_parallel_discovery`` stamps the company job's id there
-        on every DApp/DefiLlama job it creates. A sibling in
-        ``queued`` or ``processing`` holds the claim back; anything
-        ``completed`` or ``failed`` counts as settled.
-        """
+        """Claim a selection job whose DApp/DefiLlama siblings have settled (matched by ``request->>'root_job_id'``)."""
         claim_id = session.execute(
             text(
                 """
@@ -168,11 +155,7 @@ class SelectionWorker(BaseWorker):
             analyze_limit,
         )
 
-        # Row passes when none of the excluded sources are present. For a
-        # single-element excluded set this is ``NOT @> ['upgrade_history']``;
-        # for future multi-element sets it's "no tag overlaps", which is
-        # logically ``AND`` of per-tag NOT-contains (De Morgan on the
-        # overlap operator). NULL guard keeps pre-array legacy rows.
+        # Row passes when none of the excluded sources is present (NULL guard keeps pre-array legacy rows).
         no_excluded_tag = and_(
             *[not_(Contract.discovery_sources.contains([src])) for src in EXCLUDED_DISCOVERY_SOURCES]
         )
@@ -199,11 +182,7 @@ class SelectionWorker(BaseWorker):
             f"Ranking {len(candidates)} discovered contracts",
         )
 
-        # Apply the corroboration-aware effective confidence up front so
-        # the MIN_CONFIDENCE_THRESHOLD filter sees the same number the
-        # ranker will use. Rows with raw ``confidence=NULL`` pick up a
-        # source-based default; rows with multiple ``discovery_sources``
-        # pick up the corroboration boost.
+        # Apply effective confidence up front so the threshold filter and the ranker see the same number.
         eligible_rows = [
             row
             for row in candidates
@@ -226,11 +205,7 @@ class SelectionWorker(BaseWorker):
 
         ranked_dicts = rank_contract_rows(eligible_rows)
 
-        # Persist the rank score onto the row so UI listings and the
-        # analyze-remaining override see the ordering the selector
-        # chose. enrich_with_activity (called inside rank_contract_rows)
-        # mutates its inputs, so the rank_score / activity values live
-        # on the dicts we passed in.
+        # Persist rank_score onto the row so UI listings see the same ordering the selector picked.
         by_key: dict[tuple[str, str | None], dict] = {(d["__row_address"], d["__row_chain"]): d for d in ranked_dicts}
         for row in eligible_rows:
             entry = by_key.get((row.address, row.chain))
@@ -262,12 +237,7 @@ class SelectionWorker(BaseWorker):
         root_job_id: str,
         request: dict,
     ) -> list[dict]:
-        """Create child analysis jobs for the highest-ranked ``analyze_limit`` candidates.
-
-        Dedup + proxy re-queue mirror the logic the discovery worker
-        previously used inline — keeping both here means every
-        source's contracts compete under the same rules.
-        """
+        """Create child analysis jobs for the top ``analyze_limit`` candidates."""
         already_used = count_analysis_children(session, root_job_id)
         remaining = max(0, analyze_limit - already_used)
         if remaining == 0:
@@ -279,13 +249,8 @@ class SelectionWorker(BaseWorker):
             )
             return []
 
-        # Under --force, dedupe even known proxies if a job for them
-        # already exists IN THIS CASCADE. The known-proxy "re-queue for
-        # upgrade check" branch below makes sense in production (a
-        # cascade weeks later may want to re-detect upgrades) but
-        # during a single bench cascade it spawns N copies of the same
-        # proxy when multiple discovery sources surface it. Mirrors the
-        # static_worker dedupe pattern in commit 1a56dde.
+        # Under --force, dedupe known-proxy re-queues within the same cascade so multiple discovery sources don't spawn
+        # N copies.
         force = bool(request.get("force"))
         selected: list[dict] = []
         for entry in ranked:

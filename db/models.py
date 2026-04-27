@@ -850,13 +850,8 @@ def apply_storage_migrations(target_engine=None) -> None:
             )
             ac_conn.execute(text("ALTER TABLE contracts DROP COLUMN discovery_source"))
     with target.connect() as conn:
-        # Etherscan cross-process cache (Phase B Step 5). Per-process
-        # in-memory cache exists in utils/etherscan.py; this table
-        # shares hits across the worker fleet so cold cascades for
-        # shared infra contracts skip Etherscan entirely.
-        # Source code at an address is immutable → ttl_expires_at NULL
-        # is the default; per-call sites can override for non-immutable
-        # actions (balance, tx history) — not currently used.
+        # Etherscan cross-process cache; ttl_expires_at NULL means immutable (e.g., source code), per-call sites can set
+        # a TTL for non-immutable actions.
         conn.execute(
             text(
                 "CREATE TABLE IF NOT EXISTS etherscan_cache ("

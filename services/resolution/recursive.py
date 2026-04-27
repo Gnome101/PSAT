@@ -34,32 +34,9 @@ logger = logging.getLogger(__name__)
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
 DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
-# Process-wide cache for the *static* parts of _materialize_contract_artifacts.
-# The (analysis, plan, contract_name) triple is a pure function of the
-# implementation address + Etherscan source — both are immutable for a given
-# impl_address, so it's safe to share across cascades and across jobs.
-#
-# What is NOT cached: the snapshot (build_control_snapshot does eth_calls
-# against current state) and effective_permissions (depends on snapshot).
-# Those are rebuilt fresh on every call.
-#
-# Cross-cascade reuse is the win — within one cascade the BFS already
-# dedupes via its `processed` set. The hit rate is highest on common
-# OZ libraries / shared implementations across protocols.
-#
-# Indexed two ways:
-#   _ARTIFACT_CACHE       — primary key by lowercase address
-#   _ARTIFACT_CACHE_BY_KECCAK — secondary key by bytecode keccak
-# A single store writes BOTH indices to the same payload. Lookup tries
-# address first, then keccak. The keccak index lets two different
-# proxy addresses pointing to the same impl bytecode share the cache
-# slot (every OZ ERC1967Proxy instance, every standard Gnosis Safe).
-# Cache size grows ~2× per entry but the bound still holds (entries
-# in both indices count once toward the same payload tuple).
-#
-# TTL matches the classify cache (30 min default). Long enough to span a
-# long cascade, short enough to eventually re-fetch source if Etherscan
-# verifies a previously-unverified contract mid-window.
+# Process-wide cache for the static parts of _materialize_contract_artifacts (analysis + plan + contract_name).
+# Address index keyed by (rpc_url, address) for chain isolation; keccak fallback enables cross-chain reuse on byte-exact
+# bytecode matches.
 _ARTIFACT_CACHE: dict[tuple[str, str], tuple[str, dict[str, Any], dict[str, Any], float]] = {}
 _ARTIFACT_CACHE_BY_KECCAK: dict[str, tuple[str, dict[str, Any], dict[str, Any], float]] = {}
 _ARTIFACT_CACHE_LOCK = threading.Lock()
@@ -77,20 +54,7 @@ def clear_artifact_cache() -> None:
 def _get_cached_static_artifacts(
     effective_address: str, rpc_url: str = "", bytecode_keccak: str | None = None
 ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
-    """Return (contract_name, analysis, plan) if cached and fresh; else None.
-
-    Tries the address index first (most-specific match). If no hit and
-    a bytecode keccak is supplied, tries the keccak index — same impl
-    bytecode at a DIFFERENT address shares the cached analysis since
-    contract_analysis is purely a function of source code, not address.
-
-    Address index is keyed by (rpc_url, address) so different chains
-    don't share the slot — the same address on Ethereum vs Polygon may
-    point at different bytecode and the keccak fallback handles only
-    the byte-exact case.
-
-    Returns deepcopies so callers can mutate without poisoning the cache.
-    """
+    """Cached ``(contract_name, analysis, plan)`` deepcopies; chain-isolated by addr, keccak for cross-chain reuse."""
     addr_key = (rpc_url, effective_address.lower())
     now = _time.monotonic()
     with _ARTIFACT_CACHE_LOCK:
@@ -120,8 +84,6 @@ def _store_cached_static_artifacts(
     addr_key = (rpc_url, effective_address.lower())
     with _ARTIFACT_CACHE_LOCK:
         if len(_ARTIFACT_CACHE) >= _ARTIFACT_CACHE_MAX:
-            # Drop the oldest entry rather than randomly evicting — keeps
-            # the cache useful for long-running worker processes.
             oldest_key = min(_ARTIFACT_CACHE, key=lambda k: _ARTIFACT_CACHE[k][3])
             _ARTIFACT_CACHE.pop(oldest_key, None)
         payload = (
@@ -132,7 +94,6 @@ def _store_cached_static_artifacts(
         )
         _ARTIFACT_CACHE[addr_key] = payload
         if bytecode_keccak:
-            # Bound the keccak index too. Same eviction policy.
             if len(_ARTIFACT_CACHE_BY_KECCAK) >= _ARTIFACT_CACHE_MAX:
                 oldest = min(_ARTIFACT_CACHE_BY_KECCAK, key=lambda k: _ARTIFACT_CACHE_BY_KECCAK[k][3])
                 _ARTIFACT_CACHE_BY_KECCAK.pop(oldest, None)
@@ -140,12 +101,7 @@ def _store_cached_static_artifacts(
 
 
 class LoadedArtifacts(TypedDict):
-    """Per-contract artifact bundle held in memory by the resolver.
-
-    Superset of what the policy worker needs to read back for authority
-    resolution. Emitted by ``resolve_control_graph`` keyed by address and
-    persisted by the worker as DB artifacts (no local filesystem writes).
-    """
+    """Per-contract artifact bundle emitted by ``resolve_control_graph`` and persisted by the worker as DB artifacts."""
 
     analysis: dict[str, Any]
     tracking_plan: dict[str, Any]
@@ -203,11 +159,7 @@ def _build_effective_permissions(
     analysis: dict[str, Any],
     snapshot: ControlSnapshot,
 ) -> dict[str, Any] | None:
-    """Compute the effective-permissions payload for a sub-contract.
-
-    Matches the legacy on-disk ``effective_permissions.json`` shape so the
-    policy stage can consume role/controller principals without change.
-    """
+    """Compute the effective-permissions payload (matches the legacy ``effective_permissions.json`` shape)."""
     try:
         return cast(
             dict,
@@ -228,12 +180,7 @@ def _materialize_contract_artifacts(
     *,
     workspace_prefix: str,
 ) -> LoadedArtifacts:
-    """Build analysis + tracking plan + snapshot + effective permissions in memory.
-
-    Source is scaffolded into a tempdir so Slither/structured analysis can
-    parse it; the tempdir is cleaned up before returning. Nothing persists
-    to the local filesystem after this function returns.
-    """
+    """Build analysis + plan + snapshot + effective permissions in memory (tempdir cleaned up before return)."""
     # Proxy check — analyze the implementation but read storage from the proxy.
     effective_address = address
     snapshot_address = address
@@ -249,12 +196,8 @@ def _materialize_contract_artifacts(
     except Exception as exc:
         logger.debug("Recursive resolve: proxy check failed for %s: %s", address, exc)
 
-    # Hot path: cross-cascade reuse of static artifacts (analysis + plan)
-    # for shared implementations (OZ libraries, common impls). Saves the
-    # scaffold + collect_contract_analysis + plan-build trio per repeat
-    # address. Indexed by both effective_address (specific) AND bytecode
-    # keccak (any-address-with-this-bytecode), so e.g. every OZ
-    # ERC1967Proxy instance hits the cache slot of the first one.
+    # Cross-cascade reuse of static artifacts; indexed by address AND bytecode keccak so identical-bytecode contracts
+    # share one cache slot.
     bytecode_keccak: str | None = None
     try:
         from utils.rpc import get_code_with_keccak
@@ -265,14 +208,7 @@ def _materialize_contract_artifacts(
     cached = _get_cached_static_artifacts(effective_address, rpc_url=rpc_url, bytecode_keccak=bytecode_keccak)
     if cached is not None:
         contract_name, analysis, plan = cached
-        # Codex iter-4 P1: a keccak-index hit can return analysis+plan
-        # cached for a DIFFERENT address that just happens to share
-        # bytecode (e.g., the first deployed UUPSProxy instance vs this
-        # call's instance). The cached `plan["contract_address"]` and
-        # `analysis["subject"]["address"]` reference the populating
-        # address; if we don't retarget, build_control_snapshot will
-        # read controller state from the wrong contract storage.
-        # Retarget to the address THIS call is materializing.
+        # Retarget address fields on a keccak hit so build_control_snapshot reads from THIS contract.
         analysis = copy.deepcopy(analysis)
         plan = copy.deepcopy(plan)
         if isinstance(analysis.get("subject"), dict):
@@ -550,22 +486,7 @@ def resolve_control_graph(
     classify_cache: dict[str, tuple[str, dict[str, object]]] | None = None,
     initial_graph: ResolvedControlGraph | None = None,
 ) -> tuple[ResolvedControlGraph, dict[str, LoadedArtifacts]]:
-    """Walk the control chain breadth-first starting from a pre-loaded root.
-
-    Returns ``(graph, nested_artifacts_by_address)``. The nested map is keyed
-    by lowercase sub-contract address and is what the worker persists to the
-    DB — the policy stage reads it back by the same key to locate authority
-    artifacts.
-
-    ``nested_artifacts_override`` lets callers (e.g. the policy worker refresh
-    path) supply pre-computed nested artifacts to skip remote fetches.
-
-    ``classify_cache`` is mutated in place so callers can reuse classification
-    results across stages (resolution → policy refresh → principal labeling).
-    Each ``classify_resolved_address`` call is 6-10 RPC roundtrips, so this
-    is the dominant cost on cascade workloads (etherfi LP impl: ~14 min in
-    principal labeling without it).
-    """
+    """BFS the control chain. Returns ``(graph, nested_artifacts_by_address)``; classify_cache is mutated in place."""
     root_analysis = root_artifacts["analysis"]
     root_subject = root_analysis.get("subject", {})
     root_address = str(root_subject.get("address", "")).lower()
@@ -581,8 +502,6 @@ def resolve_control_graph(
     )
     queued = {root_address}
     processed: set[str] = set()
-    # Use the caller's cache if supplied so cross-stage reuse is possible;
-    # otherwise allocate a fresh per-call dict (legacy behavior).
     _classify_cache: dict[str, tuple[str, dict[str, object]]] = classify_cache if classify_cache is not None else {}
     nested_artifacts: dict[str, LoadedArtifacts] = dict(nested_artifacts_override or {})
 
@@ -591,10 +510,8 @@ def resolve_control_graph(
         if key in _classify_cache:
             return _classify_cache[key]
         kind, details, cacheable = classify_resolved_address_with_status(rpc_url, addr)
-        # Only persist into the per-job cache (which gets serialized as the
-        # `classified_addresses` artifact and read by the policy worker) when
-        # the underlying probes succeeded. A transient RPC error otherwise
-        # cements a "contract" fallback in the artifact for downstream stages.
+        # Skip caching transient RPC errors — otherwise a "contract" fallback gets cemented in the persisted
+        # classified_addresses artifact.
         if cacheable:
             _classify_cache[key] = (kind, details)
         return kind, details
@@ -602,12 +519,8 @@ def resolve_control_graph(
     nodes: dict[str, ResolvedGraphNode] = {}
     edges: dict[tuple, ResolvedGraphEdge] = {}
 
-    # Caller can pre-seed the graph from a prior walk so we project new
-    # discoveries onto the existing structure rather than rebuild from
-    # scratch. Used by the policy worker's refresh step: the resolution
-    # stage's graph + the now-computed root effective_permissions feed a
-    # second walk, but every nested contract has already been analyzed —
-    # only the root + any newly-discovered role principals need fresh work.
+    # Pre-seed the graph from a prior walk so the policy refresh path skips re-analyzing already-processed nested
+    # contracts.
     if initial_graph is not None:
         for node in initial_graph.get("nodes", []):
             if not isinstance(node, dict):
@@ -619,11 +532,8 @@ def resolve_control_graph(
             if not isinstance(edge, dict):
                 continue
             edges[_edge_key(cast(ResolvedGraphEdge, edge))] = cast(ResolvedGraphEdge, dict(edge))
-        # Pre-mark every analyzed contract from the prior walk as processed,
-        # EXCEPT the root. The root must be re-walked so role principals
-        # from its newly-populated effective_permissions get projected;
-        # everything else already had its effective_permissions computed
-        # during _materialize_contract_artifacts in the first walk.
+        # Mark already-analyzed nested contracts as processed; the root must re-walk so freshly-computed role principals
+        # get projected.
         for node in initial_graph.get("nodes", []):
             if not isinstance(node, dict) or not node.get("analyzed"):
                 continue
@@ -681,9 +591,8 @@ def resolve_control_graph(
         effective_permissions = artifacts.get("effective_permissions")
         subject = analysis.get("subject", {})
         contract_name = str(subject.get("name", address))
-        # Carry `method_to_role` onto the graph node so the policy
-        # stage's cross-contract guard bridge can resolve authority
-        # method names to role constants without keyword heuristics.
+        # Carry `method_to_role` onto the graph node so the policy stage can resolve authority method names without
+        # keyword heuristics.
         access_control_block = analysis.get("access_control") or {}
         method_to_role = access_control_block.get("method_to_role") or {}
         node_details: dict[str, object] = {"address": address}
@@ -702,13 +611,8 @@ def resolve_control_graph(
             artifacts={"data_key": f"recursive:{address.lower()}"},
         )
 
-        # Replay writer events for each discovered mapping allowlist and
-        # materialize each current member as a principal node tagged
-        # with `controller_label=<mapping_name>`. The enumeration is
-        # bounded (timeout + max-pages) — see mapping_enumerator.py.
-        # Truncated/errored results are surfaced via the `status` field
-        # so downstream stages can decide whether to trust the principal
-        # set; a silent empty fallback would drop authorized addresses.
+        # Replay mapping-allowlist writer events into principal nodes; bounded enumeration surfaces truncation via the
+        # `status` field.
         mapping_specs = list(access_control_block.get("mapping_writer_events") or [])
         enumerated: list[Any] = []
         enumeration_status = "skipped"
@@ -730,8 +634,8 @@ def resolve_control_graph(
                         bearer_token=hypersync_token,
                     )
                 except Exception as exc:
-                    # Bounds are inside enumerate_mapping_allowlist; raises here are
-                    # truly unexpected (auth, hypersync module load, etc).
+                    # Bounds are inside enumerate_mapping_allowlist; raises here are unexpected (auth, hypersync load,
+                    # etc).
                     logger.warning(
                         "mapping_enumerator UNEXPECTED FAILURE for %s: %s — treating as truncated",
                         address,
@@ -785,10 +689,7 @@ def resolve_control_graph(
                         "notes": [],
                     },
                 )
-            # Surface enumeration status on the contract node so downstream
-            # stages (policy labeling, principal enrichment) can flag
-            # incomplete allowlists in the artifact rather than treating
-            # the principal list as authoritative.
+            # Surface enumeration status on the node so downstream stages can flag incomplete allowlists.
             if mapping_specs and contract_node_id in nodes:
                 nodes[contract_node_id]["details"]["mapping_enumeration_status"] = enumeration_status
 

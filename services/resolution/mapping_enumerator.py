@@ -18,15 +18,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 
-# Bounds on the from-block-0 pagination loop. A 2017-deployed contract has
-# ~190 pages of history at ~25s/page = 80 min — far more than a single
-# resolution worker should block. Without these caps we'd silently wedge.
-# Defaults: 60s wall clock, 50 pages — enough to enumerate any contract
-# deployed in the last ~5 years.
+# Pagination bounds (default 60s / 50 pages); without these caps a 2017-deployed contract can wedge a worker for ~80
+# min.
 _TIMEOUT_S = float(os.getenv("PSAT_MAPPING_ENUMERATION_TIMEOUT_S", "60"))
 _MAX_PAGES = int(os.getenv("PSAT_MAPPING_ENUMERATION_MAX_PAGES", "50"))
-# Process-wide cache TTL (matches classify cache). Sibling cascade jobs
-# enumerating the same contract within ~30 min reuse results.
 _CACHE_TTL_S = float(os.getenv("PSAT_MAPPING_ENUMERATION_CACHE_TTL_S", "1800"))
 
 
@@ -38,10 +33,7 @@ class EnumeratedPrincipal(TypedDict):
 
 
 class EnumerationResult(TypedDict):
-    """Replaces the bare list[EnumeratedPrincipal] return so the caller
-    can distinguish complete vs. truncated scans. Truncation MUST be
-    surfaced — silent fallback to [] would drop principals (wards.alice
-    set in 2017 with no Deny since means alice is still authorized)."""
+    """Principal list + status; complete vs. truncated scans (silent [] would drop authorized addresses)."""
 
     principals: list[EnumeratedPrincipal]
     status: str  # "complete" | "incomplete_timeout" | "incomplete_max_pages" | "error"
@@ -50,10 +42,8 @@ class EnumerationResult(TypedDict):
     error: str | None
 
 
-# Process-wide cache. Keyed on lowercased contract address. Values include
-# the head block at scan time so callers can decide if the cache is stale
-# enough to require re-scanning. We don't include head_block in the key
-# because re-querying head per call defeats the cascade-sharing benefit.
+# Process-wide cache keyed on lowercased contract address; head_block is in the value, not the key, so cascade siblings
+# reuse results.
 _CACHE: dict[str, tuple[EnumerationResult, float]] = {}
 _CACHE_LOCK = threading.Lock()
 
@@ -148,22 +138,8 @@ async def enumerate_mapping_allowlist(
     timeout_s: float | None = None,
     max_pages: int | None = None,
 ) -> EnumerationResult:
-    """Replay mapping-writer events into a current-allowlist principal list.
-
-    Returns an ``EnumerationResult`` so the caller can distinguish a
-    complete scan from a truncated one. Truncation flags:
-      - ``incomplete_timeout``: ``timeout_s`` wall-clock budget exhausted
-      - ``incomplete_max_pages``: ``max_pages`` pages fetched without finishing
-      - ``error``: an underlying RPC raised mid-scan
-
-    Truncation MUST be surfaced — a silent fallback to ``[]`` would drop
-    principals: a ``wards[alice] = 1`` event in 2017 with no later ``Deny``
-    means alice is still authorized; truncating the scan loses that fact.
-
-    Defaults for ``timeout_s`` and ``max_pages`` come from env vars
-    ``PSAT_MAPPING_ENUMERATION_TIMEOUT_S`` and
-    ``PSAT_MAPPING_ENUMERATION_MAX_PAGES`` (60s and 50 pages by default).
-    """
+    """Replay mapping-writer events into a current-allowlist principal list, surfacing truncation via
+    ``EnumerationResult.status``."""
     eff_timeout = _TIMEOUT_S if timeout_s is None else timeout_s
     eff_max_pages = _MAX_PAGES if max_pages is None else max_pages
 
@@ -329,16 +305,7 @@ def enumerate_mapping_allowlist_sync(
     writer_specs: list[WriterEventSpec],
     **kwargs: Any,
 ) -> EnumerationResult:
-    """Synchronous wrapper around ``enumerate_mapping_allowlist`` with a
-    process-wide cache keyed on the lowercased contract address. Cache TTL
-    is ``PSAT_MAPPING_ENUMERATION_CACHE_TTL_S`` (default 30 min) — long
-    enough that sibling cascade jobs share results, short enough that
-    long-lived workers eventually re-scan for new events.
-
-    ``incomplete_*`` and ``error`` results ARE cached too because re-running
-    them within the TTL would just hit the same bound. The caller can decide
-    whether to act on partial data or not via the ``status`` field.
-    """
+    """Sync wrapper with TTL cache (default 30 min); ``incomplete_*``/``error`` results are cached too."""
     cache_key = contract_address.lower()
     now = time.monotonic()
     with _CACHE_LOCK:

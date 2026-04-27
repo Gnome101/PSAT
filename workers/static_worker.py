@@ -882,35 +882,19 @@ class StaticWorker(BaseWorker):
 
         base_name = job.name or contract_name
         force = bool(request.get("force"))
-        # Compute the root_job_id for this cascade so we can dedupe within
-        # a single cascade even under --force. Without this, when a cascade
-        # discovers the same impl through multiple proxy paths (very common
-        # for shared infra contracts like UUPSProxy_308861A4 in etherfi),
-        # static_worker spawns N copies of the impl analysis. Within-cascade
-        # dedupe lets us preserve --force's "fresh impl per cascade" goal
-        # while eliminating intra-cascade duplicates.
+        # Within-cascade dedupe under --force: same impl reached via multiple proxy paths must not spawn N copies.
         root_job_id = request.get("root_job_id") or str(job.id)
         chain = request.get("chain")
         from sqlalchemy import text as _sa_text
 
         for impl_addr, label in impl_entries:
             if force:
-                # Codex iter-7 P2: serialize the SELECT-then-INSERT against
-                # concurrent static workers (PSAT_STATIC_WORKERS > 1) so two
-                # peers on the same (root_job_id, chain, address) can't both
-                # observe "no existing job" and create duplicates. Lock
-                # auto-releases at transaction end.
+                # Advisory xact lock serializes the SELECT-then-INSERT against concurrent static workers.
                 lock_seed = f"impl-dedupe:{root_job_id}:{chain or '-'}:{impl_addr.lower()}"
                 lock_key = int(hashlib.sha1(lock_seed.encode()).hexdigest()[:15], 16)
                 session.execute(_sa_text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
 
-                # Within-cascade dedupe: check for an existing job for this
-                # impl that's already part of the same root cascade AND
-                # the same chain. Codex iter-6 P2: in multi-chain company
-                # cascades the same proxy/impl address can exist on two
-                # chains (e.g., USDC on Ethereum vs Polygon); without the
-                # chain filter the first chain's impl would suppress the
-                # second chain's analysis.
+                # Same (address, root_job_id, chain) → reject; chain is required for multi-chain cascades.
                 stmt = select(Job).where(
                     Job.address == impl_addr,
                     Job.request["root_job_id"].as_string() == root_job_id,
@@ -919,7 +903,6 @@ class StaticWorker(BaseWorker):
                     stmt = stmt.where(Job.request["chain"].as_string() == chain)
                 existing = session.execute(stmt.limit(1)).scalar_one_or_none()
             else:
-                # Global dedupe: any prior job for this impl wins.
                 existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
             if existing:
                 logger.info(
