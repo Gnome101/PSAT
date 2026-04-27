@@ -110,6 +110,10 @@ def test_resolve_control_graph_recurses_to_contract_and_safe(monkeypatch):
 
     monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
     monkeypatch.setattr("services.resolution.recursive.classify_resolved_address", fake_classify)
+    monkeypatch.setattr(
+        "services.resolution.recursive.classify_resolved_address_with_status",
+        lambda rpc_url, address, block_tag="latest": (*fake_classify(rpc_url, address, block_tag), True),
+    )
 
     graph, nested = resolve_control_graph(
         root_artifacts=cast(LoadedArtifacts, root_bundle),
@@ -201,6 +205,10 @@ def test_resolve_control_graph_dedupes_recursive_contract_addresses(monkeypatch)
     monkeypatch.setattr(
         "services.resolution.recursive.classify_resolved_address",
         lambda rpc_url, address, block_tag="latest": ("unknown", {"address": address}),
+    )
+    monkeypatch.setattr(
+        "services.resolution.recursive.classify_resolved_address_with_status",
+        lambda rpc_url, address, block_tag="latest": ("unknown", {"address": address}, True),
     )
 
     graph, _nested = resolve_control_graph(
@@ -299,6 +307,10 @@ def test_resolve_control_graph_recurses_into_role_holder_contracts(monkeypatch):
 
     monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
     monkeypatch.setattr("services.resolution.recursive.classify_resolved_address", fake_classify)
+    monkeypatch.setattr(
+        "services.resolution.recursive.classify_resolved_address_with_status",
+        lambda rpc_url, address, block_tag="latest": (*fake_classify(rpc_url, address, block_tag), True),
+    )
 
     resolve_control_graph(
         root_artifacts=cast(LoadedArtifacts, root_bundle),
