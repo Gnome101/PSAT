@@ -47,10 +47,21 @@ DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 # dedupes via its `processed` set. The hit rate is highest on common
 # OZ libraries / shared implementations across protocols.
 #
+# Indexed two ways:
+#   _ARTIFACT_CACHE       — primary key by lowercase address
+#   _ARTIFACT_CACHE_BY_KECCAK — secondary key by bytecode keccak
+# A single store writes BOTH indices to the same payload. Lookup tries
+# address first, then keccak. The keccak index lets two different
+# proxy addresses pointing to the same impl bytecode share the cache
+# slot (every OZ ERC1967Proxy instance, every standard Gnosis Safe).
+# Cache size grows ~2× per entry but the bound still holds (entries
+# in both indices count once toward the same payload tuple).
+#
 # TTL matches the classify cache (30 min default). Long enough to span a
 # long cascade, short enough to eventually re-fetch source if Etherscan
 # verifies a previously-unverified contract mid-window.
 _ARTIFACT_CACHE: dict[str, tuple[str, dict[str, Any], dict[str, Any], float]] = {}
+_ARTIFACT_CACHE_BY_KECCAK: dict[str, tuple[str, dict[str, Any], dict[str, Any], float]] = {}
 _ARTIFACT_CACHE_LOCK = threading.Lock()
 _ARTIFACT_CACHE_MAX = 1024
 _ARTIFACT_CACHE_TTL_S = float(os.getenv("PSAT_RESOLUTION_ARTIFACT_CACHE_TTL_S", "1800"))
@@ -60,28 +71,45 @@ def clear_artifact_cache() -> None:
     """Clear the process-wide static-artifact cache. For tests + manual reset."""
     with _ARTIFACT_CACHE_LOCK:
         _ARTIFACT_CACHE.clear()
+        _ARTIFACT_CACHE_BY_KECCAK.clear()
 
 
-def _get_cached_static_artifacts(effective_address: str) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+def _get_cached_static_artifacts(
+    effective_address: str, bytecode_keccak: str | None = None
+) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
     """Return (contract_name, analysis, plan) if cached and fresh; else None.
+
+    Tries the address index first (most-specific match). If no hit and
+    a bytecode keccak is supplied, tries the keccak index — same impl
+    bytecode at a DIFFERENT address shares the cached analysis since
+    contract_analysis is purely a function of source code, not address.
 
     Returns deepcopies so callers can mutate without poisoning the cache.
     """
     key = effective_address.lower()
+    now = _time.monotonic()
     with _ARTIFACT_CACHE_LOCK:
         entry = _ARTIFACT_CACHE.get(key)
+        if entry is None and bytecode_keccak:
+            entry = _ARTIFACT_CACHE_BY_KECCAK.get(bytecode_keccak)
     if entry is None:
         return None
     contract_name, analysis, plan, inserted_at = entry
-    if _time.monotonic() - inserted_at > _ARTIFACT_CACHE_TTL_S:
+    if now - inserted_at > _ARTIFACT_CACHE_TTL_S:
         with _ARTIFACT_CACHE_LOCK:
             _ARTIFACT_CACHE.pop(key, None)
+            if bytecode_keccak:
+                _ARTIFACT_CACHE_BY_KECCAK.pop(bytecode_keccak, None)
         return None
     return contract_name, copy.deepcopy(analysis), copy.deepcopy(plan)
 
 
 def _store_cached_static_artifacts(
-    effective_address: str, contract_name: str, analysis: dict[str, Any], plan: dict[str, Any]
+    effective_address: str,
+    contract_name: str,
+    analysis: dict[str, Any],
+    plan: dict[str, Any],
+    bytecode_keccak: str | None = None,
 ) -> None:
     key = effective_address.lower()
     with _ARTIFACT_CACHE_LOCK:
@@ -90,12 +118,19 @@ def _store_cached_static_artifacts(
             # the cache useful for long-running worker processes.
             oldest_key = min(_ARTIFACT_CACHE, key=lambda k: _ARTIFACT_CACHE[k][3])
             _ARTIFACT_CACHE.pop(oldest_key, None)
-        _ARTIFACT_CACHE[key] = (
+        payload = (
             contract_name,
             copy.deepcopy(analysis),
             copy.deepcopy(plan),
             _time.monotonic(),
         )
+        _ARTIFACT_CACHE[key] = payload
+        if bytecode_keccak:
+            # Bound the keccak index too. Same eviction policy.
+            if len(_ARTIFACT_CACHE_BY_KECCAK) >= _ARTIFACT_CACHE_MAX:
+                oldest = min(_ARTIFACT_CACHE_BY_KECCAK, key=lambda k: _ARTIFACT_CACHE_BY_KECCAK[k][3])
+                _ARTIFACT_CACHE_BY_KECCAK.pop(oldest, None)
+            _ARTIFACT_CACHE_BY_KECCAK[bytecode_keccak] = payload
 
 
 class LoadedArtifacts(TypedDict):
@@ -211,9 +246,17 @@ def _materialize_contract_artifacts(
     # Hot path: cross-cascade reuse of static artifacts (analysis + plan)
     # for shared implementations (OZ libraries, common impls). Saves the
     # scaffold + collect_contract_analysis + plan-build trio per repeat
-    # address. Skipped when skip_slither=False because the cached path
-    # never invokes the Slither CLI.
-    cached = _get_cached_static_artifacts(effective_address)
+    # address. Indexed by both effective_address (specific) AND bytecode
+    # keccak (any-address-with-this-bytecode), so e.g. every OZ
+    # ERC1967Proxy instance hits the cache slot of the first one.
+    bytecode_keccak: str | None = None
+    try:
+        from utils.rpc import get_code_with_keccak
+
+        _code, bytecode_keccak = get_code_with_keccak(rpc_url, effective_address)
+    except Exception as exc:
+        logger.debug("Recursive resolve: get_code_with_keccak failed for %s: %s", effective_address, exc)
+    cached = _get_cached_static_artifacts(effective_address, bytecode_keccak)
     if cached is not None:
         contract_name, analysis, plan = cached
     else:
@@ -227,7 +270,9 @@ def _materialize_contract_artifacts(
             analysis = cast(dict, collect_contract_analysis(project_dir))
 
         plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
-        _store_cached_static_artifacts(effective_address, contract_name, analysis, plan)
+        _store_cached_static_artifacts(
+            effective_address, contract_name, analysis, plan, bytecode_keccak
+        )
     if snapshot_address != effective_address:
         plan = {**plan, "contract_address": snapshot_address}
 

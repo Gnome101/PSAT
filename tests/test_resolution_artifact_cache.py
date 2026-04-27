@@ -87,6 +87,14 @@ def _patch_pipeline(monkeypatch, *, scaffold_calls, collect_calls, snapshot_call
     monkeypatch.setattr(recursive, "build_control_tracking_plan", _build_plan)
     monkeypatch.setattr(recursive, "build_control_snapshot", _build_snapshot)
     monkeypatch.setattr(recursive, "_build_effective_permissions", _build_perms)
+    # _materialize_contract_artifacts now calls utils.rpc.get_code_with_keccak
+    # to populate the bytecode-keccak secondary cache index. Stub it so
+    # tests don't make real eth_getCode RPCs (was making each test ~20s
+    # before this stub).
+    monkeypatch.setattr(
+        "utils.rpc.get_code_with_keccak",
+        lambda _rpc, _addr: ("0x60", "0x" + "ab" * 32),
+    )
 
 
 def test_second_call_serves_static_artifacts_from_cache(monkeypatch):
@@ -221,3 +229,88 @@ def test_cache_helpers_round_trip():
     second = _get_cached_static_artifacts("0xabc")
     assert second is not None
     assert second[1]["k"] == [1, 2, 3], "store must deepcopy on read"
+
+
+# ---------------------------------------------------------------------------
+# Phase B Step 2: bytecode keccak secondary index for cross-cascade reuse
+# ---------------------------------------------------------------------------
+
+
+def test_keccak_secondary_index_hits_for_different_address_same_bytecode():
+    """The whole point of step 2: two contracts deployed at DIFFERENT
+    addresses but with the SAME impl bytecode (every OZ ERC1967Proxy
+    instance, every standard Gnosis Safe singleton) share the cached
+    static analysis since contract_analysis is purely a function of
+    source code, not address."""
+    keccak = "0x" + "11" * 32
+    _store_cached_static_artifacts(
+        "0x" + "AA" * 20,
+        "SharedImpl",
+        {"functions": [{"sig": "f()"}]},
+        {"controllers": []},
+        bytecode_keccak=keccak,
+    )
+    # Different address, SAME keccak → cache hit.
+    cached = _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak=keccak)
+    assert cached is not None
+    name, analysis, plan = cached
+    assert name == "SharedImpl"
+    assert analysis["functions"][0]["sig"] == "f()"
+
+
+def test_keccak_secondary_index_misses_when_keccak_differs():
+    """Different bytecode → not the same impl → must NOT hit the cache.
+    Catches a refactor that conflates the two indices."""
+    _store_cached_static_artifacts(
+        "0x" + "AA" * 20,
+        "ImplA",
+        {"v": 1},
+        {"v": 1},
+        bytecode_keccak="0x" + "11" * 32,
+    )
+    cached = _get_cached_static_artifacts("0x" + "CC" * 20, bytecode_keccak="0x" + "22" * 32)
+    assert cached is None
+
+
+def test_address_index_preferred_over_keccak_index():
+    """When both indices could match (same address, but the keccak
+    points to a DIFFERENT cached entry from another store), the
+    address-keyed entry wins. Address is the more-specific match."""
+    addr = "0x" + "AA" * 20
+    # First store: address AA, keccak ZZ → both indices point to "v1"
+    _store_cached_static_artifacts(addr, "v1-name", {"v": 1}, {}, bytecode_keccak="0x" + "ZZ".replace("Z", "z") * 32)
+    # Second store: a totally different address, keccak XX → installed in keccak index too
+    _store_cached_static_artifacts(
+        "0x" + "DD" * 20, "v2-name", {"v": 2}, {}, bytecode_keccak="0x" + "XX".lower() * 32
+    )
+    # Lookup by addr AA + keccak XX should still get the v1 (address wins).
+    cached = _get_cached_static_artifacts(addr, bytecode_keccak="0x" + "XX".lower() * 32)
+    assert cached is not None
+    name, _a, _p = cached
+    assert name == "v1-name", "address-key match must take precedence over keccak fallback"
+
+
+def test_keccak_index_respects_ttl(monkeypatch):
+    """TTL applies to keccak-keyed lookups too — eventually re-fetch."""
+    real_monotonic = time.monotonic
+    fake_now = [real_monotonic()]
+    monkeypatch.setattr(recursive._time, "monotonic", lambda: fake_now[0])
+
+    keccak = "0x" + "ee" * 32
+    _store_cached_static_artifacts(
+        "0x" + "AA" * 20, "ImplE", {"v": 1}, {}, bytecode_keccak=keccak
+    )
+    fake_now[0] += recursive._ARTIFACT_CACHE_TTL_S + 1
+    # Keccak hit on a DIFFERENT address, after TTL → must miss.
+    assert _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak=keccak) is None
+
+
+def test_clear_cache_clears_both_indices():
+    """clear_artifact_cache must wipe the keccak index too — otherwise
+    test isolation breaks (a stale keccak entry survives the helper)."""
+    _store_cached_static_artifacts(
+        "0x" + "AA" * 20, "Test", {}, {}, bytecode_keccak="0x" + "ff" * 32
+    )
+    recursive.clear_artifact_cache()
+    assert _get_cached_static_artifacts("0x" + "AA" * 20) is None
+    assert _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak="0x" + "ff" * 32) is None
