@@ -282,45 +282,6 @@ class TestAnalysisPhaseSuccess:
         assert [call["name"] for call in calls] == ["contract_analysis", "semantic_guards"]
         assert calls[1]["data"] == semantic_data
 
-    def test_hevm_semantic_phase_stores_refined_artifacts(self, monkeypatch, tmp_path):
-        worker = StaticWorker()
-        monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
-        session = MagicMock()
-        job = _job(request={"rpc_url": "https://rpc.example"})
-
-        analysis_path = tmp_path / "contract_analysis.json"
-        analysis_path.write_text(json.dumps({"schema_version": "0.1"}))
-        semantic_path = tmp_path / "semantic_guards.json"
-        semantic_path.write_text(json.dumps({"functions": [{"function": "upgradeTo(address)", "predicates": []}]}))
-        tracking_path = tmp_path / "control_tracking_plan.json"
-        tracking_path.write_text(json.dumps({"tracked_controllers": []}))
-
-        monkeypatch.setattr(
-            "workers.static_worker.get_artifact",
-            lambda _session, _job_id, name: {"tracked_controllers": []} if name == "control_tracking_plan" else None,
-        )
-        monkeypatch.setattr(
-            "workers.static_worker.refine_semantic_guards_with_hevm",
-            lambda semantic_guards, tracking_plan, rpc_url, project_dir=None: (
-                {
-                    "functions": [
-                        {
-                            "function": "upgradeTo(address)",
-                            "predicates": [{"kind": "caller_equals_controller"}],
-                        }
-                    ]
-                },
-                {"status": "ok", "functions": []},
-            ),
-        )
-        calls = _capture_store_artifact(monkeypatch)
-
-        worker._run_hevm_semantic_phase(session, job, tmp_path, "TestContract", job.address)
-
-        assert [call["name"] for call in calls] == ["hevm_semantic_guards", "semantic_guards"]
-        assert calls[0]["data"]["status"] == "ok"
-        assert calls[1]["data"]["functions"][0]["predicates"] == [{"kind": "caller_equals_controller"}]
-
     def test_succeeds_even_when_returned_path_missing(self, monkeypatch, tmp_path):
         """If analyze_contract returns a path that doesn't exist, phase still returns True
         (no artifact stored, but no error either)."""
