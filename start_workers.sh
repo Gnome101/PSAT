@@ -45,11 +45,19 @@ fi
 
 echo "Starting PSAT workers with: ${PYTHON_CMD[*]}"
 
-# Static worker count is env-tunable so the bench harness can sweep it
-# without rebuilding the image. Default 2 matches the long-standing prod
-# fleet shape; cascade benches found 1-4 to be the useful range.
+# Worker counts are env-tunable so the bench harness can sweep them
+# without rebuilding the image. Defaults match the long-standing prod
+# fleet shape; cascade benches found 1-4 to be the useful range per
+# stage. Recommended values per VM size:
+#   shared-cpu-1x:    static=1 resolution=1 policy=1
+#   performance-2x:   static=2 resolution=2 policy=1   (current default)
+#   performance-4x:   static=4 resolution=2 policy=2
 STATIC_COUNT="${PSAT_STATIC_WORKERS:-2}"
-echo "  static workers: $STATIC_COUNT (set PSAT_STATIC_WORKERS to override)"
+RESOLUTION_COUNT="${PSAT_RESOLUTION_WORKERS:-1}"
+POLICY_COUNT="${PSAT_POLICY_WORKERS:-1}"
+echo "  static workers:     $STATIC_COUNT (set PSAT_STATIC_WORKERS to override)"
+echo "  resolution workers: $RESOLUTION_COUNT (set PSAT_RESOLUTION_WORKERS to override)"
+echo "  policy workers:     $POLICY_COUNT (set PSAT_POLICY_WORKERS to override)"
 
 "${PYTHON_CMD[@]}" -m workers.discovery &
 PIDS+=($!)
@@ -57,10 +65,14 @@ for _ in $(seq 1 "$STATIC_COUNT"); do
   "${PYTHON_CMD[@]}" -m workers.static_worker &
   PIDS+=($!)
 done
-"${PYTHON_CMD[@]}" -m workers.resolution_worker &
-PIDS+=($!)
-"${PYTHON_CMD[@]}" -m workers.policy_worker &
-PIDS+=($!)
+for _ in $(seq 1 "$RESOLUTION_COUNT"); do
+  "${PYTHON_CMD[@]}" -m workers.resolution_worker &
+  PIDS+=($!)
+done
+for _ in $(seq 1 "$POLICY_COUNT"); do
+  "${PYTHON_CMD[@]}" -m workers.policy_worker &
+  PIDS+=($!)
+done
 "${PYTHON_CMD[@]}" -m workers.coverage_worker &
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.defillama_worker &
