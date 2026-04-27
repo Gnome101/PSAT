@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from alembic import context
 from db.models import Base
@@ -47,6 +47,11 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # Fail fast instead of waiting forever for an AccessExclusiveLock
+        # held by a draining machine during a Fly rolling deploy. Migrations
+        # that need longer can override these inside the migration body.
+        connection.execute(text("SET lock_timeout = '10s'"))
+        connection.execute(text("SET statement_timeout = '300s'"))
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
