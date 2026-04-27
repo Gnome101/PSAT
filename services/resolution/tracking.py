@@ -47,11 +47,13 @@ _CLASSIFY_CACHE_MAX = 4096
 # process lifetime so we eventually re-probe upgraded contracts.
 _CLASSIFY_CACHE_TTL_S = float(os.getenv("PSAT_CLASSIFY_CACHE_TTL_S", "1800"))
 
-# Speculative single-batch classify probes. Off by default so this commit
-# is a pure no-op until enabled per-environment. Flip on via Fly env to
-# A/B bench against the sequential path. Falls through to sequential mode
-# automatically if any provider rejects the batch (whole-chunk failure).
-_CLASSIFY_BATCH_ENABLED = os.getenv("PSAT_CLASSIFY_BATCH", "0").lower() in ("1", "true", "yes")
+# Speculative single-batch classify probes (default ON). Saves 5 RTT per
+# cold classify by sending all 6 probes in one JSON-RPC roundtrip.
+# Whole-batch failure (e.g., a private RPC that rejects batches) falls
+# back to the sequential path automatically — see commit 7f07e3e for the
+# fallback regression test. Set PSAT_CLASSIFY_BATCH=0 to disable on a
+# specific environment if needed.
+_CLASSIFY_BATCH_ENABLED = os.getenv("PSAT_CLASSIFY_BATCH", "1").lower() in ("1", "true", "yes")
 
 
 def clear_classify_cache() -> None:

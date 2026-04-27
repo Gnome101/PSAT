@@ -848,8 +848,12 @@ def test_resolution_worker_rewrites_address_for_impl_jobs(monkeypatch):
     )
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
 
-    # Mock resolve_control_graph to capture the analysis it receives
-    def fake_resolve_graph(*, root_artifacts, rpc_url, max_depth, workspace_prefix):
+    # Mock resolve_control_graph to capture the analysis it receives.
+    # Accept **_kw so the mock survives signature growth in the production
+    # function (classify_cache, initial_graph, nested_artifacts_override
+    # have all been threaded through during Phase A — pinning each kwarg
+    # name here would create a brittle test-vs-prod coupling).
+    def fake_resolve_graph(*, root_artifacts, rpc_url, max_depth, workspace_prefix, **_kw):
         captured_analyses.append(root_artifacts["analysis"])
         return {"nodes": [], "edges": []}, {}
 

@@ -6,10 +6,13 @@ The codex gate explicitly required: ``_PROBE_ERROR`` sentinel
 preservation under partial failures, AND identical (kind, details,
 cacheable) on every branch.
 
-The batched path is gated behind ``PSAT_CLASSIFY_BATCH``. By default OFF
-— this commit is a no-op in production until flipped on Fly. These
-tests exercise BOTH paths with the same mocked RPC responses and assert
-they produce byte-identical outputs.
+The batched path is gated behind ``PSAT_CLASSIFY_BATCH`` (default ON
+since the parity tests + production benches confirmed equivalence;
+set ``PSAT_CLASSIFY_BATCH=0`` to disable per environment). These tests
+exercise BOTH paths with the same mocked RPC responses and assert
+they produce byte-identical outputs — the env-dispatch tests below
+monkeypatch the constant directly so they are insensitive to the
+default.
 
 Branches covered (each tested in batched and sequential mode):
 1. Zero address → ("zero", ..., cacheable=True), no RPC issued.
