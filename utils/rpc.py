@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
 import requests
 from eth_utils.crypto import keccak
+from requests.adapters import HTTPAdapter
 
 JSON_RPC_TIMEOUT_SECONDS = 10
 
@@ -15,6 +17,32 @@ MAX_BATCH_SIZE = 500
 
 RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
 
+# Per-thread requests.Session so RPC calls reuse the underlying TCP/TLS
+# connection. Bare ``requests.post()`` opens a new socket per call —
+# that's a TCP handshake + TLS handshake (~50-200ms RTT each) on every
+# eth_call, which dominates the cost of RPC-heavy stages like the
+# resolution recursive walk.
+#
+# requests.Session is NOT thread-safe across calls, so we key by thread
+# rather than sharing a global one. Workers also use threadpools for
+# parallel cascades, so threading.local() is the safe primitive.
+#
+# HTTPAdapter pool sizes are intentionally generous — these are within
+# one thread, so the pool only holds connections to the few RPC URLs
+# this thread has hit recently.
+_session_local = threading.local()
+
+
+def _get_session() -> requests.Session:
+    s = getattr(_session_local, "session", None)
+    if s is None:
+        s = requests.Session()
+        adapter = HTTPAdapter(pool_connections=16, pool_maxsize=32)
+        s.mount("http://", adapter)
+        s.mount("https://", adapter)
+        _session_local.session = s
+    return s
+
 
 def normalize_address(address: str) -> str:
     """Normalize an Ethereum address to lowercase with a single 0x prefix."""
@@ -22,9 +50,10 @@ def normalize_address(address: str) -> str:
 
 
 def rpc_request(rpc_url: str, method: str, params: list[Any], retries: int = 1) -> Any:
+    session = _get_session()
     for attempt in range(retries + 1):
         try:
-            response = requests.post(
+            response = session.post(
                 rpc_url,
                 json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
                 timeout=JSON_RPC_TIMEOUT_SECONDS,
@@ -70,7 +99,7 @@ def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[
             for i, (method, params) in enumerate(chunk)
         ]
 
-        response = requests.post(
+        response = _get_session().post(
             rpc_url,
             json=batch,
             timeout=max(JSON_RPC_TIMEOUT_SECONDS, len(chunk) * 0.1),
