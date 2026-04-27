@@ -276,6 +276,24 @@ def _classify_uncached_batched(
     if code in {"0x", "0x0"}:
         return "eoa", {"address": normalized}, False
 
+    # Bytecode-keccak shortcut: same as the sequential path; skips the
+    # batch round trip entirely when the contract's bytecode matches a
+    # canonical impl. See _KNOWN_BYTECODE_IMPLS for registry semantics.
+    if _KNOWN_BYTECODE_IMPLS:
+        try:
+            from utils.rpc import get_code_with_keccak
+
+            _, bytecode_keccak = get_code_with_keccak(rpc_url, normalized)
+        except Exception:
+            bytecode_keccak = None
+        if bytecode_keccak is not None:
+            hit = _KNOWN_BYTECODE_IMPLS.get(bytecode_keccak)
+            if hit is not None:
+                kind, partial = hit
+                details: dict[str, object] = {"address": normalized}
+                details.update(partial)
+                return kind, details, False
+
     probes = _batch_probe(rpc_url, normalized, block_tag)
     # Whole-batch failure (provider rejects JSON-RPC batches, transport
     # error) marks every slot as _PROBE_ERROR. Without a fallback, the
@@ -339,6 +357,30 @@ def _classify_uncached_batched(
     return "contract", details, had_error
 
 
+# Registry of canonical-impl bytecode keccaks → classifier shortcut.
+# Format: {keccak_hex_with_0x: (kind, partial_details)}
+#
+# When an address's bytecode keccak matches a registry entry, classify
+# returns immediately without issuing the 6-probe sequence. The 0x-
+# prefixed lowercase keccak format matches what utils.rpc.get_code_with_keccak
+# returns. Keccak match is byte-exact, so false positives are impossible —
+# the registry can grow over time without correctness risk; entries that
+# don't match simply don't fire the shortcut.
+#
+# Empty by default (ships infrastructure only). Production registry is
+# populated by manual mainnet-bytecode discovery; doc'd in code comments
+# above each entry: source mainnet address used to derive the keccak.
+#
+# Examples (left empty here — populate in a follow-up commit after
+# manually fetching + verifying each):
+#   "0x..." (Gnosis Safe v1.3.0 singleton bytecode keccak) → ("safe", {})
+#   "0x..." (OZ TimelockController v4.x bytecode keccak)   → ("timelock", {})
+#   "0x..." (OZ ProxyAdmin v4.x bytecode keccak)           → ("proxy_admin", {})
+#
+# Test-time entries can be injected via monkeypatch.
+_KNOWN_BYTECODE_IMPLS: dict[str, tuple[str, dict[str, object]]] = {}
+
+
 def _classify_uncached(rpc_url: str, normalized: str, block_tag: str) -> tuple[str, dict[str, object], bool]:
     """The actual classifier. Returns (kind, details, had_rpc_error).
 
@@ -357,6 +399,25 @@ def _classify_uncached(rpc_url: str, normalized: str, block_tag: str) -> tuple[s
         return "contract", {"address": normalized}, True
     if code in {"0x", "0x0"}:
         return "eoa", {"address": normalized}, False
+
+    # Bytecode-keccak shortcut: skip the 6-probe sequence for canonical
+    # impls (Gnosis Safe singletons, OZ TimelockController, etc.). The
+    # registry is empty by default — populating it is a separate
+    # follow-up after fetching + verifying real mainnet bytecode keccaks.
+    if _KNOWN_BYTECODE_IMPLS:
+        try:
+            from utils.rpc import get_code_with_keccak
+
+            _, bytecode_keccak = get_code_with_keccak(rpc_url, normalized)
+        except Exception:
+            bytecode_keccak = None
+        if bytecode_keccak is not None:
+            hit = _KNOWN_BYTECODE_IMPLS.get(bytecode_keccak)
+            if hit is not None:
+                kind, partial = hit
+                details: dict[str, object] = {"address": normalized}
+                details.update(partial)
+                return kind, details, False
 
     had_error = False
 
