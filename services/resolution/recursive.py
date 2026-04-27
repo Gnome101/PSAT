@@ -259,6 +259,19 @@ def _materialize_contract_artifacts(
     cached = _get_cached_static_artifacts(effective_address, bytecode_keccak)
     if cached is not None:
         contract_name, analysis, plan = cached
+        # Codex iter-4 P1: a keccak-index hit can return analysis+plan
+        # cached for a DIFFERENT address that just happens to share
+        # bytecode (e.g., the first deployed UUPSProxy instance vs this
+        # call's instance). The cached `plan["contract_address"]` and
+        # `analysis["subject"]["address"]` reference the populating
+        # address; if we don't retarget, build_control_snapshot will
+        # read controller state from the wrong contract storage.
+        # Retarget to the address THIS call is materializing.
+        analysis = copy.deepcopy(analysis)
+        plan = copy.deepcopy(plan)
+        if isinstance(analysis.get("subject"), dict):
+            analysis["subject"]["address"] = effective_address
+        plan["contract_address"] = effective_address
     else:
         result = fetch(effective_address)
         contract_name = str(result.get("ContractName", "Contract"))

@@ -326,3 +326,38 @@ def test_get_code_batch_populates_keccak_index(monkeypatch):
     assert code == "0xdeadbeef"
     assert keccak_hex == "0x" + keccak(bytes.fromhex("deadbeef")).hex()
     assert follow_up_calls["n"] == 0, "follow-up must hit cache from the batch"
+
+
+# ---------------------------------------------------------------------------
+# Codex iter-4 P2: providers may return "0x0" for empty bytecode
+# ---------------------------------------------------------------------------
+
+
+def test_get_code_with_keccak_handles_0x0_provider_response(monkeypatch):
+    """Codex iter-4 P2: some RPC providers return empty bytecode as
+    "0x0" (odd-length hex) instead of "0x". bytes.fromhex would crash.
+    Normalize to "0x" so the keccak computation produces keccak(b'')
+    cleanly for EOAs."""
+    rpc.clear_getcode_cache()
+    monkeypatch.setattr(rpc, "rpc_request", lambda *_a, **_kw: "0x0")
+    code, keccak_hex = rpc.get_code_with_keccak("https://rpc", "0x" + "11" * 20)
+    assert code == "0x"
+    assert keccak_hex == "0x" + keccak(b"").hex()
+
+
+def test_get_code_batch_handles_0x0_provider_response(monkeypatch):
+    """Same odd-length protection in the batch path."""
+    rpc.clear_getcode_cache()
+
+    def _fake_batch(_url, calls_list):
+        return [("0x0", False) for _ in calls_list]
+
+    monkeypatch.setattr(rpc, "rpc_batch_request_with_status", _fake_batch)
+    out = rpc.get_code_batch("https://rpc", ["0x" + "22" * 20])
+    addr = "0x" + "22" * 20
+    # Normalized to "0x" before storing.
+    assert out[addr] == "0x"
+    # And the keccak in cache is keccak(b'').
+    code, keccak_hex = rpc.get_code_with_keccak("https://rpc", addr)
+    assert code == "0x"
+    assert keccak_hex == "0x" + keccak(b"").hex()

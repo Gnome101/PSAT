@@ -57,6 +57,23 @@ def _get_api_key() -> str:
 # ETHERSCAN_PG_CACHE=0) but defaults are on.
 _CACHE_ENABLED = os.getenv("ETHERSCAN_CACHE", "1").lower() in ("1", "true", "yes")
 _PG_CACHE_ENABLED = os.getenv("ETHERSCAN_PG_CACHE", "1").lower() in ("1", "true", "yes")
+
+# (module, action) whitelist for the Postgres cache layer. Only effectively-
+# immutable Etherscan responses go to PG (verified source code, ABI, contract
+# creation tx — these never change for a deployed contract). Dynamic data
+# (account/balance, stats/ethprice, addresstokenbalance, tx history) MUST
+# stay out of the persistent cache, otherwise workers serve stale numbers
+# indefinitely. Codex iter-4 P1 — without this restriction, the first
+# balance lookup would cement that balance for every subsequent worker.
+_PG_CACHE_WHITELIST: frozenset[tuple[str, str]] = frozenset({
+    ("contract", "getsourcecode"),
+    ("contract", "getabi"),
+    ("contract", "getcontractcreation"),
+})
+
+
+def _pg_cache_eligible(module: str, action: str) -> bool:
+    return (module, action) in _PG_CACHE_WHITELIST
 _cache: dict[tuple, dict] = {}
 _cache_lock = threading.Lock()
 
@@ -85,7 +102,7 @@ def _pg_cache_get(module: str, action: str, chain_id: int, params: dict) -> dict
     """Read-through from the Postgres etherscan_cache table. Returns None
     on cache miss OR any DB unavailability (graceful degradation — CLI
     tooling that imports utils.etherscan without a DB shouldn't crash)."""
-    if not _PG_CACHE_ENABLED:
+    if not _PG_CACHE_ENABLED or not _pg_cache_eligible(module, action):
         return None
     try:
         from sqlalchemy import text
@@ -116,8 +133,9 @@ def _pg_cache_get(module: str, action: str, chain_id: int, params: dict) -> dict
 def _pg_cache_put(module: str, action: str, chain_id: int, params: dict, response: dict) -> None:
     """Upsert into the Postgres etherscan_cache. Best-effort — DB
     unavailability never raises (the in-memory cache + caller's retry
-    loop are the safety net)."""
-    if not _PG_CACHE_ENABLED:
+    loop are the safety net). Whitelist-gated: only effectively-immutable
+    actions persist (see _PG_CACHE_WHITELIST)."""
+    if not _PG_CACHE_ENABLED or not _pg_cache_eligible(module, action):
         return
     try:
         from sqlalchemy import text

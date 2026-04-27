@@ -314,3 +314,51 @@ def test_clear_cache_clears_both_indices():
     recursive.clear_artifact_cache()
     assert _get_cached_static_artifacts("0x" + "AA" * 20) is None
     assert _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak="0x" + "ff" * 32) is None
+
+
+# ---------------------------------------------------------------------------
+# Codex iter-4 P1: bytecode-keccak hit must retarget plan to the new address
+# ---------------------------------------------------------------------------
+
+
+def test_bytecode_keccak_hit_retargets_plan_to_new_address(monkeypatch):
+    """Codex iter-4 P1: when a keccak-index hit returns analysis+plan
+    cached for a DIFFERENT address with the same bytecode (e.g., two
+    UUPSProxy instances pointing to different impls), the cached
+    plan["contract_address"] points at the FIRST address. Without
+    retargeting, build_control_snapshot reads controller state from
+    the wrong contract storage.
+
+    Fix: on cache hit, deepcopy the analysis+plan and overwrite
+    contract_address with the address THIS call is materializing.
+    Verify that two materializations of the same-bytecode-different-
+    address pair both end up reading from the right contract."""
+    snapshot_calls: list[Any] = []
+    scaffold_calls: list[Any] = []
+    collect_calls: list[Any] = []
+    _patch_pipeline(
+        monkeypatch,
+        scaffold_calls=scaffold_calls,
+        collect_calls=collect_calls,
+        snapshot_calls=snapshot_calls,
+    )
+
+    # Both addresses share the same bytecode → same keccak.
+    keccak = "0x" + "ab" * 32
+    monkeypatch.setattr("utils.rpc.get_code_with_keccak", lambda _rpc, _addr: ("0x60", keccak))
+
+    addr_a = "0x" + "11" * 20
+    addr_b = "0x" + "22" * 20
+
+    _materialize_contract_artifacts(addr_a, "http://rpc", workspace_prefix="test")
+    _materialize_contract_artifacts(addr_b, "http://rpc", workspace_prefix="test")
+
+    assert len(snapshot_calls) == 2
+    # First call is a cache MISS — uses the test fixture's _build_plan
+    # output (hardcoded "0xabc"). Not under test here; the retarget
+    # only fires on cache HIT.
+    # Second call is a cache HIT via the keccak index — must retarget
+    # plan["contract_address"] from "0xabc" to addr_b. Without the fix,
+    # build_control_snapshot would read controller state from the
+    # cache-populating contract instead of addr_b.
+    assert snapshot_calls[1]["contract_address"] == addr_b.lower()

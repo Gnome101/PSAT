@@ -151,8 +151,12 @@ def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
     # across an HTTP roundtrip is not.
     raw = rpc_request(rpc_url, "eth_getCode", [address, "latest"])
     code = raw if isinstance(raw, str) and raw.startswith("0x") else "0x"
-    # Hash the raw bytes (strip 0x prefix). Empty bytecode → keccak of empty string.
-    code_bytes = bytes.fromhex(code[2:]) if len(code) >= 2 else b""
+    # Some providers return "0x0" for empty bytecode (odd-length hex);
+    # normalize to "0x" so bytes.fromhex doesn't raise. Other callers in
+    # tracking.py already treat both as empty.
+    if code in {"0x", "0x0"}:
+        code = "0x"
+    code_bytes = bytes.fromhex(code[2:]) if len(code) > 2 else b""
     keccak_hex = "0x" + keccak(code_bytes).hex()
 
     with _GETCODE_CACHE_LOCK:
@@ -219,7 +223,11 @@ def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
             if had_error:
                 continue  # caller treats absence as missing/error
             code = raw if isinstance(raw, str) and raw.startswith("0x") else "0x"
-            code_bytes = bytes.fromhex(code[2:]) if len(code) >= 2 else b""
+            # Normalize "0x0" → "0x" so bytes.fromhex doesn't raise on
+            # odd-length hex (some providers return "0x0" for EOAs).
+            if code in {"0x", "0x0"}:
+                code = "0x"
+            code_bytes = bytes.fromhex(code[2:]) if len(code) > 2 else b""
             keccak_hex = "0x" + keccak(code_bytes).hex()
             _GETCODE_CACHE[(rpc_url, addr)] = (code, keccak_hex, now)
             out[addr] = code
