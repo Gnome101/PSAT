@@ -850,6 +850,33 @@ def apply_storage_migrations(target_engine=None) -> None:
             )
             ac_conn.execute(text("ALTER TABLE contracts DROP COLUMN discovery_source"))
     with target.connect() as conn:
+        # Etherscan cross-process cache (Phase B Step 5). Per-process
+        # in-memory cache exists in utils/etherscan.py; this table
+        # shares hits across the worker fleet so cold cascades for
+        # shared infra contracts skip Etherscan entirely.
+        # Source code at an address is immutable → ttl_expires_at NULL
+        # is the default; per-call sites can override for non-immutable
+        # actions (balance, tx history) — not currently used.
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS etherscan_cache ("
+                "  module TEXT NOT NULL,"
+                "  action TEXT NOT NULL,"
+                "  chain_id INT NOT NULL,"
+                "  params_hash VARCHAR(64) NOT NULL,"
+                "  response JSONB NOT NULL,"
+                "  cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+                "  ttl_expires_at TIMESTAMPTZ,"
+                "  PRIMARY KEY (module, action, chain_id, params_hash)"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_etherscan_cache_cached_at "
+                "ON etherscan_cache (cached_at)"
+            )
+        )
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS size_bytes BIGINT"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS content_type VARCHAR(64)"))

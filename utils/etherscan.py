@@ -51,8 +51,12 @@ def _get_api_key() -> str:
 
 
 # Response cache — keyed by (module, action, chain_id, sorted params).
-# Avoids duplicate Etherscan calls across pipeline stages for the same data.
+# Two layers: in-memory dict (per-process) + Postgres-backed (cross-process).
+# In-memory hits are free; Postgres hits cost one DB roundtrip but skip the
+# Etherscan API entirely. Both can be disabled (ETHERSCAN_CACHE=0,
+# ETHERSCAN_PG_CACHE=0) but defaults are on.
 _CACHE_ENABLED = os.getenv("ETHERSCAN_CACHE", "1").lower() in ("1", "true", "yes")
+_PG_CACHE_ENABLED = os.getenv("ETHERSCAN_PG_CACHE", "1").lower() in ("1", "true", "yes")
 _cache: dict[tuple, dict] = {}
 _cache_lock = threading.Lock()
 
@@ -61,11 +65,92 @@ def _cache_key(module: str, action: str, chain_id: int, params: dict) -> tuple:
     return (module, action, chain_id, tuple(sorted(params.items())))
 
 
+def _params_hash(module: str, action: str, chain_id: int, params: dict) -> str:
+    """Hash key for the Postgres etherscan_cache table.
+
+    Same equivalence class as ``_cache_key`` (module/action/chain_id +
+    sorted params), serialized to a stable string and hashed to a fixed
+    64-char hex so it fits the table's VARCHAR(64) primary-key column.
+    """
+    import hashlib
+
+    canonical = _json.dumps(
+        {"module": module, "action": action, "chain_id": chain_id, "params": dict(sorted(params.items()))},
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _pg_cache_get(module: str, action: str, chain_id: int, params: dict) -> dict | None:
+    """Read-through from the Postgres etherscan_cache table. Returns None
+    on cache miss OR any DB unavailability (graceful degradation — CLI
+    tooling that imports utils.etherscan without a DB shouldn't crash)."""
+    if not _PG_CACHE_ENABLED:
+        return None
+    try:
+        from sqlalchemy import text
+
+        from db.models import SessionLocal
+    except Exception:
+        return None
+    h = _params_hash(module, action, chain_id, params)
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT response FROM etherscan_cache "
+                    "WHERE module = :m AND action = :a AND chain_id = :c "
+                    "  AND params_hash = :h "
+                    "  AND (ttl_expires_at IS NULL OR ttl_expires_at > NOW()) "
+                    "LIMIT 1"
+                ),
+                {"m": module, "a": action, "c": chain_id, "h": h},
+            ).scalar_one_or_none()
+        if row is not None:
+            return dict(row) if not isinstance(row, dict) else row
+    except Exception as exc:
+        logger.debug("Etherscan PG cache lookup failed (%s) — falling through", exc)
+    return None
+
+
+def _pg_cache_put(module: str, action: str, chain_id: int, params: dict, response: dict) -> None:
+    """Upsert into the Postgres etherscan_cache. Best-effort — DB
+    unavailability never raises (the in-memory cache + caller's retry
+    loop are the safety net)."""
+    if not _PG_CACHE_ENABLED:
+        return
+    try:
+        from sqlalchemy import text
+
+        from db.models import SessionLocal
+    except Exception:
+        return
+    h = _params_hash(module, action, chain_id, params)
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "INSERT INTO etherscan_cache (module, action, chain_id, params_hash, response) "
+                    "VALUES (:m, :a, :c, :h, CAST(:r AS JSONB)) "
+                    "ON CONFLICT (module, action, chain_id, params_hash) DO UPDATE "
+                    "  SET response = EXCLUDED.response, cached_at = NOW()"
+                ),
+                {"m": module, "a": action, "c": chain_id, "h": h, "r": _json.dumps(response)},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.debug("Etherscan PG cache write failed (%s) — keeping in-memory only", exc)
+
+
 def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
     """Make an Etherscan API call with automatic retry on rate-limit errors.
 
-    Results are cached in-memory so duplicate calls (same module/action/params)
-    within the same process return instantly. Disable with ETHERSCAN_CACHE=0.
+    Two-tier cache:
+      1. Per-process in-memory dict (free; ETHERSCAN_CACHE=1)
+      2. Postgres-backed cross-process table (one DB roundtrip;
+         ETHERSCAN_PG_CACHE=1) — shares hits across the worker fleet
+         so cold cascades for shared infra contracts skip Etherscan
+         entirely. Falls through silently on DB unavailability.
 
     Automatically throttled to ``ETHERSCAN_RATE_LIMIT`` req/s — callers
     should not add their own sleeps.
@@ -74,8 +159,17 @@ def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
         key = _cache_key(module, action, chain_id, params)
         with _cache_lock:
             if key in _cache:
-                logger.debug("Etherscan cache hit: %s/%s %s", module, action, params.get("address", ""))
+                logger.debug("Etherscan in-memory cache hit: %s/%s %s", module, action, params.get("address", ""))
                 return _cache[key]
+
+    # Cross-process layer.
+    pg_hit = _pg_cache_get(module, action, chain_id, params)
+    if pg_hit is not None:
+        logger.debug("Etherscan PG cache hit: %s/%s %s", module, action, params.get("address", ""))
+        if _CACHE_ENABLED:
+            with _cache_lock:
+                _cache[_cache_key(module, action, chain_id, params)] = pg_hit
+        return pg_hit
 
     api_key = _get_api_key()
     backoff = _RATE_LIMIT_BACKOFF
@@ -100,6 +194,7 @@ def get(module: str, action: str, chain_id: int = 1, **params) -> dict:
             if _CACHE_ENABLED:
                 with _cache_lock:
                     _cache[_cache_key(module, action, chain_id, params)] = data
+            _pg_cache_put(module, action, chain_id, params, data)
             return data
 
         result_str = str(data.get("result", ""))
