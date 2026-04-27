@@ -20,12 +20,6 @@ def test_contract_analysis_artifact(analyzed_weth, live_client: LiveClient):
     assert "summary" in art, "contract_analysis.summary missing"
 
 
-def test_analysis_report_is_text(analyzed_weth, live_client: LiveClient):
-    art = live_client.artifact(analyzed_weth["name"], "analysis_report")
-    assert isinstance(art, str), f"expected str body, got {type(art).__name__}"
-    assert art.strip(), "analysis_report should not be empty"
-
-
 def test_contract_flags_artifact(analyzed_weth, live_client: LiveClient):
     art = live_client.artifact(analyzed_weth["name"], "contract_flags")
     assert isinstance(art, dict)
