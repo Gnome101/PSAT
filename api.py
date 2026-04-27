@@ -1007,7 +1007,6 @@ def analysis_detail(run_name: str) -> dict:
                     "resolved_control_graph",
                     "effective_permissions",
                     "principal_labels",
-                    "analysis_report",
                 ):
                     if fallback_name not in payload:
                         val = impl_artifacts.get(fallback_name)
@@ -1156,10 +1155,6 @@ def analysis_detail(run_name: str) -> dict:
 
                 payload["proxy_address"] = payload.get("proxy_address") or job.address
                 payload["implementation_address"] = impl_addr
-
-        # Inline text artifacts
-        if "analysis_report" in all_artifacts:
-            payload["analysis_report"] = all_artifacts["analysis_report"]
 
         # Add subject info from contract_analysis if available
         if isinstance(all_artifacts.get("contract_analysis"), dict):

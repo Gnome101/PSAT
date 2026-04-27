@@ -174,30 +174,6 @@ def test_cache_ttl_expiry(monkeypatch):
     assert len(scaffold_calls) == 2, "expired entry should be rebuilt"
 
 
-def test_skip_slither_false_bypasses_cache(monkeypatch):
-    """The Slither CLI path writes additional on-disk artifacts that
-    downstream consumers may expect. Caching the in-memory analysis
-    would silently skip those side effects — must NOT cache."""
-    scaffold_calls: list[Any] = []
-    collect_calls: list[Any] = []
-    snapshot_calls: list[Any] = []
-    _patch_pipeline(
-        monkeypatch,
-        scaffold_calls=scaffold_calls,
-        collect_calls=collect_calls,
-        snapshot_calls=snapshot_calls,
-    )
-    monkeypatch.setattr(recursive, "analyze", lambda *_a, **_kw: None)
-
-    _materialize_contract_artifacts(
-        "0xABC", "http://rpc", workspace_prefix="test", skip_slither=False
-    )
-    _materialize_contract_artifacts(
-        "0xABC", "http://rpc", workspace_prefix="test", skip_slither=False
-    )
-    assert len(scaffold_calls) == 2, "skip_slither=False must rebuild every time"
-
-
 def test_cache_keyed_by_effective_address_not_input(monkeypatch):
     """When two different proxies point to the same impl, the cache key
     is the impl address — both proxies share the cached static artifacts.

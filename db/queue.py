@@ -468,11 +468,12 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 # Artifact names that constitute cached static data (immutable, never change).
+# slither_results / analysis_report were removed when vulnerability-detector
+# triage was split out of PSAT's pipeline; downstream stages don't depend on
+# them, and the only writer (StaticWorker._run_slither_phase) is gone.
 _STATIC_ARTIFACT_NAMES = frozenset(
     {
         "contract_analysis",
-        "slither_results",
-        "analysis_report",
         "control_tracking_plan",
         "static_dependencies",
         "enrichment_cache",
@@ -689,8 +690,8 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     - ``source_files`` rows
     - ``contract_summaries``, ``privileged_functions``, ``role_definitions``
       rows (linked to the new contract row)
-    - Static artifacts (``contract_analysis``, ``slither_results``,
-      ``analysis_report``, ``control_tracking_plan``)
+    - Static artifacts (``contract_analysis``, ``control_tracking_plan``,
+      ``static_dependencies``, ``enrichment_cache``)
 
     The source contract is looked up by (address, chain) rather than by
     ``job_id`` so that subsequent cache copies still work after a prior copy

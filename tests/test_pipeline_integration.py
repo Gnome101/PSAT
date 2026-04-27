@@ -682,7 +682,6 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
         "control_snapshot": {"schema_version": "0.1", "controller_values": {"state_variable:owner": {"value": "0xaa"}}},
         "resolved_control_graph": {"nodes": [{"id": "a", "address": TARGET}], "edges": []},
         "dependencies": {"address": TARGET, "dependencies": {}},
-        "analysis_report": "High-level report text",
     }
 
     resp = client.get("/api/analyses/full_run")
@@ -700,9 +699,6 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
 
     # principal_labels built from PrincipalLabel table
     assert body["principal_labels"]["principals"][0]["label"] == "admin"
-
-    # Text artifact should be inlined
-    assert body["analysis_report"] == "High-level report text"
 
     # Subject info should be extracted
     assert body["contract_name"] == "Vault"
@@ -1142,7 +1138,6 @@ def test_static_worker_reads_discovery_artifacts(monkeypatch):
     )
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *_a, **_kw: None)
     monkeypatch.setattr(worker, "_run_dependency_phase", lambda *_a, **_kw: None)
-    monkeypatch.setattr(worker, "_run_slither_phase", lambda *_a, **_kw: True)
     monkeypatch.setattr(worker, "_run_analysis_phase", lambda *_a, **_kw: True)
     monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *_a, **_kw: None)
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
@@ -1328,9 +1323,9 @@ def test_static_worker_proxy_skips_analysis_and_completes(monkeypatch):
     completed = []
     monkeypatch.setattr("db.queue.complete_job", lambda _s, _j, detail="": completed.append(True))
 
-    # Slither/analysis should NOT be called
+    # Analysis/tracking-plan should NOT be called for a proxy parent
+    # (proxies short-circuit to spawn an impl child job).
     slither_called = []
-    monkeypatch.setattr(worker, "_run_slither_phase", lambda *_a, **_kw: slither_called.append(True) or True)
     monkeypatch.setattr(worker, "_run_analysis_phase", lambda *_a, **_kw: slither_called.append(True) or True)
     monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *_a, **_kw: slither_called.append(True))
 

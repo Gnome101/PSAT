@@ -29,22 +29,12 @@ from services.discovery import (
 from services.discovery.dynamic_dependencies import NoNewTransactionsError
 from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
-from services.static import analyze, collect_contract_analysis
+from services.static import collect_contract_analysis
 from services.static.contract_analysis_pipeline import build_semantic_guards
-from services.static.vyper_analysis import is_vyper_project
 from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
-
-# When set, the Slither CLI subprocess is skipped during the static stage.
-# Saves ~20-40s per static job at the cost of user-facing detector findings
-# (the slither_results + analysis_report artifacts). Pipeline downstream is
-# unaffected: nothing in resolution/policy/coverage reads detector output,
-# and collect_contract_analysis returns empty detector counts when the
-# slither_results.json file is missing. Default off; flip on per-environment
-# to A/B bench the throughput vs detector-coverage trade-off.
-SKIP_SLITHER_CLI = os.getenv("PSAT_STATIC_SKIP_SLITHER_CLI", "0").lower() in ("1", "true", "yes")
 
 # ---------------------------------------------------------------------------
 # Error logging template
@@ -758,32 +748,10 @@ class StaticWorker(BaseWorker):
                 )
                 self.update_detail(session, job, "Static analysis complete (cached)")
             else:
-                # Phase 1: Slither
-                # PSAT_STATIC_SKIP_SLITHER_CLI=1 skips the Slither CLI subprocess
-                # entirely. Eliminates ~20-40s per static stage at the cost of
-                # the user-facing detector findings (slither_results +
-                # analysis_report artifacts). Pipeline downstream is unaffected:
-                # collect_contract_analysis already handles a missing
-                # slither_results.json gracefully (empty detector counts), and
-                # nothing in resolution/policy/coverage reads detector output.
-                # Default off — flip on per-environment via Fly env to A/B
-                # bench whether the loss of detector findings is acceptable.
-                t0 = time.monotonic()
-                if SKIP_SLITHER_CLI:
-                    self.update_detail(session, job, "Skipping Slither CLI (PSAT_STATIC_SKIP_SLITHER_CLI=1)")
-                    store_artifact(
-                        session,
-                        job.id,
-                        "slither_error",
-                        data={"error": "skipped via PSAT_STATIC_SKIP_SLITHER_CLI"},
-                    )
-                    slither_ok = False
-                else:
-                    slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] slither: %.1fs", time.monotonic() - t0)
-
-                # Phase 2: Contract analysis
+                # Phase 1: Contract analysis (uses Slither's Python IR — the
+                # CLI subprocess that produced detector findings was removed;
+                # vulnerability triage is now an out-of-band concern, not part
+                # of the cascade pipeline).
                 t0 = time.monotonic()
                 analysis_data = self._run_analysis_phase(session, job, project_dir, contract_name, address)
                 if DEBUG_TIMING:
@@ -791,11 +759,10 @@ class StaticWorker(BaseWorker):
 
                 if analysis_data is None:
                     raise RuntimeError(
-                        f"Contract analysis failed for {contract_name} ({address}). "
-                        f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
+                        f"Contract analysis failed for {contract_name} ({address})."
                     )
 
-                # Phase 3: Control tracking plan
+                # Phase 2: Control tracking plan
                 t0 = time.monotonic()
                 self._run_tracking_plan_phase(session, job, analysis_data, contract_name, address)
                 if DEBUG_TIMING:
@@ -1301,48 +1268,6 @@ class StaticWorker(BaseWorker):
 
         if dependency_errors:
             store_artifact(session, job.id, "dependency_errors", data=dependency_errors)
-
-    def _run_slither_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> bool:
-        """Run Slither CLI. Returns True on success, False on failure (non-fatal)."""
-        if is_vyper_project(project_dir):
-            self.update_detail(session, job, "Skipping Slither for Vyper source")
-            store_artifact(
-                session,
-                job.id,
-                "slither_error",
-                data={"error": "Skipped Slither for Vyper source"},
-            )
-            logger.info(
-                "Static stage skipped Slither for Vyper job %s address=%s contract=%s",
-                job.id,
-                address,
-                contract_name,
-            )
-            return False
-        self.update_detail(session, job, "Running Slither")
-        try:
-            analyze(project_dir, contract_name, address)
-        except Exception as exc:
-            _log_phase_error(str(job.id), address, contract_name, "slither_cli", str(exc))
-            store_artifact(session, job.id, "slither_error", data={"error": str(exc)})
-            return False
-
-        slither_path = project_dir / "slither_results.json"
-        if slither_path.exists():
-            slither_data = json.loads(slither_path.read_text())
-            store_artifact(session, job.id, "slither_results", data=slither_data)
-
-        report_path = project_dir / "analysis_report.txt"
-        if report_path.exists():
-            store_artifact(session, job.id, "analysis_report", text_data=report_path.read_text())
-
-        logger.info(
-            "Static stage slither complete for job %s address=%s contract=%s",
-            job.id,
-            address,
-            contract_name,
-        )
-        return True
 
     def _run_analysis_phase(
         self, session, job, project_dir: Path, contract_name: str, address: str

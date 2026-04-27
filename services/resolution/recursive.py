@@ -20,7 +20,7 @@ from schemas.control_tracking import ControlSnapshot
 from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEdge, ResolvedGraphNode
 from services.discovery.fetch import fetch, scaffold
 from services.policy.effective_permissions import build_effective_permissions
-from services.static import analyze, collect_contract_analysis
+from services.static import collect_contract_analysis
 
 from .tracking import (
     build_control_snapshot,
@@ -186,7 +186,6 @@ def _materialize_contract_artifacts(
     rpc_url: str,
     *,
     workspace_prefix: str,
-    skip_slither: bool = True,
 ) -> LoadedArtifacts:
     """Build analysis + tracking plan + snapshot + effective permissions in memory.
 
@@ -214,7 +213,7 @@ def _materialize_contract_artifacts(
     # scaffold + collect_contract_analysis + plan-build trio per repeat
     # address. Skipped when skip_slither=False because the cached path
     # never invokes the Slither CLI.
-    cached = _get_cached_static_artifacts(effective_address) if skip_slither else None
+    cached = _get_cached_static_artifacts(effective_address)
     if cached is not None:
         contract_name, analysis, plan = cached
     else:
@@ -225,24 +224,10 @@ def _materialize_contract_artifacts(
         with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
             project_dir = Path(tmp) / project_name
             scaffold(effective_address, result, project_dir)
-            if not skip_slither:
-                try:
-                    analyze(project_dir, contract_name, effective_address)
-                except Exception as exc:
-                    logger.warning(
-                        "Recursive resolve: Slither CLI failed for %s (%s), "
-                        "continuing with structured analysis only: %s",
-                        contract_name,
-                        effective_address,
-                        exc,
-                    )
             analysis = cast(dict, collect_contract_analysis(project_dir))
 
         plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
-        # Only cache the skip_slither path — the Slither-CLI path writes
-        # additional artifacts to disk that downstream code may expect.
-        if skip_slither:
-            _store_cached_static_artifacts(effective_address, contract_name, analysis, plan)
+        _store_cached_static_artifacts(effective_address, contract_name, analysis, plan)
     if snapshot_address != effective_address:
         plan = {**plan, "contract_address": snapshot_address}
 
