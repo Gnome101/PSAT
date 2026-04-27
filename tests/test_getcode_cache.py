@@ -225,3 +225,104 @@ def test_get_code_uses_cached_value_with_unrelated_get_code_with_keccak(monkeypa
     rpc.get_code("https://rpc", addr)
     rpc.get_code_with_keccak("https://rpc", addr)
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase B Step 4: get_code_batch — batch eth_getCode for many addresses
+# ---------------------------------------------------------------------------
+
+
+def test_get_code_batch_single_request_for_n_addresses(monkeypatch):
+    """The whole point: one HTTP call for N addresses instead of N calls.
+    Verifies via a single rpc_batch_request_with_status invocation."""
+    rpc.clear_getcode_cache()
+    calls = {"n": 0}
+
+    def _fake_batch(_url, calls_list):
+        calls["n"] += 1
+        return [(f"0x{i:02x}", False) for i in range(len(calls_list))]
+
+    monkeypatch.setattr(rpc, "rpc_batch_request_with_status", _fake_batch)
+    addrs = ["0x" + f"{i:040x}" for i in range(5)]
+    out = rpc.get_code_batch("https://rpc", addrs)
+    assert len(out) == 5
+    assert calls["n"] == 1, "must batch all 5 addresses into one HTTP call"
+
+
+def test_get_code_batch_short_circuits_already_cached(monkeypatch):
+    """Addresses already in the per-thread cache must NOT be re-fetched.
+    Saves the wire entirely when subsequent batches overlap with prior."""
+    rpc.clear_getcode_cache()
+
+    def _fake_batch(_url, calls_list):
+        # Should only ever be called for cache-MISS addresses.
+        assert len(calls_list) <= 1, "cached addresses must be filtered before batching"
+        return [("0xff00", False) for _ in calls_list]
+
+    monkeypatch.setattr(rpc, "rpc_batch_request_with_status", _fake_batch)
+    monkeypatch.setattr(rpc, "rpc_request", lambda *_a, **_kw: "0x60806040")
+
+    # Pre-populate cache for one address via the single-call API.
+    pre = "0x" + "aa" * 20
+    rpc.get_code("https://rpc", pre)
+    # Now batch over [pre, new] — pre should be served from cache, new from batch.
+    new = "0x" + "bb" * 20
+    out = rpc.get_code_batch("https://rpc", [pre, new])
+    assert out[pre] == "0x60806040"
+    assert out[new] == "0xff00"
+
+
+def test_get_code_batch_empty_input_no_http(monkeypatch):
+    """Empty input must short-circuit cleanly, never call the wire."""
+    rpc.clear_getcode_cache()
+
+    def _no_call(*_a, **_kw):
+        raise AssertionError("must not call rpc_batch_request_with_status on empty input")
+
+    monkeypatch.setattr(rpc, "rpc_batch_request_with_status", _no_call)
+    assert rpc.get_code_batch("https://rpc", []) == {}
+
+
+def test_get_code_batch_omits_errored_slots(monkeypatch):
+    """Per-call errors → that address is OMITTED from the returned map.
+    Caller (e.g., static_dependencies) treats absence as a fall-back
+    trigger to retry per-address."""
+    rpc.clear_getcode_cache()
+
+    def _fake_batch(_url, calls_list):
+        # First call succeeds, second errors, third succeeds.
+        return [("0x60", False), (None, True), ("0x80", False)]
+
+    monkeypatch.setattr(rpc, "rpc_batch_request_with_status", _fake_batch)
+    addrs = ["0x" + f"{i:040x}" for i in range(3)]
+    out = rpc.get_code_batch("https://rpc", addrs)
+    assert addrs[0].lower() in out
+    assert addrs[1].lower() not in out  # errored slot omitted
+    assert addrs[2].lower() in out
+
+
+def test_get_code_batch_populates_keccak_index(monkeypatch):
+    """A subsequent get_code_with_keccak must hit the cache populated by
+    the batch — proves the keccak is computed and stored alongside the
+    bytecode (load-bearing for the bytecode-keccak content cache from
+    Step 2 / classifier shortcut from Step 3)."""
+    rpc.clear_getcode_cache()
+
+    def _fake_batch(_url, calls_list):
+        return [("0xdeadbeef", False) for _ in calls_list]
+
+    follow_up_calls = {"n": 0}
+
+    def _no_followup(*_a, **_kw):
+        follow_up_calls["n"] += 1
+        return "0xfresh"
+
+    monkeypatch.setattr(rpc, "rpc_batch_request_with_status", _fake_batch)
+    monkeypatch.setattr(rpc, "rpc_request", _no_followup)
+
+    addr = "0x" + "11" * 20
+    rpc.get_code_batch("https://rpc", [addr])
+    code, keccak_hex = rpc.get_code_with_keccak("https://rpc", addr)
+    assert code == "0xdeadbeef"
+    assert keccak_hex == "0x" + keccak(bytes.fromhex("deadbeef")).hex()
+    assert follow_up_calls["n"] == 0, "follow-up must hit cache from the batch"

@@ -169,6 +169,63 @@ def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
     return code, keccak_hex
 
 
+def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
+    """Fetch eth_getCode for multiple addresses in a single JSON-RPC batch.
+
+    Returns a ``{normalized_address: bytecode_hex}`` map. Cache-aware:
+    addresses already in the per-thread cache short-circuit and don't go
+    over the wire; only un-cached addresses get batched. Cache is populated
+    as a side effect for both the bytecode AND its keccak (so a follow-up
+    ``get_code_with_keccak`` call hits the cache for free).
+
+    Per-call errors → that address is omitted from the returned map (caller
+    should treat absence the same as ``"0x"`` if it needs a default).
+    Whole-batch failure (provider rejects batches, transport error) →
+    every address is omitted; caller can fall back to per-address
+    ``get_code()`` calls.
+
+    Used by the discovery static-dependency BFS where we know upfront
+    that we'll probe N addresses extracted from a contract's bytecode —
+    one batched roundtrip beats N sequential ones.
+    """
+    if not addresses:
+        return {}
+
+    normalized = [_normalized_addr(a) for a in addresses]
+    now = time.monotonic()
+    out: dict[str, str] = {}
+
+    # Pre-fill from cache; collect cache-misses for the batch RPC.
+    to_fetch: list[str] = []
+    with _GETCODE_CACHE_LOCK:
+        for addr in normalized:
+            cached = _GETCODE_CACHE.get((rpc_url, addr))
+            if cached is not None:
+                code, _keccak, inserted_at = cached
+                if now - inserted_at < _GETCODE_CACHE_TTL_S:
+                    out[addr] = code
+                    continue
+            to_fetch.append(addr)
+
+    if not to_fetch:
+        return out
+
+    calls: list[tuple[str, list[Any]]] = [
+        ("eth_getCode", [addr, "latest"]) for addr in to_fetch
+    ]
+    raw_results = rpc_batch_request_with_status(rpc_url, calls)
+    with _GETCODE_CACHE_LOCK:
+        for addr, (raw, had_error) in zip(to_fetch, raw_results):
+            if had_error:
+                continue  # caller treats absence as missing/error
+            code = raw if isinstance(raw, str) and raw.startswith("0x") else "0x"
+            code_bytes = bytes.fromhex(code[2:]) if len(code) >= 2 else b""
+            keccak_hex = "0x" + keccak(code_bytes).hex()
+            _GETCODE_CACHE[(rpc_url, addr)] = (code, keccak_hex, now)
+            out[addr] = code
+    return out
+
+
 def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[Any]:
     """Send a JSON-RPC batch request and return results in call order.
 

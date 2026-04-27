@@ -58,17 +58,42 @@ def discover_dependencies(
     root: str,
     code_cache: dict[str, str] | None = None,
 ) -> list[str]:
-    """BFS-traverse embedded PUSH20 addresses and return deployed contract dependencies."""
+    """BFS-traverse embedded PUSH20 addresses and return deployed contract dependencies.
+
+    Uses ``utils.rpc.get_code_batch`` to probe all candidates extracted
+    from one contract's bytecode in a single JSON-RPC roundtrip — saves
+    N-1 sequential RTTs per BFS layer when the contract embeds many
+    PUSH20 addresses (Solidity hardcoded library refs, factory deploys,
+    etc.). Falls back transparently to single-address ``get_code`` for
+    addresses not returned by the batch (per-call error handling lives
+    inside get_code_batch).
+    """
+    from utils.rpc import get_code_batch
+
     root = normalize_address(root)
     if code_cache is None:
         code_cache = {}
 
-    # Cache eth_getCode lookups so repeated scans don’t spam the RPC endpoint.
     def cached_get_code(address: str) -> str:
         normalized = normalize_address(address)
         if normalized not in code_cache:
             code_cache[normalized] = get_code(rpc_url, normalized)
         return code_cache[normalized]
+
+    def batch_fill_cache(addrs: list[str]) -> None:
+        """Populate code_cache for every address in addrs in one batch."""
+        to_fetch = [a for a in addrs if a not in code_cache]
+        if not to_fetch:
+            return
+        results = get_code_batch(rpc_url, to_fetch)
+        for addr in to_fetch:
+            # get_code_batch omits errored slots; backfill with single-call
+            # so the per-cascade contract still gets evaluated (will raise
+            # if the RPC is genuinely down — same surface as before).
+            if addr in results:
+                code_cache[addr] = results[addr]
+            else:
+                code_cache[addr] = get_code(rpc_url, addr)
 
     if not has_deployed_code(cached_get_code(root)):
         raise RuntimeError(f"Address {root} has no deployed bytecode.")
@@ -79,14 +104,22 @@ def discover_dependencies(
 
     while stack:
         current = stack.pop()
-        for candidate in extract_push20_addresses(cached_get_code(current)):
-            candidate = normalize_address(candidate)
-            if candidate in seen:
+        # Collect candidates from this contract's bytecode, dedupe against
+        # the BFS-wide `seen` set, then batch-probe them all at once.
+        candidates: list[str] = []
+        for raw in extract_push20_addresses(cached_get_code(current)):
+            cand = normalize_address(raw)
+            if cand in seen:
                 continue
-            seen.add(candidate)
-            if has_deployed_code(cached_get_code(candidate)):
-                deps.add(candidate)
-                stack.append(candidate)
+            seen.add(cand)
+            candidates.append(cand)
+
+        if candidates:
+            batch_fill_cache(candidates)
+            for cand in candidates:
+                if has_deployed_code(code_cache.get(cand, "0x")):
+                    deps.add(cand)
+                    stack.append(cand)
 
     return sorted(deps)
 
