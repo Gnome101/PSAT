@@ -119,6 +119,78 @@ def rpc_batch_request(rpc_url: str, calls: list[tuple[str, list[Any]]]) -> list[
     return results
 
 
+def rpc_batch_request_with_status(
+    rpc_url: str, calls: list[tuple[str, list[Any]]]
+) -> list[tuple[Any, bool]]:
+    """Same as ``rpc_batch_request`` but distinguishes "RPC errored" from
+    "RPC succeeded but returned None".
+
+    Returns a list of ``(result, had_error)`` in call order:
+      - ``had_error=True``  → the JSON-RPC response carried an ``error``
+                              field for that call, OR the whole batch
+                              transport failed (network, HTTP 5xx, JSON
+                              parse, missing-id-in-response).
+      - ``had_error=False`` → the call succeeded; ``result`` may still be
+                              ``None`` (the function legitimately returned
+                              no data, e.g. eth_call to a method that
+                              isn't there returns ``"0x"``).
+
+    This split is what callers like classify_resolved_address need:
+    treating "RPC failed" as "function absent" cements transient
+    misclassifications in caches. The plain ``rpc_batch_request`` helper
+    above conflates both — keep it for sites that don't care.
+    """
+    if not calls:
+        return []
+
+    # Default to (None, True) so any chunk that fails wholesale leaves
+    # its slots flagged as errored — matches the sequential path's
+    # behavior of raising on any RPC failure.
+    results: list[tuple[Any, bool]] = [(None, True)] * len(calls)
+
+    for chunk_start in range(0, len(calls), MAX_BATCH_SIZE):
+        chunk = calls[chunk_start : chunk_start + MAX_BATCH_SIZE]
+        batch = [
+            {"jsonrpc": "2.0", "id": chunk_start + i, "method": method, "params": params}
+            for i, (method, params) in enumerate(chunk)
+        ]
+
+        try:
+            response = _get_session().post(
+                rpc_url,
+                json=batch,
+                timeout=max(JSON_RPC_TIMEOUT_SECONDS, len(chunk) * 0.1),
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            # Whole-chunk failure — leave defaults as (None, True). This
+            # is the conservative choice: caller will skip caching and
+            # treat results as transient.
+            continue
+
+        if isinstance(payload, dict):
+            payload = [payload]
+        if not isinstance(payload, list):
+            # Unexpected shape (some providers refuse batches with a
+            # non-list error object) — flag every slot in this chunk.
+            continue
+
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("id")
+            if not isinstance(idx, int) or idx < 0 or idx >= len(calls):
+                continue
+            if item.get("error"):
+                results[idx] = (None, True)
+            else:
+                results[idx] = (item.get("result"), False)
+
+    return results
+
+
 def parse_address_result(raw: Any) -> str | None:
     """Extract a valid address from a raw ``eth_getStorageAt`` / ``eth_call`` result.
 

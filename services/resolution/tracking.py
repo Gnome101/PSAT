@@ -16,6 +16,9 @@ from utils.rpc import (
     normalize_hex as _normalize_hex,
 )
 from utils.rpc import (
+    rpc_batch_request_with_status as _rpc_batch_request_with_status,
+)
+from utils.rpc import (
     rpc_request as _rpc_request,
 )
 from utils.rpc import (
@@ -43,6 +46,12 @@ _CLASSIFY_CACHE_MAX = 4096
 # (~12 min) so sibling jobs share classifications, shorter than a worker
 # process lifetime so we eventually re-probe upgraded contracts.
 _CLASSIFY_CACHE_TTL_S = float(os.getenv("PSAT_CLASSIFY_CACHE_TTL_S", "1800"))
+
+# Speculative single-batch classify probes. Off by default so this commit
+# is a pure no-op until enabled per-environment. Flip on via Fly env to
+# A/B bench against the sequential path. Falls through to sequential mode
+# automatically if any provider rejects the batch (whole-chunk failure).
+_CLASSIFY_BATCH_ENABLED = os.getenv("PSAT_CLASSIFY_BATCH", "0").lower() in ("1", "true", "yes")
 
 
 def clear_classify_cache() -> None:
@@ -156,7 +165,10 @@ def classify_resolved_address_with_status(
                 return kind, copy.deepcopy(cached_details), True
             del _CLASSIFY_CACHE[cache_key]
 
-    kind, details, had_error = _classify_uncached(rpc_url, normalized, block_tag)
+    if _CLASSIFY_BATCH_ENABLED:
+        kind, details, had_error = _classify_uncached_batched(rpc_url, normalized, block_tag)
+    else:
+        kind, details, had_error = _classify_uncached(rpc_url, normalized, block_tag)
 
     if not had_error:
         with _CLASSIFY_CACHE_LOCK:
@@ -179,6 +191,141 @@ def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "late
     """
     kind, details, _cacheable = classify_resolved_address_with_status(rpc_url, address, block_tag)
     return kind, details
+
+
+# Probe set used by the batched classifier. Order matters: the dispatch
+# logic below indexes this list directly, so any reorder must update the
+# unpacking in `_classify_uncached_batched`.
+_CLASSIFY_PROBE_SIGS: tuple[tuple[str, str], ...] = (
+    ("getOwners()", "address[]"),  # 0: Safe
+    ("getThreshold()", "uint256"),  # 1: Safe
+    ("getMinDelay()", "uint256"),  # 2: Timelock primary
+    ("delay()", "uint256"),  # 3: Timelock fallback
+    ("UPGRADE_INTERFACE_VERSION()", "string"),  # 4: ProxyAdmin
+    ("owner()", "address"),  # 5: Timelock + ProxyAdmin secondary
+)
+
+
+def _decode_probe_result(raw: object, abi_type: str) -> object | None:
+    """Apply the same per-probe decoding logic as ``_try_eth_call_decoded``
+    but to a pre-fetched raw result. Returns the decoded value, or None
+    when the call legitimately had no data (``"0x"`` / decode failure).
+
+    Caller is responsible for translating ``had_error=True`` into
+    ``_PROBE_ERROR`` BEFORE invoking this helper — this function does
+    not see the error flag, only the raw result string.
+    """
+    if not isinstance(raw, str):
+        return None
+    if _normalize_hex(raw) in {"0x", "0x0"}:
+        return None
+    try:
+        return _decode_abi_value(raw, abi_type)
+    except Exception:
+        return None
+
+
+def _batch_probe(rpc_url: str, address: str, block_tag: str) -> list[object]:
+    """Fire all 6 classify probes in one JSON-RPC batch.
+
+    Returns a list aligned with ``_CLASSIFY_PROBE_SIGS``: each slot is
+    the decoded value, ``None`` (function legitimately absent), or
+    ``_PROBE_ERROR`` (per-call RPC error or whole-batch failure).
+
+    Falling back to ``_PROBE_ERROR`` on whole-batch failure preserves the
+    sequential path's semantics: caller (``_classify_uncached_batched``)
+    sets ``had_error=True`` and skips caching, exactly as the sequential
+    path does when ``_eth_call_raw`` raises.
+    """
+    calls = [
+        ("eth_call", [{"to": address, "data": _selector(sig)}, block_tag])
+        for sig, _abi in _CLASSIFY_PROBE_SIGS
+    ]
+    raw_results = _rpc_batch_request_with_status(rpc_url, calls)
+    decoded: list[object] = []
+    for (raw, had_err), (_sig, abi_type) in zip(raw_results, _CLASSIFY_PROBE_SIGS):
+        if had_err:
+            decoded.append(_PROBE_ERROR)
+            continue
+        decoded.append(_decode_probe_result(raw, abi_type))
+    return decoded
+
+
+def _classify_uncached_batched(
+    rpc_url: str, normalized: str, block_tag: str
+) -> tuple[str, dict[str, object], bool]:
+    """Same contract as ``_classify_uncached`` but batches the 6 probes
+    upfront. Saves 5 RTT for any contract that falls through to the
+    generic-contract branch (most of them, in DeFi).
+
+    Wasteful for early-terminating cases (Safes, Timelocks, ProxyAdmins
+    don't need every probe), but the wasted calls are cheap on a single
+    socket and providers handle them fine. The bigger cost would be
+    rebuilding all this dispatch logic to do a two-phase batch — not
+    worth the complexity for a minor RPC bandwidth saving.
+    """
+    if normalized == "0x0000000000000000000000000000000000000000":
+        return "zero", {"address": normalized}, False
+
+    try:
+        code = _get_code(rpc_url, normalized, block_tag)
+    except Exception:
+        return "contract", {"address": normalized}, True
+    if code in {"0x", "0x0"}:
+        return "eoa", {"address": normalized}, False
+
+    probes = _batch_probe(rpc_url, normalized, block_tag)
+    safe_owners_raw, safe_threshold_raw, min_delay_a, min_delay_b, upgrade_iv, owner_raw = probes
+
+    def _ok(v: object) -> object | None:
+        """Coerce probe result into the same shape ``_probe()`` returns
+        in the sequential path: error → None + sets had_error; legit
+        absent → None; success → value."""
+        if v is _PROBE_ERROR:
+            return None
+        return v
+
+    had_error = any(p is _PROBE_ERROR for p in probes)
+    safe_owners = _ok(safe_owners_raw)
+    safe_threshold = _ok(safe_threshold_raw)
+    if safe_owners is not None and safe_threshold is not None:
+        return (
+            "safe",
+            {
+                "address": normalized,
+                "owners": [str(item).lower() for item in safe_owners] if isinstance(safe_owners, list) else [],
+                "threshold": _coerce_int(safe_threshold),
+            },
+            had_error,
+        )
+
+    min_delay = _ok(min_delay_a)
+    if min_delay is None:
+        min_delay = _ok(min_delay_b)
+    if min_delay is not None:
+        owner = _ok(owner_raw)
+        details: dict[str, object] = {"address": normalized, "delay": _coerce_int(min_delay)}
+        if owner is not None:
+            details["owner"] = owner
+        return "timelock", details, had_error
+
+    upgrade_interface_version = _ok(upgrade_iv)
+    if upgrade_interface_version is not None:
+        owner = _ok(owner_raw)
+        details = {
+            "address": normalized,
+            "upgrade_interface_version": str(upgrade_interface_version),
+        }
+        if owner is not None:
+            details["owner"] = owner
+        return "proxy_admin", details, had_error
+
+    details = {"address": normalized}
+    try:
+        details.update(type_authority_contract(rpc_url, normalized, block_tag))
+    except Exception:
+        had_error = True
+    return "contract", details, had_error
 
 
 def _classify_uncached(rpc_url: str, normalized: str, block_tag: str) -> tuple[str, dict[str, object], bool]:
