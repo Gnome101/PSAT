@@ -60,8 +60,8 @@ kill_timeout = 30
 
 [[vm]]
   processes = ["workers"]
-  size = "shared-cpu-2x"
-  memory = "2gb"
+  size = "performance-2x"
+  memory = "4gb"
 
 # Playwright Chromium is RAM-heavy; give it its own headroom.
 [[vm]]
