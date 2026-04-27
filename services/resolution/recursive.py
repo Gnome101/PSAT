@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
 import tempfile
+import threading
+import time as _time
 from collections import deque
 from pathlib import Path
 from typing import Any, TypedDict, cast
@@ -30,6 +33,69 @@ logger = logging.getLogger(__name__)
 
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
 DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
+
+# Process-wide cache for the *static* parts of _materialize_contract_artifacts.
+# The (analysis, plan, contract_name) triple is a pure function of the
+# implementation address + Etherscan source — both are immutable for a given
+# impl_address, so it's safe to share across cascades and across jobs.
+#
+# What is NOT cached: the snapshot (build_control_snapshot does eth_calls
+# against current state) and effective_permissions (depends on snapshot).
+# Those are rebuilt fresh on every call.
+#
+# Cross-cascade reuse is the win — within one cascade the BFS already
+# dedupes via its `processed` set. The hit rate is highest on common
+# OZ libraries / shared implementations across protocols.
+#
+# TTL matches the classify cache (30 min default). Long enough to span a
+# long cascade, short enough to eventually re-fetch source if Etherscan
+# verifies a previously-unverified contract mid-window.
+_ARTIFACT_CACHE: dict[str, tuple[str, dict[str, Any], dict[str, Any], float]] = {}
+_ARTIFACT_CACHE_LOCK = threading.Lock()
+_ARTIFACT_CACHE_MAX = 1024
+_ARTIFACT_CACHE_TTL_S = float(os.getenv("PSAT_RESOLUTION_ARTIFACT_CACHE_TTL_S", "1800"))
+
+
+def clear_artifact_cache() -> None:
+    """Clear the process-wide static-artifact cache. For tests + manual reset."""
+    with _ARTIFACT_CACHE_LOCK:
+        _ARTIFACT_CACHE.clear()
+
+
+def _get_cached_static_artifacts(effective_address: str) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    """Return (contract_name, analysis, plan) if cached and fresh; else None.
+
+    Returns deepcopies so callers can mutate without poisoning the cache.
+    """
+    key = effective_address.lower()
+    with _ARTIFACT_CACHE_LOCK:
+        entry = _ARTIFACT_CACHE.get(key)
+    if entry is None:
+        return None
+    contract_name, analysis, plan, inserted_at = entry
+    if _time.monotonic() - inserted_at > _ARTIFACT_CACHE_TTL_S:
+        with _ARTIFACT_CACHE_LOCK:
+            _ARTIFACT_CACHE.pop(key, None)
+        return None
+    return contract_name, copy.deepcopy(analysis), copy.deepcopy(plan)
+
+
+def _store_cached_static_artifacts(
+    effective_address: str, contract_name: str, analysis: dict[str, Any], plan: dict[str, Any]
+) -> None:
+    key = effective_address.lower()
+    with _ARTIFACT_CACHE_LOCK:
+        if len(_ARTIFACT_CACHE) >= _ARTIFACT_CACHE_MAX:
+            # Drop the oldest entry rather than randomly evicting — keeps
+            # the cache useful for long-running worker processes.
+            oldest_key = min(_ARTIFACT_CACHE, key=lambda k: _ARTIFACT_CACHE[k][3])
+            _ARTIFACT_CACHE.pop(oldest_key, None)
+        _ARTIFACT_CACHE[key] = (
+            contract_name,
+            copy.deepcopy(analysis),
+            copy.deepcopy(plan),
+            _time.monotonic(),
+        )
 
 
 class LoadedArtifacts(TypedDict):
@@ -143,26 +209,40 @@ def _materialize_contract_artifacts(
     except Exception as exc:
         logger.debug("Recursive resolve: proxy check failed for %s: %s", address, exc)
 
-    result = fetch(effective_address)
-    contract_name = str(result.get("ContractName", "Contract"))
-    project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
+    # Hot path: cross-cascade reuse of static artifacts (analysis + plan)
+    # for shared implementations (OZ libraries, common impls). Saves the
+    # scaffold + collect_contract_analysis + plan-build trio per repeat
+    # address. Skipped when skip_slither=False because the cached path
+    # never invokes the Slither CLI.
+    cached = _get_cached_static_artifacts(effective_address) if skip_slither else None
+    if cached is not None:
+        contract_name, analysis, plan = cached
+    else:
+        result = fetch(effective_address)
+        contract_name = str(result.get("ContractName", "Contract"))
+        project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
 
-    with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
-        project_dir = Path(tmp) / project_name
-        scaffold(effective_address, result, project_dir)
-        if not skip_slither:
-            try:
-                analyze(project_dir, contract_name, effective_address)
-            except Exception as exc:
-                logger.warning(
-                    "Recursive resolve: Slither CLI failed for %s (%s), continuing with structured analysis only: %s",
-                    contract_name,
-                    effective_address,
-                    exc,
-                )
-        analysis = collect_contract_analysis(project_dir)
+        with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
+            project_dir = Path(tmp) / project_name
+            scaffold(effective_address, result, project_dir)
+            if not skip_slither:
+                try:
+                    analyze(project_dir, contract_name, effective_address)
+                except Exception as exc:
+                    logger.warning(
+                        "Recursive resolve: Slither CLI failed for %s (%s), "
+                        "continuing with structured analysis only: %s",
+                        contract_name,
+                        effective_address,
+                        exc,
+                    )
+            analysis = cast(dict, collect_contract_analysis(project_dir))
 
-    plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
+        plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
+        # Only cache the skip_slither path — the Slither-CLI path writes
+        # additional artifacts to disk that downstream code may expect.
+        if skip_slither:
+            _store_cached_static_artifacts(effective_address, contract_name, analysis, plan)
     if snapshot_address != effective_address:
         plan = {**plan, "contract_address": snapshot_address}
 
