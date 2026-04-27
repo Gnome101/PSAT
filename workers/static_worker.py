@@ -37,6 +37,15 @@ from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
 
+# When set, the Slither CLI subprocess is skipped during the static stage.
+# Saves ~20-40s per static job at the cost of user-facing detector findings
+# (the slither_results + analysis_report artifacts). Pipeline downstream is
+# unaffected: nothing in resolution/policy/coverage reads detector output,
+# and collect_contract_analysis returns empty detector counts when the
+# slither_results.json file is missing. Default off; flip on per-environment
+# to A/B bench the throughput vs detector-coverage trade-off.
+SKIP_SLITHER_CLI = os.getenv("PSAT_STATIC_SKIP_SLITHER_CLI", "0").lower() in ("1", "true", "yes")
+
 # ---------------------------------------------------------------------------
 # Error logging template
 # ---------------------------------------------------------------------------
@@ -750,8 +759,27 @@ class StaticWorker(BaseWorker):
                 self.update_detail(session, job, "Static analysis complete (cached)")
             else:
                 # Phase 1: Slither
+                # PSAT_STATIC_SKIP_SLITHER_CLI=1 skips the Slither CLI subprocess
+                # entirely. Eliminates ~20-40s per static stage at the cost of
+                # the user-facing detector findings (slither_results +
+                # analysis_report artifacts). Pipeline downstream is unaffected:
+                # collect_contract_analysis already handles a missing
+                # slither_results.json gracefully (empty detector counts), and
+                # nothing in resolution/policy/coverage reads detector output.
+                # Default off — flip on per-environment via Fly env to A/B
+                # bench whether the loss of detector findings is acceptable.
                 t0 = time.monotonic()
-                slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
+                if SKIP_SLITHER_CLI:
+                    self.update_detail(session, job, "Skipping Slither CLI (PSAT_STATIC_SKIP_SLITHER_CLI=1)")
+                    store_artifact(
+                        session,
+                        job.id,
+                        "slither_error",
+                        data={"error": "skipped via PSAT_STATIC_SKIP_SLITHER_CLI"},
+                    )
+                    slither_ok = False
+                else:
+                    slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
                 if DEBUG_TIMING:
                     logger.info("[TIMING] slither: %.1fs", time.monotonic() - t0)
 
