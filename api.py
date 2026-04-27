@@ -376,6 +376,8 @@ def health():
     """Liveness/readiness probe — verifies the database and object storage are reachable."""
     from fastapi.responses import JSONResponse
 
+    from db.models import engine as _engine
+
     body: dict[str, Any] = {"status": "ok", "db": "ok", "storage": "inline"}
     failures: list[str] = []
 
@@ -389,6 +391,18 @@ def health():
         logger.exception("Health check: db unreachable")
         body["db"] = "unavailable"
         failures.append("db")
+
+    # NullPool (used in some test setups) lacks these counters.
+    from sqlalchemy.pool import QueuePool
+
+    if isinstance(_engine.pool, QueuePool):
+        pool = _engine.pool
+        body["pool"] = {
+            "size": pool.size(),
+            "checked_in": pool.checkedin(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+        }
 
     storage_client = get_storage_client()
     if storage_client is not None:
@@ -824,22 +838,17 @@ def analysis_detail(run_name: str) -> dict:
         if contract_row:
             ef_rows = list(
                 session.execute(
-                    select(EffectiveFunction).where(EffectiveFunction.contract_id == contract_row.id)
+                    select(EffectiveFunction)
+                    .where(EffectiveFunction.contract_id == contract_row.id)
+                    .options(selectinload(EffectiveFunction.principals))
                 ).scalars()
             )
-            principals_by_fn: dict[int, list[FunctionPrincipal]] = {}
-            if ef_rows:
-                ef_ids = [ef.id for ef in ef_rows]
-                for fp in session.execute(
-                    select(FunctionPrincipal).where(FunctionPrincipal.function_id.in_(ef_ids))
-                ).scalars():
-                    principals_by_fn.setdefault(fp.function_id, []).append(fp)
 
             ef_list = []
             for ef in ef_rows:
                 direct_owner = None
                 controller_principals = []
-                for fp in principals_by_fn.get(ef.id, []):
+                for fp in ef.principals or []:
                     principal_dict = {
                         "address": fp.address,
                         "resolved_type": fp.resolved_type,
@@ -1001,22 +1010,17 @@ def analysis_detail(run_name: str) -> dict:
                     if "effective_permissions" not in payload:
                         impl_efs = list(
                             session.execute(
-                                select(EffectiveFunction).where(EffectiveFunction.contract_id == impl_c.id)
+                                select(EffectiveFunction)
+                                .where(EffectiveFunction.contract_id == impl_c.id)
+                                .options(selectinload(EffectiveFunction.principals))
                             ).scalars()
                         )
-                        impl_principals_by_fn: dict[int, list[FunctionPrincipal]] = {}
-                        if impl_efs:
-                            impl_ef_ids = [ef.id for ef in impl_efs]
-                            for fp in session.execute(
-                                select(FunctionPrincipal).where(FunctionPrincipal.function_id.in_(impl_ef_ids))
-                            ).scalars():
-                                impl_principals_by_fn.setdefault(fp.function_id, []).append(fp)
                         if impl_efs:
                             ef_list = []
                             for ef in impl_efs:
                                 direct_owner = None
                                 controller_principals = []
-                                for fp in impl_principals_by_fn.get(ef.id, []):
+                                for fp in ef.principals or []:
                                     principal_dict = {
                                         "address": fp.address,
                                         "resolved_type": fp.resolved_type,
@@ -1218,13 +1222,17 @@ def company_overview(company_name: str) -> dict:
             req = j.request if isinstance(j.request, dict) else {}
             unresolved_addrs_by_chain.setdefault(req.get("chain"), set()).add(j.address.lower())
         contracts_by_addr_chain: dict[tuple[str, str | None], Contract] = {}
-        for chain_key, addrs in unresolved_addrs_by_chain.items():
-            stmt = select(Contract).where(Contract.address.in_(list(addrs)))
-            if chain_key is not None:
-                stmt = stmt.where(Contract.chain == chain_key)
-            stmt = stmt.options(selectinload(Contract.summary))
-            for c in session.execute(stmt).scalars():
-                contracts_by_addr_chain[(c.address.lower(), chain_key)] = c
+        all_unresolved_addrs = {a for addrs in unresolved_addrs_by_chain.values() for a in addrs}
+        if all_unresolved_addrs:
+            for c in session.execute(
+                select(Contract)
+                .where(Contract.address.in_(list(all_unresolved_addrs)))
+                .options(selectinload(Contract.summary))
+            ).scalars():
+                addr_lc = (c.address or "").lower()
+                for chain_key, addrs in unresolved_addrs_by_chain.items():
+                    if addr_lc in addrs and (chain_key is None or c.chain == chain_key):
+                        contracts_by_addr_chain[(addr_lc, chain_key)] = c
 
         def _resolve_contract(j: Job) -> Contract | None:
             cr = contracts_by_job_id.get(j.id)
@@ -1277,7 +1285,9 @@ def company_overview(company_name: str) -> dict:
             ).scalars():
                 controller_values_by_cid.setdefault(cv.contract_id, []).append(cv)
             for ef in session.execute(
-                select(EffectiveFunction).where(EffectiveFunction.contract_id.in_(id_list))
+                select(EffectiveFunction)
+                .where(EffectiveFunction.contract_id.in_(id_list))
+                .options(selectinload(EffectiveFunction.principals))
             ).scalars():
                 ef_rows_by_cid.setdefault(ef.contract_id, []).append(ef)
             for cid, count in session.execute(
@@ -1296,14 +1306,6 @@ def company_overview(company_name: str) -> dict:
                 select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list))
             ).scalars():
                 cge_by_cid.setdefault(e.contract_id, []).append(e)
-
-        all_ef_ids = [ef.id for efs in ef_rows_by_cid.values() for ef in efs]
-        principals_by_fn_id: dict[int, list[FunctionPrincipal]] = {}
-        if all_ef_ids:
-            for fp in session.execute(
-                select(FunctionPrincipal).where(FunctionPrincipal.function_id.in_(all_ef_ids))
-            ).scalars():
-                principals_by_fn_id.setdefault(fp.function_id, []).append(fp)
 
         # Build contract entries from relational tables
         contracts = []
@@ -1415,7 +1417,7 @@ def company_overview(company_name: str) -> dict:
 
             functions_list = []
             for ef in ef_rows_for_contract:
-                functions_list.append(_build_company_function_entry(ef, principals_by_fn_id.get(ef.id, [])))
+                functions_list.append(_build_company_function_entry(ef, ef.principals or []))
 
             balance_contract = lookup_contract or contract_row
             balances_list = []
@@ -1703,7 +1705,7 @@ def company_overview(company_name: str) -> dict:
             lookup_c = lookup_contract_by_entry.get(target)
             if not lookup_c:
                 continue
-            fp_iter = (fp for ef in ef_rows_by_cid.get(lookup_c.id, []) for fp in principals_by_fn_id.get(ef.id, []))
+            fp_iter = (fp for ef in ef_rows_by_cid.get(lookup_c.id, []) for fp in (ef.principals or []))
             for fp in fp_iter:
                 pa = (fp.address or "").lower()
                 if not pa or pa == target:

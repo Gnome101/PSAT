@@ -802,9 +802,17 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
 
+# Defaults (5+10) serialize concurrent /api/company hits; env-overridable for tight-quota Postgres.
+DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "10"))
+DB_MAX_OVERFLOW = int(os.environ.get("DB_MAX_OVERFLOW", "20"))
+DB_POOL_RECYCLE = int(os.environ.get("DB_POOL_RECYCLE", "1800"))
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
+    pool_size=DB_POOL_SIZE,
+    max_overflow=DB_MAX_OVERFLOW,
+    pool_recycle=DB_POOL_RECYCLE,
     # psycopg2 defaults connect_timeout to infinity — would block every
     # session acquisition during a Neon cold-start.
     connect_args={"connect_timeout": 10},

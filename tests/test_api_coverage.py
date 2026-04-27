@@ -549,9 +549,10 @@ def test_analysis_detail_relational_effective_permissions(mock_session_cls, mock
     fp.resolved_type = "eoa"
     fp.origin = "owner_slot"
     fp.details = {"role": "admin"}
-    # Batched FunctionPrincipal lookup keys principals by function_id, so the
-    # mock fp must declare the parent EF id explicitly.
+    fp.principal_type = "controller"
     fp.function_id = ef.id
+    # selectinload puts principals on ef.principals; no separate FP query.
+    ef.principals = [fp]
 
     call_count = {"n": 0}
 
@@ -565,20 +566,16 @@ def test_analysis_detail_relational_effective_permissions(mock_session_cls, mock
             # Contract lookup
             result.scalar_one_or_none.return_value = contract_row
         elif call_count["n"] == 3:
-            # EffectiveFunction query (batched per contract)
+            # EffectiveFunction query (batched per contract, principals eager-loaded)
             result.scalars.return_value.all.return_value = [ef]
             result.scalars.return_value.__iter__ = lambda s: iter([ef])
         elif call_count["n"] == 4:
-            # FunctionPrincipal query (now WHERE function_id IN (...))
-            result.scalars.return_value.all.return_value = [fp]
-            result.scalars.return_value.__iter__ = lambda s: iter([fp])
-        elif call_count["n"] == 5:
             # PrincipalLabel query
             result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 6:
+        elif call_count["n"] == 5:
             # ControllerValue query (for control_snapshot)
             result.scalars.return_value.all.return_value = []
-        elif call_count["n"] == 7:
+        elif call_count["n"] == 6:
             # ControlGraphNode query
             result.scalars.return_value.all.return_value = []
         else:
@@ -1544,10 +1541,11 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
 
     mock_session.get.return_value = None
 
-    # Batched FP lookup keys principals by function_id; declare it explicitly.
     fp_owner.function_id = ef.id
     fp_role.function_id = ef.id
     fp_controller.function_id = ef.id
+    # selectinload puts principals on ef.principals; no separate FP query.
+    ef.principals = [fp_owner, fp_role, fp_controller]
 
     def make_result(scalar=None, scalars_all=None):
         r = MagicMock()
@@ -1559,11 +1557,8 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
         r.scalars.return_value.__iter__ = lambda s: iter(items)
         return r
 
-    # Build the call sequence. The analysis_detail endpoint:
-    # Calls 0-6: proxy's own relational queries (including both CGN and CGE)
-    # Call 7: impl job lookup (from is_proxy block)
-    # Call 8: impl Contract lookup (from is_proxy block)
-    # Calls 9+: impl's relational queries (EF, FP, CV, CGN, CGE, PL)
+    # Calls 0-6: proxy's own relational queries; 7-8: impl job + Contract;
+    # 9+: impl's relational queries (EF eager-loads FP, then CV/CGN/CGE/PL).
     call_results = [
         make_result(scalar=proxy_job),  # 0: Job lookup by name
         make_result(scalar=proxy_contract),  # 1: Contract lookup for proxy
@@ -1575,11 +1570,10 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
         make_result(scalar=impl_job),  # 7: impl job lookup by address
         make_result(scalar=impl_contract),  # 8: impl Contract lookup
         make_result(scalars_all=[ef]),  # 9: EffectiveFunction for impl
-        make_result(scalars_all=[fp_owner, fp_role, fp_controller]),  # 10: FunctionPrincipal for impl ef
-        make_result(scalars_all=[cv]),  # 11: ControllerValue for impl
-        make_result(scalars_all=[cgn]),  # 12: ControlGraphNode for impl
-        make_result(scalars_all=[cge]),  # 13: ControlGraphEdge for impl
-        make_result(scalars_all=[pl]),  # 14: PrincipalLabel for impl
+        make_result(scalars_all=[cv]),  # 10: ControllerValue for impl
+        make_result(scalars_all=[cgn]),  # 11: ControlGraphNode for impl
+        make_result(scalars_all=[cge]),  # 12: ControlGraphEdge for impl
+        make_result(scalars_all=[pl]),  # 13: PrincipalLabel for impl
     ]
     # Add extra fallback results
     for _ in range(10):

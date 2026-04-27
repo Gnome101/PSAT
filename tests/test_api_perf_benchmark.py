@@ -513,3 +513,51 @@ def test_benchmark_high_impact_endpoints(seeded, api_client, db_session, monkeyp
     assert len(timeline["coverage"]) == 1
     jobs = api_client.get("/api/jobs").json()
     assert any(j.get("company") == PROTOCOL_NAME for j in jobs)
+
+
+# Post-perf actuals + ~3 slack. Tighten when you intentionally lower a count.
+QUERY_BUDGETS = {
+    "company_overview": 25,
+    "analyses": 5,
+    "analysis_detail": 12,
+    "list_jobs": 3,
+    "audit_timeline": 10,
+}
+
+
+@requires_postgres
+def test_query_count_budgets(seeded, api_client, db_session, monkeypatch, record_property):
+    """Every hot endpoint must stay under its query budget."""
+    import api as api_module
+
+    monkeypatch.setattr(api_module, "_bytecode_keccak_now_batch", lambda addrs: {a.lower(): None for a in addrs})
+
+    sample_run = "perf_000"
+    proxy_contract_id = seeded["proxy_contract_id"]
+    cases = {
+        "company_overview": lambda: api_client.get(f"/api/company/{PROTOCOL_NAME}"),
+        "analyses": lambda: api_client.get("/api/analyses"),
+        "analysis_detail": lambda: api_client.get(f"/api/analyses/{sample_run}"),
+        "list_jobs": lambda: api_client.get("/api/jobs"),
+        "audit_timeline": lambda: api_client.get(f"/api/contracts/{proxy_contract_id}/audit_timeline"),
+    }
+
+    actuals: dict[str, int] = {}
+    failures: list[str] = []
+    for label, fn in cases.items():
+        # Warm-up — don't measure planner/JIT cost.
+        fn()
+        db_session.commit()
+        db_session.expire_all()
+        with _measure(db_session.get_bind()) as counter:
+            resp = fn()
+        assert resp.status_code == 200, f"{label}: {resp.status_code} {resp.text[:200]}"
+        actuals[label] = counter.count
+        budget = QUERY_BUDGETS[label]
+        if counter.count > budget:
+            failures.append(f"{label}: {counter.count} queries exceeds budget {budget}")
+
+    summary = "\n  ".join(f"{label}: {actuals[label]}/{QUERY_BUDGETS[label]} queries" for label in cases)
+    print("\nQuery counts (actual / budget):\n  " + summary)
+    record_property("query_counts", actuals)
+    assert not failures, "Query-count regression:\n  " + "\n  ".join(failures) + "\n\nAll cases:\n  " + summary
