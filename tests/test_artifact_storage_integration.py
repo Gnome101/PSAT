@@ -269,7 +269,9 @@ def test_health_endpoint_reports_db_and_storage(api_with):
     client = TestClient(api_with.app)
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "db": "ok", "storage": "ok"}
+    payload = resp.json()
+    payload.pop("pool", None)  # only present under QueuePool
+    assert payload == {"status": "ok", "db": "ok", "storage": "ok"}
 
 
 def test_health_endpoint_503_when_storage_unreachable(api_with, monkeypatch):
@@ -285,6 +287,7 @@ def test_health_endpoint_503_when_storage_unreachable(api_with, monkeypatch):
     resp = client.get("/api/health")
     assert resp.status_code == 503
     payload = resp.json()
+    payload.pop("pool", None)
     assert payload == {"status": "unavailable", "db": "ok", "storage": "unavailable"}
 
 
@@ -526,34 +529,8 @@ def test_artifact_storage_prefix_scopes_keys_and_round_trips(monkeypatch, db_ses
     assert artifact_key(job.id, "flagged") == f"artifacts/{job.id}/flagged"
 
 
-# ---------------------------------------------------------------------------
-# 15. /api/jobs surfaces programming bugs instead of silently swallowing them
-# ---------------------------------------------------------------------------
-
-
-def test_list_jobs_surfaces_non_storage_errors(db_session, storage_bucket):
-    """A resolver bug (AttributeError) bubbles up as a 500 instead of hiding as is_proxy=False."""
-    import api as api_module
-    from db.models import JobStage, JobStatus
-    from db.queue import create_job, store_artifact
-
-    job = create_job(db_session, {"address": "0xabcdefde00000000000000000000000000000042", "name": "bug-test"})
-    job.status = JobStatus.completed
-    job.stage = JobStage.done
-    db_session.commit()
-
-    store_artifact(db_session, job.id, "contract_flags", data={"is_proxy": True})
-
-    api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
-
-    def buggy_resolver(art):
-        raise AttributeError("BUG: artifact.dat typo (should be artifact.data)")
-
-    with (
-        patch.object(api_module, "SessionLocal", SessionFactory(db_session)),
-        patch.object(api_module, "_resolve_artifact_value", side_effect=buggy_resolver),
-    ):
-        client = TestClient(api_module.app, raise_server_exceptions=False)
-        resp = client.get("/api/jobs")
-
-    assert resp.status_code == 500
+# /api/jobs no longer goes through ``_resolve_artifact_value`` — it reads
+# ``Job.is_proxy`` directly, mirrored from the ``contract_flags`` artifact
+# at write time. The "resolver bug surfaces as 500" guarantee still applies
+# to /api/analyses and /api/analyses/{run_name}, which is where the catch
+# blocks for storage errors actually live now.

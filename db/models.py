@@ -69,6 +69,8 @@ class Job(Base):
     protocol_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
     )
+    # Mirrored from contract_flags by store_artifact; lets /api/jobs skip the artifact resolve.
+    is_proxy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -93,6 +95,7 @@ class Job(Base):
             "request": self.request,
             "error": self.error,
             "worker_id": self.worker_id,
+            "is_proxy": self.is_proxy,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -460,6 +463,8 @@ class PrivilegedFunction(Base):
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="privileged_functions")
 
+    __table_args__ = (Index("ix_privileged_functions_contract_id", "contract_id"),)
+
 
 class RoleDefinition(Base):
     __tablename__ = "role_definitions"
@@ -470,6 +475,8 @@ class RoleDefinition(Base):
     declared_in: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="role_definitions")
+
+    __table_args__ = (Index("ix_role_definitions_contract_id", "contract_id"),)
 
 
 class ControllerValue(Base):
@@ -486,6 +493,8 @@ class ControllerValue(Base):
     observed_via: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="controller_values")
+
+    __table_args__ = (Index("ix_controller_values_contract_id", "contract_id"),)
 
 
 class ControlGraphNode(Base):
@@ -504,6 +513,8 @@ class ControlGraphNode(Base):
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="control_graph_nodes")
 
+    __table_args__ = (Index("ix_control_graph_nodes_contract_id", "contract_id"),)
+
 
 class ControlGraphEdge(Base):
     __tablename__ = "control_graph_edges"
@@ -518,6 +529,8 @@ class ControlGraphEdge(Base):
     notes: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="control_graph_edges")
+
+    __table_args__ = (Index("ix_control_graph_edges_contract_id", "contract_id"),)
 
 
 class UpgradeEvent(Base):
@@ -555,6 +568,8 @@ class EffectiveFunction(Base):
         "FunctionPrincipal", back_populates="function", cascade="all, delete-orphan"
     )
 
+    __table_args__ = (Index("ix_effective_functions_contract_id", "contract_id"),)
+
 
 class FunctionPrincipal(Base):
     __tablename__ = "function_principals"
@@ -570,6 +585,8 @@ class FunctionPrincipal(Base):
     details: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
 
     function: Mapped[EffectiveFunction] = relationship("EffectiveFunction", back_populates="principals")
+
+    __table_args__ = (Index("ix_function_principals_function_id", "function_id"),)
 
 
 class PrincipalLabel(Base):
@@ -587,6 +604,8 @@ class PrincipalLabel(Base):
     graph_context: Mapped[list[str] | None] = mapped_column(ARRAY(String(255)), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="principal_labels")
+
+    __table_args__ = (Index("ix_principal_labels_contract_id", "contract_id"),)
 
 
 class AddressLabel(Base):
@@ -625,6 +644,8 @@ class ContractDependency(Base):
     admin: Mapped[str | None] = mapped_column(String(42), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="dependencies")
+
+    __table_args__ = (Index("ix_contract_dependencies_contract_id", "contract_id"),)
 
 
 # ---------------------------------------------------------------------------
@@ -781,15 +802,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
 
-# Pool sizing is env-tunable per process group. Defaults match SQLAlchemy's
-# historical 5+10 (preserves api/script behavior). start_workers.sh ships
-# tighter values for workers — each worker is mostly serial (claim job →
-# process → repeat), so a 2+3 pool is enough and 10 worker processes ×
-# 5 connections stays well under Neon's pool ceiling.
-#
-# pool_recycle (default 300s) protects against Neon idle-disconnects:
-# Neon closes idle connections at ~5 min, and a stale conn surfaces as
-# OperationalError on the *next* checkout — costing one job a retry.
+# Env-tunable per process group; start_workers.sh tightens to 2+3 per worker so 10 procs × 5 conns stays under Neon's
+# pool ceiling. pool_recycle=300s protects against Neon's ~5-min idle-disconnect.
 _POOL_SIZE = int(os.environ.get("PSAT_DB_POOL_SIZE", "5"))
 _MAX_OVERFLOW = int(os.environ.get("PSAT_DB_MAX_OVERFLOW", "10"))
 _POOL_RECYCLE = int(os.environ.get("PSAT_DB_POOL_RECYCLE", "300"))
@@ -828,6 +842,30 @@ def apply_storage_migrations(target_engine=None) -> None:
         ac_conn.execute(text("SET statement_timeout = '30s'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'coverage' BEFORE 'done'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'selection' BEFORE 'static'"))
+        # CONCURRENTLY can't run in a transaction; FK indexes built here on the AUTOCOMMIT
+        # conn so rolling deploys don't block writes.
+        ac_conn.execute(text("SET statement_timeout = '300s'"))
+        for table in (
+            "upgrade_events",
+            "privileged_functions",
+            "role_definitions",
+            "controller_values",
+            "control_graph_nodes",
+            "control_graph_edges",
+            "effective_functions",
+            "principal_labels",
+            "contract_dependencies",
+        ):
+            ac_conn.execute(
+                text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_{table}_contract_id ON {table} (contract_id)")
+            )
+        ac_conn.execute(
+            text(
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_function_principals_function_id "
+                "ON function_principals (function_id)"
+            )
+        )
+        ac_conn.execute(text("SET statement_timeout = '30s'"))
         # Contracts.discovery_source → discovery_sources (array): writers
         # now union their tag in so ranking can boost contracts
         # corroborated by multiple pipelines. Check whether the legacy
@@ -1001,10 +1039,21 @@ def apply_storage_migrations(target_engine=None) -> None:
         # proof_kind (Phase C): strength subtype for proven rows. See the
         # model comment for the full vocabulary.
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS proof_kind VARCHAR(30)"))
-        # upgrade_events.contract_id — Postgres FKs don't auto-create an index,
-        # and this column is scanned on every per-impl window computation in
-        # services/audits/coverage.py + contract_audit_timeline.
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_upgrade_events_contract_id ON upgrade_events (contract_id)"))
+        # jobs.is_proxy mirrors contract_flags.is_proxy. Inline rows handled here;
+        # storage-backed rows handled by the post-commit backfill below.
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_proxy BOOLEAN NOT NULL DEFAULT FALSE"))
+        conn.execute(
+            text(
+                "UPDATE jobs SET is_proxy = TRUE "
+                "FROM artifacts "
+                "WHERE artifacts.job_id = jobs.id "
+                "  AND artifacts.name = 'contract_flags' "
+                "  AND artifacts.data IS NOT NULL "
+                "  AND COALESCE((artifacts.data ->> 'is_proxy')::boolean, FALSE) = TRUE "
+                "  AND jobs.is_proxy = FALSE"
+            )
+        )
+        # FK indexes are created CONCURRENTLY in the AUTOCOMMIT block above.
         # audit_contract_coverage ↔ proxy invariant. Scope names like
         # ``UUPSProxy`` match generic proxy Contract rows verbatim, but the
         # audit didn't review the proxy's code — it reviewed the impl's.
@@ -1053,6 +1102,19 @@ def apply_storage_migrations(target_engine=None) -> None:
             )
         )
         conn.commit()
+
+    # Storage-backed contract_flags rows can't be reached from the inline SQL UPDATE above
+    # — best-effort walk via the storage client.
+    try:
+        from .queue import backfill_job_is_proxy_from_storage
+
+        Session_ = sessionmaker(bind=target, class_=Session, expire_on_commit=False)
+        with Session_() as session:
+            backfill_job_is_proxy_from_storage(session)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning("Storage-backed is_proxy backfill failed", exc_info=True)
 
 
 def create_tables() -> None:
