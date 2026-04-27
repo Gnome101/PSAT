@@ -64,11 +64,15 @@ class BaseWorker:
         # One-line boot banner per worker process so a fly-log scrape can
         # reconstruct the fleet shape that hit OOM. Captures stage + RSS at
         # boot + the cgroup memory limit + sibling python proc count.
+        # `stage` is a class attribute set by subclasses; default to "?"
+        # so bare BaseWorker() in unit tests doesn't trip AttributeError.
+        stage_attr = getattr(self, "stage", None)
+        stage_str = stage_attr.value if stage_attr is not None else "?"
         logger.info(
             "[BOOT] worker=%s pid=%d stage=%s rss_mb=%s cgroup_used_mb=%s/%s python_siblings=%d",
             self.worker_id,
             os.getpid(),
-            self.stage.value,
+            stage_str,
             mb(current_rss_bytes()),
             mb(cgroup_memory_current_bytes()),
             mb(cgroup_memory_max_bytes()),
