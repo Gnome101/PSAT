@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
+import time
 from typing import Any, TypedDict
 
 from eth_utils.crypto import keccak
@@ -15,12 +18,50 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 
+# Bounds on the from-block-0 pagination loop. A 2017-deployed contract has
+# ~190 pages of history at ~25s/page = 80 min — far more than a single
+# resolution worker should block. Without these caps we'd silently wedge.
+# Defaults: 60s wall clock, 50 pages — enough to enumerate any contract
+# deployed in the last ~5 years.
+_TIMEOUT_S = float(os.getenv("PSAT_MAPPING_ENUMERATION_TIMEOUT_S", "60"))
+_MAX_PAGES = int(os.getenv("PSAT_MAPPING_ENUMERATION_MAX_PAGES", "50"))
+# Process-wide cache TTL (matches classify cache). Sibling cascade jobs
+# enumerating the same contract within ~30 min reuse results.
+_CACHE_TTL_S = float(os.getenv("PSAT_MAPPING_ENUMERATION_CACHE_TTL_S", "1800"))
+
 
 class EnumeratedPrincipal(TypedDict):
     address: str
     mapping_name: str
     direction_history: list[str]
     last_seen_block: int
+
+
+class EnumerationResult(TypedDict):
+    """Replaces the bare list[EnumeratedPrincipal] return so the caller
+    can distinguish complete vs. truncated scans. Truncation MUST be
+    surfaced — silent fallback to [] would drop principals (wards.alice
+    set in 2017 with no Deny since means alice is still authorized)."""
+
+    principals: list[EnumeratedPrincipal]
+    status: str  # "complete" | "incomplete_timeout" | "incomplete_max_pages" | "error"
+    pages_fetched: int
+    last_block_scanned: int
+    error: str | None
+
+
+# Process-wide cache. Keyed on lowercased contract address. Values include
+# the head block at scan time so callers can decide if the cache is stale
+# enough to require re-scanning. We don't include head_block in the key
+# because re-querying head per call defeats the cascade-sharing benefit.
+_CACHE: dict[str, tuple[EnumerationResult, float]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def clear_enumeration_cache() -> None:
+    """Test helper. Drop all cached enumerations."""
+    with _CACHE_LOCK:
+        _CACHE.clear()
 
 
 def _event_topic0(signature: str) -> str:
@@ -104,9 +145,32 @@ async def enumerate_mapping_allowlist(
     to_block: int | None = None,
     client: Any = None,
     hypersync_module: Any = None,
-) -> list[EnumeratedPrincipal]:
+    timeout_s: float | None = None,
+    max_pages: int | None = None,
+) -> EnumerationResult:
+    """Replay mapping-writer events into a current-allowlist principal list.
+
+    Returns an ``EnumerationResult`` so the caller can distinguish a
+    complete scan from a truncated one. Truncation flags:
+      - ``incomplete_timeout``: ``timeout_s`` wall-clock budget exhausted
+      - ``incomplete_max_pages``: ``max_pages`` pages fetched without finishing
+      - ``error``: an underlying RPC raised mid-scan
+
+    Truncation MUST be surfaced — a silent fallback to ``[]`` would drop
+    principals: a ``wards[alice] = 1`` event in 2017 with no later ``Deny``
+    means alice is still authorized; truncating the scan loses that fact.
+
+    Defaults for ``timeout_s`` and ``max_pages`` come from env vars
+    ``PSAT_MAPPING_ENUMERATION_TIMEOUT_S`` and
+    ``PSAT_MAPPING_ENUMERATION_MAX_PAGES`` (60s and 50 pages by default).
+    """
+    eff_timeout = _TIMEOUT_S if timeout_s is None else timeout_s
+    eff_max_pages = _MAX_PAGES if max_pages is None else max_pages
+
     if not writer_specs:
-        return []
+        return EnumerationResult(
+            principals=[], status="complete", pages_fetched=0, last_block_scanned=from_block, error=None
+        )
 
     topic0_to_specs: dict[str, list[WriterEventSpec]] = {}
     for spec in writer_specs:
@@ -124,7 +188,9 @@ async def enumerate_mapping_allowlist(
         )
         del topic0_to_specs[topic0]
     if not topic0_to_specs:
-        return []
+        return EnumerationResult(
+            principals=[], status="complete", pages_fetched=0, last_block_scanned=from_block, error=None
+        )
 
     if hypersync_module is None:
         import hypersync as hypersync_module  # type: ignore
@@ -137,10 +203,12 @@ async def enumerate_mapping_allowlist(
 
     topic0s = sorted(topic0_to_specs.keys())
     logger.info(
-        "mapping_enumerator: address=%s from_block=%d to_block=%s topic0s=%s specs=%s",
+        "mapping_enumerator: address=%s from_block=%d to_block=%s timeout=%.1fs max_pages=%d topic0s=%s specs=%s",
         contract_address,
         from_block,
         to_block,
+        eff_timeout,
+        eff_max_pages,
         topic0s,
         [(s["event_signature"], s["direction"], s.get("key_position")) for s in writer_specs],
     )
@@ -149,8 +217,43 @@ async def enumerate_mapping_allowlist(
     state: dict[tuple[str, str], dict[str, Any]] = {}
     current_from = from_block
     page_count = 0
+    started = time.monotonic()
+    status: str = "complete"
+    error: str | None = None
     while True:
-        result = await client.get(query)
+        if time.monotonic() - started > eff_timeout:
+            status = "incomplete_timeout"
+            logger.warning(
+                "mapping_enumerator: TIMEOUT after %.1fs at page %d, address=%s last_block=%d",
+                eff_timeout,
+                page_count,
+                contract_address,
+                current_from,
+            )
+            break
+        if page_count >= eff_max_pages:
+            status = "incomplete_max_pages"
+            logger.warning(
+                "mapping_enumerator: MAX_PAGES (%d) hit at address=%s last_block=%d",
+                eff_max_pages,
+                contract_address,
+                current_from,
+            )
+            break
+
+        try:
+            result = await client.get(query)
+        except Exception as exc:
+            status = "error"
+            error = str(exc)
+            logger.warning(
+                "mapping_enumerator: RPC error at page %d for address=%s: %s",
+                page_count,
+                contract_address,
+                exc,
+            )
+            break
+
         page_count += 1
         data_obj = getattr(result, "data", None)
         if data_obj is not None and hasattr(data_obj, "logs"):
@@ -212,12 +315,48 @@ async def enumerate_mapping_allowlist(
                 "last_seen_block": int(entry["last_block"]),
             }
         )
-    return out
+    return EnumerationResult(
+        principals=out,
+        status=status,
+        pages_fetched=page_count,
+        last_block_scanned=current_from,
+        error=error,
+    )
 
 
 def enumerate_mapping_allowlist_sync(
     contract_address: str,
     writer_specs: list[WriterEventSpec],
     **kwargs: Any,
-) -> list[EnumeratedPrincipal]:
-    return asyncio.run(enumerate_mapping_allowlist(contract_address, writer_specs, **kwargs))
+) -> EnumerationResult:
+    """Synchronous wrapper around ``enumerate_mapping_allowlist`` with a
+    process-wide cache keyed on the lowercased contract address. Cache TTL
+    is ``PSAT_MAPPING_ENUMERATION_CACHE_TTL_S`` (default 30 min) — long
+    enough that sibling cascade jobs share results, short enough that
+    long-lived workers eventually re-scan for new events.
+
+    ``incomplete_*`` and ``error`` results ARE cached too because re-running
+    them within the TTL would just hit the same bound. The caller can decide
+    whether to act on partial data or not via the ``status`` field.
+    """
+    cache_key = contract_address.lower()
+    now = time.monotonic()
+    with _CACHE_LOCK:
+        cached = _CACHE.get(cache_key)
+        if cached is not None:
+            result, inserted_at = cached
+            if now - inserted_at < _CACHE_TTL_S:
+                logger.info(
+                    "mapping_enumerator: CACHE HIT address=%s status=%s principals=%d",
+                    contract_address,
+                    result["status"],
+                    len(result["principals"]),
+                )
+                return result
+            del _CACHE[cache_key]
+
+    result = asyncio.run(enumerate_mapping_allowlist(contract_address, writer_specs, **kwargs))
+
+    with _CACHE_LOCK:
+        _CACHE[cache_key] = (result, now)
+    return result

@@ -543,9 +543,14 @@ def resolve_control_graph(
 
         # Replay writer events for each discovered mapping allowlist and
         # materialize each current member as a principal node tagged
-        # with `controller_label=<mapping_name>`.
+        # with `controller_label=<mapping_name>`. The enumeration is
+        # bounded (timeout + max-pages) — see mapping_enumerator.py.
+        # Truncated/errored results are surfaced via the `status` field
+        # so downstream stages can decide whether to trust the principal
+        # set; a silent empty fallback would drop authorized addresses.
         mapping_specs = list(access_control_block.get("mapping_writer_events") or [])
         enumerated: list[Any] = []
+        enumeration_status = "skipped"
         if mapping_specs:
             hypersync_token = os.getenv("ENVIO_API_TOKEN") or ""
             logger.info(
@@ -555,26 +560,41 @@ def resolve_control_graph(
                 "present" if hypersync_token else "missing",
             )
             if hypersync_token:
-                try:
-                    from services.resolution.mapping_enumerator import enumerate_mapping_allowlist_sync
+                from services.resolution.mapping_enumerator import enumerate_mapping_allowlist_sync
 
-                    enumerated = enumerate_mapping_allowlist_sync(
+                try:
+                    result = enumerate_mapping_allowlist_sync(
                         address,
                         mapping_specs,
                         bearer_token=hypersync_token,
                     )
-                    logger.info(
-                        "mapping_enumerator: %s returned %d principals",
-                        address,
-                        len(enumerated),
-                    )
                 except Exception as exc:
+                    # Bounds are inside enumerate_mapping_allowlist; raises here are
+                    # truly unexpected (auth, hypersync module load, etc).
                     logger.warning(
-                        "mapping_enumerator FAILED for %s: %s — skipping",
+                        "mapping_enumerator UNEXPECTED FAILURE for %s: %s — treating as truncated",
                         address,
                         exc,
                     )
-                    enumerated = []
+                    enumeration_status = "error"
+                else:
+                    enumerated = list(result["principals"])
+                    enumeration_status = result["status"]
+                    if enumeration_status != "complete":
+                        logger.warning(
+                            "mapping_enumerator: %s INCOMPLETE status=%s pages=%d last_block=%d "
+                            "(principal set may be missing entries)",
+                            address,
+                            enumeration_status,
+                            result["pages_fetched"],
+                            result["last_block_scanned"],
+                        )
+                    logger.info(
+                        "mapping_enumerator: %s returned %d principals (status=%s)",
+                        address,
+                        len(enumerated),
+                        enumeration_status,
+                    )
             for principal in enumerated:
                 member_addr = principal["address"]
                 _ensure_node(
@@ -604,6 +624,12 @@ def resolve_control_graph(
                         "notes": [],
                     },
                 )
+            # Surface enumeration status on the contract node so downstream
+            # stages (policy labeling, principal enrichment) can flag
+            # incomplete allowlists in the artifact rather than treating
+            # the principal list as authoritative.
+            if mapping_specs and contract_node_id in nodes:
+                nodes[contract_node_id]["details"]["mapping_enumeration_status"] = enumeration_status
 
         for controller_id, controller_value in snapshot.get("controller_values", {}).items():
             controller_address = str(controller_value.get("value", "")).lower()
