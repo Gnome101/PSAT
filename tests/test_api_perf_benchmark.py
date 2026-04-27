@@ -65,6 +65,12 @@ def _wipe_perf_data(session) -> None:
     counts. Clean by Protocol name (cascades to AuditReport, Contract via
     SET NULL on contracts.protocol_id, Jobs via SET NULL on jobs.protocol_id)
     plus a sweep of the company-tagged jobs.
+
+    Also drops storage-keyed artifacts left behind by sibling tests that
+    used ``storage_bucket`` — their MinIO objects get purged at fixture
+    teardown but the DB rows persist and would make ``/api/analyses``
+    raise RuntimeError once storage env vars get scrubbed by the autouse
+    ``_scrub_storage_env`` fixture.
     """
     session.execute(
         text("DELETE FROM artifacts WHERE job_id IN (SELECT id FROM jobs WHERE company = :c)"),
@@ -92,6 +98,14 @@ def _wipe_perf_data(session) -> None:
     )
     session.execute(text("DELETE FROM jobs WHERE company = :c"), {"c": PROTOCOL_NAME})
     session.execute(text("DELETE FROM protocols WHERE name = :n"), {"n": PROTOCOL_NAME})
+    # Storage-keyed orphans from sibling fixtures.
+    session.execute(
+        text(
+            "DELETE FROM jobs WHERE id IN ("
+            "SELECT job_id FROM artifacts WHERE storage_key IS NOT NULL"
+            ")"
+        )
+    )
     session.commit()
 
 

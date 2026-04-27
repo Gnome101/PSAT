@@ -943,9 +943,8 @@ def test_analysis_detail_analysis_report_inline(mock_session_cls, mock_get_all_a
 # ============================================================================
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls, mock_get_artifact):
+def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls):
     """rank_score + chain come from the ``contracts`` table (selection's single
     authoritative ranking pass), not from the legacy inventory artifact."""
     client = _make_client()
@@ -972,6 +971,14 @@ def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls, mock_g
     # Contract-row row tuple stand-in — api.py reads .address / .chain /
     # .rank_score attributes off each row.
     contract_row = SimpleNamespace(address="0xcccc", chain="ethereum", rank_score=8.5)
+    artifact_row = SimpleNamespace(
+        job_id=child_job.id,
+        name="contract_analysis",
+        storage_key=None,
+        data={"subject": {"name": "ContractX"}, "summary": {}},
+        text_data=None,
+        content_type=None,
+    )
 
     call_count = {"n": 0}
 
@@ -984,20 +991,15 @@ def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls, mock_g
         elif call_count["n"] == 2:
             # Second query: contract rows for rank/chain lookup
             result.all.return_value = [contract_row]
+        elif call_count["n"] == 3:
+            # Third query: batched Artifact rows for all jobs
+            result.scalars.return_value = iter([artifact_row])
         else:
-            # Per-job artifact listing queries
-            result.scalars.return_value.all.return_value = ["contract_analysis"]
+            result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
         return result
 
     mock_session.execute.side_effect = route_execute
-
-    def fake_get_artifact(session, jid, name):
-        if name == "contract_analysis":
-            return {"subject": {"name": "ContractX"}, "summary": {}}
-        return None
-
-    mock_get_artifact.side_effect = fake_get_artifact
 
     response = client.get("/api/analyses")
     assert response.status_code == 200
@@ -1250,9 +1252,8 @@ def test_spa_fallback_non_api_serves_html():
 # ============================================================================
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_company_from_parent_chain(mock_session_cls, mock_get_artifact):
+def test_analyses_company_from_parent_chain(mock_session_cls):
     """company_for_job() walks parent_job_id chain to find company."""
     client = _make_client()
 
@@ -1281,6 +1282,17 @@ def test_analyses_company_from_parent_chain(mock_session_cls, mock_get_artifact)
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
+    artifacts = [
+        SimpleNamespace(
+            job_id=child_job.id,
+            name="contract_analysis",
+            storage_key=None,
+            data={"subject": {"name": "Child"}, "summary": {}},
+            text_data=None,
+            content_type=None,
+        ),
+    ]
+
     call_count = {"n": 0}
 
     def route_execute(stmt, *args, **kwargs):
@@ -1288,19 +1300,16 @@ def test_analyses_company_from_parent_chain(mock_session_cls, mock_get_artifact)
         result = MagicMock()
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [company_job, child_job]
+        elif call_count["n"] == 2:
+            result.all.return_value = []
+        elif call_count["n"] == 3:
+            result.scalars.return_value = iter(artifacts)
         else:
-            result.scalars.return_value.all.return_value = ["contract_analysis"]
+            result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
         return result
 
     mock_session.execute.side_effect = route_execute
-
-    def fake_artifact(session, jid, name):
-        if name == "contract_analysis":
-            return {"subject": {"name": "Child"}, "summary": {}}
-        return None
-
-    mock_get_artifact.side_effect = fake_artifact
 
     response = client.get("/api/analyses")
     assert response.status_code == 200
@@ -1315,9 +1324,8 @@ def test_analyses_company_from_parent_chain(mock_session_cls, mock_get_artifact)
 # ============================================================================
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls, mock_get_artifact):
+def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls):
     """A completed proxy is suppressed until its impl child also completes.
 
     Showing the proxy alone would render a half-populated card (no
@@ -1339,6 +1347,25 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls, mock_ge
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
+    artifacts = [
+        SimpleNamespace(
+            job_id=proxy_job.id,
+            name="contract_flags",
+            storage_key=None,
+            data={"is_proxy": True, "proxy_type": "ERC1967", "implementation": "0xbbbb"},
+            text_data=None,
+            content_type=None,
+        ),
+        SimpleNamespace(
+            job_id=proxy_job.id,
+            name="contract_analysis",
+            storage_key=None,
+            data={"subject": {"name": "ProxyContract"}, "summary": {}},
+            text_data=None,
+            content_type=None,
+        ),
+    ]
+
     call_count = {"n": 0}
 
     def route_execute(stmt, *args, **kwargs):
@@ -1347,26 +1374,15 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls, mock_ge
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job]
         elif call_count["n"] == 2:
-            # Contract rows for rank/chain lookup — empty is fine for this test
             result.all.return_value = []
         elif call_count["n"] == 3:
-            # Artifact names
-            result.scalars.return_value.all.return_value = ["contract_flags", "contract_analysis"]
+            result.scalars.return_value = iter(artifacts)
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
         return result
 
     mock_session.execute.side_effect = route_execute
-
-    def fake_artifact(session, jid, name):
-        if name == "contract_flags":
-            return {"is_proxy": True, "proxy_type": "ERC1967", "implementation": "0xbbbb"}
-        if name == "contract_analysis":
-            return {"subject": {"name": "ProxyContract"}, "summary": {}}
-        return None
-
-    mock_get_artifact.side_effect = fake_artifact
 
     response = client.get("/api/analyses")
     assert response.status_code == 200
@@ -1815,9 +1831,8 @@ def test_company_overview_with_proxy_and_effects(db_session, api_client):
 # ============================================================================
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_chain_populated_from_contracts_table(mock_session_cls, mock_get_artifact):
+def test_analyses_chain_populated_from_contracts_table(mock_session_cls):
     """Chain comes from the ``contracts`` table (same pass that sets
     rank_score) regardless of how the discovery worker wrote it —
     a row with ``chain='arbitrum'`` surfaces in the analyses listing."""
@@ -1841,6 +1856,16 @@ def test_analyses_chain_populated_from_contracts_table(mock_session_cls, mock_ge
     _mock_session_ctx(mock_session_cls, mock_session)
 
     contract_row = SimpleNamespace(address="0xdddd", chain="arbitrum", rank_score=5.0)
+    artifacts = [
+        SimpleNamespace(
+            job_id=child_job.id,
+            name="contract_analysis",
+            storage_key=None,
+            data={"subject": {"name": "ChainTest"}, "summary": {}},
+            text_data=None,
+            content_type=None,
+        ),
+    ]
 
     call_count = {"n": 0}
 
@@ -1851,19 +1876,14 @@ def test_analyses_chain_populated_from_contracts_table(mock_session_cls, mock_ge
             result.scalars.return_value.all.return_value = [company_job, child_job]
         elif call_count["n"] == 2:
             result.all.return_value = [contract_row]
+        elif call_count["n"] == 3:
+            result.scalars.return_value = iter(artifacts)
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
         return result
 
     mock_session.execute.side_effect = route_execute
-
-    def fake_artifact(session, jid, name):
-        if name == "contract_analysis":
-            return {"subject": {"name": "ChainTest"}, "summary": {}}
-        return None
-
-    mock_get_artifact.side_effect = fake_artifact
 
     response = client.get("/api/analyses")
     assert response.status_code == 200
@@ -1878,9 +1898,8 @@ def test_analyses_chain_populated_from_contracts_table(mock_session_cls, mock_ge
 # ============================================================================
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_entry_without_analysis_still_appears(mock_session_cls, mock_get_artifact):
+def test_analyses_entry_without_analysis_still_appears(mock_session_cls):
     """A job without contract_analysis artifact still appears in results, but
     without contract_name or summary fields from the analysis."""
     client = _make_client()
@@ -1900,17 +1919,16 @@ def test_analyses_entry_without_analysis_still_appears(mock_session_cls, mock_ge
         result = MagicMock()
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [job]
+        elif call_count["n"] == 2:
+            result.all.return_value = []
+        elif call_count["n"] == 3:
+            result.scalars.return_value = iter([])
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
         return result
 
     mock_session.execute.side_effect = route_execute
-
-    def fake_artifact(session, jid, name):
-        return None  # No artifacts at all
-
-    mock_get_artifact.side_effect = fake_artifact
 
     response = client.get("/api/analyses")
     assert response.status_code == 200
@@ -1927,9 +1945,8 @@ def test_analyses_entry_without_analysis_still_appears(mock_session_cls, mock_ge
 # ============================================================================
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls, mock_get_artifact):
+def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls):
     """When proxy's contract_analysis is None but impl's exists, proxy entry uses impl's."""
     client = _make_client()
 
@@ -1955,6 +1972,25 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls,
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
+    artifacts = [
+        SimpleNamespace(
+            job_id=proxy_job.id,
+            name="contract_flags",
+            storage_key=None,
+            data={"is_proxy": True, "proxy_type": "ERC1967", "implementation": "0xbbbb"},
+            text_data=None,
+            content_type=None,
+        ),
+        SimpleNamespace(
+            job_id=impl_job.id,
+            name="contract_analysis",
+            storage_key=None,
+            data={"subject": {"name": "ImplName"}, "summary": {"control_model": "ownable"}},
+            text_data=None,
+            content_type=None,
+        ),
+    ]
+
     call_count = {"n": 0}
 
     def route_execute(stmt, *args, **kwargs):
@@ -1963,34 +1999,15 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls,
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            # Contract-row lookup for rank/chain — empty for this test
             result.all.return_value = []
-        elif call_count["n"] <= 4:
-            result.scalars.return_value.all.return_value = ["contract_flags"]
-            result.scalar_one_or_none.return_value = impl_job
+        elif call_count["n"] == 3:
+            result.scalars.return_value = iter(artifacts)
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
         return result
 
     mock_session.execute.side_effect = route_execute
-
-    def fake_artifact(session, jid, name):
-        if str(jid) == str(proxy_job_id):
-            if name == "contract_flags":
-                return {"is_proxy": True, "proxy_type": "ERC1967", "implementation": "0xbbbb"}
-            if name == "contract_analysis":
-                return None  # Proxy has no analysis
-            return None
-        if str(jid) == str(impl_job_id):
-            if name == "contract_analysis":
-                return {"subject": {"name": "ImplName"}, "summary": {"control_model": "ownable"}}
-            if name == "contract_flags":
-                return None
-            return None
-        return None
-
-    mock_get_artifact.side_effect = fake_artifact
 
     response = client.get("/api/analyses")
     assert response.status_code == 200

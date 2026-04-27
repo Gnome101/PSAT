@@ -269,7 +269,12 @@ def test_health_endpoint_reports_db_and_storage(api_with):
     client = TestClient(api_with.app)
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "db": "ok", "storage": "ok"}
+    payload = resp.json()
+    # The pool block is QueuePool-only (NullPool used by some test setups
+    # has no counters); keep its presence loose so this test passes in both
+    # modes.
+    payload.pop("pool", None)
+    assert payload == {"status": "ok", "db": "ok", "storage": "ok"}
 
 
 def test_health_endpoint_503_when_storage_unreachable(api_with, monkeypatch):
@@ -285,6 +290,7 @@ def test_health_endpoint_503_when_storage_unreachable(api_with, monkeypatch):
     resp = client.get("/api/health")
     assert resp.status_code == 503
     payload = resp.json()
+    payload.pop("pool", None)
     assert payload == {"status": "unavailable", "db": "ok", "storage": "unavailable"}
 
 

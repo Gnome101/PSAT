@@ -802,7 +802,12 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
 
-# Defaults (5+10) serialize concurrent /api/company hits; env-overridable for tight-quota Postgres.
+# PSAT runs a single uvicorn process (start_container.sh — psycopg2 sockets
+# aren't fork-safe), so pool_size + max_overflow IS the prod connection
+# budget. SQLAlchemy's stock 5+10 default serialized concurrent /api/company
+# hits; 10+20 keeps a Neon Free tenant comfortably under the 100-conn cap
+# while leaving room for the workers' own pools. Override via env when the
+# Postgres tier has a tighter quota.
 DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "10"))
 DB_MAX_OVERFLOW = int(os.environ.get("DB_MAX_OVERFLOW", "20"))
 DB_POOL_RECYCLE = int(os.environ.get("DB_POOL_RECYCLE", "1800"))
@@ -841,6 +846,35 @@ def apply_storage_migrations(target_engine=None) -> None:
         ac_conn.execute(text("SET statement_timeout = '30s'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'coverage' BEFORE 'done'"))
         ac_conn.execute(text("ALTER TYPE jobstage ADD VALUE IF NOT EXISTS 'selection' BEFORE 'static'"))
+        # FK indexes must build CONCURRENTLY so we don't block writes on
+        # the join-key columns during a rolling deploy. CONCURRENTLY can't
+        # run inside a transaction, hence the AUTOCOMMIT connection. On a
+        # fresh schema these are already created by Base.metadata.create_all
+        # via Index() declarations on the model — IF NOT EXISTS keeps it a
+        # no-op there. Bump statement_timeout for the build (SET LOCAL has
+        # no effect under AUTOCOMMIT) then restore the cap.
+        ac_conn.execute(text("SET statement_timeout = '300s'"))
+        for table in (
+            "upgrade_events",
+            "privileged_functions",
+            "role_definitions",
+            "controller_values",
+            "control_graph_nodes",
+            "control_graph_edges",
+            "effective_functions",
+            "principal_labels",
+            "contract_dependencies",
+        ):
+            ac_conn.execute(
+                text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_{table}_contract_id ON {table} (contract_id)")
+            )
+        ac_conn.execute(
+            text(
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_function_principals_function_id "
+                "ON function_principals (function_id)"
+            )
+        )
+        ac_conn.execute(text("SET statement_timeout = '30s'"))
         # Contracts.discovery_source → discovery_sources (array): writers
         # now union their tag in so ranking can boost contracts
         # corroborated by multiple pipelines. Check whether the legacy
@@ -997,9 +1031,10 @@ def apply_storage_migrations(target_engine=None) -> None:
         # proof_kind (Phase C): strength subtype for proven rows. See the
         # model comment for the full vocabulary.
         conn.execute(text("ALTER TABLE audit_contract_coverage ADD COLUMN IF NOT EXISTS proof_kind VARCHAR(30)"))
-        # jobs.is_proxy mirrors contract_flags.is_proxy. The UPDATE below only
-        # backfills inline rows; storage-backed legacy rows stay False until
-        # their contract_flags artifact is rewritten (re-analyze).
+        # jobs.is_proxy mirrors contract_flags.is_proxy. The SQL UPDATE
+        # below handles inline rows in one shot; the matching pass for
+        # storage-backed rows runs after this connection closes (see
+        # backfill_job_is_proxy_from_storage at the bottom of this fn).
         conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS is_proxy BOOLEAN NOT NULL DEFAULT FALSE"))
         conn.execute(
             text(
@@ -1012,23 +1047,9 @@ def apply_storage_migrations(target_engine=None) -> None:
                 "  AND jobs.is_proxy = FALSE"
             )
         )
-        # FK indexes — Postgres doesn't auto-create them, and these columns
-        # are the join keys for every per-contract batch prefetch.
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_upgrade_events_contract_id ON upgrade_events (contract_id)"))
-        for table in (
-            "privileged_functions",
-            "role_definitions",
-            "controller_values",
-            "control_graph_nodes",
-            "control_graph_edges",
-            "effective_functions",
-            "principal_labels",
-            "contract_dependencies",
-        ):
-            conn.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_contract_id ON {table} (contract_id)"))
-        conn.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_function_principals_function_id ON function_principals (function_id)")
-        )
+        # FK indexes for the per-contract batch prefetches live in the
+        # AUTOCOMMIT block above so they can build CONCURRENTLY without
+        # blocking writes on rolling deploys.
         # audit_contract_coverage ↔ proxy invariant. Scope names like
         # ``UUPSProxy`` match generic proxy Contract rows verbatim, but the
         # audit didn't review the proxy's code — it reviewed the impl's.
@@ -1077,6 +1098,25 @@ def apply_storage_migrations(target_engine=None) -> None:
             )
         )
         conn.commit()
+
+    # Storage-backed contract_flags rows (data IS NULL, body in S3/MinIO)
+    # weren't reachable from the SQL backfill above. Walk them via the
+    # storage client. No-op when storage isn't configured. Best-effort:
+    # any read failure is logged and skipped — /api/jobs is the only
+    # consumer and it tolerates a stale False.
+    try:
+        from .queue import backfill_job_is_proxy_from_storage
+
+        Session_ = sessionmaker(bind=target, class_=Session, expire_on_commit=False)
+        with Session_() as session:
+            backfill_job_is_proxy_from_storage(session)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Storage-backed is_proxy backfill failed; /api/jobs may show stale flags for legacy proxies",
+            exc_info=True,
+        )
 
 
 def create_tables() -> None:

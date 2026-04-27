@@ -632,30 +632,24 @@ def analyses() -> list[dict]:
                 if row.chain:
                     chains_by_address[addr_lower] = row.chain
 
-        # Fall back to per-job ``get_artifact`` when the batch finds nothing
-        # so unit tests that mock ``db.queue.get_artifact`` keep working.
         job_ids = [job.id for job in jobs]
         artifact_names_by_job: dict[Any, list[str]] = {}
         targeted_artifacts: dict[tuple[Any, str], Artifact] = {}
-        batch_found = False
         if job_ids:
             for art in session.execute(select(Artifact).where(Artifact.job_id.in_(job_ids))).scalars():
-                batch_found = True
                 artifact_names_by_job.setdefault(art.job_id, []).append(art.name)
                 if art.name in ("contract_analysis", "contract_flags"):
                     targeted_artifacts[(art.job_id, art.name)] = art
 
         def _value(job_id: Any, name: str) -> Any:
             art = targeted_artifacts.get((job_id, name))
-            if art is not None:
-                try:
-                    return _resolve_artifact_value(art)
-                except StorageError:
-                    logger.warning("artifact %s storage read failed for job %s", name, job_id)
-                    return None
-            if batch_found:
+            if art is None:
                 return None
-            return get_artifact(session, job_id, name)
+            try:
+                return _resolve_artifact_value(art)
+            except StorageError:
+                logger.warning("artifact %s storage read failed for job %s", name, job_id)
+                return None
 
         def company_for_job(job: Job) -> str | None:
             seen: set[str] = set()
