@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Compare AI-search benchmark results across backends.
+"""Compare full-pipeline AI-search benchmark results across backends.
 
-Reads bench_results/<protocol>/<backend>__<mode>.json files and computes
-per-protocol + overall recall/precision against the union of classified
-audit reports (the best ground-truth we have without human review).
+Reads bench_results_full/<protocol>/<backend>__<mode>.json and computes
+per-protocol recall/precision against the union of audit URLs across all
+6 configs (raw 5 + Exa Deep Research).
 
-Outputs bench_results/comparison.json and a terminal summary.
+Outputs bench_results_full/comparison.json and a terminal summary.
 """
 
 from __future__ import annotations
@@ -16,19 +16,13 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
-ROOT = Path(__file__).resolve().parent.parent
-RESULTS_DIR = ROOT / "bench_results"
+ROOT = Path(__file__).resolve().parents[3]
+RESULTS_DIR = ROOT / "bench_results_full"
 
 
 def _normalize_url(url: str) -> str:
-    """Coarse URL equivalence for dedup across backends.
-
-    Drops trailing slash, fragment, and common query-string noise so
-    `site.com/audit.pdf?ref=x` and `site.com/audit.pdf` cluster.
-    """
-    from urllib.parse import urlsplit
-
     u = urlsplit(url.strip())
     netloc = u.netloc.lower().removeprefix("www.")
     path = u.path.rstrip("/")
@@ -62,13 +56,12 @@ def compare(runs: list[dict[str, Any]]) -> dict[str, Any]:
         per_config: dict[str, dict[str, Any]] = {}
         for r in proto_runs:
             cfg = _config_label(r["backend"], r["mode"])
-            found = {_normalize_url(c["url"]) for c in r.get("classified", [])}
+            found = {_normalize_url(rep["url"]) for rep in r.get("reports", []) if rep.get("url")}
             per_config[cfg] = {
-                "classified_count": len(r.get("classified", [])),
+                "report_count": len(r.get("reports", [])),
                 "unique_urls": len(found),
-                "raw_count": len(r.get("all_results_deduped", [])),
                 "errors": len(r.get("errors", [])),
-                "timings_ms": r.get("timings_ms", {}),
+                "elapsed_ms": r.get("elapsed_ms"),
                 "urls": sorted(found),
             }
             union |= found
@@ -104,36 +97,33 @@ def compare(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def print_summary(report: dict[str, Any]) -> None:
-    print("\n=== OVERALL (across 12 protocols) ===")
+    print("\n=== OVERALL (full pipeline, all 12 protocols) ===")
     overall = report["overall"]
     ranked = sorted(overall.items(), key=lambda kv: -kv[1]["total_classified_urls"])
     union_size = report["global_union_size"]
-    print(f"global union of classified URLs: {union_size}")
-    print(f"{'config':<20} {'unique_found':>14} {'recall':>8}")
+    print(f"global union of audit URLs: {union_size}")
+    print(f"{'config':<22} {'unique_found':>14} {'recall':>8}")
     for cfg, stats in ranked:
-        print(f"{cfg:<20} {stats['total_classified_urls']:>14} {stats['recall_vs_union']:>7.1%}")
+        print(f"{cfg:<22} {stats['total_classified_urls']:>14} {stats['recall_vs_union']:>7.1%}")
 
     print("\n=== PER-PROTOCOL RECALL ===")
     configs = sorted({cfg for p in report["protocols"].values() for cfg in p["per_config"]})
-    header = f"{'protocol':<22}" + "".join(f"{cfg:>18}" for cfg in configs)
+    header = f"{'protocol':<22}" + "".join(f"{cfg:>22}" for cfg in configs)
     print(header)
-    print(f"{'':<22}" + "".join(f"{'union':>18}" for _ in configs)[: 18 * len(configs)])
     for protocol, data in report["protocols"].items():
         row = f"{protocol:<22}"
         for cfg in configs:
             stats = data["per_config"].get(cfg)
             if stats is None:
-                row += f"{'--':>18}"
+                row += f"{'--':>22}"
             else:
-                found = stats["unique_urls"]
-                union = data["union_size"]
-                row += f"{found}/{union} ({stats['recall']:>4.0%})".rjust(18)
+                row += f"{stats['unique_urls']}/{data['union_size']} ({stats['recall']:>4.0%})".rjust(22)
         print(row)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", default=str(RESULTS_DIR), help="bench_results directory")
+    parser.add_argument("--out", default=str(RESULTS_DIR))
     args = parser.parse_args()
     out_dir = Path(args.out)
     runs = load_runs(out_dir)
