@@ -206,7 +206,7 @@ Per protocol:
 ## 8. Artifacts on this branch (`feat/bench-ai/search`)
 
 ```
-scripts/
+research/ai-search-bench/scripts/
 ├── bench_ai_search.py           — raw search bench (deprecated)
 ├── bench_ai_search_full.py      — full-pipeline audit bench (final)
 ├── bench_ai_compare_full.py     — audit comparison + reporting

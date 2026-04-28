@@ -5,7 +5,7 @@ Supersedes `bench_results/REPORT.md` (raw search + classifier only). This run us
 ## Setup
 
 - 12 protocols × 6 configs = 72 runs
-- `scripts/bench_ai_search_full.py`, `scripts/bench_ai_compare_full.py`
+- `research/ai-search-bench/scripts/bench_ai_search_full.py`, `research/ai-search-bench/scripts/bench_ai_compare_full.py`
 - Raw JSON: `bench_results_full/<protocol>/<backend>__<mode>.json`
 - Aggregate: `bench_results_full/comparison.json`
 

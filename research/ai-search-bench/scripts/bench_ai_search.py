@@ -22,7 +22,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from services.discovery.audit_reports_llm import classify_search_results, generate_followup_query  # noqa: E402

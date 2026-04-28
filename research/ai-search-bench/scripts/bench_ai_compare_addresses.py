@@ -17,7 +17,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[3]
 RESULTS_DIR = ROOT / "bench_results_addresses"
 
 
