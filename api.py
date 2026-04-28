@@ -716,9 +716,7 @@ def analyses() -> list[dict]:
     if storage_lookups:
         client = get_storage_client()
         if client is None:
-            raise RuntimeError(
-                "/api/analyses: artifacts have storage_key set but storage is not configured"
-            )
+            raise RuntimeError("/api/analyses: artifacts have storage_key set but storage is not configured")
         keys = [sk for sk, _ in storage_lookups.values()]
         try:
             bodies = client.get_many(keys)

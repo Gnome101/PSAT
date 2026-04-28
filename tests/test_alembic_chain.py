@@ -33,7 +33,4 @@ def test_single_head_revision():
 def test_no_branched_revisions():
     script = _script_dir()
     branched = [r.revision for r in script.walk_revisions() if r.is_branch_point]
-    assert not branched, (
-        f"Branched revisions found: {branched}. Each revision should have at "
-        "most one child."
-    )
+    assert not branched, f"Branched revisions found: {branched}. Each revision should have at most one child."
