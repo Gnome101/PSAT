@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+import logging
+import os
+import threading
+import time
 from typing import Any
 
 from eth_abi.abi import decode
@@ -12,6 +17,9 @@ from utils.rpc import (
     normalize_hex as _normalize_hex,
 )
 from utils.rpc import (
+    rpc_batch_request_with_status as _rpc_batch_request_with_status,
+)
+from utils.rpc import (
     rpc_request as _rpc_request,
 )
 from utils.rpc import (
@@ -19,6 +27,41 @@ from utils.rpc import (
 )
 
 from .controller_adapters import expand_role_identifier_principals, type_authority_contract
+
+logger = logging.getLogger(__name__)
+
+# Distinguishes "RPC succeeded, function absent" (None) from "RPC raised" — caching the latter would cement
+# misclassification.
+_PROBE_ERROR = object()
+
+# Process-wide classify cache keyed on (rpc_url, address, block_tag); skips error returns and applies a TTL so latest-
+# block reads eventually re-probe.
+_CLASSIFY_CACHE: dict[tuple[str, str, str], tuple[str, dict[str, object], float]] = {}
+_CLASSIFY_CACHE_LOCK = threading.Lock()
+_CLASSIFY_CACHE_MAX = 4096
+_CLASSIFY_CACHE_TTL_S = float(os.getenv("PSAT_CLASSIFY_CACHE_TTL_S", "1800"))
+
+# Single-batch classify probes (default ON); falls back to sequential on whole-batch failure. Toggle
+# PSAT_CLASSIFY_BATCH=0 to force sequential.
+_CLASSIFY_BATCH_ENABLED = os.getenv("PSAT_CLASSIFY_BATCH", "1").lower() in ("1", "true", "yes")
+
+
+def clear_classify_cache() -> None:
+    """Clear the process-wide classify cache. For tests + manual reset."""
+    from utils.memory import reset_cache_pressure_state
+
+    with _CLASSIFY_CACHE_LOCK:
+        _CLASSIFY_CACHE.clear()
+    reset_cache_pressure_state("classify")
+
+
+def _log_classify_pressure() -> None:
+    """Log when _CLASSIFY_CACHE crosses 50/75/95% of bound (caller holds the lock)."""
+    from utils.memory import cache_pressure_message
+
+    msg = cache_pressure_message("classify", len(_CLASSIFY_CACHE), _CLASSIFY_CACHE_MAX)
+    if msg:
+        logger.info("[CACHE_PRESSURE] %s", msg)
 
 
 def _decode_controller_value(raw_value: Any, controller_kind: str) -> str:
@@ -64,13 +107,18 @@ def _decode_topic_value(raw_value: str, abi_type: str):
 def _try_eth_call_decoded(
     rpc_url: str, contract_address: str, signature: str, abi_type: str, block_tag: str = "latest"
 ) -> object | None:
+    """Decoded value, None (function absent / decode failure), or _PROBE_ERROR (transient RPC issue — caller should not
+    cache)."""
     try:
         raw = _eth_call_raw(rpc_url, contract_address, signature, block_tag)
         if _normalize_hex(raw) in {"0x", "0x0"}:
             return None
-        return _decode_abi_value(raw, abi_type)
+        try:
+            return _decode_abi_value(raw, abi_type)
+        except Exception:
+            return None
     except Exception:
-        return None
+        return _PROBE_ERROR
 
 
 def _get_code(rpc_url: str, address: str, block_tag: str = "latest") -> str:
@@ -88,50 +136,250 @@ def _coerce_int(value: object) -> int:
     raise RuntimeError(f"Unsupported integer value: {value!r}")
 
 
-def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "latest") -> tuple[str, dict[str, object]]:
+def classify_resolved_address_with_status(
+    rpc_url: str, address: str, block_tag: str = "latest"
+) -> tuple[str, dict[str, object], bool]:
+    """Like ``classify_resolved_address`` but also returns a ``cacheable`` flag (False if any probe errored)."""
     normalized = _normalize_hex(address)
+    cache_key = (rpc_url, normalized, block_tag)
+    now = time.monotonic()
+
+    with _CLASSIFY_CACHE_LOCK:
+        cached = _CLASSIFY_CACHE.get(cache_key)
+        if cached is not None:
+            kind, cached_details, inserted_at = cached
+            if now - inserted_at < _CLASSIFY_CACHE_TTL_S:
+                return kind, copy.deepcopy(cached_details), True
+            del _CLASSIFY_CACHE[cache_key]
+
+    if _CLASSIFY_BATCH_ENABLED:
+        kind, details, had_error = _classify_uncached_batched(rpc_url, normalized, block_tag)
+    else:
+        kind, details, had_error = _classify_uncached(rpc_url, normalized, block_tag)
+
+    if not had_error:
+        with _CLASSIFY_CACHE_LOCK:
+            if len(_CLASSIFY_CACHE) >= _CLASSIFY_CACHE_MAX:
+                for old_key in list(_CLASSIFY_CACHE.keys())[: _CLASSIFY_CACHE_MAX // 2]:
+                    del _CLASSIFY_CACHE[old_key]
+            _CLASSIFY_CACHE[cache_key] = (kind, copy.deepcopy(details), now)
+            _log_classify_pressure()
+
+    return kind, details, not had_error
+
+
+def classify_resolved_address(rpc_url: str, address: str, block_tag: str = "latest") -> tuple[str, dict[str, object]]:
+    """Backwards-compatible wrapper that drops the cacheable flag; use the ``_with_status`` form if you maintain a
+    downstream cache."""
+    kind, details, _cacheable = classify_resolved_address_with_status(rpc_url, address, block_tag)
+    return kind, details
+
+
+# Probe set for the batched classifier; order is load-bearing — `_classify_uncached_batched` unpacks by index.
+_CLASSIFY_PROBE_SIGS: tuple[tuple[str, str], ...] = (
+    ("getOwners()", "address[]"),  # 0: Safe
+    ("getThreshold()", "uint256"),  # 1: Safe
+    ("getMinDelay()", "uint256"),  # 2: Timelock primary
+    ("delay()", "uint256"),  # 3: Timelock fallback
+    ("UPGRADE_INTERFACE_VERSION()", "string"),  # 4: ProxyAdmin
+    ("owner()", "address"),  # 5: Timelock + ProxyAdmin secondary
+)
+
+
+def _decode_probe_result(raw: object, abi_type: str) -> object | None:
+    """Decode a pre-fetched probe result; returns None on empty/decode-failure (caller maps RPC errors to _PROBE_ERROR
+    before calling)."""
+    if not isinstance(raw, str):
+        return None
+    if _normalize_hex(raw) in {"0x", "0x0"}:
+        return None
+    try:
+        return _decode_abi_value(raw, abi_type)
+    except Exception:
+        return None
+
+
+def _batch_probe(rpc_url: str, address: str, block_tag: str) -> list[object]:
+    """Fire all 6 classify probes in one JSON-RPC batch; per-slot errors yield _PROBE_ERROR so callers skip caching."""
+    calls = [("eth_call", [{"to": address, "data": _selector(sig)}, block_tag]) for sig, _abi in _CLASSIFY_PROBE_SIGS]
+    raw_results = _rpc_batch_request_with_status(rpc_url, calls)
+    decoded: list[object] = []
+    for (raw, had_err), (_sig, abi_type) in zip(raw_results, _CLASSIFY_PROBE_SIGS):
+        if had_err:
+            decoded.append(_PROBE_ERROR)
+            continue
+        decoded.append(_decode_probe_result(raw, abi_type))
+    return decoded
+
+
+def _classify_uncached_batched(rpc_url: str, normalized: str, block_tag: str) -> tuple[str, dict[str, object], bool]:
+    """Same contract as ``_classify_uncached`` but batches the 6 probes upfront, saving 5 RTT in the common generic-
+    contract case."""
     if normalized == "0x0000000000000000000000000000000000000000":
-        return "zero", {"address": normalized}
+        return "zero", {"address": normalized}, False
 
-    code = _get_code(rpc_url, normalized, block_tag)
+    try:
+        code = _get_code(rpc_url, normalized, block_tag)
+    except Exception:
+        return "contract", {"address": normalized}, True
     if code in {"0x", "0x0"}:
-        return "eoa", {"address": normalized}
+        return "eoa", {"address": normalized}, False
 
-    safe_owners = _try_eth_call_decoded(rpc_url, normalized, "getOwners()", "address[]", block_tag)
-    safe_threshold = _try_eth_call_decoded(rpc_url, normalized, "getThreshold()", "uint256", block_tag)
+    # Bytecode-keccak shortcut: skip the batch round trip when bytecode matches a canonical impl.
+    if _KNOWN_BYTECODE_IMPLS:
+        try:
+            from utils.rpc import get_code_with_keccak
+
+            _, bytecode_keccak = get_code_with_keccak(rpc_url, normalized)
+        except Exception:
+            bytecode_keccak = None
+        if bytecode_keccak is not None:
+            hit = _KNOWN_BYTECODE_IMPLS.get(bytecode_keccak)
+            if hit is not None:
+                kind, partial = hit
+                details: dict[str, object] = {"address": normalized}
+                details.update(partial)
+                return kind, details, False
+
+    probes = _batch_probe(rpc_url, normalized, block_tag)
+    # Whole-batch failure → fall back to sequential so providers that reject batches don't degrade classification
+    # accuracy.
+    if all(p is _PROBE_ERROR for p in probes):
+        return _classify_uncached(rpc_url, normalized, block_tag)
+    safe_owners_raw, safe_threshold_raw, min_delay_a, min_delay_b, upgrade_iv, owner_raw = probes
+
+    def _ok(v: object) -> object | None:
+        """Map _PROBE_ERROR → None to match the sequential ``_probe()`` shape."""
+        if v is _PROBE_ERROR:
+            return None
+        return v
+
+    had_error = any(p is _PROBE_ERROR for p in probes)
+    safe_owners = _ok(safe_owners_raw)
+    safe_threshold = _ok(safe_threshold_raw)
     if safe_owners is not None and safe_threshold is not None:
-        return "safe", {
-            "address": normalized,
-            "owners": [str(item).lower() for item in safe_owners] if isinstance(safe_owners, list) else [],
-            "threshold": _coerce_int(safe_threshold),
-        }
+        return (
+            "safe",
+            {
+                "address": normalized,
+                "owners": [str(item).lower() for item in safe_owners] if isinstance(safe_owners, list) else [],
+                "threshold": _coerce_int(safe_threshold),
+            },
+            had_error,
+        )
 
-    min_delay = _try_eth_call_decoded(rpc_url, normalized, "getMinDelay()", "uint256", block_tag)
+    min_delay = _ok(min_delay_a)
     if min_delay is None:
-        min_delay = _try_eth_call_decoded(rpc_url, normalized, "delay()", "uint256", block_tag)
+        min_delay = _ok(min_delay_b)
     if min_delay is not None:
-        owner = _try_eth_call_decoded(rpc_url, normalized, "owner()", "address", block_tag)
+        owner = _ok(owner_raw)
         details: dict[str, object] = {"address": normalized, "delay": _coerce_int(min_delay)}
         if owner is not None:
             details["owner"] = owner
-        return "timelock", details
+        return "timelock", details, had_error
 
-    upgrade_interface_version = _try_eth_call_decoded(
-        rpc_url, normalized, "UPGRADE_INTERFACE_VERSION()", "string", block_tag
-    )
+    upgrade_interface_version = _ok(upgrade_iv)
     if upgrade_interface_version is not None:
-        owner = _try_eth_call_decoded(rpc_url, normalized, "owner()", "address", block_tag)
+        owner = _ok(owner_raw)
         details = {
             "address": normalized,
             "upgrade_interface_version": str(upgrade_interface_version),
         }
         if owner is not None:
             details["owner"] = owner
-        return "proxy_admin", details
+        return "proxy_admin", details, had_error
 
     details = {"address": normalized}
-    details.update(type_authority_contract(rpc_url, normalized, block_tag))
-    return "contract", details
+    try:
+        details.update(type_authority_contract(rpc_url, normalized, block_tag))
+    except Exception:
+        had_error = True
+    return "contract", details, had_error
+
+
+# Canonical-impl bytecode keccak registry; matches short-circuit the 6-probe classifier (empty by default — populate via
+# follow-up or test monkeypatch).
+_KNOWN_BYTECODE_IMPLS: dict[str, tuple[str, dict[str, object]]] = {}
+
+
+def _classify_uncached(rpc_url: str, normalized: str, block_tag: str) -> tuple[str, dict[str, object], bool]:
+    """The classifier. Returns ``(kind, details, had_rpc_error)``; caller must skip caching on had_rpc_error."""
+    if normalized == "0x0000000000000000000000000000000000000000":
+        return "zero", {"address": normalized}, False
+
+    try:
+        code = _get_code(rpc_url, normalized, block_tag)
+    except Exception:
+        return "contract", {"address": normalized}, True
+    if code in {"0x", "0x0"}:
+        return "eoa", {"address": normalized}, False
+
+    # Bytecode-keccak shortcut: skip the 6-probe sequence when bytecode matches a registered canonical impl.
+    if _KNOWN_BYTECODE_IMPLS:
+        try:
+            from utils.rpc import get_code_with_keccak
+
+            _, bytecode_keccak = get_code_with_keccak(rpc_url, normalized)
+        except Exception:
+            bytecode_keccak = None
+        if bytecode_keccak is not None:
+            hit = _KNOWN_BYTECODE_IMPLS.get(bytecode_keccak)
+            if hit is not None:
+                kind, partial = hit
+                details: dict[str, object] = {"address": normalized}
+                details.update(partial)
+                return kind, details, False
+
+    had_error = False
+
+    def _probe(signature: str, abi_type: str) -> object | None:
+        nonlocal had_error
+        result = _try_eth_call_decoded(rpc_url, normalized, signature, abi_type, block_tag)
+        if result is _PROBE_ERROR:
+            had_error = True
+            return None
+        return result
+
+    safe_owners = _probe("getOwners()", "address[]")
+    safe_threshold = _probe("getThreshold()", "uint256")
+    if safe_owners is not None and safe_threshold is not None:
+        return (
+            "safe",
+            {
+                "address": normalized,
+                "owners": [str(item).lower() for item in safe_owners] if isinstance(safe_owners, list) else [],
+                "threshold": _coerce_int(safe_threshold),
+            },
+            had_error,
+        )
+
+    min_delay = _probe("getMinDelay()", "uint256")
+    if min_delay is None:
+        min_delay = _probe("delay()", "uint256")
+    if min_delay is not None:
+        owner = _probe("owner()", "address")
+        details: dict[str, object] = {"address": normalized, "delay": _coerce_int(min_delay)}
+        if owner is not None:
+            details["owner"] = owner
+        return "timelock", details, had_error
+
+    upgrade_interface_version = _probe("UPGRADE_INTERFACE_VERSION()", "string")
+    if upgrade_interface_version is not None:
+        owner = _probe("owner()", "address")
+        details = {
+            "address": normalized,
+            "upgrade_interface_version": str(upgrade_interface_version),
+        }
+        if owner is not None:
+            details["owner"] = owner
+        return "proxy_admin", details, had_error
+
+    details = {"address": normalized}
+    try:
+        details.update(type_authority_contract(rpc_url, normalized, block_tag))
+    except Exception:
+        had_error = True
+    return "contract", details, had_error
 
 
 def _current_block_number(rpc_url: str) -> int:
@@ -174,8 +422,7 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
     for controller in plan["tracked_controllers"]:
         controllers_by_source.setdefault(controller["source"], []).append(controller)
     in_progress: set[str] = set()
-    # Cache classify_resolved_address results to avoid duplicate RPC calls
-    # when multiple controllers resolve to the same address.
+    # Cache classify results so multiple controllers resolving the same address don't re-probe.
     _classification_cache: dict[str, tuple[str, dict[str, object]]] = {}
 
     def _cached_classify(address: str) -> tuple[str, dict[str, object]]:

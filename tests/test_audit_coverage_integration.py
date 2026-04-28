@@ -837,7 +837,7 @@ def test_audit_timeline_404_for_unknown_contract(db_session, api_with_storage):
 # ---------------------------------------------------------------------------
 
 
-def test_unified_watcher_live_upgrade_refreshes_coverage_windows(
+def test_unified_watcher_upgrade_refreshes_coverage_windows(
     db_session, storage_bucket, seed_protocol_with_history, worker, llm_stub_dir
 ):
     """Audit + scope runs → impl_a's current window closes when a NEW

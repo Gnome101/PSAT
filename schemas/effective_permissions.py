@@ -56,6 +56,8 @@ class EffectiveFunctionPermission(TypedDict):
     effect_labels: list[str]
     action_summary: str
     notes: list[str]
+    external_call_guards: NotRequired[list[dict]]
+    sinks: NotRequired[list[dict]]
 
 
 class EffectivePermissions(TypedDict):

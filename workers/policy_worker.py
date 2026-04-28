@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -25,6 +25,263 @@ logger = logging.getLogger("workers.policy_worker")
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
+
+
+def _resolve_target_state_var_address(
+    target_state_var: str,
+    control_snapshot: dict | ControlSnapshot | None,
+) -> str | None:
+    """Look up `target_state_var` in `controller_values` (matched by the
+    `:name` suffix, so either `state_variable:X` or `external_contract:X`
+    hits) and return the lowercased address, or None."""
+    if not target_state_var or not isinstance(control_snapshot, dict):
+        return None
+    suffix = f":{target_state_var}"
+    for key, value in (control_snapshot.get("controller_values") or {}).items():
+        if not key.endswith(suffix):
+            continue
+        address = str(value.get("value") or "").lower() if isinstance(value, dict) else ""
+        if address.startswith("0x") and len(address) == 42:
+            return address
+    return None
+
+
+def _method_to_role_for_address(address: str, control_graph_nodes: list[dict] | None) -> dict[str, list[str]]:
+    """Return the `method -> [role_constant, ...]` map the resolver attached
+    to the graph node for `address`, or {}."""
+    for node in control_graph_nodes or []:
+        if str(node.get("address", "")).lower() != address.lower():
+            continue
+        details = node.get("details") or {}
+        m2r = details.get("method_to_role")
+        if isinstance(m2r, dict):
+            return {k: list(v) for k, v in m2r.items() if isinstance(v, list)}
+    return {}
+
+
+def _node_id_for_address(address: str) -> str:
+    return f"address:{address.lower()}"
+
+
+def _principals_for_role_from_graph(
+    role: str,
+    control_graph_nodes: list[dict] | None,
+    *,
+    authority_address: str | None = None,
+    control_graph_edges: list[dict] | None = None,
+) -> list[dict]:
+    scoped_node_ids: set[str] | None = None
+    if authority_address and control_graph_edges is not None:
+        authority = authority_address.lower()
+        authority_node_ids = {
+            str(node.get("id") or _node_id_for_address(str(node.get("address", ""))))
+            for node in control_graph_nodes or []
+            if str(node.get("address", "")).lower() == authority
+        }
+        authority_node_ids.add(_node_id_for_address(authority))
+        scoped_node_ids = {
+            str(edge.get("to_id") or "")
+            for edge in control_graph_edges
+            if str(edge.get("from_id") or "") in authority_node_ids
+            and str(edge.get("relation") or "") in {"role_principal", "mapping_member"}
+        }
+
+    principals: list[dict] = []
+    for node in control_graph_nodes or []:
+        details = node.get("details") or {}
+        if str(details.get("controller_label", "")) != role:
+            continue
+        address = str(node.get("address", "")).lower()
+        if not (address.startswith("0x") and len(address) == 42):
+            continue
+        node_id = str(node.get("id") or _node_id_for_address(address))
+        if scoped_node_ids is not None and node_id not in scoped_node_ids:
+            continue
+        principals.append(
+            {
+                "address": address,
+                "resolved_type": node.get("resolved_type"),
+                "details": details,
+            }
+        )
+    return principals
+
+
+def _principals_by_controller_label(label: str, control_graph_nodes: list[dict] | None) -> list[dict]:
+    """Return every graph node tagged with `controller_label == label`
+    — the enumerated mapping-allowlist members for `label=<mapping_name>`."""
+    out: list[dict] = []
+    for node in control_graph_nodes or []:
+        details = node.get("details") or {}
+        if str(details.get("controller_label", "")) != label:
+            continue
+        address = str(node.get("address", "")).lower()
+        if not (address.startswith("0x") and len(address) == 42):
+            continue
+        out.append({"address": address, "resolved_type": node.get("resolved_type"), "details": details})
+    return out
+
+
+def _apply_sink_bridge(
+    session: Session,
+    *,
+    effective_function: Any,
+    function_record: dict[str, Any],
+    control_snapshot: dict | ControlSnapshot | None,
+    control_graph_nodes: list[dict] | None,
+) -> int:
+    """Dispatch each `CallerSink` kind to its principal resolver:
+    `caller_equals` via `controller_values`, `caller_in_mapping` via
+    enumerated graph nodes, `caller_signature`/`caller_merkle` as
+    off_chain_witness descriptors. `caller_external_call` stays on the
+    legacy external-call-guard bridge."""
+    sinks = function_record.get("sinks") or []
+    if not sinks:
+        return 0
+    added = 0
+    seen: set[tuple[str, str, str]] = set()
+
+    def _add(address: str, origin: str, principal_type: str, details: dict[str, Any]) -> None:
+        nonlocal added
+        key = (address.lower(), origin, principal_type)
+        if key in seen:
+            return
+        seen.add(key)
+        session.add(
+            FunctionPrincipal(
+                function_id=effective_function.id,
+                address=address.lower(),
+                resolved_type=details.get("resolved_type"),
+                origin=origin,
+                principal_type=principal_type,
+                details=details,
+            )
+        )
+        added += 1
+
+    for sink in sinks:
+        kind = str(sink.get("kind") or "")
+        if kind in {"caller_equals", "caller_in_mapping", "caller_signature", "caller_merkle"} and not sink.get(
+            "revert_on_mismatch"
+        ):
+            continue
+        if kind == "caller_equals":
+            target_var = str(sink.get("target_state_var") or "")
+            if not target_var:
+                continue
+            addr = _resolve_target_state_var_address(target_var, control_snapshot)
+            if not addr:
+                continue
+            _add(
+                addr,
+                f"caller_equals:{target_var}",
+                "caller_equals",
+                {"target_state_var": target_var, "sink_kind": kind},
+            )
+        elif kind == "caller_in_mapping":
+            mapping_name = str(sink.get("mapping_name") or "")
+            if not mapping_name:
+                continue
+            for principal in _principals_by_controller_label(mapping_name, control_graph_nodes):
+                _add(
+                    principal["address"],
+                    f"mapping:{mapping_name}",
+                    "caller_in_mapping",
+                    {
+                        "mapping_name": mapping_name,
+                        "mapping_predicate": sink.get("mapping_predicate"),
+                        "sink_kind": kind,
+                        "resolved_type": principal.get("resolved_type"),
+                        **(principal.get("details") or {}),
+                    },
+                )
+        elif kind in ("caller_signature", "caller_merkle"):
+            source_var = str(
+                sink.get("signature_source_var") or sink.get("merkle_root_var") or sink.get("target_state_var") or ""
+            )
+            if not source_var:
+                continue
+            # FunctionPrincipal.address is NOT NULL — use zero address as a
+            # sentinel; details.source_slot is the real authority pointer.
+            zero = "0x" + "0" * 40
+            witness_kind = "signature" if kind == "caller_signature" else "merkle"
+            _add(
+                zero,
+                f"off_chain_witness:{source_var}",
+                "off_chain_witness",
+                {
+                    "kind": witness_kind,
+                    "source_slot": source_var,
+                    "sink_kind": kind,
+                    "resolved_type": "off_chain_witness",
+                },
+            )
+    return added
+
+
+def _apply_external_call_guard_bridge(
+    session: Session,
+    *,
+    effective_function: Any,
+    function_record: dict[str, Any],
+    control_snapshot: dict | ControlSnapshot | None,
+    control_graph_nodes: list[dict] | None,
+    control_graph_edges: list[dict] | None = None,
+) -> int:
+    """For each `X.method(msg.sender)` guard, resolve X's authority
+    address, map the method (or explicit `role_args`) to a role, and
+    attach every principal holding that role as a FunctionPrincipal row."""
+    guards = function_record.get("external_call_guards") or []
+    if not guards:
+        return 0
+    added = 0
+    seen: set[tuple[str, str, str, str]] = set()
+    for guard in guards:
+        target_var = str(guard.get("target_state_var") or "")
+        method = str(guard.get("method") or "")
+        if not target_var or not method:
+            continue
+        authority_addr = _resolve_target_state_var_address(target_var, control_snapshot)
+        if not authority_addr:
+            continue
+        # Explicit role_args (`hasRole(ROLE, msg.sender)`) win over the
+        # authority's method-name lookup.
+        role_args = [str(r) for r in (guard.get("role_args") or []) if r]
+        if role_args:
+            roles = role_args
+        else:
+            m2r = _method_to_role_for_address(authority_addr, control_graph_nodes)
+            roles = list(m2r.get(method, []))
+        for role in roles:
+            for principal in _principals_for_role_from_graph(
+                role,
+                control_graph_nodes,
+                authority_address=authority_addr,
+                control_graph_edges=control_graph_edges,
+            ):
+                key = (principal["address"], role, method, authority_addr)
+                if key in seen:
+                    continue
+                seen.add(key)
+                session.add(
+                    FunctionPrincipal(
+                        function_id=effective_function.id,
+                        address=principal["address"],
+                        resolved_type=principal.get("resolved_type"),
+                        origin=f"{target_var}.{method}",
+                        principal_type="external_call_guard",
+                        details={
+                            "role": role,
+                            "authority_address": authority_addr,
+                            "guard_method": method,
+                            "target_state_var": target_var,
+                            "guard_pattern": "role_args" if role_args else "method_to_role",
+                            **(principal.get("details") or {}),
+                        },
+                    )
+                )
+                added += 1
+    return added
 
 
 def _root_artifacts(
@@ -90,6 +347,14 @@ class PolicyWorker(BaseWorker):
         resolved_control_graph = get_artifact(session, job.id, "resolved_control_graph")
         semantic_guards = get_artifact(session, job.id, "semantic_guards")
         tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
+        # Optional: classify cache populated by the resolution stage. Lets the
+        # refresh + labeling passes skip 6-10 RPCs per address.
+        classify_cache_raw = get_artifact(session, job.id, "classified_addresses")
+        classify_cache: dict[str, tuple[str, dict[str, object]]] = {}
+        if isinstance(classify_cache_raw, dict):
+            for addr, val in classify_cache_raw.items():
+                if isinstance(val, list) and len(val) == 2:
+                    classify_cache[addr] = (str(val[0]), dict(val[1]) if isinstance(val[1], dict) else {})
 
         if not isinstance(contract_analysis, dict):
             raise RuntimeError("contract_analysis artifact not found")
@@ -208,6 +473,23 @@ class PolicyWorker(BaseWorker):
                                     details=p.get("details"),
                                 )
                             )
+                graph_nodes = resolved_control_graph.get("nodes") if isinstance(resolved_control_graph, dict) else None
+                graph_edges = resolved_control_graph.get("edges") if isinstance(resolved_control_graph, dict) else None
+                _apply_external_call_guard_bridge(
+                    session,
+                    effective_function=ef,
+                    function_record=fn,
+                    control_snapshot=control_snapshot,
+                    control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
+                    control_graph_edges=graph_edges if isinstance(graph_edges, list) else None,
+                )
+                _apply_sink_bridge(
+                    session,
+                    effective_function=ef,
+                    function_record=fn,
+                    control_snapshot=control_snapshot,
+                    control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
+                )
             session.commit()
 
         store_artifact(session, job.id, "effective_permissions", data=ep_data)
@@ -236,6 +518,16 @@ class PolicyWorker(BaseWorker):
             max_depth=RECURSION_MAX_DEPTH,
             workspace_prefix="recursive",
             nested_artifacts_override=nested_artifacts,
+            # Reuse the resolution stage's classification results — every
+            # entry here saves one classify_resolved_address call (6-10 RPCs).
+            classify_cache=classify_cache,
+            # Pre-seed with the resolution stage's graph: every nested
+            # contract was already analyzed in the first walk and has
+            # its effective_permissions baked in. The refresh's only job
+            # is projecting the root's now-computed role principals onto
+            # the existing graph, which the BFS handles by re-walking
+            # ONLY the root and any newly-discovered downstream nodes.
+            initial_graph=cast(Any, resolved_control_graph) if isinstance(resolved_control_graph, dict) else None,
         )
         if refreshed_graph:
             resolved_control_graph = refreshed_graph
@@ -258,6 +550,11 @@ class PolicyWorker(BaseWorker):
                 cast(dict, resolved_control_graph) if isinstance(resolved_control_graph, dict) else None
             ),
             rpc_url=rpc_url,
+            # Same cache the resolution stage populated. Without this, labeling
+            # re-runs classify_resolved_address (6-10 RPCs each) for every
+            # principal — the dominant cost on big protocols (etherfi LP impl
+            # spent 14+ min here on shared-cpu-2x).
+            classify_cache=classify_cache,
         )
 
         # Write to principal_labels table

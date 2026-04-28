@@ -1,0 +1,238 @@
+"""Discover mapping writes that can be replayed from emitted events."""
+
+from __future__ import annotations
+
+from typing import Any, Literal, TypedDict
+
+from .shared import _contract_functions
+
+
+class WriterEventSpec(TypedDict):
+    mapping_name: str
+    event_signature: str
+    event_name: str
+    key_position: int
+    indexed_positions: list[int]
+    direction: Literal["add", "remove"]
+    writer_function: str
+
+
+class _EventMetadata(TypedDict):
+    signature: str
+    arg_types: list[str]
+    indexed_positions: list[int]
+
+
+def _ir_name(ir: Any) -> str:
+    return type(ir).__name__ if ir is not None else ""
+
+
+def _var_name(item: Any) -> str:
+    if item is None:
+        return ""
+    return getattr(item, "name", None) or str(item)
+
+
+def _is_mapping_address_keyed(variable: Any) -> bool:
+    type_str = str(getattr(variable, "type", "") or "")
+    return type_str.startswith("mapping(address =>") or type_str.startswith("mapping(address=>")
+
+
+def _written_mappings(function: Any) -> list[Any]:
+    return [v for v in function.all_state_variables_written() if _is_mapping_address_keyed(v)]
+
+
+def _extract_index_writes(function: Any) -> list[tuple[str, Any, Any]]:
+    triples: list[tuple[str, Any, Any]] = []
+    for node in getattr(function, "nodes", []) or []:
+        index_map: dict[str, tuple[Any, Any]] = {}
+        for ir in getattr(node, "irs", []) or []:
+            kind = _ir_name(ir)
+            if kind == "Index":
+                base = getattr(ir, "variable_left", None)
+                if not _is_mapping_address_keyed(base):
+                    continue
+                key = getattr(ir, "variable_right", None)
+                lvalue_name = _var_name(getattr(ir, "lvalue", None))
+                if lvalue_name:
+                    index_map[lvalue_name] = (base, key)
+            elif kind == "Assignment":
+                lvalue_name = _var_name(getattr(ir, "lvalue", None))
+                if lvalue_name in index_map:
+                    base, key = index_map[lvalue_name]
+                    triples.append((_var_name(base), key, getattr(ir, "rvalue", None)))
+            elif kind == "Delete":
+                operand_name = _var_name(getattr(ir, "lvalue", None))
+                if operand_name in index_map:
+                    base, key = index_map[operand_name]
+                    triples.append((_var_name(base), key, None))
+    return triples
+
+
+def _direction_of_write(value_var: Any) -> Literal["add", "remove"] | None:
+    if value_var is None:
+        return "remove"
+    value = getattr(value_var, "value", None)
+    type_str = str(getattr(value_var, "type", "") or "")
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "add" if value else "remove"
+    try:
+        numeric = int(value, 16) if isinstance(value, str) and str(value).startswith("0x") else int(value)
+        return "add" if numeric != 0 else "remove"
+    except (ValueError, TypeError):
+        pass
+    if type_str == "bool":
+        if str(value).lower() in ("true", "1"):
+            return "add"
+        if str(value).lower() in ("false", "0"):
+            return "remove"
+    return None
+
+
+def _abi_type(type_obj: Any) -> str:
+    if type_obj is None:
+        return "unknown"
+    type_name = type(type_obj).__name__
+    if type_name == "UserDefinedType":
+        underlying = getattr(type_obj, "type", None)
+        if type(underlying).__name__ == "Contract":
+            return "address"
+        if type(underlying).__name__ == "Enum":
+            return "uint8"
+    return str(type_obj)
+
+
+def _event_declarations(contract: Any) -> list[Any]:
+    declarations: list[Any] = []
+    for current in [contract, *list(getattr(contract, "inheritance", []) or [])]:
+        events = list(getattr(current, "events", []) or [])
+        declared = list(getattr(current, "events_declared", []) or [])
+        declarations.extend(events or declared)
+    return declarations
+
+
+def _event_metadata(event: Any) -> _EventMetadata | None:
+    name = getattr(event, "name", "") or ""
+    elems = list(getattr(event, "elems", []) or [])
+    arg_types = [_abi_type(getattr(elem, "type", None)) for elem in elems]
+    signature = getattr(event, "full_name", "") or ""
+    if not signature and name:
+        signature = f"{name}({','.join(arg_types)})"
+    if not signature:
+        return None
+    return {
+        "signature": signature,
+        "arg_types": arg_types,
+        "indexed_positions": [i for i, elem in enumerate(elems) if bool(getattr(elem, "indexed", False))],
+    }
+
+
+def _event_metadata_index(contract: Any) -> dict[str, list[_EventMetadata]]:
+    index: dict[str, list[_EventMetadata]] = {}
+    for event in _event_declarations(contract):
+        metadata = _event_metadata(event)
+        if metadata is None:
+            continue
+        name = getattr(event, "name", "") or metadata["signature"].split("(", 1)[0]
+        for key in {name, metadata["signature"]}:
+            if key:
+                index.setdefault(key, []).append(metadata)
+    return index
+
+
+def _resolve_event_metadata(
+    event_name: str,
+    arguments: list[Any],
+    metadata_index: dict[str, list[_EventMetadata]],
+) -> _EventMetadata | None:
+    candidates = metadata_index.get(event_name, [])
+    if not candidates:
+        return None
+    arg_types = [_abi_type(getattr(arg, "type", None)) for arg in arguments]
+    for candidate in candidates:
+        if candidate["arg_types"] == arg_types:
+            return candidate
+    for candidate in candidates:
+        if len(candidate["arg_types"]) == len(arguments):
+            return candidate
+    return candidates[0]
+
+
+def _extract_event_emissions(
+    function: Any,
+    metadata_index: dict[str, list[_EventMetadata]],
+) -> list[tuple[str, list[Any], list[int]]]:
+    emissions: list[tuple[str, list[Any], list[int]]] = []
+    for node in getattr(function, "nodes", []) or []:
+        for ir in getattr(node, "irs", []) or []:
+            if _ir_name(ir) != "EventCall":
+                continue
+            name = getattr(ir, "name", "") or ""
+            arguments = list(getattr(ir, "arguments", []) or [])
+            if not name:
+                continue
+            metadata = _resolve_event_metadata(name, arguments, metadata_index)
+            if metadata is None:
+                emissions.append((name, arguments, []))
+                continue
+            emissions.append((metadata["signature"], arguments, list(metadata["indexed_positions"])))
+    return emissions
+
+
+def _match_event_to_key(
+    emissions: list[tuple[str, list[Any], list[int]]],
+    key_var: Any,
+) -> tuple[str, int, list[int]] | None:
+    key_name = _var_name(key_var)
+    if not key_name:
+        return None
+    for signature, arguments, indexed_positions in emissions:
+        for i, arg in enumerate(arguments):
+            if _var_name(arg) == key_name:
+                return signature, i, indexed_positions
+    return None
+
+
+def discover_mapping_writer_events(contract: Any) -> list[WriterEventSpec]:
+    specs: list[WriterEventSpec] = []
+    seen: set[tuple[str, str, str]] = set()
+    metadata_index = _event_metadata_index(contract)
+    for function in _contract_functions(contract):
+        if getattr(function, "is_constructor", False):
+            continue
+        written = _written_mappings(function)
+        if not written:
+            continue
+        index_writes = _extract_index_writes(function)
+        if not index_writes:
+            continue
+        emissions = _extract_event_emissions(function, metadata_index)
+        if not emissions:
+            continue
+        for mapping_name, key_var, value_var in index_writes:
+            direction = _direction_of_write(value_var)
+            if direction is None:
+                continue
+            match = _match_event_to_key(emissions, key_var)
+            if match is None:
+                continue
+            event_signature, key_position, indexed_positions = match
+            event_name = event_signature.split("(", 1)[0]
+            key = (mapping_name, event_signature, direction)
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append(
+                {
+                    "mapping_name": mapping_name,
+                    "event_signature": event_signature,
+                    "event_name": event_name,
+                    "key_position": key_position,
+                    "indexed_positions": list(indexed_positions),
+                    "direction": direction,
+                    "writer_function": getattr(function, "full_name", getattr(function, "name", "")),
+                }
+            )
+    return specs

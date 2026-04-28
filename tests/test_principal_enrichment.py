@@ -103,8 +103,8 @@ def test_build_principal_labels_enriches_safe_admin_and_operator(monkeypatch):
     }
 
     monkeypatch.setattr(
-        "services.policy.principal_enrichment.classify_resolved_address",
-        lambda rpc_url, address: ("eoa", {"address": address}),
+        "services.policy.principal_enrichment.classify_resolved_address_with_status",
+        lambda rpc_url, address: ("eoa", {"address": address}, True),
     )
 
     payload = build_principal_labels(
@@ -277,8 +277,8 @@ def test_build_principal_labels_includes_generic_controller_principals(monkeypat
     }
 
     monkeypatch.setattr(
-        "services.policy.principal_enrichment.classify_resolved_address",
-        lambda rpc_url, address: ("eoa", {"address": address}),
+        "services.policy.principal_enrichment.classify_resolved_address_with_status",
+        lambda rpc_url, address: ("eoa", {"address": address}, True),
     )
 
     payload = build_principal_labels(

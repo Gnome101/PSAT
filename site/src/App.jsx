@@ -225,12 +225,6 @@ function SummaryTab({ detail }) {
           </div>
         </div>
       </div>
-      {detail?.analysis_report ? (
-        <div className="card">
-          <h3>Analysis Report</h3>
-          <pre className="pre-wrap">{detail.analysis_report}</pre>
-        </div>
-      ) : null}
     </div>
   );
 }

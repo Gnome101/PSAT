@@ -18,11 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
+from sqlalchemy.orm import selectinload
 
 from db.models import (
     Artifact,
     Contract,
+    ControlGraphEdge,
     ControlGraphNode,
     ControllerValue,
     EffectiveFunction,
@@ -84,6 +86,10 @@ class AnalyzeRequest(BaseModel):
     wait: int | None = Field(default=None, ge=1, le=120)
     analyze_limit: int = Field(default=5, ge=1, le=200)
     rpc_url: str | None = None
+    force: bool = Field(
+        default=False,
+        description="Bench-only: skip the static-cache discovery shortcut so every stage re-runs cold.",
+    )
 
     @model_validator(mode="after")
     def _validate_target(self) -> "AnalyzeRequest":
@@ -374,6 +380,8 @@ def health():
     """Liveness/readiness probe — verifies the database and object storage are reachable."""
     from fastapi.responses import JSONResponse
 
+    from db.models import engine as _engine
+
     body: dict[str, Any] = {"status": "ok", "db": "ok", "storage": "inline"}
     failures: list[str] = []
 
@@ -387,6 +395,18 @@ def health():
         logger.exception("Health check: db unreachable")
         body["db"] = "unavailable"
         failures.append("db")
+
+    # NullPool (used in some test setups) lacks these counters.
+    from sqlalchemy.pool import QueuePool
+
+    if isinstance(_engine.pool, QueuePool):
+        pool = _engine.pool
+        body["pool"] = {
+            "size": pool.size(),
+            "checked_in": pool.checkedin(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+        }
 
     storage_client = get_storage_client()
     if storage_client is not None:
@@ -402,6 +422,13 @@ def health():
         body["status"] = "unavailable"
         return JSONResponse(body, status_code=503)
     return body
+
+
+@app.get("/api/version")
+def version() -> dict[str, str]:
+    """Returns the deployed git SHA. Used by post-deploy smoke checks to confirm
+    the running image matches the commit that triggered the deploy."""
+    return {"sha": os.environ.get("GIT_SHA", "unknown")}
 
 
 @app.get("/api/config")
@@ -436,30 +463,7 @@ def list_jobs() -> list[dict[str, Any]]:
     with SessionLocal() as session:
         stmt = select(Job).order_by(Job.created_at.desc())
         jobs = session.execute(stmt).scalars().all()
-
-        # Batch-fetch contract_flags to tag proxy jobs.
-        # Artifacts may live inline (data) or in object storage (storage_key);
-        # _resolve_artifact_value() handles both transparently.
-        job_ids = [job.id for job in jobs]
-        proxy_ids: set[str] = set()
-        if job_ids:
-            flags_stmt = select(Artifact).where(Artifact.job_id.in_(job_ids), Artifact.name == "contract_flags")
-            for art in session.execute(flags_stmt).scalars():
-                try:
-                    value = _resolve_artifact_value(art)
-                except StorageError:
-                    # Storage object missing or unreachable — skip but don't block the list.
-                    logger.warning("contract_flags storage read failed for job %s", art.job_id)
-                    continue
-                if isinstance(value, dict) and value.get("is_proxy"):
-                    proxy_ids.add(str(art.job_id))
-
-        result = []
-        for job in jobs:
-            d = job.to_dict()
-            d["is_proxy"] = str(job.id) in proxy_ids
-            result.append(d)
-        return result
+        return [job.to_dict() for job in jobs]
 
 
 @app.post("/api/analyze", dependencies=[Depends(require_admin_key)])
@@ -533,6 +537,31 @@ def analyze_remaining(company_name: str) -> dict[str, Any]:
 
 
 @app.delete(
+    "/api/company/{company_name}/queued-jobs",
+    dependencies=[Depends(require_admin_key)],
+)
+def cancel_queued_company_jobs(company_name: str) -> dict[str, Any]:
+    """Cancel queued jobs for a company; leaves processing/completed/failed untouched."""
+    with SessionLocal() as session:
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+        result = session.execute(
+            text(
+                """
+                DELETE FROM jobs
+                WHERE company = :company AND status = 'queued'
+                RETURNING id
+                """
+            ),
+            {"company": company_name},
+        )
+        deleted = [str(row_id) for (row_id,) in result]
+        session.commit()
+    return {"company": company_name, "cancelled": len(deleted), "job_ids": deleted}
+
+
+@app.delete(
     "/api/company/{company_name}/addresses/{address}",
     dependencies=[Depends(require_admin_key)],
 )
@@ -572,6 +601,41 @@ def get_job(job_id: str) -> dict[str, Any]:
         return job.to_dict()
 
 
+@app.get("/api/jobs/{job_id}/stage_timings", dependencies=[Depends(require_admin_key)])
+def get_job_stage_timings(job_id: str) -> dict[str, Any]:
+    """Return all per-stage timing artifacts the worker fleet wrote for
+    this job, keyed by stage name. Schema-v2 layout (one
+    ``stage_timing_<stage>`` artifact per stage). Used by the bench
+    harness to populate ``worker_elapsed_seconds`` reliably without
+    scraping Fly logs.
+
+    Admin-protected because per-job timings expose internal worker_id /
+    runtime metadata.
+    """
+    with SessionLocal() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        # Escape `_` so the legacy `stage_timings` artifact doesn't match this prefix scan.
+        rows = (
+            session.execute(
+                select(Artifact).where(
+                    Artifact.job_id == job.id,
+                    Artifact.name.like(r"stage\_timing\_%", escape="\\"),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        timings: dict[str, Any] = {}
+        for row in rows:
+            stage = row.name[len("stage_timing_") :]
+            value = _resolve_artifact_value(row)
+            if isinstance(value, dict):
+                timings[stage] = value
+        return {"job_id": str(job.id), "stage_timings": timings}
+
+
 @app.get("/api/analyses")
 def analyses() -> list[dict]:
     """List completed analyses with their available artifacts."""
@@ -580,6 +644,10 @@ def analyses() -> list[dict]:
         jobs = session.execute(stmt).scalars().all()
 
         jobs_by_id = {str(job.id): job for job in jobs}
+        jobs_by_address: dict[str, Job] = {}
+        for job in jobs:
+            if job.address:
+                jobs_by_address.setdefault(job.address.lower(), job)
 
         # Rank scores + chains come from the ``contracts`` table, populated
         # by the selection stage (the single authoritative ranking pass
@@ -588,14 +656,39 @@ def analyses() -> list[dict]:
         # rows and shows pre-selection scores.
         rank_scores: dict[str, float] = {}
         chains_by_address: dict[str, str] = {}
-        for row in session.execute(select(Contract.address, Contract.chain, Contract.rank_score)).all():
-            addr_lower = (row.address or "").lower()
-            if not addr_lower:
-                continue
-            if row.rank_score is not None:
-                rank_scores[addr_lower] = float(row.rank_score)
-            if row.chain:
-                chains_by_address[addr_lower] = row.chain
+        addresses_from_jobs = list(jobs_by_address.keys())
+        if addresses_from_jobs:
+            for row in session.execute(
+                select(Contract.address, Contract.chain, Contract.rank_score).where(
+                    Contract.address.in_(addresses_from_jobs)
+                )
+            ).all():
+                addr_lower = (row.address or "").lower()
+                if not addr_lower:
+                    continue
+                if row.rank_score is not None:
+                    rank_scores[addr_lower] = float(row.rank_score)
+                if row.chain:
+                    chains_by_address[addr_lower] = row.chain
+
+        job_ids = [job.id for job in jobs]
+        artifact_names_by_job: dict[Any, list[str]] = {}
+        targeted_artifacts: dict[tuple[Any, str], Artifact] = {}
+        if job_ids:
+            for art in session.execute(select(Artifact).where(Artifact.job_id.in_(job_ids))).scalars():
+                artifact_names_by_job.setdefault(art.job_id, []).append(art.name)
+                if art.name in ("contract_analysis", "contract_flags"):
+                    targeted_artifacts[(art.job_id, art.name)] = art
+
+        def _value(job_id: Any, name: str) -> Any:
+            art = targeted_artifacts.get((job_id, name))
+            if art is None:
+                return None
+            try:
+                return _resolve_artifact_value(art)
+            except StorageError:
+                logger.warning("artifact %s storage read failed for job %s", name, job_id)
+                return None
 
         def company_for_job(job: Job) -> str | None:
             seen: set[str] = set()
@@ -614,8 +707,8 @@ def analyses() -> list[dict]:
         results = []
         for job in jobs:
             run_name = job.name or str(job.id)
-            analysis_artifact = get_artifact(session, job.id, "contract_analysis")
-            flags = get_artifact(session, job.id, "contract_flags")
+            analysis_artifact = _value(job.id, "contract_analysis")
+            flags = _value(job.id, "contract_flags")
             request = job.request if isinstance(job.request, dict) else {}
             parent_job_id = request.get("parent_job_id")
             company = company_for_job(job)
@@ -633,23 +726,17 @@ def analyses() -> list[dict]:
                 "implementation_address": flags.get("implementation") if isinstance(flags, dict) else None,
                 "proxy_address": request.get("proxy_address"),
             }
-            # List available artifact names
-            stmt_artifacts = select(Artifact.name).where(Artifact.job_id == job.id)
-            artifact_names = [row for row in session.execute(stmt_artifacts).scalars().all()]
-            entry["available_artifacts"] = sorted(artifact_names)
+            entry["available_artifacts"] = sorted(artifact_names_by_job.get(job.id, []))
 
-            # For proxy jobs, check if the impl child has completed.
-            # If the impl is still running, hide the proxy — it'll appear
-            # as a merged entry once the impl finishes.
+            # Hide proxy entries until the impl is completed — otherwise the
+            # listing renders a half-populated card that mutates once the impl
+            # lands. jobs_by_address only carries completed jobs.
             if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
-                impl_stmt = (
-                    select(Job).where(Job.address == flags["implementation"]).order_by(Job.updated_at.desc()).limit(1)
-                )
-                impl_job = session.execute(impl_stmt).scalar_one_or_none()
-                if impl_job and impl_job.status != JobStatus.completed:
+                impl_job = jobs_by_address.get(flags["implementation"].lower())
+                if impl_job is None:
                     continue
-                if impl_job and not isinstance(analysis_artifact, dict):
-                    analysis_artifact = get_artifact(session, impl_job.id, "contract_analysis")
+                if not isinstance(analysis_artifact, dict):
+                    analysis_artifact = _value(impl_job.id, "contract_analysis")
 
             if isinstance(analysis_artifact, dict):
                 subject = analysis_artifact.get("subject", {})
@@ -733,13 +820,16 @@ def analysis_detail(run_name: str) -> dict:
         # Load artifacts (for those still stored as artifacts)
         all_artifacts = get_all_artifacts(session, job.id)
 
-        # Load from relational tables — fall back to address lookup when
-        # copy_static_cache has reassigned the Contract row to a newer job.
+        # Fall back to address lookup when copy_static_cache has reassigned
+        # the Contract row to a newer job. Chain-scoped so we don't pick up
+        # the same address on a different chain.
         contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
         if contract_row is None and job.address:
-            contract_row = session.execute(
-                select(Contract).where(Contract.address == job.address.lower()).limit(1)
-            ).scalar_one_or_none()
+            fallback_stmt = select(Contract).where(Contract.address == job.address.lower())
+            job_chain = job.request.get("chain") if isinstance(job.request, dict) else None
+            if job_chain:
+                fallback_stmt = fallback_stmt.where(Contract.chain == job_chain)
+            contract_row = session.execute(fallback_stmt.limit(1)).scalar_one_or_none()
 
         # Walk the job tree — mirrors analyses().
         def _company_for(j: Job) -> str | None:
@@ -778,21 +868,20 @@ def analysis_detail(run_name: str) -> dict:
             if artifact_name in all_artifacts and isinstance(all_artifacts[artifact_name], dict):
                 payload[artifact_name] = all_artifacts[artifact_name]
 
-        # Build effective_permissions from relational tables
         if contract_row:
+            ef_rows = list(
+                session.execute(
+                    select(EffectiveFunction)
+                    .where(EffectiveFunction.contract_id == contract_row.id)
+                    .options(selectinload(EffectiveFunction.principals))
+                ).scalars()
+            )
+
             ef_list = []
-            for ef in (
-                session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == contract_row.id))
-                .scalars()
-                .all()
-            ):
+            for ef in ef_rows:
                 direct_owner = None
                 controller_principals = []
-                for fp in (
-                    session.execute(select(FunctionPrincipal).where(FunctionPrincipal.function_id == ef.id))
-                    .scalars()
-                    .all()
-                ):
+                for fp in ef.principals or []:
                     principal_dict = {
                         "address": fp.address,
                         "resolved_type": fp.resolved_type,
@@ -916,11 +1005,13 @@ def analysis_detail(run_name: str) -> dict:
             proxy_stmt = select(Job).where(Job.address == proxy_address).order_by(Job.updated_at.desc()).limit(1)
             proxy_job = session.execute(proxy_stmt).scalar_one_or_none()
             if proxy_job:
+                proxy_artifacts = get_all_artifacts(session, proxy_job.id)
                 for fallback_name in ("upgrade_history", "dependency_graph_viz", "dependencies"):
-                    if fallback_name not in payload:
-                        fallback = get_artifact(session, proxy_job.id, fallback_name)
-                        if isinstance(fallback, dict):
-                            payload[fallback_name] = fallback
+                    if fallback_name in payload:
+                        continue
+                    fallback = proxy_artifacts.get(fallback_name)
+                    if isinstance(fallback, dict):
+                        payload[fallback_name] = fallback
         payload["proxy_address"] = proxy_address
 
         # For proxy jobs, inherit analysis from the impl child job
@@ -937,7 +1028,6 @@ def analysis_detail(run_name: str) -> dict:
                     "resolved_control_graph",
                     "effective_permissions",
                     "principal_labels",
-                    "analysis_report",
                 ):
                     if fallback_name not in payload:
                         val = impl_artifacts.get(fallback_name)
@@ -949,25 +1039,20 @@ def analysis_detail(run_name: str) -> dict:
                     select(Contract).where(Contract.job_id == impl_job.id).limit(1)
                 ).scalar_one_or_none()
                 if impl_c:
-                    # effective_permissions from impl
                     if "effective_permissions" not in payload:
-                        impl_efs = (
-                            session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == impl_c.id))
-                            .scalars()
-                            .all()
+                        impl_efs = list(
+                            session.execute(
+                                select(EffectiveFunction)
+                                .where(EffectiveFunction.contract_id == impl_c.id)
+                                .options(selectinload(EffectiveFunction.principals))
+                            ).scalars()
                         )
                         if impl_efs:
                             ef_list = []
                             for ef in impl_efs:
                                 direct_owner = None
                                 controller_principals = []
-                                for fp in (
-                                    session.execute(
-                                        select(FunctionPrincipal).where(FunctionPrincipal.function_id == ef.id)
-                                    )
-                                    .scalars()
-                                    .all()
-                                ):
+                                for fp in ef.principals or []:
                                     principal_dict = {
                                         "address": fp.address,
                                         "resolved_type": fp.resolved_type,
@@ -1087,10 +1172,6 @@ def analysis_detail(run_name: str) -> dict:
                 payload["proxy_address"] = payload.get("proxy_address") or job.address
                 payload["implementation_address"] = impl_addr
 
-        # Inline text artifacts
-        if "analysis_report" in all_artifacts:
-            payload["analysis_report"] = all_artifacts["analysis_report"]
-
         # Add subject info from contract_analysis if available
         if isinstance(all_artifacts.get("contract_analysis"), dict):
             subject = all_artifacts["contract_analysis"].get("subject", {})
@@ -1149,6 +1230,111 @@ def company_overview(company_name: str) -> dict:
 
             company_jobs = [j for j in all_completed if j.address and belongs_to_company(j)]
 
+        # Batch-prefetch every per-contract child table here so the loop
+        # below is pure Python dict lookups instead of one SELECT per row
+        # per table.
+        company_job_ids = [j.id for j in company_jobs]
+        contracts_by_job_id: dict[Any, Contract] = {}
+        if company_job_ids:
+            for c in session.execute(
+                select(Contract).where(Contract.job_id.in_(company_job_ids)).options(selectinload(Contract.summary))
+            ).scalars():
+                contracts_by_job_id[c.job_id] = c
+
+        # Address-keyed fallback for jobs whose Contract row was reassigned
+        # by copy_static_cache.
+        unresolved_addrs_by_chain: dict[str | None, set[str]] = {}
+        for j in company_jobs:
+            if contracts_by_job_id.get(j.id) is not None or not j.address:
+                continue
+            req = j.request if isinstance(j.request, dict) else {}
+            unresolved_addrs_by_chain.setdefault(req.get("chain"), set()).add(j.address.lower())
+        contracts_by_addr_chain: dict[tuple[str, str | None], Contract] = {}
+        all_unresolved_addrs = {a for addrs in unresolved_addrs_by_chain.values() for a in addrs}
+        if all_unresolved_addrs:
+            for c in session.execute(
+                select(Contract)
+                .where(Contract.address.in_(list(all_unresolved_addrs)))
+                .options(selectinload(Contract.summary))
+            ).scalars():
+                addr_lc = (c.address or "").lower()
+                for chain_key, addrs in unresolved_addrs_by_chain.items():
+                    if addr_lc in addrs and (chain_key is None or c.chain == chain_key):
+                        contracts_by_addr_chain[(addr_lc, chain_key)] = c
+
+        def _resolve_contract(j: Job) -> Contract | None:
+            cr = contracts_by_job_id.get(j.id)
+            if cr is not None or not j.address:
+                return cr
+            req = j.request if isinstance(j.request, dict) else {}
+            return contracts_by_addr_chain.get((j.address.lower(), req.get("chain")))
+
+        impl_addrs_needed: set[str] = set()
+        for j in company_jobs:
+            cr = _resolve_contract(j)
+            if cr and cr.is_proxy and cr.implementation:
+                impl_addrs_needed.add(cr.implementation.lower())
+        impl_job_by_addr: dict[str, Job] = {}
+        if impl_addrs_needed:
+            impl_jobs_q = session.execute(
+                select(Job).where(
+                    Job.address.in_(list(impl_addrs_needed)),
+                    Job.status == JobStatus.completed,
+                )
+            ).scalars()
+            for ij in impl_jobs_q:
+                key = (ij.address or "").lower()
+                if key and key not in impl_job_by_addr:
+                    impl_job_by_addr[key] = ij
+
+        impl_job_ids_needed = [ij.id for ij in impl_job_by_addr.values()]
+        if impl_job_ids_needed:
+            for c in session.execute(
+                select(Contract).where(Contract.job_id.in_(impl_job_ids_needed)).options(selectinload(Contract.summary))
+            ).scalars():
+                contracts_by_job_id[c.job_id] = c
+
+        relevant_contract_ids: set[int] = {c.id for c in contracts_by_job_id.values() if c is not None} | {
+            c.id for c in contracts_by_addr_chain.values() if c is not None
+        }
+
+        controller_values_by_cid: dict[int, list[ControllerValue]] = {}
+        ef_rows_by_cid: dict[int, list[EffectiveFunction]] = {}
+        upgrade_events_count_by_cid: dict[int, int] = {}
+        balances_by_cid: dict[int, list[Any]] = {}
+        cgn_by_cid: dict[int, list[ControlGraphNode]] = {}
+        cge_by_cid: dict[int, list[ControlGraphEdge]] = {}
+        from db.models import ContractBalance as _CB
+
+        if relevant_contract_ids:
+            id_list = list(relevant_contract_ids)
+            for cv in session.execute(
+                select(ControllerValue).where(ControllerValue.contract_id.in_(id_list))
+            ).scalars():
+                controller_values_by_cid.setdefault(cv.contract_id, []).append(cv)
+            for ef in session.execute(
+                select(EffectiveFunction)
+                .where(EffectiveFunction.contract_id.in_(id_list))
+                .options(selectinload(EffectiveFunction.principals))
+            ).scalars():
+                ef_rows_by_cid.setdefault(ef.contract_id, []).append(ef)
+            for cid, count in session.execute(
+                select(UpgradeEvent.contract_id, func.count(UpgradeEvent.id))
+                .where(UpgradeEvent.contract_id.in_(id_list))
+                .group_by(UpgradeEvent.contract_id)
+            ).all():
+                upgrade_events_count_by_cid[cid] = count
+            for b in session.execute(select(_CB).where(_CB.contract_id.in_(id_list))).scalars():
+                balances_by_cid.setdefault(b.contract_id, []).append(b)
+            for n in session.execute(
+                select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))
+            ).scalars():
+                cgn_by_cid.setdefault(n.contract_id, []).append(n)
+            for e in session.execute(
+                select(ControlGraphEdge).where(ControlGraphEdge.contract_id.in_(id_list))
+            ).scalars():
+                cge_by_cid.setdefault(e.contract_id, []).append(e)
+
         # Build contract entries from relational tables
         contracts = []
         owner_groups: dict[str, list[dict]] = {}
@@ -1161,104 +1347,50 @@ def company_overview(company_name: str) -> dict:
 
             # Read from contracts table — fall back to address lookup when
             # copy_static_cache has reassigned the Contract row to a newer job.
-            contract_row = session.execute(
-                select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
-            if contract_row is None and job.address:
-                chain = request.get("chain")
-                addr_stmt = select(Contract).where(
-                    Contract.address == job.address.lower(),
-                )
-                if chain:
-                    addr_stmt = addr_stmt.where(Contract.chain == chain)
-                contract_row = session.execute(addr_stmt.limit(1)).scalar_one_or_none()
+            contract_row = _resolve_contract(job)
 
             is_proxy = contract_row.is_proxy if contract_row else False
             proxy_type = contract_row.proxy_type if contract_row else None
             impl_addr = contract_row.implementation if contract_row else None
 
-            # For proxies, find impl job
-            impl_job = None
-            impl_job_id = None
-            if impl_addr:
-                impl_job = session.execute(
-                    select(Job).where(Job.address == impl_addr, Job.status == JobStatus.completed).limit(1)
-                ).scalar_one_or_none()
-                if impl_job:
-                    impl_job_id = str(impl_job.id)
+            impl_job = impl_job_by_addr.get(impl_addr.lower()) if impl_addr else None
+            impl_job_id = str(impl_job.id) if impl_job else None
+            impl_contract = contracts_by_job_id.get(impl_job.id) if impl_job else None
 
             # Read summary from contract_summaries table (prefer impl's summary for proxies)
-            summary_row = None
-            if impl_job:
-                impl_contract = session.execute(
-                    select(Contract).where(Contract.job_id == impl_job.id).limit(1)
-                ).scalar_one_or_none()
-                if impl_contract:
-                    summary_row = impl_contract.summary
+            summary_row = impl_contract.summary if impl_contract else None
             if not summary_row and contract_row:
                 summary_row = contract_row.summary
 
-            # Read controller values
+            # Prefer the impl's controller snapshot for proxies if it has any.
             lookup_contract = contract_row
-            if is_proxy and impl_job:
-                impl_c = session.execute(
-                    select(Contract).where(Contract.job_id == impl_job.id).limit(1)
-                ).scalar_one_or_none()
-                if (
-                    impl_c
-                    and session.execute(
-                        select(ControllerValue).where(ControllerValue.contract_id == impl_c.id).limit(1)
-                    ).scalar_one_or_none()
-                ):
-                    lookup_contract = impl_c
+            if is_proxy and impl_contract and controller_values_by_cid.get(impl_contract.id):
+                lookup_contract = impl_contract
 
             owner = None
             controllers = {}
             if lookup_contract:
-                for cv in (
-                    session.execute(select(ControllerValue).where(ControllerValue.contract_id == lookup_contract.id))
-                    .scalars()
-                    .all()
-                ):
+                for cv in controller_values_by_cid.get(lookup_contract.id, []):
                     controllers[cv.controller_id] = cv.value
                     if "owner" in cv.controller_id.lower() and cv.value and cv.value.startswith("0x"):
                         owner = cv.value.lower()
 
-            # Get upgrade count
-            upgrade_count = None
-            if contract_row:
-                ue_count = (
-                    session.execute(select(UpgradeEvent).where(UpgradeEvent.contract_id == contract_row.id))
-                    .scalars()
-                    .all()
-                )
-                if ue_count:
-                    upgrade_count = len(ue_count)
+            upgrade_count = (upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None) or None
 
-            # Read effect labels from effective_functions table
-            ef_contract_id = None
-            if impl_job:
-                impl_c = session.execute(
-                    select(Contract).where(Contract.job_id == impl_job.id).limit(1)
-                ).scalar_one_or_none()
-                if impl_c:
-                    ef_contract_id = impl_c.id
-            if not ef_contract_id and contract_row:
-                ef_contract_id = contract_row.id
+            # Prefer impl for effect labels when available.
+            ef_contract_id = (impl_contract.id if impl_contract else None) or (
+                contract_row.id if contract_row else None
+            )
 
             value_effects: list[str] = []
             all_effects: set[str] = set()
-            if ef_contract_id:
-                for ef in (
-                    session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == ef_contract_id))
-                    .scalars()
-                    .all()
-                ):
-                    for label in ef.effect_labels or []:
-                        all_effects.add(label)
-                        if label in ("asset_pull", "asset_send", "mint", "burn"):
-                            if label not in value_effects:
-                                value_effects.append(label)
+            ef_rows_for_contract = ef_rows_by_cid.get(ef_contract_id, []) if ef_contract_id else []
+            for ef in ef_rows_for_contract:
+                for label in ef.effect_labels or []:
+                    all_effects.add(label)
+                    if label in ("asset_pull", "asset_send", "mint", "burn"):
+                        if label not in value_effects:
+                            value_effects.append(label)
 
             # Build capabilities
             capabilities: list[str] = []
@@ -1284,11 +1416,8 @@ def company_overview(company_name: str) -> dict:
             # For proxies, use the impl contract's name instead of the proxy name
             contract_name = None
             if is_proxy and impl_job:
-                impl_c = session.execute(
-                    select(Contract).where(Contract.job_id == impl_job.id).limit(1)
-                ).scalar_one_or_none()
-                if impl_c and impl_c.contract_name:
-                    contract_name = impl_c.contract_name
+                if impl_contract and impl_contract.contract_name:
+                    contract_name = impl_contract.contract_name
                 elif impl_job.name:
                     contract_name = impl_job.name
             if not contract_name:
@@ -1314,33 +1443,15 @@ def company_overview(company_name: str) -> dict:
             else:
                 role = "utility"
 
-            # Build functions list from effective_functions table
             functions_list = []
-            if ef_contract_id:
-                for ef in (
-                    session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == ef_contract_id))
-                    .scalars()
-                    .all()
-                ):
-                    function_principals = (
-                        session.execute(select(FunctionPrincipal).where(FunctionPrincipal.function_id == ef.id))
-                        .scalars()
-                        .all()
-                    )
-                    functions_list.append(_build_company_function_entry(ef, list(function_principals)))
-
-            # Fetch balances
-            from db.models import ContractBalance
+            for ef in ef_rows_for_contract:
+                functions_list.append(_build_company_function_entry(ef, ef.principals or []))
 
             balance_contract = lookup_contract or contract_row
             balances_list = []
             total_usd = 0.0
             if balance_contract:
-                for b in (
-                    session.execute(select(ContractBalance).where(ContractBalance.contract_id == balance_contract.id))
-                    .scalars()
-                    .all()
-                ):
+                for b in balances_by_cid.get(balance_contract.id, []):
                     usd = float(b.usd_value) if b.usd_value is not None else None
                     balances_list.append(
                         {
@@ -1383,14 +1494,10 @@ def company_overview(company_name: str) -> dict:
                 "total_usd": round(total_usd, 2) if total_usd > 0 else None,
             }
 
-            # Add control graph for principal resolution
             graph_contract = lookup_contract or contract_row
             if graph_contract:
-                from db.models import ControlGraphEdge as CGE2
-                from db.models import ControlGraphNode as CGN2
-
-                cg_nodes = session.execute(select(CGN2).where(CGN2.contract_id == graph_contract.id)).scalars().all()
-                cg_edges = session.execute(select(CGE2).where(CGE2.contract_id == graph_contract.id)).scalars().all()
+                cg_nodes = cgn_by_cid.get(graph_contract.id, [])
+                cg_edges = cge_by_cid.get(graph_contract.id, [])
                 entry["control_graph"] = {
                     "nodes": [
                         {
@@ -1478,6 +1585,19 @@ def company_overview(company_name: str) -> dict:
                 }
             )
 
+        def _lookup_contract_for(entry: dict[str, Any]) -> Contract | None:
+            lookup_job_id = entry.get("impl_job_id") or entry["job_id"]
+            try:
+                key_id = uuid.UUID(lookup_job_id) if isinstance(lookup_job_id, str) else lookup_job_id
+            except (TypeError, ValueError):
+                key_id = lookup_job_id
+            return contracts_by_job_id.get(key_id)
+
+        lookup_contract_by_entry: dict[str, Contract | None] = {}
+        for entry in contracts:
+            if entry.get("address"):
+                lookup_contract_by_entry[entry["address"].lower()] = _lookup_contract_for(entry)
+
         for c in contracts:
             if not c["address"]:
                 continue
@@ -1499,17 +1619,10 @@ def company_overview(company_name: str) -> dict:
                     if val_lower in contract_addrs and val_lower != (c.get("owner") or ""):
                         add_flow(val_lower, target, "controller")
 
-            # Resolved control graph: find company contracts that are principals of this one
-            lookup_job_id = c.get("impl_job_id") or c["job_id"]
-            lookup_c = session.execute(
-                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
-            ).scalar_one_or_none()
+            # Find company contracts that are principals of this one.
+            lookup_c = lookup_contract_by_entry.get(target)
             if lookup_c:
-                for cgn in (
-                    session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == lookup_c.id))
-                    .scalars()
-                    .all()
-                ):
+                for cgn in cgn_by_cid.get(lookup_c.id, []):
                     node_addr = (cgn.address or "").lower()
                     if node_addr and node_addr in contract_addrs and node_addr != target:
                         add_flow(node_addr, target, "principal")
@@ -1519,7 +1632,6 @@ def company_overview(company_name: str) -> dict:
         # Collect non-contract principals from control graph.
         # Only show direct controllers (Safes, timelocks, EOAs that control contracts).
         # Safe owners are nested inside their Safe, not shown as standalone nodes.
-        from db.models import ControlGraphEdge
 
         principal_map: dict[str, dict[str, Any]] = {}
         # First pass: find all safe_owner edges to build Safe→owners mapping
@@ -1529,22 +1641,12 @@ def company_overview(company_name: str) -> dict:
         for c in contracts:
             if not c["address"]:
                 continue
-            lookup_job_id = c.get("impl_job_id") or c["job_id"]
-            lookup_c = session.execute(
-                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
-            ).scalar_one_or_none()
+            lookup_c = lookup_contract_by_entry.get(c["address"].lower())
             if not lookup_c:
                 continue
-            for edge in (
-                session.execute(
-                    select(ControlGraphEdge).where(
-                        ControlGraphEdge.contract_id == lookup_c.id,
-                        ControlGraphEdge.relation == "safe_owner",
-                    )
-                )
-                .scalars()
-                .all()
-            ):
+            for edge in cge_by_cid.get(lookup_c.id, []):
+                if edge.relation != "safe_owner":
+                    continue
                 safe_addr = edge.from_node_id.replace("address:", "").lower()
                 owner_addr = edge.to_node_id.replace("address:", "").lower()
                 safe_owners_map.setdefault(safe_addr, [])
@@ -1557,18 +1659,11 @@ def company_overview(company_name: str) -> dict:
             if not c["address"]:
                 continue
             target = c["address"].lower()
-            lookup_job_id = c.get("impl_job_id") or c["job_id"]
-            lookup_c = session.execute(
-                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
-            ).scalar_one_or_none()
+            lookup_c = lookup_contract_by_entry.get(target)
             if not lookup_c:
                 continue
 
-            for cgn in (
-                session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id == lookup_c.id))
-                .scalars()
-                .all()
-            ):
+            for cgn in cgn_by_cid.get(lookup_c.id, []):
                 node_addr = (cgn.address or "").lower()
                 if not node_addr or node_addr in contract_addrs:
                     continue
@@ -1592,16 +1687,9 @@ def company_overview(company_name: str) -> dict:
                     details: dict[str, Any] = {}
                     if isinstance(cgn.details, dict):
                         details.update(cgn.details)
-                    for cv in (
-                        session.execute(
-                            select(ControllerValue).where(
-                                ControllerValue.contract_id == lookup_c.id,
-                                ControllerValue.value == node_addr,
-                            )
-                        )
-                        .scalars()
-                        .all()
-                    ):
+                    for cv in controller_values_by_cid.get(lookup_c.id, []):
+                        if (cv.value or "").lower() != node_addr:
+                            continue
                         if cv.details and isinstance(cv.details, dict):
                             # Don't let consumer-side details overwrite the
                             # safe's own threshold / owners — only fill in
@@ -1642,21 +1730,11 @@ def company_overview(company_name: str) -> dict:
             if not c["address"]:
                 continue
             target = c["address"].lower()
-            lookup_job_id = c.get("impl_job_id") or c["job_id"]
-            lookup_c = session.execute(
-                select(Contract).where(Contract.job_id == lookup_job_id).limit(1)
-            ).scalar_one_or_none()
+            lookup_c = lookup_contract_by_entry.get(target)
             if not lookup_c:
                 continue
-            for fp in (
-                session.execute(
-                    select(FunctionPrincipal)
-                    .join(EffectiveFunction, FunctionPrincipal.function_id == EffectiveFunction.id)
-                    .where(EffectiveFunction.contract_id == lookup_c.id)
-                )
-                .scalars()
-                .all()
-            ):
+            fp_iter = (fp for ef in ef_rows_by_cid.get(lookup_c.id, []) for fp in (ef.principals or []))
+            for fp in fp_iter:
                 pa = (fp.address or "").lower()
                 if not pa or pa == target:
                     continue
@@ -1698,12 +1776,13 @@ def company_overview(company_name: str) -> dict:
                 session.execute(select(Contract).where(Contract.protocol_id == protocol_row.id)).scalars().all()
             )
         else:
-            # Fallback: collect from company_jobs
-            all_contract_rows = []
-            for j in company_jobs:
-                cr = session.execute(select(Contract).where(Contract.job_id == j.id).limit(1)).scalar_one_or_none()
-                if cr:
-                    all_contract_rows.append(cr)
+            fallback_job_ids = [j.id for j in company_jobs]
+            if fallback_job_ids:
+                all_contract_rows = list(
+                    session.execute(select(Contract).where(Contract.job_id.in_(fallback_job_ids))).scalars()
+                )
+            else:
+                all_contract_rows = []
 
         # Prefetch impl-name lookup so proxy rows can expose the implementation
         # contract name alongside their own generic "UUPSProxy"/"ERC1967Proxy"
@@ -1713,6 +1792,14 @@ def company_overview(company_name: str) -> dict:
         impl_name_by_addr = {
             (c.address or "").lower(): c.contract_name for c in all_contract_rows if c.address and c.contract_name
         }
+        job_ids = {cr.job_id for cr in all_contract_rows if cr.job_id is not None}
+        completed_job_ids: set = set()
+        if job_ids:
+            completed_job_ids = set(
+                session.execute(select(Job.id).where(Job.id.in_(job_ids), Job.status == JobStatus.completed))
+                .scalars()
+                .all()
+            )
         all_addresses = sorted(
             [
                 {
@@ -1720,7 +1807,7 @@ def company_overview(company_name: str) -> dict:
                     "name": cr.contract_name,
                     "source_verified": cr.source_verified,
                     "is_proxy": cr.is_proxy,
-                    "analyzed": cr.job_id is not None,
+                    "analyzed": cr.job_id is not None and cr.job_id in completed_job_ids,
                     "discovery_sources": list(cr.discovery_sources or []),
                     "discovery_url": cr.discovery_url,
                     "chain": cr.chain,
@@ -2521,15 +2608,9 @@ def contract_audit_timeline(contract_id: int) -> dict[str, Any]:
                 # Current impl isn't in inventory. We can't tell.
                 return "unaudited_since_upgrade" if cov_rows else "never_audited"
 
-            current_cov = (
-                session.execute(
-                    select(AuditContractCoverage).where(
-                        AuditContractCoverage.contract_id == impl_contract.id,
-                    )
-                )
-                .scalars()
-                .all()
-            )
+            # impl_contract.id is always in scope_contract_ids by the time we
+            # get here, so cov_rows already covers it.
+            current_cov = [r for r in cov_rows if r.contract_id == impl_contract.id]
             # 'audited' requires definitive coverage of the currently-open
             # impl window. Two paths:
             #   (a) any row on this impl has a cryptographic proof

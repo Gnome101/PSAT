@@ -14,11 +14,24 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+def _fake_artifact(job_id, name: str, data):
+    """Inline ``Artifact`` row stand-in for the /api/analyses batched select."""
+    return SimpleNamespace(
+        job_id=job_id,
+        name=name,
+        storage_key=None,
+        data=data,
+        text_data=None,
+        content_type=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +222,8 @@ def test_analyze_address_creates_job(mock_create_job, mock_session_cls):
 # ---------------------------------------------------------------------------
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_list_proxy_flagging(mock_session_cls, mock_get_artifact):
+def test_analyses_list_proxy_flagging(mock_session_cls):
     """A completed proxy job + its impl job should merge into one entry
     that carries the is_proxy, proxy_type, and implementation_address
     fields from the contract_flags artifact.
@@ -245,61 +257,50 @@ def test_analyses_list_proxy_flagging(mock_session_cls, mock_get_artifact):
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
-    # Make impl_job.status match the real JobStatus.completed enum so the
-    # analyses endpoint's impl-completion check passes.
     from db.models import JobStatus
 
     impl_job.status = JobStatus.completed
+    proxy_job.status = JobStatus.completed
 
-    # The analyses() endpoint calls session.execute() multiple times:
-    #   1. select(Job).where(status==completed) → returns jobs
-    #   2. select(Artifact.name).where(job_id==X) → per-job artifact names
-    #   3. select(Job).where(address==impl) → impl job lookup (for proxy entries)
-    #   4+ more artifact name queries
-    call_count = 0
+    # /api/analyses query order:
+    #   1. select(Job)         → jobs list
+    #   2. select(Contract...) → rank_score / chain (returns .all())
+    #   3. select(Artifact)    → batched artifact rows (.scalars())
+    artifacts = [
+        _fake_artifact(
+            proxy_job.id,
+            "contract_flags",
+            {"is_proxy": True, "proxy_type": "ERC1967", "implementation": impl_addr},
+        ),
+        _fake_artifact(
+            proxy_job.id,
+            "contract_analysis",
+            {"subject": {"name": "ProxyContract"}, "summary": {"control_model": "proxy"}},
+        ),
+        _fake_artifact(
+            impl_job.id,
+            "contract_analysis",
+            {"subject": {"name": "VaultImpl"}, "summary": {"control_model": "authority"}},
+        ),
+    ]
+
+    call_count = {"n": 0}
 
     def route_execute(stmt, *args, **kwargs):
-        nonlocal call_count
-        call_count += 1
+        call_count["n"] += 1
         result = MagicMock()
-        if call_count == 1:
+        if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
-            return result
-        # Impl job lookup — returns scalar_one_or_none
-        if hasattr(result, "scalar_one_or_none") and call_count <= 5:
-            result.scalar_one_or_none.return_value = impl_job
-        result.scalars.return_value.all.return_value = [
-            "contract_flags",
-            "contract_analysis",
-        ]
+        elif call_count["n"] == 2:
+            result.all.return_value = []
+        elif call_count["n"] == 3:
+            result.scalars.return_value = iter(artifacts)
+        else:
+            result.scalars.return_value.all.return_value = []
+            result.scalar_one_or_none.return_value = None
         return result
 
     mock_session.execute.side_effect = route_execute
-
-    def fake_get_artifact(session, jid, name):
-        if str(jid) == str(proxy_job_id) and name == "contract_flags":
-            return {
-                "is_proxy": True,
-                "proxy_type": "ERC1967",
-                "implementation": impl_addr,
-            }
-        if str(jid) == str(proxy_job_id) and name == "contract_analysis":
-            return {
-                "subject": {"name": "ProxyContract"},
-                "summary": {"control_model": "proxy"},
-            }
-        if str(jid) == str(impl_job_id) and name == "contract_analysis":
-            return {
-                "subject": {"name": "VaultImpl"},
-                "summary": {"control_model": "authority"},
-            }
-        if name == "contract_inventory":
-            return None
-        if name == "contract_flags":
-            return None
-        return None
-
-    mock_get_artifact.side_effect = fake_get_artifact
 
     response = client.get("/api/analyses")
 
@@ -317,9 +318,8 @@ def test_analyses_list_proxy_flagging(mock_session_cls, mock_get_artifact):
     assert merged["display_name"] == "VaultImpl"
 
 
-@patch("api.get_artifact")
 @patch("api.SessionLocal")
-def test_analyses_list_non_proxy_has_is_proxy_false(mock_session_cls, mock_get_artifact):
+def test_analyses_list_non_proxy_has_is_proxy_false(mock_session_cls):
     """A completed job without contract_flags or with is_proxy=False should
     appear with is_proxy=False."""
     client = _make_client()
@@ -334,33 +334,34 @@ def test_analyses_list_non_proxy_has_is_proxy_false(mock_session_cls, mock_get_a
         request={"address": "0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"},
     )
 
+    from db.models import JobStatus
+
+    fake_job.status = JobStatus.completed
+
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
-    mock_exec_jobs = MagicMock()
-    mock_exec_jobs.scalars.return_value.all.return_value = [fake_job]
+    artifacts = [
+        _fake_artifact(fake_job.id, "contract_analysis", {"subject": {"name": "Regular"}, "summary": {}}),
+    ]
 
-    mock_exec_artifacts = MagicMock()
-    mock_exec_artifacts.scalars.return_value.all.return_value = ["contract_analysis"]
+    call_count = {"n": 0}
 
     def route_execute(stmt, *args, **kwargs):
-        stmt_str = str(stmt)
-        if "artifacts" in stmt_str.lower():
-            return mock_exec_artifacts
-        return mock_exec_jobs
+        call_count["n"] += 1
+        result = MagicMock()
+        if call_count["n"] == 1:
+            result.scalars.return_value.all.return_value = [fake_job]
+        elif call_count["n"] == 2:
+            result.all.return_value = []
+        elif call_count["n"] == 3:
+            result.scalars.return_value = iter(artifacts)
+        else:
+            result.scalars.return_value.all.return_value = []
+            result.scalar_one_or_none.return_value = None
+        return result
 
     mock_session.execute.side_effect = route_execute
-
-    def fake_get_artifact(session, jid, name):
-        if name == "contract_flags":
-            return None  # No flags artifact
-        if name == "contract_analysis":
-            return {"subject": {"name": "Regular"}, "summary": {}}
-        if name == "contract_inventory":
-            return None
-        return None
-
-    mock_get_artifact.side_effect = fake_get_artifact
 
     response = client.get("/api/analyses")
 
@@ -430,8 +431,7 @@ def test_analysis_detail_falls_back_to_proxy_artifacts(mock_session_cls, mock_ge
 
     mock_session.execute.side_effect = route_execute
 
-    # Impl job's artifacts: has contract_analysis but NOT dependency_graph_viz
-    mock_get_all_artifacts.return_value = {
+    impl_artifacts = {
         "contract_analysis": {
             "subject": {"name": "ImplContract"},
             "summary": {"control_model": "ownable"},
@@ -445,17 +445,21 @@ def test_analysis_detail_falls_back_to_proxy_artifacts(mock_session_cls, mock_ge
     proxy_dependencies = {
         "dependencies": ["0x4444444444444444444444444444444444444444"],
     }
+    proxy_artifacts = {
+        "dependency_graph_viz": proxy_dep_graph,
+        "dependencies": proxy_dependencies,
+    }
 
-    # get_artifact is called for proxy job's fallback artifacts
-    def fake_get_artifact(session, jid, name):
+    # get_all_artifacts is called once per job — return impl's artifacts for
+    # the impl job's job.id and proxy's artifacts for the proxy job's job.id
+    # (matches the batched proxy-fallback in analysis_detail).
+    def fake_get_all_artifacts(session, jid):
         if str(jid) == str(proxy_job_id):
-            if name == "dependency_graph_viz":
-                return proxy_dep_graph
-            if name == "dependencies":
-                return proxy_dependencies
-        return None
+            return proxy_artifacts
+        return impl_artifacts
 
-    mock_get_artifact.side_effect = fake_get_artifact
+    mock_get_all_artifacts.side_effect = fake_get_all_artifacts
+    mock_get_artifact.side_effect = lambda *a, **kw: None
 
     response = client.get("/api/analyses/impl_contract")
 
@@ -687,7 +691,6 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
         "principal_labels": {"principals": []},
         "resolved_control_graph": {"nodes": [], "edges": []},
         "control_snapshot": {"controller_values": {}},
-        "analysis_report": "Some report text",
     }
 
     def fake_get_artifact(session, jid, name):
@@ -723,7 +726,6 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
     assert body["effective_permissions"]["functions"][0]["function"] == "pause()"
     assert "principal_labels" in body
     assert "resolved_control_graph" in body
-    assert body["analysis_report"] == "Some report text"
     assert body["contract_name"] == "VaultImpl"
     assert body["implementation_address"] == impl_addr
 
@@ -999,3 +1001,59 @@ def test_company_audits_empty(mock_session_cls):
     body = response.json()
     assert body["audit_count"] == 0
     assert body["audits"] == []
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/company/{name}/queued-jobs — test-isolation teardown for
+# analyze-remaining flood
+# ---------------------------------------------------------------------------
+
+
+@patch("api.SessionLocal")
+def test_cancel_queued_company_jobs_unknown_company_404(mock_session_cls):
+    """404 when the company has never been registered as a Protocol."""
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+    mock_session.execute.return_value.scalar_one_or_none.return_value = None
+
+    response = client.delete("/api/company/psat-unknown-xyz/queued-jobs")
+    assert response.status_code == 404
+    # Pure lookup: no DELETE should have run.
+    assert mock_session.commit.call_count == 0
+
+
+@patch("api.SessionLocal")
+def test_cancel_queued_company_jobs_returns_deleted_ids(mock_session_cls):
+    """DELETE returns the list of cancelled job UUIDs + a count."""
+    client = _make_client()
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    protocol = MagicMock()
+    protocol.id = 7
+
+    fake_ids = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+
+    call_count = {"n": 0}
+
+    def route_execute(stmt, *args, **kwargs):
+        call_count["n"] += 1
+        result = MagicMock()
+        if call_count["n"] == 1:
+            # First call: SELECT Protocol
+            result.scalar_one_or_none.return_value = protocol
+        else:
+            # Second call: DELETE ... RETURNING id — iterator yields single-col rows
+            result.__iter__ = lambda self: iter((i,) for i in fake_ids)
+        return result
+
+    mock_session.execute.side_effect = route_execute
+
+    response = client.delete("/api/company/etherfi/queued-jobs")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["company"] == "etherfi"
+    assert body["cancelled"] == 3
+    assert set(body["job_ids"]) == {str(i) for i in fake_ids}
+    mock_session.commit.assert_called_once()

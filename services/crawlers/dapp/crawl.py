@@ -1,13 +1,10 @@
-"""
-Callable entry point for DApp crawling.
-
-Importable function used by ``workers.dapp_crawl_worker``.
-"""
+"""Callable entry point for DApp crawling; used by workers.dapp_crawl_worker."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from dataclasses import asdict
 from typing import Callable
 
@@ -18,6 +15,10 @@ from services.crawlers.dapp.wallet import HoneypotWallet
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[str], None]
+
+# Hard cap: a hung wallet-connect flow used to wedge the worker past the stale-job sweep
+# because the blocked asyncio.run never released playwright. Timeout lets us fail cleanly.
+_DAPP_CRAWL_TIMEOUT_SECONDS = int(os.environ.get("PSAT_DAPP_CRAWL_TIMEOUT", "300"))
 
 
 async def _crawl_async(
@@ -54,26 +55,30 @@ def crawl_dapp(
     wait: int = 10,
     progress: ProgressCallback | None = None,
 ) -> dict:
-    """Crawl DApp URLs and return discovered contract addresses.
+    """Crawl DApp URLs and return discovered contract addresses."""
 
-    This is the main entry point for the PSAT worker. Runs the async
-    crawler synchronously and returns results as a dict.
-
-    Returns:
-        {
-            "addresses": ["0x...", ...],
-            "interactions": [...],
-            "session_start": "...",
-        }
-    """
-    interaction_log = asyncio.run(
-        _crawl_async(
-            urls,
-            chain_id=chain_id,
-            wait=wait,
-            progress=progress,
+    async def _bounded() -> InteractionLog:
+        return await asyncio.wait_for(
+            _crawl_async(
+                urls,
+                chain_id=chain_id,
+                wait=wait,
+                progress=progress,
+            ),
+            timeout=_DAPP_CRAWL_TIMEOUT_SECONDS,
         )
-    )
+
+    try:
+        interaction_log = asyncio.run(_bounded())
+    except asyncio.TimeoutError as exc:
+        logger.error(
+            "DApp crawl exceeded %ds limit — aborting so the worker can mark the job failed",
+            _DAPP_CRAWL_TIMEOUT_SECONDS,
+        )
+        raise RuntimeError(
+            f"DApp crawl exceeded {_DAPP_CRAWL_TIMEOUT_SECONDS}s — likely a hung wallet-connect "
+            f"or stalled page load on {urls!r}"
+        ) from exc
 
     addresses = interaction_log.get_contract_addresses()
     logger.info("Discovered %d unique contract addresses", len(addresses))

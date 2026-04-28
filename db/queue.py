@@ -7,6 +7,7 @@ import os
 from typing import Any
 
 from sqlalchemy import func, select, text
+from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -299,6 +300,15 @@ def _artifact_row_to_value(artifact: Artifact) -> dict | list | str | None:
     return artifact.text_data
 
 
+def _mirror_contract_flags_to_job(session: Session, job_id: Any, name: str, data: Any) -> None:
+    """Mirror ``contract_flags.is_proxy`` onto ``Job.is_proxy`` so /api/jobs
+    can answer the proxy-flag question without resolving the artifact body."""
+    if name != "contract_flags" or not isinstance(data, dict):
+        return
+    is_proxy = data.get("is_proxy") is True
+    session.execute(sa_update(Job).where(Job.id == job_id).values(is_proxy=is_proxy))
+
+
 def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, text_data: str | None = None) -> None:
     """Upsert an artifact for a job (unique on job_id + name).
 
@@ -341,6 +351,7 @@ def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, t
         )
         try:
             session.execute(stmt)
+            _mirror_contract_flags_to_job(session, job_id, name, data)
             session.commit()
         except Exception:
             session.rollback()
@@ -369,6 +380,7 @@ def store_artifact(session: Session, job_id: Any, name: str, data: Any = None, t
         },
     )
     session.execute(stmt)
+    _mirror_contract_flags_to_job(session, job_id, name, data)
     session.commit()
 
 
@@ -379,6 +391,34 @@ def get_artifact(session: Session, job_id: Any, name: str) -> dict | list | str 
     if artifact is None:
         return None
     return _artifact_row_to_value(artifact)
+
+
+def backfill_job_is_proxy_from_storage(session: Session) -> int:
+    """Flip ``Job.is_proxy`` for legacy storage-backed ``contract_flags`` rows the inline SQL backfill can't reach."""
+    if get_storage_client() is None:
+        return 0
+    rows = session.execute(
+        select(Artifact)
+        .join(Job, Artifact.job_id == Job.id)
+        .where(
+            Artifact.name == "contract_flags",
+            Artifact.storage_key.is_not(None),
+            Job.is_proxy.is_(False),
+        )
+    ).scalars()
+    updated = 0
+    for art in rows:
+        try:
+            value = _artifact_row_to_value(art)
+        except StorageError:
+            logger.warning("backfill: contract_flags storage read failed for job %s", art.job_id)
+            continue
+        if not isinstance(value, dict) or value.get("is_proxy") is not True:
+            continue
+        session.execute(sa_update(Job).where(Job.id == art.job_id, Job.is_proxy.is_(False)).values(is_proxy=True))
+        updated += 1
+    session.commit()
+    return updated
 
 
 def get_all_artifacts(session: Session, job_id: Any) -> dict[str, Any]:
@@ -468,11 +508,12 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 # Artifact names that constitute cached static data (immutable, never change).
+# slither_results / analysis_report were removed when vulnerability-detector
+# triage was split out of PSAT's pipeline; downstream stages don't depend on
+# them, and the only writer (StaticWorker._run_slither_phase) is gone.
 _STATIC_ARTIFACT_NAMES = frozenset(
     {
         "contract_analysis",
-        "slither_results",
-        "analysis_report",
         "control_tracking_plan",
         "static_dependencies",
         "enrichment_cache",
@@ -571,10 +612,12 @@ def find_completed_static_cache(session: Session, address: str, chain: str | Non
         if not src_count:
             continue
 
-        # Look up contract by (address, chain) — not by job_id, because a
-        # prior copy_static_cache may have reassigned the row.
-        contract_stmt = select(Contract).where(
-            func.lower(Contract.address) == address.lower(),
+        # Look up by (address, chain), not job_id — copy_static_cache may have reassigned.
+        # Join ContractSummary so .limit(1) skips stub rows that lack the cached summary.
+        contract_stmt = (
+            select(Contract)
+            .join(ContractSummary, ContractSummary.contract_id == Contract.id)
+            .where(func.lower(Contract.address) == address.lower())
         )
         if chain is not None:
             contract_stmt = contract_stmt.where(Contract.chain == chain)
@@ -687,8 +730,8 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     - ``source_files`` rows
     - ``contract_summaries``, ``privileged_functions``, ``role_definitions``
       rows (linked to the new contract row)
-    - Static artifacts (``contract_analysis``, ``slither_results``,
-      ``analysis_report``, ``control_tracking_plan``)
+    - Static artifacts (``contract_analysis``, ``control_tracking_plan``,
+      ``static_dependencies``, ``enrichment_cache``)
 
     The source contract is looked up by (address, chain) rather than by
     ``job_id`` so that subsequent cache copies still work after a prior copy
@@ -712,8 +755,11 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     src_req = src_job.request if isinstance(src_job.request, dict) else {}
     src_chain = src_req.get("chain")
 
-    src_contract_stmt = select(Contract).where(
-        func.lower(Contract.address) == src_job.address.lower(),
+    # Join ContractSummary so we copy a summaried row, not a stub (mirrors find_completed_static_cache).
+    src_contract_stmt = (
+        select(Contract)
+        .join(ContractSummary, ContractSummary.contract_id == Contract.id)
+        .where(func.lower(Contract.address) == src_job.address.lower())
     )
     if src_chain is not None:
         src_contract_stmt = src_contract_stmt.where(Contract.chain == src_chain)

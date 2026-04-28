@@ -425,6 +425,85 @@ def _writes_hook_reference(function) -> bool:
     return False
 
 
+def _is_address_like_state_var(var) -> bool:
+    """Address or contract/interface-typed state var."""
+    type_str = str(getattr(var, "type", ""))
+    if "address" in type_str.lower():
+        return True
+    # User-defined contract/interface types start uppercase (e.g. "IHook", "AuthorityLike").
+    return bool(type_str) and type_str[0].isupper()
+
+
+def _writes_unclassified_address_pointer(function) -> bool:
+    """Bare setter that writes a single address/contract state var with no other effects
+    and no owner/authority/pause/impl role — e.g. ``function setHook(address h) { hook = h; }``."""
+    if _writes_owner_like_address(function):
+        return False
+    if _writes_authority_reference(function):
+        return False
+    if _writes_pause_like_bool(function):
+        return False
+    if _writes_delegatecall_target(function):
+        return False
+    if _writes_assembly_delegatecall_slot(function):
+        return False
+    written = list(function.all_state_variables_written())
+    if len(written) != 1 or not _is_address_like_state_var(written[0]):
+        return False
+    # Modifier auth calls don't count as effects; only inspect the body.
+    for node in function.nodes:
+        for ir in node.irs:
+            op = type(ir).__name__
+            if op in ("HighLevelCall", "LowLevelCall", "LibraryCall"):
+                return False
+    return True
+
+
+def _detect_supply_change_pattern(function) -> str | None:
+    """Mint/burn via pre/post totalSupply: X.totalSupply() twice around a non-totalSupply call
+    on X, compared with > (mint) or < (burn). Catches randomized method names."""
+
+    def _extract_dest(ir_str: str) -> str | None:
+        idx = ir_str.find("dest:")
+        if idx < 0:
+            return None
+        rest = ir_str[idx + 5 :]
+        paren = rest.find("(")
+        return rest[:paren] if paren > 0 else None
+
+    total_supply_dests: list[str] = []
+    other_dests: set[str] = set()
+    has_greater = False
+    has_less = False
+    for node in function.nodes:
+        for ir in node.irs:
+            op = type(ir).__name__
+            ir_str = str(ir)
+            if op == "HighLevelCall":
+                dest = _extract_dest(ir_str)
+                if not dest:
+                    continue
+                if "function:totalSupply" in ir_str:
+                    total_supply_dests.append(dest)
+                else:
+                    other_dests.add(dest)
+            elif op == "Binary":
+                if " > " in ir_str:
+                    has_greater = True
+                elif " < " in ir_str:
+                    has_less = True
+
+    from collections import Counter
+
+    for receiver, count in Counter(total_supply_dests).items():
+        if count >= 2 and receiver in other_dests:
+            if has_greater:
+                return "mint"
+            if has_less:
+                return "burn"
+    return None
+
+
 def _detect_encoded_selectors(function) -> set[str]:
     """Scan IR for abi.encodeWithSelector calls with known ERC20 selectors."""
     labels: set[str] = set()
@@ -517,6 +596,10 @@ def _effect_labels(function, effects: list[str], effect_targets: list[str], grap
     # Encoded selectors: abi.encodeWithSelector with known ERC20 selectors
     labels.update(_detect_encoded_selectors(function))
 
+    supply_change = _detect_supply_change_pattern(function)
+    if supply_change:
+        labels.add(supply_change)
+
     # --- Layer 3: Structural authority/hook + arbitrary call detection ---
     if any(target.endswith(".functioncallwithvalue") for target in targets_lower):
         labels.discard("external_contract_call")
@@ -558,6 +641,10 @@ def _effect_labels(function, effects: list[str], effect_targets: list[str], grap
     # Downgrade generic external_contract_call when a more specific label applies
     if labels.intersection({"asset_pull", "asset_send", "arbitrary_external_call", "mint", "burn"}):
         labels.discard("external_contract_call")
+
+    # Fallback: fires only if no more specific label matched.
+    if not labels and _writes_unclassified_address_pointer(function):
+        labels.add("hook_update")
 
     return _dedupe_strings(list(labels))
 
@@ -735,6 +822,49 @@ def _detect_contract_classification(contract, project_dir: Path) -> ContractClas
     }
 
 
+# Role-membership checks. `grantRole`/`revokeRole` are deliberately
+# excluded — we want role-gating, not role-admin.
+_ROLE_CHECK_CALLEES = {"hasRole", "_checkRole", "checkRole", "_hasRole", "hasAnyRole"}
+
+
+def _function_calls_role_check(function) -> bool:
+    for call in _call_or_value(function, "all_internal_calls"):
+        callee = getattr(call, "function", None)
+        name = getattr(callee, "name", None) or str(callee or "")
+        if name in _ROLE_CHECK_CALLEES:
+            return True
+    for node in getattr(function, "nodes", []) or []:
+        for ir in getattr(node, "irs", []) or []:
+            if type(ir).__name__ not in {"HighLevelCall", "InternalCall", "LibraryCall"}:
+                continue
+            function_ref = getattr(ir, "function_name", None) or getattr(ir, "function", None)
+            name = getattr(function_ref, "name", None) or str(function_ref or "")
+            if name in _ROLE_CHECK_CALLEES:
+                return True
+    return False
+
+
+def _build_method_to_role_map(contract, project_dir: Path) -> dict[str, list[str]]:
+    """Map each public/external method that invokes a role-membership
+    check to the role constants it references — feeds the cross-contract
+    policy-stage role join."""
+    result: dict[str, list[str]] = {}
+    for function in _contract_functions(contract):
+        if getattr(function, "is_constructor", False):
+            continue
+        visibility = getattr(function, "visibility", "")
+        if visibility not in ("public", "external"):
+            continue
+        if not _function_calls_role_check(function):
+            continue
+        roles = _role_constants_from_function(function, project_dir)
+        if roles:
+            name = getattr(function, "name", "") or ""
+            if name:
+                result[name] = sorted(set(roles))
+    return result
+
+
 def _detect_access_control(contract, project_dir: Path, permission_graph: PermissionGraph) -> AccessControlAnalysis:
     state_variables = _all_state_variables(contract)
     modifiers = _all_modifiers(contract)
@@ -791,27 +921,36 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
             continue
 
         guards = _dedupe_strings((graph_entry["guards"] if graph_entry else []) + inferred_guards)
-        privileged_functions.append(
-            {
-                "contract": _declaring_contract_name(function, contract.name),
-                "function": function_signature,
-                "visibility": getattr(function, "visibility", "unknown"),
-                "guards": guards,
-                "guard_kinds": graph_entry["guard_kinds"] if graph_entry else [],
-                "controller_refs": _dedupe_strings(
-                    (graph_entry["controller_refs"] if graph_entry else [])
-                    + graph_guard_controller_refs
-                    + inferred_controller_refs
-                    + target_controller_refs
-                ),
-                "sink_ids": graph_entry["sink_ids"] if graph_entry else [],
-                "effects": effects,
-                "effect_targets": effect_targets,
-                "effect_labels": effect_labels,
-                "value_flows": _extract_value_flows(function),
-                "action_summary": action_summary,
-            }
-        )
+        # `sinks` is the canonical source; `external_call_guards` is a derived
+        # legacy-shape view for consumers that haven't migrated.
+        from .caller_sinks import caller_reach_analysis, sinks_to_external_call_guards
+
+        caller_sinks = caller_reach_analysis(function, project_dir)
+        external_call_guards = sinks_to_external_call_guards(caller_sinks)
+        entry: dict = {
+            "contract": _declaring_contract_name(function, contract.name),
+            "function": function_signature,
+            "visibility": getattr(function, "visibility", "unknown"),
+            "guards": guards,
+            "guard_kinds": graph_entry["guard_kinds"] if graph_entry else [],
+            "controller_refs": _dedupe_strings(
+                (graph_entry["controller_refs"] if graph_entry else [])
+                + graph_guard_controller_refs
+                + inferred_controller_refs
+                + target_controller_refs
+            ),
+            "sink_ids": graph_entry["sink_ids"] if graph_entry else [],
+            "effects": effects,
+            "effect_targets": effect_targets,
+            "effect_labels": effect_labels,
+            "value_flows": _extract_value_flows(function),
+            "action_summary": action_summary,
+        }
+        if external_call_guards:
+            entry["external_call_guards"] = external_call_guards
+        if caller_sinks:
+            entry["sinks"] = caller_sinks
+        privileged_functions.append(entry)
 
     modifier_names = [modifier.name.lower() for modifier in modifiers]
     pattern = "unknown"
@@ -834,7 +973,7 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
     elif privileged_functions or admin_variables:
         pattern = "custom"
 
-    return {
+    result: AccessControlAnalysis = {
         "pattern": pattern,
         "owner_variables": _dedupe_strings(owner_variables),
         "admin_variables": _dedupe_strings(admin_variables),
@@ -844,6 +983,16 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
             "status": "unknown_static_only",
         },
     }
+    if pattern in ("access_control", "governance") or role_definitions:
+        method_to_role = _build_method_to_role_map(contract, project_dir)
+        if method_to_role:
+            result["method_to_role"] = method_to_role
+    from .mapping_events import discover_mapping_writer_events
+
+    mapping_writer_events = discover_mapping_writer_events(contract)
+    if mapping_writer_events:
+        result["mapping_writer_events"] = [dict(spec) for spec in mapping_writer_events]
+    return result
 
 
 def _detect_upgradeability(contract, project_dir: Path) -> UpgradeabilityAnalysis:

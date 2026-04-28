@@ -113,6 +113,7 @@ def _patch_all(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> dict[str, A
         max_depth: int = 6,
         workspace_prefix: str = "",
         nested_artifacts_override: Any = None,
+        **_kw: Any,  # absorb classify_cache, initial_graph, future kwargs
     ) -> tuple[dict, dict]:
         return resolved_graph, {}
 
@@ -859,6 +860,7 @@ class TestResolvedGraphEmpty:
             max_depth: int = 6,
             workspace_prefix: str = "",
             nested_artifacts_override: Any = None,
+            **_kw: Any,
         ) -> tuple[dict, dict]:
             return {}, {}
 

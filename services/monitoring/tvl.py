@@ -223,14 +223,17 @@ def _read_existing_balances(session: Session, protocol_id: int) -> dict[str, dic
     the resolution stage already wrote these rows minutes earlier.
     """
     contracts = _get_protocol_addresses(session, protocol_id)
+    if not contracts:
+        return {}
+    contract_ids = [c.id for c in contracts]
+    rows_by_cid: dict[int, list[ContractBalance]] = {}
+    for b in session.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(contract_ids))).scalars():
+        rows_by_cid.setdefault(b.contract_id, []).append(b)
     breakdown: dict[str, dict] = {}
     for contract in contracts:
-        rows = (
-            session.execute(select(ContractBalance).where(ContractBalance.contract_id == contract.id)).scalars().all()
-        )
         contract_total = 0.0
         tokens: list[dict] = []
-        for b in rows:
+        for b in rows_by_cid.get(contract.id, []):
             usd = float(b.usd_value) if b.usd_value is not None else None
             if usd:
                 contract_total += usd

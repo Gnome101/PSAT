@@ -11,8 +11,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from slither.slither import Slither
@@ -210,7 +208,6 @@ contract Target {{
 # =========================================================================
 
 
-@pytest.mark.xfail(reason="Randomized external mint function name bypasses .mint() target check")
 def test_random_interface_mint_name():
     fn_name = _rand()
     mint_name = _rand()

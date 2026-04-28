@@ -1,0 +1,215 @@
+name: PR
+
+# Strict sequential chain via `needs:` — no workflow_run, no parallel firing.
+#   1. ci          (lint, typecheck, frontend-test, test+coverage)
+#   2. deploy      (Fly preview + Neon DB; runs only on ci success)
+#   3. live-tests  (pytest -m live against the preview; runs only on deploy success)
+on:
+  pull_request:
+    branches: [main]
+
+# Latest push wins; the whole chain (ci/deploy/live-tests) cancels together.
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ci:
+    uses: ./.github/workflows/_ci-checks.yml
+
+  deploy:
+    needs: ci
+    # Forks lack secrets — skip cleanly. Fork PRs still get ci above.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      app: ${{ steps.fly.outputs.app }}
+      url: ${{ steps.fly.outputs.url }}
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      NEON_STAGING_HOST: ${{ secrets.NEON_STAGING_HOST }}
+      NEON_STAGING_POOLER_HOST: ${{ secrets.NEON_STAGING_POOLER_HOST }}
+      NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
+      NEON_STAGING_PASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Compute Fly app + URL
+        id: fly
+        run: |
+          APP="psat-pr-${PR_NUMBER}"
+          echo "app=$APP" >> $GITHUB_OUTPUT
+          echo "url=https://${APP}.fly.dev" >> $GITHUB_OUTPUT
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+
+      - name: Create Fly app if missing
+        run: flyctl apps create "${{ steps.fly.outputs.app }}" --org personal || true
+
+      - name: Create per-PR Neon database
+        env:
+          PGPASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
+        run: |
+          # CREATE DATABASE must hit the direct compute endpoint (pgbouncer txn mode blocks admin).
+          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
+            -c "CREATE DATABASE \"psat_pr_${PR_NUMBER}\";" || true
+
+      - name: Stage Fly secrets
+        run: |
+          # App uses the pooler so N previews × ~10 workers don't blow Neon's connection cap.
+          DB_URL="postgresql://${NEON_STAGING_USER}:${NEON_STAGING_PASSWORD}@${NEON_STAGING_POOLER_HOST}/psat_pr_${PR_NUMBER}?sslmode=require"
+          flyctl secrets set --stage -a "${{ steps.fly.outputs.app }}" \
+            DATABASE_URL="$DB_URL" \
+            PSAT_ADMIN_KEY="${{ secrets.PSAT_ADMIN_KEY }}" \
+            PSAT_SITE_ORIGIN="${{ steps.fly.outputs.url }}" \
+            ETHERSCAN_API_KEY="${{ secrets.ETHERSCAN_API_KEY }}" \
+            ETH_RPC="${{ secrets.ETH_RPC }}" \
+            ENVIO_API_TOKEN="${{ secrets.ENVIO_API_TOKEN }}" \
+            TAVILY_API_KEY="${{ secrets.TAVILY_API_KEY }}" \
+            OPEN_ROUTER_KEY="${{ secrets.OPEN_ROUTER_KEY }}" \
+            GITHUB_TOKEN="${{ secrets.PROTOCOL_GITHUB_TOKEN }}" \
+            ARTIFACT_STORAGE_ENDPOINT="${{ secrets.ARTIFACT_STORAGE_ENDPOINT }}" \
+            ARTIFACT_STORAGE_BUCKET="${{ secrets.ARTIFACT_STORAGE_BUCKET }}" \
+            ARTIFACT_STORAGE_ACCESS_KEY="${{ secrets.ARTIFACT_STORAGE_ACCESS_KEY }}" \
+            ARTIFACT_STORAGE_SECRET_KEY="${{ secrets.ARTIFACT_STORAGE_SECRET_KEY }}" \
+            ARTIFACT_STORAGE_PREFIX="pr-${PR_NUMBER}/"
+
+      - name: Generate preview-specific fly config
+        # Identical to fly.toml except min_machines_running = 0 so idle previews
+        # suspend fully. Prod's fly.toml keeps ≥1 web machine warm.
+        run: sed 's/^  min_machines_running = 1$/  min_machines_running = 0/' fly.toml > fly-preview.toml
+
+      - name: Deploy preview
+        run: |
+          flyctl deploy -a "${{ steps.fly.outputs.app }}" \
+            --config fly-preview.toml \
+            --remote-only \
+            --build-arg GIT_SHA="${{ github.event.pull_request.head.sha }}"
+
+      - name: Start non-web process groups
+        # flyctl deploy leaves stopped machines stopped after updating their
+        # image, and auto_start_machines in fly.toml only applies to web.
+        # Without this, runs after stop-preview-workers leave workers/browser/
+        # monitor stopped and live-tests hangs polling queued jobs.
+        run: |
+          APP="${{ steps.fly.outputs.app }}"
+          for proc in workers browser monitor; do
+            flyctl machines list -a "$APP" --json \
+              | jq -r ".[] | select(.config.metadata.fly_process_group == \"$proc\" and .state == \"stopped\") | .id" \
+              | xargs -r -I{} flyctl machines start {} -a "$APP"
+          done
+
+      - name: Post sticky preview comment
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
+        with:
+          number: ${{ env.PR_NUMBER }}
+          header: psat-preview
+          message: |
+            ### :rocket: PSAT preview deployed
+
+            - **URL:** ${{ steps.fly.outputs.url }}
+            - **Health:** ${{ steps.fly.outputs.url }}/api/health
+            - **Fly app:** `${{ steps.fly.outputs.app }}`
+            - **Neon DB:** `psat_pr_${{ env.PR_NUMBER }}` (staging pooler)
+            - **Artifact prefix:** `pr-${{ env.PR_NUMBER }}/` (shared staging bucket)
+
+            This environment is torn down automatically when the PR closes.
+
+  live-tests:
+    needs: deploy
+    # Explicit fork gate — don't rely solely on transitive skip from deploy.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Wait for preview /api/health
+        run: |
+          URL="${{ needs.deploy.outputs.url }}/api/health"
+          # 2 min ceiling: cold-start is 30-60s; past that the deploy is unhealthy.
+          for i in $(seq 1 24); do
+            if curl -fsS --max-time 5 "$URL" >/dev/null; then
+              echo "preview healthy after attempt $i"
+              exit 0
+            fi
+            echo "attempt $i: $URL not healthy yet, sleeping 5s"
+            sleep 5
+          done
+          echo "::error::Preview never healthy at $URL"
+          curl -v --max-time 5 "$URL" || true
+          exit 1
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+
+      - name: Run live suite
+        env:
+          PSAT_LIVE_URL: ${{ needs.deploy.outputs.url }}
+          PSAT_ADMIN_KEY: ${{ secrets.PSAT_ADMIN_KEY }}
+          # Pin to PR head SHA via raw.github — stable in git history regardless of renames.
+          PSAT_LIVE_AUDIT_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha }}/tests/fixtures/audits/sample_audit.pdf
+        run: uv run pytest -m live -q
+
+      - name: Post sticky result (success)
+        if: success()
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
+        with:
+          number: ${{ github.event.pull_request.number }}
+          header: psat-live-tests
+          message: |
+            ### :white_check_mark: Live integration tests passed
+
+            - **Preview:** ${{ needs.deploy.outputs.url }}
+            - **Run:** [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      - name: Post sticky result (failure)
+        if: failure()
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
+        with:
+          number: ${{ github.event.pull_request.number }}
+          header: psat-live-tests
+          message: |
+            ### :x: Live integration tests failed
+
+            - **Preview:** ${{ needs.deploy.outputs.url }}
+            - **Run:** [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+  stop-preview-workers:
+    # Stop workers/browser/monitor whenever deploy actually ran. Skips only
+    # when deploy itself was skipped (fork PRs, CI failures). Own concurrency
+    # group with cancel-in-progress=false so a follow-up push can't cancel
+    # this cleanup mid-flight.
+    needs: [deploy, live-tests]
+    if: always() && needs.deploy.result != 'skipped'
+    concurrency:
+      group: pr-stop-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Stop machines
+        # Stops background process groups only. `web` is intentionally excluded
+        # so the preview URL stays reachable for manual inspection (Fly will
+        # auto-suspend it via min_machines_running=0 once idle).
+        run: |
+          APP="psat-pr-${{ github.event.pull_request.number }}"
+          for proc in workers browser monitor; do
+            flyctl machines list -a "$APP" --json \
+              | jq -r ".[] | select(.config.metadata.fly_process_group == \"$proc\" and .state == \"started\") | .id" \
+              | xargs -r -I{} flyctl machines stop {} -a "$APP" || true
+          done

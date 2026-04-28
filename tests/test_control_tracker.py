@@ -3,11 +3,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest
+
 from schemas.control_tracking import ControlTrackingPlan
-from services.resolution.tracking import build_control_snapshot
+from services.resolution.tracking import build_control_snapshot, clear_classify_cache
 from services.resolution.tracking import (
     classify_resolved_address as _classify_resolved_address,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_classify_cache():
+    # Process-wide classify cache leaks across test files when xdist/pytest-cov
+    # serializes them in worker order — clear before each test so mocked RPC
+    # responses aren't shadowed by a stale entry from a sibling file.
+    clear_classify_cache()
+    yield
+    clear_classify_cache()
 
 
 def test_build_control_snapshot(monkeypatch):

@@ -13,6 +13,7 @@ ResolvedEdgeRelation = Literal[
     "safe_owner",
     "timelock_owner",
     "proxy_admin_owner",
+    "mapping_member",
 ]
 
 
