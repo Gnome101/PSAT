@@ -17,5 +17,19 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // Pre-split heavy graph deps so the home page (`/`) doesn't download
+    // ReactFlow + ELK + anime until the user opens a company graph, and
+    // each vendor chunk caches independently across deploys (React almost
+    // never changes; the app chunk does on every deploy).
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom"],
+          reactflow: ["@xyflow/react"],
+          elk: ["elkjs/lib/elk.bundled.js"],
+          anime: ["animejs"],
+        },
+      },
+    },
   },
 });

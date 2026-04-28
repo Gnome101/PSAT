@@ -2623,9 +2623,19 @@ function SearchNavigator({ machines, principals, onFocus, mode, setMode }) {
   );
 }
 
-export default function ProtocolSurface({ companyName }) {
-  const [companyData, setCompanyData] = useState(null);
-  const [functionData, setFunctionData] = useState({});
+export default function ProtocolSurface({ companyName, initialData = null }) {
+  // initialData lets a parent (CompanyOverview) hand us the
+  // /api/company/{name} payload it already fetched, so we don't fire a
+  // second 1-3 MB request on mount. We still pull functions out of it
+  // (they're embedded on each contract entry).
+  const [companyData, setCompanyData] = useState(initialData);
+  const initialFunctionData = useMemo(() => {
+    if (!initialData?.contracts) return {};
+    return Object.fromEntries(
+      initialData.contracts.filter((c) => c.address).map((c) => [c.address, c.functions || []])
+    );
+  }, [initialData]);
+  const [functionData, setFunctionData] = useState(initialFunctionData);
   const [selectedGuard, setSelectedGuard] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
   const [selectedPrincipal, setSelectedPrincipal] = useState(null);
@@ -2722,6 +2732,15 @@ export default function ProtocolSurface({ companyName }) {
 
   useEffect(() => {
     if (!companyName) return undefined;
+    // Skip the fetch when the parent already handed us the payload —
+    // the embedded surface in CompanyOverview reuses its parent's data,
+    // which previously caused a duplicate 1-3 MB request.
+    if (initialData) {
+      setCompanyData(initialData);
+      setError(null);
+      setSelectedGuard(null);
+      return undefined;
+    }
     let cancelled = false;
 
     async function load() {
@@ -2750,7 +2769,7 @@ export default function ProtocolSurface({ companyName }) {
     return () => {
       cancelled = true;
     };
-  }, [companyName]);
+  }, [companyName, initialData]);
 
   const allMachines = useMemo(
     () => (companyData ? buildMachines(companyData, functionData) : []),

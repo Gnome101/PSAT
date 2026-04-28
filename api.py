@@ -13,13 +13,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import selectinload
+from starlette.types import Scope
 
 from db.models import (
     Artifact,
@@ -180,6 +182,10 @@ if not ALLOWED_ORIGINS:
     )
 
 app = FastAPI(title="PSAT Demo", version="0.1.0", lifespan=lifespan)
+# Compress JSON > 1KB on the wire. /api/company/{name} routinely returns
+# 1-3 MB of nested control-graph data; gzip cuts it ~5-10x and is the single
+# largest win for the company page's perceived load time.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -187,17 +193,37 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "X-PSAT-Admin-Key"],
 )
+
+
+class _ImmutableStaticFiles(StaticFiles):
+    """StaticFiles that stamps a 1-year immutable Cache-Control on every
+    response. Vite emits hashed filenames (``index-<hash>.js``) so the URL
+    changes whenever content changes — caching forever is correct, and lets
+    repeat visitors skip the ~2MB bundle download entirely.
+    """
+
+    async def get_response(self, path: str, scope: Scope):  # type: ignore[override]
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
 if SITE_ASSETS_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=SITE_ASSETS_DIR), name="assets")
+    app.mount("/assets", _ImmutableStaticFiles(directory=SITE_ASSETS_DIR), name="assets")
 
 
 def _site_index_response():
+    # The HTML embeds hash-stamped asset URLs (`/assets/index-<hash>.js`)
+    # that change on every build, so it must NOT be cached — otherwise a
+    # post-deploy reload would keep pointing at old, evicted bundles.
+    headers = {"Cache-Control": "no-cache, must-revalidate"}
     dist_index = SITE_DIST_DIR / "index.html"
     source_index = SITE_DIR / "index.html"
     if dist_index.exists():
-        return FileResponse(dist_index)
+        return FileResponse(dist_index, headers=headers)
     if source_index.exists():
-        return FileResponse(source_index)
+        return FileResponse(source_index, headers=headers)
     return PlainTextResponse(
         "Frontend build not found. Run `cd site && npm run build` or start the "
         "Vite dev server with `cd site && npm run dev`.",
@@ -664,8 +690,12 @@ def get_job_stage_timings(job_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/analyses")
-def analyses() -> list[dict]:
+def analyses(response: Response) -> list[dict]:
     """List completed analyses with their available artifacts."""
+    # Read-mostly listing — let the browser reuse it across navigations.
+    # Short max-age + SWR keeps freshness while letting back/forward and
+    # rapid re-renders avoid a network round-trip for the multi-MB payload.
+    response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=60"
     with SessionLocal() as session:
         stmt = select(Job).where(Job.status == JobStatus.completed).order_by(Job.updated_at.desc())
         jobs = session.execute(stmt).scalars().all()
@@ -676,27 +706,19 @@ def analyses() -> list[dict]:
             if job.address:
                 jobs_by_address.setdefault(job.address.lower(), job)
 
-        # Rank scores + chains come from the ``contracts`` table, populated
-        # by the selection stage (the single authoritative ranking pass
-        # across inventory / DApp crawl / DefiLlama). Reading from the
-        # inventory artifact is a legacy path that misses DApp and DefiLlama
-        # rows and shows pre-selection scores.
-        rank_scores: dict[str, float] = {}
-        chains_by_address: dict[str, str] = {}
+        # Rank scores, chains, name, proxy_type, implementation come from
+        # the ``contracts`` table. is_proxy comes from Job (denormalized via
+        # store_artifact). Pulling all of these from columns lets us skip
+        # the per-job ``contract_flags`` storage GET entirely — at 25ms
+        # production RTT × N jobs, that GET batch was the dominant cost
+        # of this endpoint after the parallel-fanout commit.
+        contracts_by_address: dict[str, Contract] = {}
         addresses_from_jobs = list(jobs_by_address.keys())
         if addresses_from_jobs:
-            for row in session.execute(
-                select(Contract.address, Contract.chain, Contract.rank_score).where(
-                    Contract.address.in_(addresses_from_jobs)
-                )
-            ).all():
-                addr_lower = (row.address or "").lower()
-                if not addr_lower:
-                    continue
-                if row.rank_score is not None:
-                    rank_scores[addr_lower] = float(row.rank_score)
-                if row.chain:
-                    chains_by_address[addr_lower] = row.chain
+            for c in session.execute(select(Contract).where(Contract.address.in_(addresses_from_jobs))).scalars():
+                addr_lower = (c.address or "").lower()
+                if addr_lower:
+                    contracts_by_address.setdefault(addr_lower, c)
 
         job_ids = [job.id for job in jobs]
         artifact_names_by_job: dict[Any, list[str]] = {}
@@ -707,7 +729,10 @@ def analyses() -> list[dict]:
         if job_ids:
             for art in session.execute(select(Artifact).where(Artifact.job_id.in_(job_ids))).scalars():
                 artifact_names_by_job.setdefault(art.job_id, []).append(art.name)
-                if art.name in ("contract_analysis", "contract_flags"):
+                # contract_flags is no longer fetched: every field the listing
+                # reads from it (is_proxy/proxy_type/implementation) is on
+                # Job/Contract columns above.
+                if art.name == "contract_analysis":
                     key = (art.job_id, art.name)
                     if art.storage_key:
                         storage_lookups[key] = (art.storage_key, art.content_type)
@@ -760,22 +785,22 @@ def analyses() -> list[dict]:
     for job in jobs:
         run_name = job.name or str(job.id)
         analysis_artifact = _value(job.id, "contract_analysis")
-        flags = _value(job.id, "contract_flags")
         request = job.request if isinstance(job.request, dict) else {}
         parent_job_id = request.get("parent_job_id")
         company = company_for_job(job)
         addr_lower = (job.address or "").lower()
+        contract = contracts_by_address.get(addr_lower)
         entry: dict[str, Any] = {
             "run_name": run_name,
             "job_id": str(job.id),
             "address": job.address,
-            "chain": request.get("chain") or chains_by_address.get(addr_lower),
+            "chain": request.get("chain") or (contract.chain if contract else None),
             "company": company,
             "parent_job_id": parent_job_id,
-            "rank_score": rank_scores.get(addr_lower),
-            "is_proxy": bool(flags.get("is_proxy")) if isinstance(flags, dict) else False,
-            "proxy_type": flags.get("proxy_type") if isinstance(flags, dict) else None,
-            "implementation_address": flags.get("implementation") if isinstance(flags, dict) else None,
+            "rank_score": (float(contract.rank_score) if contract and contract.rank_score is not None else None),
+            "is_proxy": bool(job.is_proxy),
+            "proxy_type": contract.proxy_type if contract else None,
+            "implementation_address": contract.implementation if contract else None,
             "proxy_address": request.get("proxy_address"),
         }
         entry["available_artifacts"] = sorted(artifact_names_by_job.get(job.id, []))
@@ -786,8 +811,8 @@ def analyses() -> list[dict]:
         # contract_analysis was prefetched above (every job's artifacts go
         # through the same batch), so the lookup is a dict hit, not an
         # extra HTTP round-trip.
-        if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
-            impl_job = jobs_by_address.get(flags["implementation"].lower())
+        if entry["is_proxy"] and entry["implementation_address"]:
+            impl_job = jobs_by_address.get(entry["implementation_address"].lower())
             if impl_job is None:
                 continue
             if not isinstance(analysis_artifact, dict):
@@ -797,6 +822,10 @@ def analyses() -> list[dict]:
             subject = analysis_artifact.get("subject", {})
             entry["contract_name"] = subject.get("name", run_name)
             entry["summary"] = analysis_artifact.get("summary")
+        elif contract and contract.contract_name:
+            # Storage GET missed (transport blip) but we have the name on
+            # the prefetched Contract row — keep the listing populated.
+            entry["contract_name"] = contract.contract_name
         results.append(entry)
     return _merge_proxy_impl_entries(results)
 
@@ -1237,8 +1266,13 @@ def analysis_detail(run_name: str) -> dict:
 
 
 @app.get("/api/company/{company_name}")
-def company_overview(company_name: str) -> dict:
+def company_overview(company_name: str, response: Response) -> dict:
     """Aggregated governance overview for all contracts in a company."""
+    # Largest payload on the site (1-3 MB). Letting the browser hold it for
+    # 15s + serve-stale-while-revalidate makes back/forward navigation and
+    # tab switches inside the company page instant — both CompanyOverview
+    # and ProtocolSurface read this URL on mount.
+    response.headers["Cache-Control"] = "private, max-age=15, stale-while-revalidate=60"
     with SessionLocal() as session:
         # Look up protocol — try by protocol table first, fall back to job.company
         protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
