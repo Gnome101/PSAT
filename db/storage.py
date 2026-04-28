@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from uuid import UUID
 
@@ -148,6 +149,33 @@ class StorageClient:
         except BotoCoreError as exc:
             raise StorageUnavailable(f"get_object transport error for {key}: {exc}") from exc
         return response["Body"].read()
+
+    def get_many(self, keys: list[str]) -> dict[str, bytes | None]:
+        """Fetch multiple keys concurrently. Returns a dict keyed by every
+        unique input key. The value is the bytes if the GET succeeded, or
+        ``None`` if the object was missing (NoSuchKey/404) **or** the
+        transport failed for that key. Per-key transport errors are logged
+        and surfaced as ``None`` so a flaky bucket can't take down a whole
+        API response — callers iterate and treat ``None`` as "skip".
+
+        The boto3 S3 client is documented as thread-safe, so a small fixed
+        pool gives effectively-parallel HTTP round-trips.
+        """
+        if not keys:
+            return {}
+        unique = list(dict.fromkeys(keys))
+
+        def _fetch(k: str) -> tuple[str, bytes | None]:
+            try:
+                return k, self.get(k)
+            except StorageKeyMissing:
+                return k, None
+            except StorageError as exc:
+                logger.warning("get_many: transport error fetching %s: %s", k, exc)
+                return k, None
+
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            return dict(ex.map(_fetch, unique))
 
     def presign(self, key: str, expires_in: int = DEFAULT_PRESIGN_TTL) -> str:
         from botocore.exceptions import BotoCoreError, ClientError

@@ -18,10 +18,9 @@ kill_timeout = 30
 
 # One-shot schema migration in a temporary machine. Runs once per
 # deploy, before any long-lived machine boots — so the four process
-# groups don't race on the enum AccessExclusiveLock during rolling
-# deploys.
+# groups don't race on DDL locks during rolling deploys.
 [deploy]
-  release_command = "uv run --no-sync python -c 'from db.models import create_tables; create_tables()'"
+  release_command = "uv run --no-sync alembic upgrade head"
 
 # Each group scales independently. `fly scale count --process-group <name> N`.
 # monitor runs chain-scan singletons — DO NOT scale above 1.
