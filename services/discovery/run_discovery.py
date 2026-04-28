@@ -14,6 +14,7 @@ Output shape mirrors the legacy `search_audit_reports()` and
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -24,7 +25,8 @@ import yaml
 from services.discovery import audit_reports as audit_reports_mod
 from services.discovery import inventory as inventory_mod
 from services.discovery import inventory_domain as inventory_domain_mod
-from utils import exa
+from services.discovery.audit_reports_llm import _parse_json_object
+from utils import exa, llm
 
 logger = logging.getLogger(__name__)
 
@@ -39,19 +41,30 @@ BUDGET_CIRCUIT_BREAKER_USD = 2.00
 # Deep Research output is stable for 24-48h; cache aggressively.
 RESEARCH_CACHE_TTL_SECONDS = 24 * 3600
 
-# Third-party components that warrant a dependency-audit two-pass.
-DEP_SIGNALS = (
-    "boringvault",
-    "eigenlayer",
-    "layerzero",
-    "oft",
-    "safe",
-    "uniswap",
-    "aave",
-    "morpho",
-    "velodrome",
-    "chainlink",
-)
+_DEPENDENCY_CLASSIFIER_PROMPT = """\
+You are deciding whether PSAT should run a follow-up dependency-audit search for \
+the {protocol} protocol.
+
+Run the follow-up only when the evidence indicates {protocol} likely integrates \
+third-party smart contract systems, vault frameworks, bridge/adaptor systems, \
+or infrastructure components that may have independent security audits separate \
+from {protocol}'s own core audits.
+
+Do not trigger for generic protocol contracts, tokens, routers, factories, \
+registries, managers, OpenZeppelin/Solmate-style libraries, or vague words \
+without concrete third-party integration evidence.
+
+Return exactly one JSON object:
+{{
+  "should_run_dependency_pass": true | false,
+  "confidence": 0.0-1.0,
+  "rationale": "short reason",
+  "suspected_dependencies": ["name or system", "..."]
+}}
+
+Evidence:
+{evidence}
+"""
 
 
 def _load_known_docs() -> dict[str, dict[str, list[str]]]:
@@ -258,9 +271,65 @@ _DEPS_SCHEMA: dict[str, Any] = {
 }
 
 
-def _needs_dependency_pass(contracts: list[dict], audits: list[dict]) -> bool:
-    blob = " ".join([str(c.get("name") or "") for c in contracts] + [str(a.get("title") or "") for a in audits]).lower()
-    return any(sig in blob for sig in DEP_SIGNALS)
+def _dependency_classifier_evidence(contracts: list[dict], audits: list[dict]) -> dict[str, list[dict[str, Any]]]:
+    contract_evidence: list[dict[str, Any]] = []
+    for contract in contracts[:25]:
+        name = str(contract.get("name") or "").strip()
+        address = str(contract.get("address") or "").strip()
+        if not name and not address:
+            continue
+        contract_evidence.append(
+            {
+                "name": name,
+                "address": address,
+                "chains": contract.get("chains") or contract.get("chain") or [],
+                "source": contract.get("source") or [],
+            }
+        )
+
+    audit_evidence: list[dict[str, Any]] = []
+    for audit in audits[:25]:
+        title = str(audit.get("title") or "").strip()
+        auditor = str(audit.get("auditor") or "").strip()
+        url = str(audit.get("url") or "").strip()
+        if not title and not auditor and not url:
+            continue
+        audit_evidence.append({"title": title, "auditor": auditor, "url": url})
+
+    return {"contracts": contract_evidence, "audits": audit_evidence}
+
+
+def _needs_dependency_pass(protocol: str, contracts: list[dict], audits: list[dict]) -> bool:
+    evidence = _dependency_classifier_evidence(contracts, audits)
+    if not evidence["contracts"] and not evidence["audits"]:
+        return False
+
+    prompt = _DEPENDENCY_CLASSIFIER_PROMPT.format(
+        protocol=protocol,
+        evidence=json.dumps(evidence, indent=2, sort_keys=True),
+    )
+    try:
+        response = llm.chat([{"role": "user", "content": prompt}], max_tokens=700, temperature=0.0)
+    except Exception as exc:
+        logger.warning("dependency classifier failed for %s: %s", protocol, exc)
+        return False
+
+    parsed = _parse_json_object(response)
+    if not parsed:
+        logger.warning("dependency classifier returned unparseable response for %s", protocol)
+        return False
+
+    try:
+        confidence = float(parsed.get("confidence") or 0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    decision = parsed.get("should_run_dependency_pass")
+    if isinstance(decision, str):
+        should_run = decision.strip().lower() in {"true", "yes", "1"}
+    else:
+        should_run = bool(decision)
+    return should_run and confidence >= 0.5
 
 
 def _dependency_research(protocol: str, budget: _Budget) -> list[dict]:
@@ -419,12 +488,17 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
         logger.warning("deep research (addresses) failed for %s: %s", protocol, exc)
 
     # ---- Dependency two-pass (conditional) ----
-    if _needs_dependency_pass(inventory_result.get("contracts", []), audit_result.get("reports", [])):
-        logger.info("dependency signals detected for %s; running two-pass", protocol)
+    dependency_pass_triggered = _needs_dependency_pass(
+        protocol,
+        inventory_result.get("contracts", []),
+        audit_result.get("reports", []),
+    )
+    if dependency_pass_triggered:
+        logger.info("dependency classifier selected %s for two-pass", protocol)
         for dep_audit in _dependency_research(protocol, budget):
             audit_result.setdefault("reports", []).append(dep_audit)
     else:
-        logger.info("no dependency signals for %s; skipping two-pass", protocol)
+        logger.info("dependency classifier skipped two-pass for %s", protocol)
 
     # ---- SPA override (gmx, etc.) ----
     _apply_spa_overrides(protocol, inventory_result, audit_result)
@@ -439,9 +513,7 @@ def run_discovery(protocol: str, *, official_domain: str | None = None, chain: s
             "search_calls": budget.search_calls,
             "research_calls": budget.research_calls,
             "estimated_cost_usd": round(budget.estimated_cost_usd, 3),
-            "dependency_pass_triggered": bool(
-                _needs_dependency_pass(inventory_result.get("contracts", []), audit_result.get("reports", []))
-            ),
+            "dependency_pass_triggered": dependency_pass_triggered,
         },
     }
 
