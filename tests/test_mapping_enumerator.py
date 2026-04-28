@@ -2,26 +2,49 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from typing import cast  # noqa: E402
-
+from services.resolution import mapping_enumerator  # noqa: E402
 from services.resolution.mapping_enumerator import (  # noqa: E402
     _decode_address_arg_from_data,
     _decode_address_topic,
     _event_topic0,
+    clear_enumeration_cache,
+    enumerate_mapping_allowlist_sync,
 )
 from services.resolution.mapping_enumerator import (
     enumerate_mapping_allowlist as _enumerate,
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_cache():
+    clear_enumeration_cache()
+    yield
+    clear_enumeration_cache()
+
+
 def enumerate_mapping_allowlist(contract_address, writer_specs, **kwargs):
-    return _enumerate(contract_address, cast(Any, writer_specs), **kwargs)
+    """Test helper. The function now returns an EnumerationResult dict;
+    legacy tests below expect the bare principal list, so this helper
+    unwraps result["principals"] to keep the legacy tests focused on
+    the per-event semantics they were written for."""
+    result = _enumerate(contract_address, cast(Any, writer_specs), **kwargs)
+
+    async def _run():
+        r = await result
+        return r["principals"]
+
+    if asyncio.iscoroutine(result):
+        return _run()
+    return result["principals"]
 
 
 def _addr(hex_suffix: str) -> str:
@@ -51,7 +74,7 @@ def _log(topic0: str, indexed_args: list[str] | None = None, data: str = "0x", b
     )
 
 
-def _fake_client(batches: list[tuple[list[Any], int | None]]):
+def _fake_client(batches: Sequence[tuple[Sequence[Any], int | None]]):
     calls: dict[str, int] = {"n": 0}
 
     class _Client:
@@ -426,3 +449,177 @@ def test_malformed_address_topic_skipped():
         )
     )
     assert [p["address"] for p in out] == [alice]
+
+
+# ---------------------------------------------------------------------------
+# Bound + cache + status regression tests (PSAT-speedup #1).
+#
+# Background: the original `while True` pagination loop had no max_pages,
+# no timeout, and no lookback bound. For 2017-deployed contracts
+# (LinkToken etc.) that's ~190 pages × 25s = 80 min of sync work blocking
+# the resolution worker — heartbeat misses, reclaim_stuck_jobs releases
+# the row, live tests time out at 600s.
+#
+# Naive truncation that returns an empty list silently is a CORRECTNESS
+# regression: a Rely(alice) in 2017 with no later Deny means alice is
+# still authorized. These tests pin the bound + the requirement that
+# truncation is surfaced via `result["status"]` rather than swallowed.
+# ---------------------------------------------------------------------------
+
+
+def test_max_pages_bound_returns_incomplete_status():
+    rely_topic = _event_topic0("Rely(address)")
+    pages = [([_log(rely_topic, indexed_args=[_addr(f"{i:040x}")], block=10 + i)], 100 + i) for i in range(5)]
+    client, _ = _fake_client(pages)
+    result = _run(
+        _enumerate(
+            "0xCC00000000000000000000000000000000000001",
+            cast(Any, [_rely_spec()]),
+            client=client,
+            hypersync_module=_FakeHypersyncModule(),
+            timeout_s=10,
+            max_pages=2,
+        )
+    )
+    # Bound hit at page 2; status surfaces it.
+    assert result["status"] == "incomplete_max_pages"
+    assert result["pages_fetched"] == 2
+    # Partial principals returned — not silent empty.
+    assert len(result["principals"]) == 2
+
+
+def test_timeout_returns_incomplete_status():
+    """Wall-clock bound: each page sleeps 0.05s, timeout is 0.12s, so
+    we expect ~2 pages then a timeout (definitely <20)."""
+    rely_topic = _event_topic0("Rely(address)")
+
+    class _SlowClient:
+        def __init__(self, n):
+            self._n = n
+            self.calls = 0
+
+        async def get(self, _query):
+            await asyncio.sleep(0.05)
+            self.calls += 1
+            if self.calls > self._n:
+                return SimpleNamespace(data=[], next_block=None)
+            return SimpleNamespace(
+                data=[_log(rely_topic, indexed_args=[_addr(f"{self.calls:040x}")], block=10)],
+                next_block=100 + self.calls,
+            )
+
+    result = _run(
+        _enumerate(
+            "0x" + "22" * 20,
+            cast(Any, [_rely_spec()]),
+            client=_SlowClient(20),
+            hypersync_module=_FakeHypersyncModule(),
+            timeout_s=0.12,
+            max_pages=100,
+        )
+    )
+    assert result["status"] == "incomplete_timeout"
+    assert result["pages_fetched"] >= 1
+    assert result["pages_fetched"] < 20  # bound stopped us well before n=20
+    # Partial principals — not silent empty.
+    assert len(result["principals"]) >= 1
+
+
+def test_rpc_error_surfaces_status_not_silent_fallback():
+    """The original recursive.py caller had `except Exception:
+    enumerated = []` which silently dropped principals. Now an
+    underlying RPC error must surface as status='error' with whatever
+    partial data was already collected."""
+    rely_topic = _event_topic0("Rely(address)")
+    alice = _addr("a11ce")
+
+    class _BoomClient:
+        calls = 0
+
+        async def get(self, _query):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                return SimpleNamespace(data=[_log(rely_topic, indexed_args=[alice], block=100)], next_block=200)
+            raise RuntimeError("hypersync 503")
+
+    result = _run(
+        _enumerate(
+            "0x" + "33" * 20,
+            cast(Any, [_rely_spec()]),
+            client=_BoomClient(),
+            hypersync_module=_FakeHypersyncModule(),
+            timeout_s=10,
+            max_pages=10,
+        )
+    )
+    assert result["status"] == "error"
+    assert result["error"] == "hypersync 503"
+    assert result["pages_fetched"] == 1
+    # Page 1 principal still surfaced — caller must NOT see an empty list
+    # and conclude "no admins".
+    assert [p["address"] for p in result["principals"]] == [alice]
+
+
+def test_complete_result_carries_status_complete():
+    rely_topic = _event_topic0("Rely(address)")
+    alice = _addr("a11ce")
+    client, _ = _fake_client([([_log(rely_topic, indexed_args=[alice], block=10)], None)])
+    result = _run(
+        _enumerate(
+            "0x" + "44" * 20,
+            cast(Any, [_rely_spec()]),
+            client=client,
+            hypersync_module=_FakeHypersyncModule(),
+            timeout_s=10,
+            max_pages=10,
+        )
+    )
+    assert result["status"] == "complete"
+    assert result["error"] is None
+    assert len(result["principals"]) == 1
+
+
+def test_sync_wrapper_caches_results():
+    """Sibling cascade jobs enumerating the same contract within the TTL
+    must share results without re-running the pagination loop."""
+    rely_topic = _event_topic0("Rely(address)")
+    alice = _addr("a11ce")
+    pages = [([_log(rely_topic, indexed_args=[alice], block=10)], None)]
+    client, calls = _fake_client(pages)
+
+    result1 = enumerate_mapping_allowlist_sync(
+        "0x" + "AA" * 20,
+        cast(Any, [_rely_spec()]),
+        client=client,
+        hypersync_module=_FakeHypersyncModule(),
+        timeout_s=10,
+        max_pages=10,
+    )
+    assert result1["status"] == "complete"
+    calls_after_first = calls["n"]
+    assert calls_after_first >= 1
+
+    # Second call — cache hit, no new client.get invocations.
+    result2 = enumerate_mapping_allowlist_sync(
+        "0x" + "AA" * 20,
+        cast(Any, [_rely_spec()]),
+        client=client,
+        hypersync_module=_FakeHypersyncModule(),
+    )
+    assert result2["status"] == "complete"
+    assert result2["principals"] == result1["principals"]
+    assert calls["n"] == calls_after_first  # no additional calls
+
+
+def test_clear_enumeration_cache_drops_entries():
+    rely_topic = _event_topic0("Rely(address)")
+    client, _ = _fake_client([([_log(rely_topic, indexed_args=[_addr("aa")], block=10)], None)])
+    enumerate_mapping_allowlist_sync(
+        "0x" + "BB" * 20,
+        cast(Any, [_rely_spec()]),
+        client=client,
+        hypersync_module=_FakeHypersyncModule(),
+    )
+    assert mapping_enumerator._CACHE  # populated
+    clear_enumeration_cache()
+    assert not mapping_enumerator._CACHE

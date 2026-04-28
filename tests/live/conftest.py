@@ -143,17 +143,15 @@ class LiveClient:
         return [j for j in self.jobs() if (j.get("request") or {}).get("parent_job_id") == parent_job_id]
 
     def artifact(self, run_name: str, artifact_name: str) -> dict | str | None:
-        """Fetch an artifact. Returns dict for JSON, str for text, None on 404."""
-        # analysis_report is slither plain-text output; everything else is JSON.
-        ext = ".txt" if artifact_name == "analysis_report" else ".json"
+        """Fetch an artifact. Returns dict for JSON, None on 404."""
         r = self._session.get(
-            self._url(f"/api/analyses/{run_name}/artifact/{artifact_name}{ext}"),
+            self._url(f"/api/analyses/{run_name}/artifact/{artifact_name}.json"),
             timeout=15,
         )
         if r.status_code == 404:
             return None
         r.raise_for_status()
-        return r.json() if ext == ".json" else r.text
+        return r.json()
 
     def analyses(self) -> list[dict[str, Any]]:
         r = self._session.get(self._url("/api/analyses"), timeout=15)

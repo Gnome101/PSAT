@@ -225,8 +225,9 @@ def test_copy_static_cache(db_session):
     assert rds[0].role_name == "ADMIN_ROLE"
 
     assert get_artifact(db_session, target_job.id, "contract_analysis") is not None
-    assert get_artifact(db_session, target_job.id, "slither_results") is not None
-    assert get_artifact(db_session, target_job.id, "analysis_report") == "Test analysis report"
+    # slither_results / analysis_report were removed from the static-artifact
+    # cache copy set when the Slither CLI subprocess was excised — they no
+    # longer participate in caching since they're no longer produced.
     assert get_artifact(db_session, target_job.id, "control_tracking_plan") is not None
     assert get_artifact(db_session, target_job.id, "contract_flags") is None
 
@@ -272,7 +273,6 @@ def test_data_isolation_after_cache_copy(db_session):
     assert len(pfs) == 1
 
     assert get_artifact(db_session, target_job.id, "contract_analysis") is not None
-    assert get_artifact(db_session, target_job.id, "analysis_report") == "Test analysis report"
 
 
 # ---------------------------------------------------------------------------
@@ -360,7 +360,7 @@ def test_no_duplicate_rows_after_two_runs(db_session, monkeypatch):
     ).scalar()
     assert src_count == 2, f"Expected 2 source files, got {src_count}"
 
-    for artifact_name in ["contract_analysis", "slither_results", "control_tracking_plan"]:
+    for artifact_name in ["contract_analysis", "control_tracking_plan"]:
         art = get_artifact(db_session, new_job.id, artifact_name)
         assert isinstance(art, dict), f"Missing artifact {artifact_name}"
 

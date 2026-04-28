@@ -900,44 +900,6 @@ def test_analysis_detail_lookup_by_address(mock_session_cls, mock_get_all_artifa
     assert response.json()["address"] == addr
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
-def test_analysis_detail_analysis_report_inline(mock_session_cls, mock_get_all_artifacts):
-    """Text artifacts like analysis_report are inlined in payload."""
-    client = _make_client()
-    job = _fake_job(name="report_job", address="0xaaa")
-
-    mock_session = MagicMock()
-    _mock_session_ctx(mock_session_cls, mock_session)
-
-    call_count = {"n": 0}
-
-    def route_execute(stmt, *args, **kwargs):
-        call_count["n"] += 1
-        result = MagicMock()
-        if call_count["n"] == 1:
-            result.scalar_one_or_none.return_value = job
-        else:
-            result.scalar_one_or_none.return_value = None
-            result.scalars.return_value.all.return_value = []
-        return result
-
-    mock_session.execute.side_effect = route_execute
-
-    mock_get_all_artifacts.return_value = {
-        "contract_analysis": {
-            "subject": {"name": "ReportContract"},
-            "summary": {},
-        },
-        "analysis_report": "This is the full report text.",
-    }
-
-    response = client.get("/api/analyses/report_job")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["analysis_report"] == "This is the full report text."
-
-
 # ============================================================================
 # 8. GET /api/analyses - rank_scores and chain come from the contracts table
 # ============================================================================

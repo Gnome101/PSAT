@@ -99,10 +99,9 @@ def test_static_worker_cache_miss_runs_analysis(db_session, monkeypatch):
 
     worker.process(db_session, job)
 
-    # All phases should run
+    # All phases should run (slither CLI subprocess removed in commit 438a11c).
     assert "resolve_proxy" in phases_run
     assert "dependency" in phases_run
-    assert "slither" in phases_run
     assert "analysis" in phases_run
     assert "tracking_plan" in phases_run
 

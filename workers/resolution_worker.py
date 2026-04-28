@@ -129,11 +129,17 @@ class ResolutionWorker(BaseWorker):
 
         self.update_detail(session, job, "Resolving recursive control graph")
         t0 = time.monotonic()
+        # Cache classify_resolved_address results so the policy stage can
+        # short-circuit its refresh + labeling passes (the dominant cost
+        # on cascade workloads — see PSAT_BENCH_NOTES in
+        # services/resolution/recursive.py).
+        classify_cache: dict[str, tuple[str, dict[str, object]]] = {}
         resolved_graph, nested_artifacts = resolve_control_graph(
             root_artifacts=root_artifacts,
             rpc_url=rpc_url,
             max_depth=RECURSION_MAX_DEPTH,
             workspace_prefix="recursive",
+            classify_cache=classify_cache,
         )
 
         if DEBUG_TIMING:
@@ -145,6 +151,16 @@ class ResolutionWorker(BaseWorker):
             store_nested_artifacts(session, job.id, nested_artifacts)
             # Keep as artifact — policy stage reads it as JSON
             store_artifact(session, job.id, "resolved_control_graph", data=resolved_graph)
+            # Persist the classify cache so the policy stage skips re-running
+            # the 6-10 RPC fan-out per address. dict[str, tuple] → JSON-friendly
+            # dict[str, list] for storage.
+            if classify_cache:
+                store_artifact(
+                    session,
+                    job.id,
+                    "classified_addresses",
+                    data={addr: list(v) for addr, v in classify_cache.items()},
+                )
             logger.info(
                 "Resolution stage graph complete for job %s address=%s name=%s",
                 job.id,

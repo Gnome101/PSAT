@@ -691,7 +691,6 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
         "principal_labels": {"principals": []},
         "resolved_control_graph": {"nodes": [], "edges": []},
         "control_snapshot": {"controller_values": {}},
-        "analysis_report": "Some report text",
     }
 
     def fake_get_artifact(session, jid, name):
@@ -727,7 +726,6 @@ def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_ge
     assert body["effective_permissions"]["functions"][0]["function"] == "pause()"
     assert "principal_labels" in body
     assert "resolved_control_graph" in body
-    assert body["analysis_report"] == "Some report text"
     assert body["contract_name"] == "VaultImpl"
     assert body["implementation_address"] == impl_addr
 

@@ -802,18 +802,18 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")
 
-# Single uvicorn process (psycopg2 isn't fork-safe), so 10+20 is the prod connection budget.
-# Env-overridable for tight-quota Postgres.
-DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", "10"))
-DB_MAX_OVERFLOW = int(os.environ.get("DB_MAX_OVERFLOW", "20"))
-DB_POOL_RECYCLE = int(os.environ.get("DB_POOL_RECYCLE", "1800"))
+# Env-tunable per process group; start_workers.sh tightens to 2+3 per worker so 10 procs × 5 conns stays under Neon's
+# pool ceiling. pool_recycle=300s protects against Neon's ~5-min idle-disconnect.
+_POOL_SIZE = int(os.environ.get("PSAT_DB_POOL_SIZE", "5"))
+_MAX_OVERFLOW = int(os.environ.get("PSAT_DB_MAX_OVERFLOW", "10"))
+_POOL_RECYCLE = int(os.environ.get("PSAT_DB_POOL_RECYCLE", "300"))
 
 engine = create_engine(
     DATABASE_URL,
+    pool_size=_POOL_SIZE,
+    max_overflow=_MAX_OVERFLOW,
+    pool_recycle=_POOL_RECYCLE,
     pool_pre_ping=True,
-    pool_size=DB_POOL_SIZE,
-    max_overflow=DB_MAX_OVERFLOW,
-    pool_recycle=DB_POOL_RECYCLE,
     # psycopg2 defaults connect_timeout to infinity — would block every
     # session acquisition during a Neon cold-start.
     connect_args={"connect_timeout": 10},
@@ -888,6 +888,23 @@ def apply_storage_migrations(target_engine=None) -> None:
             )
             ac_conn.execute(text("ALTER TABLE contracts DROP COLUMN discovery_source"))
     with target.connect() as conn:
+        # Etherscan cross-process cache; ttl_expires_at NULL means immutable (e.g., source code), per-call sites can set
+        # a TTL for non-immutable actions.
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS etherscan_cache ("
+                "  module TEXT NOT NULL,"
+                "  action TEXT NOT NULL,"
+                "  chain_id INT NOT NULL,"
+                "  params_hash VARCHAR(64) NOT NULL,"
+                "  response JSONB NOT NULL,"
+                "  cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+                "  ttl_expires_at TIMESTAMPTZ,"
+                "  PRIMARY KEY (module, action, chain_id, params_hash)"
+                ")"
+            )
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_etherscan_cache_cached_at ON etherscan_cache (cached_at)"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS storage_key VARCHAR(512)"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS size_bytes BIGINT"))
         conn.execute(text("ALTER TABLE artifacts ADD COLUMN IF NOT EXISTS content_type VARCHAR(64)"))

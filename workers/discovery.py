@@ -288,9 +288,14 @@ class DiscoveryWorker(BaseWorker):
         if address is None:
             raise ValueError("Address job missing address")
 
-        # Check for cached static data from a previously completed job (same chain)
+        # Check for cached static data from a previously completed job (same chain).
+        # `force` is the bench-mode escape hatch — see AnalyzeRequest.force in api.py.
         request = job.request if isinstance(job.request, dict) else {}
-        cached_job = find_completed_static_cache(session, address, chain=request.get("chain"))
+        if request.get("force"):
+            cached_job = None
+            logger.info("Discovery: force=True, skipping static cache lookup for %s", address)
+        else:
+            cached_job = find_completed_static_cache(session, address, chain=request.get("chain"))
         if cached_job is not None:
             self.update_detail(session, job, f"Reusing cached static data for {address}")
             new_contract_id = copy_static_cache(session, cached_job.id, job.id)
