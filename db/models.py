@@ -811,6 +811,25 @@ class TvlSnapshot(Base):
     __table_args__ = (Index("ix_tvl_snapshots_protocol_timestamp", "protocol_id", "timestamp"),)
 
 
+class EtherscanCache(Base):
+    """Persistent Etherscan response cache. Read/written by ``utils/etherscan.py``
+    via raw SQL; the model exists so the schema participates in
+    ``Base.metadata`` and ``alembic check`` doesn't flag the table as drift.
+    """
+
+    __tablename__ = "etherscan_cache"
+
+    module: Mapped[str] = mapped_column(Text, primary_key=True)
+    action: Mapped[str] = mapped_column(Text, primary_key=True)
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    params_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    cached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("NOW()"), nullable=False)
+    ttl_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_etherscan_cache_cached_at", "cached_at"),)
+
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")

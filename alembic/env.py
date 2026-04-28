@@ -52,6 +52,12 @@ def run_migrations_online() -> None:
         # that need longer can override these inside the migration body.
         connection.execute(text("SET lock_timeout = '10s'"))
         connection.execute(text("SET statement_timeout = '300s'"))
+        # Close the autobegun transaction the SETs opened. Without this,
+        # transaction_per_migration's per-migration COMMITs nest as savepoints
+        # under the outer autobegun txn, which then rolls back on context exit
+        # and silently throws away every migration's DDL. SET (without LOCAL)
+        # persists across the commit at the session level.
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
