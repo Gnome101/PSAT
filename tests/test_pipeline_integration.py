@@ -65,6 +65,7 @@ def _fake_api_job(
     name: str = "demo_run",
     request: dict | None = None,
     company: str | None = None,
+    is_proxy: bool = False,
 ) -> MagicMock:
     job = MagicMock()
     job.id = uuid.uuid4()
@@ -77,6 +78,10 @@ def _fake_api_job(
     job.request = request or {"address": address}
     job.error = None
     job.worker_id = None
+    # Must be set explicitly — bare MagicMock attributes are truthy and
+    # the analyses listing now reads Job.is_proxy directly (denormalized
+    # from contract_flags by the static worker).
+    job.is_proxy = is_proxy
     job.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     job.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     job.to_dict.return_value = {"job_id": str(job.id), "address": address, "name": name}
@@ -725,7 +730,7 @@ def test_analyses_list_reads_contract_flags_from_static_worker(mock_session_cls)
     import api
 
     client = TestClient(api.app)
-    proxy_job = _fake_api_job(name="proxy_test", address=PROXY)
+    proxy_job = _fake_api_job(name="proxy_test", address=PROXY, is_proxy=True)
     impl_job = _fake_api_job(
         name="proxy_test: (impl)",
         address=IMPL,
@@ -740,15 +745,19 @@ def test_analyses_list_reads_contract_flags_from_static_worker(mock_session_cls)
     impl_job.status = JobStatus.completed
     proxy_job.status = JobStatus.completed
 
+    # proxy_type / implementation now come from the Contract row, not
+    # the contract_flags artifact (which the listing no longer fetches).
+    proxy_contract_row = SimpleNamespace(
+        address=PROXY,
+        chain=None,
+        rank_score=None,
+        contract_name="MyProxy",
+        is_proxy=True,
+        proxy_type="eip1967",
+        implementation=IMPL,
+    )
+
     artifacts = [
-        SimpleNamespace(
-            job_id=proxy_job.id,
-            name="contract_flags",
-            storage_key=None,
-            data={"is_proxy": True, "proxy_type": "eip1967", "implementation": IMPL},
-            text_data=None,
-            content_type=None,
-        ),
         SimpleNamespace(
             job_id=proxy_job.id,
             name="contract_analysis",
@@ -775,7 +784,7 @@ def test_analyses_list_reads_contract_flags_from_static_worker(mock_session_cls)
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            result.all.return_value = []
+            result.scalars.return_value = iter([proxy_contract_row])
         elif call_count["n"] == 3:
             result.scalars.return_value = iter(artifacts)
         else:

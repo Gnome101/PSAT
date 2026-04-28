@@ -47,6 +47,7 @@ def _fake_api_job(
     status: str = "queued",
     stage: str = "discovery",
     request: dict | None = None,
+    is_proxy: bool = False,
 ):
     """Build a MagicMock that behaves like db.models.Job."""
     job = MagicMock()
@@ -61,6 +62,10 @@ def _fake_api_job(
     job.request = request or {}
     job.error = None
     job.worker_id = None
+    # Must be set explicitly — bare MagicMock attributes are truthy and
+    # the analyses listing now reads Job.is_proxy directly (denormalized
+    # from contract_flags by the static worker).
+    job.is_proxy = is_proxy
     job.created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     job.updated_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     job.to_dict.return_value = {
@@ -244,6 +249,7 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
         status="completed",
         stage="done",
         request={"address": proxy_addr},
+        is_proxy=True,
     )
     impl_job = _fake_api_job(
         job_id=str(impl_job_id),
@@ -262,16 +268,23 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
     impl_job.status = JobStatus.completed
     proxy_job.status = JobStatus.completed
 
+    # proxy_type and implementation now come from the Contract row, not
+    # the contract_flags artifact (which is no longer fetched here).
+    proxy_contract_row = SimpleNamespace(
+        address=proxy_addr,
+        chain=None,
+        rank_score=None,
+        contract_name="ProxyContract",
+        is_proxy=True,
+        proxy_type="ERC1967",
+        implementation=impl_addr,
+    )
+
     # /api/analyses query order:
     #   1. select(Job)         → jobs list
-    #   2. select(Contract...) → rank_score / chain (returns .all())
+    #   2. select(Contract...) → contracts_by_address (returns .scalars())
     #   3. select(Artifact)    → batched artifact rows (.scalars())
     artifacts = [
-        _fake_artifact(
-            proxy_job.id,
-            "contract_flags",
-            {"is_proxy": True, "proxy_type": "ERC1967", "implementation": impl_addr},
-        ),
         _fake_artifact(
             proxy_job.id,
             "contract_analysis",
@@ -292,7 +305,7 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            result.all.return_value = []
+            result.scalars.return_value = iter([proxy_contract_row])
         elif call_count["n"] == 3:
             result.scalars.return_value = iter(artifacts)
         else:
@@ -353,7 +366,8 @@ def test_analyses_list_non_proxy_has_is_proxy_false(mock_session_cls):
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [fake_job]
         elif call_count["n"] == 2:
-            result.all.return_value = []
+            # contracts_by_address prefetch — empty (no Contract row)
+            result.scalars.return_value = iter([])
         elif call_count["n"] == 3:
             result.scalars.return_value = iter(artifacts)
         else:

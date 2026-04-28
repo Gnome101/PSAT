@@ -930,9 +930,17 @@ def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls):
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
-    # Contract-row row tuple stand-in — api.py reads .address / .chain /
-    # .rank_score attributes off each row.
-    contract_row = SimpleNamespace(address="0xcccc", chain="ethereum", rank_score=8.5)
+    # api.py now stores the full Contract row in contracts_by_address;
+    # mocks must expose every column the listing reads.
+    contract_row = SimpleNamespace(
+        address="0xcccc",
+        chain="ethereum",
+        rank_score=8.5,
+        contract_name="ContractX",
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
+    )
     artifact_row = SimpleNamespace(
         job_id=child_job.id,
         name="contract_analysis",
@@ -951,8 +959,8 @@ def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls):
             # First query: completed jobs
             result.scalars.return_value.all.return_value = [company_job, child_job]
         elif call_count["n"] == 2:
-            # Second query: contract rows for rank/chain lookup
-            result.all.return_value = [contract_row]
+            # Second query: Contract rows for rank/chain/name/proxy lookup
+            result.scalars.return_value = iter([contract_row])
         elif call_count["n"] == 3:
             # Third query: batched Artifact rows for all jobs
             result.scalars.return_value = iter([artifact_row])
@@ -1300,6 +1308,7 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls):
     proxy_job = _fake_job(
         name="proxy_hidden",
         address="0xaaaa",
+        is_proxy=True,
     )
 
     from db.models import JobStatus
@@ -1309,15 +1318,18 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls):
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
+    # proxy_type / implementation come from Contract now.
+    proxy_contract = SimpleNamespace(
+        address="0xaaaa",
+        chain=None,
+        rank_score=None,
+        contract_name="ProxyContract",
+        is_proxy=True,
+        proxy_type="ERC1967",
+        implementation="0xbbbb",
+    )
+
     artifacts = [
-        SimpleNamespace(
-            job_id=proxy_job.id,
-            name="contract_flags",
-            storage_key=None,
-            data={"is_proxy": True, "proxy_type": "ERC1967", "implementation": "0xbbbb"},
-            text_data=None,
-            content_type=None,
-        ),
         SimpleNamespace(
             job_id=proxy_job.id,
             name="contract_analysis",
@@ -1336,7 +1348,7 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls):
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job]
         elif call_count["n"] == 2:
-            result.all.return_value = []
+            result.scalars.return_value = iter([proxy_contract])
         elif call_count["n"] == 3:
             result.scalars.return_value = iter(artifacts)
         else:
@@ -1817,7 +1829,15 @@ def test_analyses_chain_populated_from_contracts_table(mock_session_cls):
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
-    contract_row = SimpleNamespace(address="0xdddd", chain="arbitrum", rank_score=5.0)
+    contract_row = SimpleNamespace(
+        address="0xdddd",
+        chain="arbitrum",
+        rank_score=5.0,
+        contract_name="ChainTest",
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
+    )
     artifacts = [
         SimpleNamespace(
             job_id=child_job.id,
@@ -1837,7 +1857,7 @@ def test_analyses_chain_populated_from_contracts_table(mock_session_cls):
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [company_job, child_job]
         elif call_count["n"] == 2:
-            result.all.return_value = [contract_row]
+            result.scalars.return_value = iter([contract_row])
         elif call_count["n"] == 3:
             result.scalars.return_value = iter(artifacts)
         else:
@@ -1919,6 +1939,7 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
         job_id=str(proxy_job_id),
         name="proxy_no_analysis",
         address="0xaaaa",
+        is_proxy=True,
     )
     impl_job = _fake_job(
         job_id=str(impl_job_id),
@@ -1934,15 +1955,17 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
     mock_session = MagicMock()
     _mock_session_ctx(mock_session_cls, mock_session)
 
+    proxy_contract = SimpleNamespace(
+        address="0xaaaa",
+        chain=None,
+        rank_score=None,
+        contract_name=None,
+        is_proxy=True,
+        proxy_type="ERC1967",
+        implementation="0xbbbb",
+    )
+
     artifacts = [
-        SimpleNamespace(
-            job_id=proxy_job.id,
-            name="contract_flags",
-            storage_key=None,
-            data={"is_proxy": True, "proxy_type": "ERC1967", "implementation": "0xbbbb"},
-            text_data=None,
-            content_type=None,
-        ),
         SimpleNamespace(
             job_id=impl_job.id,
             name="contract_analysis",
@@ -1961,7 +1984,7 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            result.all.return_value = []
+            result.scalars.return_value = iter([proxy_contract])
         elif call_count["n"] == 3:
             result.scalars.return_value = iter(artifacts)
         else:

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ADDRESS_GRAPH_COLUMNS,
@@ -11,10 +11,18 @@ import {
   shortenAddress,
   wrapText,
 } from "./graph.js";
-import DependencyGraphTab from "./DependencyGraphTab.jsx";
-import ProtocolGraph from "./ProtocolGraph.jsx";
-import RiskSurface from "./RiskSurface.jsx";
-import ProtocolSurface from "./ProtocolSurface.jsx";
+// Heavy graph + audit components are deferred so the home page (`/`)
+// doesn't pay their bundle cost on first paint. The pre-split bundle
+// was ~1.9 MB; each lazy chunk cuts a slice that only loads when its
+// route or modal opens.
+const DependencyGraphTab = lazy(() => import("./DependencyGraphTab.jsx"));
+const ProtocolGraph = lazy(() => import("./ProtocolGraph.jsx"));
+const RiskSurface = lazy(() => import("./RiskSurface.jsx"));
+const ProtocolSurface = lazy(() => import("./ProtocolSurface.jsx"));
+const AuditsTab = lazy(() => import("./AuditsTab.jsx"));
+const AuditExtractionShelf = lazy(() => import("./AuditExtractionShelf.jsx"));
+const AddressesModal = lazy(() => import("./AddressesModal.jsx"));
+const AuditsAdminModal = lazy(() => import("./AuditsAdminModal.jsx"));
 import { matchesEra } from "./auditMatching.js";
 import {
   AUDIT_STATUS_META,
@@ -28,8 +36,6 @@ import {
   proofKindTitle,
   PROOF_KIND_META,
 } from "./auditUi.jsx";
-import AuditsTab from "./AuditsTab.jsx";
-import AuditExtractionShelf from "./AuditExtractionShelf.jsx";
 import { api } from "./api/client.js";
 import { getPipeline as getAuditPipeline } from "./api/audits.js";
 import ProductHero from "./ProductHero.jsx";
@@ -38,8 +44,18 @@ import ProductHero from "./ProductHero.jsx";
 // import AssemblyLine from "./AssemblyLine.jsx";
 import ProtocolLogo from "./ProtocolLogo.jsx";
 import ProtocolRadar from "./ProtocolRadar.jsx";
-import AddressesModal from "./AddressesModal.jsx";
-import AuditsAdminModal from "./AuditsAdminModal.jsx";
+
+function LoadingFallback({ label = "Loading..." }) {
+  return (
+    <div className="page">
+      <section className="panel">
+        <p className="empty" style={{ textAlign: "center", padding: "2rem 0", color: "#64748b" }}>
+          {label}
+        </p>
+      </section>
+    </div>
+  );
+}
 // SurfacePreview was a static SVG mini-map; we now embed the real
 // ProtocolSurface component inline. File kept for possible reuse.
 // import SurfacePreview from "./SurfacePreview.jsx";
@@ -1580,28 +1596,38 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface })
           </div>
         </div>
         <div className="company-surface-embed">
-          <ProtocolSurface companyName={companyName} />
+          {/* Pass the already-fetched companyData so the embedded surface
+              skips its own /api/company fetch — that response can be
+              1-3 MB and was previously requested twice in parallel on
+              every overview page-load. */}
+          <Suspense fallback={<LoadingFallback label="Loading control surface..." />}>
+            <ProtocolSurface companyName={companyName} initialData={data} />
+          </Suspense>
         </div>
       </section>
 
       {addressesModalOpen && (
-        <AddressesModal
-          companyName={companyName}
-          onClose={() => setAddressesModalOpen(false)}
-          onSelectContract={(row) => {
-            // Only jump into the job view for addresses that were actually
-            // analyzed; discovered-only rows don't have a job_id. Pass the
-            // matching Contract job_id up to the App-level loader.
-            const full = contracts.find((c) => c.address?.toLowerCase() === row.address?.toLowerCase());
-            if (full?.job_id) onSelectContract(full.job_id);
-          }}
-        />
+        <Suspense fallback={null}>
+          <AddressesModal
+            companyName={companyName}
+            onClose={() => setAddressesModalOpen(false)}
+            onSelectContract={(row) => {
+              // Only jump into the job view for addresses that were actually
+              // analyzed; discovered-only rows don't have a job_id. Pass the
+              // matching Contract job_id up to the App-level loader.
+              const full = contracts.find((c) => c.address?.toLowerCase() === row.address?.toLowerCase());
+              if (full?.job_id) onSelectContract(full.job_id);
+            }}
+          />
+        </Suspense>
       )}
       {auditsAdminOpen && (
-        <AuditsAdminModal
-          companyName={companyName}
-          onClose={() => setAuditsAdminOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <AuditsAdminModal
+            companyName={companyName}
+            onClose={() => setAuditsAdminOpen(false)}
+          />
+        </Suspense>
       )}
     </div>
   );
@@ -3357,7 +3383,11 @@ export default function App() {
     permissions: <PermissionsTab detail={selectedDetail} />,
     principals: <PrincipalsTab detail={selectedDetail} />,
     graph: <GraphTab detail={selectedDetail} />,
-    dependencies: <DependencyGraphTab data={selectedDetail?.dependency_graph_viz} runName={selectedRun} />,
+    dependencies: (
+      <Suspense fallback={<LoadingFallback label="Loading graph..." />}>
+        <DependencyGraphTab data={selectedDetail?.dependency_graph_viz} runName={selectedRun} />
+      </Suspense>
+    ),
     upgrades: <UpgradesTab detail={selectedDetail} />,
     raw: <RawTab detail={selectedDetail} />,
   } : {};
@@ -3452,29 +3482,37 @@ export default function App() {
       )}
       {isCompany && companyName && companyTab === "surface" && (
         <div className="fullscreen-surface">
-          <ProtocolSurface companyName={companyName} />
+          <Suspense fallback={<LoadingFallback label="Loading control surface..." />}>
+            <ProtocolSurface companyName={companyName} />
+          </Suspense>
         </div>
       )}
       {isCompany && companyName && companyTab === "graph" && (
         <div className="page" style={{ height: "calc(100vh - 52px)", display: "flex", flexDirection: "column" }}>
           <div className="protocol-graph-wrapper" style={{ flex: 1, minHeight: 0 }}>
-            <ProtocolGraph companyName={companyName} />
+            <Suspense fallback={<LoadingFallback label="Loading graph..." />}>
+              <ProtocolGraph companyName={companyName} />
+            </Suspense>
           </div>
         </div>
       )}
       {isCompany && companyName && companyTab === "risk" && (
         <div className="page">
-          <RiskSurface companyName={companyName} />
+          <Suspense fallback={<LoadingFallback label="Loading risk matrix..." />}>
+            <RiskSurface companyName={companyName} />
+          </Suspense>
         </div>
       )}
       {isCompany && companyName && companyTab === "monitoring" && (
         <ProtocolMonitoringPage companyName={companyName} />
       )}
       {isCompany && companyName && companyTab === "audits" && (
-        <AuditsTab
-          companyName={companyName}
-          focusAuditId={new URLSearchParams(window.location.search).get("audit")}
-        />
+        <Suspense fallback={<LoadingFallback label="Loading audits..." />}>
+          <AuditsTab
+            companyName={companyName}
+            focusAuditId={new URLSearchParams(window.location.search).get("audit")}
+          />
+        </Suspense>
       )}
 
       {!isDetail && !isMonitor && !isCompany && !isProxies && (
