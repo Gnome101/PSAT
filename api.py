@@ -18,10 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.types import Scope
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import selectinload
+from starlette.types import Scope
 
 from db.models import (
     Artifact,
@@ -715,9 +715,7 @@ def analyses(response: Response) -> list[dict]:
         contracts_by_address: dict[str, Contract] = {}
         addresses_from_jobs = list(jobs_by_address.keys())
         if addresses_from_jobs:
-            for c in session.execute(
-                select(Contract).where(Contract.address.in_(addresses_from_jobs))
-            ).scalars():
+            for c in session.execute(select(Contract).where(Contract.address.in_(addresses_from_jobs))).scalars():
                 addr_lower = (c.address or "").lower()
                 if addr_lower:
                     contracts_by_address.setdefault(addr_lower, c)
