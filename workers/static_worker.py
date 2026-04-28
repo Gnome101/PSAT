@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -29,10 +30,8 @@ from services.discovery import (
 from services.discovery.dynamic_dependencies import NoNewTransactionsError
 from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
-from services.static import analyze, collect_contract_analysis
+from services.static import collect_contract_analysis
 from services.static.contract_analysis_pipeline import build_semantic_guards
-from services.static.hevm_guard_analysis import refine_semantic_guards_with_hevm
-from services.static.vyper_analysis import is_vyper_project
 from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
 
@@ -750,35 +749,23 @@ class StaticWorker(BaseWorker):
                 )
                 self.update_detail(session, job, "Static analysis complete (cached)")
             else:
-                # Phase 1: Slither
-                t0 = time.monotonic()
-                slither_ok = self._run_slither_phase(session, job, project_dir, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] slither: %.1fs", time.monotonic() - t0)
-
-                # Phase 2: Contract analysis
+                # Phase 1: Contract analysis (uses Slither's Python IR — the
+                # CLI subprocess that produced detector findings was removed;
+                # vulnerability triage is now an out-of-band concern, not part
+                # of the cascade pipeline).
                 t0 = time.monotonic()
                 analysis_data = self._run_analysis_phase(session, job, project_dir, contract_name, address)
                 if DEBUG_TIMING:
                     logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
 
                 if analysis_data is None:
-                    raise RuntimeError(
-                        f"Contract analysis failed for {contract_name} ({address}). "
-                        f"Slither CLI {'succeeded' if slither_ok else 'also failed'}."
-                    )
+                    raise RuntimeError(f"Contract analysis failed for {contract_name} ({address}).")
 
-                # Phase 3: Control tracking plan
+                # Phase 2: Control tracking plan
                 t0 = time.monotonic()
                 self._run_tracking_plan_phase(session, job, analysis_data, contract_name, address)
                 if DEBUG_TIMING:
                     logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
-
-                # Phase 4: HEVM semantic guard refinement (best-effort)
-                t0 = time.monotonic()
-                self._run_hevm_semantic_phase(session, job, project_dir, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] hevm semantic guards: %.1fs", time.monotonic() - t0)
 
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
@@ -894,12 +881,32 @@ class StaticWorker(BaseWorker):
                     impl_entries.append((facet, f"facet {i + 1}"))
 
         base_name = job.name or contract_name
+        force = bool(request.get("force"))
+        # Within-cascade dedupe under --force: same impl reached via multiple proxy paths must not spawn N copies.
+        root_job_id = request.get("root_job_id") or str(job.id)
+        chain = request.get("chain")
+        from sqlalchemy import text as _sa_text
+
         for impl_addr, label in impl_entries:
-            # Check if we already have a job for this implementation
-            existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
+            if force:
+                # Advisory xact lock serializes the SELECT-then-INSERT against concurrent static workers.
+                lock_seed = f"impl-dedupe:{root_job_id}:{chain or '-'}:{impl_addr.lower()}"
+                lock_key = int(hashlib.sha1(lock_seed.encode()).hexdigest()[:15], 16)
+                session.execute(_sa_text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+
+                # Same (address, root_job_id, chain) → reject; chain is required for multi-chain cascades.
+                stmt = select(Job).where(
+                    Job.address == impl_addr,
+                    Job.request["root_job_id"].as_string() == root_job_id,
+                )
+                if chain is not None:
+                    stmt = stmt.where(Job.request["chain"].as_string() == chain)
+                existing = session.execute(stmt.limit(1)).scalar_one_or_none()
+            else:
+                existing = session.execute(select(Job).where(Job.address == impl_addr).limit(1)).scalar_one_or_none()
             if existing:
                 logger.info(
-                    "Job %s: %s %s already has job %s, skipping",
+                    "Job %s: %s %s already has job %s in this cascade, skipping",
                     job.id,
                     label,
                     impl_addr,
@@ -913,6 +920,7 @@ class StaticWorker(BaseWorker):
                 "name": impl_name,
                 "rpc_url": rpc_url,
                 "parent_job_id": str(job.id),
+                "root_job_id": root_job_id,
                 "proxy_address": address,
                 "proxy_type": proxy_type,
             }
@@ -920,6 +928,8 @@ class StaticWorker(BaseWorker):
                 child_request["chain"] = request.get("chain")
             if getattr(job, "protocol_id", None):
                 child_request["protocol_id"] = job.protocol_id
+            if force:
+                child_request["force"] = True
             child_job = create_job(session, child_request)
             logger.info(
                 "Job %s: created %s job %s for %s (%s)",
@@ -1257,48 +1267,6 @@ class StaticWorker(BaseWorker):
         if dependency_errors:
             store_artifact(session, job.id, "dependency_errors", data=dependency_errors)
 
-    def _run_slither_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> bool:
-        """Run Slither CLI. Returns True on success, False on failure (non-fatal)."""
-        if is_vyper_project(project_dir):
-            self.update_detail(session, job, "Skipping Slither for Vyper source")
-            store_artifact(
-                session,
-                job.id,
-                "slither_error",
-                data={"error": "Skipped Slither for Vyper source"},
-            )
-            logger.info(
-                "Static stage skipped Slither for Vyper job %s address=%s contract=%s",
-                job.id,
-                address,
-                contract_name,
-            )
-            return False
-        self.update_detail(session, job, "Running Slither")
-        try:
-            analyze(project_dir, contract_name, address)
-        except Exception as exc:
-            _log_phase_error(str(job.id), address, contract_name, "slither_cli", str(exc))
-            store_artifact(session, job.id, "slither_error", data={"error": str(exc)})
-            return False
-
-        slither_path = project_dir / "slither_results.json"
-        if slither_path.exists():
-            slither_data = json.loads(slither_path.read_text())
-            store_artifact(session, job.id, "slither_results", data=slither_data)
-
-        report_path = project_dir / "analysis_report.txt"
-        if report_path.exists():
-            store_artifact(session, job.id, "analysis_report", text_data=report_path.read_text())
-
-        logger.info(
-            "Static stage slither complete for job %s address=%s contract=%s",
-            job.id,
-            address,
-            contract_name,
-        )
-        return True
-
     def _run_analysis_phase(
         self, session, job, project_dir: Path, contract_name: str, address: str
     ) -> ContractAnalysis | None:
@@ -1312,7 +1280,7 @@ class StaticWorker(BaseWorker):
             return None
 
         # Persist side artifacts into the temp workspace so later static
-        # subphases (tracking plan / HEVM refinement) can read them from disk.
+        # subphases (tracking plan) can read them from disk.
         (project_dir / "contract_analysis.json").write_text(json.dumps(analysis_data, indent=2) + "\n")
         semantic_guards = build_semantic_guards(analysis_data)
         (project_dir / "semantic_guards.json").write_text(json.dumps(semantic_guards, indent=2) + "\n")
@@ -1415,58 +1383,6 @@ class StaticWorker(BaseWorker):
         except Exception as exc:
             _log_phase_error(str(job.id), address, contract_name, "tracking_plan", str(exc))
             store_artifact(session, job.id, "tracking_plan_error", data={"error": str(exc)})
-
-    def _run_hevm_semantic_phase(self, session, job, project_dir: Path, contract_name: str, address: str) -> None:
-        """Refine unresolved semantic guards with HEVM proofs. Non-fatal on failure."""
-        semantic_guards_path = project_dir / "semantic_guards.json"
-        analysis_path = project_dir / "contract_analysis.json"
-        if not semantic_guards_path.exists() or not analysis_path.exists():
-            logger.info("Job %s: skipping HEVM semantic guards — no semantic_guards.json", job.id)
-            return
-
-        request = job.request if isinstance(job.request, dict) else {}
-        rpc_url = request.get("rpc_url") or os.getenv("ETH_RPC")
-        if not rpc_url:
-            logger.info("Job %s: skipping HEVM semantic guards — no RPC URL", job.id)
-            store_artifact(session, job.id, "hevm_semantic_guards", data={"status": "skipped", "reason": "no_rpc_url"})
-            return
-
-        tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
-        if not isinstance(tracking_plan, dict):
-            tracking_plan_path = project_dir / "control_tracking_plan.json"
-            if not tracking_plan_path.exists():
-                logger.info("Job %s: skipping HEVM semantic guards — no tracking plan", job.id)
-                return
-            tracking_plan = json.loads(tracking_plan_path.read_text())
-
-        try:
-            semantic_guards = json.loads(semantic_guards_path.read_text())
-            merged, hevm_artifact = refine_semantic_guards_with_hevm(
-                semantic_guards,
-                tracking_plan=tracking_plan,
-                rpc_url=rpc_url,
-                project_dir=project_dir,
-            )
-            store_artifact(session, job.id, "hevm_semantic_guards", data=hevm_artifact)
-            if merged != semantic_guards:
-                semantic_guards_path.write_text(json.dumps(merged, indent=2) + "\n")
-                store_artifact(session, job.id, "semantic_guards", data=merged)
-                logger.info(
-                    "Static stage HEVM semantic refinement updated semantic_guards for job %s address=%s contract=%s",
-                    job.id,
-                    address,
-                    contract_name,
-                )
-            else:
-                logger.info(
-                    "Static stage HEVM semantic refinement found no stronger guards for job %s address=%s contract=%s",
-                    job.id,
-                    address,
-                    contract_name,
-                )
-        except Exception as exc:
-            _log_phase_error(str(job.id), address, contract_name, "hevm_semantic_guards", str(exc))
-            store_artifact(session, job.id, "hevm_semantic_guards", data={"status": "error", "error": str(exc)})
 
 
 def main():

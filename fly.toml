@@ -12,6 +12,9 @@ kill_timeout = 30
 [env]
   PORT = "8000"
   PYTHONUNBUFFERED = "1"
+  # Bumped from start_workers.sh defaults (2/1) — fits within shared-cpu-2x:4GB workers VM.
+  PSAT_STATIC_WORKERS = "3"
+  PSAT_RESOLUTION_WORKERS = "2"
 
 # One-shot schema migration in a temporary machine. Runs once per
 # deploy, before any long-lived machine boots — so the four process
@@ -60,7 +63,7 @@ kill_timeout = 30
 [[vm]]
   processes = ["workers"]
   size = "shared-cpu-2x"
-  memory = "2gb"
+  memory = "4gb"
 
 # Playwright Chromium is RAM-heavy; give it its own headroom.
 [[vm]]

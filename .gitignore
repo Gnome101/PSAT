@@ -28,3 +28,9 @@ info-dont-add-to-git.txt
 bench_results/
 bench_results_full/
 bench_results_addresses/
+fly-bench.toml
+fly-bench-split.toml
+todo-no-commit-to-gihub.txt
+.codex
+old_tood
+phase-b-results.md

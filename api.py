@@ -86,6 +86,10 @@ class AnalyzeRequest(BaseModel):
     wait: int | None = Field(default=None, ge=1, le=120)
     analyze_limit: int = Field(default=5, ge=1, le=200)
     rpc_url: str | None = None
+    force: bool = Field(
+        default=False,
+        description="Bench-only: skip the static-cache discovery shortcut so every stage re-runs cold.",
+    )
 
     @model_validator(mode="after")
     def _validate_target(self) -> "AnalyzeRequest":
@@ -597,6 +601,41 @@ def get_job(job_id: str) -> dict[str, Any]:
         return job.to_dict()
 
 
+@app.get("/api/jobs/{job_id}/stage_timings", dependencies=[Depends(require_admin_key)])
+def get_job_stage_timings(job_id: str) -> dict[str, Any]:
+    """Return all per-stage timing artifacts the worker fleet wrote for
+    this job, keyed by stage name. Schema-v2 layout (one
+    ``stage_timing_<stage>`` artifact per stage). Used by the bench
+    harness to populate ``worker_elapsed_seconds`` reliably without
+    scraping Fly logs.
+
+    Admin-protected because per-job timings expose internal worker_id /
+    runtime metadata.
+    """
+    with SessionLocal() as session:
+        job = session.get(Job, job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        # Escape `_` so the legacy `stage_timings` artifact doesn't match this prefix scan.
+        rows = (
+            session.execute(
+                select(Artifact).where(
+                    Artifact.job_id == job.id,
+                    Artifact.name.like(r"stage\_timing\_%", escape="\\"),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        timings: dict[str, Any] = {}
+        for row in rows:
+            stage = row.name[len("stage_timing_") :]
+            value = _resolve_artifact_value(row)
+            if isinstance(value, dict):
+                timings[stage] = value
+        return {"job_id": str(job.id), "stage_timings": timings}
+
+
 @app.get("/api/analyses")
 def analyses() -> list[dict]:
     """List completed analyses with their available artifacts."""
@@ -989,7 +1028,6 @@ def analysis_detail(run_name: str) -> dict:
                     "resolved_control_graph",
                     "effective_permissions",
                     "principal_labels",
-                    "analysis_report",
                 ):
                     if fallback_name not in payload:
                         val = impl_artifacts.get(fallback_name)
@@ -1133,10 +1171,6 @@ def analysis_detail(run_name: str) -> dict:
 
                 payload["proxy_address"] = payload.get("proxy_address") or job.address
                 payload["implementation_address"] = impl_addr
-
-        # Inline text artifacts
-        if "analysis_report" in all_artifacts:
-            payload["analysis_report"] = all_artifacts["analysis_report"]
 
         # Add subject info from contract_analysis if available
         if isinstance(all_artifacts.get("contract_analysis"), dict):

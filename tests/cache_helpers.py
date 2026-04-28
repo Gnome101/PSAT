@@ -512,7 +512,6 @@ def _patch_static_worker_phases(monkeypatch, worker):
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
     monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
     monkeypatch.setattr(worker, "_run_dependency_phase", lambda *a, **kw: phases_run.append("dependency"))
-    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
     monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
     monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
@@ -524,7 +523,6 @@ def _patch_static_worker_non_dep_phases(monkeypatch, worker):
     phases_run = []
     monkeypatch.setattr(worker, "_resolve_proxy", lambda *a, **kw: phases_run.append("resolve_proxy"))
     monkeypatch.setattr(worker, "_scaffold_project", lambda *a, **kw: None)
-    monkeypatch.setattr(worker, "_run_slither_phase", lambda *a, **kw: phases_run.append("slither") or True)
     monkeypatch.setattr(worker, "_run_analysis_phase", lambda *a, **kw: phases_run.append("analysis") or True)
     monkeypatch.setattr(worker, "_run_tracking_plan_phase", lambda *a, **kw: phases_run.append("tracking_plan"))
     monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
