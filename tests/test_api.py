@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -507,3 +508,149 @@ def test_stage_timings_endpoint_is_admin_protected() -> None:
         "stage_timings endpoint must depend on require_admin_key — without "
         "it, per-job worker_id / runtime metadata would be public"
     )
+
+
+# ---------------------------------------------------------------------------
+# Storage-failure degradation. Both endpoints used to 500 on a transport
+# error or a missing storage client; we degrade per-row so a flaky bucket
+# can't take down the whole response.
+# ---------------------------------------------------------------------------
+
+
+@patch("api.get_storage_client")
+@patch("api.SessionLocal")
+def test_stage_timings_degrades_when_storage_unconfigured(mock_session_cls, mock_get_client) -> None:
+    """If storage is not configured but rows reference ``storage_key``, the
+    endpoint must return what it can (inline rows, empty if none) instead of
+    raising — env drift on a redeploy shouldn't 500 the SPA."""
+
+    fake_job = _make_fake_job()
+    storage_row = SimpleNamespace(
+        name="stage_timing_static",
+        storage_key="some/key",
+        content_type="application/json",
+        data=None,
+        text_data=None,
+    )
+    inline_row = SimpleNamespace(
+        name="stage_timing_discovery",
+        storage_key=None,
+        content_type=None,
+        data={"stage": "discovery", "elapsed_s": 1.0},
+        text_data=None,
+    )
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = fake_job
+    mock_session.execute.return_value.scalars.return_value.all.return_value = [inline_row, storage_row]
+    mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+    mock_get_client.return_value = None  # storage env stripped
+
+    resp = make_client().get(f"/api/jobs/{fake_job.id}/stage_timings")
+    assert resp.status_code == 200
+    body = resp.json()
+    # Inline row survives; storage row is silently skipped.
+    assert set(body["stage_timings"].keys()) == {"discovery"}
+
+
+@patch("api.get_storage_client")
+@patch("api.SessionLocal")
+def test_stage_timings_degrades_on_storage_transport_error(mock_session_cls, mock_get_client) -> None:
+    """Transport error from the bucket (Tigris hiccup, signing failure, etc.)
+    surfaces as ``None`` for the affected key (per ``get_many``'s contract,
+    pinned in test_db_storage_unit.py). The endpoint must drop the affected
+    stage and keep healthy ones, not 500."""
+    fake_job = _make_fake_job()
+    inline_row = SimpleNamespace(
+        name="stage_timing_discovery",
+        storage_key=None,
+        content_type=None,
+        data={"stage": "discovery", "elapsed_s": 1.0},
+        text_data=None,
+    )
+    storage_row = SimpleNamespace(
+        name="stage_timing_static",
+        storage_key="some/key",
+        content_type="application/json",
+        data=None,
+        text_data=None,
+    )
+
+    fake_client = MagicMock()
+    fake_client.get_many.return_value = {"some/key": None}
+
+    mock_session = MagicMock()
+    mock_session.get.return_value = fake_job
+    mock_session.execute.return_value.scalars.return_value.all.return_value = [inline_row, storage_row]
+    mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
+    mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+    mock_get_client.return_value = fake_client
+
+    resp = make_client().get(f"/api/jobs/{fake_job.id}/stage_timings")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "discovery" in body["stage_timings"]
+    assert "static" not in body["stage_timings"]
+
+
+@patch("api.get_storage_client")
+@patch("api.SessionLocal")
+def test_analyses_degrades_per_row_on_partial_storage_failure(mock_session_cls, mock_get_client) -> None:
+    """A single bad key must not wipe every entry. Pre-fix, ``get_many``
+    raised on the first transport error and the catch zeroed ``bodies`` for
+    every row in the response. Now: per-key None means the surviving rows
+    keep their summary/contract_name."""
+
+    j_good = _make_fake_job(name="run_good", address="0xaaa")
+    j_bad = _make_fake_job(name="run_bad", address="0xbbb")
+
+    def _art(job_id, name, key):
+        return SimpleNamespace(
+            job_id=job_id,
+            name=name,
+            storage_key=key,
+            content_type="application/json",
+            data=None,
+            text_data=None,
+        )
+
+    artifacts = [
+        _art(j_good.id, "contract_analysis", "good_analysis"),
+        _art(j_good.id, "contract_flags", "good_flags"),
+        _art(j_bad.id, "contract_analysis", "bad_analysis"),
+        _art(j_bad.id, "contract_flags", "bad_flags"),
+    ]
+
+    fake_client = MagicMock()
+    # Good job's bodies arrive; bad job's keys come back as None (transport blip).
+    fake_client.get_many.return_value = {
+        "good_analysis": json.dumps({"subject": {"name": "Good"}, "summary": "ok"}).encode(),
+        "good_flags": json.dumps({"is_proxy": False}).encode(),
+        "bad_analysis": None,
+        "bad_flags": None,
+    }
+    mock_get_client.return_value = fake_client
+
+    jobs_result = MagicMock()
+    jobs_result.scalars.return_value.all.return_value = [j_good, j_bad]
+    contracts_result = MagicMock()
+    contracts_result.all.return_value = []
+    artifacts_result = MagicMock()
+    artifacts_result.scalars.return_value = iter(artifacts)
+
+    sess = MagicMock()
+    sess.execute.side_effect = [jobs_result, contracts_result, artifacts_result]
+    mock_session_cls.return_value.__enter__ = MagicMock(return_value=sess)
+    mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
+
+    resp = make_client().get("/api/analyses")
+    assert resp.status_code == 200, resp.text
+    by_run = {e["run_name"]: e for e in resp.json()}
+    assert by_run["run_good"].get("summary") == "ok"
+    assert by_run["run_good"].get("contract_name") == "Good"
+    # The bad row still appears in the listing (basic fields), just without
+    # summary/contract_name. Pre-fix it would have appeared but ALSO the good
+    # row would have lost its summary. Pin the per-row behavior.
+    assert "run_bad" in by_run
+    assert "summary" not in by_run["run_bad"]

@@ -643,17 +643,22 @@ def get_job_stage_timings(job_id: str) -> dict[str, Any]:
     if storage_lookups:
         client = get_storage_client()
         if client is None:
-            raise RuntimeError(
-                f"stage_timings on job {resolved_job_id} reference storage_key but storage is not configured"
+            # Storage env stripped after rows were written. Degrade to inline-only
+            # rather than 500 — the SPA copes with a partial timings map.
+            logger.warning(
+                "stage_timings on job %s reference storage_key but storage is not configured; "
+                "returning inline timings only",
+                resolved_job_id,
             )
-        bodies = client.get_many([key for key, _ in storage_lookups.values()])
-        for stage, (key, content_type) in storage_lookups.items():
-            body = bodies.get(key)
-            if body is None:
-                continue
-            value = deserialize_artifact(body, content_type)
-            if isinstance(value, dict):
-                timings[stage] = value
+        else:
+            bodies = client.get_many([key for key, _ in storage_lookups.values()])
+            for stage, (key, content_type) in storage_lookups.items():
+                body = bodies.get(key)
+                if body is None:
+                    continue
+                value = deserialize_artifact(body, content_type)
+                if isinstance(value, dict):
+                    timings[stage] = value
 
     return {"job_id": resolved_job_id, "stage_timings": timings}
 
@@ -712,23 +717,27 @@ def analyses() -> list[dict]:
                         inline_resolved[key] = art.text_data
 
     # Session closed. Fan out the storage GETs in parallel and decode bodies.
+    # ``get_many`` swallows per-key transport errors and returns ``None`` for
+    # them, so partial bucket failure degrades per-row instead of wiping the
+    # whole response — a non-storage entry still renders.
     resolved: dict[tuple[Any, str], Any] = dict(inline_resolved)
     if storage_lookups:
         client = get_storage_client()
         if client is None:
-            raise RuntimeError("/api/analyses: artifacts have storage_key set but storage is not configured")
-        keys = [sk for sk, _ in storage_lookups.values()]
-        try:
+            logger.warning(
+                "/api/analyses: %d artifact(s) reference storage_key but storage is not configured; "
+                "degrading to inline-only response",
+                len(storage_lookups),
+            )
+        else:
+            keys = [sk for sk, _ in storage_lookups.values()]
             bodies = client.get_many(keys)
-        except StorageError:
-            logger.warning("/api/analyses: storage fan-out failed; degrading to no-artifact response")
-            bodies = {}
-        for cache_key, (storage_key, content_type) in storage_lookups.items():
-            body = bodies.get(storage_key)
-            if body is None:
-                logger.warning("artifact %s storage read failed for job %s", cache_key[1], cache_key[0])
-                continue
-            resolved[cache_key] = deserialize_artifact(body, content_type)
+            for cache_key, (storage_key, content_type) in storage_lookups.items():
+                body = bodies.get(storage_key)
+                if body is None:
+                    logger.warning("artifact %s storage read failed for job %s", cache_key[1], cache_key[0])
+                    continue
+                resolved[cache_key] = deserialize_artifact(body, content_type)
 
     def _value(job_id: Any, name: str) -> Any:
         return resolved.get((job_id, name))
