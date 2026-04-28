@@ -61,13 +61,20 @@ jobs:
       - name: Verify deployed SHA matches commit
         # Catches "deploy reported success but old image is still serving" — e.g. a partial
         # rollout that left the previous release in place.
+        # Polls because fly-proxy can still hit a draining old machine right after `flyctl deploy`
+        # returns, especially when process groups change and old machines linger.
         run: |
-          DEPLOYED=$(curl -fsS --max-time 10 "$PROD_URL/api/version" | jq -r .sha)
-          if [ "$DEPLOYED" != "${{ github.sha }}" ]; then
-            echo "::error::SHA mismatch: deployed=$DEPLOYED expected=${{ github.sha }}"
-            exit 1
-          fi
-          echo "deployed SHA matches: $DEPLOYED"
+          for i in $(seq 1 24); do
+            DEPLOYED=$(curl -fsS --max-time 10 "$PROD_URL/api/version" | jq -r .sha || echo "")
+            if [ "$DEPLOYED" = "${{ github.sha }}" ]; then
+              echo "deployed SHA matches on attempt $i: $DEPLOYED"
+              exit 0
+            fi
+            echo "attempt $i: deployed=$DEPLOYED expected=${{ github.sha }}, sleeping 5s"
+            sleep 5
+          done
+          echo "::error::SHA never matched after 2min: last deployed=$DEPLOYED expected=${{ github.sha }}"
+          exit 1
 
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --dev
