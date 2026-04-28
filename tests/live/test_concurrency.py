@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import statistics
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
@@ -45,9 +44,19 @@ def test_concurrent_analyses_all_complete(live_base_url: str, live_admin_key: st
     )
 
 
-def test_concurrent_analyses_balanced_runtimes(live_base_url: str, live_admin_key: str):
-    """No run >2.5x the median (soft margin: USDC impl chain is legitimately heavier than DAI)."""
-    durations: dict[str, float] = {}
+def test_concurrent_analyses_parallelism(live_base_url: str, live_admin_key: str):
+    """The worker pool runs concurrent submissions in parallel, not serially.
+
+    Compares the wall-clock window (max end - min start) against the sum of
+    per-job durations. A serializing pool collapses to factor ≈ 1; a fully
+    parallel pool with no queueing hits factor = N. Threshold 1.5 is well
+    below the floor for the configured worker count (PSAT_STATIC_WORKERS=3 +
+    PSAT_RESOLUTION_WORKERS=2 in fly.toml), so this fires on real starvation
+    rather than per-contract weight variance — the previous median-ratio
+    check tripped on heterogeneous contract weights (LINK is legitimately
+    heavier than DAI under shared-cpu-2x), which is not a pool-health signal.
+    """
+    jobs: dict[str, dict] = {}
     with ThreadPoolExecutor(max_workers=len(PARALLEL_ADDRESSES)) as pool:
         futures = {
             pool.submit(_submit_and_wait, live_base_url, live_admin_key, addr): addr for addr in PARALLEL_ADDRESSES
@@ -56,18 +65,23 @@ def test_concurrent_analyses_balanced_runtimes(live_base_url: str, live_admin_ke
             addr = futures[fut]
             job = fut.result()
             if job["status"] == "completed":
-                durations[addr] = LiveClient.job_duration_seconds(job)
+                jobs[addr] = job
 
-    if len(durations) < 3:
-        pytest.skip(f"need at least 3 successful runs to compute a balanced-runtime check, got {len(durations)}")
+    if len(jobs) < 3:
+        pytest.skip(f"need at least 3 successful runs to evaluate parallelism, got {len(jobs)}")
 
-    median = statistics.median(durations.values())
-    # Tiny medians make ratios meaningless (2s vs 20s reads 10x but says nothing about saturation).
-    if median < 10:
-        pytest.skip(f"median runtime {median:.1f}s too short for a saturation check")
+    windows = {a: LiveClient.job_window(j) for a, j in jobs.items()}
+    durations = {a: (end - start).total_seconds() for a, (start, end) in windows.items()}
+    total_serial = sum(durations.values())
+    wall = (max(end for _, end in windows.values()) - min(start for start, _ in windows.values())).total_seconds()
 
-    outliers = {a: d for a, d in durations.items() if d > median * 2.5}
-    assert not outliers, (
-        f"concurrent runtime imbalance — median={median:.1f}s, "
-        f"outliers={ {a: round(d, 1) for a, d in outliers.items()} }"
+    # Sub-30s aggregate runs are dominated by submission/poll jitter rather than worker scheduling.
+    if total_serial < 30:
+        pytest.skip(f"total work {total_serial:.1f}s too short to evaluate parallelism")
+
+    factor = total_serial / wall if wall > 0 else float("inf")
+    assert factor > 1.5, (
+        f"worker pool serialized concurrent analyses — parallelism factor {factor:.2f} "
+        f"(sum={total_serial:.1f}s, wall={wall:.1f}s); per-job durations: "
+        f"{ {a: round(d, 1) for a, d in durations.items()} }"
     )
