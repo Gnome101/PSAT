@@ -149,6 +149,32 @@ class StorageClient:
             raise StorageUnavailable(f"get_object transport error for {key}: {exc}") from exc
         return response["Body"].read()
 
+    def get_many(self, keys: list[str]) -> dict[str, bytes | None]:
+        """Fetch multiple keys concurrently. Returns a dict with every unique
+        input key mapped to its bytes, or ``None`` if the object was reported
+        missing (NoSuchKey/404). Transport-level failures (network, auth,
+        signing) raise :class:`StorageUnavailable` so callers can distinguish
+        "object not in bucket" from "we can't reach the bucket at all".
+
+        Order is not preserved; the boto3 S3 client is documented as
+        thread-safe so a small fixed pool gives effectively-parallel HTTP
+        round-trips without spinning up one thread per call site.
+        """
+        if not keys:
+            return {}
+        unique = list(dict.fromkeys(keys))
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _fetch(k: str) -> tuple[str, bytes | None]:
+            try:
+                return k, self.get(k)
+            except StorageKeyMissing:
+                return k, None
+
+        with ThreadPoolExecutor(max_workers=16) as ex:
+            return dict(ex.map(_fetch, unique))
+
     def presign(self, key: str, expires_in: int = DEFAULT_PRESIGN_TTL) -> str:
         from botocore.exceptions import BotoCoreError, ClientError
 

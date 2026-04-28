@@ -44,15 +44,12 @@ from db.models import (
     WatchedProxy,
 )
 from db.queue import (
-    _artifact_row_to_value as _resolve_artifact_value,
-)
-from db.queue import (
     create_job,
     find_existing_job_for_address,
     get_all_artifacts,
     get_artifact,
 )
-from db.storage import StorageError, StorageUnavailable, get_storage_client
+from db.storage import StorageError, StorageUnavailable, deserialize_artifact, get_storage_client
 
 logger = logging.getLogger(__name__)
 
@@ -627,13 +624,38 @@ def get_job_stage_timings(job_id: str) -> dict[str, Any]:
             .scalars()
             .all()
         )
-        timings: dict[str, Any] = {}
+        # Read everything we need off the rows before releasing the session
+        # so the storage fan-out below doesn't pin a DB connection during
+        # slow HTTP I/O.
+        resolved_job_id = str(job.id)
+        inline_values: dict[str, Any] = {}
+        storage_lookups: dict[str, tuple[str, str | None]] = {}
         for row in rows:
             stage = row.name[len("stage_timing_") :]
-            value = _resolve_artifact_value(row)
+            if row.storage_key:
+                storage_lookups[stage] = (row.storage_key, row.content_type)
+            elif row.data is not None:
+                inline_values[stage] = row.data
+            elif row.text_data is not None:
+                inline_values[stage] = row.text_data
+
+    timings: dict[str, Any] = {stage: v for stage, v in inline_values.items() if isinstance(v, dict)}
+    if storage_lookups:
+        client = get_storage_client()
+        if client is None:
+            raise RuntimeError(
+                f"stage_timings on job {resolved_job_id} reference storage_key but storage is not configured"
+            )
+        bodies = client.get_many([key for key, _ in storage_lookups.values()])
+        for stage, (key, content_type) in storage_lookups.items():
+            body = bodies.get(key)
+            if body is None:
+                continue
+            value = deserialize_artifact(body, content_type)
             if isinstance(value, dict):
                 timings[stage] = value
-        return {"job_id": str(job.id), "stage_timings": timings}
+
+    return {"job_id": resolved_job_id, "stage_timings": timings}
 
 
 @app.get("/api/analyses")
@@ -673,77 +695,103 @@ def analyses() -> list[dict]:
 
         job_ids = [job.id for job in jobs]
         artifact_names_by_job: dict[Any, list[str]] = {}
-        targeted_artifacts: dict[tuple[Any, str], Artifact] = {}
+        # Resolve inline rows in-place; defer storage rows so we can fan out
+        # the HTTP GETs after the DB session is released.
+        inline_resolved: dict[tuple[Any, str], Any] = {}
+        storage_lookups: dict[tuple[Any, str], tuple[str, str | None]] = {}
         if job_ids:
             for art in session.execute(select(Artifact).where(Artifact.job_id.in_(job_ids))).scalars():
                 artifact_names_by_job.setdefault(art.job_id, []).append(art.name)
                 if art.name in ("contract_analysis", "contract_flags"):
-                    targeted_artifacts[(art.job_id, art.name)] = art
+                    key = (art.job_id, art.name)
+                    if art.storage_key:
+                        storage_lookups[key] = (art.storage_key, art.content_type)
+                    elif art.data is not None:
+                        inline_resolved[key] = art.data
+                    elif art.text_data is not None:
+                        inline_resolved[key] = art.text_data
 
-        def _value(job_id: Any, name: str) -> Any:
-            art = targeted_artifacts.get((job_id, name))
-            if art is None:
-                return None
-            try:
-                return _resolve_artifact_value(art)
-            except StorageError:
-                logger.warning("artifact %s storage read failed for job %s", name, job_id)
-                return None
+    # Session closed. Fan out the storage GETs in parallel and decode bodies.
+    resolved: dict[tuple[Any, str], Any] = dict(inline_resolved)
+    if storage_lookups:
+        client = get_storage_client()
+        if client is None:
+            raise RuntimeError(
+                "/api/analyses: artifacts have storage_key set but storage is not configured"
+            )
+        keys = [sk for sk, _ in storage_lookups.values()]
+        try:
+            bodies = client.get_many(keys)
+        except StorageError:
+            logger.warning("/api/analyses: storage fan-out failed; degrading to no-artifact response")
+            bodies = {}
+        for cache_key, (storage_key, content_type) in storage_lookups.items():
+            body = bodies.get(storage_key)
+            if body is None:
+                logger.warning("artifact %s storage read failed for job %s", cache_key[1], cache_key[0])
+                continue
+            resolved[cache_key] = deserialize_artifact(body, content_type)
 
-        def company_for_job(job: Job) -> str | None:
-            seen: set[str] = set()
-            current: Job | None = job
-            while current is not None:
-                if current.company:
-                    return current.company
-                request = current.request if isinstance(current.request, dict) else {}
-                parent_job_id = request.get("parent_job_id")
-                if not isinstance(parent_job_id, str) or parent_job_id in seen:
-                    return None
-                seen.add(parent_job_id)
-                current = jobs_by_id.get(parent_job_id)
-            return None
+    def _value(job_id: Any, name: str) -> Any:
+        return resolved.get((job_id, name))
 
-        results = []
-        for job in jobs:
-            run_name = job.name or str(job.id)
-            analysis_artifact = _value(job.id, "contract_analysis")
-            flags = _value(job.id, "contract_flags")
-            request = job.request if isinstance(job.request, dict) else {}
+    def company_for_job(job: Job) -> str | None:
+        seen: set[str] = set()
+        current: Job | None = job
+        while current is not None:
+            if current.company:
+                return current.company
+            request = current.request if isinstance(current.request, dict) else {}
             parent_job_id = request.get("parent_job_id")
-            company = company_for_job(job)
-            addr_lower = (job.address or "").lower()
-            entry: dict[str, Any] = {
-                "run_name": run_name,
-                "job_id": str(job.id),
-                "address": job.address,
-                "chain": request.get("chain") or chains_by_address.get(addr_lower),
-                "company": company,
-                "parent_job_id": parent_job_id,
-                "rank_score": rank_scores.get(addr_lower),
-                "is_proxy": bool(flags.get("is_proxy")) if isinstance(flags, dict) else False,
-                "proxy_type": flags.get("proxy_type") if isinstance(flags, dict) else None,
-                "implementation_address": flags.get("implementation") if isinstance(flags, dict) else None,
-                "proxy_address": request.get("proxy_address"),
-            }
-            entry["available_artifacts"] = sorted(artifact_names_by_job.get(job.id, []))
+            if not isinstance(parent_job_id, str) or parent_job_id in seen:
+                return None
+            seen.add(parent_job_id)
+            current = jobs_by_id.get(parent_job_id)
+        return None
 
-            # Hide proxy entries until the impl is completed — otherwise the
-            # listing renders a half-populated card that mutates once the impl
-            # lands. jobs_by_address only carries completed jobs.
-            if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
-                impl_job = jobs_by_address.get(flags["implementation"].lower())
-                if impl_job is None:
-                    continue
-                if not isinstance(analysis_artifact, dict):
-                    analysis_artifact = _value(impl_job.id, "contract_analysis")
+    results = []
+    for job in jobs:
+        run_name = job.name or str(job.id)
+        analysis_artifact = _value(job.id, "contract_analysis")
+        flags = _value(job.id, "contract_flags")
+        request = job.request if isinstance(job.request, dict) else {}
+        parent_job_id = request.get("parent_job_id")
+        company = company_for_job(job)
+        addr_lower = (job.address or "").lower()
+        entry: dict[str, Any] = {
+            "run_name": run_name,
+            "job_id": str(job.id),
+            "address": job.address,
+            "chain": request.get("chain") or chains_by_address.get(addr_lower),
+            "company": company,
+            "parent_job_id": parent_job_id,
+            "rank_score": rank_scores.get(addr_lower),
+            "is_proxy": bool(flags.get("is_proxy")) if isinstance(flags, dict) else False,
+            "proxy_type": flags.get("proxy_type") if isinstance(flags, dict) else None,
+            "implementation_address": flags.get("implementation") if isinstance(flags, dict) else None,
+            "proxy_address": request.get("proxy_address"),
+        }
+        entry["available_artifacts"] = sorted(artifact_names_by_job.get(job.id, []))
 
-            if isinstance(analysis_artifact, dict):
-                subject = analysis_artifact.get("subject", {})
-                entry["contract_name"] = subject.get("name", run_name)
-                entry["summary"] = analysis_artifact.get("summary")
-            results.append(entry)
-        return _merge_proxy_impl_entries(results)
+        # Hide proxy entries until the impl is completed — otherwise the
+        # listing renders a half-populated card that mutates once the impl
+        # lands. jobs_by_address only carries completed jobs. The impl's
+        # contract_analysis was prefetched above (every job's artifacts go
+        # through the same batch), so the lookup is a dict hit, not an
+        # extra HTTP round-trip.
+        if isinstance(flags, dict) and flags.get("is_proxy") and flags.get("implementation"):
+            impl_job = jobs_by_address.get(flags["implementation"].lower())
+            if impl_job is None:
+                continue
+            if not isinstance(analysis_artifact, dict):
+                analysis_artifact = _value(impl_job.id, "contract_analysis")
+
+        if isinstance(analysis_artifact, dict):
+            subject = analysis_artifact.get("subject", {})
+            entry["contract_name"] = subject.get("name", run_name)
+            entry["summary"] = analysis_artifact.get("summary")
+        results.append(entry)
+    return _merge_proxy_impl_entries(results)
 
 
 @app.get("/api/analyses/{run_name:path}/artifact/{artifact_name:path}")

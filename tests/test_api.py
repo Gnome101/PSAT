@@ -402,9 +402,8 @@ def test_protocol_tvl_caps_days(mock_session_cls) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("api._resolve_artifact_value")
 @patch("api.SessionLocal")
-def test_stage_timings_endpoint_returns_per_stage_artifacts(mock_session_cls, mock_resolve) -> None:
+def test_stage_timings_endpoint_returns_per_stage_artifacts(mock_session_cls) -> None:
     """Bench harness needs a reliable per-stage timing source. The endpoint
     must collect every ``stage_timing_<stage>`` artifact for the job and
     return them keyed by stage name (the suffix after ``stage_timing_``).
@@ -414,36 +413,39 @@ def test_stage_timings_endpoint_returns_per_stage_artifacts(mock_session_cls, mo
     client = make_client()
     fake_job = _make_fake_job()
 
-    # Synthesize two artifacts: stage_timing_discovery + stage_timing_static.
-    # The session.execute().scalars().all() chain returns SimpleNamespaces
-    # that look like ORM Artifact rows.
-    art_discovery = SimpleNamespace(name="stage_timing_discovery")
-    art_static = SimpleNamespace(name="stage_timing_static")
-
-    def _fake_resolve(row):
-        if row is art_discovery:
-            return {
-                "schema_version": "2",
-                "stage": "discovery",
-                "elapsed_s": 4.2,
-                "started_at": "t0",
-                "ended_at": "t1",
-                "worker_id": "DiscoveryWorker-1-aaa",
-                "status": "success",
-            }
-        if row is art_static:
-            return {
-                "schema_version": "2",
-                "stage": "static",
-                "elapsed_s": 28.7,
-                "started_at": "t1",
-                "ended_at": "t2",
-                "worker_id": "StaticWorker-1-bbb",
-                "status": "success",
-            }
-        return None
-
-    mock_resolve.side_effect = _fake_resolve
+    # Use the inline path (data set, storage_key NULL) — exercises the same
+    # response-assembly code as the storage path without needing a fake
+    # boto3 client. SimpleNamespace stands in for an ORM Artifact row.
+    art_discovery = SimpleNamespace(
+        name="stage_timing_discovery",
+        storage_key=None,
+        content_type=None,
+        data={
+            "schema_version": "2",
+            "stage": "discovery",
+            "elapsed_s": 4.2,
+            "started_at": "t0",
+            "ended_at": "t1",
+            "worker_id": "DiscoveryWorker-1-aaa",
+            "status": "success",
+        },
+        text_data=None,
+    )
+    art_static = SimpleNamespace(
+        name="stage_timing_static",
+        storage_key=None,
+        content_type=None,
+        data={
+            "schema_version": "2",
+            "stage": "static",
+            "elapsed_s": 28.7,
+            "started_at": "t1",
+            "ended_at": "t2",
+            "worker_id": "StaticWorker-1-bbb",
+            "status": "success",
+        },
+        text_data=None,
+    )
 
     mock_session = MagicMock()
     mock_session.get.return_value = fake_job
