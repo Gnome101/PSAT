@@ -24,7 +24,6 @@ import pytest
 from sqlalchemy import event, text
 
 from db.models import (
-    Artifact,
     AuditContractCoverage,
     AuditReport,
     Contract,
@@ -42,6 +41,7 @@ from db.models import (
     Protocol,
     UpgradeEvent,
 )
+from db.queue import store_artifact
 from tests.conftest import requires_postgres
 
 PROTOCOL_NAME = "perftest"
@@ -50,6 +50,19 @@ N_FUNCTIONS_PER_CONTRACT = 50
 N_PRINCIPALS_PER_FUNCTION = 2
 N_NODES_PER_CONTRACT = 6
 N_EDGES_PER_CONTRACT = 8
+
+# Stage names whose timings the worker fleet records as ``stage_timing_<name>``
+# artifacts; ``done`` is the terminal sink so it never gets one.
+_PERF_STAGE_TIMING_STAGES = (
+    "discovery",
+    "dapp_crawl",
+    "defillama_scan",
+    "selection",
+    "static",
+    "resolution",
+    "policy",
+    "coverage",
+)
 
 
 def _addr(seed: int) -> str:
@@ -101,7 +114,33 @@ def _wipe_perf_data(session) -> None:
 
 
 @pytest.fixture()
-def seeded(db_session):
+def _simulated_prod_rtt(monkeypatch):
+    # Localhost minio answers a GET in ~1 ms; Fly Tigris in prod sits
+    # closer to 30 ms. The serial-vs-parallel gap we want to demonstrate
+    # only shows up once GET cost is dominated by network latency, so
+    # inject a small sleep into StorageClient.get. Real client.get is
+    # still called — this is added latency, not a mock.
+    import time as _time
+
+    from db.storage import StorageClient
+
+    real_get = StorageClient.get
+    rtt_ms = float(os.environ.get("PSAT_BENCH_RTT_MS", "25"))
+
+    def slow_get(self, key):
+        _time.sleep(rtt_ms / 1000.0)
+        return real_get(self, key)
+
+    monkeypatch.setattr(StorageClient, "get", slow_get)
+
+
+@pytest.fixture()
+def seeded(db_session, storage_bucket, _simulated_prod_rtt):
+    # storage_bucket wires ARTIFACT_STORAGE_* to minio so the artifacts
+    # below land as storage_key rows (data NULL) — that's what
+    # /api/analyses and /api/jobs/{job_id}/stage_timings hit in prod, and
+    # the only configuration where the per-row HTTP GET cost we're
+    # benchmarking is real.
     _wipe_perf_data(db_session)
 
     protocol = Protocol(name=PROTOCOL_NAME, chains=["ethereum"])
@@ -272,31 +311,20 @@ def seeded(db_session):
                 )
             )
 
-        # contract_analysis artifact (small JSON to mimic real shape)
-        db_session.add(
-            Artifact(
-                job_id=job.id,
-                name="contract_analysis",
-                data={
-                    "subject": {"name": f"PerfContract_{i:03d}"},
-                    "summary": "perf summary",
-                },
-            )
+        # contract_analysis / contract_flags / dependencies via store_artifact
+        # so each body lands in object storage (storage_key set, data NULL),
+        # matching the prod layout that exposes the per-row GET hotspot.
+        store_artifact(
+            db_session,
+            job.id,
+            "contract_analysis",
+            data={
+                "subject": {"name": f"PerfContract_{i:03d}"},
+                "summary": "perf summary",
+            },
         )
-        db_session.add(
-            Artifact(
-                job_id=job.id,
-                name="contract_flags",
-                data={"is_proxy": False},
-            )
-        )
-        db_session.add(
-            Artifact(
-                job_id=job.id,
-                name="dependencies",
-                data={"deps": []},
-            )
-        )
+        store_artifact(db_session, job.id, "contract_flags", data={"is_proxy": False})
+        store_artifact(db_session, job.id, "dependencies", data={"deps": []})
 
     # Proxy + impl + audit + coverage rows so the audit_timeline benchmark
     # exercises the proxy/_current_status branch (where the unstaged
@@ -388,11 +416,33 @@ def seeded(db_session):
     )
 
     db_session.commit()
+
+    # Stage timings on perf_000 so the /api/jobs/{id}/stage_timings benchmark
+    # has eight storage-backed rows to fan out (one per stage that actually
+    # ran; ``done`` is terminal and never gets a timing).
+    timing_target = jobs[0]
+    for stage in _PERF_STAGE_TIMING_STAGES:
+        store_artifact(
+            db_session,
+            timing_target.id,
+            f"stage_timing_{stage}",
+            data={
+                "schema_version": "2",
+                "stage": stage,
+                "started_at": "2025-01-01T00:00:00Z",
+                "ended_at": "2025-01-01T00:00:01Z",
+                "elapsed_s": 1.0,
+                "worker_id": "perf-bench",
+                "status": "ok",
+            },
+        )
+
     yield {
         "protocol": protocol,
         "jobs": jobs,
         "contracts": contracts,
         "proxy_contract_id": proxy_contract.id,
+        "stage_timings_job_id": timing_target.id,
     }
     _wipe_perf_data(db_session)
 
@@ -487,6 +537,16 @@ def test_benchmark_high_impact_endpoints(seeded, api_client, db_session, monkeyp
         )
     )
 
+    stage_timings_job_id = seeded["stage_timings_job_id"]
+    results.append(
+        _run(
+            api_client,
+            db_session,
+            "GET /api/jobs/{id}/stage_timings",
+            lambda: api_client.get(f"/api/jobs/{stage_timings_job_id}/stage_timings"),
+        )
+    )
+
     print()
     print("=" * 78)
     print(f"{'endpoint':<40} {'queries':>10} {'wall_ms':>10}")
@@ -518,6 +578,8 @@ def test_benchmark_high_impact_endpoints(seeded, api_client, db_session, monkeyp
     assert len(timeline["coverage"]) == 1
     jobs = api_client.get("/api/jobs").json()
     assert any(j.get("company") == PROTOCOL_NAME for j in jobs)
+    timings = api_client.get(f"/api/jobs/{stage_timings_job_id}/stage_timings").json()
+    assert set(timings["stage_timings"].keys()) == set(_PERF_STAGE_TIMING_STAGES)
 
 
 # Post-perf actuals + ~3 slack. Tighten when you intentionally lower a count.
@@ -527,6 +589,7 @@ QUERY_BUDGETS = {
     "analysis_detail": 12,
     "list_jobs": 3,
     "audit_timeline": 10,
+    "stage_timings": 3,
 }
 
 
@@ -539,12 +602,14 @@ def test_query_count_budgets(seeded, api_client, db_session, monkeypatch, record
 
     sample_run = "perf_000"
     proxy_contract_id = seeded["proxy_contract_id"]
+    stage_timings_job_id = seeded["stage_timings_job_id"]
     cases = {
         "company_overview": lambda: api_client.get(f"/api/company/{PROTOCOL_NAME}"),
         "analyses": lambda: api_client.get("/api/analyses"),
         "analysis_detail": lambda: api_client.get(f"/api/analyses/{sample_run}"),
         "list_jobs": lambda: api_client.get("/api/jobs"),
         "audit_timeline": lambda: api_client.get(f"/api/contracts/{proxy_contract_id}/audit_timeline"),
+        "stage_timings": lambda: api_client.get(f"/api/jobs/{stage_timings_job_id}/stage_timings"),
     }
 
     actuals: dict[str, int] = {}

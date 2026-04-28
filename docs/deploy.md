@@ -192,7 +192,7 @@ a month; teardown on PR close bounds the total.
 Every Fly machine (prod or preview) runs **one container** that starts, in
 order:
 
-1. `python -c "from db.models import create_tables; create_tables()"` — idempotent schema init.
+1. `uv run alembic upgrade head` — schema migrations (also runs as Fly's `release_command` so the in-container call is a no-op on prod).
 2. `./start_workers.sh &` — background, starts every worker (discovery,
    static, resolution, policy, coverage, dapp_crawl, defillama, selection,
    audit_text_extraction, audit_scope_extraction).

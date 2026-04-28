@@ -63,6 +63,9 @@ select = ["E", "F", "I", "W"]
 "tests/test_effect_label_adversarial.py" = ["E501"]
 "tests/test_symbolic_effects.py" = ["E501"]
 "tests/*" = ["F811"]
+# Alembic autogenerates one-column-per-line table definitions; line length
+# isn't worth fighting with the generator.
+"alembic/versions/*.py" = ["E501"]
 
 [tool.coverage.run]
 source = ["api", "workers", "services", "db", "utils"]

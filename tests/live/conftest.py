@@ -415,6 +415,11 @@ class LiveClient:
     def job_duration_seconds(job: dict[str, Any]) -> float:
         return (_parse_dt(job["updated_at"]) - _parse_dt(job["created_at"])).total_seconds()
 
+    @staticmethod
+    def job_window(job: dict[str, Any]) -> tuple[datetime, datetime]:
+        """Return the (created_at, updated_at) datetimes for a job."""
+        return _parse_dt(job["created_at"]), _parse_dt(job["updated_at"])
+
     def submit_and_wait(
         self,
         address: str,

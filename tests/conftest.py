@@ -23,7 +23,6 @@ _STORAGE_ENV_KEYS = (
 
 from db.models import (  # noqa: E402
     AuditContractCoverage,
-    Base,
     MonitoredContract,
     MonitoredEvent,
     Protocol,
@@ -199,29 +198,25 @@ def _can_connect() -> bool:
 requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available (set TEST_DATABASE_URL)")
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _apply_storage_schema_once():
-    """Ensure new artifact storage columns exist on TEST_DATABASE_URL.
+def run_alembic_upgrade(url: str) -> None:
+    """Run ``alembic upgrade head`` against ``url``. Idempotent."""
+    from alembic.config import Config
 
-    Many test modules build their own engine and call ``Base.metadata.create_all``,
-    which is a no-op for tables that pre-exist — so on a long-lived test DB the
-    storage_key/size_bytes/content_type columns would be missing. This session-
-    scoped autouse fixture runs the ALTER TABLE statements once at the start of
-    the test session against the canonical TEST_DATABASE_URL.
-    """
+    from alembic import command
+
+    repo_root = Path(__file__).resolve().parents[1]
+    cfg = Config(str(repo_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(repo_root / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "head")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _migrate_test_db_once():
+    """Bring TEST_DATABASE_URL up to head once per session."""
     if not _can_connect():
         return
-    from db.models import apply_storage_migrations
-
-    test_engine = create_engine(DATABASE_URL)
-    try:
-        # Ensure tables exist before altering.
-        from db.models import Base as _Base
-
-        _Base.metadata.create_all(test_engine)
-        apply_storage_migrations(test_engine)
-    finally:
-        test_engine.dispose()
+    run_alembic_upgrade(DATABASE_URL)
 
 
 # ---------------------------------------------------------------------------
@@ -275,15 +270,11 @@ def _make_log(
 def db_session():
     """PostgreSQL database session with full schema.
 
-    Creates all tables if they don't exist, yields a session, then
-    cleans up test-created rows on teardown.
+    The session-scoped ``_migrate_test_db_once`` fixture has already brought
+    the schema up; this fixture just opens a session and cleans up rows on
+    teardown.
     """
-    from db.models import apply_storage_migrations
-
     engine = create_engine(DATABASE_URL)
-    Base.metadata.create_all(engine)
-    apply_storage_migrations(engine)
-
     session = Session(engine, expire_on_commit=False)
     try:
         yield session

@@ -40,7 +40,8 @@ RUN uv sync --frozen --no-dev
 # Playwright browsers + OS deps (required by dapp_crawl_worker). ~400MB.
 RUN uv run --no-sync playwright install --with-deps chromium
 
-COPY api.py ./
+COPY api.py alembic.ini ./
+COPY alembic/ alembic/
 COPY db/ db/
 COPY workers/ workers/
 COPY start_workers.sh start_container.sh start_web.sh start_browser.sh start_monitor.sh ./
