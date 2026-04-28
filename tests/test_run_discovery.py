@@ -206,18 +206,53 @@ def test_apply_spa_overrides_injects(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_needs_dependency_pass_true_on_contract_name():
-    assert rd._needs_dependency_pass(contracts=[{"name": "BoringVault Manager"}], audits=[]) is True
+def test_needs_dependency_pass_true_from_llm(monkeypatch):
+    captured = {}
+
+    def fake_chat(messages, **kwargs):
+        captured["prompt"] = messages[0]["content"]
+        return (
+            '{"should_run_dependency_pass": true, "confidence": 0.86, '
+            '"rationale": "uses Veda", "suspected_dependencies": ["BoringVault"]}'
+        )
+
+    monkeypatch.setattr(rd.llm, "chat", fake_chat)
+
+    assert rd._needs_dependency_pass("ether.fi", contracts=[{"name": "BoringVault Manager"}], audits=[]) is True
+    assert "BoringVault Manager" in captured["prompt"]
 
 
-def test_needs_dependency_pass_true_on_audit_title():
-    assert rd._needs_dependency_pass(contracts=[], audits=[{"title": "EigenLayer audit"}]) is True
-
-
-def test_needs_dependency_pass_false_for_pure_protocol():
-    assert (
-        rd._needs_dependency_pass(contracts=[{"name": "FooToken"}], audits=[{"title": "core protocol audit"}]) is False
+def test_needs_dependency_pass_false_from_llm(monkeypatch):
+    monkeypatch.setattr(
+        rd.llm,
+        "chat",
+        lambda messages, **kwargs: (
+            '{"should_run_dependency_pass": false, "confidence": 0.91, '
+            '"rationale": "core-only", "suspected_dependencies": []}'
+        ),
     )
+
+    assert (
+        rd._needs_dependency_pass(
+            "foo",
+            contracts=[{"name": "FooToken"}],
+            audits=[{"title": "core protocol audit"}],
+        )
+        is False
+    )
+
+
+def test_needs_dependency_pass_unparseable_llm_response(monkeypatch):
+    monkeypatch.setattr(rd.llm, "chat", lambda messages, **kwargs: "not json")
+    assert rd._needs_dependency_pass("foo", contracts=[{"name": "FooToken"}], audits=[]) is False
+
+
+def test_needs_dependency_pass_no_evidence_skips_llm(monkeypatch):
+    def fail(*a, **kw):
+        raise AssertionError("LLM should not be called without evidence")
+
+    monkeypatch.setattr(rd.llm, "chat", fail)
+    assert rd._needs_dependency_pass("foo", contracts=[], audits=[]) is False
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +419,7 @@ def test_run_discovery_happy_path_no_deps(monkeypatch):
         }
 
     monkeypatch.setattr(rd, "_cached_deep_research", fake_dr)
+    monkeypatch.setattr(rd, "_needs_dependency_pass", lambda protocol, contracts, audits: False)
 
     out = rd.run_discovery("ether.fi")
     assert "audits" in out and "addresses" in out and "meta" in out
@@ -392,7 +428,7 @@ def test_run_discovery_happy_path_no_deps(monkeypatch):
     assert "0x" + "2" * 40 in addrs
     assert out["meta"]["protocol"] == "ether.fi"
     assert out["meta"]["search_calls"] >= 0
-    # No dep signals → not triggered.
+    # Dependency classifier chose not to trigger.
     assert out["meta"]["dependency_pass_triggered"] is False
 
 
@@ -410,6 +446,7 @@ def test_run_discovery_triggers_dependency_pass(monkeypatch):
         return [{"url": "https://dep.example.com", "title": "dep audit"}]
 
     monkeypatch.setattr(rd, "_dependency_research", fake_dep)
+    monkeypatch.setattr(rd, "_needs_dependency_pass", lambda protocol, contracts, audits: True)
     monkeypatch.setattr(
         rd,
         "_cached_deep_research",
@@ -432,6 +469,7 @@ def test_run_discovery_audit_seed_failure_does_not_abort(monkeypatch):
         return {"data": {"contracts": []}}
 
     monkeypatch.setattr(rd, "_cached_deep_research", fake_dr)
+    monkeypatch.setattr(rd, "_needs_dependency_pass", lambda protocol, contracts, audits: False)
 
     out = rd.run_discovery("p")
     # Pipeline still produces a meta block.
@@ -453,6 +491,7 @@ def test_run_discovery_skips_invalid_addresses_from_deep_research(monkeypatch):
             }
         },
     )
+    monkeypatch.setattr(rd, "_needs_dependency_pass", lambda protocol, contracts, audits: False)
     out = rd.run_discovery("p")
     addrs = [c["address"] for c in out["addresses"]["contracts"]]
     assert addrs == ["0x" + "a" * 40]
@@ -461,6 +500,7 @@ def test_run_discovery_skips_invalid_addresses_from_deep_research(monkeypatch):
 def test_run_discovery_applies_spa_overrides(monkeypatch):
     _stub_discovery_modules(monkeypatch)
     monkeypatch.setattr(rd, "_cached_deep_research", lambda instructions, schema=None: {"data": {}})
+    monkeypatch.setattr(rd, "_needs_dependency_pass", lambda protocol, contracts, audits: False)
     monkeypatch.setattr(
         rd,
         "_load_known_docs",
