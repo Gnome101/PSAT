@@ -8,6 +8,8 @@ Two suites, marker-filtered: `pytest -m "not live"` (offline, CI runs this) and 
 
 **Never use `-k "not live"`** — it silently caught false positives like `test_live_findings_*`. Use the marker.
 
+When I say run the CI it means run the file .github/workflows/_ci-checks.yml
+
 ### Offline
 
 ```bash

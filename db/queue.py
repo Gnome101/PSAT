@@ -422,17 +422,38 @@ def backfill_job_is_proxy_from_storage(session: Session) -> int:
 
 
 def get_all_artifacts(session: Session, job_id: Any) -> dict[str, Any]:
-    """Read all artifacts for a job. Returns {name: data_or_text}."""
+    """Read all artifacts for a job. Returns {name: data_or_text}.
+
+    Storage-backed bodies are fetched in parallel via ``StorageClient.get_many``
+    so a job with N storage artifacts pays one HTTP round-trip's worth of
+    latency instead of N. Missing keys are skipped (mirrors the prior
+    ``StorageKeyMissing`` behavior).
+    """
     stmt = select(Artifact).where(Artifact.job_id == job_id)
     artifacts = session.execute(stmt).scalars().all()
     result: dict[str, Any] = {}
+    storage_lookups: dict[str, tuple[str, str | None]] = {}
     for artifact in artifacts:
-        try:
-            value = _artifact_row_to_value(artifact)
-        except StorageKeyMissing:
-            continue
-        if value is not None:
-            result[artifact.name] = value
+        if artifact.storage_key:
+            storage_lookups[artifact.name] = (artifact.storage_key, artifact.content_type)
+        elif artifact.data is not None:
+            result[artifact.name] = artifact.data
+        elif artifact.text_data is not None:
+            result[artifact.name] = artifact.text_data
+
+    if storage_lookups:
+        client = get_storage_client()
+        if client is None:
+            raise RuntimeError(f"job {job_id} has artifacts with storage_key but storage is not configured")
+        bodies = client.get_many([key for key, _ in storage_lookups.values()])
+        for name, (key, content_type) in storage_lookups.items():
+            body = bodies.get(key)
+            if body is None:
+                continue
+            value = deserialize_artifact(body, content_type)
+            if value is not None:
+                result[name] = value
+
     return result
 
 
