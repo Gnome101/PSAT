@@ -35,11 +35,6 @@ PSAT_LLM_STUB_DIR=tests/fixtures/scope_extraction/llm_responses \
 - `requests.Session` isn't thread-safe across calls. `test_concurrency.py` spawns one `LiveClient` per thread; reuse that pattern when parallelizing.
 - `MonitoredContract` rows leak across runs: `WatchedProxy.delete` is `ON DELETE SET NULL` for the link (`db/models.py`), and there's no admin DELETE. Use a stable `(address, chain)` rather than randomizing — the unique key keeps it a singleton.
 
-## Alembic
-
-- New revision: `scripts/new_migration.sh "msg"` — runs autogenerate against `TEST_DATABASE_URL`. Running against a dev DB or `$DATABASE_URL` produces wrong diffs.
-- `env.py` sets `lock_timeout=10s` / `statement_timeout=300s` per migration. `CREATE INDEX CONCURRENTLY` and `ALTER TYPE ADD VALUE` must run in `with op.get_context().autocommit_block():`.
-- Prod migration runs as Fly's `release_command` — one-shot machine before any long-lived group boots, so rolling deploys don't race on DDL locks.
 
 ## Style
 
