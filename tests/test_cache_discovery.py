@@ -289,6 +289,14 @@ def test_first_run_no_previous_inventory(db_session, monkeypatch):
             {"address": ADDR_A, "name": "A", "confidence": 0.9},
         ]
     )
+    monkeypatch.setattr(
+        "services.discovery.run_discovery.run_discovery",
+        lambda *a, **kw: {
+            "audits": {"reports": [], "errors": [], "notes": []},
+            "addresses": inventory,
+            "meta": {"protocol": "TestProtocol", "estimated_cost_usd": 0.0},
+        },
+    )
     monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: inventory)
 
     job = _make_company_job(db_session)
@@ -334,6 +342,14 @@ def test_rerun_merges_with_previous_inventory(db_session, monkeypatch):
             {"address": ADDR_B, "name": "B_v2", "confidence": 0.6},
             {"address": ADDR_C, "name": "C", "confidence": 0.85},
         ]
+    )
+    monkeypatch.setattr(
+        "services.discovery.run_discovery.run_discovery",
+        lambda *a, **kw: {
+            "audits": {"reports": [], "errors": [], "notes": []},
+            "addresses": new_inventory,
+            "meta": {"protocol": "TestProtocol", "estimated_cost_usd": 0.0},
+        },
     )
     monkeypatch.setattr("workers.discovery.search_protocol_inventory", lambda *a, **kw: new_inventory)
 
