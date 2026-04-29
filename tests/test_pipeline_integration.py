@@ -263,7 +263,7 @@ def test_dep_phase_skips_upgrade_history_when_no_proxies(monkeypatch, tmp_path):
 def test_merge_uses_impl_name_and_propagates_company():
     """Merged entry gets impl contract_name as display_name and inherits
     the proxy's company and rank_score."""
-    import api
+    from services.governance.proxies import _merge_proxy_impl_entries
 
     proxy_entry = {
         "run_name": "MyProxy",
@@ -294,7 +294,7 @@ def test_merge_uses_impl_name_and_propagates_company():
         "contract_name": "LiquidityPool",
     }
 
-    merged = api._merge_proxy_impl_entries([proxy_entry, impl_entry])
+    merged = _merge_proxy_impl_entries([proxy_entry, impl_entry])
     assert len(merged) == 1
     # Merge sets display_name from impl's contract_name directly (no chain suffix)
     assert merged[0]["display_name"] == "LiquidityPool"
@@ -306,20 +306,20 @@ def test_merge_uses_impl_name_and_propagates_company():
 def test_display_name_chain_suffix_and_generic_fallback():
     """_display_name appends chain, prefers display_name, and falls back
     to run_name for generic proxy contract names."""
-    import api
+    from services.governance.proxies import _display_name
 
     entry1 = {"contract_name": "Pool", "run_name": "x", "display_name": None, "chain": "base"}
-    assert api._display_name(entry1) == "Pool (base)"
+    assert _display_name(entry1) == "Pool (base)"
     entry2 = {"contract_name": "ERC1967Proxy", "run_name": "Router", "display_name": None, "chain": None}
-    assert api._display_name(entry2) == "Router"
+    assert _display_name(entry2) == "Router"
     entry3 = {"contract_name": "Proxy", "run_name": "r", "display_name": "Custom", "chain": None}
-    assert api._display_name(entry3) == "Custom"
+    assert _display_name(entry3) == "Custom"
 
 
 def test_proxy_with_completed_impl_visible_after_merge():
     """A proxy entry whose impl child has completed should appear as
     a merged entry in the list (this is the normal end state)."""
-    import api
+    from services.governance.proxies import _merge_proxy_impl_entries
 
     proxy_entry = {
         "run_name": "eETH",
@@ -349,7 +349,7 @@ def test_proxy_with_completed_impl_visible_after_merge():
         "proxy_address": "0x3333333333333333333333333333333333333333",
         "contract_name": "EETH",
     }
-    merged = api._merge_proxy_impl_entries([proxy_entry, impl_entry])
+    merged = _merge_proxy_impl_entries([proxy_entry, impl_entry])
     assert len(merged) == 1
     assert merged[0]["display_name"] == "EETH"
     assert merged[0]["proxy_address_display"] == "0x3333333333333333333333333333333333333333"
@@ -357,7 +357,7 @@ def test_proxy_with_completed_impl_visible_after_merge():
 
 def test_orphan_impl_appears_in_merged_list():
     """An impl whose proxy_address is not in the list still appears."""
-    import api
+    from services.governance.proxies import _merge_proxy_impl_entries
 
     orphan = {
         "run_name": "Orphan",
@@ -373,7 +373,7 @@ def test_orphan_impl_appears_in_merged_list():
         "proxy_address": "0x9999999999999999999999999999999999999999",
         "contract_name": "Impl",
     }
-    merged = api._merge_proxy_impl_entries([orphan])
+    merged = _merge_proxy_impl_entries([orphan])
     assert len(merged) == 1
 
 
@@ -382,8 +382,8 @@ def test_orphan_impl_appears_in_merged_list():
 # ===================================================================
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_detail_inlines_upgrade_history_and_graph_viz(mock_session_cls, mock_get_all_artifacts):
     from fastapi.testclient import TestClient
 
@@ -577,12 +577,12 @@ def test_resolution_artifact_names_match_policy_worker_reads():
 
 def test_policy_stores_all_artifacts_that_api_detail_inlines():
     """Policy worker stores effective_permissions, principal_labels, and
-    resolved_control_graph. The API detail endpoint inlines each of these.
+    resolved_control_graph. The API detail aggregator inlines each of these.
     Verify the names match between producer and consumer."""
     import inspect
 
-    import api
     import workers.policy_worker as pw
+    from services.aggregations import analysis_detail as detail_module
 
     pw_source = inspect.getsource(pw.PolicyWorker.process)
 
@@ -591,13 +591,13 @@ def test_policy_stores_all_artifacts_that_api_detail_inlines():
     assert '"principal_labels"' in pw_source
     assert '"resolved_control_graph"' in pw_source
 
-    # API detail inlines these
-    api_source = inspect.getsource(api.analysis_detail)
-    assert '"effective_permissions"' in api_source
-    assert '"principal_labels"' in api_source
-    assert '"resolved_control_graph"' in api_source
-    assert '"contract_analysis"' in api_source
-    assert '"control_snapshot"' in api_source
+    # API detail aggregator inlines these
+    detail_source = inspect.getsource(detail_module)
+    assert '"effective_permissions"' in detail_source
+    assert '"principal_labels"' in detail_source
+    assert '"resolved_control_graph"' in detail_source
+    assert '"contract_analysis"' in detail_source
+    assert '"control_snapshot"' in detail_source
 
 
 # ===================================================================
@@ -605,8 +605,8 @@ def test_policy_stores_all_artifacts_that_api_detail_inlines():
 # ===================================================================
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_artifacts):
     """The API detail endpoint must inline effective_permissions,
     principal_labels, control_snapshot, and resolved_control_graph
@@ -715,7 +715,7 @@ def test_detail_inlines_all_pipeline_artifacts(mock_session_cls, mock_get_all_ar
 # ===================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_list_reads_contract_flags_from_static_worker(mock_session_cls):
     """The analyses list endpoint reads 'contract_flags' artifact that
     static worker stores during _resolve_proxy. Verify the is_proxy
@@ -1226,8 +1226,8 @@ def test_scaffold_project_writes_expected_files(tmp_path):
 # ===================================================================
 
 
-@patch("api.get_artifact")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_artifact_endpoint_strips_json_extension(mock_session_cls, mock_get_artifact):
     """The artifact endpoint should strip .json and .txt extensions when
     looking up artifacts, since workers store artifacts without extensions

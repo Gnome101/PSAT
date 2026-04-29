@@ -48,6 +48,7 @@ COPY start_workers.sh start_container.sh start_web.sh start_browser.sh start_mon
 RUN chmod +x start_workers.sh start_container.sh start_web.sh start_browser.sh start_monitor.sh
 COPY services/ services/
 COPY schemas/ schemas/
+COPY routers/ routers/
 COPY utils/ utils/
 COPY site/ site/
 COPY --from=site-builder /site/dist /app/site/dist
