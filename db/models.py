@@ -44,6 +44,7 @@ class JobStatus(str, enum.Enum):
 
 class JobStage(str, enum.Enum):
     discovery = "discovery"
+    docs_discovery = "docs_discovery"
     dapp_crawl = "dapp_crawl"
     defillama_scan = "defillama_scan"
     selection = "selection"
