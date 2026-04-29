@@ -45,7 +45,8 @@ def _make_result(primary: dict, siblings: list[dict]) -> dict:
         # to find pre-resolver duplicate rows that share a family. Keep the
         # primary name first so callers can still treat ``[0]`` as the
         # canonical display string.
-        "all_names": [primary.get("name")] + [s.get("name") for s in siblings if s.get("name") and s.get("slug") != primary.get("slug")],
+        "all_names": [primary.get("name")]
+        + [s.get("name") for s in siblings if s.get("name") and s.get("slug") != primary.get("slug")],
     }
 
 
