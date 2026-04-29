@@ -176,9 +176,7 @@ def test_concurrent_slug_insert_serializes():
     assert results["a"]["exc"] is None, f"thread A raised: {results['a']['exc']!r}"
     assert results["b"]["exc"] is None, f"thread B raised: {results['b']['exc']!r}"
     # Both should converge on the same row id.
-    assert results["a"]["id"] == results["b"]["id"], (
-        f"expected both threads to see the same row, got {results!r}"
-    )
+    assert results["a"]["id"] == results["b"]["id"], f"expected both threads to see the same row, got {results!r}"
 
 
 # ---------------------------------------------------------------------------
