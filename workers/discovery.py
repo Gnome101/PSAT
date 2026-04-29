@@ -31,6 +31,7 @@ from services.discovery.audit_reports import merge_audit_reports, search_audit_r
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import merge_inventory, search_protocol_inventory
+from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.discovery")
@@ -122,8 +123,21 @@ class DiscoveryWorker(BaseWorker):
 
         store_artifact(session, job.id, "contract_inventory", data=inventory)
 
-        # Create or look up Protocol row
-        protocol_row = get_or_create_protocol(session, company, official_domain=inventory.get("official_domain"))
+        # Resolve to a DefiLlama family slug FIRST so the Protocol upsert is
+        # keyed on a stable canonical id. Without this, the same protocol
+        # discovered via different free-text spellings (e.g. "ether fi" vs
+        # "etherfi") splits into duplicate rows. The resolved struct is
+        # reused below for the parallel-discovery sibling spawns.
+        resolved = resolve_protocol(company)
+        canonical_slug = pick_family_slug(resolved)
+
+        protocol_row = get_or_create_protocol(
+            session,
+            company,
+            official_domain=inventory.get("official_domain"),
+            canonical_slug=canonical_slug,
+            aliases=resolved.get("all_names") or [],
+        )
         job.protocol_id = protocol_row.id
         session.commit()
 
@@ -202,7 +216,7 @@ class DiscoveryWorker(BaseWorker):
 
         # Run unconditionally: DApp crawl + DefiLlama scans are independent
         # sources, and empty primary inventory is the case that most needs them.
-        self._spawn_parallel_discovery(session, job, company, request, root_job_id)
+        self._spawn_parallel_discovery(session, job, company, request, root_job_id, resolved=resolved)
 
         self.update_detail(
             session,
@@ -229,11 +243,10 @@ class DiscoveryWorker(BaseWorker):
         company: str,
         request: dict,
         root_job_id: str,
+        resolved: dict | None = None,
     ) -> None:
         """Spawn DApp crawl and DefiLlama scan jobs if we can resolve the protocol."""
-        from services.discovery.protocol_resolver import resolve_protocol
-
-        protocol = resolve_protocol(company)
+        protocol = resolved if resolved is not None else resolve_protocol(company)
         if not protocol.get("slug") and not protocol.get("url"):
             logger.info("Job %s: no DefiLlama match for '%s', skipping parallel discovery", job.id, company)
             return

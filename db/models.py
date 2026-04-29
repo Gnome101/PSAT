@@ -212,12 +212,20 @@ class Protocol(Base):
         "ProtocolSubscription", backref="protocol"
     )
     official_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Canonical external ID — DefiLlama family slug. NULL when the protocol
+    # has no DefiLlama match (long-tail / private). Worker code resolves
+    # free-text input to a slug, then keys ``get_or_create_protocol`` on it
+    # so different spellings ("ether fi" vs "etherfi") collapse to one row.
+    canonical_slug: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     audit_reports: Mapped[list["AuditReport"]] = relationship(
         "AuditReport", backref="protocol", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (UniqueConstraint("name", name="uq_protocol_name"),)
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_protocol_name"),
+        UniqueConstraint("canonical_slug", name="uq_protocol_canonical_slug"),
+    )
 
 
 class AuditReport(Base):

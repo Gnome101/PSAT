@@ -24,6 +24,7 @@ from db.queue import (
     upsert_discovered_contract,
 )
 from services.crawlers.dapp.crawl import crawl_dapp
+from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.dapp_crawl")
@@ -58,7 +59,20 @@ class DAppCrawlWorker(BaseWorker):
             first_host = first_host[4:]
         protocol_name = job.company or first_host or f"dapp_{str(job.id)[:8]}"
         official_domain = first_host or None
-        protocol_row = get_or_create_protocol(session, protocol_name, official_domain=official_domain)
+        # Route through the resolver so dapp-crawl jobs that started from a
+        # hostname spelling ("ether.fi") collapse onto the same canonical
+        # row as discovery jobs that started from the github-org spelling
+        # ("etherfi"). Returns None for unknown hostnames; the fallback
+        # name-keyed lookup handles those.
+        resolved = resolve_protocol(protocol_name)
+        canonical_slug = pick_family_slug(resolved)
+        protocol_row = get_or_create_protocol(
+            session,
+            protocol_name,
+            official_domain=official_domain,
+            canonical_slug=canonical_slug,
+            aliases=resolved.get("all_names") or [],
+        )
         job.protocol_id = protocol_row.id
         if not job.company:
             job.company = protocol_row.name
