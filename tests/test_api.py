@@ -61,7 +61,7 @@ def make_client() -> TestClient:
 
 
 def test_build_company_function_entry_filters_generic_authority_contract_when_specific_principals_exist() -> None:
-    import api
+    from services.governance.principals import _build_company_function_entry
 
     ef = SimpleNamespace(
         abi_signature="pauseContract()",
@@ -97,7 +97,7 @@ def test_build_company_function_entry_filters_generic_authority_contract_when_sp
         ),
     ]
 
-    result = api._build_company_function_entry(cast(Any, ef), cast(Any, principals))
+    result = _build_company_function_entry(cast(Any, ef), cast(Any, principals))
 
     assert result["controllers"] == [
         {
@@ -165,10 +165,11 @@ def test_version_endpoint_returns_git_sha(api_client, monkeypatch) -> None:
 def test_admin_key_required_for_non_get(monkeypatch) -> None:
     """Without a valid admin key, write endpoints must return 401."""
     import api
+    from routers.deps import require_admin_key
 
     # Drop the conftest override for this test only and force a known key.
-    api.app.dependency_overrides.pop(api.require_admin_key, None)
-    monkeypatch.setattr(api, "ADMIN_KEY", "real-key")
+    api.app.dependency_overrides.pop(require_admin_key, None)
+    monkeypatch.setattr("routers.deps.ADMIN_KEY", "real-key")
 
     client = TestClient(api.app)
 
@@ -197,10 +198,14 @@ def test_cors_allows_configured_origin(monkeypatch, db_session) -> None:
 
     importlib.reload(api)
     try:
-        # The reload reset SessionLocal to the prod-default engine; point it
-        # back at the test DB so /api/health can reach Postgres.
-        api.SessionLocal = SessionFactory(db_session)
-        api.app.dependency_overrides[api.require_admin_key] = lambda: None
+        # Reload re-evaluated the CORS middleware against the new origin.
+        # SessionLocal lives on routers.deps (every router reads it from
+        # there) — point that at the test DB so /api/health works.
+        from routers import deps
+        from routers.deps import require_admin_key
+
+        deps.SessionLocal = SessionFactory(db_session)
+        api.app.dependency_overrides[require_admin_key] = lambda: None
         client = TestClient(api.app)
 
         response = client.get("/api/health", headers={"Origin": "https://psat.example.com"})
@@ -211,8 +216,8 @@ def test_cors_allows_configured_origin(monkeypatch, db_session) -> None:
         importlib.reload(api)
 
 
-@patch("api.SessionLocal")
-@patch("api.create_job")
+@patch("routers.deps.SessionLocal")
+@patch("routers.deps.create_job")
 def test_analyze_endpoint_creates_job(mock_create_job, mock_session_cls) -> None:
     client = make_client()
 
@@ -233,8 +238,8 @@ def test_analyze_endpoint_creates_job(mock_create_job, mock_session_cls) -> None
     assert response.json()["job_id"] == "job-1"
 
 
-@patch("api.SessionLocal")
-@patch("api.create_job")
+@patch("routers.deps.SessionLocal")
+@patch("routers.deps.create_job")
 def test_company_analyze_endpoint(mock_create_job, mock_session_cls) -> None:
     client = make_client()
 
@@ -269,7 +274,7 @@ def test_analyze_endpoint_requires_at_least_one_target() -> None:
     assert missing.status_code == 422
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_get_job_and_missing_job(mock_session_cls) -> None:
     client = make_client()
     fake_job = _make_fake_job()
@@ -287,8 +292,8 @@ def test_get_job_and_missing_job(mock_session_cls) -> None:
     assert missing.status_code == 404
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analyses_detail(mock_session_cls, mock_get_all_artifacts) -> None:
     client = make_client()
     fake_job = _make_fake_job(name="demo_run", address="0xabc")
@@ -310,8 +315,8 @@ def test_analyses_detail(mock_session_cls, mock_get_all_artifacts) -> None:
     assert detail.json()["run_name"] == "demo_run"
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_missing_analysis_returns_404(mock_session_cls, mock_get_all_artifacts) -> None:
     client = make_client()
 
@@ -327,7 +332,7 @@ def test_missing_analysis_returns_404(mock_session_cls, mock_get_all_artifacts) 
     assert response.status_code == 404
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_artifact_endpoint_serves_json_and_text(mock_session_cls) -> None:
     """Inline-stored artifacts (no storage_key) are served directly."""
     client = make_client()
@@ -368,7 +373,7 @@ def test_artifact_endpoint_serves_json_and_text(mock_session_cls) -> None:
     assert "report body" in txt_response.text
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_protocol_tvl_caps_days(mock_session_cls) -> None:
     """days parameter should be capped to MAX_TVL_HISTORY_DAYS."""
     client = make_client()
@@ -392,10 +397,10 @@ def test_protocol_tvl_caps_days(mock_session_cls) -> None:
     response = client.get("/api/protocols/1/tvl?days=9999")
     assert response.status_code == 200
 
-    import api
+    from routers import deps
 
-    assert hasattr(api, "MAX_TVL_HISTORY_DAYS"), "api.py should define MAX_TVL_HISTORY_DAYS"
-    assert api.MAX_TVL_HISTORY_DAYS <= 365
+    assert hasattr(deps, "MAX_TVL_HISTORY_DAYS"), "routers.deps should define MAX_TVL_HISTORY_DAYS"
+    assert deps.MAX_TVL_HISTORY_DAYS <= 365
 
 
 # ---------------------------------------------------------------------------
@@ -403,13 +408,13 @@ def test_protocol_tvl_caps_days(mock_session_cls) -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_stage_timings_endpoint_returns_per_stage_artifacts(mock_session_cls) -> None:
     """Bench harness needs a reliable per-stage timing source. The endpoint
     must collect every ``stage_timing_<stage>`` artifact for the job and
     return them keyed by stage name (the suffix after ``stage_timing_``).
     Mirrors what the worker writes via ``_record_stage_timing``."""
-    import api
+    from routers import deps
 
     client = make_client()
     fake_job = _make_fake_job()
@@ -458,7 +463,7 @@ def test_stage_timings_endpoint_returns_per_stage_artifacts(mock_session_cls) ->
     mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
     mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
 
-    api.ADMIN_KEY = "test-admin-key"
+    deps.ADMIN_KEY = "test-admin-key"
     resp = client.get(
         f"/api/jobs/{fake_job.id}/stage_timings",
         headers={"X-PSAT-Admin-Key": "test-admin-key"},
@@ -472,9 +477,9 @@ def test_stage_timings_endpoint_returns_per_stage_artifacts(mock_session_cls) ->
     assert body["stage_timings"]["discovery"]["status"] == "success"
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_stage_timings_endpoint_404_for_unknown_job(mock_session_cls) -> None:
-    import api
+    from routers import deps
 
     client = make_client()
     mock_session = MagicMock()
@@ -482,7 +487,7 @@ def test_stage_timings_endpoint_404_for_unknown_job(mock_session_cls) -> None:
     mock_session_cls.return_value.__enter__ = MagicMock(return_value=mock_session)
     mock_session_cls.return_value.__exit__ = MagicMock(return_value=False)
 
-    api.ADMIN_KEY = "test-admin-key"
+    deps.ADMIN_KEY = "test-admin-key"
     resp = client.get(
         f"/api/jobs/{uuid.uuid4()}/stage_timings",
         headers={"X-PSAT-Admin-Key": "test-admin-key"},
@@ -498,13 +503,14 @@ def test_stage_timings_endpoint_is_admin_protected() -> None:
     the auth dependency for every test, so an HTTP 401 assertion
     can never fire."""
     import api
+    from routers.deps import require_admin_key
 
     target_path = "/api/jobs/{job_id}/stage_timings"
     matching = [r for r in api.app.routes if getattr(r, "path", None) == target_path]
     assert matching, f"route {target_path} is not registered"
     route = matching[0]
-    deps = [dep.call for dep in route.dependant.dependencies]  # type: ignore[attr-defined]
-    assert api.require_admin_key in deps, (
+    route_deps = [dep.call for dep in route.dependant.dependencies]  # type: ignore[attr-defined]
+    assert require_admin_key in route_deps, (
         "stage_timings endpoint must depend on require_admin_key — without "
         "it, per-job worker_id / runtime metadata would be public"
     )
@@ -517,8 +523,8 @@ def test_stage_timings_endpoint_is_admin_protected() -> None:
 # ---------------------------------------------------------------------------
 
 
-@patch("api.get_storage_client")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_storage_client")
+@patch("routers.deps.SessionLocal")
 def test_stage_timings_degrades_when_storage_unconfigured(mock_session_cls, mock_get_client) -> None:
     """If storage is not configured but rows reference ``storage_key``, the
     endpoint must return what it can (inline rows, empty if none) instead of
@@ -554,8 +560,8 @@ def test_stage_timings_degrades_when_storage_unconfigured(mock_session_cls, mock
     assert set(body["stage_timings"].keys()) == {"discovery"}
 
 
-@patch("api.get_storage_client")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_storage_client")
+@patch("routers.deps.SessionLocal")
 def test_stage_timings_degrades_on_storage_transport_error(mock_session_cls, mock_get_client) -> None:
     """Transport error from the bucket (Tigris hiccup, signing failure, etc.)
     surfaces as ``None`` for the affected key (per ``get_many``'s contract,
@@ -594,8 +600,8 @@ def test_stage_timings_degrades_on_storage_transport_error(mock_session_cls, moc
     assert "static" not in body["stage_timings"]
 
 
-@patch("api.get_storage_client")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_storage_client")
+@patch("routers.deps.SessionLocal")
 def test_analyses_degrades_per_row_on_partial_storage_failure(mock_session_cls, mock_get_client) -> None:
     """A single bad key must not wipe every entry. Pre-fix, ``get_many``
     raised on the first transport error and the catch zeroed ``bodies`` for

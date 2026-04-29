@@ -39,9 +39,11 @@ pytestmark = [requires_postgres, requires_storage]
 def api_with(monkeypatch, db_session, storage_bucket):
     """Wire the FastAPI app to the test DB session and storage bucket."""
     import api as api_module
+    from routers import deps
+    from routers.deps import require_admin_key
 
-    monkeypatch.setattr(api_module, "SessionLocal", SessionFactory(db_session))
-    api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
+    monkeypatch.setattr(deps, "SessionLocal", SessionFactory(db_session))
+    api_module.app.dependency_overrides[require_admin_key] = lambda: None
     return api_module
 
 

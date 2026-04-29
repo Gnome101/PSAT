@@ -91,13 +91,15 @@ def api_with_storage(monkeypatch, db_session, storage_bucket):
     from fastapi.testclient import TestClient
 
     import api as api_module
+    from routers import deps
+    from routers.deps import require_admin_key
 
-    monkeypatch.setattr(api_module, "SessionLocal", SessionFactory(db_session))
-    api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
+    monkeypatch.setattr(deps, "SessionLocal", SessionFactory(db_session))
+    api_module.app.dependency_overrides[require_admin_key] = lambda: None
     try:
         yield TestClient(api_module.app)
     finally:
-        api_module.app.dependency_overrides.pop(api_module.require_admin_key, None)
+        api_module.app.dependency_overrides.pop(require_admin_key, None)
 
 
 # ---------------------------------------------------------------------------

@@ -1379,13 +1379,15 @@ def test_audit_timeline_dedupe_prefers_reviewed_commit_over_impl_era(db_session,
     db_session.commit()
 
     # Hit the API on the proxy — it unions coverage from proxy + impls.
-    SessionLocal_orig = api_module.SessionLocal
-    api_module.SessionLocal = SessionFactory(db_session)
+    from routers import deps as routers_deps
+
+    SessionLocal_orig = routers_deps.SessionLocal
+    routers_deps.SessionLocal = SessionFactory(db_session)
     try:
         client = TestClient(api_module.app)
         r = client.get(f"/api/contracts/{proxy.id}/audit_timeline")
     finally:
-        api_module.SessionLocal = SessionLocal_orig
+        routers_deps.SessionLocal = SessionLocal_orig
 
     assert r.status_code == 200, r.text
     body = r.json()
@@ -1474,13 +1476,15 @@ def test_audit_timeline_dedupe_prefers_impl_era_over_direct(db_session, seed_pro
     )
     db_session.commit()
 
-    SessionLocal_orig = api_module.SessionLocal
-    api_module.SessionLocal = SessionFactory(db_session)
+    from routers import deps as routers_deps
+
+    SessionLocal_orig = routers_deps.SessionLocal
+    routers_deps.SessionLocal = SessionFactory(db_session)
     try:
         client = TestClient(api_module.app)
         r = client.get(f"/api/contracts/{proxy.id}/audit_timeline")
     finally:
-        api_module.SessionLocal = SessionLocal_orig
+        routers_deps.SessionLocal = SessionLocal_orig
 
     assert r.status_code == 200, r.text
     rows_for_audit = [c for c in r.json()["coverage"] if c["audit_id"] == audit.id]
