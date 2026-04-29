@@ -100,11 +100,18 @@ def _patch_worker_deps(
 
     monkeypatch.setattr(worker_module, "crawl_dapp", lambda urls, chain_id=1, wait=10, progress=None: crawl_result)
 
-    def fake_get_or_create_protocol(session, name, official_domain=None):
+    def fake_get_or_create_protocol(session, name, official_domain=None, canonical_slug=None, aliases=None):
         protocol_calls.append((name, official_domain))
-        return SimpleNamespace(id=1, name=name, official_domain=official_domain)
+        return SimpleNamespace(id=1, name=name, official_domain=official_domain, canonical_slug=canonical_slug)
 
     monkeypatch.setattr(worker_module, "get_or_create_protocol", fake_get_or_create_protocol)
+    # Worker now resolves the hostname to a canonical DefiLlama slug before
+    # upserting the Protocol row; stub the network call away.
+    monkeypatch.setattr(
+        worker_module,
+        "resolve_protocol",
+        lambda name: {"slug": None, "url": None, "name": None, "chains": [], "all_slugs": [], "all_names": []},
+    )
     monkeypatch.setattr(
         worker_module.DAppCrawlWorker,
         "update_detail",

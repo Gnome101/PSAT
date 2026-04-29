@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select, text
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -188,12 +189,114 @@ def upsert_discovered_contract(
     return existing
 
 
+_PROTOCOL_FK_TABLES = (
+    # (table, column) for every FK referencing protocols.id. Listed
+    # explicitly so the merge step touches every dependent table without
+    # depending on a model registry walk. Includes both CASCADE and SET NULL
+    # FKs — the orphan row is being deleted, not nulled, so the destination
+    # protocol takes ownership of all children.
+    ("jobs", "protocol_id"),
+    ("audit_reports", "protocol_id"),
+    ("audit_contract_coverage", "protocol_id"),
+    ("contracts", "protocol_id"),
+    ("monitored_contracts", "protocol_id"),
+    ("protocol_subscriptions", "protocol_id"),
+    ("dapp_interactions", "protocol_id"),
+    ("tvl_snapshots", "protocol_id"),
+)
+
+
+def _merge_protocol_into(session: Session, src: Protocol, dst: Protocol) -> None:
+    """Reassign every protocols.id FK from ``src`` to ``dst``, then delete src.
+
+    Used when ``get_or_create_protocol`` discovers that a pre-resolver row
+    (NULL canonical_slug) is a duplicate of a freshly-resolved family. None
+    of the dependent tables have a UNIQUE(protocol_id, …) constraint, so the
+    bulk UPDATE never conflicts.
+    """
+    if src.id == dst.id:
+        return
+    for table, col in _PROTOCOL_FK_TABLES:
+        session.execute(
+            text(f"UPDATE {table} SET {col} = :dst WHERE {col} = :src"),
+            {"src": src.id, "dst": dst.id},
+        )
+    session.delete(src)
+    session.flush()
+
+
 def get_or_create_protocol(
     session: Session,
     name: str,
     official_domain: str | None = None,
+    canonical_slug: str | None = None,
+    aliases: list[str] | None = None,
 ) -> Protocol:
-    """Look up Protocol by name, create if missing. Backfill official_domain if still null."""
+    """Look up Protocol by canonical slug (preferred) or name, create if missing.
+
+    The slug-keyed branch is the durable fix for duplicate rows: ``"ether fi"``
+    and ``"etherfi"`` both resolve to the same DefiLlama family slug, so
+    keying on slug collapses them. The name-keyed branch is the fallback
+    for protocols without a DefiLlama match (slug is None).
+
+    ``aliases`` is the list of every display-name spelling the resolver
+    knows for this family (typically ``resolved["all_names"]``). It is used
+    to find pre-resolver duplicate rows whose ``canonical_slug`` is still
+    NULL and merge them into the slug-keyed row. Without this, the prod
+    incident's two rows (``"ether fi"`` + ``"etherfi"``) would not collapse
+    on first post-migration touch — one would adopt the slug and the other
+    would orphan.
+
+    Concurrent slug inserts are serialized via ``uq_protocol_canonical_slug``;
+    the IntegrityError is caught inside a savepoint and we re-fetch the
+    winning row instead of bubbling the failure up to the worker.
+    """
+    if canonical_slug:
+        row = session.execute(select(Protocol).where(Protocol.canonical_slug == canonical_slug)).scalar_one_or_none()
+        if row is None:
+            # Look at every alias plus the requested name. Match is
+            # name + NULL slug — never poach a row that's already owned
+            # by a different family.
+            candidate_names = [name, *(aliases or [])]
+            orphans = list(
+                session.execute(
+                    select(Protocol).where(
+                        Protocol.canonical_slug.is_(None),
+                        Protocol.name.in_(candidate_names),
+                    )
+                ).scalars()
+            )
+            if orphans:
+                # Adopt the first orphan; merge any siblings into it so
+                # FK children consolidate onto one row.
+                row = orphans[0]
+                row.canonical_slug = canonical_slug
+                for extra in orphans[1:]:
+                    _merge_protocol_into(session, src=extra, dst=row)
+            else:
+                # Savepoint so a concurrent winner's IntegrityError on
+                # uq_protocol_canonical_slug doesn't poison the outer
+                # transaction. ``add`` goes inside the savepoint so the
+                # session expunges the rejected pending object on rollback —
+                # otherwise the next autoflush retries the doomed INSERT.
+                try:
+                    with session.begin_nested():
+                        row = Protocol(name=name, official_domain=official_domain, canonical_slug=canonical_slug)
+                        session.add(row)
+                        session.flush()
+                except IntegrityError:
+                    row = session.execute(
+                        select(Protocol).where(Protocol.canonical_slug == canonical_slug)
+                    ).scalar_one()
+                if official_domain and not row.official_domain:
+                    row.official_domain = official_domain
+                    session.flush()
+                return row
+        if official_domain and not row.official_domain:
+            row.official_domain = official_domain
+        session.flush()
+        return row
+
     row = session.execute(select(Protocol).where(Protocol.name == name)).scalar_one_or_none()
     if row is None:
         row = Protocol(name=name, official_domain=official_domain)

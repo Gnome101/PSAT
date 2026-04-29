@@ -96,10 +96,11 @@ jobs:
             --build-arg GIT_SHA="${{ github.event.pull_request.head.sha }}"
 
       - name: Start non-web process groups
-        # flyctl deploy leaves stopped machines stopped after updating their
-        # image, and auto_start_machines in fly.toml only applies to web.
-        # Without this, runs after stop-preview-workers leave workers/browser/
-        # monitor stopped and live-tests hangs polling queued jobs.
+        # Defensive: after destroy-preview-workers, the next deploy recreates
+        # these machines in started state, so this is usually a no-op. Kept
+        # for the edge case where a machine exists but was left stopped (e.g.
+        # manual intervention). auto_start_machines in fly.toml only applies
+        # to web, so we can't rely on it for these process groups.
         run: |
           APP="${{ steps.fly.outputs.app }}"
           for proc in workers browser monitor; do
@@ -186,15 +187,18 @@ jobs:
             - **Preview:** ${{ needs.deploy.outputs.url }}
             - **Run:** [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
-  stop-preview-workers:
-    # Stop workers/browser/monitor whenever deploy actually ran. Skips only
+  destroy-preview-workers:
+    # Destroy workers/browser/monitor whenever deploy actually ran. Skips only
     # when deploy itself was skipped (fork PRs, CI failures). Own concurrency
     # group with cancel-in-progress=false so a follow-up push can't cancel
-    # this cleanup mid-flight.
+    # this cleanup mid-flight. We destroy (not stop) because stopped machines
+    # still count against Fly's concurrent-machine quota, which becomes the
+    # binding constraint with several PRs open at once. The next push's deploy
+    # recreates these machines from fly.toml fresh.
     needs: [deploy, live-tests]
     if: always() && needs.deploy.result != 'skipped'
     concurrency:
-      group: pr-stop-${{ github.event.pull_request.number }}
+      group: pr-destroy-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: staging
@@ -202,14 +206,15 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      - name: Stop machines
-        # Stops background process groups only. `web` is intentionally excluded
-        # so the preview URL stays reachable for manual inspection (Fly will
-        # auto-suspend it via min_machines_running=0 once idle).
+      - name: Destroy machines
+        # Destroys background process groups only. `web` is intentionally
+        # excluded so the preview URL stays reachable for manual inspection
+        # (Fly auto-suspends it via min_machines_running=0 once idle).
+        # `--force` allows destroying running machines without a separate stop.
         run: |
           APP="psat-pr-${{ github.event.pull_request.number }}"
           for proc in workers browser monitor; do
             flyctl machines list -a "$APP" --json \
-              | jq -r ".[] | select(.config.metadata.fly_process_group == \"$proc\" and .state == \"started\") | .id" \
-              | xargs -r -I{} flyctl machines stop {} -a "$APP" || true
+              | jq -r ".[] | select(.config.metadata.fly_process_group == \"$proc\") | .id" \
+              | xargs -r -I{} flyctl machines destroy {} -a "$APP" --force || true
           done
