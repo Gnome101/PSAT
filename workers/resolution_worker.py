@@ -47,6 +47,90 @@ def _build_root_artifacts(
     }
 
 
+def project_upgrade_history(
+    session: Session,
+    *,
+    subject_contract_id: int,
+    subject_chain: str | None,
+    artifact_data: dict,
+) -> dict:
+    """Project an ``upgrade_history`` artifact into ``UpgradeEvent`` rows.
+
+    Idempotent: deletes existing UpgradeEvent rows for each proxy contract
+    (and the subject, as legacy cleanup) before re-inserting from the
+    artifact. Caller commits.
+
+    Returns counts useful for logging / backfill scripts; ``impl_addrs`` is
+    the set of historical impl addresses encountered, suitable for feeding
+    to ``_backfill_historical_impls``.
+    """
+    out = {
+        "proxies_seen": 0,
+        "proxies_projected": 0,
+        "proxies_skipped_no_contract": 0,
+        "events_written": 0,
+        "impl_addrs": set(),
+    }
+    if not isinstance(artifact_data, dict) or not artifact_data.get("proxies"):
+        return out
+
+    # Legacy cleanup: older versions of this projection keyed every event
+    # to the subject's id regardless of which proxy the event described.
+    # Drop those so re-runs are idempotent for non-proxy subjects.
+    session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == subject_contract_id).delete()
+
+    for proxy_info in artifact_data["proxies"].values():
+        out["proxies_seen"] += 1
+        proxy_addr = proxy_info.get("proxy_address", "")
+        if not proxy_addr:
+            continue
+        # UpgradeEvent.contract_id must point at the PROXY's row, not the
+        # subject's — the artifact can describe any proxy in the dependency
+        # graph, not just the subject's own.
+        chain_filter = (
+            Contract.chain == subject_chain if subject_chain is not None else Contract.chain.is_(None)
+        )
+        proxy_contract = session.execute(
+            select(Contract).where(
+                func.lower(Contract.address) == proxy_addr.lower(),
+                chain_filter,
+            )
+        ).scalar_one_or_none()
+        if proxy_contract is None:
+            # Proxy not yet in inventory — skip. Will get picked up on a
+            # later run once discovery surfaces the address.
+            out["proxies_skipped_no_contract"] += 1
+            continue
+        session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == proxy_contract.id).delete()
+        for evt in proxy_info.get("events", []):
+            if evt.get("event_type") != "upgraded":
+                continue
+            impl = evt.get("implementation")
+            # Artifact carries ``timestamp`` as unix seconds (int | None);
+            # the DB column is DateTime(timezone=True). Dropping this was
+            # the root cause of ImplWindow.from_ts=None downstream, which
+            # collapsed every post-upgrade audit to low confidence.
+            ts_raw = evt.get("timestamp")
+            ts_val = datetime.fromtimestamp(ts_raw, tz=timezone.utc) if ts_raw is not None else None
+            session.add(
+                UpgradeEvent(
+                    contract_id=proxy_contract.id,
+                    proxy_address=proxy_addr,
+                    old_impl=None,
+                    new_impl=impl,
+                    block_number=evt.get("block_number"),
+                    timestamp=ts_val,
+                    tx_hash=evt.get("tx_hash"),
+                )
+            )
+            out["events_written"] += 1
+            if impl:
+                out["impl_addrs"].add(impl.lower())
+        out["proxies_projected"] += 1
+
+    return out
+
+
 class ResolutionWorker(BaseWorker):
     stage = JobStage.resolution
     next_stage = JobStage.policy
@@ -380,71 +464,31 @@ class ResolutionWorker(BaseWorker):
             if contract_row is None:
                 return
 
-            # Legacy cleanup: older versions of this worker keyed every
-            # event to the subject's id regardless of which proxy the
-            # event described. Drop those so re-run is idempotent for
-            # non-proxy subjects.
-            session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == contract_row.id).delete()
-
-            impl_addrs: set[str] = set()
-            for proxy_info in uh_data["proxies"].values():
-                proxy_addr = proxy_info.get("proxy_address", "")
-                if not proxy_addr:
-                    continue
-                # UpgradeEvent.contract_id must point at the PROXY's row,
-                # not the subject's — the artifact can describe any proxy
-                # in the dependency graph, not just the subject's own.
-                chain_filter = (
-                    Contract.chain == contract_row.chain if contract_row.chain is not None else Contract.chain.is_(None)
-                )
-                proxy_contract = session.execute(
-                    select(Contract).where(
-                        func.lower(Contract.address) == proxy_addr.lower(),
-                        chain_filter,
-                    )
-                ).scalar_one_or_none()
-                if proxy_contract is None:
-                    # Proxy not yet in inventory — skip. It'll get picked
-                    # up on a later run once discovery surfaces the address.
-                    continue
-                session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == proxy_contract.id).delete()
-                for evt in proxy_info.get("events", []):
-                    if evt.get("event_type") != "upgraded":
-                        continue
-                    impl = evt.get("implementation")
-                    # Artifact carries ``timestamp`` as unix seconds (int | None);
-                    # the DB column is DateTime(timezone=True). Dropping this
-                    # was the root cause of ImplWindow.from_ts=None downstream,
-                    # which collapsed every post-upgrade audit to low confidence.
-                    ts_raw = evt.get("timestamp")
-                    ts_val = datetime.fromtimestamp(ts_raw, tz=timezone.utc) if ts_raw is not None else None
-                    session.add(
-                        UpgradeEvent(
-                            contract_id=proxy_contract.id,
-                            proxy_address=proxy_addr,
-                            old_impl=None,
-                            new_impl=impl,
-                            block_number=evt.get("block_number"),
-                            timestamp=ts_val,
-                            tx_hash=evt.get("tx_hash"),
-                        )
-                    )
-                    if impl:
-                        impl_addrs.add(impl.lower())
+            stats = project_upgrade_history(
+                session,
+                subject_contract_id=contract_row.id,
+                subject_chain=contract_row.chain,
+                artifact_data=uh_data,
+            )
             session.commit()
 
-            if contract_row.protocol_id is not None and impl_addrs:
+            if contract_row.protocol_id is not None and stats["impl_addrs"]:
                 self._backfill_historical_impls(
                     session,
                     protocol_id=contract_row.protocol_id,
                     chain=contract_row.chain,
-                    impl_addrs=impl_addrs,
+                    impl_addrs=stats["impl_addrs"],
                 )
 
             logger.info(
-                "Resolution stage upgrade history complete for job %s address=%s",
+                "Resolution stage upgrade history complete for job %s address=%s "
+                "(projected %d/%d proxies, %d events, %d skipped no-contract)",
                 job.id,
                 job.address or "0x0",
+                stats["proxies_projected"],
+                stats["proxies_seen"],
+                stats["events_written"],
+                stats["proxies_skipped_no_contract"],
             )
         except Exception as exc:
             logger.warning(

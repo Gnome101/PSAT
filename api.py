@@ -145,6 +145,22 @@ class ProtocolSubscribeRequest(BaseModel):
         return v
 
 
+class UpsertMonitoredContractRequest(BaseModel):
+    address: str = Field(min_length=42, max_length=42)
+    chain: str = "ethereum"
+    contract_type: str = "regular"
+    monitoring_config: dict | None = None
+    needs_polling: bool = False
+    is_active: bool = True
+
+    @field_validator("address")
+    @classmethod
+    def validate_address(cls, value: str) -> str:
+        if not re.fullmatch(r"0x[a-fA-F0-9]{40}", value):
+            raise ValueError("address must be a 20-byte hex address")
+        return value.lower()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Verify DB is reachable on startup."""
@@ -1390,6 +1406,13 @@ def company_overview(company_name: str, response: Response) -> dict:
         controller_values_by_cid: dict[int, list[ControllerValue]] = {}
         ef_rows_by_cid: dict[int, list[EffectiveFunction]] = {}
         upgrade_events_count_by_cid: dict[int, int] = {}
+        # Latest UpgradeEvent metadata per contract — drives the
+        # "last MMM YYYY" chip in the company-page Upgrades sidebar list,
+        # which would otherwise need a multi-MB /api/analyses/{job_id}
+        # round-trip per proxy. block_number is plain int; timestamp is a
+        # tz-aware datetime (DateTime(timezone=True)) — emitted to JSON via
+        # .isoformat() below.
+        last_upgrade_by_cid: dict[int, dict[str, Any]] = {}
         balances_by_cid: dict[int, list[Any]] = {}
         cgn_by_cid: dict[int, list[ControlGraphNode]] = {}
         cge_by_cid: dict[int, list[ControlGraphEdge]] = {}
@@ -1413,6 +1436,16 @@ def company_overview(company_name: str, response: Response) -> dict:
                 .group_by(UpgradeEvent.contract_id)
             ).all():
                 upgrade_events_count_by_cid[cid] = count
+            for cid, last_block, last_ts in session.execute(
+                select(
+                    UpgradeEvent.contract_id,
+                    func.max(UpgradeEvent.block_number),
+                    func.max(UpgradeEvent.timestamp),
+                )
+                .where(UpgradeEvent.contract_id.in_(id_list))
+                .group_by(UpgradeEvent.contract_id)
+            ).all():
+                last_upgrade_by_cid[cid] = {"block": last_block, "timestamp": last_ts}
             for b in session.execute(select(_CB).where(_CB.contract_id.in_(id_list))).scalars():
                 balances_by_cid.setdefault(b.contract_id, []).append(b)
             for n in session.execute(
@@ -1464,7 +1497,21 @@ def company_overview(company_name: str, response: Response) -> dict:
                     if "owner" in cv.controller_id.lower() and cv.value and cv.value.startswith("0x"):
                         owner = cv.value.lower()
 
-            upgrade_count = (upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None) or None
+            # `upgrade_count` is None when there's no UpgradeEvent row at all
+            # (e.g. before the resolution worker has projected the artifact).
+            # Distinguish "unknown" (None) from "known zero" (0): a proxy with
+            # zero recorded upgrades returns 0, while a proxy whose events
+            # haven't been ingested returns None — the UI suppresses the chip
+            # only in the unknown case.
+            upgrade_count = (
+                upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None
+            )
+            last_upgrade_entry = (
+                last_upgrade_by_cid.get(contract_row.id) if contract_row else None
+            ) or {}
+            last_upgrade_block = last_upgrade_entry.get("block")
+            _last_ts = last_upgrade_entry.get("timestamp")
+            last_upgrade_timestamp = _last_ts.isoformat() if _last_ts is not None else None
 
             # Prefer impl for effect labels when available.
             ef_contract_id = (impl_contract.id if impl_contract else None) or (
@@ -1571,7 +1618,14 @@ def company_overview(company_name: str, response: Response) -> dict:
                 "control_model": control_model,
                 "risk_level": summary_row.risk_level if summary_row else None,
                 "source_verified": summary_row.source_verified if summary_row else None,
+                # Emit chain so the frontend can pass it back as the agent
+                # context (selected_chain). Without this the LLM has to
+                # guess the chain string and frequently picks "ethereum"
+                # for rows that the DB tagged "mainnet" or NULL.
+                "chain": contract_row.chain if contract_row else None,
                 "upgrade_count": upgrade_count,
+                "last_upgrade_block": last_upgrade_block,
+                "last_upgrade_timestamp": last_upgrade_timestamp,
                 "role": role,
                 "standards": standards,
                 "value_effects": value_effects,
@@ -3167,6 +3221,72 @@ def list_protocol_monitoring(protocol_id: int) -> list[dict[str, Any]]:
         ]
 
 
+@app.post("/api/protocols/{protocol_id}/monitoring", dependencies=[Depends(require_admin_key)])
+def upsert_protocol_monitoring(protocol_id: int, request: UpsertMonitoredContractRequest) -> dict[str, Any]:
+    """Create or update one monitored contract for a protocol."""
+    with SessionLocal() as session:
+        protocol = session.get(Protocol, protocol_id)
+        if protocol is None:
+            raise HTTPException(status_code=404, detail="Protocol not found")
+
+        contract_stmt = select(Contract).where(
+            Contract.protocol_id == protocol_id,
+            func.lower(Contract.address) == request.address.lower(),
+        )
+        if request.chain:
+            contract_stmt = contract_stmt.where(Contract.chain == request.chain)
+        contract = session.execute(contract_stmt).scalar_one_or_none()
+
+        existing = session.execute(
+            select(MonitoredContract).where(
+                MonitoredContract.address == request.address,
+                MonitoredContract.chain == request.chain,
+            )
+        ).scalar_one_or_none()
+
+        if existing is None:
+            existing = MonitoredContract(
+                address=request.address,
+                chain=request.chain,
+                protocol_id=protocol_id,
+                contract_id=contract.id if contract else None,
+                contract_type=request.contract_type,
+                monitoring_config=request.monitoring_config,
+                last_known_state={},
+                last_scanned_block=0,
+                needs_polling=request.needs_polling,
+                is_active=request.is_active,
+                enrollment_source="surface_alert",
+            )
+            session.add(existing)
+        else:
+            existing.protocol_id = protocol_id
+            existing.contract_id = contract.id if contract else existing.contract_id
+            existing.contract_type = request.contract_type
+            existing.monitoring_config = request.monitoring_config
+            existing.needs_polling = request.needs_polling
+            existing.is_active = request.is_active
+            existing.enrollment_source = existing.enrollment_source or "surface_alert"
+
+        session.commit()
+        session.refresh(existing)
+        return {
+            "id": str(existing.id),
+            "address": existing.address,
+            "chain": existing.chain,
+            "protocol_id": existing.protocol_id,
+            "contract_id": existing.contract_id,
+            "contract_type": existing.contract_type,
+            "monitoring_config": existing.monitoring_config,
+            "last_known_state": existing.last_known_state,
+            "last_scanned_block": existing.last_scanned_block,
+            "needs_polling": existing.needs_polling,
+            "is_active": existing.is_active,
+            "enrollment_source": existing.enrollment_source,
+            "created_at": existing.created_at.isoformat() if existing.created_at else None,
+        }
+
+
 @app.post("/api/protocols/{protocol_id}/re-enroll", dependencies=[Depends(require_admin_key)])
 def re_enroll_protocol(protocol_id: int, chain: str = "ethereum") -> dict[str, Any]:
     """Manually trigger monitoring enrollment for a protocol.
@@ -3511,6 +3631,106 @@ def delete_address_label(address: str) -> dict[str, Any]:
         session.delete(row)
         session.commit()
         return {"address": a, "deleted": True}
+
+
+# ── Agent (chatbot) endpoint ──────────────────────────────────────────────
+
+
+class AgentChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class AgentChatRequest(BaseModel):
+    company: str
+    message: str
+    selected_address: str | None = None
+    selected_chain: str | None = None
+    history: list[AgentChatMessage] = Field(default_factory=list)
+
+
+@app.post("/api/agent/chat", dependencies=[Depends(require_admin_key)])
+def agent_chat(req: AgentChatRequest):
+    """Stream a chat completion through an OpenRouter-backed agent that
+    can call tools (read source, fetch contract info, etc.) and emit
+    canvas-highlight events.
+
+    Frames each event from ``run_agent_stream`` as a Server-Sent Events
+    record so the browser can read events incrementally via fetch +
+    ReadableStream.
+    """
+    from fastapi.responses import StreamingResponse
+
+    from services.chat.agent import AgentContext, run_agent_stream
+
+    ctx = AgentContext(
+        company=req.company,
+        selected_address=req.selected_address,
+        selected_chain=req.selected_chain,
+    )
+    history = [{"role": m.role, "content": m.content} for m in req.history]
+
+    import json as _json
+
+    def sse_iter():
+        try:
+            for evt in run_agent_stream(req.message, history, ctx):
+                name = evt.get("event", "message")
+                payload = _json.dumps(evt.get("data") or {}, default=str)
+                yield f"event: {name}\ndata: {payload}\n\n"
+        except Exception as exc:
+            err = _json.dumps({"message": str(exc)})
+            yield f"event: error\ndata: {err}\n\n"
+
+    return StreamingResponse(
+        sse_iter(),
+        media_type="text/event-stream",
+        headers={
+            # Disable proxy buffering so events flush in real time.
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/agent/address-touches", dependencies=[Depends(require_admin_key)])
+def agent_address_touches(company: str, address: str) -> dict[str, Any]:
+    """Return the contracts an arbitrary address (typically an EOA) has
+    function-level authority over within a protocol. Drives the Agent
+    panel's "click an EOA → dim everything that EOA can't act on"
+    interaction: when the address isn't itself a node on the canvas, the
+    frontend uses this set to populate ``highlightedAddresses`` so the
+    canvas dims unrelated nodes the same way it does for an audit-coverage
+    overlay.
+    """
+    from db.models import EffectiveFunction, FunctionPrincipal
+
+    addr_lc = (address or "").lower()
+    with SessionLocal() as session:
+        proto = session.execute(
+            select(Protocol).where(Protocol.name == company)
+        ).scalar_one_or_none()
+        if proto is None:
+            return {"address": address, "touches": []}
+        rows = session.execute(
+            select(
+                Contract.address,
+                Contract.contract_name,
+                func.count(EffectiveFunction.id).label("fn_count"),
+            )
+            .join(EffectiveFunction, EffectiveFunction.contract_id == Contract.id)
+            .join(FunctionPrincipal, FunctionPrincipal.function_id == EffectiveFunction.id)
+            .where(Contract.protocol_id == proto.id)
+            .where(func.lower(FunctionPrincipal.address) == addr_lc)
+            .group_by(Contract.address, Contract.contract_name)
+        ).all()
+        return {
+            "address": address,
+            "touches": [
+                {"address": r[0], "label": r[1], "function_count": int(r[2])}
+                for r in rows
+            ],
+        }
 
 
 @app.get("/{full_path:path}")

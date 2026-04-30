@@ -1,0 +1,539 @@
+"""Agent-callable tools for the company-page chatbot.
+
+Each tool is a Python callable ``fn(session, ctx, **kwargs) -> dict`` that
+returns JSON-serializable data the LLM can read back. Tool *definitions*
+(name, description, JSON-schema params) are surfaced to OpenRouter via
+``TOOL_DEFINITIONS``.
+
+Truncation: tool results are cheap to ship to the model in this v1, but
+text bodies that are routinely large (contract source code) cap at
+``MAX_SOURCE_CHARS`` so a single tool call doesn't blow the context
+budget for follow-up turns.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable
+
+from sqlalchemy import select
+
+from db.models import AuditReport, Contract
+from services.chat.data import (
+    contract_brief,
+    list_protocol_principals,
+    live_findings,
+    protocol_brief,
+    role_holders,
+    upgrade_summary,
+)
+
+logger = logging.getLogger("services.chat.tools")
+
+MAX_SOURCE_CHARS = 30_000
+
+
+# ── Tool implementations ────────────────────────────────────────────────
+
+
+def _get_protocol_info(session, ctx, **_kwargs) -> dict[str, Any]:
+    return protocol_brief(session, ctx.company)
+
+
+def _get_contract_info(session, ctx, address: str | None = None, chain: str | None = None, **_kw) -> dict[str, Any]:
+    addr = address or ctx.selected_address
+    chn = chain if chain is not None else ctx.selected_chain
+    if not addr:
+        return {"error": "address is required (or select a contract on the canvas)"}
+    return contract_brief(session, addr, chn)
+
+
+def _source_row_content(row) -> str:
+    """Resolve a SourceFile row to its raw content body. Inline content
+    wins; ``storage_key`` falls back to object storage. Empty string on
+    any failure (caller decides what to do)."""
+    from db.storage import get_storage_client
+
+    if row.content:
+        return row.content
+    if row.storage_key:
+        try:
+            client = get_storage_client()
+            if client is None:
+                return ""
+            body = client.get(row.storage_key)
+            return body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
+        except Exception as exc:
+            logger.warning("storage fetch failed for %s: %s", row.storage_key, exc)
+    return ""
+
+
+def _etherscan_sources(address: str) -> dict[str, str]:
+    """Live-fetch verified source from Etherscan as a fallback when DB
+    rows have no inline content (typical when source bodies live in
+    object storage and the storage backend is unreachable).
+    Returns ``{path: content}`` (empty on failure)."""
+    try:
+        from services.discovery.fetch import parse_sources
+        from utils.etherscan import get_source
+
+        result = get_source(address)
+        return parse_sources(result) or {}
+    except Exception as exc:
+        logger.warning("etherscan source fetch failed for %s: %s", address, exc)
+        return {}
+
+
+def _get_contract_source(
+    session, ctx, address: str | None = None, chain: str | None = None, file: str | None = None, **_kw
+) -> dict[str, Any]:
+    """Return verified source code for a contract.
+
+    Strategy:
+      1. Read indexed ``SourceFile`` rows for the contract's job. If a
+         row has inline ``content`` we use it directly; otherwise we
+         fetch the body from object storage via ``storage_key``.
+      2. If every row resolves to empty (typical when MinIO/S3 is down
+         or no rows are indexed), live-fetch from Etherscan as a
+         fallback. This keeps the tool useful in environments where the
+         DB only stores hashes/keys.
+    """
+    from db.models import SourceFile
+
+    addr = address or ctx.selected_address
+    chn = chain if chain is not None else ctx.selected_chain
+    if not addr:
+        return {"error": "address is required"}
+
+    from sqlalchemy import func as _func
+
+    stmt = select(Contract).where(_func.lower(Contract.address) == addr.lower())
+    if chn is not None:
+        stmt = stmt.where(Contract.chain == chn)
+    contract = session.execute(stmt.limit(1)).scalar_one_or_none()
+
+    rows = []
+    if contract is not None and contract.job_id is not None:
+        rows = (
+            session.execute(select(SourceFile).where(SourceFile.job_id == contract.job_id))
+            .scalars()
+            .all()
+        )
+
+    # Materialize (path, content) pairs from DB. If every body resolves
+    # empty, fall through to Etherscan.
+    db_files: list[tuple[str, str]] = [(r.path, _source_row_content(r)) for r in rows]
+    if not db_files or not any(body for _, body in db_files):
+        es_files = _etherscan_sources(addr)
+        files = list(es_files.items())
+    else:
+        files = db_files
+
+    if not files:
+        return {"error": f"no verified source available for {addr}"}
+
+    file_list = [{"name": p, "size": len(b) if b else None} for p, b in files]
+
+    if file:
+        target = next(((p, b) for p, b in files if p == file), None)
+        if target is None:
+            return {"files": file_list, "error": f"file {file!r} not found"}
+        return {"files": file_list, "requested": target[0], "source": _truncate(target[1])}
+
+    # Default: largest file (typically the top-level contract).
+    files_sorted = sorted(files, key=lambda kv: -len(kv[1] or ""))
+    main_path, main_body = files_sorted[0]
+    return {"files": file_list, "requested": main_path, "source": _truncate(main_body)}
+
+
+def _truncate(s: str | None) -> str:
+    if not s:
+        return ""
+    if len(s) <= MAX_SOURCE_CHARS:
+        return s
+    return s[:MAX_SOURCE_CHARS] + f"\n\n…[truncated {len(s) - MAX_SOURCE_CHARS} chars]"
+
+
+def _search_source(
+    session,
+    ctx,
+    pattern: str = "",
+    address: str | None = None,
+    max_results: int = 50,
+    case_sensitive: bool = False,
+    **_kw,
+) -> dict[str, Any]:
+    """Substring search across indexed source files.
+
+    Scope (in priority): explicit ``address`` arg → currently-selected
+    contract → all of the protocol's contracts. Returns ``matches``
+    (file/line/snippet for the first ``max_results`` hits) plus
+    ``summary`` (per-file total counts) so the model can budget how much
+    detail to fetch next.
+    """
+    from db.models import SourceFile
+
+    if not pattern:
+        return {"error": "pattern is required"}
+
+    needle = pattern if case_sensitive else pattern.lower()
+
+    # Pick the contract scope.
+    contracts: list[Contract] = []
+    target_addr = address or ctx.selected_address
+    if target_addr:
+        from sqlalchemy import func as _func
+
+        chain_filter = Contract.chain == ctx.selected_chain if ctx.selected_chain else None
+        stmt = select(Contract).where(_func.lower(Contract.address) == target_addr.lower())
+        if chain_filter is not None:
+            stmt = stmt.where(chain_filter)
+        c = session.execute(stmt.limit(1)).scalar_one_or_none()
+        if c is not None:
+            contracts = [c]
+    else:
+        from db.models import Protocol as _P
+
+        proto = session.execute(
+            select(_P).where(_P.name == ctx.company)
+        ).scalar_one_or_none()
+        if proto is not None:
+            contracts = list(
+                session.execute(
+                    select(Contract).where(Contract.protocol_id == proto.id)
+                ).scalars()
+            )
+
+    if not contracts:
+        return {"pattern": pattern, "matches": [], "summary": [], "scope_contracts": 0}
+
+    matches: list[dict[str, Any]] = []
+    summary: list[dict[str, Any]] = []
+    total_matches = 0
+    contracts_with_no_source = 0
+
+    for contract in contracts:
+        if contract.job_id is None:
+            continue
+        rows = (
+            session.execute(select(SourceFile).where(SourceFile.job_id == contract.job_id))
+            .scalars()
+            .all()
+        )
+        if not rows:
+            contracts_with_no_source += 1
+            continue
+        for row in rows:
+            content = _source_row_content(row)
+            if not content:
+                continue
+            haystack = content if case_sensitive else content.lower()
+            if needle not in haystack:
+                continue
+            file_match_count = 0
+            for line_no, line in enumerate(content.split("\n"), 1):
+                hay_line = line if case_sensitive else line.lower()
+                if needle in hay_line:
+                    file_match_count += 1
+                    total_matches += 1
+                    if len(matches) < max_results:
+                        matches.append(
+                            {
+                                "contract_address": contract.address,
+                                "contract_name": contract.contract_name,
+                                "file": row.path,
+                                "line_no": line_no,
+                                "line": line.strip()[:200],
+                            }
+                        )
+            if file_match_count > 0:
+                summary.append(
+                    {
+                        "contract_address": contract.address,
+                        "contract_name": contract.contract_name,
+                        "file": row.path,
+                        "matches": file_match_count,
+                    }
+                )
+
+    return {
+        "pattern": pattern,
+        "case_sensitive": case_sensitive,
+        "scope_contracts": len(contracts),
+        "contracts_with_no_source": contracts_with_no_source,
+        "total_matches": total_matches,
+        "summary": summary,
+        "matches": matches,
+        "truncated": len(matches) >= max_results and total_matches > max_results,
+    }
+
+
+def _get_contract_overview(
+    session, ctx, address: str | None = None, chain: str | None = None, **_kw
+) -> dict[str, Any]:
+    """One-shot fetch combining identity, controls, upgrade summary, and
+    verified source. Saves a tool round-trip when the agent wants the
+    full picture of a single contract."""
+    addr = address or ctx.selected_address
+    chn = chain if chain is not None else ctx.selected_chain
+    if not addr:
+        return {"error": "address is required"}
+    info = contract_brief(session, addr, chn)
+    upgrades = upgrade_summary(session, addr, chn) if not info.get("error") else None
+    src = _get_contract_source(session, ctx, address=addr, chain=chn)
+    # Strip the source body from the bulk result — the agent gets file
+    # listing + main file path, then can request the full body via
+    # get_contract_source(file=...) if needed. Keeps the bulk response
+    # compact for the prompt.
+    src_summary = {"files": src.get("files", []), "main_file": src.get("requested")}
+    if "error" in src:
+        src_summary["error"] = src["error"]
+    return {
+        "info": info,
+        "upgrade_summary": upgrades,
+        "source": src_summary,
+    }
+
+
+def _get_upgrade_history(session, ctx, address: str | None = None, chain: str | None = None, **_kw) -> dict[str, Any]:
+    addr = address or ctx.selected_address
+    chn = chain if chain is not None else ctx.selected_chain
+    if not addr:
+        return {"error": "address is required"}
+    return upgrade_summary(session, addr, chn)
+
+
+def _get_audit_findings(session, ctx, address: str | None = None, **_kw) -> dict[str, Any]:
+    return live_findings(session, address=address, company=ctx.company, limit=10)
+
+
+def _list_principals(session, ctx, **_kw) -> dict[str, Any]:
+    return list_protocol_principals(session, ctx.company)
+
+
+def _get_role_holders(session, ctx, role_name: str | None = None, **_kw) -> dict[str, Any]:
+    return role_holders(session, company=ctx.company, role_name=role_name)
+
+
+def _search_audits(session, ctx, query: str = "", **_kw) -> dict[str, Any]:
+    if not query:
+        return {"results": []}
+    from db.models import Protocol
+
+    proto = session.execute(
+        select(Protocol).where(Protocol.name == ctx.company)
+    ).scalar_one_or_none()
+    if proto is None:
+        return {"results": []}
+    q = f"%{query.lower()}%"
+    rows = (
+        session.execute(
+            select(AuditReport)
+            .where(AuditReport.protocol_id == proto.id)
+            .where(
+                AuditReport.title.ilike(q) | AuditReport.auditor.ilike(q)
+            )
+            .limit(5)
+        )
+        .scalars()
+        .all()
+    )
+    return {
+        "results": [
+            {
+                "audit_id": r.id,
+                "auditor": r.auditor,
+                "title": r.title,
+                "date": r.date.isoformat() if r.date else None,
+            }
+            for r in rows
+        ]
+    }
+
+
+# ── Registry + OpenRouter-shaped definitions ─────────────────────────────
+
+
+TOOLS: dict[str, Callable] = {
+    "get_protocol_info": _get_protocol_info,
+    "get_contract_info": _get_contract_info,
+    "get_contract_source": _get_contract_source,
+    "search_source": _search_source,
+    "get_contract_overview": _get_contract_overview,
+    "get_upgrade_history": _get_upgrade_history,
+    "get_audit_findings": _get_audit_findings,
+    "list_principals": _list_principals,
+    "get_role_holders": _get_role_holders,
+    "search_audits": _search_audits,
+}
+
+
+def _addr_param() -> dict[str, Any]:
+    return {
+        "type": "string",
+        "description": "Contract address (0x-prefixed, 40 hex). Optional — defaults to the contract currently selected on the canvas.",
+    }
+
+
+def _chain_param() -> dict[str, Any]:
+    return {"type": "string", "description": "Chain name (e.g. 'mainnet'). Optional."}
+
+
+TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_protocol_info",
+            "description": "Top-level snapshot for the current protocol: contract count, proxy count, audit count.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_contract_info",
+            "description": "Identity, proxy status, controls, last upgrade for a single contract.",
+            "parameters": {
+                "type": "object",
+                "properties": {"address": _addr_param(), "chain": _chain_param()},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_contract_source",
+            "description": "Return the verified Solidity source for a contract. Pass `file` to request a specific filename listed by a prior call.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": _addr_param(),
+                    "chain": _chain_param(),
+                    "file": {"type": "string", "description": "Specific source filename to return (optional)."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_source",
+            "description": "Substring search across indexed Solidity source. Scope defaults to the currently-selected contract; pass `address` to scope to one specific contract; omit both to search every contract in the protocol. Returns up to `max_results` matches with file path + line number + snippet, plus a per-file `summary` of total hit counts. Use this for 'find every function with onlyOwner / delegatecall / selfdestruct' style questions where calling get_contract_source on each contract individually would burn the budget.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Substring to find. Case-insensitive by default.",
+                    },
+                    "address": {
+                        "type": "string",
+                        "description": "Limit to one contract address. Optional — defaults to the selected contract or the whole protocol.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Cap on returned snippets (default 50). Summary is uncapped.",
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Default false. Set true for exact-case match.",
+                    },
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_contract_overview",
+            "description": "ONE-CALL summary for a contract: identity + controls + upgrade summary + source file list. Prefer this over calling get_contract_info / get_upgrade_history / get_contract_source separately when investigating a single contract. Use get_contract_source(file=...) afterward only if you need a specific file's body.",
+            "parameters": {
+                "type": "object",
+                "properties": {"address": _addr_param(), "chain": _chain_param()},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_upgrade_history",
+            "description": "Per-impl upgrade timeline + audit-coverage status for a proxy.",
+            "parameters": {
+                "type": "object",
+                "properties": {"address": _addr_param(), "chain": _chain_param()},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_audit_findings",
+            "description": "Audit findings still affecting current code (status != 'fixed'). Filter by address or fall back to protocol-wide.",
+            "parameters": {
+                "type": "object",
+                "properties": {"address": _addr_param()},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_principals",
+            "description": "List the Safes / EOAs / timelocks that govern this protocol's contracts.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_role_holders",
+            "description": "Map every protocol role to its actual holders, each typed (eoa / safe / timelock / contract) with thresholds, delays, and function counts inlined. For 'single key compromise' / 'worst case governance' / 'who can pause' style questions, CALL THIS ONCE WITH NO role_name FIRST — the no-arg response already lists every EOA holder per role plus Safe/Timelock metadata, so you usually do not need to drill in. Only pass role_name when you've already identified a specific role from the summary and need the full holder list for that one role.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "role_name": {
+                        "type": "string",
+                        "description": "Specific role to expand, e.g. 'PROTOCOL_PAUSER'. Usually omit — the no-arg summary already inlines holders.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_audits",
+            "description": "Find audits of this protocol whose title or auditor matches the query.",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Substring to match."}},
+                "required": ["query"],
+            },
+        },
+    },
+]
+
+
+def run_tool(name: str, session, ctx, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Execute a tool by name. Filters arguments to those the tool actually
+    accepts, so the LLM can't smuggle unknown kwargs into the call."""
+    fn = TOOLS.get(name)
+    if fn is None:
+        return {"error": f"unknown tool: {name}"}
+    try:
+        return fn(session, ctx, **(arguments or {}))
+    except TypeError as exc:
+        # Mismatched kwargs from the LLM: surface as an error result so the
+        # model can self-correct on the next turn instead of crashing.
+        logger.warning("tool %s rejected args %r: %s", name, arguments, exc)
+        return {"error": f"tool {name} called with invalid arguments: {exc}"}
+    except Exception as exc:
+        logger.exception("tool %s raised", name)
+        return {"error": f"tool {name} failed: {exc}"}

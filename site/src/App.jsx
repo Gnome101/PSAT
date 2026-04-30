@@ -23,19 +23,6 @@ const AuditsTab = lazy(() => import("./AuditsTab.jsx"));
 const AuditExtractionShelf = lazy(() => import("./AuditExtractionShelf.jsx"));
 const AddressesModal = lazy(() => import("./AddressesModal.jsx"));
 const AuditsAdminModal = lazy(() => import("./AuditsAdminModal.jsx"));
-import { matchesEra } from "./auditMatching.js";
-import {
-  AUDIT_STATUS_META,
-  DRIFT_FALSE_META,
-  DRIFT_TRUE_META,
-  EQUIVALENCE_META,
-  formatAuditDate,
-  formatAuditTimestamp,
-  MATCH_TYPE_META,
-  MetaBadge,
-  proofKindTitle,
-  PROOF_KIND_META,
-} from "./auditUi.jsx";
 import { api } from "./api/client.js";
 import { getPipeline as getAuditPipeline } from "./api/audits.js";
 import ProductHero from "./ProductHero.jsx";
@@ -44,6 +31,10 @@ import ProductHero from "./ProductHero.jsx";
 // import AssemblyLine from "./AssemblyLine.jsx";
 import ProtocolLogo from "./ProtocolLogo.jsx";
 import ProtocolRadar from "./ProtocolRadar.jsx";
+import { computeProtocolScore } from "./protocolScore.js";
+import { bytecodeVerifiedAudits } from "./auditCoverage.js";
+import { StatCard } from "./ui/StatCard.jsx";
+import { UpgradesPanel } from "./surface/inspector/UpgradesPanel.jsx";
 
 function LoadingFallback({ label = "Loading..." }) {
   return (
@@ -73,16 +64,6 @@ function LoadingFallback({ label = "Loading..." }) {
 
 const TABS = ["summary", "permissions", "principals", "graph", "dependencies", "upgrades", "raw"];
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-const BLOCK_NUMBER_FORMAT = new Intl.NumberFormat("en-US");
-
-function StatCard({ label, value }) {
-  return (
-    <div className="stat-card">
-      <div className="eyebrow">{label}</div>
-      <div className="stat">{value}</div>
-    </div>
-  );
-}
 
 function formatJson(value) {
   return JSON.stringify(value, null, 2);
@@ -338,421 +319,16 @@ function PrincipalsTab({ detail }) {
   );
 }
 
-function formatCoverageWindow(coverage) {
-  const fromBlock = coverage?.covered_from_block;
-  const toBlock = coverage?.covered_to_block;
-  if (fromBlock == null && toBlock == null) return null;
-  if (fromBlock != null && toBlock != null) {
-    return `blocks ${BLOCK_NUMBER_FORMAT.format(fromBlock)}-${BLOCK_NUMBER_FORMAT.format(toBlock)}`;
-  }
-  if (fromBlock != null) {
-    return `from block ${BLOCK_NUMBER_FORMAT.format(fromBlock)}`;
-  }
-  return `through block ${BLOCK_NUMBER_FORMAT.format(toBlock)}`;
-}
-
-function coverageVerificationLabel(coverage) {
-  const stamp = formatAuditTimestamp(coverage?.verified_at || coverage?.equivalence_checked_at);
-  if (!stamp) return null;
-  return `${coverage?.equivalence_status === "proven" ? "verified" : "checked"} ${stamp}`;
-}
-
-function coverageSummary(coverage) {
-  if (coverage?.proof_kind === "pre_fix_unpatched") {
-    return proofKindTitle(coverage.proof_kind);
-  }
-  if (coverage?.equivalence_status === "proven" && coverage?.equivalence_reason) {
-    return `Source proof: ${coverage.equivalence_reason}`;
-  }
-  if (coverage?.proof_kind === "post_fix" || coverage?.proof_kind === "cited_only") {
-    return proofKindTitle(coverage.proof_kind);
-  }
-  if (coverage?.equivalence_reason) {
-    return coverage.equivalence_reason;
-  }
-  if (coverage?.match_type === "reviewed_address") {
-    return "The audit scope explicitly pinned this deployed address.";
-  }
-  return null;
-}
-
-function UpgradeAuditCard({ coverage, companyName }) {
-  const matchMeta = MATCH_TYPE_META[coverage.match_type] || MATCH_TYPE_META.direct;
-  const driftKnown = coverage.bytecode_drift === true || coverage.bytecode_drift === false;
-  const verificationLabel = coverageVerificationLabel(coverage);
-  const blockWindow = formatCoverageWindow(coverage);
-  const note = coverageSummary(coverage);
-  const findings = coverage.live_findings || [];
-  const findingTitle = findings
-    .slice(0, 3)
-    .map((finding) => finding?.title)
-    .filter(Boolean)
-    .join(" • ");
-  const href = companyName
-    ? `/company/${encodeURIComponent(companyName)}/audits?audit=${encodeURIComponent(coverage.audit_id)}`
-    : null;
-
-  const content = (
-    <>
-      <div className="upgrade-audit-card-top">
-        <div className="upgrade-audit-card-auditor">{coverage.auditor || "Unknown"}</div>
-        <div className="upgrade-audit-card-date">{formatAuditDate(coverage.date)}</div>
-      </div>
-      <div className="upgrade-audit-card-title">{coverage.title || ""}</div>
-      <div className="ps-inspector-badges upgrade-audit-card-badges">
-        <MetaBadge meta={matchMeta} />
-        {coverage.match_confidence ? (
-          <span className="ps-badge" style={{ "--badge-accent": "#6b7590", fontSize: 10 }}>
-            {coverage.match_confidence}
-          </span>
-        ) : null}
-        {coverage.equivalence_status && coverage.equivalence_status !== "proven" && EQUIVALENCE_META[coverage.equivalence_status] ? (
-          <MetaBadge
-            meta={EQUIVALENCE_META[coverage.equivalence_status]}
-            title={coverage.equivalence_reason || ""}
-          />
-        ) : null}
-        {coverage.equivalence_status === "proven" && coverage.proof_kind && PROOF_KIND_META[coverage.proof_kind] ? (
-          <MetaBadge
-            meta={PROOF_KIND_META[coverage.proof_kind]}
-            title={proofKindTitle(coverage.proof_kind)}
-          />
-        ) : null}
-        {coverage.bytecode_drift === true ? (
-          <MetaBadge
-            meta={DRIFT_TRUE_META}
-            label="⚠ code changed"
-            title="Runtime bytecode at this impl changed since the audit was matched"
-          />
-        ) : null}
-        {coverage.bytecode_drift === false ? (
-          <MetaBadge
-            meta={DRIFT_FALSE_META}
-            label="✓ bytecode stable"
-            title="Runtime bytecode hash matches the hash captured at audit match time"
-          />
-        ) : null}
-        {!driftKnown && coverage.bytecode_keccak_now && !coverage.bytecode_keccak_at_match ? (
-          <span
-            className="ps-badge"
-            title="Anchor not set — refresh coverage to stamp runtime bytecode hash"
-            style={{ "--badge-accent": "#6b7590", fontSize: 10 }}
-          >
-            drift unverified
-          </span>
-        ) : null}
-        {findings.length ? (
-          <span
-            className="ps-badge"
-            title={findingTitle || "This audit still has live findings on the current code"}
-            style={{ "--badge-accent": "#92400e", fontSize: 10 }}
-          >
-            {findings.length} live finding{findings.length === 1 ? "" : "s"}
-          </span>
-        ) : null}
-      </div>
-      {verificationLabel || blockWindow ? (
-        <div className="upgrade-audit-card-facts">
-          {verificationLabel ? <span>{verificationLabel}</span> : null}
-          {blockWindow ? <span>{blockWindow}</span> : null}
-        </div>
-      ) : null}
-      {note ? <div className="upgrade-audit-card-note">{note}</div> : null}
-    </>
-  );
-
-  return href ? (
-    <a className="upgrade-audit-card" href={href}>
-      {content}
-    </a>
-  ) : (
-    <div className="upgrade-audit-card">{content}</div>
-  );
-}
-
 function UpgradesTab({ detail }) {
-  const history = detail?.upgrade_history;
-  const contractId = detail?.contract_id ?? null;
-  const companyName = detail?.company || null;
-
-  const [auditTimeline, setAuditTimeline] = useState(null);
-  const [auditTimelineError, setAuditTimelineError] = useState(null);
-  useEffect(() => {
-    if (!contractId) {
-      setAuditTimeline(null);
-      setAuditTimelineError(null);
-      return;
-    }
-    let cancelled = false;
-    setAuditTimeline(null);
-    setAuditTimelineError(null);
-    api(`/api/contracts/${encodeURIComponent(contractId)}/audit_timeline`)
-      .then((t) => { if (!cancelled) setAuditTimeline(t); })
-      .catch((e) => { if (!cancelled) setAuditTimelineError(e.message || String(e)); });
-    return () => { cancelled = true; };
-  }, [contractId]);
-
-  const coverageRows = auditTimeline?.coverage || [];
-  const currentStatus = auditTimeline?.current_status || null;
-
-  function frontendCurrentImplAudited() {
-    if (!auditTimeline || !history?.proxies) return false;
-    const targetProxy = Object.entries(history.proxies).find(
-      ([addr]) => addr.toLowerCase() === (history.target_address || detail?.address || "").toLowerCase(),
-    );
-    if (!targetProxy) return false;
-    const impls = targetProxy[1]?.implementations || [];
-    if (!impls.length) return false;
-    const current = impls[impls.length - 1];
-    return coverageRows.some((c) => matchesEra(c, current));
-  }
-
-  function auditStatusBanner() {
-    if (!contractId) return null;
-    if (auditTimelineError) {
-      return <span className="chip" style={{ background: "#fee2e2", color: "#991b1b" }}>audit lookup failed: {auditTimelineError}</span>;
-    }
-    if (!auditTimeline) {
-      return <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>loading audits…</span>;
-    }
-    // Backend is block-range strict; relax to "audited" when date alignment
-    // on the current impl-era has evidence the backend couldn't see.
-    if (currentStatus === "unaudited_since_upgrade" && frontendCurrentImplAudited()) {
-      return <MetaBadge meta={AUDIT_STATUS_META.audited} label="Current impl audited" />;
-    }
-    const meta = AUDIT_STATUS_META[currentStatus] || null;
-    if (!meta) return null;
-    const label = currentStatus === "audited" ? "Current impl audited" : currentStatus === "non_proxy_unaudited" ? "Unaudited" : undefined;
-    return <MetaBadge meta={meta} label={label} />;
-  }
-
-  if (!history || !Object.keys(history.proxies || {}).length) {
-    return (
-      <div className="stack">
-        {contractId ? (
-          <div className="chips">{auditStatusBanner()}</div>
-        ) : null}
-        <p className="empty">No proxy upgrade history available.</p>
-      </div>
-    );
-  }
-
-  const deps = detail?.dependencies?.dependencies || {};
-  // history.target_address is always the proxy whose upgrade history this
-  // artifact describes. detail.address can diverge on merged /api/analyses
-  // rows — when an impl run is merged behind its proxy, detail.address is
-  // the IMPL but the upgrade_history is keyed to the proxy. Preferring
-  // target_address here keeps isTarget() matching the proxy's row in the
-  // timeline, so audit chips attach instead of silently disappearing.
-  const targetAddr = (history.target_address || detail?.address || "").toLowerCase();
-
-  function proxyLabel(addr) {
-    if (addr.toLowerCase() === targetAddr) {
-      return detail?.run_name || detail?.contract_name || shortenAddress(addr);
-    }
-    const dep = deps[addr];
-    if (dep?.contract_name) return dep.contract_name;
-    return shortenAddress(addr);
-  }
-
-  function isTarget(addr) {
-    return addr.toLowerCase() === targetAddr;
-  }
-
-  function formatTimestamp(ts) {
-    if (!ts) return null;
-    return new Date(ts * 1000).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-  }
-
-  function implLabel(addr, fallbackName) {
-    if (!addr) return "unknown";
-    if (fallbackName) return fallbackName;
-    const dep = deps[addr];
-    if (dep?.contract_name) return dep.contract_name;
-    const nested = Object.values(deps).find(
-      (d) => typeof d.implementation === "object" && d.implementation?.address === addr
-    );
-    if (nested?.implementation?.contract_name) return nested.implementation.contract_name;
-    return null;
-  }
-
   return (
-    <div className="stack">
-      {contractId ? (
-        <div className="chips">
-          {auditStatusBanner()}
-          {auditTimeline && coverageRows.length ? (() => {
-            // Raw coverageRows.length over-counts when audits linked to
-            // the proxy via a generic scope name (e.g. "UUPSProxy").
-            const proxy = history?.proxies
-              ? Object.entries(history.proxies).find(
-                  ([addr]) => addr.toLowerCase() === (history.target_address || detail?.address || "").toLowerCase(),
-                )?.[1]
-              : null;
-            const impls = proxy?.implementations || [];
-            const placed = new Set();
-            for (const cov of coverageRows) {
-              for (const impl of impls) {
-                if (matchesEra(cov, impl)) {
-                  placed.add(cov.audit_id);
-                  break;
-                }
-              }
-            }
-            const n = placed.size;
-            if (n === 0) return null;
-            return (
-              <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>
-                {n} audit{n === 1 ? "" : "s"} in history
-              </span>
-            );
-          })() : null}
-        </div>
-      ) : null}
-      <div className="summary-grid">
-        <StatCard label="Proxies" value={Object.keys(history.proxies).length} />
-        <StatCard label="Total Upgrades" value={history.total_upgrades} />
-      </div>
-      {Object.entries(history.proxies)
-        .sort(([a], [b]) => (isTarget(a) ? -1 : isTarget(b) ? 1 : 0))
-        .map(([addr, proxy]) => (
-        <div className="card" key={addr}>
-          <div className="card-header-row">
-            <h3>{proxyLabel(addr)}</h3>
-            {isTarget(addr) ? <span className="chip">target</span> : null}
-            <span className="chip alt">{proxy.proxy_type}</span>
-          </div>
-          <div className="mono muted" style={{ marginBottom: 8 }}>{addr}</div>
-          <div className="kv-grid compact">
-            <div className="kv-row">
-              <span className="key">Current implementation</span>
-              <span>{proxy.current_implementation ? (<>{implLabel(proxy.current_implementation) ? <strong>{implLabel(proxy.current_implementation)} </strong> : null}<span className="mono">{shortenAddress(proxy.current_implementation)}</span></>) : "None"}</span>
-            </div>
-            <div className="kv-row">
-              <span className="key">Upgrade count</span>
-              <span>{proxy.upgrade_count}</span>
-            </div>
-            {proxy.first_upgrade_block ? (
-              <div className="kv-row">
-                <span className="key">First upgrade</span>
-                <span>Block {proxy.first_upgrade_block.toLocaleString()}</span>
-              </div>
-            ) : null}
-            {proxy.last_upgrade_block ? (
-              <div className="kv-row">
-                <span className="key">Last upgrade</span>
-                <span>Block {proxy.last_upgrade_block.toLocaleString()}</span>
-              </div>
-            ) : null}
-          </div>
-
-          {proxy.implementations?.length > 0 ? (
-            <div className="subsection">
-              <div className="subsection-title">Implementation Timeline</div>
-              <div className="timeline">
-                {proxy.implementations.map((impl, idx) => {
-                  // Other proxies would need their own timeline fetch.
-                  const coverageForEra = isTarget(addr)
-                    ? coverageRows.filter((c) => matchesEra(c, impl))
-                    : [];
-                  return (
-                  <div className={`timeline-entry ${idx === proxy.implementations.length - 1 ? "current" : "past"}`} key={impl.address + idx}>
-                    <div className="timeline-marker" />
-                    <div className="timeline-content">
-                      <div className="timeline-header">
-                        <strong>{implLabel(impl.address, impl.contract_name) || shortenAddress(impl.address)}</strong>
-                        {idx === proxy.implementations.length - 1 ? <span className="chip">current</span> : <span className="chip warn">replaced</span>}
-                      </div>
-                      <div className="kv-grid compact small" style={{ marginTop: 4 }}>
-                        <div className="kv-row">
-                          <span className="key">Address</span>
-                          <span className="mono">{impl.address}</span>
-                        </div>
-                        {impl.block_introduced ? (
-                          <div className="kv-row">
-                            <span className="key">Introduced</span>
-                            <span>
-                              {formatTimestamp(impl.timestamp_introduced) || `Block ${impl.block_introduced.toLocaleString()}`}
-                              {impl.block_replaced ? ` \u2192 replaced ${formatTimestamp(impl.timestamp_replaced) || `block ${impl.block_replaced.toLocaleString()}`}` : ""}
-                            </span>
-                          </div>
-                        ) : null}
-                        {impl.tx_hash ? (
-                          <div className="kv-row">
-                            <span className="key">Tx</span>
-                            <span className="mono">{impl.tx_hash}</span>
-                          </div>
-                        ) : null}
-                        {impl.contract_name ? (
-                          <div className="kv-row">
-                            <span className="key">Contract</span>
-                            <span>{impl.contract_name}</span>
-                          </div>
-                        ) : null}
-                      </div>
-                      {isTarget(addr) && auditTimeline ? (
-                        <div style={{ marginTop: 10 }}>
-                          {coverageForEra.length === 0 ? (
-                            <span className="chip" style={{ background: "#fee2e2", color: "#991b1b", fontSize: 10, padding: "2px 8px" }}>
-                              no audit coverage
-                            </span>
-                          ) : (
-                            <div className="upgrade-audit-list">
-                              {coverageForEra.map((cov) => (
-                                <UpgradeAuditCard
-                                  key={cov.audit_id}
-                                  coverage={cov}
-                                  companyName={companyName}
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
-          {proxy.events?.length > 0 ? (
-            <div className="subsection">
-              <div className="subsection-title">All Events ({proxy.events.length})</div>
-              <table className="event-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Type</th>
-                    <th>Detail</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {proxy.events.map((evt, idx) => (
-                    <tr key={idx}>
-                      <td>{formatTimestamp(evt.timestamp) || <span className="mono">{evt.block_number?.toLocaleString()}</span>}</td>
-                      <td><span className={`chip ${evt.event_type === "upgraded" ? "alt" : ""}`}>{evt.event_type}</span></td>
-                      <td className="small">
-                        {evt.event_type === "upgraded" && evt.implementation ? (
-                          <><span className="key">New impl: </span><strong>{implLabel(evt.implementation) || ""}</strong> <span className="mono">{shortenAddress(evt.implementation)}</span></>
-                        ) : null}
-                        {evt.event_type === "admin_changed" ? (
-                          <><span className="key">Admin: </span><span className="mono">{shortenAddress(evt.previous_admin)}</span> {"\u2192"} <span className="mono">{shortenAddress(evt.new_admin)}</span></>
-                        ) : null}
-                        {evt.event_type === "beacon_upgraded" && evt.beacon ? (
-                          <><span className="key">Beacon: </span><span className="mono">{shortenAddress(evt.beacon)}</span></>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </div>
-      ))}
-    </div>
+    <UpgradesPanel
+      upgradeHistory={detail?.upgrade_history}
+      contractId={detail?.contract_id ?? null}
+      companyName={detail?.company || null}
+      contractAddress={detail?.address}
+      contractName={detail?.run_name || detail?.contract_name}
+      dependencies={detail?.dependencies?.dependencies || {}}
+    />
   );
 }
 
@@ -1384,47 +960,8 @@ function GraphTab({ detail }) {
 // Company overview
 // ---------------------------------------------------------------------------
 
-function computeProtocolScore(contracts, hierarchy, auditCoverage) {
-  const safe = Array.isArray(contracts) ? contracts : [];
-  const total = safe.length || 1;
-
-  const riskCounts = { high: 0, medium: 0, low: 0, unknown: 0 };
-  for (const c of safe) {
-    const lvl = c.risk_level && riskCounts[c.risk_level] != null ? c.risk_level : "unknown";
-    riskCounts[lvl]++;
-  }
-  const riskScore = safe.length
-    ? Math.max(0, 1 - (riskCounts.high * 1.0 + riskCounts.medium * 0.5) / safe.length)
-    : 0.5;
-
-  const controlledOwners = (hierarchy || []).filter((g) => g.owner && g.owner_is_contract).length;
-  const ownerGroups = (hierarchy || []).length || 1;
-  const controlScore = Math.min(1, controlledOwners / ownerGroups);
-
-  const proxyCount = safe.filter((c) => c.is_proxy).length;
-  const upgradesKnown = safe.filter((c) => c.upgrade_count != null).length;
-  const upgradeScore = proxyCount === 0 ? 0.6 : Math.min(1, upgradesKnown / Math.max(1, proxyCount));
-
-  let auditScore = 0;
-  if (auditCoverage?.coverage?.length) {
-    const covered = auditCoverage.coverage.filter((r) => (r.audit_count || 0) > 0).length;
-    auditScore = covered / auditCoverage.coverage.length;
-  }
-
-  const transparency = safe.filter((c) => c.name && c.name.toLowerCase() !== "unknown").length / total;
-
-  const axes = [
-    { key: "coverage", label: "Coverage", value: auditScore, display: `${Math.round(auditScore * 100)}%` },
-    { key: "control", label: "Control", value: controlScore, display: `${Math.round(controlScore * 100)}%` },
-    { key: "risk", label: "Risk", value: riskScore, display: `${Math.round(riskScore * 100)}%` },
-    { key: "upgrades", label: "Upgrades", value: upgradeScore, display: `${Math.round(upgradeScore * 100)}%` },
-    { key: "transparency", label: "Transparency", value: transparency, display: `${Math.round(transparency * 100)}%` },
-  ];
-
-  const composite = Math.round((axes.reduce((a, x) => a + x.value, 0) / axes.length) * 100);
-  const grade = composite >= 85 ? "a" : composite >= 70 ? "b" : composite >= 55 ? "c" : composite >= 40 ? "d" : "f";
-  return { axes, composite, grade };
-}
+// computeProtocolScore moved to ./protocolScore.js so the Surface sidebar
+// can render the same score + radar in its empty Detail state.
 
 function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface }) {
   const [data, setData] = useState(null);
@@ -1453,8 +990,8 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface })
 
   const { contracts, ownership_hierarchy: hierarchy } = data;
 
-  // Composite-score inputs still use hierarchy + coverageByAddr even though
-  // the hierarchy list itself is no longer rendered below the fold.
+  // The score uses the full company payload: function-level authority,
+  // principal details, upgrade state, and audit coverage.
   const coverageByAddr = (() => {
     const map = {};
     for (const row of auditCoverage?.coverage || []) {
@@ -1463,10 +1000,24 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface })
     return map;
   })();
 
-  const { axes, composite, grade } = computeProtocolScore(contracts, hierarchy, auditCoverage);
-  const coveredContracts = Object.values(coverageByAddr).filter((r) => r.audit_count > 0).length;
+  const { axes, composite, grade } = computeProtocolScore(data, auditCoverage);
+  const coveredContracts = Object.values(coverageByAddr).filter((r) => bytecodeVerifiedAudits(r.audits).length > 0).length;
 
   const proxyCount = contracts.filter((c) => c.is_proxy).length;
+  const openRadarExample = (example) => {
+    if (!example?.contractAddress) return;
+    sessionStorage.setItem("psat:surfaceRadarExample", JSON.stringify({
+      companyName,
+      contractAddress: example.contractAddress,
+      functionSignature: example.functionSignature || "",
+      selector: example.selector || "",
+    }));
+    onNavigateToSurface({
+      focus: example.contractAddress,
+      fn: example.functionSignature || example.selector || "",
+      score: "1",
+    });
+  };
 
   return (
     <div className="company-page">
@@ -1531,7 +1082,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface })
 
         <div className="company-score-right">
           <p className="eyebrow" style={{ margin: 0 }}>Security Radar</p>
-          <ProtocolRadar axes={axes} size={300} />
+          <ProtocolRadar axes={axes} size={300} onExampleClick={openRadarExample} />
         </div>
       </section>
 
@@ -1601,7 +1152,7 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface })
               1-3 MB and was previously requested twice in parallel on
               every overview page-load. */}
           <Suspense fallback={<LoadingFallback label="Loading control surface..." />}>
-            <ProtocolSurface companyName={companyName} initialData={data} />
+            <ProtocolSurface companyName={companyName} initialData={data} embedded />
           </Suspense>
         </div>
       </section>
@@ -3215,10 +2766,15 @@ export default function App() {
     window.history.pushState({}, "", `/company/${encodeURIComponent(name)}`);
   }
 
-  function navigateCompanyTab(tab) {
+  function navigateCompanyTab(tab, params = {}) {
     setCompanyTab(tab);
     const suffix = tab === "overview" ? "" : `/${tab}`;
-    window.history.pushState({}, "", `/company/${encodeURIComponent(companyName)}${suffix}`);
+    const query = new URLSearchParams();
+    if (params.focus) query.set("focus", params.focus);
+    if (params.fn) query.set("fn", params.fn);
+    if (params.score) query.set("score", params.score);
+    const search = query.toString();
+    window.history.pushState({}, "", `/company/${encodeURIComponent(companyName)}${suffix}${search ? `?${search}` : ""}`);
   }
 
   async function loadAnalysis(runId, options = {}) {
@@ -3477,7 +3033,7 @@ export default function App() {
         <CompanyOverview
           companyName={companyName}
           onSelectContract={(jobId) => loadAnalysis(jobId, { history: "push" })}
-          onNavigateToSurface={() => navigateCompanyTab("surface")}
+          onNavigateToSurface={(params) => navigateCompanyTab("surface", params)}
         />
       )}
       {isCompany && companyName && companyTab === "surface" && (

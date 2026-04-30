@@ -1,0 +1,57 @@
+
+[1/8] WETH (0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2) → label=seq-warm-cache-v1-01-WETH
+  ✓ wall=70.6s  cascade_total=21.68s  jobs=107
+
+[2/8] USDC (0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48) → label=seq-warm-cache-v1-02-USDC
+  ✓ wall=43.9s  cascade_total=5.36s  jobs=108
+
+[3/8] UNI (0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984) → label=seq-warm-cache-v1-03-UNI
+  ✓ wall=67.0s  cascade_total=33.05s  jobs=112
+
+[4/8] etherfi-LP (0x308861A430be4cce5502d0A12724771Fc6DaF216) → label=seq-warm-cache-v1-04-etherfi-LP
+  ✓ wall=45.2s  cascade_total=9.37s  jobs=113
+
+[5/8] DAI (0x6B175474E89094C44Da98b954EedeAC495271d0F) → label=seq-warm-cache-v1-05-DAI
+  ✓ wall=54.6s  cascade_total=14.3s  jobs=114
+
+[6/8] LINK (0x514910771AF9Ca656af840dff83E8264EcF986CA) → label=seq-warm-cache-v1-06-LINK
+  ✓ wall=51.4s  cascade_total=14.94s  jobs=115
+
+[7/8] MKR (0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2) → label=seq-warm-cache-v1-07-MKR
+  ! bench_workers failed (rc=1); stdout/stderr tail:
+[bench] starting fly logs tail for app=psat-bench
+[bench] submitting 0x9f8F72aA9304c8B593d555F12eF6589cC3A579A2 → https://psat-bench.fly.dev
+[bench] job_id=a6bd98de-c18f-433d-a616-5ad13cd70a01
+[bench] +  0.22s  stage=discovery  status=queued
+[bench] +  6.32s  stage=static  status=processing
+[bench cascade] +  10.3s  jobs: 116 total, 116 done, 0 active
+[bench cascade] all 116 jobs reached terminal at +10.3s
+
+[bench] cascade total=10.31s (116 jobs, 4 failed)
+[bench] parent final_status=failed total=6.32s
+[bench] stage          polled    worker
+          discovery       6.10s     3.83s
+          static          0.00s     2.42s
+[bench] wrote bench_results/runs/20260427T154231Z_seq-warm-cache-v1-07-MKR_a6bd98de.json
+
+
+
+[8/8] WBTC (0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599) → label=seq-warm-cache-v1-08-WBTC
+  ✓ wall=188.7s  cascade_total=151.05s  jobs=119
+
+================================================================================
+Wrote bench_results/sequences/20260427T154540Z_seq-warm-cache-v1.json
+Per-cascade results:
+ # name          cascade_s  jobs   wall_s
+ 1 WETH               21.7   107     70.6
+ 2 USDC                5.4   108     43.9
+ 3 UNI                33.0   112     67.0
+ 4 etherfi-LP          9.4   113     45.2
+ 5 DAI                14.3   114     54.6
+ 6 LINK               14.9   115     51.4
+ 7 WBTC              151.1   119    188.7
+
+First 3 avg cascade_total: 20.03s
+Last  4 avg cascade_total: 47.42s
+Warm-cache delta: +27.4s (+136.7%) — second half SLOWER
+Total wall time: 521.5s (8.7 min)

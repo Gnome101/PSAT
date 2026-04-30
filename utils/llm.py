@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Iterator
 
 import requests
 from dotenv import load_dotenv
@@ -71,12 +72,126 @@ class LLMClient:
 
         return "".join(content_parts)
 
+    def tool_chat(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        model: str | None = None,
+        **kwargs,
+    ) -> Iterator[dict]:
+        """Stream a chat completion with tool/function calling enabled.
+
+        Yields events:
+          {"type": "token", "text": str} — streamed assistant text
+          {"type": "tool_calls", "calls": [{"id", "name", "arguments": dict}]}
+              — emitted once when ``finish_reason == "tool_calls"``; arguments
+              are parsed JSON (or raw string if parse fails)
+          {"type": "finish", "reason": str}
+              — emitted at the end with the model's stop reason
+
+        The agent loop is the caller's responsibility — see
+        ``services/chat/agent.py``.
+        """
+        api_key = self._get_api_key()
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Accept": "text/event-stream",
+        }
+        payload = {
+            "model": model or self.default_model,
+            "messages": messages,
+            "tools": tools,
+            "max_tokens": kwargs.get("max_tokens", 16384),
+            "temperature": kwargs.get("temperature", 0.2),
+            "top_p": kwargs.get("top_p", 0.9),
+            "stream": True,
+        }
+
+        response = requests.post(self.url, headers=headers, json=payload, stream=True, timeout=180)
+        response.raise_for_status()
+
+        # Tool calls arrive as deltas keyed by index. OpenRouter normalizes
+        # most providers to OpenAI's shape: choices[0].delta.tool_calls[] with
+        # partial id/name and a streaming JSON `arguments` string. Accumulate
+        # by index until finish_reason fires, then parse and emit at once.
+        pending_calls: dict[int, dict] = {}
+        finish_reason: str | None = None
+
+        for line in response.iter_lines():
+            if not line:
+                continue
+            decoded = line.decode("utf-8")
+            if not decoded.startswith("data: "):
+                continue
+            data = decoded[6:]
+            if data.strip() == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = choice.get("delta") or {}
+
+            content = delta.get("content")
+            if content:
+                yield {"type": "token", "text": content}
+
+            # OpenRouter relays provider reasoning/thinking content on a
+            # parallel `reasoning` field (GLM, Claude w/ thinking, GPT-o*).
+            # Some providers stream it as `reasoning` string, others as
+            # `reasoning_content`; accept either, fall through quietly when
+            # neither is present.
+            reasoning = delta.get("reasoning") or delta.get("reasoning_content")
+            if reasoning:
+                yield {"type": "reasoning", "text": reasoning}
+
+            for tc in delta.get("tool_calls") or []:
+                idx = tc.get("index", 0)
+                slot = pending_calls.setdefault(idx, {"id": None, "name": None, "arguments": ""})
+                if tc.get("id"):
+                    slot["id"] = tc["id"]
+                fn = tc.get("function") or {}
+                if fn.get("name"):
+                    slot["name"] = fn["name"]
+                if fn.get("arguments") is not None:
+                    slot["arguments"] += fn["arguments"]
+
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+
+        if pending_calls:
+            calls = []
+            for idx in sorted(pending_calls.keys()):
+                slot = pending_calls[idx]
+                try:
+                    parsed_args = json.loads(slot["arguments"]) if slot["arguments"] else {}
+                except json.JSONDecodeError:
+                    parsed_args = {"_raw": slot["arguments"]}
+                calls.append({
+                    "id": slot["id"] or f"call_{idx}",
+                    "name": slot["name"] or "",
+                    "arguments": parsed_args,
+                })
+            yield {"type": "tool_calls", "calls": calls}
+
+        yield {"type": "finish", "reason": finish_reason or "stop"}
+
 
 openrouter = LLMClient(
     url="https://openrouter.ai/api/v1/chat/completions",
     env_var="OPEN_ROUTER_KEY",
     default_model="google/gemini-2.0-flash-001",
 )
+
+# Agent uses a separate model env so it can be tuned independently of
+# scope-extraction. The slug must match an OpenRouter id; "GLM 5.1" isn't
+# a current id, so default to GLM 4.6 and let prod override.
+AGENT_MODEL = os.getenv("PSAT_AGENT_MODEL", "z-ai/glm-4.6")
 
 
 def chat(messages: list[dict], **kwargs) -> str:
