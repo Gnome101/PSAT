@@ -21,7 +21,7 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from db.models import (
     AuditContractCoverage,
@@ -39,14 +39,11 @@ from db.models import (
     SourceFile,
     UpgradeEvent,
 )
-from sqlalchemy.orm import sessionmaker
-
 from services.chat import agent as agent_mod
 from services.chat import data as chat_data
 from services.chat import tools as chat_tools
 from services.chat.agent import AgentContext, run_agent_stream
 from utils import llm as llm_mod
-
 
 # db_session teardown clears Protocol-scoped rows but contracts (with
 # ondelete="SET NULL") survive across tests, so reusing the same address
@@ -463,9 +460,10 @@ def test_truncate_caps_and_run_tool_dispatches(db_session, seeded_protocol):
     assert out["name"] == PROTO_NAME
     assert "error" in chat_tools.run_tool("does_not_exist", db_session, ctx, {})
     # Bad kwargs surface as an error, not an exception.
-    assert "error" in chat_tools.run_tool(
-        "get_protocol_info", db_session, ctx, {"unknown_arg_that_should_fail": True}
-    ) or True  # tools accept **_kw; this just exercises the path
+    assert (
+        "error" in chat_tools.run_tool("get_protocol_info", db_session, ctx, {"unknown_arg_that_should_fail": True})
+        or True
+    )  # tools accept **_kw; this just exercises the path
 
 
 # ── agent.py + utils.llm.tool_chat ─────────────────────────────────────────
@@ -612,23 +610,11 @@ def test_tool_chat_parses_tokens_reasoning_and_tool_calls(monkeypatch):
         json.dumps(
             {
                 "choices": [
-                    {
-                        "delta": {
-                            "tool_calls": [
-                                {"index": 0, "id": "call_1", "function": {"name": "get_protocol_info"}}
-                            ]
-                        }
-                    }
+                    {"delta": {"tool_calls": [{"index": 0, "id": "call_1", "function": {"name": "get_protocol_info"}}]}}
                 ]
             }
         ),
-        json.dumps(
-            {
-                "choices": [
-                    {"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"a":'}}]}}
-                ]
-            }
-        ),
+        json.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": '{"a":'}}]}}]}),
         json.dumps(
             {
                 "choices": [
@@ -661,11 +647,27 @@ def test_tool_chat_handles_malformed_args_and_unknown_chunks(monkeypatch):
     """Malformed JSON in `arguments` falls through to ``_raw`` instead of
     raising; non-JSON SSE lines are silently ignored."""
     monkeypatch.setenv("OPEN_ROUTER_KEY", "k")
+    bad_call = {
+        "choices": [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "x",
+                            "function": {"name": "foo", "arguments": "{not}"},
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
     chunks = [
         # malformed JSON line — parser should skip
         "data: not json",
         # tool call with non-JSON arguments
-        f"data: {json.dumps({'choices': [{'delta': {'tool_calls': [{'index': 0, 'id': 'x', 'function': {'name': 'foo', 'arguments': '{not}'}}]}, 'finish_reason': 'tool_calls'}]})}",
+        f"data: {json.dumps(bad_call)}",
         "data: [DONE]",
     ]
 
