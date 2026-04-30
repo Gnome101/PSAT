@@ -87,9 +87,7 @@ def project_upgrade_history(
         # UpgradeEvent.contract_id must point at the PROXY's row, not the
         # subject's — the artifact can describe any proxy in the dependency
         # graph, not just the subject's own.
-        chain_filter = (
-            Contract.chain == subject_chain if subject_chain is not None else Contract.chain.is_(None)
-        )
+        chain_filter = Contract.chain == subject_chain if subject_chain is not None else Contract.chain.is_(None)
         proxy_contract = session.execute(
             select(Contract).where(
                 func.lower(Contract.address) == proxy_addr.lower(),

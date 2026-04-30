@@ -43,9 +43,9 @@ def jobs_with_upgrade_history(session) -> Iterable[Job]:
     object storage the body fetch is lazy via get_artifact() per row, which
     keeps memory bounded when the dataset is large.
     """
-    job_ids = session.execute(
-        select(Artifact.job_id).where(Artifact.name == "upgrade_history").distinct()
-    ).scalars().all()
+    job_ids = (
+        session.execute(select(Artifact.job_id).where(Artifact.name == "upgrade_history").distinct()).scalars().all()
+    )
     if not job_ids:
         return []
     return session.execute(select(Job).where(Job.id.in_(job_ids))).scalars().all()
@@ -65,15 +65,17 @@ def proxy_contract_ids_for_artifact(session, *, subject_chain: str | None, uh_da
     ]
     if not proxy_addrs:
         return []
-    chain_filter = (
-        Contract.chain == subject_chain if subject_chain is not None else Contract.chain.is_(None)
-    )
-    rows = session.execute(
-        select(Contract.id).where(
-            func.lower(Contract.address).in_(proxy_addrs),
-            chain_filter,
+    chain_filter = Contract.chain == subject_chain if subject_chain is not None else Contract.chain.is_(None)
+    rows = (
+        session.execute(
+            select(Contract.id).where(
+                func.lower(Contract.address).in_(proxy_addrs),
+                chain_filter,
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return list(rows)
 
 
@@ -122,9 +124,7 @@ def run(*, dry_run: bool, company_filter: str | None) -> int:
                 skipped_no_artifact += 1
                 continue
 
-            proxy_cids = proxy_contract_ids_for_artifact(
-                session, subject_chain=contract_row.chain, uh_data=uh_data
-            )
+            proxy_cids = proxy_contract_ids_for_artifact(session, subject_chain=contract_row.chain, uh_data=uh_data)
             if not needs_backfill(session, contract_ids=proxy_cids):
                 skipped_already_full += 1
                 continue
@@ -132,7 +132,10 @@ def run(*, dry_run: bool, company_filter: str | None) -> int:
             if dry_run:
                 logger.info(
                     "DRY: would project job=%s company=%s address=%s proxies=%d",
-                    job.id, job.company, job.address, len(proxy_cids),
+                    job.id,
+                    job.company,
+                    job.address,
+                    len(proxy_cids),
                 )
                 projected += 1
                 continue
@@ -146,11 +149,14 @@ def run(*, dry_run: bool, company_filter: str | None) -> int:
                 )
                 session.commit()
                 logger.info(
-                    "projected job=%s company=%s address=%s "
-                    "(proxies %d/%d, events %d, skipped %d)",
-                    job.id, job.company, job.address,
-                    stats["proxies_projected"], stats["proxies_seen"],
-                    stats["events_written"], stats["proxies_skipped_no_contract"],
+                    "projected job=%s company=%s address=%s (proxies %d/%d, events %d, skipped %d)",
+                    job.id,
+                    job.company,
+                    job.address,
+                    stats["proxies_projected"],
+                    stats["proxies_seen"],
+                    stats["events_written"],
+                    stats["proxies_skipped_no_contract"],
                 )
                 projected += 1
             except Exception as exc:
@@ -159,9 +165,12 @@ def run(*, dry_run: bool, company_filter: str | None) -> int:
                 errored += 1
 
     logger.info(
-        "Done. considered=%d projected=%d skipped_no_artifact=%d "
-        "skipped_already_full=%d errored=%d",
-        seen, projected, skipped_no_artifact, skipped_already_full, errored,
+        "Done. considered=%d projected=%d skipped_no_artifact=%d skipped_already_full=%d errored=%d",
+        seen,
+        projected,
+        skipped_no_artifact,
+        skipped_already_full,
+        errored,
     )
     return 0 if errored == 0 else 1
 

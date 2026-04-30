@@ -28,7 +28,6 @@ from db.models import (
     UpgradeEvent,
 )
 
-
 # Common aliases the same chain shows up under in our DB. Treat
 # `ethereum`/`mainnet` as the same canonical chain when matching, so a
 # tool call with `chain="ethereum"` resolves rows tagged `mainnet` and
@@ -71,9 +70,7 @@ def classify_address(session, address: str, chain: str | None = None) -> dict[st
     addr_lc = address.lower()
 
     cg_node = session.execute(
-        select(ControlGraphNode)
-        .where(func.lower(ControlGraphNode.address) == addr_lc)
-        .limit(1)
+        select(ControlGraphNode).where(func.lower(ControlGraphNode.address) == addr_lc).limit(1)
     ).scalar_one_or_none()
     contract = _resolve_contract(session, address, chain)
 
@@ -87,10 +84,7 @@ def classify_address(session, address: str, chain: str | None = None) -> dict[st
     # important fact about this address (it has a delay window).
     raw_delay = details.get("delay") or details.get("delay_seconds")
     name_hint = (label or "").lower()
-    if kind == "contract" and (
-        (isinstance(raw_delay, (int, float)) and raw_delay > 0)
-        or "timelock" in name_hint
-    ):
+    if kind == "contract" and ((isinstance(raw_delay, (int, float)) and raw_delay > 0) or "timelock" in name_hint):
         kind = "timelock"
 
     out: dict[str, Any] = {
@@ -130,13 +124,7 @@ def _resolve_contract(session, address: str, chain: str | None) -> Contract | No
     if not address:
         return None
     addr_lc = address.lower()
-    rows = (
-        session.execute(
-            select(Contract).where(func.lower(Contract.address) == addr_lc)
-        )
-        .scalars()
-        .all()
-    )
+    rows = session.execute(select(Contract).where(func.lower(Contract.address) == addr_lc)).scalars().all()
     if not rows:
         return None
     if len(rows) == 1:
@@ -191,13 +179,7 @@ def contract_brief(session, address: str, chain: str | None = None) -> dict[str,
     # Classify each controller value (often the address that holds a
     # role like ``owner`` or ``DEFAULT_ADMIN_ROLE``). Without this the
     # model treats every controller as an EOA by default.
-    cv_rows = (
-        session.execute(
-            select(ControllerValue).where(ControllerValue.contract_id == contract.id)
-        )
-        .scalars()
-        .all()
-    )
+    cv_rows = session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract.id)).scalars().all()
     controllers: dict[str, dict[str, Any]] = {}
     for cv in cv_rows:
         if cv.value and cv.value.startswith("0x"):
@@ -275,19 +257,14 @@ def upgrade_summary(session, address: str, chain: str | None = None) -> dict[str
     scope_ids = {contract.id}
     if impl_addrs:
         scope_ids.update(
-            r[0]
-            for r in session.execute(
-                select(Contract.id).where(func.lower(Contract.address).in_(impl_addrs))
-            ).all()
+            r[0] for r in session.execute(select(Contract.id).where(func.lower(Contract.address).in_(impl_addrs))).all()
         )
 
-    coverage_rows = (
-        session.execute(
-            select(AuditContractCoverage, AuditReport)
-            .join(AuditReport, AuditContractCoverage.audit_report_id == AuditReport.id)
-            .where(AuditContractCoverage.contract_id.in_(scope_ids))
-        ).all()
-    )
+    coverage_rows = session.execute(
+        select(AuditContractCoverage, AuditReport)
+        .join(AuditReport, AuditContractCoverage.audit_report_id == AuditReport.id)
+        .where(AuditContractCoverage.contract_id.in_(scope_ids))
+    ).all()
     coverage = [
         {
             "audit_id": cov.audit_report_id,
@@ -312,7 +289,13 @@ def upgrade_summary(session, address: str, chain: str | None = None) -> dict[str
     }
 
 
-def live_findings(session, *, address: str | None = None, company: str | None = None, limit: int = 10) -> dict[str, Any]:
+def live_findings(
+    session,
+    *,
+    address: str | None = None,
+    company: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
     """Audit findings still affecting the current code (status != 'fixed').
 
     Filters: by address (joins through coverage), by company (all audits
@@ -328,16 +311,14 @@ def live_findings(session, *, address: str | None = None, company: str | None = 
         )
     if company:
         # AuditReport keys to Protocol via protocol_id; resolve the name.
-        proto = session.execute(
-            select(Protocol).where(Protocol.name == company)
-        ).scalar_one_or_none()
+        proto = session.execute(select(Protocol).where(Protocol.name == company)).scalar_one_or_none()
         if proto is None:
             return {"findings": [], "truncated": False}
         stmt = stmt.where(AuditReport.protocol_id == proto.id)
     audits = session.execute(stmt.distinct()).scalars().all()
     out = []
     for rep in audits:
-        for f in (rep.findings or []):
+        for f in rep.findings or []:
             if (f.get("status") or "").lower() == "fixed":
                 continue
             out.append(
@@ -373,11 +354,7 @@ def protocol_brief(session, name: str) -> dict[str, Any]:
             )
         ).scalars()
     ]
-    contracts = (
-        session.execute(select(Contract).where(Contract.job_id.in_(job_ids))).scalars().all()
-        if job_ids
-        else []
-    )
+    contracts = session.execute(select(Contract).where(Contract.job_id.in_(job_ids))).scalars().all() if job_ids else []
     proxy_count = sum(1 for c in contracts if c.is_proxy)
     audit_count = session.execute(
         select(func.count(AuditReport.id)).where(AuditReport.protocol_id == proto.id)
@@ -406,16 +383,9 @@ def list_protocol_principals(session, name: str) -> dict[str, Any]:
     ]
     if not job_ids:
         return {"principals": []}
-    contract_ids = [
-        c.id
-        for c in session.execute(select(Contract).where(Contract.job_id.in_(job_ids))).scalars()
-    ]
+    contract_ids = [c.id for c in session.execute(select(Contract).where(Contract.job_id.in_(job_ids))).scalars()]
     nodes = (
-        session.execute(
-            select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(contract_ids))
-        )
-        .scalars()
-        .all()
+        session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(contract_ids))).scalars().all()
     )
     by_addr: dict[str, dict[str, Any]] = {}
     for n in nodes:
@@ -466,10 +436,7 @@ def role_holders(session, *, company: str, role_name: str | None = None) -> dict
     if proto is None:
         return {"error": f"protocol not found: {company}"}
 
-    contract_ids = [
-        c.id
-        for c in session.execute(select(Contract).where(Contract.protocol_id == proto.id)).scalars()
-    ]
+    contract_ids = [c.id for c in session.execute(select(Contract).where(Contract.protocol_id == proto.id)).scalars()]
     if not contract_ids:
         return {"roles": []}
 

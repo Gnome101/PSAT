@@ -362,9 +362,9 @@ def test_pipeline_item_exposes_stage_metadata(db_session, api_client, seed_proto
 def test_pipeline_caps_buckets_at_limit(db_session, api_client, seed_protocol):
     """Seeding more rows than the cap in a single bucket still yields a
     bounded response. Prevents one stuck worker from bricking the monitor."""
-    import api as api_module
+    from services.aggregations import audits_pipeline as pipeline_module
 
-    cap = api_module._PIPELINE_BUCKET_LIMIT
+    cap = pipeline_module._PIPELINE_BUCKET_LIMIT
     pid, _ = seed_protocol
 
     for _ in range(cap + 10):

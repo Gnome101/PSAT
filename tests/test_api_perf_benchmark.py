@@ -484,9 +484,9 @@ def _run(api_client, db_session, label: str, fn) -> dict:
 def test_benchmark_high_impact_endpoints(seeded, api_client, db_session, monkeypatch):
     # audit_timeline calls _fetch_bytecode_keccak via an RPC; stub it so the
     # benchmark measures DB cost only.
-    import api as api_module
+    from services.aggregations import contract_audit_timeline as _cat
 
-    monkeypatch.setattr(api_module, "_bytecode_keccak_now_batch", lambda addrs: {a.lower(): None for a in addrs})
+    monkeypatch.setattr(_cat, "_bytecode_keccak_now_batch", lambda addrs: {a.lower(): None for a in addrs})
 
     results: list[dict] = []
 
@@ -596,9 +596,9 @@ QUERY_BUDGETS = {
 @requires_postgres
 def test_query_count_budgets(seeded, api_client, db_session, monkeypatch, record_property):
     """Every hot endpoint must stay under its query budget."""
-    import api as api_module
+    from services.aggregations import contract_audit_timeline as _cat
 
-    monkeypatch.setattr(api_module, "_bytecode_keccak_now_batch", lambda addrs: {a.lower(): None for a in addrs})
+    monkeypatch.setattr(_cat, "_bytecode_keccak_now_batch", lambda addrs: {a.lower(): None for a in addrs})
 
     sample_run = "perf_000"
     proxy_contract_id = seeded["proxy_contract_id"]

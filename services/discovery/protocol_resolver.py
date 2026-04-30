@@ -41,6 +41,12 @@ def _make_result(primary: dict, siblings: list[dict]) -> dict:
         "name": primary.get("name"),
         "chains": primary.get("chains", []),
         "all_slugs": [s.get("slug") for s in siblings if s.get("slug")],
+        # Display names for every sibling — used by ``get_or_create_protocol``
+        # to find pre-resolver duplicate rows that share a family. Keep the
+        # primary name first so callers can still treat ``[0]`` as the
+        # canonical display string.
+        "all_names": [primary.get("name")]
+        + [s.get("name") for s in siblings if s.get("name") and s.get("slug") != primary.get("slug")],
     }
 
 
@@ -78,13 +84,21 @@ def _match_protocol(name: str, protocols: list[dict]) -> dict | None:
         if _normalize(p.get("slug", "")) == name_norm or _normalize(p.get("name", "")) == name_norm:
             return p
 
-    # 4. Normalized substring — require search term covers ≥50% of target
+    # 4. Normalized substring — bidirectional. The forward direction
+    # ("name in slug/name") catches partial inputs like "ether" → "etherfi".
+    # The reverse ("slug/name in name") catches the bare-hostname case:
+    # ``_normalize("etherfi.org") = "etherfiorg"`` contains slug "etherfi".
+    # Both gate on ≥50% length overlap to keep the match-space tight.
     for p in protocols:
         slug_norm = _normalize(p.get("slug", ""))
         p_name_norm = _normalize(p.get("name", ""))
         if slug_norm and name_norm in slug_norm and len(name_norm) / len(slug_norm) >= 0.5:
             return p
         if p_name_norm and name_norm in p_name_norm and len(name_norm) / len(p_name_norm) >= 0.5:
+            return p
+        if slug_norm and slug_norm in name_norm and len(slug_norm) / len(name_norm) >= 0.5:
+            return p
+        if p_name_norm and p_name_norm in name_norm and len(p_name_norm) / len(name_norm) >= 0.5:
             return p
 
     # 5. Similarity search — compare normalized strings, pick best above threshold
@@ -111,6 +125,25 @@ def _match_protocol(name: str, protocols: list[dict]) -> dict | None:
     return None
 
 
+def pick_family_slug(resolved: dict) -> str | None:
+    """Return a stable slug shared by every sibling under one parentProtocol.
+
+    DefiLlama splits some protocols into siblings (ether.fi has 4:
+    ether.fi-stake, ether.fi-cash, ...). The resolver's ``slug`` is the
+    primary match — picked by TVL — and can shift across runs. Picking
+    the alphabetically-first slug across ``all_slugs`` gives every input
+    in the family the same canonical key regardless of which sibling
+    happened to top the TVL ranking.
+
+    Falls back to ``slug`` if ``all_slugs`` is empty (legacy stub data).
+    Returns None when the resolver had no match at all.
+    """
+    all_slugs = resolved.get("all_slugs") or []
+    if all_slugs:
+        return min(all_slugs)
+    return resolved.get("slug")
+
+
 def resolve_protocol(name: str) -> dict:
     """Resolve a company name to DefiLlama slug and DApp URL.
 
@@ -124,11 +157,11 @@ def resolve_protocol(name: str) -> dict:
         protocols = _fetch_protocols()
     except Exception as exc:
         logger.warning("Failed to fetch DefiLlama protocols: %s", exc)
-        return {"slug": None, "url": None, "name": None, "chains": [], "all_slugs": []}
+        return {"slug": None, "url": None, "name": None, "chains": [], "all_slugs": [], "all_names": []}
 
     match = _match_protocol(name, protocols)
     if not match:
-        return {"slug": None, "url": None, "name": None, "chains": [], "all_slugs": []}
+        return {"slug": None, "url": None, "name": None, "chains": [], "all_slugs": [], "all_names": []}
 
     siblings = _find_siblings(match, protocols)
     result = _make_result(match, siblings)

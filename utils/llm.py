@@ -172,11 +172,13 @@ class LLMClient:
                     parsed_args = json.loads(slot["arguments"]) if slot["arguments"] else {}
                 except json.JSONDecodeError:
                     parsed_args = {"_raw": slot["arguments"]}
-                calls.append({
-                    "id": slot["id"] or f"call_{idx}",
-                    "name": slot["name"] or "",
-                    "arguments": parsed_args,
-                })
+                calls.append(
+                    {
+                        "id": slot["id"] or f"call_{idx}",
+                        "name": slot["name"] or "",
+                        "arguments": parsed_args,
+                    }
+                )
             yield {"type": "tool_calls", "calls": calls}
 
         yield {"type": "finish", "reason": finish_reason or "stop"}

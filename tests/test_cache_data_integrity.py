@@ -180,7 +180,7 @@ def api_client(db_session, monkeypatch):
         def __exit__(self, *args):
             pass
 
-    monkeypatch.setattr("api.SessionLocal", _FakeSessionCtx)
+    monkeypatch.setattr("routers.deps.SessionLocal", _FakeSessionCtx)
 
     from fastapi.testclient import TestClient
 

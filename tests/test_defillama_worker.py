@@ -74,13 +74,19 @@ def _patch_worker_deps(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     def fake_update_detail(session, job_id, detail):
         pass
 
-    def fake_get_or_create_protocol(session, name, official_domain=None):
+    def fake_get_or_create_protocol(session, name, official_domain=None, canonical_slug=None, aliases=None):
         protocol_calls.append((name, official_domain))
-        return SimpleNamespace(id=1, name=name, official_domain=official_domain)
+        return SimpleNamespace(id=1, name=name, official_domain=official_domain, canonical_slug=canonical_slug)
 
     monkeypatch.setattr("workers.defillama_worker.store_artifact", fake_store)
     monkeypatch.setattr("workers.defillama_worker.complete_job", fake_complete)
     monkeypatch.setattr("workers.defillama_worker.get_or_create_protocol", fake_get_or_create_protocol)
+    # Worker now resolves the name to a canonical DefiLlama slug before
+    # upserting the Protocol row; stub the network call away.
+    monkeypatch.setattr(
+        "workers.defillama_worker.resolve_protocol",
+        lambda name: {"slug": None, "url": None, "name": None, "chains": [], "all_slugs": [], "all_names": []},
+    )
     monkeypatch.setattr("workers.base.update_job_detail", fake_update_detail)
 
     return {

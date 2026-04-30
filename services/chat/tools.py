@@ -114,11 +114,7 @@ def _get_contract_source(
 
     rows = []
     if contract is not None and contract.job_id is not None:
-        rows = (
-            session.execute(select(SourceFile).where(SourceFile.job_id == contract.job_id))
-            .scalars()
-            .all()
-        )
+        rows = session.execute(select(SourceFile).where(SourceFile.job_id == contract.job_id)).scalars().all()
 
     # Materialize (path, content) pairs from DB. If every body resolves
     # empty, fall through to Etherscan.
@@ -194,15 +190,9 @@ def _search_source(
     else:
         from db.models import Protocol as _P
 
-        proto = session.execute(
-            select(_P).where(_P.name == ctx.company)
-        ).scalar_one_or_none()
+        proto = session.execute(select(_P).where(_P.name == ctx.company)).scalar_one_or_none()
         if proto is not None:
-            contracts = list(
-                session.execute(
-                    select(Contract).where(Contract.protocol_id == proto.id)
-                ).scalars()
-            )
+            contracts = list(session.execute(select(Contract).where(Contract.protocol_id == proto.id)).scalars())
 
     if not contracts:
         return {"pattern": pattern, "matches": [], "summary": [], "scope_contracts": 0}
@@ -215,11 +205,7 @@ def _search_source(
     for contract in contracts:
         if contract.job_id is None:
             continue
-        rows = (
-            session.execute(select(SourceFile).where(SourceFile.job_id == contract.job_id))
-            .scalars()
-            .all()
-        )
+        rows = session.execute(select(SourceFile).where(SourceFile.job_id == contract.job_id)).scalars().all()
         if not rows:
             contracts_with_no_source += 1
             continue
@@ -268,9 +254,7 @@ def _search_source(
     }
 
 
-def _get_contract_overview(
-    session, ctx, address: str | None = None, chain: str | None = None, **_kw
-) -> dict[str, Any]:
+def _get_contract_overview(session, ctx, address: str | None = None, chain: str | None = None, **_kw) -> dict[str, Any]:
     """One-shot fetch combining identity, controls, upgrade summary, and
     verified source. Saves a tool round-trip when the agent wants the
     full picture of a single contract."""
@@ -320,9 +304,7 @@ def _search_audits(session, ctx, query: str = "", **_kw) -> dict[str, Any]:
         return {"results": []}
     from db.models import Protocol
 
-    proto = session.execute(
-        select(Protocol).where(Protocol.name == ctx.company)
-    ).scalar_one_or_none()
+    proto = session.execute(select(Protocol).where(Protocol.name == ctx.company)).scalar_one_or_none()
     if proto is None:
         return {"results": []}
     q = f"%{query.lower()}%"
@@ -330,9 +312,7 @@ def _search_audits(session, ctx, query: str = "", **_kw) -> dict[str, Any]:
         session.execute(
             select(AuditReport)
             .where(AuditReport.protocol_id == proto.id)
-            .where(
-                AuditReport.title.ilike(q) | AuditReport.auditor.ilike(q)
-            )
+            .where(AuditReport.title.ilike(q) | AuditReport.auditor.ilike(q))
             .limit(5)
         )
         .scalars()
@@ -371,7 +351,10 @@ TOOLS: dict[str, Callable] = {
 def _addr_param() -> dict[str, Any]:
     return {
         "type": "string",
-        "description": "Contract address (0x-prefixed, 40 hex). Optional — defaults to the contract currently selected on the canvas.",
+        "description": (
+            "Contract address (0x-prefixed, 40 hex). Optional - defaults to the contract currently "
+            "selected on the canvas."
+        ),
     }
 
 
@@ -404,7 +387,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_contract_source",
-            "description": "Return the verified Solidity source for a contract. Pass `file` to request a specific filename listed by a prior call.",
+            "description": (
+                "Return the verified Solidity source for a contract. Pass `file` to request a specific "
+                "filename listed by a prior call."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -420,7 +406,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_source",
-            "description": "Substring search across indexed Solidity source. Scope defaults to the currently-selected contract; pass `address` to scope to one specific contract; omit both to search every contract in the protocol. Returns up to `max_results` matches with file path + line number + snippet, plus a per-file `summary` of total hit counts. Use this for 'find every function with onlyOwner / delegatecall / selfdestruct' style questions where calling get_contract_source on each contract individually would burn the budget.",
+            "description": (
+                "Substring search across indexed Solidity source. Scope defaults to the selected contract; "
+                "pass `address` to scope to one contract; omit both to search the protocol. Returns up to "
+                "`max_results` matches with file path, line number, snippet, and per-file hit counts."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -430,7 +420,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "address": {
                         "type": "string",
-                        "description": "Limit to one contract address. Optional — defaults to the selected contract or the whole protocol.",
+                        "description": (
+                            "Limit to one contract address. Optional - defaults to the selected contract "
+                            "or the whole protocol."
+                        ),
                     },
                     "max_results": {
                         "type": "integer",
@@ -449,7 +442,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_contract_overview",
-            "description": "ONE-CALL summary for a contract: identity + controls + upgrade summary + source file list. Prefer this over calling get_contract_info / get_upgrade_history / get_contract_source separately when investigating a single contract. Use get_contract_source(file=...) afterward only if you need a specific file's body.",
+            "description": (
+                "One-call summary for a contract: identity, controls, upgrade summary, and source file list. "
+                "Use get_contract_source(file=...) afterward only if you need one file body."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"address": _addr_param(), "chain": _chain_param()},
@@ -473,7 +469,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_audit_findings",
-            "description": "Audit findings still affecting current code (status != 'fixed'). Filter by address or fall back to protocol-wide.",
+            "description": (
+                "Audit findings still affecting current code (status != 'fixed'). Filter by address or "
+                "fall back to protocol-wide."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {"address": _addr_param()},
@@ -493,13 +492,20 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_role_holders",
-            "description": "Map every protocol role to its actual holders, each typed (eoa / safe / timelock / contract) with thresholds, delays, and function counts inlined. For 'single key compromise' / 'worst case governance' / 'who can pause' style questions, CALL THIS ONCE WITH NO role_name FIRST — the no-arg response already lists every EOA holder per role plus Safe/Timelock metadata, so you usually do not need to drill in. Only pass role_name when you've already identified a specific role from the summary and need the full holder list for that one role.",
+            "description": (
+                "Map every protocol role to its typed holders with thresholds, delays, and function counts. "
+                "For governance-risk questions, call with no role_name first; pass role_name only to expand "
+                "one role from the summary."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "role_name": {
                         "type": "string",
-                        "description": "Specific role to expand, e.g. 'PROTOCOL_PAUSER'. Usually omit — the no-arg summary already inlines holders.",
+                        "description": (
+                            "Specific role to expand, e.g. 'PROTOCOL_PAUSER'. Usually omit; the no-arg "
+                            "summary already inlines holders."
+                        ),
                     },
                 },
                 "required": [],
