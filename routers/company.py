@@ -131,6 +131,13 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
             matching = [
                 _audit_brief(audits_by_id[e.audit_report_id], e) for e in entries if e.audit_report_id in audits_by_id
             ]
+            # Inventory-only entries (discovered but never analyzed) have no
+            # name and no audits — they contribute nothing to the coverage
+            # view and otherwise inflate the payload (~67% of rows for a
+            # mature protocol). Drop them at the serializer rather than at
+            # the query, so analyzed contracts without audits still surface.
+            if not c.contract_name and not matching:
+                continue
             coverage.append(
                 {
                     "address": c.address,
@@ -144,7 +151,7 @@ def company_audit_coverage(company_name: str) -> dict[str, Any]:
         return {
             "company": company_name,
             "protocol_id": protocol_row.id,
-            "contract_count": len(contracts),
+            "contract_count": len(coverage),
             "audit_count": len(audit_rows),
             "coverage": coverage,
         }

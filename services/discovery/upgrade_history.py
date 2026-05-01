@@ -462,3 +462,313 @@ def build_upgrade_history(dependencies: dict, *, enrich: bool = True, from_block
         "proxies": proxies,
         "total_upgrades": total_upgrades,
     }
+
+
+def project_to_events(
+    session,
+    *,
+    subject_contract_id: int,
+    subject_chain: str | None,
+    artifact_data: dict,
+) -> dict:
+    """Project an ``upgrade_history`` artifact into ``UpgradeEvent`` rows.
+
+    Forward direction of the artifact ⇄ rows pair (the inverse is
+    ``synthesize_from_events`` below). Idempotent: deletes existing
+    ``UpgradeEvent`` rows for each proxy contract (and the subject, as
+    legacy cleanup) before re-inserting from the artifact. Caller commits.
+
+    Returns counters useful for logging; ``impl_addrs`` is the set of
+    historical impl addresses encountered, suitable for feeding to the
+    static worker's historical-impl Contract backfill.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    from db.models import Contract, UpgradeEvent
+
+    out = {
+        "proxies_seen": 0,
+        "proxies_projected": 0,
+        "proxies_skipped_no_contract": 0,
+        "events_written": 0,
+        "impl_addrs": set(),
+    }
+    if not isinstance(artifact_data, dict) or not artifact_data.get("proxies"):
+        return out
+
+    # Legacy cleanup: older versions of this projection keyed every event
+    # to the subject's id regardless of which proxy the event described.
+    # Drop those so re-runs are idempotent for non-proxy subjects.
+    session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == subject_contract_id).delete()
+
+    for proxy_info in artifact_data["proxies"].values():
+        out["proxies_seen"] += 1
+        proxy_addr = proxy_info.get("proxy_address", "")
+        if not proxy_addr:
+            continue
+        # UpgradeEvent.contract_id must point at the PROXY's row, not the
+        # subject's — the artifact can describe any proxy in the dependency
+        # graph, not just the subject's own.
+        chain_filter = Contract.chain == subject_chain if subject_chain is not None else Contract.chain.is_(None)
+        proxy_contract = session.execute(
+            select(Contract).where(
+                func.lower(Contract.address) == proxy_addr.lower(),
+                chain_filter,
+            )
+        ).scalar_one_or_none()
+        if proxy_contract is None:
+            out["proxies_skipped_no_contract"] += 1
+            continue
+        session.query(UpgradeEvent).filter(UpgradeEvent.contract_id == proxy_contract.id).delete()
+        for evt in proxy_info.get("events", []):
+            if evt.get("event_type") != "upgraded":
+                continue
+            impl = evt.get("implementation")
+            # Artifact carries ``timestamp`` as unix seconds (int | None);
+            # the DB column is DateTime(timezone=True). Dropping this was
+            # the root cause of ImplWindow.from_ts=None downstream, which
+            # collapsed every post-upgrade audit to low confidence.
+            ts_raw = evt.get("timestamp")
+            ts_val = datetime.fromtimestamp(ts_raw, tz=timezone.utc) if ts_raw is not None else None
+            session.add(
+                UpgradeEvent(
+                    contract_id=proxy_contract.id,
+                    proxy_address=proxy_addr,
+                    old_impl=None,
+                    new_impl=impl,
+                    block_number=evt.get("block_number"),
+                    timestamp=ts_val,
+                    tx_hash=evt.get("tx_hash"),
+                )
+            )
+            out["events_written"] += 1
+            if impl:
+                out["impl_addrs"].add(impl.lower())
+        out["proxies_projected"] += 1
+
+    return out
+
+
+def backfill_historical_impl_contracts(
+    session,
+    *,
+    protocol_id: int,
+    chain: str | None,
+    impl_addrs: set[str],
+) -> None:
+    """Ensure a Contract row exists for each historical impl address.
+
+    Companion to ``project_to_events`` — every impl referenced by the
+    artifact's events should be present as a Contract row so the audit
+    coverage matcher can link audits whose scope names a past impl.
+
+    For each address, three cases:
+      1. No Contract row exists → create one tagged
+         ``discovery_source='upgrade_history'`` with Etherscan-resolved
+         name. Normal path for newly-surfaced impls.
+      2. Row exists with ``protocol_id`` NULL or equal to ours → adopt.
+         Sets the upgrade_history tag if empty, sets protocol_id. Keeps
+         existing name/analysis fields intact.
+      3. Row exists in a DIFFERENT protocol → leave alone, log a warning.
+         Rare (impl bytecode is usually protocol-specific) but possible;
+         silently stomping another protocol's inventory would be worse
+         than an unresolved coverage link.
+
+    Etherscan name resolution uses the shared ``get_contract_info`` cache,
+    so re-analyzing a protocol re-hits only new impls. Per-address errors
+    are swallowed so one flaky lookup doesn't wreck the whole backfill.
+    """
+    import logging
+
+    from sqlalchemy import select
+
+    from db.models import Contract
+    from utils.etherscan import get_contract_info
+
+    logger = logging.getLogger("services.discovery.upgrade_history")
+
+    if not impl_addrs:
+        return
+
+    # Match the natural (address, chain) uniqueness grain. Cross-chain
+    # protocols (rare but real — CREATE2 / deterministic deployments can
+    # put the same impl address on Ethereum and Polygon) would otherwise
+    # look like cross-protocol collisions and get skipped incorrectly.
+    chain_filter = Contract.chain == chain if chain is not None else Contract.chain.is_(None)
+    existing_rows = {
+        row.address.lower(): row
+        for row in session.execute(select(Contract).where(Contract.address.in_(impl_addrs), chain_filter))
+        .scalars()
+        .all()
+    }
+
+    created = 0
+    adopted = 0
+    refresh_ids: list[int] = []
+    for addr in impl_addrs:
+        existing = existing_rows.get(addr)
+        if existing is not None:
+            if existing.protocol_id is None or existing.protocol_id == protocol_id:
+                was_orphan = existing.protocol_id is None
+                had_no_tag = "upgrade_history" not in (existing.discovery_sources or [])
+                if was_orphan:
+                    existing.protocol_id = protocol_id
+                if had_no_tag:
+                    existing.discovery_sources = list(existing.discovery_sources or []) + ["upgrade_history"]
+                adopted += 1
+                if was_orphan or had_no_tag:
+                    refresh_ids.append(existing.id)
+            else:
+                logger.warning(
+                    "Job protocol %s: historical impl %s already owned by protocol %s — "
+                    "coverage link will not be created against this impl",
+                    protocol_id,
+                    addr,
+                    existing.protocol_id,
+                )
+            continue
+
+        try:
+            name, _ = get_contract_info(addr)
+        except Exception:
+            logger.exception("Etherscan name fetch failed for historical impl %s", addr)
+            name = None
+
+        new_row = Contract(
+            protocol_id=protocol_id,
+            address=addr,
+            chain=chain,
+            contract_name=name or "UnknownImpl",
+            is_proxy=False,
+            job_id=None,
+            discovery_sources=["upgrade_history"],
+            source_verified=bool(name),
+        )
+        session.add(new_row)
+        created += 1
+        session.flush()
+        refresh_ids.append(new_row.id)
+
+    if created or adopted:
+        session.commit()
+        logger.info(
+            "Protocol %s: backfilled %d historical impl Contract row(s) (%d created, %d adopted)",
+            protocol_id,
+            created + adopted,
+            created,
+            adopted,
+        )
+
+    if refresh_ids:
+        # Lazy import keeps this module importable from contexts that don't
+        # have audits-service deps loaded.
+        from services.audits.coverage import upsert_coverage_for_contract
+
+        refreshed = 0
+        for contract_id in refresh_ids:
+            try:
+                # Source-equivalence ON: historical impls have no Job, so
+                # the coverage_worker path never runs for them. This inline
+                # call is the only chance to promote matches to
+                # reviewed_commit/high when an audit's reviewed_commits
+                # byte-equal the deployed impl's Etherscan source.
+                refreshed += upsert_coverage_for_contract(
+                    session,
+                    contract_id,
+                    verify_source_equivalence=True,
+                )
+            except Exception:
+                logger.exception(
+                    "Coverage refresh failed for backfilled impl contract_id=%s",
+                    contract_id,
+                )
+        session.commit()
+        if refreshed:
+            logger.info(
+                "Protocol %s: linked %d audit coverage row(s) to %d backfilled impl(s)",
+                protocol_id,
+                refreshed,
+                len(refresh_ids),
+            )
+
+
+def synthesize_from_events(session, contract) -> dict | None:
+    """Rebuild the ``upgrade_history`` artifact shape from ``UpgradeEvent`` rows.
+
+    Used as a fallback when the artifact is missing or unreachable in object
+    storage. The relational ``UpgradeEvent`` table is the source of truth for
+    the count + last-block badges already shown in the company overview, so
+    deriving the per-proxy detail view from the same data keeps the two
+    consistent. Returns None when there are no events for this contract.
+    """
+    from sqlalchemy import select
+
+    from db.models import Contract, UpgradeEvent
+
+    rows = (
+        session.execute(
+            select(UpgradeEvent)
+            .where(UpgradeEvent.contract_id == contract.id)
+            .order_by(UpgradeEvent.block_number.asc().nullslast(), UpgradeEvent.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return None
+
+    events: list[dict] = []
+    for ev in rows:
+        if not ev.new_impl:
+            continue
+        # The canonical artifact (worker-built) stores ts as unix epoch
+        # seconds — see services/discovery/upgrade_history.parse_upgrade_log
+        # at the _hex_to_int(ts) call. The frontend formatTimestamp does
+        # `new Date(ts * 1000)`, so anything else (ISO string) renders as
+        # "Invalid Date". Match the canonical shape.
+        events.append(
+            {
+                "event_type": "upgraded",
+                "block_number": ev.block_number,
+                "timestamp": int(ev.timestamp.timestamp()) if ev.timestamp else None,
+                "tx_hash": ev.tx_hash,
+                "implementation": ev.new_impl.lower(),
+            }
+        )
+    if not events:
+        return None
+
+    current_impl = (contract.implementation or events[-1]["implementation"]).lower()
+    implementations = _build_implementation_timeline(events, current_impl)
+
+    impl_addrs = {impl["address"] for impl in implementations}
+    if impl_addrs:
+        name_rows = session.execute(
+            select(Contract.address, Contract.contract_name).where(Contract.address.in_(list(impl_addrs)))
+        ).all()
+        names = {addr.lower(): name for addr, name in name_rows if name}
+        for impl in implementations:
+            n = names.get(impl["address"].lower())
+            if n:
+                impl["contract_name"] = n
+
+    proxy_addr = (contract.address or "").lower()
+    proxy = {
+        "proxy_address": proxy_addr,
+        "proxy_type": contract.proxy_type or "unknown",
+        "current_implementation": current_impl,
+        "upgrade_count": len(events),
+        "first_upgrade_block": events[0]["block_number"],
+        "last_upgrade_block": events[-1]["block_number"],
+        "implementations": implementations,
+        "events": events,
+    }
+    return {
+        "schema_version": "0.1",
+        "target_address": proxy_addr,
+        "proxies": {proxy_addr: proxy},
+        "total_upgrades": len(events),
+        "synthesized": True,
+    }

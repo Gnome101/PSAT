@@ -130,6 +130,19 @@ def build_analysis_detail(session: Session, run_name: str) -> dict[str, Any] | N
         payload["contract_name"] = subject.get("name", payload["run_name"])
         payload["summary"] = all_artifacts["contract_analysis"].get("summary")
 
+    # Synthesis fallback for upgrade_history. Mirrors the per-artifact
+    # endpoint at /api/analyses/{job}/artifact/upgrade_history. Runs after
+    # all other paths (artifact body, proxy-impl inheritance) so it only
+    # fires when nothing else surfaced one — typically a storage outage or
+    # a never-materialized artifact. Gated on is_proxy because UpgradeEvent
+    # rows only ever exist for proxies.
+    if "upgrade_history" not in payload and contract_row is not None and getattr(contract_row, "is_proxy", False):
+        from services.discovery.upgrade_history import synthesize_from_events
+
+        synthesized = synthesize_from_events(session, contract_row)
+        if synthesized:
+            payload["upgrade_history"] = synthesized
+
     return payload
 
 

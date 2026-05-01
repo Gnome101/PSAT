@@ -1,4 +1,4 @@
-"""Tests for ResolutionWorker — process(), _fetch_balances, _queue_discovered_contracts, _run_upgrade_history."""
+"""Tests for ResolutionWorker — process(), _fetch_balances, _queue_discovered_contracts."""
 
 from __future__ import annotations
 
@@ -567,106 +567,6 @@ class TestQueueDiscoveredContractsCompanyInheritance:
 
 
 # ---------------------------------------------------------------------------
-# 7. _run_upgrade_history — no dependencies artifact skips
-# ---------------------------------------------------------------------------
-
-
-class TestRunUpgradeHistoryNoDeps:
-    """Skips when dependencies artifact is missing."""
-
-    def test_skips_without_dependencies(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        worker = ResolutionWorker()
-        session = MagicMock()
-        job = _job()
-
-        monkeypatch.setattr("workers.resolution_worker.get_artifact", lambda _s, _j, name: None)
-        monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
-
-        # Should not raise
-        worker._run_upgrade_history(session, cast(Any, job))
-
-        # store_artifact should NOT be called (no error stored)
-        session.add.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# 8. _run_upgrade_history — exception is non-fatal
-# ---------------------------------------------------------------------------
-
-
-class TestRunUpgradeHistoryNonFatal:
-    """Exception during upgrade history does not propagate."""
-
-    def test_exception_is_caught_and_logged(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        worker = ResolutionWorker()
-        session = MagicMock()
-        # Make the DB query raise after the artifact is loaded
-        session.execute.return_value.scalar_one_or_none.side_effect = RuntimeError("db error")
-        job = _job()
-
-        uh_data = {
-            "proxies": {
-                "0xproxy": {
-                    "proxy_address": "0xproxy",
-                    "events": [
-                        {
-                            "event_type": "upgraded",
-                            "block_number": 100,
-                            "tx_hash": "0xtx",
-                            "implementation": "0xnew",
-                        }
-                    ],
-                }
-            }
-        }
-        monkeypatch.setattr(
-            "workers.resolution_worker.get_artifact",
-            lambda _s, _j, name: uh_data if name == "upgrade_history" else None,
-        )
-        monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
-
-        # Should NOT raise
-        worker._run_upgrade_history(session, cast(Any, job))
-
-    def test_upgrade_history_writes_events(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        worker = ResolutionWorker()
-        session = MagicMock()
-        # Mock stands in for BOTH the subject lookup (first scalar_one_or_none
-        # call) and the per-proxy lookup (second call) — the worker reads
-        # .chain on the subject to build its proxy-chain filter.
-        fake_contract = SimpleNamespace(id=99, address="0xproxy", chain=None)
-        session.execute.return_value.scalar_one_or_none.return_value = fake_contract
-        job = _job()
-
-        uh_data = {
-            "proxies": {
-                "0xproxy": {
-                    "proxy_address": "0xproxy",
-                    "events": [
-                        {
-                            "event_type": "upgraded",
-                            "block_number": 100,
-                            "tx_hash": "0xtx",
-                            "implementation": "0xnew",
-                        }
-                    ],
-                }
-            }
-        }
-        monkeypatch.setattr(
-            "workers.resolution_worker.get_artifact",
-            lambda _s, _j, name: uh_data if name == "upgrade_history" else None,
-        )
-        monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
-
-        worker._run_upgrade_history(session, cast(Any, job))
-
-        # Should have added an UpgradeEvent
-        assert session.add.call_count == 1
-        session.commit.assert_called()
-
-
-# ---------------------------------------------------------------------------
 # 9. Missing artifacts raise RuntimeError
 # ---------------------------------------------------------------------------
 
@@ -872,27 +772,3 @@ class TestResolvedGraphEmpty:
         stored_names = [name for name, _ in ctx["store_calls"]]
         assert "control_snapshot" in stored_names
         assert "resolved_control_graph" not in stored_names
-
-
-# ---------------------------------------------------------------------------
-# 14. _run_upgrade_history — path is None
-# ---------------------------------------------------------------------------
-
-
-class TestRunUpgradeHistoryPathNone:
-    """No upgrade_history artifact — nothing to write."""
-
-    def test_returns_none_gracefully(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        worker = ResolutionWorker()
-        session = MagicMock()
-        job = _job()
-
-        monkeypatch.setattr(
-            "workers.resolution_worker.get_artifact",
-            lambda _s, _j, name: None,
-        )
-        monkeypatch.setattr("workers.base.update_job_detail", lambda *a, **kw: None)
-
-        # Should not raise
-        worker._run_upgrade_history(session, cast(Any, job))
-        session.add.assert_not_called()

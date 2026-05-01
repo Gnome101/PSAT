@@ -1,8 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { streamAgentChat } from "../../api/agent.js";
+
+// react-markdown + remark-gfm together are ~80 KB of compiled JS that
+// only matters once the user actually opens the Agent tab AND sends a
+// message. Lazy-load them so cold Surface entry doesn't pay the parse
+// cost. The fallback for the suspense boundary is the raw text — good
+// enough until the chunk arrives, since the bubble already has the
+// content as plain text from the stream.
+const MarkdownBubble = lazy(() => import("./MarkdownBubble.jsx"));
 
 const SUGGESTIONS = [
   "What's the worst thing that can happen if 1 EOA is compromised?",
@@ -272,12 +278,12 @@ export function AgentPanel({ companyName, selectedMachine, onHighlight, onFocusA
                 {(turn.blocks || []).map((b, j) =>
                   b.type === "text" ? (
                     <div key={j} className="agent-bubble">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        components={makeMarkdownComponents(onFocusAddress)}
-                      >
-                        {b.text}
-                      </ReactMarkdown>
+                      <Suspense fallback={<span className="agent-bubble-fallback">{b.text}</span>}>
+                        <MarkdownBubble
+                          text={b.text}
+                          components={makeMarkdownComponents(onFocusAddress)}
+                        />
+                      </Suspense>
                     </div>
                   ) : (
                     <ToolCallCard key={b.id || j} call={b} />

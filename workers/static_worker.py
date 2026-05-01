@@ -318,12 +318,27 @@ def _resolve_upgrade_history(
     job,
     dependencies: dict,
     prev_uh: dict | None,
+    contract_row: Contract | None = None,
 ) -> dict | None:
-    """Load cached upgrade history, fetch incrementally, merge, and persist.
+    """Build the upgrade history artifact AND project it to relational rows.
 
-    Returns the (possibly merged) upgrade history dict, or None on failure.
+    Etherscan getLogs is fetched once. The result is:
+      1. Stored as the ``upgrade_history`` artifact (full per-event detail).
+      2. Projected into ``UpgradeEvent`` rows for the company-overview
+         joins (count + last block + last timestamp aggregates).
+      3. Used to backfill ``Contract`` rows for historical impl addresses
+         so the audit-coverage matcher can link audits whose scope names
+         a past impl.
+
+    Doing all three in one pass means the artifact and rows stay in sync
+    without a cross-stage re-read of object storage. Returns the artifact
+    dict (or None if no proxies were detected).
     """
-    from services.discovery.upgrade_history import build_upgrade_history
+    from services.discovery.upgrade_history import (
+        backfill_historical_impl_contracts,
+        build_upgrade_history,
+        project_to_events,
+    )
 
     # Compute from_block for incremental fetch
     from_block = 0
@@ -346,10 +361,48 @@ def _resolve_upgrade_history(
             # No new events — use previous as-is
             uh = prev_uh
 
-    if uh.get("proxies"):
-        store_artifact(session, job.id, "upgrade_history", data=uh)
+    if not uh.get("proxies"):
+        return None
 
-    return uh if uh.get("proxies") else None
+    store_artifact(session, job.id, "upgrade_history", data=uh)
+
+    # Project the artifact's "upgraded" events into UpgradeEvent rows and
+    # backfill historical impl Contract rows. Both operate on the in-memory
+    # dict — no re-read of storage. Errors here are non-fatal: the artifact
+    # is already stored, so a failure leaves the data still recoverable
+    # via re-running this stage.
+    if contract_row is not None:
+        try:
+            stats = project_to_events(
+                session,
+                subject_contract_id=contract_row.id,
+                subject_chain=contract_row.chain,
+                artifact_data=uh,
+            )
+            session.commit()
+            logger.info(
+                "Static stage upgrade events projected for job %s (proxies %d/%d, events %d, skipped %d)",
+                job.id,
+                stats["proxies_projected"],
+                stats["proxies_seen"],
+                stats["events_written"],
+                stats["proxies_skipped_no_contract"],
+            )
+            if contract_row.protocol_id is not None and stats["impl_addrs"]:
+                backfill_historical_impl_contracts(
+                    session,
+                    protocol_id=contract_row.protocol_id,
+                    chain=contract_row.chain,
+                    impl_addrs=stats["impl_addrs"],
+                )
+        except Exception as exc:
+            logger.warning(
+                "Upgrade event projection failed for job %s: %s",
+                job.id,
+                exc,
+            )
+
+    return uh
 
 
 # ---------------------------------------------------------------------------
@@ -1242,7 +1295,7 @@ class StaticWorker(BaseWorker):
                 prev_uh = get_artifact(session, job.id, "upgrade_history")
                 if prev_uh is not None and not isinstance(prev_uh, dict):
                     prev_uh = None
-                uh = _resolve_upgrade_history(session, job, unified, prev_uh)
+                uh = _resolve_upgrade_history(session, job, unified, prev_uh, contract_row=contract_row)
                 if uh:
                     logger.info(
                         "Static stage upgrade history complete for job %s address=%s upgrades=%d",

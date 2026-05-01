@@ -2175,15 +2175,22 @@ function DetailEmptyState({ companyName, companyData, coverageData, onExampleCli
   );
 }
 
-function SidebarTabs({ mode, onSetMode, auditCount }) {
+function SidebarTabs({ mode, onSetMode, auditCount, showDetail = true }) {
   return (
     <div className="ps-sidebar-tabs">
-      <button
-        className={`ps-sidebar-tab ${mode === "detail" ? "active" : ""}`}
-        onClick={() => onSetMode("detail")}
-      >
-        Detail
-      </button>
+      {/* Detail tab is hidden in embedded mode (the slim surface on the
+          /company/{name} overview page) — it's not very useful at narrow
+          widths since the function lanes don't fit, and the user can
+          open the fullscreen view to access it. Shown in the dedicated
+          /company/{name}/surface route. */}
+      {showDetail && (
+        <button
+          className={`ps-sidebar-tab ${mode === "detail" ? "active" : ""}`}
+          onClick={() => onSetMode("detail")}
+        >
+          Detail
+        </button>
+      )}
       <button
         className={`ps-sidebar-tab ${mode === "agent" ? "active" : ""}`}
         onClick={() => onSetMode("agent")}
@@ -3848,8 +3855,11 @@ function AuditCommitChips({ detail, maxShown = 4 }) {
 function DraggableSidebar({ children, flyout = null }) {
   const [width, setWidth] = useState(380);
   const [collapsed, setCollapsed] = useState(false);
+  const [flyoutCollapsed, setFlyoutCollapsed] = useState(false);
   const dragging = useRef(false);
   const sidebarWidth = collapsed ? 44 : width;
+  const showFlyout = !collapsed && flyout && !flyoutCollapsed;
+  const showFlyoutRail = !collapsed && flyout && flyoutCollapsed;
 
   const onMouseDown = useCallback((e) => {
     if (collapsed) return;
@@ -3873,10 +3883,31 @@ function DraggableSidebar({ children, flyout = null }) {
 
   return (
     <>
-      {!collapsed && flyout ? (
+      {showFlyout ? (
         <div className="ps-sidebar-flyout" style={{ right: sidebarWidth }}>
+          <button
+            type="button"
+            className="ps-sidebar-flyout-toggle"
+            onClick={() => setFlyoutCollapsed(true)}
+            title="Minimize panel"
+            aria-label="Minimize panel"
+          >
+            &lt;
+          </button>
           {flyout}
         </div>
+      ) : null}
+      {showFlyoutRail ? (
+        <button
+          type="button"
+          className="ps-sidebar-flyout-rail"
+          style={{ right: sidebarWidth }}
+          onClick={() => setFlyoutCollapsed(false)}
+          title="Expand panel"
+          aria-label="Expand panel"
+        >
+          &gt;
+        </button>
       ) : null}
       <div
         className={`ps-sidebar${collapsed ? " ps-sidebar-collapsed" : ""}`}
@@ -4193,7 +4224,11 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
 
   // Right sidebar mode: "detail" (default), "agent", "audits",
   // "monitoring", or "upgrades".
-  const [sidebarMode, setSidebarMode] = useState("detail");
+  // Default to Agent in both embedded and fullscreen views — the chat
+  // interface is the most useful entry point on first load. Embedded
+  // mode still hides the Detail tab option (function lanes don't fit
+  // in the narrow sidebar), but Agent works fine at any width.
+  const [sidebarMode, setSidebarMode] = useState("agent");
   // Per-proxy upgrade history cache, keyed by job_id. Server's
   // /api/company/{name} returns upgrade_count=null for protocols whose
   // chain monitor hasn't ingested events yet (the static-analysis blob in
@@ -4712,14 +4747,15 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
             onSelectMachine={(m) => {
               // Auto-switch to Detail when the user clicks a contract
               // ON THE CANVAS so the function lanes are immediately
-              // visible. Agent-link clicks go through handleSelectMachine
-              // directly (not this wrapper), so they don't trigger this
-              // and the user stays in the chat.
-              if (m && sidebarMode !== "detail") setSidebarMode("detail");
+              // visible. Skipped in embedded mode (Detail tab is
+              // hidden there). Agent-link clicks go through
+              // handleSelectMachine directly (not this wrapper), so
+              // they don't trigger this and the user stays in the chat.
+              if (m && !embedded && sidebarMode !== "detail") setSidebarMode("detail");
               handleSelectMachine(m);
             }}
             onSelectPrincipal={(p) => {
-              if (p && sidebarMode !== "detail") setSidebarMode("detail");
+              if (p && !embedded && sidebarMode !== "detail") setSidebarMode("detail");
               handleSelectPrincipal(p);
             }}
             principalTour={principalTour}
@@ -4753,6 +4789,7 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
             mode={sidebarMode}
             onSetMode={setSidebarMode}
             auditCount={coverageData?.audit_count}
+            showDetail={!embedded}
           />
           {sidebarMode === "audits" && (
             <AuditsListPanel

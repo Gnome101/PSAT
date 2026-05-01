@@ -2,21 +2,51 @@ import { useState, useEffect } from "react";
 
 import { matchesEra } from "../../auditMatching.js";
 import { isBytecodeVerifiedAudit } from "../../auditCoverage.js";
-import { AUDIT_STATUS_META, MetaBadge } from "../../auditUi.jsx";
 import { api } from "../../api/client.js";
 import { shortenAddress } from "../../graph.js";
-import { StatCard } from "../../ui/StatCard.jsx";
-import { UpgradeAuditCard } from "../../ui/UpgradeAuditCard.jsx";
 
-function formatTimestamp(ts) {
+function formatDate(ts) {
   if (!ts) return null;
   return new Date(ts * 1000).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+function formatRelative(ts) {
+  if (!ts) return null;
+  const now = Date.now() / 1000;
+  const seconds = Math.max(0, now - ts);
+  const days = Math.floor(seconds / 86400);
+  if (days < 1) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+  const years = Math.floor(days / 365);
+  const remMonths = Math.floor((days - years * 365) / 30);
+  if (remMonths === 0) return `${years} year${years === 1 ? "" : "s"} ago`;
+  return `${years}y ${remMonths}mo ago`;
+}
+
+function formatSpan(fromTs, toTs) {
+  const start = formatDate(fromTs);
+  if (!start) return null;
+  const end = toTs ? formatDate(toTs) : null;
+  return end ? `${start} → ${end}` : start;
+}
+
+function etherscanLink(address, chain) {
+  if (!address) return null;
+  const base = chain === "base" ? "https://basescan.org/address/"
+    : chain === "scroll" ? "https://scrollscan.com/address/"
+    : chain === "blast" ? "https://blastscan.io/address/"
+    : chain === "bsc" ? "https://bscscan.com/address/"
+    : "https://etherscan.io/address/";
+  return base + address;
 }
 
 export function UpgradesPanel({
   upgradeHistory,
   contractId,
-  companyName,
+  companyName: _companyName,
   contractAddress,
   contractName,
   dependencies,
@@ -43,269 +73,196 @@ export function UpgradesPanel({
 
   const coverageRows = auditTimeline?.coverage || [];
   const verifiedCoverageRows = coverageRows.filter(isBytecodeVerifiedAudit);
-  const currentStatus = auditTimeline?.current_status || null;
-
-  function frontendCurrentImplAudited() {
-    if (!auditTimeline || !history?.proxies) return false;
-    const targetProxy = Object.entries(history.proxies).find(
-      ([addr]) => addr.toLowerCase() === (history.target_address || contractAddress || "").toLowerCase(),
-    );
-    if (!targetProxy) return false;
-    const impls = targetProxy[1]?.implementations || [];
-    if (!impls.length) return false;
-    const current = impls[impls.length - 1];
-    return verifiedCoverageRows.some((c) => matchesEra(c, current));
-  }
-
-  function auditStatusBanner() {
-    if (!contractId) return null;
-    if (auditTimelineError) {
-      return <span className="chip" style={{ background: "#fee2e2", color: "#991b1b" }}>audit lookup failed: {auditTimelineError}</span>;
-    }
-    if (!auditTimeline) {
-      return <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>loading audits…</span>;
-    }
-    if (frontendCurrentImplAudited()) {
-      return <MetaBadge meta={AUDIT_STATUS_META.audited} label="Current impl bytecode verified" />;
-    }
-    if (currentStatus === "audited" || currentStatus === "non_proxy_audited") {
-      return <MetaBadge meta={AUDIT_STATUS_META.unaudited_since_upgrade} label="No bytecode proof" />;
-    }
-    const meta = AUDIT_STATUS_META[currentStatus] || null;
-    if (!meta) return null;
-    const label = currentStatus === "non_proxy_unaudited" ? "No bytecode proof" : undefined;
-    return <MetaBadge meta={meta} label={label} />;
-  }
 
   if (loading) {
-    return (
-      <div className="stack">
-        <p className="empty">Loading upgrade history…</p>
-      </div>
-    );
+    return <div className="upgr2-empty">Loading upgrade history…</div>;
   }
 
   if (!history || !Object.keys(history.proxies || {}).length) {
     return (
-      <div className="stack">
-        {contractId ? (
-          <div className="chips">{auditStatusBanner()}</div>
-        ) : null}
-        <p className="empty">No proxy upgrade history available.</p>
+      <div className="upgr2-empty">
+        <div className="upgr2-empty-title">No upgrades on record</div>
+        <div className="upgr2-empty-sub">
+          {contractId ? "This contract has not been upgraded since deployment." : "Select a proxy to see its upgrade history."}
+        </div>
       </div>
     );
   }
 
   const deps = dependencies || {};
-  // history.target_address is always the proxy whose upgrade history this
-  // artifact describes. detail.address can diverge on merged /api/analyses
-  // rows — when an impl run is merged behind its proxy, detail.address is
-  // the IMPL but the upgrade_history is keyed to the proxy. Preferring
-  // target_address here keeps isTarget() matching the proxy's row in the
-  // timeline, so audit chips attach instead of silently disappearing.
   const targetAddr = (history.target_address || contractAddress || "").toLowerCase();
+  const targetProxy = history.proxies?.[targetAddr] || Object.values(history.proxies)[0] || null;
+  const otherProxies = Object.entries(history.proxies).filter(([addr]) => addr.toLowerCase() !== targetAddr);
+  const chain = targetProxy?.chain || null;
 
-  function proxyLabel(addr) {
-    if (addr.toLowerCase() === targetAddr) {
-      return contractName || shortenAddress(addr);
-    }
-    const dep = deps[addr];
-    if (dep?.contract_name) return dep.contract_name;
-    return shortenAddress(addr);
-  }
-
-  function isTarget(addr) {
-    return addr.toLowerCase() === targetAddr;
-  }
-
-  function implLabel(addr, fallbackName) {
-    if (!addr) return "unknown";
+  function implName(addr, fallbackName) {
+    if (!addr) return null;
     if (fallbackName) return fallbackName;
     const dep = deps[addr];
     if (dep?.contract_name) return dep.contract_name;
     const nested = Object.values(deps).find(
-      (d) => typeof d.implementation === "object" && d.implementation?.address === addr
+      (d) => typeof d.implementation === "object" && d.implementation?.address === addr,
     );
-    if (nested?.implementation?.contract_name) return nested.implementation.contract_name;
-    return null;
+    return nested?.implementation?.contract_name || null;
+  }
+
+  function isAudited(impl) {
+    return verifiedCoverageRows.some((c) => matchesEra(c, impl));
+  }
+
+  function auditsFor(impl) {
+    return verifiedCoverageRows.filter((c) => matchesEra(c, impl));
+  }
+
+  // Implementations from oldest → newest in the artifact; reverse for display
+  // so the active impl reads first.
+  const impls = Array.isArray(targetProxy?.implementations) ? targetProxy.implementations.slice().reverse() : [];
+  const currentImpl = impls[0] || null;
+  const currentAudited = currentImpl ? isAudited(currentImpl) : false;
+  const upgradeCount = targetProxy?.upgrade_count ?? Math.max(0, impls.length - 1);
+  const lastTs = currentImpl?.timestamp_introduced;
+
+  function StatusChip({ audited }) {
+    return audited ? (
+      <span className="upgr2-chip upgr2-chip--ok" title="Bytecode matches an audited version">audited</span>
+    ) : (
+      <span className="upgr2-chip upgr2-chip--warn" title="No audit covers this exact bytecode">no proof</span>
+    );
+  }
+
+  function ImplRow({ impl, isCurrent, isFirst }) {
+    const name = implName(impl.address, impl.contract_name);
+    const span = formatSpan(impl.timestamp_introduced, impl.timestamp_replaced);
+    const link = etherscanLink(impl.address, chain);
+    const audits = auditsFor(impl);
+    return (
+      <li className={`upgr2-impl${isCurrent ? " upgr2-impl--current" : ""}`}>
+        <div className="upgr2-impl-marker" aria-hidden="true">
+          <span className="upgr2-impl-dot" />
+          {isFirst ? null : <span className="upgr2-impl-line" />}
+        </div>
+        <div className="upgr2-impl-body">
+          <div className="upgr2-impl-row">
+            <span className="upgr2-impl-name">{name || shortenAddress(impl.address)}</span>
+            {isCurrent ? <span className="upgr2-chip upgr2-chip--current">current</span> : null}
+            <StatusChip audited={audits.length > 0} />
+          </div>
+          <div className="upgr2-impl-row upgr2-impl-row--meta">
+            {link ? (
+              <a className="upgr2-impl-addr mono" href={link} target="_blank" rel="noreferrer">
+                {shortenAddress(impl.address)}
+              </a>
+            ) : (
+              <span className="upgr2-impl-addr mono">{shortenAddress(impl.address)}</span>
+            )}
+            {span ? <span className="upgr2-impl-span">{span}</span> : null}
+          </div>
+          {audits.length ? (
+            <div className="upgr2-impl-audits">
+              {audits.map((a) => (
+                <span key={a.audit_id} className="upgr2-audit-chip" title={a.title || a.auditor}>
+                  {a.auditor || "audit"}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </li>
+    );
   }
 
   return (
-    <div className="stack">
-      {contractId ? (
-        <div className="chips">
-          {auditStatusBanner()}
-          {auditTimeline && verifiedCoverageRows.length ? (() => {
-            // Raw coverageRows.length over-counts when audits linked to
-            // the proxy via a generic scope name (e.g. "UUPSProxy").
-            const proxy = history?.proxies
-              ? Object.entries(history.proxies).find(
-                  ([addr]) => addr.toLowerCase() === (history.target_address || contractAddress || "").toLowerCase(),
-                )?.[1]
-              : null;
-            const impls = proxy?.implementations || [];
-            const placed = new Set();
-            for (const cov of verifiedCoverageRows) {
-              for (const impl of impls) {
-                if (matchesEra(cov, impl)) {
-                  placed.add(cov.audit_id);
-                  break;
-                }
+    <div className="upgr2">
+      {/* Focal status: current implementation + audit posture */}
+      <header className={`upgr2-status ${currentAudited ? "upgr2-status--ok" : "upgr2-status--warn"}`}>
+        <div className="upgr2-status-eyebrow">Current implementation</div>
+        <div className="upgr2-status-row">
+          <span className="upgr2-status-name">
+            {implName(currentImpl?.address, currentImpl?.contract_name) || contractName || "—"}
+          </span>
+          <StatusChip audited={currentAudited} />
+        </div>
+        {currentImpl ? (
+          <div className="upgr2-status-meta">
+            <a
+              className="upgr2-status-addr mono"
+              href={etherscanLink(currentImpl.address, chain) || "#"}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {shortenAddress(currentImpl.address)}
+            </a>
+            {lastTs ? (
+              <span className="upgr2-status-since">since {formatDate(lastTs)} · {formatRelative(lastTs)}</span>
+            ) : null}
+          </div>
+        ) : null}
+      </header>
+
+      {/* Compact stats row */}
+      <div className="upgr2-stats">
+        <span><strong>{upgradeCount}</strong> upgrade{upgradeCount === 1 ? "" : "s"}</span>
+        {targetProxy?.proxy_type ? <span className="upgr2-stats-sep" /> : null}
+        {targetProxy?.proxy_type ? <span className="upgr2-stats-meta">{targetProxy.proxy_type}</span> : null}
+        {(() => {
+          // Unique audits that bytecode-verify any impl in this history.
+          // Counted at audit_id level so a single audit citing multiple
+          // impls doesn't double-count.
+          const placed = new Set();
+          for (const cov of verifiedCoverageRows) {
+            for (const impl of impls) {
+              if (matchesEra(cov, impl)) {
+                placed.add(cov.audit_id);
+                break;
               }
             }
-            const n = placed.size;
-            if (n === 0) return null;
-            return (
-              <span className="chip" style={{ background: "#f1f5f9", color: "#475569" }}>
-                {n} bytecode match{n === 1 ? "" : "es"} in history
+          }
+          if (placed.size === 0) return null;
+          return (
+            <>
+              <span className="upgr2-stats-sep" />
+              <span className="chip upgr2-stats-audits">
+                {placed.size} bytecode match{placed.size === 1 ? "" : "es"} in history
               </span>
-            );
-          })() : null}
-        </div>
-      ) : null}
-      <div className="summary-grid">
-        <StatCard label="Proxies" value={Object.keys(history.proxies).length} />
-        <StatCard label="Total Upgrades" value={history.total_upgrades} />
+            </>
+          );
+        })()}
+        {auditTimelineError ? (
+          <>
+            <span className="upgr2-stats-sep" />
+            <span className="upgr2-stats-meta">audit lookup unavailable</span>
+          </>
+        ) : null}
       </div>
-      {Object.entries(history.proxies)
-        .sort(([a], [b]) => (isTarget(a) ? -1 : isTarget(b) ? 1 : 0))
-        .map(([addr, proxy]) => (
-        <div className="card" key={addr}>
-          <div className="card-header-row">
-            <h3>{proxyLabel(addr)}</h3>
-            {isTarget(addr) ? <span className="chip">target</span> : null}
-            <span className="chip alt">{proxy.proxy_type}</span>
-          </div>
-          <div className="mono muted" style={{ marginBottom: 8 }}>{addr}</div>
-          <div className="kv-grid compact">
-            <div className="kv-row">
-              <span className="key">Current implementation</span>
-              <span>{proxy.current_implementation ? (<>{implLabel(proxy.current_implementation) ? <strong>{implLabel(proxy.current_implementation)} </strong> : null}<span className="mono">{shortenAddress(proxy.current_implementation)}</span></>) : "None"}</span>
-            </div>
-            <div className="kv-row">
-              <span className="key">Upgrade count</span>
-              <span>{proxy.upgrade_count}</span>
-            </div>
-            {proxy.first_upgrade_block ? (
-              <div className="kv-row">
-                <span className="key">First upgrade</span>
-                <span>Block {proxy.first_upgrade_block.toLocaleString()}</span>
-              </div>
-            ) : null}
-            {proxy.last_upgrade_block ? (
-              <div className="kv-row">
-                <span className="key">Last upgrade</span>
-                <span>Block {proxy.last_upgrade_block.toLocaleString()}</span>
-              </div>
-            ) : null}
-          </div>
 
-          {proxy.implementations?.length > 0 ? (
-            <div className="subsection">
-              <div className="subsection-title">Implementation Timeline</div>
-              <div className="timeline">
-                {proxy.implementations.map((impl, idx) => {
-                  // Other proxies would need their own timeline fetch.
-                  const coverageForEra = isTarget(addr)
-                    ? verifiedCoverageRows.filter((c) => matchesEra(c, impl))
-                    : [];
-                  return (
-                  <div className={`timeline-entry ${idx === proxy.implementations.length - 1 ? "current" : "past"}`} key={impl.address + idx}>
-                    <div className="timeline-marker" />
-                    <div className="timeline-content">
-                      <div className="timeline-header">
-                        <strong>{implLabel(impl.address, impl.contract_name) || shortenAddress(impl.address)}</strong>
-                        {idx === proxy.implementations.length - 1 ? <span className="chip">current</span> : <span className="chip warn">replaced</span>}
-                      </div>
-                      <div className="kv-grid compact small" style={{ marginTop: 4 }}>
-                        <div className="kv-row">
-                          <span className="key">Address</span>
-                          <span className="mono">{impl.address}</span>
-                        </div>
-                        {impl.block_introduced ? (
-                          <div className="kv-row">
-                            <span className="key">Introduced</span>
-                            <span>
-                              {formatTimestamp(impl.timestamp_introduced) || `Block ${impl.block_introduced.toLocaleString()}`}
-                              {impl.block_replaced ? ` → replaced ${formatTimestamp(impl.timestamp_replaced) || `block ${impl.block_replaced.toLocaleString()}`}` : ""}
-                            </span>
-                          </div>
-                        ) : null}
-                        {impl.tx_hash ? (
-                          <div className="kv-row">
-                            <span className="key">Tx</span>
-                            <span className="mono">{impl.tx_hash}</span>
-                          </div>
-                        ) : null}
-                        {impl.contract_name ? (
-                          <div className="kv-row">
-                            <span className="key">Contract</span>
-                            <span>{impl.contract_name}</span>
-                          </div>
-                        ) : null}
-                      </div>
-                      {isTarget(addr) && auditTimeline ? (
-                        <div style={{ marginTop: 10 }}>
-                          {coverageForEra.length === 0 ? (
-                            <span className="chip" style={{ background: "#fee2e2", color: "#991b1b", fontSize: 10, padding: "2px 8px" }}>
-                              no bytecode proof
-                            </span>
-                          ) : (
-                            <div className="upgrade-audit-list">
-                              {coverageForEra.map((cov) => (
-                                <UpgradeAuditCard
-                                  key={cov.audit_id}
-                                  coverage={cov}
-                                  companyName={companyName}
-                                />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
+      {/* Timeline: most recent first, one row per impl */}
+      {impls.length ? (
+        <ol className="upgr2-timeline" aria-label="Implementation timeline">
+          {impls.map((impl, idx) => (
+            <ImplRow
+              key={`${impl.address}-${idx}`}
+              impl={impl}
+              isCurrent={idx === 0}
+              isFirst={idx === impls.length - 1}
+            />
+          ))}
+        </ol>
+      ) : null}
 
-          {proxy.events?.length > 0 ? (
-            <div className="subsection">
-              <div className="subsection-title">All Events ({proxy.events.length})</div>
-              <table className="event-table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Type</th>
-                    <th>Detail</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {proxy.events.map((evt, idx) => (
-                    <tr key={idx}>
-                      <td>{formatTimestamp(evt.timestamp) || <span className="mono">{evt.block_number?.toLocaleString()}</span>}</td>
-                      <td><span className={`chip ${evt.event_type === "upgraded" ? "alt" : ""}`}>{evt.event_type}</span></td>
-                      <td className="small">
-                        {evt.event_type === "upgraded" && evt.implementation ? (
-                          <><span className="key">New impl: </span><strong>{implLabel(evt.implementation) || ""}</strong> <span className="mono">{shortenAddress(evt.implementation)}</span></>
-                        ) : null}
-                        {evt.event_type === "admin_changed" ? (
-                          <><span className="key">Admin: </span><span className="mono">{shortenAddress(evt.previous_admin)}</span> {"→"} <span className="mono">{shortenAddress(evt.new_admin)}</span></>
-                        ) : null}
-                        {evt.event_type === "beacon_upgraded" && evt.beacon ? (
-                          <><span className="key">Beacon: </span><span className="mono">{shortenAddress(evt.beacon)}</span></>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : null}
-        </div>
-      ))}
+      {/* Other proxies — only when more than one is in scope; collapsed by default */}
+      {otherProxies.length ? (
+        <details className="upgr2-others">
+          <summary>{otherProxies.length} other proxy{otherProxies.length === 1 ? "" : "ies"} in this analysis</summary>
+          <ul className="upgr2-others-list">
+            {otherProxies.map(([addr, p]) => (
+              <li key={addr}>
+                <span className="mono">{shortenAddress(addr)}</span>
+                <span>{p.upgrade_count ?? 0} upgrade{(p.upgrade_count ?? 0) === 1 ? "" : "s"}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
     </div>
   );
 }

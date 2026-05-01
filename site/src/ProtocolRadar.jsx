@@ -132,10 +132,14 @@ export default function ProtocolRadar({
 
         {labels.map(({ axis, x, y, anchor }, i) => {
           const selected = i === safeSelectedIndex;
+          // When any axis is selected, dim every other label group so the
+          // selected one reads as the focal point. No ring overlay — the
+          // contrast does the work.
+          const dimmed = safeSelectedIndex != null && !selected;
           return (
             <g
               key={`label-${axis.key || i}`}
-              className={`radar-label-group${selected ? " selected" : ""}`}
+              className={`radar-label-group${selected ? " selected" : ""}${dimmed ? " dimmed" : ""}`}
               tabIndex={0}
               role="button"
               aria-pressed={selected}
@@ -149,7 +153,6 @@ export default function ProtocolRadar({
               }}
             >
               <circle className="radar-label-hit" cx={x} cy={y + 6} r={26} />
-              {selected ? <circle className="radar-label-selected-ring" cx={x} cy={y + 6} r={15} /> : null}
               <text className="radar-label" x={x} y={y} textAnchor={anchor} dominantBaseline="middle">
                 {axis.label}
               </text>

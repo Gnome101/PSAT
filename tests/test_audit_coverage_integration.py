@@ -502,6 +502,16 @@ def test_audit_coverage_endpoint_uses_coverage_table(
             chain="ethereum",
         )
     )
+    # Inventory-only entry: discovered but never analyzed, no Etherscan
+    # name, no audits. Should NOT appear in the response.
+    db_session.add(
+        Contract(
+            protocol_id=proto["protocol_id"],
+            address="0x" + "e" * 40,
+            contract_name=None,
+            chain="ethereum",
+        )
+    )
     db_session.commit()
 
     _seed_scoped_audit(
@@ -536,9 +546,16 @@ def test_audit_coverage_endpoint_uses_coverage_table(
     assert vault["audit_count"] == 1
     assert vault["last_audit"]["match_type"] == "direct"
 
-    # Unrelated contract
+    # Unrelated contract — has a name but no audits, should still surface.
     assert by_name["NotAudited"]["audit_count"] == 0
     assert by_name["NotAudited"]["last_audit"] is None
+
+    # Inventory-only entry (no name, no audits) is filtered out — the
+    # company_overview endpoint excludes these contracts because they
+    # were never analyzed, and the audit_coverage view should match.
+    addresses = {row["address"] for row in body["coverage"]}
+    assert "0x" + "e" * 40 not in addresses
+    assert body["contract_count"] == len(body["coverage"])
 
     # Proxy row inherits its current implementation's coverage — the
     # company view is "is the code this address runs audited?", so a

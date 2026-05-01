@@ -195,9 +195,27 @@ def analysis_artifact(run_name: str, artifact_name: str):
         elif artifact_name.endswith(".txt"):
             lookup_name = artifact_name[:-4]
 
-        artifact = deps.get_artifact(session, job.id, lookup_name)
-        if artifact is None:
-            artifact = deps.get_artifact(session, job.id, artifact_name)
+        artifact: Any = None
+        try:
+            artifact = deps.get_artifact(session, job.id, lookup_name)
+            if artifact is None:
+                artifact = deps.get_artifact(session, job.id, artifact_name)
+        except Exception as exc:
+            # Storage backend can be transiently unreachable (MinIO/Tigris
+            # outage, expired credentials, missing object). Don't 500 — log
+            # and fall through to the per-artifact synthesis fallback.
+            logger.warning("artifact %s for job %s unreadable: %s", lookup_name, job.id, exc)
+
+        # upgrade_history is reproducible from UpgradeEvent rows. When the
+        # stored artifact is gone or storage is down, regenerate from the
+        # relational source so the per-proxy detail view stays usable.
+        if artifact is None and lookup_name == "upgrade_history":
+            from services.discovery.upgrade_history import synthesize_from_events
+
+            contract = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+            if contract is not None:
+                artifact = synthesize_from_events(session, contract)
+
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
 

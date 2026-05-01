@@ -455,6 +455,75 @@ def test_artifact_not_found(mock_session_cls, mock_get_artifact):
 
 @patch("routers.deps.get_artifact")
 @patch("routers.deps.SessionLocal")
+def test_artifact_storage_error_returns_404_not_500(mock_session_cls, mock_get_artifact):
+    """Storage backend failures degrade to 404 instead of leaking a 500.
+
+    The artifact rows can outlive the underlying storage object (e.g. MinIO
+    volume wiped, Tigris credential rotation, transient network blip). The
+    route should answer cleanly so callers' .catch() paths fire — not raise
+    an opaque server error.
+    """
+    client = _make_client()
+    fake_job = _fake_job(name="test_job")
+
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+    mock_exec = MagicMock()
+    mock_exec.scalar_one_or_none.return_value = fake_job
+    mock_session.execute.return_value = mock_exec
+
+    mock_get_artifact.side_effect = RuntimeError("storage_key set but storage not configured")
+
+    response = client.get("/api/analyses/test_job/artifact/dependencies")
+    assert response.status_code == 404
+
+
+@patch("services.discovery.upgrade_history.synthesize_from_events")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
+def test_artifact_upgrade_history_falls_back_to_synthesis(
+    mock_session_cls,
+    mock_get_artifact,
+    mock_synth,
+):
+    """When storage can't serve upgrade_history, rebuild it from
+    UpgradeEvent rows. The relational table is the source of truth for
+    the count/last_block badges shown in the company overview, so the
+    detail view should stay consistent when storage is unhappy."""
+    client = _make_client()
+    fake_job = _fake_job(name="test_job")
+    fake_contract = MagicMock()
+    fake_contract.id = 42
+
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    # First execute resolves the job, second resolves the Contract row.
+    job_exec = MagicMock()
+    job_exec.scalar_one_or_none.return_value = fake_job
+    contract_exec = MagicMock()
+    contract_exec.scalar_one_or_none.return_value = fake_contract
+    mock_session.execute.side_effect = [job_exec, contract_exec]
+
+    mock_get_artifact.side_effect = RuntimeError("object 404")
+    mock_synth.return_value = {
+        "schema_version": "0.1",
+        "target_address": "0xaaa",
+        "proxies": {"0xaaa": {"upgrade_count": 3}},
+        "total_upgrades": 3,
+        "synthesized": True,
+    }
+
+    response = client.get("/api/analyses/test_job/artifact/upgrade_history")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["synthesized"] is True
+    assert body["total_upgrades"] == 3
+    mock_synth.assert_called_once()
+
+
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_artifact_txt_extension_stripping(mock_session_cls, mock_get_artifact):
     """The .txt extension is stripped for lookup."""
     client = _make_client()
