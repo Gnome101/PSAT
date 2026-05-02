@@ -345,6 +345,44 @@ contract C {
 """
 
 
+_HASHED_KEY_MEMBERSHIP = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    mapping(bytes32 => bool) public _authorized;
+
+    function authorize(bytes32 role, address user) external {
+        require(msg.sender == ownerVar);
+        _authorized[keccak256(abi.encode(role, user))] = true;
+    }
+    function f(bytes32 role) external view {
+        require(_authorized[keccak256(abi.encode(role, msg.sender))]);
+    }
+}
+"""
+
+_M_OF_N_THRESHOLD = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    mapping(address => bool) public isOwner;
+    mapping(bytes32 => uint256) public approvals;
+    uint256 constant THRESHOLD = 2;
+
+    function addOwner(address user) external {
+        require(msg.sender == ownerVar);
+        isOwner[user] = true;
+    }
+    function approve(bytes32 txHash) external {
+        require(isOwner[msg.sender]);
+        approvals[txHash] += 1;
+    }
+    function execute(bytes32 txHash) external view {
+        require(approvals[txHash] >= THRESHOLD);
+    }
+}
+"""
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
@@ -355,6 +393,8 @@ _FIXTURES = [
     ("oz_ac_multi_role", _OZ_AC_MULTI_ROLE),
     ("bitwise_role_flag", _BITWISE_ROLE_FLAG),
     ("multi_modifier", _MULTI_MODIFIER),
+    ("hashed_key_membership", _HASHED_KEY_MEMBERSHIP),
+    ("m_of_n_threshold", _M_OF_N_THRESHOLD),
 ]
 
 
