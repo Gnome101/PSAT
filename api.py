@@ -4005,23 +4005,74 @@ def get_contract_capabilities(
         capabilities = resolve_contract_capabilities(
             session, address=addr, chain_id=chain_id, block=block
         )
-    if capabilities is None:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                "No v2 capabilities for this address — either no completed "
-                "analysis exists or it predates the schema-v2 emit. Fall "
-                "back to /api/company/* or /api/jobs?address=..."
-            ),
-        )
+        if capabilities is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No v2 capabilities for this address — either no completed "
+                    "analysis exists or it predates the schema-v2 emit. Fall "
+                    "back to /api/company/* or /api/jobs?address=..."
+                ),
+            )
+        freshness = _compute_data_freshness(session, addr, chain_id)
     response = {
         "contract_address": addr,
         "chain_id": chain_id,
         "block": block,
         "capabilities": capabilities,
+        "data_freshness": freshness,
     }
     _capabilities_cache_put(cache_key, response)
     return response
+
+
+def _compute_data_freshness(session, address: str, chain_id: int) -> dict[str, Any]:
+    """Look up the role_grants_cursors row for ``(chain_id, address)``
+    and return a freshness summary the UI can render as
+    'data current as of block X, ~5 min ago'.
+
+    Returns:
+        {
+          "role_grants": {
+            "last_indexed_block": int | None,
+            "last_run_at": ISO8601 string | None,
+          } | None
+        }
+
+    ``role_grants`` is None when no cursor exists yet (legacy
+    pre-v2 contract or AC contract not yet enrolled in the
+    indexer). Other indexers (aragon_acl) follow the same
+    pattern; surfaced lazily as we wire them.
+    """
+    from db.models import Contract, RoleGrantsCursor
+
+    # Resolve contract_id by (chain, address). Same shape the
+    # repos use; reusing their convention here.
+    chain_name_map = {1: "ethereum", 10: "optimism", 137: "polygon", 8453: "base", 42161: "arbitrum"}
+    chain_name = chain_name_map.get(chain_id, "ethereum")
+    contract_row = session.execute(
+        select(Contract.id).where(
+            func.lower(Contract.address) == address.lower(),
+            Contract.chain == chain_name,
+        )
+    ).first()
+    if contract_row is None:
+        return {"role_grants": None}
+    cid = contract_row[0]
+    cursor = session.execute(
+        select(RoleGrantsCursor).where(
+            RoleGrantsCursor.chain_id == chain_id,
+            RoleGrantsCursor.contract_id == cid,
+        )
+    ).scalar_one_or_none()
+    if cursor is None:
+        return {"role_grants": None}
+    return {
+        "role_grants": {
+            "last_indexed_block": cursor.last_indexed_block,
+            "last_run_at": cursor.last_run_at.isoformat() if cursor.last_run_at else None,
+        }
+    }
 
 
 @app.get(

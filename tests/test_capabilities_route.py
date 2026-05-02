@@ -174,6 +174,72 @@ def test_capabilities_chain_id_query_param(api_client, db_session):
 
 
 @requires_postgres
+def test_capabilities_response_includes_data_freshness(api_client, db_session, monkeypatch):
+    """The response carries a ``data_freshness`` block summarizing
+    the indexer cursor for the contract. UI uses this to render
+    'data current as of block X' and warn if it's stale."""
+    import api as api_module
+    from db.models import Contract, Protocol, RoleGrantsCursor
+
+    api_module._capabilities_cache.clear()
+    monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)  # disable cache for the test
+
+    address = "0x" + uuid.uuid4().hex[:8] + "df" * 16
+
+    # Seed a Contract row (the freshness lookup resolves
+    # contract_id by (chain, address)) plus a RoleGrantsCursor.
+    proto = Protocol(name=f"freshness_test_{uuid.uuid4().hex[:8]}")
+    db_session.add(proto)
+    db_session.flush()
+    contract = Contract(address=address, chain="ethereum", protocol_id=proto.id)
+    db_session.add(contract)
+    db_session.flush()
+    db_session.add(
+        RoleGrantsCursor(
+            chain_id=1,
+            contract_id=contract.id,
+            last_indexed_block=18_500_000,
+            last_indexed_block_hash=b"\xee" * 32,
+        )
+    )
+    db_session.commit()
+
+    _seed_completed_job_with_artifact(
+        db_session, address=address, predicate_trees=_equality_leaf_artifact()
+    )
+
+    resp = api_client.get(f"/api/contract/{address}/capabilities")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert "data_freshness" in body
+    rg = body["data_freshness"]["role_grants"]
+    assert rg is not None
+    assert rg["last_indexed_block"] == 18_500_000
+    assert rg["last_run_at"] is not None  # ISO8601 string
+
+
+@requires_postgres
+def test_capabilities_response_freshness_null_when_no_cursor(api_client, db_session, monkeypatch):
+    """No RoleGrantsCursor -> data_freshness.role_grants is null
+    (legacy pre-v2 contract or AC contract not yet enrolled in
+    the indexer)."""
+    import api as api_module
+
+    api_module._capabilities_cache.clear()
+    monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)
+
+    address = "0x" + uuid.uuid4().hex[:8] + "fa" * 16
+    _seed_completed_job_with_artifact(
+        db_session, address=address, predicate_trees=_equality_leaf_artifact()
+    )
+
+    resp = api_client.get(f"/api/contract/{address}/capabilities")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["data_freshness"] == {"role_grants": None}
+
+
+@requires_postgres
 def test_capabilities_response_is_cached(api_client, db_session, monkeypatch):
     """Repeat hits within the TTL window short-circuit the
     resolver — proven by counting resolve_contract_capabilities
