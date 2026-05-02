@@ -179,29 +179,6 @@ def test_oz_ownable_pattern(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "OZ 5.0+ uses a 3-hop helper chain where the deepest helper "
-        "(_checkRoleAddr) takes ``account`` as a PARAMETER bound to "
-        "_msgSender() at the call site. Without full caller-side "
-        "ParameterBindingEnv substitution back through the chain, "
-        "the membership leaf inside the helper has key_sources = "
-        "[parameter(role), parameter(account)] — both parameters, "
-        "neither tagged as msg.sender. Rule B's multi-key promotion "
-        "requires at least one key from {msg_sender, tx_origin, "
-        "signature_recovery}, so the leaf classifies as business. "
-        "FIX: extend RevertDetector to record the call_chain (caller "
-        "fn + arg expressions at each hop), then the predicate "
-        "builder substitutes helper parameters with caller-site "
-        "provenance. ``_msgSender()`` returning msg.sender chains "
-        "through to mark the helper's account parameter as "
-        "msg_sender-tainted. Open work item — the simpler 2-hop "
-        "case (modifier → helper-with-revert reading msg.sender "
-        "directly) passes today, covering the EtherFiTimelock + "
-        "OZ <5.0 patterns."
-    ),
-    strict=True,
-)
 def test_oz_access_control_full_3_hop_helper_chain(tmp_path):
     """The actual production OZ AccessControl (5.0+) uses a 3-hop
     helper chain:

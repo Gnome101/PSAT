@@ -379,8 +379,14 @@ class ProvenanceEngine:
         return self.provenance.set(self._var_name(ir.lvalue), sources)
 
     def _handle_phi(self, ir: Any) -> bool:
-        # Phi joins all incoming SSA versions with set union.
-        result: SourceSet = EMPTY
+        # Phi joins all incoming SSA versions with set union. Also
+        # unions with the lvalue's existing source set so caller-
+        # bound parameters seeded before the IR walk aren't
+        # clobbered. Slither's parameter-Phi at function entry
+        # represents the caller's binding via incoming SSA values
+        # the engine can't resolve in the callee's scope; the
+        # binding lives in the seeded source set.
+        result: SourceSet = self.provenance.get(self._var_name(ir.lvalue))
         for incoming in ir.rvalues:
             result = union(result, self._sources_for_value(incoming))
         return self.provenance.set(self._var_name(ir.lvalue), result)
@@ -704,15 +710,30 @@ class ProvenanceEngine:
             )
         # ReferenceVariable (e.g., result of Index/Member) — propagate
         # whatever provenance has been computed for the reference.
+        # Slither's SSA suffixes parameter names with ``_N``; if the
+        # SSA name has no entry but the base name does (seeded via
+        # parameter_bindings), fall back to the base.
         if isinstance(value, (LocalVariable, TemporaryVariable, ReferenceVariable)):
             name = self._var_name(value)
             if name:
-                return self.provenance.get(name)
+                sources = self.provenance.get(name)
+                if not sources:
+                    base = _strip_ssa_suffix(name)
+                    if base != name:
+                        sources = self.provenance.get(base)
+                return sources
             return EMPTY
         # Bare Variable fallback.
         if isinstance(value, Variable):
             name = self._var_name(value)
-            return self.provenance.get(name) if name else EMPTY
+            if not name:
+                return EMPTY
+            sources = self.provenance.get(name)
+            if not sources:
+                base = _strip_ssa_suffix(name)
+                if base != name:
+                    sources = self.provenance.get(base)
+            return sources
         return EMPTY
 
     def _classify_solidity_variable(self, var: Any) -> SourceSet:
@@ -758,24 +779,25 @@ class ProvenanceEngine:
         return out
 
     def _collect_return_sources(self, callee: Any, prov: ProvenanceMap) -> SourceSet:
-        """Union the provenance of every value the callee returns."""
-        out: SourceSet = EMPTY
-        for node in callee.nodes:
-            if NodeType.RETURN != getattr(node, "type", None):
-                # Slither normalizes returns — Return IR in irs_ssa
-                continue
-            for ir in node.irs_ssa:
-                if isinstance(ir, Return):
-                    for v in getattr(ir, "values", ()):
-                        out = union(out, prov.get(self._var_name(v)))
-        # Fallback: scan all Return IRs across nodes (NodeType is unstable).
-        if out == EMPTY:
+        """Union the provenance of every value the callee returns.
+
+        Uses ``_sources_for_value`` so SolidityVariable returns
+        (``return msg.sender``) classify even when there's no
+        intermediate assignment writing them into ``prov``."""
+        # Snapshot self.provenance so _sources_for_value reads from
+        # the sub-engine's run instead of the caller's state.
+        original = self.provenance
+        self.provenance = prov
+        try:
+            out: SourceSet = EMPTY
             for node in callee.nodes:
                 for ir in getattr(node, "irs_ssa", ()):
                     if isinstance(ir, Return):
                         for v in getattr(ir, "values", ()):
-                            out = union(out, prov.get(self._var_name(v)))
-        return out
+                            out = union(out, self._sources_for_value(v))
+            return out
+        finally:
+            self.provenance = original
 
     @staticmethod
     def _var_name(var: Any) -> str:
@@ -785,6 +807,19 @@ class ProvenanceEngine:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _strip_ssa_suffix(name: str) -> str:
+    """Slither's SSA gives ``account_1`` for the first version of
+    the parameter ``account``. When parameter_bindings seeds
+    ``account``, downstream IR walks reference ``account_1`` — so
+    if the SSA-named lookup misses, fall back to the base name."""
+    if not name:
+        return name
+    parts = name.rsplit("_", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0]
+    return name
 
 
 def _digest(s: SourceSet) -> str:

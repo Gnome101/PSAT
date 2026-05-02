@@ -177,13 +177,14 @@ class RevertDetector:
         self._call_chain_irs: list[Any] = []
 
     def run(self) -> list[RevertGate]:
-        # Walk the function's own body.
+        # Walk the function's own body. Modifier-call IRs and
+        # internal-call IRs are both traversed via the in-body scan
+        # (the recursion handles both uniformly), so the call_chain
+        # captures modifier parameter bindings naturally — needed
+        # for full caller-side ParameterBindingEnv on chains like
+        # ``grantRole → onlyRole(getRoleAdmin(role)) → _checkRole(role)``.
         for node in self.function.nodes:
             self._scan_node(node, container=self.function)
-        # Walk each modifier's body.
-        for modifier in getattr(self.function, "modifiers", []) or []:
-            for node in getattr(modifier, "nodes", []) or []:
-                self._scan_node(node, container=modifier)
         # Case 8: opaque-Yul fallback.
         if self._has_unresolved_revert_in_assembly():
             self._gates.append(
@@ -219,13 +220,12 @@ class RevertDetector:
                 callee = getattr(ir, "function", None)
                 if callee is None:
                     continue
-                # Skip modifier-call IRs — modifiers are walked
-                # separately via run() iterating function.modifiers.
-                # If we recursed here we'd find the modifier's
-                # reverts twice (once via the dedicated walk, once
-                # via this recursion).
-                if isinstance(callee, Modifier):
-                    continue
+                # Modifier callees are now traversed (not skipped)
+                # so the call_chain captures modifier parameter
+                # bindings — required for full caller-side
+                # ParameterBindingEnv. The recursion is the single
+                # source of truth for cross-fn body walking; we no
+                # longer iterate function.modifiers separately.
                 callee_id = getattr(callee, "full_name", None) or getattr(callee, "name", None)
                 if not callee_id or callee_id in self._call_stack:
                     continue

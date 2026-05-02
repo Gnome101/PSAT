@@ -33,6 +33,10 @@ try:
         Binary,
         HighLevelCall,
         Index,
+        InternalCall,
+        LibraryCall,
+        Member,
+        Return,
         SolidityCall,
         Unary,
         UnaryType,
@@ -125,26 +129,99 @@ def _build_subtree_from_gate(
     if cond is None:
         return make_leaf_node(_unsupported_leaf(reason="missing_condition", expression=gate.expression_text))
 
-    # If gate is in a cross-fn helper, run provenance + IR walks
-    # against the helper so we can resolve the condition's defining
-    # IR + operand sources.
-    #
-    # Full caller-side ParameterBindingEnv (substituting helper
-    # parameters with call-site provenance through the entire call
-    # chain) is more involved when the chain crosses a modifier —
-    # modifiers are walked separately by RevertDetector and their
-    # parameters need to be reconstructed from the modifier-call
-    # site. Pinned in the v4 plan §predicates as a follow-up; the
-    # 2-hop case (modifier → helper-with-revert reading msg.sender
-    # directly) covers most production OZ AC <5.0 patterns and
-    # works today.
+    # If gate is in a cross-fn helper, walk the call chain to build
+    # parameter bindings for the helper, then run provenance on the
+    # helper with those bindings. Full caller-side
+    # ParameterBindingEnv per v4 plan §predicates (round-2 #2 fix).
     operating_fn = gate.containing_function or function
     if operating_fn is not function:
-        helper_engine = ProvenanceEngine(operating_fn)
+        bindings = _build_chain_bindings(gate.call_chain or [], operating_fn, function)
+        helper_engine = ProvenanceEngine(operating_fn, parameter_bindings=bindings)
         helper_engine.run()
         prov = helper_engine.provenance
 
     return _build_subtree_from_value(cond, prov, gate, operating_fn)
+
+
+def _build_chain_bindings(
+    call_chain: list[Any], helper: Any, top_function: Any
+) -> dict[str, Any]:
+    """Walk the call chain forward to build parameter bindings for
+    the helper's scope. Each link is an InternalCall (or
+    modifier-call InternalCall) IR taken to enter the next callee.
+
+    For the OZ AC 3-hop case:
+      chain = [
+        modifier_call to onlyRole(getRoleAdmin(role)),
+        InternalCall to _checkRole(role),
+        InternalCall to _checkRoleAddr(role, _msgSender()),
+      ]
+    The walk binds:
+      onlyRole.role        ← getRoleAdmin(grantRole.role) (view_call source)
+      _checkRole.role      ← onlyRole.role (chained)
+      _checkRoleAddr.role  ← _checkRole.role
+      _checkRoleAddr.account ← _msgSender() return = msg_sender source
+
+    Then the helper's engine seeds parameters with these provenance
+    sets, so a leaf inside the helper that reads ``account`` resolves
+    to msg.sender taint, and Rule B (multi-key with caller key)
+    promotes to caller_authority.
+    """
+    if not call_chain:
+        return {}
+    # Start from the top function's provenance.
+    top_engine = ProvenanceEngine(top_function)
+    top_engine.run()
+    current_prov = top_engine.provenance
+    current_fn = top_function
+
+    for ir in call_chain:
+        callee = getattr(ir, "function", None)
+        if callee is None:
+            continue
+        args = list(getattr(ir, "arguments", []) or [])
+        params = list(getattr(callee, "parameters", []) or [])
+        new_bindings: dict[str, Any] = {}
+        for param, arg in zip(params, args):
+            param_name = getattr(param, "name", None)
+            if not param_name:
+                continue
+            new_bindings[param_name] = _operand_value_provenance(arg, current_prov)
+        callee_engine = ProvenanceEngine(callee, parameter_bindings=new_bindings)
+        callee_engine.run()
+        current_prov = callee_engine.provenance
+        current_fn = callee
+
+    helper_bindings: dict[str, Any] = {}
+    for param in getattr(helper, "parameters", []) or []:
+        name = getattr(param, "name", None)
+        if name and name in current_prov.sources:
+            helper_bindings[name] = current_prov.sources[name]
+    return helper_bindings
+
+
+def _operand_value_provenance(value: Any, prov: ProvenanceMap) -> Any:
+    """Resolve a Slither IR value's provenance (frozenset[Source])
+    in the given map. Same SSA-suffix fallback as the engine's
+    ``_sources_for_value`` so seeded base names match SSA-versioned
+    references."""
+    from .provenance import EMPTY, Source, _strip_ssa_suffix
+
+    if value is None:
+        return EMPTY
+    name = getattr(value, "name", None)
+    if name is None:
+        return EMPTY
+    if name in prov.sources:
+        return prov.sources[name]
+    base = _strip_ssa_suffix(name)
+    if base != name and base in prov.sources:
+        return prov.sources[base]
+    if name == "msg.sender":
+        return frozenset({Source(kind="msg_sender")})
+    if name == "tx.origin":
+        return frozenset({Source(kind="tx_origin")})
+    return EMPTY
 
 
 def _build_subtree_from_value(
@@ -252,6 +329,56 @@ def _classify_leaf_from_ir(
         return _build_external_bool_leaf(defining_ir, prov, gate)
     if isinstance(defining_ir, SolidityCall):
         return _build_solidity_call_leaf(defining_ir, prov, gate)
+    if isinstance(defining_ir, (InternalCall, LibraryCall)):
+        return _build_internal_call_leaf(defining_ir, prov, gate, function)
+    return None
+
+
+def _build_internal_call_leaf(
+    ir: Any, prov: ProvenanceMap, gate: RevertGate, function: Any | None
+) -> LeafPredicate | None:
+    """The condition is the lvalue of an InternalCall returning a
+    bool — e.g. ``if (!hasRole(role, account)) revert``. Recurse into
+    the callee's body, bind parameters from caller-site arg
+    provenance, and reclassify on the return-value's defining IR.
+
+    This unfolds extra hops past the cross-fn revert chain: the gate
+    lives in the helper that *contains* the revert, but the bool
+    actually being negated may itself come from a deeper helper. The
+    OZ AC 5.0+ shape ``hasRole(role,account) → _roles[role][account]``
+    is the canonical case."""
+    callee = getattr(ir, "function", None)
+    if callee is None:
+        return None
+    bindings: dict[str, Any] = {}
+    args = list(getattr(ir, "arguments", []) or [])
+    params = list(getattr(callee, "parameters", []) or [])
+    for param, arg in zip(params, args):
+        name = getattr(param, "name", None)
+        if name:
+            bindings[name] = _operand_value_provenance(arg, prov)
+    sub_engine = ProvenanceEngine(callee, parameter_bindings=bindings)
+    sub_engine.run()
+    sub_prov = sub_engine.provenance
+    return_value = _find_callee_return_value(callee)
+    if return_value is None:
+        return None
+    inner = _find_defining_ir(return_value, None, callee)
+    if inner is None:
+        return _build_truthy_leaf(return_value, sub_prov, gate)
+    return _classify_leaf_from_ir(inner, sub_prov, gate, callee)
+
+
+def _find_callee_return_value(callee: Any) -> Any | None:
+    """Pick a representative Return IR's value from the callee. We
+    take the first Return found — multi-return helpers gating on a
+    bool typically have one return path."""
+    for node in getattr(callee, "nodes", []) or []:
+        for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
+            if isinstance(ir, Return):
+                values = getattr(ir, "values", ()) or ()
+                if values:
+                    return values[0]
     return None
 
 
@@ -1050,10 +1177,22 @@ def _reconstruct_index_chain(ir: Any, prov: ProvenanceMap, function: Any | None 
         if left_name is not None:
             visited.add(left_name)
         # If the left is itself the lvalue of an outer Index, find
-        # that IR and continue the walk.
+        # that IR and continue the walk. Also bridge struct-field
+        # accesses (``map[k].field[m]`` shape used by OZ AC 5.0+):
+        # the outer Index's left points at a Member whose variable_left
+        # is itself an Index — continue from that inner Index.
         if function is None:
             break
         defining = _find_defining_ir(left, None, function)
+        while isinstance(defining, Member):
+            base = defining.variable_left
+            base_name = getattr(base, "name", None)
+            if base_name in visited:
+                defining = None
+                break
+            if base_name is not None:
+                visited.add(base_name)
+            defining = _find_defining_ir(base, None, function)
         if not isinstance(defining, Index):
             break
         current = defining
