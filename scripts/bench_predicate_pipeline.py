@@ -268,16 +268,30 @@ def run_benchmark(*, runs: int, fixture_filter: str | None = None) -> dict[str, 
             return {"fixtures": [], "filter": fixture_filter, "summary": {}}
     reports = [_bench_one_fixture(n, s, runs=runs) for n, s in fixtures]
 
-    # Roll up worst-case across all fixtures.
+    # Roll up worst-case across all fixtures. Surface BOTH isolated
+    # build_predicate_tree p99 and artifact build_predicate_artifacts
+    # p99 in the summary — the artifact metric is the load-bearing one
+    # for production usage, the isolated metric is the worst-case watch
+    # for direct callers (tests, single-function probes).
     all_build_p99 = [r["build"].get("p99", 0.0) for r in reports if r["build"]["n"]]
+    all_artifact_p99 = [
+        r["build_artifact_per_fn"].get("p99", 0.0)
+        for r in reports
+        if r.get("build_artifact_per_fn") and r["build_artifact_per_fn"].get("n")
+    ]
     all_eval_p99 = [r["eval"].get("p99", 0.0) for r in reports if r["eval"]["n"]]
+    build_max = max(all_build_p99) if all_build_p99 else 0.0
+    artifact_max = max(all_artifact_p99) if all_artifact_p99 else 0.0
+    eval_max = max(all_eval_p99) if all_eval_p99 else 0.0
     summary = {
-        "build_p99_max_ms": max(all_build_p99) if all_build_p99 else 0.0,
-        "eval_p99_max_ms": max(all_eval_p99) if all_eval_p99 else 0.0,
+        "build_p99_max_ms": build_max,
+        "build_artifact_p99_max_ms": artifact_max,
+        "eval_p99_max_ms": eval_max,
         "build_target_ms": TARGET_BUILD_P99_MS,
         "eval_target_ms": TARGET_EVAL_P99_MS,
-        "build_meets_target": (max(all_build_p99) if all_build_p99 else 0.0) <= TARGET_BUILD_P99_MS,
-        "eval_meets_target": (max(all_eval_p99) if all_eval_p99 else 0.0) <= TARGET_EVAL_P99_MS,
+        "build_meets_target": build_max <= TARGET_BUILD_P99_MS,
+        "build_artifact_meets_target": artifact_max <= TARGET_BUILD_P99_MS,
+        "eval_meets_target": eval_max <= TARGET_EVAL_P99_MS,
     }
     return {
         "runs_per_fixture": runs,
@@ -308,10 +322,16 @@ def _format_text(report: dict[str, Any]) -> str:
     s = report["summary"]
     lines.append("")
     lines.append(
-        f"Worst build p99: {s.get('build_p99_max_ms', 0.0):.3f} ms "
+        f"Worst build p99 (isolated): {s.get('build_p99_max_ms', 0.0):.3f} ms "
         f"(target ≤ {s.get('build_target_ms', 0.0):.1f} ms) — "
         f"{'OK' if s.get('build_meets_target') else 'MISS'}"
     )
+    if "build_artifact_p99_max_ms" in s:
+        lines.append(
+            f"Worst build p99 (artifact): {s.get('build_artifact_p99_max_ms', 0.0):.3f} ms "
+            f"(target ≤ {s.get('build_target_ms', 0.0):.1f} ms) — "
+            f"{'OK' if s.get('build_artifact_meets_target') else 'MISS'}"
+        )
     lines.append(
         f"Worst eval  p99: {s.get('eval_p99_max_ms', 0.0):.3f} ms "
         f"(target ≤ {s.get('eval_target_ms', 0.0):.1f} ms) — "
@@ -334,7 +354,16 @@ def main() -> int:
         print(_format_text(report))
 
     s = report.get("summary", {})
-    if not s.get("build_meets_target", True) or not s.get("eval_meets_target", True):
+    # Either metric missing target → exit 1. The artifact metric is
+    # the load-bearing one for production usage (helper-engine cache
+    # active across functions). The isolated metric watches direct-
+    # caller worst-case (tests, single-function probes). Treating
+    # either miss as a failure surfaces regressions earliest.
+    if (
+        not s.get("build_meets_target", True)
+        or not s.get("build_artifact_meets_target", True)
+        or not s.get("eval_meets_target", True)
+    ):
         return 1
     return 0
 
