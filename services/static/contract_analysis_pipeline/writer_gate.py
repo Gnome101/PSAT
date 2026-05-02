@@ -38,6 +38,7 @@ from typing import Any
 try:
     from slither.slithir.operations import (  # type: ignore[import]
         Assignment,
+        Binary,
         Index,
     )
     from slither.slithir.variables import Constant  # type: ignore[import]
@@ -56,28 +57,51 @@ def apply_writer_gate_pass(
     """Mutates ``predicate_trees`` in place. Promotes 1-key caller-
     keyed membership leaves from authority_role="business" to
     "caller_authority" when the underlying storage var's writers
-    are themselves authority-gated.
-
-    Args:
-        contract: a Slither Contract object.
-        predicate_trees: mapping function full_name → PredicateTree
-            from build_predicate_tree's pass 1.
+    are themselves authority-gated. Iterates to fixed point so
+    chained authority dependencies (e.g., M-of-N counter
+    promotions that depend on isOwner being promoted first)
+    converge.
     """
     if not SLITHER_AVAILABLE:
         raise RuntimeError("writer-gate analyzer requires slither")
 
-    # Build storage_var → set of writer functions index.
     writers_by_var: dict[str, list[Any]] = {}
     for fn in contract.functions:
         for sv in fn.state_variables_written:
             writers_by_var.setdefault(sv.name, []).append(fn)
 
-    # For each function, walk its tree and inspect 1-key caller-keyed
-    # membership leaves.
-    for fn_name, tree in predicate_trees.items():
-        if tree is None:
-            continue
-        _walk_and_promote(tree, writers_by_var, predicate_trees, contract)
+    # Iterate to fixed point. Each pass may promote more leaves;
+    # subsequent passes can use those new authority leaves to
+    # promote downstream (M-of-N counters whose approvers are now
+    # known authority). Cap at 8 iterations to bound work; in
+    # practice converges in ≤3.
+    for _ in range(8):
+        before = _snapshot_authority_roles(predicate_trees)
+        for tree in predicate_trees.values():
+            if tree is None:
+                continue
+            _walk_and_promote(tree, writers_by_var, predicate_trees, contract)
+        after = _snapshot_authority_roles(predicate_trees)
+        if after == before:
+            break
+
+
+def _snapshot_authority_roles(trees: dict[str, PredicateTree]) -> tuple:
+    """Return a hashable snapshot of every leaf's authority_role —
+    used to detect fixed-point convergence."""
+    out: list[tuple] = []
+    for name in sorted(trees):
+        out.append((name, _tree_role_signature(trees[name])))
+    return tuple(out)
+
+
+def _tree_role_signature(tree: PredicateTree | None) -> tuple:
+    if tree is None:
+        return ()
+    if tree.get("op") == "LEAF":
+        leaf = tree.get("leaf") or {}
+        return ("LEAF", leaf.get("authority_role"))
+    return tuple(("BR", _tree_role_signature(c)) for c in tree.get("children") or [])
 
 
 # ---------------------------------------------------------------------------
@@ -108,15 +132,8 @@ def _maybe_promote_leaf(
 ) -> None:
     if leaf.get("authority_role") != "business":
         return  # already classified
-    if leaf.get("kind") != "membership":
-        return
     descriptor = leaf.get("set_descriptor")
     if not descriptor:
-        return
-    keys = descriptor.get("key_sources") or []
-    if len(keys) != 1:
-        return
-    if keys[0]["source"] not in ("msg_sender", "tx_origin", "signature_recovery"):
         return
     storage_var = descriptor.get("storage_var")
     if not storage_var:
@@ -124,12 +141,33 @@ def _maybe_promote_leaf(
     writers = writers_by_var.get(storage_var, [])
     if not writers:
         return
-    classification = _classify_writers(storage_var, writers, all_trees)
-    if classification == "promote":
-        leaf["authority_role"] = "caller_authority"
-        leaf["basis"] = list(leaf.get("basis", [])) + [
-            f"writer-gate promoted: {storage_var} writers are authority-gated",
-        ]
+
+    # Path 1: 1-key caller-keyed bool/uint membership (rules a/b.i/b.ii/c).
+    if leaf.get("kind") == "membership":
+        keys = descriptor.get("key_sources") or []
+        if len(keys) != 1:
+            return
+        if keys[0]["source"] not in ("msg_sender", "tx_origin", "signature_recovery"):
+            return
+        classification = _classify_writers(storage_var, writers, all_trees)
+        if classification == "promote":
+            leaf["authority_role"] = "caller_authority"
+            leaf["basis"] = list(leaf.get("basis", [])) + [
+                f"writer-gate promoted: {storage_var} writers are authority-gated",
+            ]
+        return
+
+    # Path 2: comparison leaf with threshold shape — the F2
+    # authority-derived state inference (codex round-7).
+    # ``map[k] >= threshold`` promotes if writers ADD to the
+    # counter and are themselves authority-gated.
+    if leaf.get("kind") == "comparison" and leaf.get("operator") in ("gt", "gte", "lt", "lte"):
+        if _is_authority_derived_counter(storage_var, writers, all_trees):
+            leaf["authority_role"] = "caller_authority"
+            leaf["basis"] = list(leaf.get("basis", [])) + [
+                f"threshold-promote: {storage_var} is authority-derived counter",
+            ]
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -251,4 +289,131 @@ def _tree_has_authority_or_self_admin(tree: PredicateTree, storage_var: str) -> 
     for child in tree.get("children") or []:
         if _tree_has_authority_or_self_admin(child, storage_var):
             return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# F2 — authority-derived state (M-of-N counter detection)
+# ---------------------------------------------------------------------------
+
+
+def _is_authority_derived_counter(
+    storage_var: str,
+    writers: list[Any],
+    all_trees: dict[str, PredicateTree],
+) -> bool:
+    """Returns True iff the storage var qualifies as an authority-
+    derived counter — a counter whose value advances only via
+    additions performed by authority-gated functions.
+
+    Per codex round-7 (F2) and false-positive defenses:
+      1. At least one writer performs an additive update
+         (`map[k] = map[k] + N` or compound `+=`)
+      2. That writer's predicate tree contains a caller_authority
+         or delegated_authority leaf
+      3. The write key sources from a parameter (the "object being
+         authorized" — e.g., txHash), NOT msg.sender (which would
+         be a self-keyed cooldown / personal counter)
+      4. NO writer performs a non-additive overwrite gated by less
+         authority (admin-settable counters are reset risks)
+
+    These constraints together exclude the common false positives
+    codex enumerated: balanceOf-style external returns (not state),
+    rate limits (self-keyed), token transfers (decrement-dominant),
+    quorum/votes via ungated public increments.
+    """
+    has_authority_additive_writer = False
+    has_unguarded_settable_writer = False
+    for fn in writers:
+        sites = _additive_write_sites(fn, storage_var)
+        if not sites:
+            # Non-additive writer — risk of admin-set / reset.
+            if _has_state_var_assignment(fn, storage_var):
+                tree = all_trees.get(fn.full_name)
+                if tree is None or not _tree_has_authority_or_self_admin(tree, storage_var):
+                    has_unguarded_settable_writer = True
+            continue
+        # All write sites in this function are additive. Check
+        # function authority + parameter-keyed writes.
+        all_param_keyed = all(_write_key_sources_from_parameter(site) for site in sites)
+        if not all_param_keyed:
+            continue
+        tree = all_trees.get(fn.full_name)
+        if tree is None:
+            continue
+        if _tree_has_authority_or_self_admin(tree, storage_var):
+            has_authority_additive_writer = True
+
+    return has_authority_additive_writer and not has_unguarded_settable_writer
+
+
+def _additive_write_sites(fn: Any, storage_var: str) -> list[Any]:
+    """Find all additive write sites in ``fn`` for ``storage_var``.
+
+    Detects the Slither IR pattern Slither emits for ``map[k] += N``:
+      Index: REF = map[k]
+      Binary(ADD/SUB): REF (-> map_2) = REF (c)+ N
+    The Binary IR's lvalue == its left operand (read-then-write
+    self-modification), and the lvalue traces to an Index of the
+    target storage var.
+
+    Returns the list of (Index_IR, Binary_IR) tuples for each
+    additive site. Empty if the function doesn't additively
+    modify ``storage_var``.
+    """
+    sites: list[Any] = []
+    indexes_by_ref: dict[str, Any] = {}
+    for node in fn.nodes:
+        for ir in node.irs_ssa or []:
+            if isinstance(ir, Index):
+                base = ir.variable_left
+                if getattr(base, "name", None) == storage_var:
+                    indexes_by_ref[ir.lvalue.name] = ir
+            elif isinstance(ir, Binary):
+                lv = ir.lvalue
+                lv_name = getattr(lv, "name", None)
+                if lv_name in indexes_by_ref:
+                    bt_name = getattr(getattr(ir, "type", None), "name", "").upper()
+                    if bt_name == "ADDITION":
+                        # Self-add pattern: lvalue equals one of the operands' name.
+                        left_name = getattr(ir.variable_left, "name", None)
+                        if left_name == lv_name:
+                            sites.append((indexes_by_ref[lv_name], ir))
+    return sites
+
+
+def _write_key_sources_from_parameter(site: tuple) -> bool:
+    """The Index in an additive write site keys on a parameter
+    (not msg.sender). Distinguishes M-of-N (key=txHash, parameter)
+    from cooldown (key=msg.sender, self-keyed)."""
+    index_ir, _binary_ir = site
+    key = getattr(index_ir, "variable_right", None)
+    if key is None:
+        return False
+    name = getattr(key, "name", "")
+    if name in ("msg.sender", "tx.origin"):
+        return False
+    if isinstance(key, Constant):
+        return False  # constant key — bizarre, exclude
+    # If key is a parameter / local / temp, accept. Slither LocalIRVariable
+    # for a parameter looks the same as for a local; the predicate
+    # builder's provenance engine would distinguish, but for this
+    # structural test the rejection of msg.sender is sufficient.
+    return True
+
+
+def _has_state_var_assignment(fn: Any, storage_var: str) -> bool:
+    """Returns True iff ``fn`` directly assigns to ``storage_var``
+    (write-replace, not additive update)."""
+    indexes_by_ref: dict[str, Any] = {}
+    for node in fn.nodes:
+        for ir in node.irs_ssa or []:
+            if isinstance(ir, Index):
+                base = ir.variable_left
+                if getattr(base, "name", None) == storage_var:
+                    indexes_by_ref[ir.lvalue.name] = ir
+            elif isinstance(ir, Assignment):
+                lv_name = getattr(ir.lvalue, "name", None)
+                if lv_name in indexes_by_ref:
+                    return True
     return False

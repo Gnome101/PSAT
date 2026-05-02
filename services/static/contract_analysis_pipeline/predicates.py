@@ -257,6 +257,16 @@ def _build_binary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate, function:
             ml = _try_membership_via_value_compare(ir, prov, gate, function, operator)
             if ml is not None:
                 return ml
+        # Threshold-shape recognition (codex F2 fix): ``map[k] >=
+        # threshold`` (or > / <= / <) where map is a state mapping
+        # is the structural shape of M-of-N counter checks. Emit a
+        # comparison leaf with set_descriptor populated so writer-
+        # gate pass-2 can decide if the counter is authority-derived
+        # (and promote to caller_authority).
+        if kind == "comparison" and function is not None:
+            tl = _try_threshold_membership(ir, prov, gate, function, operator)
+            if tl is not None:
+                return tl
         # Signature-auth detection: an equality between a
         # signature_recovery operand and an address operand is the
         # canonical ECDSA-recover-then-compare pattern. Emit kind=
@@ -349,19 +359,19 @@ def _try_membership_via_value_compare(
 def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, Any | None]:
     """Return (index_ir, const_value) if ``a`` is the lvalue of an
     Index IR (possibly with a bitwise mask applied) and ``b`` is a
-    Constant; otherwise (None, None).
+    constant-like value (literal Constant, state-level
+    ``constant``/``immutable``); otherwise (None, None).
 
-    Per codex round-7 review (F1 fix): in addition to the direct
-    ``map[k] == const`` form, recognize bitwise-mask forms:
-      - ``(map[k] & MASK) != 0``  (the canonical bitwise role-flag check)
-      - ``(map[k] & MASK) == V``  (bit-equality)
-    These all reduce to membership-with-value-compare structurally.
+    Per codex round-7 review (F1+F2): handles the direct
+    ``map[k] == const`` form, bitwise-mask forms, and threshold
+    forms ``map[k] >= const`` uniformly.
     """
-    if not isinstance(b, Constant):
+    if not _is_mask_operand(b):
         return None, None
+    const_value = _coerce_constant_value(b)
     defining = _find_defining_ir(a, None, function)
     if isinstance(defining, Index):
-        return defining, b.value
+        return defining, const_value
     # Bitwise mask: ``a`` is the lvalue of a Binary AND whose left
     # is the Index lvalue and whose right is a constant. The outer
     # comparison ``(map[k] & MASK) op CONST`` is structurally a
@@ -385,8 +395,85 @@ def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, A
                 return None, None
             inner = _find_defining_ir(left, None, function)
             if isinstance(inner, Index):
-                return inner, b.value
+                return inner, const_value
     return None, None
+
+
+def _coerce_constant_value(value: Any) -> Any:
+    """Extract the underlying value from a Constant or
+    constant/immutable StateIRVariable. Returns None if the
+    constant initializer isn't statically known."""
+    if isinstance(value, Constant):
+        return value.value
+    nsv = getattr(value, "non_ssa_version", None)
+    if nsv is not None:
+        if getattr(nsv, "is_constant", False) or getattr(nsv, "is_immutable", False):
+            expr = getattr(nsv, "expression", None)
+            if expr is not None:
+                return getattr(expr, "value", None) or str(expr)
+            return getattr(nsv, "name", None)  # fallback to var name
+    return None
+
+
+def _try_threshold_membership(
+    ir: Any,
+    prov: ProvenanceMap,
+    gate: RevertGate,
+    function: Any,
+    operator: LeafOperator,
+) -> LeafPredicate | None:
+    """Recognize ``Index_lvalue [op] constant`` for ordering ops
+    (gt/gte/lt/lte) — the structural shape of threshold/counter
+    checks. Emits a comparison leaf with set_descriptor populated
+    (storage_var + key_sources + threshold value), so writer-gate
+    pass-2 can detect authority-derived counter patterns and
+    promote the leaf to caller_authority.
+
+    The leaf stays kind=comparison (not membership) because the
+    semantic isn't "value satisfies a flag bit" — it's "counter
+    crossed a threshold." Authority depends on whether the
+    counter's writers are authority-gated, decided by pass-2.
+    """
+    if operator not in ("gt", "gte", "lt", "lte"):
+        return None
+    left = ir.variable_left
+    right = ir.variable_right
+    index_ir, threshold_value = _find_index_value_pair(left, right, function)
+    if index_ir is None:
+        # Try right as the Index side.
+        index_ir, threshold_value = _find_index_value_pair(right, left, function)
+        if index_ir is None:
+            return None
+        # Operator inverts when operands swap (a >= b is b <= a).
+        operator = _swap_operator(operator)
+    if index_ir is None or threshold_value is None:
+        return None
+
+    keys = _reconstruct_index_chain(index_ir, prov, function)
+    descriptor: SetDescriptor = {
+        "kind": "mapping_membership",
+        "key_sources": keys,
+        "truthy_value": str(threshold_value),
+    }
+    base_var = _find_index_base(index_ir, function)
+    if base_var is not None:
+        descriptor["storage_var"] = getattr(base_var, "name", None)
+    operands = [_operand_for_value(ir.variable_left, prov), _operand_for_value(ir.variable_right, prov)]
+    leaf = _make_leaf(
+        kind="comparison",
+        operator=operator,
+        operands=operands,
+        gate=gate,
+    )
+    leaf["set_descriptor"] = descriptor
+    leaf["authority_role"] = "business"  # promoted to caller_authority by writer-gate pass-2 if applicable
+    return leaf
+
+
+def _swap_operator(op: LeafOperator) -> LeafOperator:
+    """Flip a comparison operator when its operands swap. e.g.
+    ``a >= b`` ↔ ``b <= a``."""
+    return {"gt": "lt", "lt": "gt", "gte": "lte", "lte": "gte"}.get(op, op)  # type: ignore[return-value]
 
 
 EIP_1271_MAGIC_VALUE = "0x1626ba7e"

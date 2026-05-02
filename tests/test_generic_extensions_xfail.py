@@ -172,32 +172,43 @@ def test_bitwise_flag_membership_classifies_caller_authority(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Custom M-of-N: ``approve()`` increments approvals[txHash] "
-        "(gated by isOwner check); ``execute()`` requires approvals"
-        "[txHash] >= threshold. The execute() function is "
-        "structurally an M-of-N gate — anyone can call, but only "
-        "after M owners have approved. "
-        "FIX: extend writer-gate analysis to recognize counter-map "
-        "patterns: when ``map[k] >= threshold`` is read in fn F, "
-        "and the same `map[k]` is incremented in fn G whose "
-        "predicate has a caller_authority leaf, classify F's gate "
-        "as `threshold_group` capability with M = threshold and "
-        "signers = G's caller_authority set. Generic — covers any "
-        "custom multisig, not just Safe."
-    ),
-    strict=True,
-)
 def test_custom_m_of_n_classifies_threshold_group(tmp_path):
+    """LANDED (codex F2 + fixed-point writer-gate): authority-derived
+    state inference. ``approvals[txHash] >= THRESHOLD`` promotes to
+    caller_authority when:
+      1. The counter is incremented additively (``map[k] += N``)
+      2. The incrementing function is itself authority-gated
+      3. The increment key sources from a parameter (M-of-N
+         object), NOT msg.sender (which would be a cooldown)
+      4. No unguarded settable writers exist (admin-reset risk)
+
+    Implementation:
+      - predicates.py:_try_threshold_membership emits a comparison
+        leaf with set_descriptor populated for ``Index_lvalue [op]
+        constant`` with op ∈ gt/gte/lt/lte
+      - writer_gate.py:_is_authority_derived_counter walks writers,
+        finds additive sites via _additive_write_sites (Binary ADD
+        whose lvalue equals one operand — Slither's compound-assign
+        IR shape), checks parameter-keyed writes, requires writer's
+        predicate to have caller_authority/delegated_authority
+      - apply_writer_gate_pass now iterates to fixed point so
+        chained promotions (isOwner promotes via b.i, then approve's
+        predicate gains caller_authority, then execute's threshold
+        check promotes) all converge
+    """
     sl = _compile(
         tmp_path,
         """
         pragma solidity ^0.8.19;
         contract C {
+            address public ownerVar;
             mapping(address => bool) public isOwner;
             mapping(bytes32 => uint256) public approvals;
             uint256 constant THRESHOLD = 2;
+            function addOwner(address user) external {
+                require(msg.sender == ownerVar);
+                isOwner[user] = true;
+            }
             function approve(bytes32 txHash) external {
                 require(isOwner[msg.sender]);
                 approvals[txHash] += 1;
