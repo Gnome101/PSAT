@@ -9,7 +9,16 @@ from typing import Any, cast
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Contract, EffectiveFunction, FunctionPrincipal, Job, JobStage, JobStatus, PrincipalLabel
+from db.models import (
+    Contract,
+    EffectiveFunction,
+    FunctionPrincipal,
+    Job,
+    JobStage,
+    JobStatus,
+    PrincipalLabel,
+    SessionLocal,
+)
 from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, artifact_key, parse_key
 from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import get_artifact, store_artifact
@@ -18,6 +27,7 @@ from schemas.effective_permissions import PrincipalResolution
 from services.policy import build_effective_permissions, build_principal_labels
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
+from utils.concurrency import parallel_map
 from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.policy_worker")
@@ -682,29 +692,45 @@ class PolicyWorker(BaseWorker):
         company = job.company
 
         # Collect analyses of all completed sibling contracts
-        sibling_analyses: dict[str, dict] = {}
         completed_jobs = (
             session.execute(select(Job).where(Job.status == JobStatus.completed, Job.address.isnot(None)))
             .scalars()
             .all()
         )
 
+        # Filter siblings on the main thread, extracting only scalar values
+        # so the parallel fetch can use fresh sessions without touching ORM
+        # objects bound to this worker's session.
+        sibling_targets: list[tuple[Any, str]] = []
         for sj in completed_jobs:
             if sj.id == job.id or not sj.address:
                 continue
-            # Check if sibling: same company or same parent
             sj_req = sj.request if isinstance(sj.request, dict) else {}
             is_sibling = (
                 (company and sj.company == company)
                 or (parent_job_id and sj_req.get("parent_job_id") == parent_job_id)
                 or (parent_job_id and str(sj.id) == parent_job_id)
             )
-            if not is_sibling:
-                continue
+            if is_sibling:
+                sibling_targets.append((sj.id, sj.address.lower()))
 
-            sj_analysis = get_artifact(session, sj.id, "contract_analysis")
-            if isinstance(sj_analysis, dict):
-                sibling_analyses[sj.address.lower()] = sj_analysis
+        if not sibling_targets:
+            return {}
+
+        def _fetch_sibling_analysis(target: tuple[Any, str]) -> tuple[str, dict | None]:
+            sj_id, addr = target
+            with SessionLocal() as s:
+                payload = get_artifact(s, sj_id, "contract_analysis")
+            return addr, payload if isinstance(payload, dict) else None
+
+        sibling_analyses: dict[str, dict] = {}
+        for (_sj_id, addr), outcome in parallel_map(_fetch_sibling_analysis, sibling_targets, max_workers=8):
+            if isinstance(outcome, BaseException):
+                logger.warning("sibling artifact fetch failed for %s: %s", addr, outcome)
+                continue
+            _addr, payload = outcome
+            if payload is not None:
+                sibling_analyses[_addr] = payload
 
         if not sibling_analyses:
             return {}

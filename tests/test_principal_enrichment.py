@@ -3,7 +3,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import pytest
+
 from services.policy.principal_enrichment import build_principal_labels
+from utils.concurrency import RpcExecutor
+
+
+@pytest.fixture(autouse=True)
+def _reset_executor():
+    """``PSAT_RPC_FANOUT`` flips per test must rebuild the shared pool."""
+    RpcExecutor.reset_for_tests()
+    yield
+    RpcExecutor.reset_for_tests()
 
 
 def test_build_principal_labels_enriches_safe_admin_and_operator(monkeypatch):
@@ -607,3 +618,173 @@ def test_build_principal_labels_skips_permission_controller_contract_principals(
 
     principals = {item["address"]: item for item in payload["principals"]}
     assert "0x2222222222222222222222222222222222222222" not in principals
+
+
+# ---------------------------------------------------------------------------
+# Parity: ``build_principal_labels`` produces identical output under
+# ``PSAT_RPC_FANOUT=1`` (sequential) and ``=8`` (parallel). The per-job
+# ``classify_cache`` must stay consistent across worker threads.
+# ---------------------------------------------------------------------------
+
+
+def _principal_labels_parity_helper(monkeypatch, fanout: str):
+    monkeypatch.setenv("PSAT_RPC_FANOUT", fanout)
+
+    target = "0x1111111111111111111111111111111111111111"
+    # 60 distinct principal addresses: enough to fan out across 8 workers
+    # multiple times and stress the classify_cache lock.
+    principal_addrs = [f"0x{(i + 0x10):040x}" for i in range(60)]
+
+    def role_principals(addrs):
+        return [{"address": a, "resolved_type": "unknown", "details": {}} for a in addrs]
+
+    effective_permissions = {
+        "contract_address": target,
+        "contract_name": "VaultBig",
+        "functions": [
+            {
+                "function": "manage(address,bytes,uint256)",
+                "effect_labels": ["arbitrary_external_call"],
+                "authority_public": False,
+                "authority_roles": [{"role": 1, "principals": role_principals(principal_addrs[:30])}],
+                "direct_owner": None,
+            },
+            {
+                "function": "setAuthority(address)",
+                "effect_labels": ["authority_update"],
+                "authority_public": False,
+                "authority_roles": [{"role": 8, "principals": role_principals(principal_addrs[30:])}],
+                "direct_owner": None,
+            },
+        ],
+    }
+    resolved_graph = {
+        "nodes": [
+            {
+                "id": "address:" + target,
+                "address": target,
+                "node_type": "contract",
+                "resolved_type": "contract",
+                "label": "VaultBig",
+                "contract_name": "VaultBig",
+                "depth": 0,
+                "analyzed": True,
+                "details": {"address": target},
+                "artifacts": {},
+            }
+        ],
+        "edges": [],
+    }
+
+    # Counter is bumped every classify call so we can assert the cache
+    # collapses repeated lookups even under fan-out (a benign double-miss
+    # race may cost at most one extra call per address).
+    call_counter = {"n": 0}
+
+    def fake_classify(rpc_url, address):
+        call_counter["n"] += 1
+        return "eoa", {"address": address}, True
+
+    monkeypatch.setattr(
+        "services.policy.principal_enrichment.classify_resolved_address_with_status",
+        fake_classify,
+    )
+
+    classify_cache: dict = {}
+    payload = build_principal_labels(
+        effective_permissions,
+        resolved_control_graph=resolved_graph,
+        rpc_url="http://rpc.example",
+        classify_cache=classify_cache,
+    )
+
+    canonical = sorted(
+        (
+            (
+                p["address"],
+                p["resolved_type"],
+                p["display_name"],
+                tuple(p["labels"]),
+                p["confidence"],
+                tuple(p["graph_context"]),
+                tuple(p["controller_context"]),
+                tuple((perm["function"], perm["role"], perm.get("controller")) for perm in p["permissions"]),
+            )
+            for p in payload["principals"]
+        )
+    )
+    return canonical, dict(classify_cache), call_counter["n"]
+
+
+def test_build_principal_labels_parity_parallel_vs_sequential(monkeypatch):
+    """``PSAT_RPC_FANOUT=1`` and ``=8`` must produce identical principals + cache."""
+    seq_principals, seq_cache, seq_calls = _principal_labels_parity_helper(monkeypatch, "1")
+    par_principals, par_cache, par_calls = _principal_labels_parity_helper(monkeypatch, "8")
+    assert seq_principals == par_principals
+    assert seq_cache == par_cache
+    # The per-job cache collapses repeated classifications even under fan-out.
+    # Allow at most one duplicate per address from a benign double-miss race
+    # (both threads see the cache empty before the first writes back).
+    assert par_calls <= seq_calls + len(seq_cache)
+
+
+def test_build_principal_labels_parallel_handles_per_address_runtimeerror(monkeypatch):
+    """A classify error on one address must propagate, not silently drop principals."""
+    monkeypatch.setenv("PSAT_RPC_FANOUT", "8")
+    target = "0x1111111111111111111111111111111111111111"
+    bad_address = "0x" + "b" * 40
+    principal_addrs = [f"0x{(i + 0x20):040x}" for i in range(5)] + [bad_address]
+    effective_permissions = {
+        "contract_address": target,
+        "contract_name": "Vault",
+        "functions": [
+            {
+                "function": "manage()",
+                "effect_labels": ["arbitrary_external_call"],
+                "authority_public": False,
+                "authority_roles": [
+                    {
+                        "role": 1,
+                        "principals": [
+                            {"address": a, "resolved_type": "unknown", "details": {}} for a in principal_addrs
+                        ],
+                    }
+                ],
+                "direct_owner": None,
+            }
+        ],
+    }
+    resolved_graph = {
+        "nodes": [
+            {
+                "id": "address:" + target,
+                "address": target,
+                "node_type": "contract",
+                "resolved_type": "contract",
+                "label": "Vault",
+                "contract_name": "Vault",
+                "depth": 0,
+                "analyzed": True,
+                "details": {"address": target},
+                "artifacts": {},
+            }
+        ],
+        "edges": [],
+    }
+
+    def fake_classify(rpc_url, address):
+        if address == bad_address:
+            raise RuntimeError("classify boom")
+        return "eoa", {"address": address}, True
+
+    monkeypatch.setattr(
+        "services.policy.principal_enrichment.classify_resolved_address_with_status",
+        fake_classify,
+    )
+
+    with pytest.raises(RuntimeError, match="classify boom"):
+        build_principal_labels(
+            effective_permissions,
+            resolved_control_graph=resolved_graph,
+            rpc_url="http://rpc.example",
+        )
