@@ -275,6 +275,143 @@ def test_probe_membership_rejects_malformed_address_payload(api_client, db_sessi
 
 
 @requires_postgres
+def test_probe_membership_returns_yes_via_postgres_role_grants_repo(
+    api_client, db_session
+):
+    """End-to-end with the Postgres-backed RoleGrantsRepo wired:
+    a contract with a granted role for ``member`` resolves to
+    ``yes`` (not ``unknown``/external_check_only). This is the
+    cutover proof that the repo wiring on the route is doing real
+    work, not just falling through to the no-backend path."""
+    import api as api_module
+    from db.models import Contract, Protocol, RoleGrantsCursor, RoleGrantsEvent
+
+    _no_auth(api_module)
+
+    # Seed: a Contract row matching the address (the repo
+    # resolves contract_id from chain_id+address), plus one
+    # RoleGranted event for the role+member, plus a cursor row so
+    # the repo reports a freshness block. Address derived from a
+    # uuid so reruns + parallel test files don't collide on the
+    # ``contracts.address+chain`` unique constraint.
+    import uuid as _uuid
+
+    suffix = _uuid.uuid4().hex[:8]
+    address = "0x" + suffix + "00" * 16
+    role_const_hex = "0x" + "01" * 32
+    role_bytes = bytes.fromhex(role_const_hex[2:])
+    member = "0x" + "44" * 20
+
+    proto = Protocol(name=f"probe_route_test_{suffix}")
+    db_session.add(proto)
+    db_session.flush()
+    contract = Contract(
+        address=address,
+        chain="ethereum",
+        protocol_id=proto.id,
+    )
+    db_session.add(contract)
+    db_session.flush()
+    db_session.add(
+        RoleGrantsEvent(
+            chain_id=1,
+            contract_id=contract.id,
+            tx_hash=b"\xaa" * 32,
+            log_index=0,
+            role=role_bytes,
+            member=member,
+            direction="grant",
+            block_number=100,
+            block_hash=b"\xbb" * 32,
+            transaction_index=0,
+        )
+    )
+    db_session.add(
+        RoleGrantsCursor(
+            chain_id=1,
+            contract_id=contract.id,
+            last_indexed_block=18_500_000,
+            last_indexed_block_hash=b"\xcc" * 32,
+        )
+    )
+    db_session.flush()
+
+    artifact = {
+        "schema_version": "v2",
+        "contract_name": "T",
+        "trees": {
+            "guardedFn()": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "membership",
+                    "operator": "truthy",
+                    "authority_role": "caller_authority",
+                    "operands": [{"source": "msg_sender"}],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "key_sources": [
+                            {"source": "constant", "constant_value": role_const_hex},
+                            {"source": "msg_sender"},
+                        ],
+                        "storage_var": "_roles",
+                        # AC adapter looks for ROLE_GRANTED_TOPIC0
+                        # in enumeration_hint to score 90 (multi-key
+                        # AC shape). Without the hint the AC adapter
+                        # scores 0 and the registry would fall
+                        # through. Wire it explicitly.
+                        "enumeration_hint": [
+                            {
+                                "event_address": address,
+                                "topic0": "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d",
+                                "topics_to_keys": {1: 0, 2: 1},
+                                "data_to_keys": {},
+                                "direction": "add",
+                            }
+                        ],
+                    },
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "_roles[ROLE][msg.sender]",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    _seed_completed_job_with_artifact(
+        db_session, address=address, predicate_trees=artifact
+    )
+
+    # Granted member -> yes
+    granted_resp = api_client.post(
+        f"/api/contract/{address}/probe/membership",
+        json={
+            "function_signature": "guardedFn()",
+            "predicate_index": 0,
+            "member": member,
+        },
+    )
+    assert granted_resp.status_code == 200, granted_resp.text
+    granted_body = granted_resp.json()
+    assert granted_body["result"] == "yes", granted_body
+    assert granted_body["leaf_kind"] == "membership"
+
+    # A different address -> no (the AC repo returned an exact
+    # finite_set with one member, so absence is definitive).
+    unknown_member = "0x" + "55" * 20
+    no_resp = api_client.post(
+        f"/api/contract/{address}/probe/membership",
+        json={
+            "function_signature": "guardedFn()",
+            "predicate_index": 0,
+            "member": unknown_member,
+        },
+    )
+    assert no_resp.status_code == 200, no_resp.text
+    no_body = no_resp.json()
+    assert no_body["result"] == "no", no_body
+
+
+@requires_postgres
 def test_probe_membership_picks_most_recent_completed_job(api_client, db_session):
     """Two completed jobs for the same address — the route uses
     the most recent one (by updated_at). Pinned so an old

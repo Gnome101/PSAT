@@ -3517,6 +3517,8 @@ class _ProbeMembershipRequest(BaseModel):
     function_signature: str = Field(..., description="Full signature, e.g. 'grantRole(bytes32,address)'")
     predicate_index: int = Field(..., ge=0, description="DFS-order leaf index in the function's predicate tree")
     member: str = Field(..., description="Address being tested for membership in the leaf's set")
+    chain_id: int = Field(default=1, description="Chain id for repo lookups (defaults to ethereum mainnet)")
+    block: int | None = Field(default=None, description="Optional block number for point-in-time probes")
 
     @field_validator("member")
     @classmethod
@@ -3540,6 +3542,21 @@ def probe_contract_membership(address: str, req: _ProbeMembershipRequest) -> dic
     received from the v2 capability rendering.
     """
     addr = _normalize_address_or_400(address)
+
+    # Lazy-import the resolver bits so the probe route doesn't
+    # impose its dependency surface on the rest of the API.
+    from services.resolution.adapters import AdapterRegistry, EvaluationContext
+    from services.resolution.adapters.access_control import AccessControlAdapter
+    from services.resolution.adapters.aragon_acl import (
+        AragonACLAdapter,
+        DSAuthAdapter,
+        EIP1271Adapter,
+    )
+    from services.resolution.adapters.event_indexed import EventIndexedAdapter
+    from services.resolution.adapters.safe import SafeAdapter
+    from services.resolution.probe import probe_membership
+    from services.resolution.repos import PostgresAragonACLRepo, PostgresRoleGrantsRepo
+
     with SessionLocal() as session:
         job = session.execute(
             select(Job)
@@ -3563,71 +3580,67 @@ def probe_contract_membership(address: str, req: _ProbeMembershipRequest) -> dic
                 ),
             )
 
-    if not isinstance(artifact, dict) or "trees" not in artifact:
-        # Either an error-path placeholder ({"error": "..."}) or
-        # a malformed payload — surface the reason rather than
-        # silently treating as no-tree.
-        reason = (
-            artifact.get("error")
-            if isinstance(artifact, dict)
-            else "predicate_trees payload was not a dict"
+        if not isinstance(artifact, dict) or "trees" not in artifact:
+            # Either an error-path placeholder ({"error": "..."}) or
+            # a malformed payload — surface the reason rather than
+            # silently treating as no-tree.
+            reason = (
+                artifact.get("error")
+                if isinstance(artifact, dict)
+                else "predicate_trees payload was not a dict"
+            )
+            return {
+                "result": "unknown",
+                "reason": "predicate_trees_unavailable",
+                "detail": reason,
+            }
+
+        tree = artifact["trees"].get(req.function_signature)
+        if tree is None:
+            # Resolver convention: absent function = unguarded
+            # (publicly callable). For probe semantics, that means
+            # anyone is in the set.
+            return {
+                "result": "yes",
+                "reason": "function_unguarded",
+                "function_signature": req.function_signature,
+            }
+
+        registry = AdapterRegistry()
+        for cls in (
+            AccessControlAdapter,
+            SafeAdapter,
+            AragonACLAdapter,
+            DSAuthAdapter,
+            EIP1271Adapter,
+            EventIndexedAdapter,
+        ):
+            registry.register(cls)
+
+        # Wire the Postgres-backed repos. AC adapter consumes
+        # ``ctx.role_grants`` directly; Aragon adapter looks under
+        # ``ctx.meta["aragon_acl_repo"]`` per its existing contract.
+        # SafeRepo is RPC-backed (RpcSafeRepo) and would need an
+        # rpc_url_for_chain map — not wired here yet because the
+        # API process doesn't carry per-chain RPC configuration on
+        # the request boundary.
+        role_grants_repo = PostgresRoleGrantsRepo(session)
+        aragon_repo = PostgresAragonACLRepo(session)
+        ctx = EvaluationContext(
+            chain_id=req.chain_id,
+            contract_address=addr,
+            block=req.block,
+            role_grants=role_grants_repo,
+            meta={"aragon_acl_repo": aragon_repo},
         )
-        return {
-            "result": "unknown",
-            "reason": "predicate_trees_unavailable",
-            "detail": reason,
-        }
 
-    tree = artifact["trees"].get(req.function_signature)
-    if tree is None:
-        # Resolver convention: absent function = unguarded (publicly
-        # callable). For probe semantics, that means anyone is in
-        # the set.
-        return {
-            "result": "yes",
-            "reason": "function_unguarded",
-            "function_signature": req.function_signature,
-        }
-
-    # Lazy-import the resolver bits so the probe route doesn't
-    # impose its dependency surface on the rest of the API.
-    from services.resolution.adapters import AdapterRegistry, EvaluationContext
-    from services.resolution.adapters.access_control import AccessControlAdapter
-    from services.resolution.adapters.aragon_acl import (
-        AragonACLAdapter,
-        DSAuthAdapter,
-        EIP1271Adapter,
-    )
-    from services.resolution.adapters.event_indexed import EventIndexedAdapter
-    from services.resolution.adapters.safe import SafeAdapter
-    from services.resolution.probe import probe_membership
-
-    registry = AdapterRegistry()
-    for cls in (
-        AccessControlAdapter,
-        SafeAdapter,
-        AragonACLAdapter,
-        DSAuthAdapter,
-        EIP1271Adapter,
-        EventIndexedAdapter,
-    ):
-        registry.register(cls)
-
-    # The probe runs without a wired RoleGrantsRepo / SafeRepo /
-    # bytecode repo for now; adapters fall back to
-    # ``external_check_only`` when no backend is available, which
-    # the probe surface translates into ``unknown`` with the probe
-    # target+selector for the caller to invoke directly. Wiring
-    # the Postgres-backed repos here is a follow-up.
-    ctx = EvaluationContext(contract_address=addr)
-
-    return probe_membership(
-        tree,
-        predicate_index=req.predicate_index,
-        member=req.member,
-        registry=registry,
-        ctx=ctx,
-    )
+        return probe_membership(
+            tree,
+            predicate_index=req.predicate_index,
+            member=req.member,
+            registry=registry,
+            ctx=ctx,
+        )
 
 
 @app.get("/{full_path:path}")
