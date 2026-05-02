@@ -34,14 +34,18 @@ but is not implemented here.
 from __future__ import annotations
 
 import hashlib
+import logging
+import time
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Callable, Iterable, Protocol
 
 from sqlalchemy import and_, delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from db.models import RoleGrantsCursor, RoleGrantsEvent
+from db.models import ChainFinalityConfig, Contract, RoleGrantsCursor, RoleGrantsEvent
+
+logger = logging.getLogger(__name__)
 
 # RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)
 # keccak256 of the canonical signature.
@@ -302,3 +306,138 @@ def event_direction(topic0: bytes) -> str | None:
     if topic0 == ROLE_REVOKED_TOPIC0:
         return "revoke"
     return None
+
+
+# ---------------------------------------------------------------------------
+# Enrollment + scan loop
+# ---------------------------------------------------------------------------
+
+
+class HeadBlockFetcher(Protocol):
+    """Returns the current chain head per chain_id. The scan loop
+    fetches once per chain per pass and reuses across all
+    contracts on that chain."""
+
+    def head_block(self, *, chain_id: int) -> int: ...
+
+
+def enroll_contract(session: Session, *, chain_id: int, contract_id: int) -> None:
+    """Idempotently insert a ``role_grants_cursors`` row for
+    ``(chain_id, contract_id)`` with ``last_indexed_block=0``.
+    The next scan pass will pick it up and backfill from genesis.
+    Caller commits."""
+    stmt = pg_insert(RoleGrantsCursor).values(
+        chain_id=chain_id,
+        contract_id=contract_id,
+        last_indexed_block=0,
+    ).on_conflict_do_nothing(index_elements=["chain_id", "contract_id"])
+    session.execute(stmt)
+
+
+def scan_enrolled_contracts(
+    session: Session,
+    *,
+    log_fetcher_for_chain: dict[int, "LogFetcher"],
+    block_hash_fetcher_for_chain: dict[int, "BlockHashFetcher"],
+    head_block_fetcher: HeadBlockFetcher,
+    finality_for_chain: dict[int, int] | None = None,
+    use_advisory_lock: bool = True,
+) -> list["IndexResult"]:
+    """One scan pass over every row in ``role_grants_cursors``.
+
+    Each contract runs in its own transaction (commit between
+    contracts) so an advisory lock taken by ``index_role_grants_step``
+    is released before moving on, and a failure on one contract
+    rolls back only that pass — the rest of the cursor list still
+    runs.
+
+    Chains without configured fetchers are skipped silently.
+    Missing finality entries default to the cursor row's chain
+    config from ``chain_finality_config`` if loaded; otherwise to
+    a conservative 12 blocks.
+    """
+    if finality_for_chain is None:
+        finality_for_chain = _load_finality_config(session)
+
+    cursors = session.execute(
+        select(
+            RoleGrantsCursor.chain_id,
+            RoleGrantsCursor.contract_id,
+            Contract.address,
+        ).join(Contract, RoleGrantsCursor.contract_id == Contract.id)
+    ).all()
+
+    head_cache: dict[int, int] = {}
+    results: list[IndexResult] = []
+    for chain_id, contract_id, address in cursors:
+        if chain_id not in log_fetcher_for_chain:
+            continue
+        if chain_id not in block_hash_fetcher_for_chain:
+            continue
+
+        if chain_id not in head_cache:
+            head_cache[chain_id] = head_block_fetcher.head_block(chain_id=chain_id)
+        head = head_cache[chain_id]
+        if head <= 0:
+            # Couldn't determine head this pass — skip the chain.
+            continue
+
+        try:
+            result = index_role_grants_step(
+                session,
+                chain_id=chain_id,
+                contract_id=contract_id,
+                contract_address=address,
+                head_block=head,
+                log_fetcher=log_fetcher_for_chain[chain_id],
+                block_hash_fetcher=block_hash_fetcher_for_chain[chain_id],
+                finality_depth=finality_for_chain.get(chain_id, 12),
+                use_advisory_lock=use_advisory_lock,
+            )
+            session.commit()
+            results.append(result)
+        except Exception:
+            # Don't let one bad contract poison the whole scan.
+            # rollback drops the advisory lock too.
+            session.rollback()
+            logger.exception(
+                "role_grants indexer pass failed for chain=%s contract_id=%s address=%s",
+                chain_id,
+                contract_id,
+                address,
+            )
+    return results
+
+
+def run_role_grants_indexer_loop(
+    session_factory: Callable[[], Session],
+    *,
+    log_fetcher_for_chain: dict[int, "LogFetcher"],
+    block_hash_fetcher_for_chain: dict[int, "BlockHashFetcher"],
+    head_block_fetcher: HeadBlockFetcher,
+    interval: float = 30.0,
+) -> None:
+    """Blocking polling loop. Each pass opens a fresh session,
+    runs ``scan_enrolled_contracts``, then sleeps. Exceptions are
+    logged and the loop continues — designed to run as a long-lived
+    worker process behind a supervisor."""
+    logger.info("starting role_grants indexer loop interval=%ss", interval)
+    while True:
+        try:
+            with session_factory() as session:
+                scan_enrolled_contracts(
+                    session,
+                    log_fetcher_for_chain=log_fetcher_for_chain,
+                    block_hash_fetcher_for_chain=block_hash_fetcher_for_chain,
+                    head_block_fetcher=head_block_fetcher,
+                )
+        except Exception:
+            logger.exception("role_grants indexer pass failed")
+        time.sleep(interval)
+
+
+def _load_finality_config(session: Session) -> dict[int, int]:
+    rows = session.execute(
+        select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)
+    ).all()
+    return {cid: depth for cid, depth in rows}

@@ -78,6 +78,33 @@ class RpcLogFetcher:
         return out
 
 
+class RpcHeadBlockFetcher:
+    """Implements ``HeadBlockFetcher`` via ``eth_blockNumber``.
+
+    The scan loop calls this once per chain per pass to bound the
+    indexer's scan range. Failure returns ``0`` so the indexer
+    treats that chain as "nothing to do this pass" instead of
+    raising and stopping the whole loop."""
+
+    def __init__(self, rpc_url_for_chain: dict[int, str]) -> None:
+        self.rpc_url_for_chain = rpc_url_for_chain
+
+    def head_block(self, *, chain_id: int) -> int:
+        url = self.rpc_url_for_chain.get(chain_id)
+        if url is None:
+            return 0
+        try:
+            result = rpc_request(url, "eth_blockNumber", [])
+        except Exception:
+            return 0
+        if isinstance(result, str) and result.startswith("0x"):
+            try:
+                return int(result, 16)
+            except ValueError:
+                return 0
+        return 0
+
+
 class RpcBlockHashFetcher:
     """Implements ``BlockHashFetcher`` against an RPC URL via
     ``eth_getBlockByNumber(hex_block, False)``. Returns ``None`` for

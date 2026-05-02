@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.resolution.repos.role_grants_rpc import (  # noqa: E402
     RpcBlockHashFetcher,
+    RpcHeadBlockFetcher,
     RpcLogFetcher,
 )
 from workers.role_grants_indexer import (  # noqa: E402
@@ -252,3 +253,30 @@ def test_fetcher_uses_role_topics_in_filter(monkeypatch):
     assert isinstance(topic_or, list)
     assert "0x" + ROLE_GRANTED_TOPIC0.hex() in topic_or
     assert "0x" + ROLE_REVOKED_TOPIC0.hex() in topic_or
+
+
+def test_head_block_fetcher_decodes_hex(monkeypatch):
+    captured: list[tuple[str, str]] = []
+
+    def fake_rpc(url, method, params, retries=1):
+        captured.append((url, method))
+        return hex(18_750_000)
+
+    monkeypatch.setattr("services.resolution.repos.role_grants_rpc.rpc_request", fake_rpc)
+    fetcher = RpcHeadBlockFetcher({1: "http://eth.invalid"})
+    assert fetcher.head_block(chain_id=1) == 18_750_000
+    assert captured == [("http://eth.invalid", "eth_blockNumber")]
+
+
+def test_head_block_fetcher_unknown_chain_returns_zero():
+    fetcher = RpcHeadBlockFetcher({1: "http://eth.invalid"})
+    assert fetcher.head_block(chain_id=999) == 0
+
+
+def test_head_block_fetcher_rpc_error_returns_zero(monkeypatch):
+    def fake_rpc(url, method, params, retries=1):
+        raise RuntimeError("rate limited")
+
+    monkeypatch.setattr("services.resolution.repos.role_grants_rpc.rpc_request", fake_rpc)
+    fetcher = RpcHeadBlockFetcher({1: "http://eth.invalid"})
+    assert fetcher.head_block(chain_id=1) == 0
