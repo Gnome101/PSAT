@@ -921,12 +921,10 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
             continue
 
         guards = _dedupe_strings((graph_entry["guards"] if graph_entry else []) + inferred_guards)
-        # `sinks` is the canonical source; `external_call_guards` is a derived
-        # legacy-shape view for consumers that haven't migrated.
-        from .caller_sinks import caller_reach_analysis, sinks_to_external_call_guards
-
-        caller_sinks = caller_reach_analysis(function, project_dir)
-        external_call_guards = sinks_to_external_call_guards(caller_sinks)
+        # Schema-v2 cutover: caller_sinks is deleted. external_call_guards
+        # / sinks fields no longer populated — the v2 path catches the
+        # equivalent shapes via external_bool / delegated_authority leaves
+        # which capability_resolver's adapters resolve.
         entry: dict = {
             "contract": _declaring_contract_name(function, contract.name),
             "function": function_signature,
@@ -946,10 +944,6 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
             "value_flows": _extract_value_flows(function),
             "action_summary": action_summary,
         }
-        if external_call_guards:
-            entry["external_call_guards"] = external_call_guards
-        if caller_sinks:
-            entry["sinks"] = caller_sinks
         privileged_functions.append(entry)
 
     modifier_names = [modifier.name.lower() for modifier in modifiers]
