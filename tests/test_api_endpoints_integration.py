@@ -268,8 +268,11 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
     impl_job.status = JobStatus.completed
     proxy_job.status = JobStatus.completed
 
-    # proxy_type and implementation now come from the Contract row, not
-    # the contract_flags artifact (which is no longer fetched here).
+    # proxy_type, implementation, AND contract_name now come from the
+    # Contract rows. The /api/analyses listing no longer fetches artifact
+    # bodies — that was the dominant cost in production. The merge layer
+    # prefers the impl's name over the proxy's (proxy shells usually
+    # carry generic names like "UUPSProxy"), so both rows must be mocked.
     proxy_contract_row = SimpleNamespace(
         address=proxy_addr,
         chain=None,
@@ -279,23 +282,20 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
         proxy_type="ERC1967",
         implementation=impl_addr,
     )
+    impl_contract_row = SimpleNamespace(
+        address=impl_addr,
+        chain=None,
+        rank_score=None,
+        contract_name="VaultImpl",
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
+    )
 
     # /api/analyses query order:
-    #   1. select(Job)         → jobs list
-    #   2. select(Contract...) → contracts_by_address (returns .scalars())
-    #   3. select(Artifact)    → batched artifact rows (.scalars())
-    artifacts = [
-        _fake_artifact(
-            proxy_job.id,
-            "contract_analysis",
-            {"subject": {"name": "ProxyContract"}, "summary": {"control_model": "proxy"}},
-        ),
-        _fake_artifact(
-            impl_job.id,
-            "contract_analysis",
-            {"subject": {"name": "VaultImpl"}, "summary": {"control_model": "authority"}},
-        ),
-    ]
+    #   1. select(Job)             → jobs list
+    #   2. select(Contract...)     → contracts_by_address (returns .scalars())
+    #   3. select(Artifact.job_id, Artifact.name) → name-only artifact rows (.all())
 
     call_count = {"n": 0}
 
@@ -305,9 +305,11 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            result.scalars.return_value = iter([proxy_contract_row])
+            result.scalars.return_value = iter([proxy_contract_row, impl_contract_row])
         elif call_count["n"] == 3:
-            result.scalars.return_value = iter(artifacts)
+            # Artifact-name listing — empty is fine; this test only cares
+            # about contract_name resolution from Contract rows.
+            result.all.return_value = []
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None

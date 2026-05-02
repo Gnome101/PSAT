@@ -477,3 +477,367 @@ class TestOwnerControllerMatching:
         assert cv_previous_reloaded is not None
         assert cv_owner_reloaded.value == ADDR(50)
         assert cv_previous_reloaded.value == ADDR(20), "previous_owner_map was incorrectly updated"
+
+
+# ---------------------------------------------------------------------------
+# Timelock event decode (CallScheduled / CallExecuted)
+# ---------------------------------------------------------------------------
+
+
+class TestTimelockEventDecode:
+    """Verify the parser pulls target/value/calldata/predecessor/delay out
+    of the static + dynamic regions of CallScheduled/CallExecuted log data.
+
+    The watcher used to keep only operation_id + index, dropping everything
+    that would actually let the UI say 'queued: setX on AuctionManager
+    (delay 3d)'. These tests pin the new decode shape so a future regression
+    that re-narrows the parser fails loudly.
+    """
+
+    def test_call_scheduled_decodes_static_fields(self):
+        from services.monitoring.event_topics import CALL_SCHEDULED_TOPIC0, parse_governance_log
+
+        target_word = "0" * 24 + "0" * 38 + "01"
+        value_word = "0" * 64
+        bytes_offset = format(160, "x").zfill(64)  # 5 head words * 32B
+        predecessor_word = "0" * 64
+        delay_word = format(3600, "x").zfill(64)
+        calldata = "12345678abcd"  # selector 0x12345678 + 2-byte tail
+        cd_len = format(6, "x").zfill(64)
+        cd_padded = calldata + "0" * (64 - len(calldata))
+        data_hex = "0x" + target_word + value_word + bytes_offset + predecessor_word + delay_word + cd_len + cd_padded
+
+        log = {
+            "topics": [CALL_SCHEDULED_TOPIC0, "0x" + "ab" * 32, "0x" + format(0, "x").zfill(64)],
+            "data": data_hex,
+            "blockNumber": "0x100",
+            "transactionHash": "0xfeed",
+        }
+        ev = parse_governance_log(log)
+        assert ev is not None
+        assert ev["event_type"] == "timelock_scheduled"
+        assert ev["operation_id"] == "0x" + "ab" * 32
+        assert ev["index"] == 0
+        assert ev["target"] == "0x" + "00" * 19 + "01"
+        assert ev["value"] == 0
+        assert ev["predecessor"] == "0x" + "00" * 32
+        assert ev["delay"] == 3600
+        assert ev["calldata_length"] == 6
+        assert ev["selector"] == "0x12345678"
+
+    def test_call_executed_decodes_static_fields(self):
+        from services.monitoring.event_topics import CALL_EXECUTED_TOPIC0, parse_governance_log
+
+        target_word = "0" * 24 + "0" * 38 + "02"
+        value_word = format(1000000000000000000, "x").zfill(64)  # 1 ETH
+        bytes_offset = format(96, "x").zfill(64)  # 3 head words
+        cd_len = format(4, "x").zfill(64)
+        selector_word = "deadbeef" + "0" * 56
+        data_hex = "0x" + target_word + value_word + bytes_offset + cd_len + selector_word
+
+        log = {
+            "topics": [CALL_EXECUTED_TOPIC0, "0x" + "cd" * 32, "0x" + format(7, "x").zfill(64)],
+            "data": data_hex,
+            "blockNumber": "0x200",
+            "transactionHash": "0xbabe",
+        }
+        ev = parse_governance_log(log)
+        assert ev is not None
+        assert ev["event_type"] == "timelock_executed"
+        assert ev["operation_id"] == "0x" + "cd" * 32
+        assert ev["index"] == 7
+        assert ev["target"] == "0x" + "00" * 19 + "02"
+        assert ev["value"] == 10**18
+        assert ev["calldata_length"] == 4
+        assert ev["selector"] == "0xdeadbeef"
+
+    def test_short_data_field_does_not_crash(self):
+        """Defensive: a malformed log with a short data field shouldn't
+        raise — the parser should set the indexed fields and skip the
+        rest. Catches RPCs that occasionally truncate before the body."""
+        from services.monitoring.event_topics import CALL_SCHEDULED_TOPIC0, parse_governance_log
+
+        log = {
+            "topics": [CALL_SCHEDULED_TOPIC0, "0x" + "ab" * 32, "0x" + format(0, "x").zfill(64)],
+            "data": "0x" + "00" * 32,  # only 1 word — way too short
+            "blockNumber": "0x1",
+            "transactionHash": "0xa",
+        }
+        ev = parse_governance_log(log)
+        assert ev is not None
+        assert ev["operation_id"] == "0x" + "ab" * 32
+        assert ev["index"] == 0
+        assert "target" not in ev
+        assert "delay" not in ev
+
+
+class TestBatchTimelockDedupe:
+    """OZ TimelockController scheduleBatch / executeBatch emit one
+    CallScheduled / CallExecuted log per call in the batch, all sharing
+    tx_hash + block_number + event_type but with distinct logIndex.
+
+    Earlier dedupe used a 4-tuple key (mc, tx, block, type) and would
+    collapse those down to one MonitoredEvent row, hiding the rest of
+    the batch from the UI. The fix splits dedupe into a DB-level
+    4-tuple guard (no row dup against existing data) and an in-scan
+    5-tuple guard that includes log_index so batch logs land as
+    separate rows when scanned for the first time.
+    """
+
+    def test_batch_call_scheduled_logs_persist_separately(self, db_session: SASession):
+        from services.monitoring.event_topics import CALL_SCHEDULED_TOPIC0
+        from services.monitoring.unified_watcher import scan_for_events
+
+        timelock_addr = ADDR(7)
+        mc = MonitoredContract(
+            id=uuid.uuid4(),
+            address=timelock_addr,
+            chain="ethereum",
+            contract_type="timelock",
+            monitoring_config={"watch_timelock": True},
+            last_known_state={},
+            last_scanned_block=100,
+            needs_polling=False,
+            is_active=True,
+        )
+        db_session.add(mc)
+        db_session.commit()
+
+        # Two CallScheduled logs from the same tx — distinct logIndex.
+        # data layout: 5 head words (target/value/bytes_off/predecessor/delay)
+        # + bytes_len + selector. Bytes_off is 5*32 = 160 (0xa0).
+        head = (
+            "0" * 24
+            + "00" * 19
+            + "01"  # target = 0x...01
+            + "0" * 64  # value = 0
+            + format(160, "x").zfill(64)  # bytes_offset
+            + "0" * 64  # predecessor
+            + format(3600, "x").zfill(64)  # delay
+        )
+        cd_section = format(4, "x").zfill(64) + "deadbeef" + "0" * 56
+        log_data = "0x" + head + cd_section
+
+        def mock_rpc(_url, method, _params):
+            if method == "eth_blockNumber":
+                return hex(200)
+            if method == "eth_getLogs":
+                return [
+                    {
+                        "address": timelock_addr,
+                        "topics": [
+                            CALL_SCHEDULED_TOPIC0,
+                            "0x" + "ab" * 32,
+                            "0x" + format(0, "x").zfill(64),
+                        ],
+                        "data": log_data,
+                        "blockNumber": "0x96",  # 150
+                        "transactionHash": "0x" + "fe" * 32,
+                        "logIndex": "0x0",
+                    },
+                    {
+                        "address": timelock_addr,
+                        "topics": [
+                            CALL_SCHEDULED_TOPIC0,
+                            "0x" + "ab" * 32,
+                            "0x" + format(1, "x").zfill(64),  # index=1 (second call in batch)
+                        ],
+                        "data": log_data,
+                        "blockNumber": "0x96",
+                        "transactionHash": "0x" + "fe" * 32,
+                        "logIndex": "0x1",
+                    },
+                ]
+            return None
+
+        with patch("services.monitoring.unified_watcher.rpc_request", side_effect=mock_rpc):
+            new_events = scan_for_events(db_session, "http://fake-rpc")
+
+        assert len(new_events) == 2, f"expected 2 batch-event rows, got {len(new_events)}"
+        # Both rows should reference the same tx + block + type but be
+        # distinct rows (different ids) so the UI can render each call.
+        ids = {e.id for e in new_events}
+        assert len(ids) == 2
+        for e in new_events:
+            assert e.event_type == "timelock_scheduled"
+            assert e.tx_hash == "0x" + "fe" * 32
+            assert e.block_number == 150
+
+    def test_batch_call_executed_logs_persist_separately(self, db_session: SASession):
+        """Same batch-dedupe story for executeBatch as for scheduleBatch.
+
+        The dedupe path is event-type agnostic, but the CallExecuted code
+        path is what the UI will actually render in 'recent activity', so
+        a separate regression keeps both halves of the lifecycle pinned.
+        """
+        from services.monitoring.event_topics import CALL_EXECUTED_TOPIC0
+        from services.monitoring.unified_watcher import scan_for_events
+
+        timelock_addr = ADDR(8)
+        mc = MonitoredContract(
+            id=uuid.uuid4(),
+            address=timelock_addr,
+            chain="ethereum",
+            contract_type="timelock",
+            monitoring_config={"watch_timelock": True},
+            last_known_state={},
+            last_scanned_block=200,
+            needs_polling=False,
+            is_active=True,
+        )
+        db_session.add(mc)
+        db_session.commit()
+
+        # CallExecuted has 3 head words (target/value/bytes_off).
+        head = (
+            "0" * 24
+            + "00" * 19
+            + "02"  # target
+            + "0" * 64  # value
+            + format(96, "x").zfill(64)  # bytes_offset = 3*32
+        )
+        cd_section = format(4, "x").zfill(64) + "cafef00d" + "0" * 56
+        log_data = "0x" + head + cd_section
+
+        def mock_rpc(_url, method, _params):
+            if method == "eth_blockNumber":
+                return hex(300)
+            if method == "eth_getLogs":
+                return [
+                    {
+                        "address": timelock_addr,
+                        "topics": [
+                            CALL_EXECUTED_TOPIC0,
+                            "0x" + "cd" * 32,
+                            "0x" + format(0, "x").zfill(64),
+                        ],
+                        "data": log_data,
+                        "blockNumber": "0xfa",  # 250
+                        "transactionHash": "0x" + "ba" * 32,
+                        "logIndex": "0x0",
+                    },
+                    {
+                        "address": timelock_addr,
+                        "topics": [
+                            CALL_EXECUTED_TOPIC0,
+                            "0x" + "cd" * 32,
+                            "0x" + format(1, "x").zfill(64),
+                        ],
+                        "data": log_data,
+                        "blockNumber": "0xfa",
+                        "transactionHash": "0x" + "ba" * 32,
+                        "logIndex": "0x1",
+                    },
+                ]
+            return None
+
+        with patch("services.monitoring.unified_watcher.rpc_request", side_effect=mock_rpc):
+            new_events = scan_for_events(db_session, "http://fake-rpc")
+
+        assert len(new_events) == 2
+        for e in new_events:
+            assert e.event_type == "timelock_executed"
+            assert e.tx_hash == "0x" + "ba" * 32
+            assert e.block_number == 250
+
+
+class TestSafeExecutionEvents:
+    """GnosisSafe ExecutionSuccess / ExecutionFailure are emitted for
+    EVERY executed Safe tx — they're the on-chain breadcrumb you'd render
+    as 'recent activity' on a Safe principal card. Pin the topic→type
+    mapping and the field decode so a future regression that reorders
+    or drops these is caught.
+    """
+
+    def test_execution_success_decodes(self):
+        from services.monitoring.event_topics import EXECUTION_SUCCESS_TOPIC0, parse_governance_log
+
+        safe_tx_hash = "0x" + "ab" * 32
+        payment = format(123456, "x").zfill(64)
+        log = {
+            "topics": [EXECUTION_SUCCESS_TOPIC0],
+            "data": safe_tx_hash + payment[2:] if False else "0x" + "ab" * 32 + payment,
+            "blockNumber": "0x100",
+            "transactionHash": "0xfeed",
+            "logIndex": "0x3",
+        }
+        ev = parse_governance_log(log)
+        assert ev is not None
+        assert ev["event_type"] == "safe_tx_executed"
+        assert ev["safe_tx_hash"] == safe_tx_hash
+        assert ev["payment"] == 123456
+        assert ev["log_index"] == 3
+
+    def test_execution_failure_decodes(self):
+        from services.monitoring.event_topics import EXECUTION_FAILURE_TOPIC0, parse_governance_log
+
+        safe_tx_hash = "0x" + "cd" * 32
+        payment = format(0, "x").zfill(64)
+        log = {
+            "topics": [EXECUTION_FAILURE_TOPIC0],
+            "data": "0x" + "cd" * 32 + payment,
+            "blockNumber": "0x100",
+            "transactionHash": "0xbabe",
+            "logIndex": "0x0",
+        }
+        ev = parse_governance_log(log)
+        assert ev is not None
+        assert ev["event_type"] == "safe_tx_failed"
+        assert ev["safe_tx_hash"] == safe_tx_hash
+        assert ev["payment"] == 0
+
+    def test_short_data_does_not_crash(self):
+        """Defensive: short/malformed data field should not raise."""
+        from services.monitoring.event_topics import EXECUTION_SUCCESS_TOPIC0, parse_governance_log
+
+        log = {
+            "topics": [EXECUTION_SUCCESS_TOPIC0],
+            "data": "0x" + "ab" * 8,  # well under the 64+64 hex chars expected
+            "blockNumber": "0x1",
+            "transactionHash": "0xa",
+        }
+        ev = parse_governance_log(log)
+        assert ev is not None
+        assert ev["event_type"] == "safe_tx_executed"
+        assert "safe_tx_hash" not in ev
+        assert "payment" not in ev
+
+    def test_execution_from_module_success_decodes(self):
+        """Module-triggered Safe executions: address indexed in topics[1],
+        no SafeTx hash, no payment. Used when a pre-authorised module
+        (e.g. recovery, batch executor) calls into the Safe directly.
+        """
+        from services.monitoring.event_topics import EXECUTION_FROM_MODULE_SUCCESS_TOPIC0, parse_governance_log
+
+        module_addr = "0x" + "ee" * 20
+        log = {
+            "topics": [
+                EXECUTION_FROM_MODULE_SUCCESS_TOPIC0,
+                "0x" + "0" * 24 + "ee" * 20,  # padded module address in topic
+            ],
+            "data": "0x",
+            "blockNumber": "0x10",
+            "transactionHash": "0xfeed",
+        }
+        ev = parse_governance_log(log)
+        assert ev is not None
+        assert ev["event_type"] == "safe_module_executed"
+        assert ev["module"] == module_addr
+
+    def test_execution_from_module_failure_decodes(self):
+        from services.monitoring.event_topics import EXECUTION_FROM_MODULE_FAILURE_TOPIC0, parse_governance_log
+
+        module_addr = "0x" + "ff" * 20
+        log = {
+            "topics": [
+                EXECUTION_FROM_MODULE_FAILURE_TOPIC0,
+                "0x" + "0" * 24 + "ff" * 20,
+            ],
+            "data": "0x",
+            "blockNumber": "0x10",
+            "transactionHash": "0xbeef",
+        }
+        ev = parse_governance_log(log)
+        assert ev is not None
+        assert ev["event_type"] == "safe_module_failed"
+        assert ev["module"] == module_addr

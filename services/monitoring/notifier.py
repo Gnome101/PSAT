@@ -119,6 +119,10 @@ _EVENT_COLORS = {
     "timelock_scheduled": 0x3498DB,  # blue
     "signer_added": 0x3498DB,
     "signer_removed": 0x3498DB,
+    "safe_tx_executed": 0x2ECC71,  # green — successful Safe tx execution
+    "safe_tx_failed": 0xE74C3C,  # red — Safe tx execution reverted
+    "safe_module_executed": 0x2ECC71,
+    "safe_module_failed": 0xE74C3C,
     "role_granted": 0xF39C12,  # amber
     "role_revoked": 0xF39C12,
     "threshold_changed": 0xF39C12,
@@ -234,6 +238,33 @@ def _format_governance_embed(event: MonitoredEvent, session: Session) -> dict:
     }
 
 
+# Legacy "Signers" UI grouping listed only the three signer events;
+# downstream we added safe_tx_* and safe_module_* under the same group.
+# When a user-saved webhook filter only contains the historical types,
+# treat it as covering the whole group so the new event types still
+# flow through. Keys are 'seed' types; values are the additions to
+# allow alongside them.
+_FILTER_GROUP_EXPANSIONS: dict[str, set[str]] = {
+    "signer_added": {"safe_tx_executed", "safe_tx_failed", "safe_module_executed", "safe_module_failed"},
+    "signer_removed": {"safe_tx_executed", "safe_tx_failed", "safe_module_executed", "safe_module_failed"},
+    "threshold_changed": {"safe_tx_executed", "safe_tx_failed", "safe_module_executed", "safe_module_failed"},
+}
+
+
+def _expand_allowed_event_types(allowed_types: list[str] | None) -> set[str]:
+    """Expand legacy webhook event-type filters to include grouped successors.
+
+    Cheap forward-compat shim so adding a new event type to an existing
+    UI grouping doesn't silently strand pre-existing webhook filters.
+    """
+    if not allowed_types:
+        return set()
+    expanded: set[str] = set(allowed_types)
+    for seed in allowed_types:
+        expanded |= _FILTER_GROUP_EXPANSIONS.get(seed, set())
+    return expanded
+
+
 def notify_protocol_events(session: Session, events: list[MonitoredEvent]) -> None:
     """Send Discord notifications for detected governance/monitoring events.
 
@@ -282,10 +313,14 @@ def notify_protocol_events(session: Session, events: list[MonitoredEvent]) -> No
         for event in proto_events:
             embed = _format_governance_embed(event, session)
             for sub in proto_subs:
-                # Check event filter
+                # Check event filter. Legacy "Signers" filter only listed
+                # signer_added/removed/threshold_changed; expand the
+                # allowed set on the fly so a historic webhook still
+                # picks up the related Safe execution events that were
+                # added later under the same UI grouping.
                 if sub.event_filter and isinstance(sub.event_filter, dict):
                     allowed_types = sub.event_filter.get("event_types")
-                    if allowed_types and event.event_type not in allowed_types:
+                    if allowed_types and event.event_type not in _expand_allowed_event_types(allowed_types):
                         continue
 
                 try:

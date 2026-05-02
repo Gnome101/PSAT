@@ -52,51 +52,20 @@ def analyses(response: Response) -> list[dict]:
                     contracts_by_address.setdefault(addr_lower, c)
 
         job_ids = [job.id for job in jobs]
+        # Earlier code fetched every job's ``contract_analysis`` artifact body
+        # from object storage just to read ``subject.name`` and ``summary``.
+        # Both were redundant: ``contract_name`` is on the prefetched
+        # ``Contract`` row and ``summary`` is never consumed by the frontend
+        # listing (it's a detail-page field). Reading just artifact NAMES
+        # (no body) keeps the available_artifacts list populated without
+        # the per-job HTTP round-trip — the dominant cost of this endpoint
+        # at production scale.
         artifact_names_by_job: dict[Any, list[str]] = {}
-        # Resolve inline rows in-place; defer storage rows so we can fan out
-        # the HTTP GETs after the DB session is released.
-        inline_resolved: dict[tuple[Any, str], Any] = {}
-        storage_lookups: dict[tuple[Any, str], tuple[str, str | None]] = {}
         if job_ids:
-            for art in session.execute(select(Artifact).where(Artifact.job_id.in_(job_ids))).scalars():
-                artifact_names_by_job.setdefault(art.job_id, []).append(art.name)
-                # contract_flags is no longer fetched: every field the listing
-                # reads from it (is_proxy/proxy_type/implementation) is on
-                # Job/Contract columns above.
-                if art.name == "contract_analysis":
-                    key = (art.job_id, art.name)
-                    if art.storage_key:
-                        storage_lookups[key] = (art.storage_key, art.content_type)
-                    elif art.data is not None:
-                        inline_resolved[key] = art.data
-                    elif art.text_data is not None:
-                        inline_resolved[key] = art.text_data
-
-    # Session closed. Fan out the storage GETs in parallel and decode bodies.
-    # ``get_many`` swallows per-key transport errors and returns ``None`` for
-    # them, so partial bucket failure degrades per-row instead of wiping the
-    # whole response — a non-storage entry still renders.
-    resolved: dict[tuple[Any, str], Any] = dict(inline_resolved)
-    if storage_lookups:
-        client = deps.get_storage_client()
-        if client is None:
-            logger.warning(
-                "/api/analyses: %d artifact(s) reference storage_key but storage is not configured; "
-                "degrading to inline-only response",
-                len(storage_lookups),
-            )
-        else:
-            keys = [sk for sk, _ in storage_lookups.values()]
-            bodies = client.get_many(keys)
-            for cache_key, (storage_key, content_type) in storage_lookups.items():
-                body = bodies.get(storage_key)
-                if body is None:
-                    logger.warning("artifact %s storage read failed for job %s", cache_key[1], cache_key[0])
-                    continue
-                resolved[cache_key] = deps.deserialize_artifact(body, content_type)
-
-    def _value(job_id: Any, name: str) -> Any:
-        return resolved.get((job_id, name))
+            for row in session.execute(
+                select(Artifact.job_id, Artifact.name).where(Artifact.job_id.in_(job_ids))
+            ).all():
+                artifact_names_by_job.setdefault(row[0], []).append(row[1])
 
     def company_for_job(job: Job) -> str | None:
         seen: set[str] = set()
@@ -115,7 +84,6 @@ def analyses(response: Response) -> list[dict]:
     results = []
     for job in jobs:
         run_name = job.name or str(job.id)
-        analysis_artifact = _value(job.id, "contract_analysis")
         request = job.request if isinstance(job.request, dict) else {}
         parent_job_id = request.get("parent_job_id")
         company = company_for_job(job)
@@ -138,25 +106,24 @@ def analyses(response: Response) -> list[dict]:
 
         # Hide proxy entries until the impl is completed — otherwise the
         # listing renders a half-populated card that mutates once the impl
-        # lands. jobs_by_address only carries completed jobs. The impl's
-        # contract_analysis was prefetched above (every job's artifacts go
-        # through the same batch), so the lookup is a dict hit, not an
-        # extra HTTP round-trip.
+        # lands. ``jobs_by_address`` only carries completed jobs.
+        contract_name_source = contract
         if entry["is_proxy"] and entry["implementation_address"]:
             impl_job = jobs_by_address.get(entry["implementation_address"].lower())
             if impl_job is None:
                 continue
-            if not isinstance(analysis_artifact, dict):
-                analysis_artifact = _value(impl_job.id, "contract_analysis")
+            # Always prefer the impl's name over the proxy shell's. Proxy
+            # rows usually carry a generic name like "UUPSProxy" or
+            # "TransparentUpgradeableProxy"; the impl's name is the one
+            # the user actually recognises (e.g. "WithdrawRequestNFT").
+            # Fall back to the proxy's name if the impl Contract row is
+            # missing or unnamed.
+            impl_contract = contracts_by_address.get(entry["implementation_address"].lower())
+            if impl_contract is not None and impl_contract.contract_name:
+                contract_name_source = impl_contract
 
-        if isinstance(analysis_artifact, dict):
-            subject = analysis_artifact.get("subject", {})
-            entry["contract_name"] = subject.get("name", run_name)
-            entry["summary"] = analysis_artifact.get("summary")
-        elif contract and contract.contract_name:
-            # Storage GET missed (transport blip) but we have the name on
-            # the prefetched Contract row — keep the listing populated.
-            entry["contract_name"] = contract.contract_name
+        if contract_name_source and contract_name_source.contract_name:
+            entry["contract_name"] = contract_name_source.contract_name
         results.append(entry)
     return _merge_proxy_impl_entries(results)
 

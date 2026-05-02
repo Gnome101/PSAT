@@ -1256,6 +1256,8 @@ const ALL_EVENT_TYPES = [
   "upgraded", "admin_changed", "beacon_upgraded", "ownership_transferred",
   "paused", "unpaused", "role_granted", "role_revoked",
   "signer_added", "signer_removed", "threshold_changed",
+  "safe_tx_executed", "safe_tx_failed",
+  "safe_module_executed", "safe_module_failed",
   "timelock_scheduled", "timelock_executed", "delay_changed",
   "state_changed_poll",
 ];
@@ -1271,6 +1273,10 @@ const EVENT_TYPE_COLORS = {
   timelock_scheduled: "#3b82f6",
   signer_added: "#3b82f6",
   signer_removed: "#3b82f6",
+  safe_tx_executed: "#22c55e",
+  safe_tx_failed: "#ef4444",
+  safe_module_executed: "#22c55e",
+  safe_module_failed: "#ef4444",
   role_granted: "#f59e0b",
   role_revoked: "#f59e0b",
   threshold_changed: "#f59e0b",
@@ -1447,7 +1453,10 @@ function ProtocolMonitoringPage({ companyName }) {
     if (config.watch_ownership) flags.push("ownership");
     if (config.watch_pause) flags.push("pause");
     if (config.watch_roles) flags.push("roles");
-    if (config.watch_signers) flags.push("signers");
+    // Read both the new and legacy keys so auto-enrolled rows (which
+    // only set watch_safe_signers) and old user data (which set the
+    // historical watch_signers) both light up the chip.
+    if (config.watch_safe_signers || config.watch_signers) flags.push("safe activity");
     if (config.watch_timelock) flags.push("timelock");
     if (config.watch_state) flags.push("state");
     if (flags.length === 0) return <span style={{ color: "#475569" }}>none</span>;

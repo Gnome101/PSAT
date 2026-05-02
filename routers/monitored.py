@@ -125,14 +125,62 @@ def update_monitored_contract(contract_id: str, request: UpdateMonitoredContract
 @router.get("/api/monitored-events")
 def list_monitored_events(
     contract_id: str | None = None,
+    address: str | None = None,
+    chain: str | None = None,
     event_type: str | None = None,
     limit: int = 50,
 ) -> list[dict[str, Any]]:
-    """List all MonitoredEvent rows, optionally filtered."""
+    """List MonitoredEvent rows, optionally filtered.
+
+    Filter modes (apply additively):
+      - ``contract_id``: by MonitoredContract.id (uuid)
+      - ``address`` (+ optional ``chain``): resolves to monitored_contract_id
+        on the fly so the front-end can query by address — useful for
+        rendering a Safe/Timelock 'recent activity' panel without first
+        having to look up the MonitoredContract row.
+      - ``event_type``: filter to a single event_type
+    """
     with deps.SessionLocal() as session:
-        stmt = select(MonitoredEvent).order_by(MonitoredEvent.detected_at.desc()).limit(limit)
+        # Multi-key sort. detected_at desc is the primary axis, but the
+        # column has a now()-default that ties events written in the
+        # same scan pass — so block_number desc disambiguates within a
+        # tie (newer-block-first matches the recency story). id desc
+        # is the final fallback purely for *deterministic* output —
+        # MonitoredEvent.id is a UUIDv4 and carries no insertion or
+        # log-order semantics, but a deterministic tiebreaker beats
+        # exposing arbitrary DB scan order to clients.
+        # If exact log-order ever becomes user-visible (e.g. step #4c
+        # historical backfill rendering each batch CallScheduled
+        # individually), promote log_index from the data JSON to a
+        # real column and sort on it before id.
+        stmt = (
+            select(MonitoredEvent)
+            .order_by(
+                MonitoredEvent.detected_at.desc(),
+                MonitoredEvent.block_number.desc(),
+                MonitoredEvent.id.desc(),
+            )
+            .limit(limit)
+        )
         if contract_id is not None:
             stmt = stmt.where(MonitoredEvent.monitored_contract_id == contract_id)
+        # address and/or chain — resolve to a set of MonitoredContract ids
+        # then narrow events. Either filter alone is supported; together
+        # they intersect at the contract level. Without either, we don't
+        # touch the contracts table.
+        if address is not None or chain is not None:
+            mc_q = select(MonitoredContract.id)
+            if address is not None:
+                mc_q = mc_q.where(MonitoredContract.address == address.lower())
+            if chain is not None:
+                mc_q = mc_q.where(MonitoredContract.chain == chain)
+            mc_ids = session.execute(mc_q).scalars().all()
+            if not mc_ids:
+                # No matching MonitoredContract → no events to return.
+                # Avoids scanning the events table when the answer is
+                # structurally empty.
+                return []
+            stmt = stmt.where(MonitoredEvent.monitored_contract_id.in_(mc_ids))
         if event_type is not None:
             stmt = stmt.where(MonitoredEvent.event_type == event_type)
         events = session.execute(stmt).scalars().all()

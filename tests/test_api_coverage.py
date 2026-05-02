@@ -1998,7 +1998,12 @@ def test_analyses_entry_without_analysis_still_appears(mock_session_cls):
 
 @patch("routers.deps.SessionLocal")
 def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls):
-    """When proxy's contract_analysis is None but impl's exists, proxy entry uses impl's."""
+    """When proxy's Contract row has no name, the proxy entry inherits the
+    impl's Contract.contract_name. Earlier code reached for the impl's
+    contract_analysis artifact body to read subject.name, but the listing
+    no longer fetches artifact bodies — names come from the prefetched
+    Contract rows directly. This regression test now seeds both
+    Contract rows and asserts the impl-name is what surfaces."""
     client = _make_client()
 
     proxy_job_id = uuid.uuid4()
@@ -2028,22 +2033,20 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
         address="0xaaaa",
         chain=None,
         rank_score=None,
-        contract_name=None,
+        contract_name=None,  # missing — should inherit from impl
         is_proxy=True,
         proxy_type="ERC1967",
         implementation="0xbbbb",
     )
-
-    artifacts = [
-        SimpleNamespace(
-            job_id=impl_job.id,
-            name="contract_analysis",
-            storage_key=None,
-            data={"subject": {"name": "ImplName"}, "summary": {"control_model": "ownable"}},
-            text_data=None,
-            content_type=None,
-        ),
-    ]
+    impl_contract = SimpleNamespace(
+        address="0xbbbb",
+        chain=None,
+        rank_score=None,
+        contract_name="ImplName",
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
+    )
 
     call_count = {"n": 0}
 
@@ -2051,11 +2054,16 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
         call_count["n"] += 1
         result = MagicMock()
         if call_count["n"] == 1:
+            # Job listing
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            result.scalars.return_value = iter([proxy_contract])
+            # Contracts prefetch — returns both rows now (was just proxy
+            # before, since the old code didn't need impl's Contract row).
+            result.scalars.return_value = iter([proxy_contract, impl_contract])
         elif call_count["n"] == 3:
-            result.scalars.return_value = iter(artifacts)
+            # Artifact name listing — empty is fine, the test only cares
+            # about the contract_name fallback chain.
+            result.all.return_value = []
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None

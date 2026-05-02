@@ -51,7 +51,7 @@ export function GuardGlyph({ kind, accent, title }) {
     );
   }
 
-  if (kind === "contract" || kind === "proxy_admin") {
+  if (kind === "contract" || kind === "proxy_admin" || kind === "access_control_hint") {
     return (
       <svg {...common}>
         <rect x="2.6" y="3" width="10.8" height="10" rx="1.8" stroke={accent} strokeWidth="1.4" fill={`${accent}16`} />

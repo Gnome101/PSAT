@@ -86,7 +86,10 @@ const MONITOR_FLAGS = [
   { key: "watch_ownership", label: "Ownership" },
   { key: "watch_pause", label: "Pause" },
   { key: "watch_roles", label: "Roles" },
-  { key: "watch_signers", label: "Signers" },
+  // Read both `watch_safe_signers` (auto-enrolled rows + new editor
+  // saves) and `watch_signers` (legacy alias) so the chip lights up
+  // either way. ``aliases`` is consumed by ``monitoringChips``.
+  { key: "watch_safe_signers", aliases: ["watch_signers"], label: "Safe activity" },
   { key: "watch_timelock", label: "Timelock" },
   { key: "watch_state", label: "State" },
 ];
@@ -118,9 +121,20 @@ const MONITOR_ALERT_GROUPS = [
   },
   {
     key: "signers",
-    label: "Signers",
-    flags: ["watch_signers"],
-    eventTypes: ["signer_added", "signer_removed", "threshold_changed"],
+    label: "Safe activity",
+    // Backend's _should_watch maps both signer changes AND Safe-tx
+    // executions onto `watch_safe_signers` — the historical UI-only
+    // alias `watch_signers` stays for backward compat with old alerts.
+    flags: ["watch_safe_signers", "watch_signers"],
+    eventTypes: [
+      "signer_added",
+      "signer_removed",
+      "threshold_changed",
+      "safe_tx_executed",
+      "safe_tx_failed",
+      "safe_module_executed",
+      "safe_module_failed",
+    ],
   },
   {
     key: "timelock",
@@ -357,6 +371,18 @@ function collectPrincipals(fn, companyData) {
   return { direct, indirect };
 }
 
+// OpenZeppelin AccessControl role-management selectors. The static analyzer
+// can't bind these to a concrete role-admin holder set because the role
+// argument is a runtime parameter (see `services/static/contract_analysis_pipeline/summaries.py`
+// — `_build_method_to_role_map` only records bindings for concrete role
+// constants), so direct-caller resolution comes back empty. Surface a hint
+// in the UI so the user knows it's role-gated, not unguarded.
+const ACCESS_CONTROL_HINTS = {
+  "0x2f2ff15d": { label: "RoleAdmin", sublabel: "guards: getRoleAdmin(role)" },
+  "0xd547741f": { label: "RoleAdmin", sublabel: "guards: getRoleAdmin(role)" },
+  "0x36568abe": { label: "Self", sublabel: "renounces own role" },
+};
+
 function guardSummary(fn, companyData) {
   const { direct, indirect } = collectPrincipals(fn, companyData);
   // `principals` stays as the direct list for backward compatibility — every
@@ -365,6 +391,14 @@ function guardSummary(fn, companyData) {
   const principals = direct;
 
   if (!direct.length) {
+    const acHint = ACCESS_CONTROL_HINTS[String(fn.selector || "").toLowerCase()];
+    if (acHint && !fn.authority_public) {
+      // The label text + sublabel already differentiate role-admin vs
+      // self-renounce; sharing the "many" accent is fine here since
+      // neither resolves to a concrete principal we'd colour by type.
+      const accent = TYPE_META.many.accent;
+      return { kind: "access_control_hint", label: acHint.label, sublabel: acHint.sublabel, accent, principals, indirect };
+    }
     const meta = TYPE_META[fn.authority_public ? "open" : "unknown"];
     return {
       kind: fn.authority_public ? "open" : "unknown",
@@ -399,7 +433,14 @@ function guardSummary(fn, companyData) {
   } else if (principal.resolvedType === "timelock" && delay) {
     sublabel = delay;
   } else if (principal.resolvedType === "contract") {
-    sublabel = principal.label || "contract";
+    // Prefer the contract's own name from the protocol inventory over the
+    // generic word "contract" — fetchNextKeyIndex resolving to "AuctionManager"
+    // tells the user something; "contract" doesn't.
+    const targetAddr = principal.address?.toLowerCase();
+    const named = (companyData?.contracts || []).find(
+      (c) => c.address?.toLowerCase() === targetAddr,
+    );
+    sublabel = principal.label || named?.name || "contract";
   }
 
   return {
@@ -719,6 +760,14 @@ function ContractMachine({
         </div>
         <div className="ps-machine-badges">
           <span className="ps-badge" style={{ "--badge-accent": (ROLE_META[machine.role] || ROLE_META.utility).color }}>{(ROLE_META[machine.role] || ROLE_META.utility).label.replace(/s$/, "")}</span>
+          {/* Deposit-destination call-out for value_handler contracts that
+              actually hold funds. The role badge above is jargon — this one
+              answers the user-facing question "where does my money go?"
+              directly. Gated on total_usd>0 so we don't mislabel zero-TVL
+              receivers (e.g. a router that pulls then forwards). */}
+          {machine.role === "value_handler" && Number(machine.total_usd) > 0 ? (
+            <span className="ps-badge" style={{ "--badge-accent": "#22c55e" }}>Deposit destination</span>
+          ) : null}
           {machine.is_proxy ? <span className="ps-badge" style={{ "--badge-accent": "#9a8a6e" }}>{machine.proxy_type || "proxy"}</span> : null}
           {machine.upgrade_count != null ? <span className="ps-badge" style={{ "--badge-accent": "#8b92a8" }}>{machine.upgrade_count} upgrades</span> : null}
           <span className="ps-badge" style={{ "--badge-accent": "#6b7590" }}>{machine.totalFunctions} functions</span>
@@ -1372,8 +1421,85 @@ function InspectorCard({ selected, onNavigate }) {
   );
 }
 
+// Pretty event-type label for the activity section. Falls back to the
+// raw underscore-separated form if we get an event_type the watcher
+// emits but the UI hasn't taught itself about yet.
+const EVENT_LABELS = {
+  signer_added: "Signer added",
+  signer_removed: "Signer removed",
+  threshold_changed: "Threshold changed",
+  safe_tx_executed: "Tx executed",
+  safe_tx_failed: "Tx failed",
+  safe_module_executed: "Module call",
+  safe_module_failed: "Module call failed",
+  timelock_scheduled: "Queued",
+  timelock_executed: "Executed",
+  delay_changed: "Delay changed",
+  ownership_transferred: "Owner transferred",
+  paused: "Paused",
+  unpaused: "Unpaused",
+  role_granted: "Role granted",
+  role_revoked: "Role revoked",
+};
+const EVENT_ACCENTS = {
+  signer_added: "#3b82f6",
+  signer_removed: "#3b82f6",
+  threshold_changed: "#f59e0b",
+  safe_tx_executed: "#22c55e",
+  safe_tx_failed: "#ef4444",
+  safe_module_executed: "#22c55e",
+  safe_module_failed: "#ef4444",
+  timelock_scheduled: "#3b82f6",
+  timelock_executed: "#f59e0b",
+  delay_changed: "#f59e0b",
+  ownership_transferred: "#ef4444",
+  paused: "#ef4444",
+  unpaused: "#ef4444",
+  role_granted: "#f59e0b",
+  role_revoked: "#f59e0b",
+};
+
+function formatEventAgo(detectedAt) {
+  if (!detectedAt) return null;
+  const d = new Date(detectedAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const seconds = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 30 * 86400) return `${Math.floor(seconds / 86400)}d ago`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function PrincipalDetail({ principal, machines, onNavigate, onFocusContract, addressLabels, refreshAddressLabels }) {
   const [focusIdx, setFocusIdx] = useState(0);
+  // Recent on-chain activity for safes/timelocks. Sourced from
+  // /api/monitored-events keyed by address — the unified watcher writes
+  // a MonitoredEvent row for every CallScheduled/CallExecuted, signer
+  // change, and Safe-tx execution it sees. Lazy-loaded only when a
+  // safe or timelock is selected so we don't hit the endpoint for
+  // every principal click on contracts/EOAs/etc.
+  const [activity, setActivity] = useState(null);
+  const [activityError, setActivityError] = useState(null);
+  const principalAddress = principal?.address?.toLowerCase();
+  const principalType = principal?.type;
+  const wantsActivity = principalType === "safe" || principalType === "timelock";
+
+  useEffect(() => {
+    if (!wantsActivity || !principalAddress) {
+      setActivity(null);
+      setActivityError(null);
+      return;
+    }
+    let cancelled = false;
+    setActivity(null);
+    setActivityError(null);
+    api(`/api/monitored-events?address=${encodeURIComponent(principalAddress)}&limit=15`)
+      .then((rows) => { if (!cancelled) setActivity(Array.isArray(rows) ? rows : []); })
+      .catch((e) => { if (!cancelled) setActivityError(e.message || String(e)); });
+    return () => { cancelled = true; };
+  }, [wantsActivity, principalAddress]);
+
   if (!principal) return null;
   const type = TYPE_META[principal.type] || TYPE_META.unknown;
   const controlled = (principal.controls || []);
@@ -1480,6 +1606,44 @@ function PrincipalDetail({ principal, machines, onNavigate, onFocusContract, add
           ))}
         </section>
       )}
+
+      {/* Recent on-chain activity. Pulls the last 15 MonitoredEvent rows
+       * for this address — the unified watcher writes one per
+       * CallScheduled/CallExecuted, signer change, and Safe tx
+       * execution it sees. Empty state explains what the user would
+       * see once we get historical backfill working (#4c). */}
+      {wantsActivity ? (
+        <section className="ps-principal-section">
+          <div className="ps-principal-section-hdr">Recent activity</div>
+          {activityError ? (
+            <div className="ps-inspector-empty">Activity lookup failed: {activityError}</div>
+          ) : activity == null ? (
+            <div className="ps-inspector-empty">Loading activity…</div>
+          ) : activity.length === 0 ? (
+            <div className="ps-inspector-empty">
+              No on-chain activity recorded yet. The watcher captures events going forward from enrollment;
+              historical events before then aren't backfilled yet.
+            </div>
+          ) : (
+            <div className="ps-activity-list">
+              {activity.map((evt) => {
+                const label = EVENT_LABELS[evt.event_type] || evt.event_type.replace(/_/g, " ");
+                const accent = EVENT_ACCENTS[evt.event_type] || "#94a3b8";
+                const ago = formatEventAgo(evt.detected_at);
+                const txShort = evt.tx_hash ? `${evt.tx_hash.slice(0, 10)}…${evt.tx_hash.slice(-4)}` : null;
+                return (
+                  <div key={evt.id} className="ps-activity-row">
+                    <span className="ps-badge" style={{ "--badge-accent": accent }}>{label}</span>
+                    {ago ? <span className="ps-activity-ago">{ago}</span> : null}
+                    {evt.block_number ? <span className="ps-activity-block">block {evt.block_number.toLocaleString()}</span> : null}
+                    {txShort ? <span className="ps-activity-tx mono">{txShort}</span> : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : null}
     </article>
   );
 }
@@ -2178,11 +2342,10 @@ function DetailEmptyState({ companyName, companyData, coverageData, onExampleCli
 function SidebarTabs({ mode, onSetMode, auditCount, showDetail = true }) {
   return (
     <div className="ps-sidebar-tabs">
-      {/* Detail tab is hidden in embedded mode (the slim surface on the
-          /company/{name} overview page) — it's not very useful at narrow
-          widths since the function lanes don't fit, and the user can
-          open the fullscreen view to access it. Shown in the dedicated
-          /company/{name}/surface route. */}
+      {/* showDetail is on by default in both embedded and fullscreen
+          modes — clicking a contract anywhere is expected to surface the
+          function-lane view. Kept as an opt-out prop so a future caller
+          that needs a chrome-only sidebar can still suppress the tab. */}
       {showDetail && (
         <button
           className={`ps-sidebar-tab ${mode === "detail" ? "active" : ""}`}
@@ -2415,7 +2578,10 @@ function UpgradesSidebarPanel({ machine, companyName, machines, onSelect, cache,
 }
 
 function monitoringChips(config) {
-  const active = MONITOR_FLAGS.filter((flag) => config?.[flag.key]);
+  const active = MONITOR_FLAGS.filter((flag) => {
+    if (config?.[flag.key]) return true;
+    return (flag.aliases || []).some((alias) => config?.[alias]);
+  });
   if (!active.length) return <span className="ps-monitor-muted">none</span>;
   return active.map((flag) => (
     <span key={flag.key} className="ps-monitor-chip">{flag.label}</span>
@@ -4225,9 +4391,8 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
   // Right sidebar mode: "detail" (default), "agent", "audits",
   // "monitoring", or "upgrades".
   // Default to Agent in both embedded and fullscreen views — the chat
-  // interface is the most useful entry point on first load. Embedded
-  // mode still hides the Detail tab option (function lanes don't fit
-  // in the narrow sidebar), but Agent works fine at any width.
+  // interface is the most useful entry point on first load. A canvas
+  // click switches to Detail in both modes (handlers below).
   const [sidebarMode, setSidebarMode] = useState("agent");
   // Per-proxy upgrade history cache, keyed by job_id. Server's
   // /api/company/{name} returns upgrade_count=null for protocols whose
@@ -4543,6 +4708,13 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
       setPrincipalTour(null);
     }
 
+    // Surface the navigation result in the Detail panel. Without this,
+    // clicking a guard chip from the Agent tab silently mutates state
+    // the user can't see — looks like "nothing happened" until they
+    // manually click Detail. The chip click is an explicit drill-in
+    // request, so swapping to Detail is the right behavior.
+    setSidebarMode("detail");
+
     if (target.type === "contract") {
       const machine = machines.find((m) => m.address?.toLowerCase() === target.address?.toLowerCase());
       if (machine) {
@@ -4747,15 +4919,14 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
             onSelectMachine={(m) => {
               // Auto-switch to Detail when the user clicks a contract
               // ON THE CANVAS so the function lanes are immediately
-              // visible. Skipped in embedded mode (Detail tab is
-              // hidden there). Agent-link clicks go through
+              // visible. Agent-link clicks go through
               // handleSelectMachine directly (not this wrapper), so
               // they don't trigger this and the user stays in the chat.
-              if (m && !embedded && sidebarMode !== "detail") setSidebarMode("detail");
+              if (m && sidebarMode !== "detail") setSidebarMode("detail");
               handleSelectMachine(m);
             }}
             onSelectPrincipal={(p) => {
-              if (p && !embedded && sidebarMode !== "detail") setSidebarMode("detail");
+              if (p && sidebarMode !== "detail") setSidebarMode("detail");
               handleSelectPrincipal(p);
             }}
             principalTour={principalTour}
@@ -4789,7 +4960,7 @@ export default function ProtocolSurface({ companyName, initialData = null, embed
             mode={sidebarMode}
             onSetMode={setSidebarMode}
             auditCount={coverageData?.audit_count}
-            showDetail={!embedded}
+            showDetail
           />
           {sidebarMode === "audits" && (
             <AuditsListPanel
