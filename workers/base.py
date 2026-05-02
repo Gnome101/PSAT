@@ -18,6 +18,7 @@ from db.models import Job, JobStage, JobStatus, SessionLocal
 from db.queue import (
     advance_job,
     claim_job,
+    claim_jobs,
     fail_job,
     reclaim_stuck_jobs,
     store_artifact,
@@ -139,6 +140,27 @@ class BaseWorker:
             reclaim_stuck_jobs(session)
             self._last_reclaim_at = now
         return claim_job(session, self.stage, self.worker_id)
+
+    def _claim_jobs_batch(self, session: Session, limit: int) -> list[Job]:
+        """Fill the executor by repeatedly calling ``_claim_job`` up to *limit*.
+
+        Default implementation iterates ``_claim_job`` so subclasses that
+        override the per-claim path (coverage, selection — readiness-gated)
+        keep all of their gating logic untouched. The win versus the prior
+        single-claim-per-poll loop is that we fill all *limit* slots in one
+        tight burst instead of waiting ``poll_interval`` between claims, so a
+        worker with ``PSAT_JOB_CONCURRENCY=4`` reaches steady-state K=4 within
+        a few milliseconds of starting up rather than ``4*poll_interval`` later.
+        Stages that want the further "one SELECT for K rows" optimisation
+        override this to call :func:`claim_jobs` directly.
+        """
+        jobs: list[Job] = []
+        for _ in range(limit):
+            job = self._claim_job(session)
+            if job is None:
+                break
+            jobs.append(job)
+        return jobs
 
     def _recover_stale_jobs(self, session: Session) -> None:
         """Requeue jobs stuck in 'processing' for longer than STALE_JOB_TIMEOUT."""
@@ -371,27 +393,26 @@ class BaseWorker:
                 wait(self._inflight, timeout=self.poll_interval, return_when=FIRST_COMPLETED)
                 continue
 
+            free_slots = self._job_concurrency - len(self._inflight)
             claim_session = SessionLocal()
-            job_to_dispatch: Job | None = None
-            job_id_for_dispatch = None
+            claimed_ids: list = []
             try:
                 recovery_counter += 1
                 if recovery_counter >= 30:
                     recovery_counter = 0
                     self._recover_stale_jobs(claim_session)
 
-                job_to_dispatch = self._claim_job(claim_session)
-                if job_to_dispatch is not None:
-                    # Capture the id before the session closes — the ORM
-                    # object will be expired/detached on the dispatcher
-                    # thread and we rebuild it via session.get there.
-                    job_id_for_dispatch = job_to_dispatch.id
+                claimed = self._claim_jobs_batch(claim_session, free_slots)
+                # Capture ids before the session closes — the ORM objects
+                # will be expired/detached on the dispatcher threads, and
+                # we rebuild them via ``session.get`` inside ``_run_one_job``.
+                claimed_ids = [job.id for job in claimed]
             except Exception:
                 logger.exception("Worker %s encountered error in claim loop", self.worker_id)
             finally:
                 claim_session.close()
 
-            if job_id_for_dispatch is None:
+            if not claimed_ids:
                 # Nothing to claim — sleep just enough to avoid hammering
                 # Postgres while still letting in-flight futures progress.
                 if self._inflight:
@@ -400,8 +421,9 @@ class BaseWorker:
                     time.sleep(self.poll_interval)
                 continue
 
-            future = self._job_pool.submit(self._run_one_job, job_id_for_dispatch)
-            self._inflight.add(future)
+            for job_id_for_dispatch in claimed_ids:
+                future = self._job_pool.submit(self._run_one_job, job_id_for_dispatch)
+                self._inflight.add(future)
 
         # Drain on shutdown so in-flight jobs land cleanly. Anything still
         # running past the timeout is logged; the cross-worker sweep

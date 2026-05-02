@@ -328,6 +328,38 @@ def claim_job(session: Session, target_stage: JobStage, worker_id: str) -> Job |
     return job
 
 
+def claim_jobs(session: Session, target_stage: JobStage, worker_id: str, limit: int) -> list[Job]:
+    """Claim up to *limit* available jobs in one shot.
+
+    K>1 dispatchers call this so the claim cycle isn't the throughput
+    bottleneck — the prior single-row ``claim_job`` meant a worker with
+    ``PSAT_JOB_CONCURRENCY=4`` could only feed the executor one new job
+    per poll cycle (~2s), serializing the fleet against the claim loop
+    instead of actual work. Returns an empty list when nothing is
+    available; SKIP LOCKED still keeps sibling workers from blocking.
+    """
+    if limit <= 1:
+        single = claim_job(session, target_stage, worker_id)
+        return [single] if single is not None else []
+    stmt = (
+        select(Job)
+        .where(Job.stage == target_stage, Job.status == JobStatus.queued)
+        .order_by(Job.created_at)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+    )
+    jobs = list(session.execute(stmt).scalars().all())
+    if not jobs:
+        return []
+    for job in jobs:
+        job.status = JobStatus.processing
+        job.worker_id = worker_id
+    session.commit()
+    for job in jobs:
+        session.refresh(job)
+    return jobs
+
+
 def update_job_detail(session: Session, job_id: Any, detail: str) -> None:
     """Update the human-readable progress message on a job."""
     job = session.get(Job, job_id)
