@@ -258,3 +258,86 @@ def test_two_requires_yields_two_gates(tmp_path):
     gates = RevertDetector(fn).run()
     require_count = sum(1 for g in gates if g.kind == "require")
     assert require_count == 2, f"expected 2 require gates, got {require_count}: {_gate_kinds(gates)}"
+
+
+# ---------------------------------------------------------------------------
+# Case 6: try/catch revert
+# ---------------------------------------------------------------------------
+
+
+def test_try_catch_with_revert_in_catch_emits_opaque_gate(tmp_path):
+    """``try x.foo() {} catch { revert(); }`` reverts iff the
+    external call reverts. We can't classify the gate structurally
+    without recursing into the called contract, so we emit an
+    opaque gate flagged ``opaque_try_catch``. Without this the
+    function looks unguarded — strictly worse than reporting
+    'we know there's a gate but can't characterize it.'"""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface Helper { function helper() external; }
+        contract C {
+            Helper public h;
+            constructor(address h_) { h = Helper(h_); }
+            function caller() external {
+                try h.helper() {} catch {
+                    revert("oops");
+                }
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "caller")
+    gates = RevertDetector(fn).run()
+    assert len(gates) == 1
+    g = gates[0]
+    assert g.kind == "opaque"
+    assert g.unsupported_reason == "opaque_try_catch"
+
+
+def test_try_catch_without_revert_in_catch_emits_no_gate(tmp_path):
+    """``try x.foo() {} catch {}`` swallows any revert — the
+    function is unguarded by the try/catch. Verifies we don't
+    over-emit gates when the catch is empty."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface Helper { function helper() external; }
+        contract C {
+            Helper public h;
+            constructor(address h_) { h = Helper(h_); }
+            function caller() external {
+                try h.helper() {} catch {}
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "caller")
+    gates = RevertDetector(fn).run()
+    assert gates == []
+
+
+def test_try_catch_with_require_in_catch_also_emits_gate(tmp_path):
+    """``catch { require(false); }`` is the same shape as a bare
+    revert — also emits an opaque gate."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface Helper { function helper() external; }
+        contract C {
+            Helper public h;
+            constructor(address h_) { h = Helper(h_); }
+            function caller() external {
+                try h.helper() {} catch {
+                    require(false, "oops");
+                }
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "caller")
+    gates = RevertDetector(fn).run()
+    assert any(g.kind == "opaque" and g.unsupported_reason == "opaque_try_catch" for g in gates)

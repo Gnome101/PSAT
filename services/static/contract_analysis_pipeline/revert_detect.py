@@ -210,6 +210,32 @@ class RevertDetector:
                 self._gates.append(self._gate_from_solidity_call(ir, node, "assert", container))
                 return
 
+        # Case 6: try/catch with revert in the catch block. The
+        # function reverts iff the try-body call reverts, which is
+        # an opaque condition on the called contract's behavior.
+        # We can't classify the gate structurally without recursing
+        # into the called function, so emit an opaque gate that
+        # downstream sees as ``unsupported``. Without this the
+        # catch-revert is silently dropped and the function looks
+        # unguarded — strictly worse than reporting "we know there's
+        # a gate but can't characterize it."
+        if getattr(node, "type", None) == getattr(NodeType, "TRY", -999):
+            if self._try_catch_has_revert(node):
+                self._gates.append(
+                    RevertGate(
+                        kind="opaque",
+                        condition_value=None,
+                        polarity="allowed_when_true",
+                        node=node,
+                        containing_function=container,
+                        call_chain=list(self._call_chain_irs),
+                        expression_text=str(node.expression) if node.expression else "<try/catch>",
+                        basis=["try/catch with revert in catch"],
+                        unsupported_reason="opaque_try_catch",
+                    )
+                )
+                return
+
         # Cross-function revert detection: recurse into InternalCall /
         # LibraryCall callees. The OZ AccessControl ``onlyRole`` modifier
         # body is just ``_checkRole(role); _;`` — the actual revert
@@ -334,6 +360,49 @@ class RevertDetector:
         # less common false branch (typical pattern is `if (bad)
         # revert`, so true is the bad branch).
         return "allowed_when_false"
+
+    def _try_catch_has_revert(self, try_node: Any) -> bool:
+        """Walk descendants reachable from a TRY node through CATCH
+        successors and check whether any of them contains a revert
+        (SolidityCall(revert) or a require/assert that would always
+        fail). Bounded BFS with a visited set to handle CFG cycles.
+
+        We only scan the catch arm — the success arm of a try is
+        the call's lvalue path and doesn't itself revert."""
+        try:
+            catch_type = NodeType.CATCH  # type: ignore[attr-defined]
+        except AttributeError:
+            return False
+        # First descend into the CATCH siblings; the TRY node's sons
+        # include both the call's success path (NEW_VARIABLE / IF /
+        # ENDIF) and the catch arm — Slither alternates per
+        # solidity version, so we walk every successor and only mark
+        # nodes typed CATCH (or descendants of CATCH) as the catch arm.
+        seen: set[int] = set()
+        worklist: list[tuple[Any, bool]] = [(s, False) for s in (getattr(try_node, "sons", []) or [])]
+        while worklist:
+            node, in_catch = worklist.pop()
+            node_id = id(node)
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            if getattr(node, "type", None) == catch_type:
+                in_catch = True
+            if in_catch:
+                # Direct revert IR in the catch body.
+                for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
+                    if _ir_is_solidity_revert(ir):
+                        return True
+                    # require/assert with literal-false condition
+                    # wrapped inside the catch counts too — rare but
+                    # cheap to catch.
+                    if _ir_is_require(ir) or _ir_is_assert(ir):
+                        return True
+                # Bound the BFS — we don't follow successors past the
+                # immediate catch body to avoid mistaking a downstream
+                # revert (after the try/catch finishes) as the catch's.
+            worklist.extend((s, in_catch) for s in (getattr(node, "sons", []) or []))
+        return False
 
     def _node_has_assembly_revert(self, node: Any) -> bool:
         """Heuristic: a node containing assembly that ends in revert.
