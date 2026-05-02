@@ -577,20 +577,48 @@ def store_source_files(session: Session, job_id: Any, files: dict[str, str]) -> 
         session.commit()
         return
 
-    uploaded_keys: list[str] = []
-    try:
-        entries: list[tuple[str, str]] = []
-        for path, content in files.items():
-            key = source_file_key(job_id, path)
-            client.put(
-                key,
-                content.encode("utf-8"),
-                "text/plain; charset=utf-8",
-                metadata={"path": path, "job_id": str(job_id)},
-            )
-            uploaded_keys.append(key)
-            entries.append((path, key))
+    # Fan out the per-file uploads — Etherscan-verified contracts often have
+    # 30-100 source files and the prior sequential loop was paying one S3/MinIO
+    # RTT per file on the static-stage critical path. Threading-only: each
+    # ``client.put`` is an independent HTTP request to object storage with no
+    # shared session state.
+    from utils.concurrency import parallel_map
 
+    items = list(files.items())
+
+    def _upload(item: tuple[str, str]) -> tuple[str, str]:
+        path, content = item
+        key = source_file_key(job_id, path)
+        client.put(
+            key,
+            content.encode("utf-8"),
+            "text/plain; charset=utf-8",
+            metadata={"path": path, "job_id": str(job_id)},
+        )
+        return path, key
+
+    upload_results = parallel_map(_upload, items)
+    entries: list[tuple[str, str]] = []
+    uploaded_keys: list[str] = []
+    failure: BaseException | None = None
+    for _item, outcome in upload_results:
+        if isinstance(outcome, BaseException):
+            if failure is None:
+                failure = outcome
+            continue
+        path, key = outcome  # type: ignore[misc]
+        entries.append((path, key))
+        uploaded_keys.append(key)
+
+    if failure is not None:
+        for key in uploaded_keys:
+            try:
+                client.delete(key)
+            except StorageError:
+                logger.warning("Failed to clean up orphan source file object %s", key)
+        raise failure
+
+    try:
         # All uploads succeeded — swap DB rows atomically.
         session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
         for path, key in entries:
@@ -612,18 +640,40 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
     rows = session.execute(stmt).scalars().all()
     out: dict[str, str] = {}
     client = get_storage_client()
+
+    storage_rows: list[tuple[str, str]] = []
     for row in rows:
         if row.storage_key:
             if client is None:
                 raise RuntimeError(
                     f"SourceFile {row.path} on job {row.job_id} has storage_key but storage is not configured"
                 )
-            try:
-                out[row.path] = client.get(row.storage_key).decode("utf-8")
-            except StorageKeyMissing:
-                continue
+            storage_rows.append((row.path, row.storage_key))
         elif row.content is not None:
             out[row.path] = row.content
+
+    if not storage_rows:
+        return out
+
+    # Fan out the storage GETs the same way ``store_source_files`` fans out
+    # the PUTs — these blocked the static + resolution + policy stages on
+    # 30-100 sequential MinIO/S3 RTTs each.
+    from utils.concurrency import parallel_map
+
+    def _fetch(item: tuple[str, str]) -> tuple[str, str | None]:
+        path, key = item
+        try:
+            return path, client.get(key).decode("utf-8")
+        except StorageKeyMissing:
+            return path, None
+
+    fetch_results = parallel_map(_fetch, storage_rows)
+    for _item, outcome in fetch_results:
+        if isinstance(outcome, BaseException):
+            raise outcome
+        path, content = outcome  # type: ignore[misc]
+        if content is not None:
+            out[path] = content
     return out
 
 
