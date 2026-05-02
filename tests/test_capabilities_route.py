@@ -174,6 +174,111 @@ def test_capabilities_chain_id_query_param(api_client, db_session):
 
 
 @requires_postgres
+def test_capabilities_response_is_cached(api_client, db_session, monkeypatch):
+    """Repeat hits within the TTL window short-circuit the
+    resolver — proven by counting resolve_contract_capabilities
+    invocations across two requests."""
+    import api as api_module
+    from services.resolution import capability_resolver as resolver_mod
+
+    address = "0x" + uuid.uuid4().hex[:8] + "ca" * 16
+    _seed_completed_job_with_artifact(
+        db_session, address=address, predicate_trees=_equality_leaf_artifact()
+    )
+
+    # Empty the cache so the test starts clean (other tests may
+    # have warmed it).
+    api_module._capabilities_cache.clear()
+    monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 60.0)
+
+    calls = {"n": 0}
+    original = resolver_mod.resolve_contract_capabilities
+
+    def _counting(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(resolver_mod, "resolve_contract_capabilities", _counting)
+    # The api route imports at handler time, so patch its reference too.
+    monkeypatch.setattr(
+        "api.SessionLocal",
+        api_module.SessionLocal,  # no-op; ensures import path stable
+        raising=False,
+    )
+
+    r1 = api_client.get(f"/api/contract/{address}/capabilities")
+    r2 = api_client.get(f"/api/contract/{address}/capabilities")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r1.json() == r2.json()
+    # Resolver invoked once across the two requests (second was a
+    # cache hit).
+    assert calls["n"] == 1
+
+
+@requires_postgres
+def test_capabilities_cache_ttl_disabled_when_zero(api_client, db_session, monkeypatch):
+    """``PSAT_CAPABILITIES_CACHE_TTL_S=0`` (or default-overridden
+    to 0) disables caching entirely — every request runs the
+    resolver fresh."""
+    import api as api_module
+    from services.resolution import capability_resolver as resolver_mod
+
+    address = "0x" + uuid.uuid4().hex[:8] + "cb" * 16
+    _seed_completed_job_with_artifact(
+        db_session, address=address, predicate_trees=_equality_leaf_artifact()
+    )
+
+    api_module._capabilities_cache.clear()
+    monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)
+
+    calls = {"n": 0}
+    original = resolver_mod.resolve_contract_capabilities
+
+    def _counting(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(resolver_mod, "resolve_contract_capabilities", _counting)
+
+    api_client.get(f"/api/contract/{address}/capabilities")
+    api_client.get(f"/api/contract/{address}/capabilities")
+    assert calls["n"] == 2  # both requests hit the resolver
+
+
+@requires_postgres
+def test_capabilities_cache_keyed_on_block_and_chain(api_client, db_session, monkeypatch):
+    """Different ``block`` or ``chain_id`` parameters cache
+    independently — no cross-contamination between e.g. mainnet
+    and polygon, or between point-in-time queries."""
+    import api as api_module
+    from services.resolution import capability_resolver as resolver_mod
+
+    address = "0x" + uuid.uuid4().hex[:8] + "cc" * 16
+    _seed_completed_job_with_artifact(
+        db_session, address=address, predicate_trees=_equality_leaf_artifact()
+    )
+
+    api_module._capabilities_cache.clear()
+    monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 60.0)
+
+    calls = {"n": 0}
+    original = resolver_mod.resolve_contract_capabilities
+
+    def _counting(*args, **kwargs):
+        calls["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(resolver_mod, "resolve_contract_capabilities", _counting)
+
+    api_client.get(f"/api/contract/{address}/capabilities")  # default chain=1, block=None
+    api_client.get(f"/api/contract/{address}/capabilities?chain_id=137")
+    api_client.get(f"/api/contract/{address}/capabilities?block=18000000")
+    # Three distinct keys -> three resolver calls.
+    assert calls["n"] == 3
+
+
+@requires_postgres
 def test_capabilities_route_is_not_admin_gated(api_client, db_session):
     """Verify no X-PSAT-Admin-Key header is required — the route
     is read-only / idempotent so anyone can hit it. Pinned because

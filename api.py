@@ -3761,6 +3761,41 @@ def probe_contract_membership(address: str, req: _ProbeMembershipRequest) -> dic
         )
 
 
+# In-process TTL cache for /api/contract/{addr}/capabilities. Per
+# the v4 plan §15 ("Response cache 60 blocks") — at 12s/block on
+# mainnet that's ~12 minutes; we accept seconds for chain-agnostic
+# simplicity. PSAT_CAPABILITIES_CACHE_TTL_S overrides; 0 disables.
+# Each worker process has its own cache; that's fine — the resolver
+# is read-only and the cache is best-effort.
+_CAPABILITIES_CACHE_TTL_S = float(
+    os.environ.get("PSAT_CAPABILITIES_CACHE_TTL_S", "60")
+)
+_capabilities_cache: dict[tuple[str, int, int | None], tuple[float, dict[str, Any]]] = {}
+
+
+def _capabilities_cache_get(key: tuple[str, int, int | None]) -> dict[str, Any] | None:
+    if _CAPABILITIES_CACHE_TTL_S <= 0:
+        return None
+    import time as _time
+
+    entry = _capabilities_cache.get(key)
+    if entry is None:
+        return None
+    expires_at, value = entry
+    if expires_at < _time.time():
+        _capabilities_cache.pop(key, None)
+        return None
+    return value
+
+
+def _capabilities_cache_put(key: tuple[str, int, int | None], value: dict[str, Any]) -> None:
+    if _CAPABILITIES_CACHE_TTL_S <= 0:
+        return
+    import time as _time
+
+    _capabilities_cache[key] = (_time.time() + _CAPABILITIES_CACHE_TTL_S, value)
+
+
 @app.get("/api/contract/{address}/capabilities")
 def get_contract_capabilities(
     address: str,
@@ -3801,6 +3836,11 @@ def get_contract_capabilities(
     from services.resolution.capability_resolver import resolve_contract_capabilities
 
     addr = _normalize_address_or_400(address)
+    cache_key = (addr, chain_id, block)
+    cached = _capabilities_cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     with SessionLocal() as session:
         capabilities = resolve_contract_capabilities(
             session, address=addr, chain_id=chain_id, block=block
@@ -3814,12 +3854,14 @@ def get_contract_capabilities(
                 "back to /api/company/* or /api/jobs?address=..."
             ),
         )
-    return {
+    response = {
         "contract_address": addr,
         "chain_id": chain_id,
         "block": block,
         "capabilities": capabilities,
     }
+    _capabilities_cache_put(cache_key, response)
+    return response
 
 
 @app.get(
