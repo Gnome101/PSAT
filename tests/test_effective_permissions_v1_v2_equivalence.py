@@ -289,6 +289,117 @@ contract C {
 }
 """
 
+# OZ AC multi-role — three functions each gated by a different
+# role constant. v1 and v2 should agree per-function: each gets
+# a single mapping_membership predicate with controller_source=
+# '_roles' (the storage_var). This pins that the per-function shim
+# emit doesn't accidentally cross-pollinate role data between
+# functions.
+_OZ_AC_MULTI_ROLE = """
+pragma solidity ^0.8.19;
+contract C {
+    mapping(bytes32 => mapping(address => bool)) private _roles;
+    bytes32 public constant MINTER = keccak256("MINTER");
+    bytes32 public constant BURNER = keccak256("BURNER");
+    bytes32 public constant ADMIN = keccak256("ADMIN");
+    uint256 public x;
+    function mint(uint256 v) external {
+        require(_roles[MINTER][msg.sender]);
+        x = x + v;
+    }
+    function burn(uint256 v) external {
+        require(_roles[BURNER][msg.sender]);
+        x = x - v;
+    }
+    function setX(uint256 v) external {
+        require(_roles[ADMIN][msg.sender]);
+        x = v;
+    }
+}
+"""
+
+# OZ AC cross-fn helper (the EtherFiTimelock case) — onlyRole(role)
+# modifier dispatches to _checkRole(role) which contains the
+# revert. v1 and v2 shim emit byte-identical mapping_membership
+# leaves with controller_source='_roles' (v1 via name-heuristic
+# recognizing onlyRole, v2 via cross-fn revert detection +
+# caller-side ParameterBindingEnv + storage_var fallback). This
+# pins the cross-fn parameter-binding path produces the same EP
+# output as v1's direct emit.
+_OZ_AC_CROSS_FN = """
+pragma solidity ^0.8.19;
+contract C {
+    mapping(bytes32 => mapping(address => bool)) private _roles;
+    mapping(bytes32 => bytes32) private _roleAdmins;
+    modifier onlyRole(bytes32 role) { _checkRole(role); _; }
+    function _checkRole(bytes32 role) internal view {
+        if (!_roles[role][msg.sender]) revert();
+    }
+    function getRoleAdmin(bytes32 role) public view returns (bytes32) {
+        return _roleAdmins[role];
+    }
+    function grantRole(bytes32 role, address account)
+        public onlyRole(getRoleAdmin(role))
+    {
+        _roles[role][account] = true;
+    }
+}
+"""
+
+# F4 hashed-key membership — _authorized[keccak256(abi.encode(role,
+# msg.sender))]. The set_descriptor has expanded key_sources via
+# _expand_key_operand walking through the keccak/abi.encode SolidityCalls.
+# v1's name-heuristic doesn't recognize the hashed-key membership
+# pattern -> f isn't privileged in v1. v2 catches via multi-key
+# direct-promote -> mapping_membership with controller_source from
+# storage_var. Pure new_coverage direction.
+_HASHED_KEY = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    mapping(bytes32 => bool) public _authorized;
+    function authorize(bytes32 role, address user) external {
+        require(msg.sender == ownerVar);
+        _authorized[keccak256(abi.encode(role, user))] = true;
+    }
+    function f(bytes32 role) external view {
+        require(_authorized[keccak256(abi.encode(role, msg.sender))]);
+    }
+}
+"""
+
+
+# Combined stack — onlyOwner + whenNotPaused + nonReentrant.
+# v1 emits 3 caller_equals_controller predicates (name-heuristic
+# treats every modifier-style guard as caller-controller); v2 emits
+# 1 caller_authority equality leaf (for onlyOwner) plus pause +
+# reentrancy leaves which the shim drops. Functional equivalence
+# in EP holds because the dedupe in _controller_grants_for_refs
+# collapses the 3 v1 grants (all pointing to ownerVar) into 1
+# grant matching v2's single grant. This pins that the dedupe
+# protects the cutover.
+_COMBINED_STACK = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    bool public _paused;
+    uint256 private _status;
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+    uint256 public x;
+    modifier onlyOwner() { require(msg.sender == ownerVar); _; }
+    modifier whenNotPaused() { require(!_paused); _; }
+    modifier nonReentrant() {
+        require(_status != _ENTERED);
+        _status = _ENTERED;
+        _;
+        _status = _NOT_ENTERED;
+    }
+    function pause() external onlyOwner { _paused = true; }
+    function withdraw() external onlyOwner whenNotPaused nonReentrant { x = x + 1; }
+}
+"""
+
 
 _FIXTURES = [
     ("maker_wards", _MAKER_WARDS),
@@ -297,6 +408,10 @@ _FIXTURES = [
     ("oz_pausable", _OZ_PAUSABLE),
     ("oz_ownable_5x", _OZ_OWNABLE_5X),
     ("bitwise_role_flag", _BITWISE_ROLE_FLAG),
+    ("combined_stack", _COMBINED_STACK),
+    ("hashed_key_membership", _HASHED_KEY),
+    ("oz_ac_cross_fn", _OZ_AC_CROSS_FN),
+    ("oz_ac_multi_role", _OZ_AC_MULTI_ROLE),
 ]
 
 
@@ -342,6 +457,7 @@ def test_effective_permissions_equivalent(tmp_path: Path, fixture_name: str, sou
             "state_variable:_owner": _sv_entry("_owner"),
             "state_variable:roles": _sv_entry("roles"),
             "state_variable:_roles": _sv_entry("_roles"),
+            "state_variable:_authorized": _sv_entry("_authorized"),
             "constant:0x" + "01" * 32: {
                 "source": "0x" + "01" * 32,
                 "kind": "constant",
