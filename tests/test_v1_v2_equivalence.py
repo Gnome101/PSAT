@@ -114,7 +114,26 @@ def _privileged(emit: dict) -> set[str]:
 
 
 def _predicate_kinds(fn_entry: dict) -> set[str]:
-    return {p.get("kind") for p in (fn_entry.get("predicates") or []) if p.get("kind")}
+    """Predicate-kind bag with semantic-equivalence normalization.
+
+    v1's name-driven heuristic emits role_member vs mapping_membership
+    inconsistently across OZ AC patterns (role_member when it sees
+    hasRole/grantRole/getRoleAdmin function names, mapping_membership
+    otherwise). Downstream effective_permissions handles BOTH kinds
+    correctly via separate code paths. For cutover-equivalence we
+    treat them as one membership-class kind so neither direction is
+    flagged as a regression — what matters is whether each privileged
+    function carries SOMEthing in the membership family, not which
+    name v1 used.
+    """
+    raw = {p.get("kind") for p in (fn_entry.get("predicates") or []) if p.get("kind")}
+    normalized = set()
+    for k in raw:
+        if k in ("role_member", "mapping_membership"):
+            normalized.add("membership_kind")
+        else:
+            normalized.add(k)
+    return normalized
 
 
 def _assert_equivalent(v1: dict, v2: dict, *, contract_name: str) -> None:
@@ -440,6 +459,27 @@ contract C {
 }
 """
 
+_OZ_AC_5X_OVERLOADED = """
+pragma solidity ^0.8.19;
+contract C {
+    mapping(bytes32 => mapping(address => bool)) private _roles;
+    uint256 public x;
+    error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+    function _msgSender() internal view returns (address) { return msg.sender; }
+    function hasRole(bytes32 role, address account) public view returns (bool) {
+        return _roles[role][account];
+    }
+    function _checkRole(bytes32 role, address account) internal view {
+        if (!hasRole(role, account)) revert AccessControlUnauthorizedAccount(account, role);
+    }
+    function _checkRole(bytes32 role) internal view { _checkRole(role, _msgSender()); }
+    modifier onlyRole(bytes32 role) { _checkRole(role); _; }
+    function grantRole(bytes32 role, address account) public onlyRole(role) {
+        _roles[role][account] = true;
+    }
+}
+"""
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
@@ -456,6 +496,7 @@ _FIXTURES = [
     ("eip1271_magic", _EIP1271_MAGIC),
     ("time_gate", _TIME_GATE),
     ("oz_ownable_5x", _OZ_OWNABLE_5X),
+    ("oz_ac_5x_overloaded", _OZ_AC_5X_OVERLOADED),
 ]
 
 

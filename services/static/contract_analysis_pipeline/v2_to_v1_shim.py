@@ -154,7 +154,16 @@ def _leaf_to_v1_predicate(leaf: dict[str, Any]) -> dict[str, Any] | None:
 
     if kind == "membership" and role == "caller_authority":
         # mapping_membership: pick the non-caller key as the
-        # controller.
+        # controller. NOTE: v1's heuristic is name-driven and emits
+        # role_member vs mapping_membership inconsistently across
+        # AC patterns — we standardize on mapping_membership here
+        # since downstream effective_permissions handles BOTH kinds
+        # (role_member via role_source path, mapping_membership via
+        # controller_source path) and the v2 leaf doesn't carry the
+        # contract-name-based heuristic v1 used to discriminate. The
+        # equivalence comparator in tests treats role_member and
+        # mapping_membership as semantically equivalent for cutover
+        # purposes.
         keys = (leaf.get("set_descriptor") or {}).get("key_sources") or operands
         controller_op = next(
             (
