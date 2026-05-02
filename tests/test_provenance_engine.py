@@ -532,6 +532,31 @@ def test_member_records_field_name(tmp_path):
     )
 
 
+def test_env_override_internal_call_depth(monkeypatch):
+    """``PSAT_PROVENANCE_INTERNAL_CALL_DEPTH`` env var overrides the
+    default recursion depth, so pipeline runs can tune without code
+    changes."""
+    from importlib import reload
+
+    import services.static.contract_analysis_pipeline.provenance as prov
+
+    monkeypatch.setenv("PSAT_PROVENANCE_INTERNAL_CALL_DEPTH", "9")
+    monkeypatch.setenv("PSAT_PROVENANCE_WORKLIST_CAP", "37")
+    reload(prov)
+    assert prov.DEFAULT_INTERNAL_CALL_DEPTH == 9
+    assert prov.DEFAULT_WORKLIST_ITER_CAP == 37
+    # Bad values fall back to the hard-coded default.
+    monkeypatch.setenv("PSAT_PROVENANCE_INTERNAL_CALL_DEPTH", "not_a_number")
+    monkeypatch.setenv("PSAT_PROVENANCE_WORKLIST_CAP", "-1")
+    reload(prov)
+    assert prov.DEFAULT_INTERNAL_CALL_DEPTH == 4
+    assert prov.DEFAULT_WORKLIST_ITER_CAP == 200
+    # Clean up — re-import without env vars set.
+    monkeypatch.delenv("PSAT_PROVENANCE_INTERNAL_CALL_DEPTH", raising=False)
+    monkeypatch.delenv("PSAT_PROVENANCE_WORKLIST_CAP", raising=False)
+    reload(prov)
+
+
 def test_loop_phi_converges_with_loop_carried_taint(tmp_path):
     """A loop-carried variable's provenance must reach a fixed point
     that includes both the entry-block source AND the loop-body
@@ -564,18 +589,14 @@ def test_loop_phi_converges_with_loop_carried_taint(tmp_path):
         if _has_source_kind(srcs, "state_variable") and _has_source_kind(srcs, "parameter"):
             found = True
             break
-    assert found, (
-        f"loop accumulator didn't converge with both seed+vals taint. "
-        f"map={dict(eng.provenance.sources)}"
-    )
+    assert found, f"loop accumulator didn't converge with both seed+vals taint. map={dict(eng.provenance.sources)}"
     # Negative invariant: the accumulator should NOT have been saturated
     # to TOP. A monotonic union over a finite source set converges
     # cleanly in Slither's bounded SSA.
     seed_sources = eng.provenance.sources
     has_top_in_loop_var = any(is_top(srcs) for srcs in seed_sources.values())
     assert not has_top_in_loop_var, (
-        "loop accumulator saturated to TOP — worklist may be oscillating "
-        "or Phi handler is wrong"
+        "loop accumulator saturated to TOP — worklist may be oscillating or Phi handler is wrong"
     )
 
 

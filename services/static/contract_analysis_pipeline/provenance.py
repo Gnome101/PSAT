@@ -23,6 +23,7 @@ shape and operand type.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -134,8 +135,23 @@ def union(a: SourceSet, b: SourceSet) -> SourceSet:
 
 
 # Configuration knobs (tunable at call site / via env).
-DEFAULT_INTERNAL_CALL_DEPTH = 4
-DEFAULT_WORKLIST_ITER_CAP = 200
+# PSAT_PROVENANCE_INTERNAL_CALL_DEPTH overrides the default recursion
+# depth for InternalCall/LibraryCall — useful for stress-testing on
+# complex inheritance chains, or for cutting off depth on benchmarks.
+# PSAT_PROVENANCE_WORKLIST_CAP overrides the worklist iteration cap.
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        v = int(raw)
+        return v if v > 0 else default
+    except ValueError:
+        return default
+
+
+DEFAULT_INTERNAL_CALL_DEPTH = _env_int("PSAT_PROVENANCE_INTERNAL_CALL_DEPTH", 4)
+DEFAULT_WORKLIST_ITER_CAP = _env_int("PSAT_PROVENANCE_WORKLIST_CAP", 200)
 
 
 @dataclass
