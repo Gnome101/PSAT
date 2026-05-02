@@ -877,6 +877,72 @@ class RoleGrantsCursor(Base):
     )
 
 
+class AragonAclEvent(Base):
+    """Append-only log of Aragon ACL ``SetPermission`` events.
+    Aragon stores permissions as ``(entity, app, role, allowed)``
+    tuples — a flip of ``allowed`` per event, no separate revoke
+    topic. Used by ``PostgresAragonACLRepo`` to enumerate currently-
+    allowed entities for a given ``(app, role)``."""
+
+    __tablename__ = "aragon_acl_events"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    acl_contract_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True
+    )
+    tx_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    log_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app: Mapped[str] = mapped_column(String(42), nullable=False)
+    role: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    entity: Mapped[str] = mapped_column(String(42), nullable=False)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    block_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    transaction_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_aragon_acl_events_lookup",
+            "chain_id",
+            "acl_contract_id",
+            "app",
+            "role",
+            "entity",
+            "block_number",
+            "log_index",
+        ),
+        Index(
+            "ix_aragon_acl_events_block",
+            "chain_id",
+            "acl_contract_id",
+            "block_number",
+            "log_index",
+        ),
+    )
+
+
+class AragonAclCursor(Base):
+    """One row per ``(chain_id, acl_contract_id)`` — tracks the
+    indexer's progress + last-indexed block hash for reorg detect.
+    Mirrors ``RoleGrantsCursor`` shape so the same indexer step
+    pattern applies once the LogFetcher is parameterized."""
+
+    __tablename__ = "aragon_acl_cursors"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    acl_contract_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True
+    )
+    last_indexed_block: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    last_indexed_block_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32), nullable=True)
+    last_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class ChainFinalityConfig(Base):
     """Per-chain confirmation depth — how many blocks deep an event
     must be before considered final (not subject to reorg). Seeded
