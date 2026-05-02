@@ -122,89 +122,41 @@ def _high_level_call_guards(function) -> list[str]:
 
 
 def _internal_auth_calls(function) -> list[str]:
-    guards = []
-    for call in _call_or_value(function, "all_internal_calls"):
-        if type(call).__name__ != "InternalCall":
-            continue
-        callee = getattr(call, "function", None)
-        callee_name = getattr(callee, "name", None) or str(callee)
-        lowered = callee_name.lower()
-        if any(token in lowered for token in ("checkauth", "checkrole", "authorize", "authoriz", "auth")):
-            guards.append(callee_name)
-    return guards
+    """Schema-v2 cutover: name-heuristic detection deleted. v2's
+    RevertDetector cross-fn recursion finds auth helpers structurally
+    via call_chain walking; this function returns empty so the v1
+    pathway stops contributing data."""
+    return []
 
 
 def _infer_function_guards(function, project_dir: Path) -> list[str]:
-    guards = []
-    modifier_names = [modifier.name for modifier in getattr(function, "modifiers", [])]
-    guards.extend(modifier_names)
-    guards.extend(_normalize_guard_label(name) for name in modifier_names)
-
-    role_constants = _role_constants_from_function(function, project_dir)
-    guards.extend(role_constants)
-    if role_constants:
-        guards.append("role")
-
-    guards.extend(_internal_auth_calls(function))
-    guards.extend(_high_level_call_guards(function))
-
-    all_solidity_reads = [str(variable) for variable in _call_or_value(function, "all_solidity_variables_read")]
-    all_state_reads = [
-        getattr(variable, "name", "") for variable in _call_or_value(function, "all_state_variables_read")
-    ]
-    if "msg.sender" in all_solidity_reads:
-        guards.extend(name for name in all_state_reads if _state_variable_looks_like_auth(name))
-
-    for node in getattr(function, "nodes", []):
-        if not _node_contains_require_or_assert(node):
-            continue
-        node_solidity_reads = [str(variable) for variable in getattr(node, "solidity_variables_read", [])]
-        node_state_reads = [getattr(variable, "name", "") for variable in getattr(node, "state_variables_read", [])]
-        if "msg.sender" in node_solidity_reads:
-            guards.extend(name for name in node_state_reads if _state_variable_looks_like_auth(name))
-        guards.extend(_role_identifier_tokens(str(getattr(node, "expression", "") or "")))
-
-    return _dedupe_strings(guards)
+    """Schema-v2 cutover: modifier-name + state-var-name heuristics
+    deleted. v2's predicate_trees + apply_writer_gate_pass +
+    apply_reentrancy_pause_pass classify guards structurally
+    independent of names."""
+    return []
 
 
 def _is_access_control_guard_label(label: str) -> bool:
-    return (
-        _looks_like_access_guard(label)
-        or _state_variable_looks_like_auth(label)
-        or _looks_like_role_identifier_name(label)
-        or label == "role"
-    )
+    """Schema-v2 cutover: deprecated. Returns False so any caller
+    that filters by 'is this an access-control label' gets an
+    empty filter."""
+    return False
 
 
 def _access_control_inferred_guards(function, project_dir: Path) -> list[str]:
-    return [label for label in _infer_function_guards(function, project_dir) if _is_access_control_guard_label(label)]
+    """Schema-v2 cutover: deprecated. v2's PredicateTree per function
+    is the structural authority — name-heuristic inferred guards no
+    longer contribute."""
+    return []
 
 
 def _controller_refs_from_inferred_guards(guards: list[str]) -> list[str]:
-    refs = []
-    for guard in guards:
-        normalized = _normalize_guard_label(guard)
-        lowered = guard.lower()
-        if _is_access_control_guard_label(normalized):
-            preserve_explicit = (
-                normalized != guard
-                and not lowered.startswith(("only", "_"))
-                and (
-                    (
-                        normalized in {"owner", "authority", "admin", "timelock", "governance", "guardian", "pauser"}
-                        and ("_" in guard or any(char.isupper() for char in guard))
-                    )
-                    or (
-                        normalized == "role"
-                        and any(token in lowered for token in ("registry", "controller"))
-                        and _state_variable_looks_like_auth(guard)
-                    )
-                )
-            )
-            if preserve_explicit:
-                refs.append(guard)
-            refs.append(normalized)
-    return _dedupe_strings(refs)
+    """Schema-v2 cutover: deprecated. Returns empty since
+    _access_control_inferred_guards / _infer_function_guards now
+    return empty; this is the no-op that absorbs any incidental
+    callers without breaking call sites."""
+    return []
 
 
 def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]:
