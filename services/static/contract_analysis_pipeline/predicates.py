@@ -31,6 +31,7 @@ try:
     from slither.core.variables.state_variable import StateVariable  # type: ignore[import]
     from slither.slithir.operations import (  # type: ignore[import]
         Binary,
+        Condition,
         HighLevelCall,
         Index,
         InternalCall,
@@ -560,16 +561,40 @@ def _build_internal_call_or_and_subtree(
         # node whose inline_asm reduces to ``or(...)`` / ``and(...)``.
         # Walk the call-site args as the children.
         asm_op = _detect_assembly_combinator_op(callee)
-        if asm_op is None:
+        if asm_op is not None:
+            op_name = asm_op
+            call_args = list(getattr(ir, "arguments", []) or [])
+            if not call_args:
+                return None
+            children = [
+                _build_subtree_from_value(arg, prov, gate, gate.containing_function or callee)
+                for arg in call_args
+            ]
+        else:
+            # Path 4: helper is an if-else chain returning bool
+            # literals + a tail bool expression — DSAuth.isAuthorized
+            # is the canonical case:
+            #
+            #   if (src == this)        return true;
+            #   else if (src == owner)  return true;
+            #   else if (auth == 0)     return false;
+            #   else                    return auth.canCall(...);
+            #
+            # The function's effective bool semantics is OR of
+            # (path-condition for each return-true / return-expr
+            # path). We approximate by collecting per-Return:
+            #   - return literal-true → use the closest dominating
+            #     IF's condition as the OR branch
+            #   - return bool-expr   → walk the expression as a
+            #     subtree (ignoring the negated-prefix for now —
+            #     accuracy can be increased by collecting the full
+            #     dominator chain in a follow-up)
+            #   - return literal-false → skip (denied path)
+            children = _build_if_else_returns_or_children(callee, sub_prov, gate)
+            if children:
+                op_name = "or"
+        if op_name is None or not children:
             return None
-        op_name = asm_op
-        call_args = list(getattr(ir, "arguments", []) or [])
-        if not call_args:
-            return None
-        children = [
-            _build_subtree_from_value(arg, prov, gate, gate.containing_function or callee)
-            for arg in call_args
-        ]
     if op_name is None or not children:
         return None
     # Polarity propagates the same way as the inline AND/OR case in
@@ -577,6 +602,92 @@ def _build_internal_call_or_and_subtree(
     if gate.polarity == "allowed_when_true":
         return make_and_node(children) if op_name == "and" else make_or_node(children)
     return make_or_node(children) if op_name == "and" else make_and_node(children)
+
+
+def _build_if_else_returns_or_children(
+    callee: Any, sub_prov: ProvenanceMap, gate: RevertGate
+) -> list[PredicateTree]:
+    """For helpers with an if-else chain returning bool literals/
+    expressions, build OR-children — one per Return node.
+
+      - Return literal True  → child is the closest dominating IF's
+                                condition value as a subtree
+      - Return bool-expr     → child is the expression as a subtree
+      - Return literal False → skipped (denied path)
+
+    The dominator walk takes the closest predecessor IF node (in
+    fn.nodes order). For DSAuth's flat if-else chain that yields
+    the right per-branch condition; for nested IFs the result is
+    conservative (uses the innermost IF). A more complete dominator
+    walk could OR the full path predicate; this approximation is
+    deliberately simple and was sufficient for the canonical DSAuth
+    shape.
+    """
+    children: list[PredicateTree] = []
+    nodes = list(getattr(callee, "nodes", []) or [])
+    if not nodes:
+        return []
+    for idx, node in enumerate(nodes):
+        if str(getattr(node, "type", "")) != "NodeType.RETURN":
+            continue
+        # Pull the Return IR's value.
+        return_value = None
+        for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
+            if isinstance(ir, Return):
+                values = getattr(ir, "values", ()) or ()
+                if values:
+                    return_value = values[0]
+                    break
+        if return_value is None:
+            continue
+        # Distinguish literal True / False / non-literal.
+        rv_str = str(getattr(return_value, "value", return_value))
+        if rv_str == "False":
+            continue  # denied path
+        if rv_str == "True":
+            # Walk back to the closest preceding IF node — its
+            # Condition IR's value is the path predicate.
+            cond_value = None
+            for back_idx in range(idx - 1, -1, -1):
+                back_node = nodes[back_idx]
+                if str(getattr(back_node, "type", "")) != "NodeType.IF":
+                    continue
+                for ir in getattr(back_node, "irs_ssa", None) or getattr(back_node, "irs", []) or []:
+                    if isinstance(ir, Condition):
+                        cond_value = getattr(ir, "value", None)
+                        break
+                break
+            if cond_value is None:
+                continue
+            # Use a fresh per-branch gate so polarity matches the
+            # outer require's allowed_when_true (children are
+            # combined under OR — each child contributes a "true"
+            # path).
+            branch_gate = RevertGate(
+                kind=gate.kind,
+                condition_value=cond_value,
+                polarity="allowed_when_true",
+                node=node,
+                containing_function=callee,
+                call_chain=list(gate.call_chain),
+                expression_text=gate.expression_text,
+                basis=list(gate.basis),
+            )
+            children.append(_build_subtree_from_value(cond_value, sub_prov, branch_gate, callee))
+            continue
+        # Non-literal Return: walk the expression itself.
+        branch_gate = RevertGate(
+            kind=gate.kind,
+            condition_value=return_value,
+            polarity="allowed_when_true",
+            node=node,
+            containing_function=callee,
+            call_chain=list(gate.call_chain),
+            expression_text=gate.expression_text,
+            basis=list(gate.basis),
+        )
+        children.append(_build_subtree_from_value(return_value, sub_prov, branch_gate, callee))
+    return children
 
 
 def _detect_assembly_combinator_op(callee: Any) -> str | None:
