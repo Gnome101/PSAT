@@ -18,10 +18,10 @@ not a signal.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from ..capabilities import CapabilityExpr, Confidence
-from . import EnumerationResult, EvaluationContext, SetAdapter, Trit
+from . import EvaluationContext
 
 
 # RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)
@@ -75,34 +75,34 @@ class AccessControlAdapter:
 
     def enumerate(self, descriptor: dict, ctx: EvaluationContext) -> CapabilityExpr:
         if ctx.role_grants is None:
-            # No backend wired — return placeholder.
             return CapabilityExpr.finite_set(
                 [],
                 quality="lower_bound",
                 confidence="partial",
             )
-        # Identify the role key (the non-caller key) and try to
-        # determine its constant value if any.
-        role_keys = self._role_key_constants(descriptor)
-        if not role_keys:
-            # Parametric role — enumerate per-role would require
-            # role-domain expansion (week 6 deliverable). For now:
-            # return a lower_bound finite_set of all members across
-            # all roles, marked partial so the resolver knows it's
-            # over-permissive.
-            members = self._enumerate_all_roles(descriptor, ctx)
-            return CapabilityExpr.finite_set(
-                members,
-                quality="lower_bound",
-                confidence="partial",
-            )
-        # Concrete role(s) — enumerate per role.
         if ctx.contract_address is None:
             return CapabilityExpr.finite_set([], quality="lower_bound", confidence="partial")
+
+        # Build the role-domain for this descriptor. Per v3 round-3
+        # #10 fix:
+        #   - seed with DEFAULT_ADMIN_ROLE (bytes32(0)) by default
+        #   - add concrete role constants from descriptor.key_sources
+        #   - add observed-history roles from role_grants
+        #   - walk getRoleAdmin to fixed point
+        role_domain = self._expand_role_domain(descriptor, ctx)
+        if not role_domain:
+            return CapabilityExpr.finite_set([], quality="lower_bound", confidence="partial")
+
+        # The descriptor either has concrete role constants (1+ roles)
+        # or is parametric (role from a function arg). For concrete
+        # roles, we know exactly which role to enumerate. For
+        # parametric, we expose the per-role expansion (every role in
+        # the domain → its members).
+        is_parametric = not self._role_key_constants(descriptor)
         merged: list[str] = []
         worst_confidence: Confidence = "enumerable"
         last_block: int | None = None
-        for role in role_keys:
+        for role in role_domain:
             try:
                 result = ctx.role_grants.members_for_role(
                     chain_id=ctx.chain_id,
@@ -116,12 +116,76 @@ class AccessControlAdapter:
             if _confidence_lt(result.confidence, worst_confidence):
                 worst_confidence = result.confidence
             last_block = result.last_indexed_block
+
+        # Concrete role(s) → exact enumeration when confidence allows.
+        # Parametric → lower_bound + partial (the union across roles
+        # is over-permissive vs the runtime role argument; the UI
+        # exposes a per-role expansion, but the capability emitted
+        # here is the conservative union).
+        quality: Literal["exact", "lower_bound"] = (
+            "exact" if (worst_confidence == "enumerable" and not is_parametric) else "lower_bound"
+        )
+        confidence = worst_confidence if not is_parametric else "partial"
         return CapabilityExpr.finite_set(
             merged,
-            quality="exact" if worst_confidence == "enumerable" else "lower_bound",
-            confidence=worst_confidence,
+            quality=quality,
+            confidence=confidence,
             last_indexed_block=last_block,
         )
+
+    def _expand_role_domain(self, descriptor: dict, ctx: EvaluationContext) -> set[bytes]:
+        """Expand the role domain per v3 round-3 #10 fix:
+        1. Seed DEFAULT_ADMIN_ROLE (bytes32(0)) when descriptor's
+           role_domain.auto_seed_default_admin is True (default).
+        2. Add concrete role constants from descriptor.key_sources.
+        3. Add observed-history roles via list_observed_roles.
+        4. Walk getRoleAdmin to fixed point (cap depth 6).
+        """
+        rd_spec = descriptor.get("role_domain") or {}
+        domain: set[bytes] = set()
+
+        # 1. Seed default admin if enabled (default True for AC-shaped).
+        if rd_spec.get("auto_seed_default_admin", True):
+            domain.add(b"\x00" * 32)
+
+        # 2. Concrete role constants from key_sources.
+        for role in self._role_key_constants(descriptor):
+            domain.add(role)
+
+        # 3. Observed-history roles.
+        if rd_spec.get("auto_seed_default_admin", True) or "role_granted_history" in (rd_spec.get("sources") or []):
+            try:
+                observed = ctx.role_grants.list_observed_roles(  # type: ignore[union-attr]
+                    chain_id=ctx.chain_id,
+                    contract_address=ctx.contract_address or "",
+                )
+            except Exception:
+                observed = []
+            for r in observed:
+                if isinstance(r, bytes) and len(r) == 32:
+                    domain.add(r)
+
+        # 4. Recursive role-admin expansion to fixed point (cap 6).
+        if rd_spec.get("recursive_role_admin_expansion", True):
+            for _ in range(6):
+                added = False
+                for role in list(domain):
+                    try:
+                        admin = ctx.role_grants.get_role_admin(  # type: ignore[union-attr]
+                            chain_id=ctx.chain_id,
+                            contract_address=ctx.contract_address or "",
+                            role=role,
+                            block=ctx.block,
+                        )
+                    except Exception:
+                        admin = None
+                    if admin is not None and isinstance(admin, bytes) and len(admin) == 32 and admin not in domain:
+                        domain.add(admin)
+                        added = True
+                if not added:
+                    break
+
+        return domain
 
     # ------------------------------------------------------------------
     # Helpers
@@ -143,24 +207,6 @@ class AccessControlAdapter:
                 if role_bytes is not None:
                     roles.append(role_bytes)
         return roles
-
-    def _enumerate_all_roles(self, descriptor: dict, ctx: EvaluationContext) -> list[str]:
-        """For parametric role descriptors, attempt a per-role
-        expansion via role-domain history (round-3 #10 fix). Without
-        a populated role_grants repo this returns []; the week-6
-        role-domain expansion will fully populate."""
-        # Returns members from the DEFAULT_ADMIN_ROLE seed if
-        # role_grants supports it; otherwise empty.
-        try:
-            result = ctx.role_grants.members_for_role(
-                chain_id=ctx.chain_id,
-                contract_address=ctx.contract_address or "",
-                role=b"\x00" * 32,
-                block=ctx.block,
-            )
-            return list(result.members)
-        except Exception:
-            return []
 
 
 # ---------------------------------------------------------------------------

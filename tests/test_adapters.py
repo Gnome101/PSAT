@@ -31,8 +31,13 @@ ADDR_C = "0xcccccccccccccccccccccccccccccccccccccccc"
 
 
 class FakeRoleGrantsRepo:
-    def __init__(self, members_by_role: dict[bytes, list[str]] | None = None):
+    def __init__(
+        self,
+        members_by_role: dict[bytes, list[str]] | None = None,
+        role_admin_map: dict[bytes, bytes] | None = None,
+    ):
         self.members_by_role = members_by_role or {}
+        self.role_admin_map = role_admin_map or {}
 
     def members_for_role(self, *, chain_id, contract_address, role, block=None):
         return EnumerationResult(
@@ -46,6 +51,12 @@ class FakeRoleGrantsRepo:
         if member.lower() in addrs:
             return Trit.YES
         return Trit.NO
+
+    def list_observed_roles(self, *, chain_id, contract_address):
+        return list(self.members_by_role.keys())
+
+    def get_role_admin(self, *, chain_id, contract_address, role, block=None):
+        return self.role_admin_map.get(role)
 
 
 class FakeSafeRepo:
@@ -173,6 +184,53 @@ def test_ac_enumerate_parametric_role_falls_back_to_default_admin():
     assert cap.confidence == "partial"
     assert cap.membership_quality == "lower_bound"
     assert ADDR_A.lower() in cap.members
+
+
+def test_ac_enumerate_recursive_role_admin_expansion():
+    """Per v3 round-3 #10: parametric role descriptors should
+    expand the role domain via list_observed_roles + walking
+    getRoleAdmin to fixed point. The capability covers the union
+    of members across the full domain (lower_bound + partial
+    because the runtime role argument selects one specific role
+    from the domain — the union is over-permissive)."""
+    minter_role = (1).to_bytes(32, "big")
+    admin_role = (2).to_bytes(32, "big")
+    default_admin = b"\x00" * 32
+    repo = FakeRoleGrantsRepo(
+        members_by_role={
+            default_admin: [ADDR_A],
+            admin_role: [ADDR_B],
+            minter_role: [ADDR_C],
+        },
+        # MINTER's admin is admin_role; admin_role's admin is default_admin.
+        role_admin_map={
+            minter_role: admin_role,
+            admin_role: default_admin,
+        },
+    )
+    # Parametric descriptor: role key sources from a parameter.
+    descriptor = _ac_2key_descriptor(role_constant=None, with_event_hint=True)
+    # Test contract observed only the MINTER role; expansion must
+    # walk to admin_role + default_admin via getRoleAdmin.
+    repo.members_by_role.pop(default_admin, None)  # not directly observed
+    repo.members_by_role.pop(admin_role, None)
+    repo.members_by_role[default_admin] = [ADDR_A]
+    repo.members_by_role[admin_role] = [ADDR_B]
+    ctx = EvaluationContext(
+        chain_id=1,
+        contract_address=ADDR_C,
+        role_grants=repo,
+    )
+    cap = AccessControlAdapter().enumerate(descriptor, ctx)
+    assert cap.kind == "finite_set"
+    # All three roles' members included via the walked admin chain.
+    member_set = set(cap.members)
+    assert ADDR_A.lower() in member_set
+    assert ADDR_B.lower() in member_set
+    assert ADDR_C.lower() in member_set
+    # Parametric → lower_bound + partial.
+    assert cap.confidence == "partial"
+    assert cap.membership_quality == "lower_bound"
 
 
 def test_ac_enumerate_no_backend_yields_partial():

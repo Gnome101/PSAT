@@ -76,13 +76,28 @@ class EnumerationResult:
 class RoleGrantsRepo(Protocol):
     """Reads from the role_grants_events table (v4 plan §role_grants).
     Concrete implementation queries Postgres; fakes for tests provide
-    in-memory data."""
+    in-memory data.
+
+    For role-domain expansion (v3 round-3 #10 fix):
+      - ``list_observed_roles`` returns every role bytes32 value
+        ever seen in RoleGranted events for the contract. Used to
+        seed the role-domain for parametric AC reads.
+      - ``get_role_admin`` returns the admin role for a given role
+        (the OZ AccessControl ``getRoleAdmin(role)`` semantic).
+        Used to walk the admin chain to fixed point.
+    """
 
     def members_for_role(
         self, *, chain_id: int, contract_address: str, role: bytes, block: int | None = None
     ) -> EnumerationResult: ...
 
     def has_member(self, *, chain_id: int, contract_address: str, role: bytes, member: str) -> Trit: ...
+
+    def list_observed_roles(self, *, chain_id: int, contract_address: str) -> list[bytes]: ...
+
+    def get_role_admin(
+        self, *, chain_id: int, contract_address: str, role: bytes, block: int | None = None
+    ) -> bytes | None: ...
 
 
 class SafeRepo(Protocol):
