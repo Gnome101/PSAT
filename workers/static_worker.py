@@ -1279,15 +1279,37 @@ class StaticWorker(BaseWorker):
             store_artifact(session, job.id, "analysis_error", data={"error": str(exc)})
             return None
 
+        # Schema-v2 predicate_trees emit (shadow-mode). The v2
+        # artifact is embedded in collect_contract_analysis's return
+        # dict under ``_v2_predicate_trees`` so we don't pay for a
+        # second Slither parse. Pop it before persisting v1 so the
+        # v1 contract_analysis artifact's shape stays unchanged;
+        # store v2 as its own artifact (``predicate_trees``) keyed
+        # off the same job_id. Downstream consumers (probe API,
+        # resolver) opt in by reading the v2 artifact when present.
+        v2_predicate_trees = analysis_data.pop("_v2_predicate_trees", None)
+
         # Persist side artifacts into the temp workspace so later static
         # subphases (tracking plan) can read them from disk.
         (project_dir / "contract_analysis.json").write_text(json.dumps(analysis_data, indent=2) + "\n")
         semantic_guards = build_semantic_guards(analysis_data)
         (project_dir / "semantic_guards.json").write_text(json.dumps(semantic_guards, indent=2) + "\n")
+        if v2_predicate_trees is not None:
+            (project_dir / "predicate_trees.json").write_text(
+                json.dumps(v2_predicate_trees, indent=2) + "\n"
+            )
 
         # Keep as artifacts — downstream stages read these as JSON.
         store_artifact(session, job.id, "contract_analysis", data=analysis_data)
         store_artifact(session, job.id, "semantic_guards", data=semantic_guards)
+        if v2_predicate_trees is not None:
+            try:
+                store_artifact(session, job.id, "predicate_trees", data=v2_predicate_trees)
+            except Exception:
+                logger.exception(
+                    "Static stage: predicate_trees artifact store failed for job %s; v1 path unaffected",
+                    job.id,
+                )
         self._write_analysis_tables(session, job, analysis_data)
         logger.info(
             "Static stage contract analysis complete for job %s address=%s contract=%s",

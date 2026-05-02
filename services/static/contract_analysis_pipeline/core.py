@@ -107,6 +107,20 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
         "is_nft": classification["is_nft"],
     }
 
+    # Schema-v2 shadow-mode embed. We compute it here while the
+    # parsed Slither subject is still in scope, so callers don't pay
+    # for a second Slither parse. The v2 artifact is namespaced
+    # under ``_v2_predicate_trees`` so the v1 ContractAnalysis dict
+    # itself is unchanged — callers that only want v1 ignore the
+    # key (or pop it before serializing). Defensive: a v2 emit
+    # failure MUST NOT fail the v1 path.
+    v2_predicate_trees: dict
+    try:
+        v2_predicate_trees = build_predicate_artifacts(subject_contract)
+    except Exception as exc:
+        logger.exception("v2 predicate_trees emit failed for %s", project_dir)
+        v2_predicate_trees = {"schema_version": "v2", "error": str(exc)}
+
     return {
         "schema_version": "0.1",
         "subject": {
@@ -132,4 +146,5 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
         "tracking_hints": _build_tracking_hints(access_control, upgradeability, pausability, timelock),
         "controller_tracking": controller_tracking,
         "policy_tracking": policy_tracking,
+        "_v2_predicate_trees": v2_predicate_trees,
     }

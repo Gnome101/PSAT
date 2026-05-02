@@ -123,6 +123,31 @@ def test_fixture_index_covers_all_solidity_contract_fixtures():
         assert (FIXTURES_DIR / entry["path"]).exists()
 
 
+def test_collect_contract_analysis_embeds_v2_predicate_trees(tmp_path):
+    """Schema-v2 shadow-mode: the v1 ``contract_analysis`` dict
+    must carry an ``_v2_predicate_trees`` key so the static worker
+    can store both artifacts off a single Slither parse. The v2
+    artifact is itself a dict with at minimum a ``schema_version``
+    field — a malformed/error response carries an ``error`` key
+    instead of trees, which tests can distinguish."""
+    project_dir = _write_project(
+        tmp_path,
+        "Token",
+        _fixture_source("token/token_erc20_ownable_pausable.sol"),
+    )
+
+    analysis = collect_contract_analysis(project_dir)
+
+    v2 = analysis.get("_v2_predicate_trees")
+    assert v2 is not None, "v2 predicate_trees must be embedded in collect_contract_analysis return"
+    assert v2.get("schema_version") == "v2"
+    # Successful emit produces a `trees` dict; an error path
+    # would set `error` instead — both shapes are valid responses
+    # but a regression in the v2 pipeline shouldn't silently leave
+    # the key unset.
+    assert "trees" in v2 or "error" in v2
+
+
 def test_collect_contract_analysis_detects_erc20_ownable_and_pausable(tmp_path):
     project_dir = _write_project(
         tmp_path,
