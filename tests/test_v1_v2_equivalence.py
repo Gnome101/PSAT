@@ -383,6 +383,34 @@ contract C {
 }
 """
 
+_ECDSA_SIGNATURE_AUTH = """
+pragma solidity ^0.8.19;
+contract C {
+    address public signerAddr;
+    uint256 public x;
+    function f(bytes32 h, uint8 v, bytes32 r, bytes32 s) external {
+        address recovered = ecrecover(h, v, r, s);
+        require(recovered == signerAddr);
+        x = 1;
+    }
+}
+"""
+
+_EIP1271_MAGIC = """
+pragma solidity ^0.8.19;
+interface IERC1271 {
+    function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4);
+}
+contract C {
+    address public signerContract;
+    uint256 public x;
+    function f(bytes32 hash, bytes calldata sig) external {
+        require(IERC1271(signerContract).isValidSignature(hash, sig) == 0x1626ba7e);
+        x = 1;
+    }
+}
+"""
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
@@ -395,6 +423,8 @@ _FIXTURES = [
     ("multi_modifier", _MULTI_MODIFIER),
     ("hashed_key_membership", _HASHED_KEY_MEMBERSHIP),
     ("m_of_n_threshold", _M_OF_N_THRESHOLD),
+    ("ecdsa_signature_auth", _ECDSA_SIGNATURE_AUTH),
+    ("eip1271_magic", _EIP1271_MAGIC),
 ]
 
 
