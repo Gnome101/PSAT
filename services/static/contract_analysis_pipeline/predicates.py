@@ -1267,6 +1267,7 @@ def _operand_for_value(value: Any, prov: ProvenanceMap) -> Operand:
         "msg_sender",
         "tx_origin",
         "signature_recovery",
+        "self_address",  # ``address(this)`` self-call gate (auth-shaped)
         "parameter",
         "state_variable",
         "view_call",
@@ -1383,6 +1384,12 @@ _ADDRESS_TYPED_SOURCES = (
     "parameter",
     "signature_recovery",
     "constant",
+    # ``address(this)`` self-call gate. Used by Compound Timelock
+    # setDelay / setPendingAdmin and many module patterns. Self-call
+    # is auth (``msg.sender == address(this)`` allows only the
+    # contract calling itself, e.g. through a queued timelock
+    # transaction).
+    "self_address",
 )
 
 

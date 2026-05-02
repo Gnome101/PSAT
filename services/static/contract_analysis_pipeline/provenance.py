@@ -83,6 +83,7 @@ SOURCE_KINDS = (
     "computed",
     "block_context",
     "signature_recovery",
+    "self_address",
     "top",
 )
 
@@ -786,6 +787,13 @@ class ProvenanceEngine:
             return frozenset({Source(kind="msg_sender")})
         if name == "tx.origin":
             return frozenset({Source(kind="tx_origin")})
+        if name == "this":
+            # Self-address — the contract's own address, structurally
+            # an authority operand for self-call gates like
+            # ``require(msg.sender == address(this))`` (Compound
+            # Timelock setDelay / setPendingAdmin pattern, OZ Timelock-
+            # Controller's _execute path, OZ proxy upgradeToAndCall, …).
+            return frozenset({Source(kind="self_address")})
         if name in (
             "block.timestamp",
             "block.number",
