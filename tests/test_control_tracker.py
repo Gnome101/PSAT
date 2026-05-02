@@ -485,3 +485,165 @@ def test_classify_resolved_address_detects_proxy_admin(monkeypatch):
         "upgrade_interface_version": "5",
         "owner": "0x4444444444444444444444444444444444444444",
     }
+
+
+# ---------------------------------------------------------------------------
+# build_control_snapshot parity: parallel + sequential produce identical output
+# even with cross-controller dependencies (read_spec.contract_source).
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_parity_helper(monkeypatch, fanout: str):
+    """Run a 5-controller fixture under the given fanout. Two controllers
+    depend (via read_spec.contract_source) on a sibling — exercises the
+    topo-sort path."""
+    monkeypatch.setenv("PSAT_RPC_FANOUT", fanout)
+    target = "0x1111111111111111111111111111111111111111"
+    authority = "0x2222222222222222222222222222222222222222"
+
+    plan: ControlTrackingPlan = {
+        "schema_version": "0.1",
+        "contract_address": target,
+        "contract_name": "MockMultiController",
+        "tracking_strategy": "event_first_with_polling_fallback",
+        "tracked_controllers": [
+            {
+                "controller_id": "state_variable:registry",
+                "label": "registry",
+                "source": "registry",
+                "kind": "state_variable",
+                "read_spec": None,
+                "tracking_mode": "state_only",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": target,
+                    "polling_sources": ["registry"],
+                    "cadence": "state_only",
+                    "notes": [],
+                },
+                "notes": [],
+            },
+            {
+                "controller_id": "state_variable:owner",
+                "label": "owner",
+                "source": "owner",
+                "kind": "state_variable",
+                "read_spec": None,
+                "tracking_mode": "state_only",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": target,
+                    "polling_sources": ["owner"],
+                    "cadence": "state_only",
+                    "notes": [],
+                },
+                "notes": [],
+            },
+            {
+                "controller_id": "state_variable:guardian",
+                "label": "guardian",
+                "source": "guardian",
+                "kind": "state_variable",
+                "read_spec": None,
+                "tracking_mode": "state_only",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": target,
+                    "polling_sources": ["guardian"],
+                    "cadence": "state_only",
+                    "notes": [],
+                },
+                "notes": [],
+            },
+            # Two controllers reading off the registry — depend on level 0's `registry`.
+            {
+                "controller_id": "external_contract:adminFromRegistry",
+                "label": "adminFromRegistry",
+                "source": "admin",
+                "kind": "external_contract",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "admin",
+                    "contract_source": "registry",
+                },
+                "tracking_mode": "state_only",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": target,
+                    "polling_sources": ["admin"],
+                    "cadence": "state_only",
+                    "notes": [],
+                },
+                "notes": [],
+            },
+            {
+                "controller_id": "external_contract:operatorFromRegistry",
+                "label": "operatorFromRegistry",
+                "source": "operator",
+                "kind": "external_contract",
+                "read_spec": {
+                    "strategy": "getter_call",
+                    "target": "operator",
+                    "contract_source": "registry",
+                },
+                "tracking_mode": "state_only",
+                "event_watch": None,
+                "polling_fallback": {
+                    "contract_address": target,
+                    "polling_sources": ["operator"],
+                    "cadence": "state_only",
+                    "notes": [],
+                },
+                "notes": [],
+            },
+        ],
+        "tracked_policies": [],
+    }
+
+    def fake_rpc(_rpc_url, method, params):
+        if method == "eth_blockNumber":
+            return "0x10"
+        if method == "eth_call":
+            to = params[0]["to"].lower()
+            data = params[0]["data"]
+            # registry/owner/guardian on target
+            if to == target:
+                if data[:10] == "0x7b103999":  # registry()
+                    return "0x" + "00" * 12 + authority[2:]
+                if data[:10] == "0x8da5cb5b":  # owner()
+                    return "0x" + "00" * 12 + "33" * 20
+                if data[:10] == "0x452a9320":  # guardian()
+                    return "0x" + "00" * 12 + "44" * 20
+                return "0x" + "00" * 32
+            # admin / operator on the registry contract (authority)
+            if to == authority:
+                return "0x" + "00" * 12 + "55" * 20
+            return "0x" + "00" * 32
+        raise AssertionError(f"Unexpected RPC call: {method}")
+
+    monkeypatch.setattr("services.resolution.tracking._rpc_request", fake_rpc)
+    monkeypatch.setattr(
+        "services.resolution.tracking.classify_resolved_address",
+        lambda rpc_url, address, block_tag="latest": ("contract", {"address": address}),
+    )
+    return build_control_snapshot(plan, "https://rpc.example")
+
+
+def test_build_control_snapshot_parity_parallel_vs_sequential(monkeypatch):
+    """Cross-controller dependencies via read_spec.contract_source must resolve
+    identically in both modes."""
+    seq = _snapshot_parity_helper(monkeypatch, "1")
+    par = _snapshot_parity_helper(monkeypatch, "8")
+
+    # Compare canonicalised form: sort controller_values by key for stable
+    # comparison (dict iteration order in CPython is insertion order, which
+    # may differ between sequential and parallel paths).
+    def _canon(snapshot):
+        return {
+            "block_number": snapshot["block_number"],
+            "contract_address": snapshot["contract_address"],
+            "contract_name": snapshot["contract_name"],
+            "controller_values": dict(sorted(snapshot["controller_values"].items())),
+        }
+
+    assert _canon(seq) == _canon(par)
