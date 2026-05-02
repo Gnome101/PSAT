@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.static.contract_analysis_pipeline.v2_to_v1_shim import (  # noqa: E402
+from services.static.contract_analysis_pipeline.semantic_guards import (  # noqa: E402
     synthesize_semantic_guards_from_predicate_trees,
 )
 

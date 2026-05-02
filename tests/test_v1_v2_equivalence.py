@@ -49,7 +49,7 @@ from services.static.contract_analysis_pipeline import (  # noqa: E402
 from services.static.contract_analysis_pipeline.predicate_artifacts import (  # noqa: E402
     build_predicate_artifacts,
 )
-from services.static.contract_analysis_pipeline.v2_to_v1_shim import (  # noqa: E402
+from services.static.contract_analysis_pipeline.semantic_guards import (  # noqa: E402
     synthesize_semantic_guards_from_predicate_trees,
 )
 
