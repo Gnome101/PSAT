@@ -532,6 +532,77 @@ def test_member_records_field_name(tmp_path):
     )
 
 
+def test_loop_phi_converges_with_loop_carried_taint(tmp_path):
+    """A loop-carried variable's provenance must reach a fixed point
+    that includes both the entry-block source AND the loop-body
+    source. The worklist iterator handles Phi unions; this test
+    pins that the result actually converges (no oscillation, no
+    saturation to TOP for a clean monotonic increase)."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public seed;
+            function f(uint256[] calldata vals) external view returns (uint256) {
+                uint256 acc = seed;
+                for (uint256 i = 0; i < vals.length; i++) {
+                    acc = acc + vals[i];
+                }
+                return acc;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    eng = ProvenanceEngine(fn)
+    eng.run()
+    # Some SSA value (the converged `acc`) must carry both
+    # state_variable (from `seed`) and parameter (from `vals`) taint.
+    found = False
+    for srcs in eng.provenance.sources.values():
+        if _has_source_kind(srcs, "state_variable") and _has_source_kind(srcs, "parameter"):
+            found = True
+            break
+    assert found, (
+        f"loop accumulator didn't converge with both seed+vals taint. "
+        f"map={dict(eng.provenance.sources)}"
+    )
+    # Negative invariant: the accumulator should NOT have been saturated
+    # to TOP. A monotonic union over a finite source set converges
+    # cleanly in Slither's bounded SSA.
+    seed_sources = eng.provenance.sources
+    has_top_in_loop_var = any(is_top(srcs) for srcs in seed_sources.values())
+    assert not has_top_in_loop_var, (
+        "loop accumulator saturated to TOP — worklist may be oscillating "
+        "or Phi handler is wrong"
+    )
+
+
+def test_loop_iteration_cap_terminates(tmp_path):
+    """Even with a pathologically deep loop body the worklist must
+    terminate within the iteration cap. We use a tiny cap to force
+    the cap-hit path; the engine must NOT raise or hang."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            function f(uint256 n) external pure returns (uint256) {
+                uint256 acc;
+                for (uint256 i = 0; i < n; i++) {
+                    acc = acc + i;
+                }
+                return acc;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    eng = ProvenanceEngine(fn, worklist_cap=1)  # force cap hit
+    eng.run()  # must terminate, must not raise
+
+
 def test_unpack_propagates_tuple_provenance(tmp_path):
     """After ``(bool ok, ) = target.call(data);``, the unpacked ``ok``
     SSA value inherits the tuple's full provenance set."""

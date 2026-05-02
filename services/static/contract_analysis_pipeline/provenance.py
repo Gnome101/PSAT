@@ -42,6 +42,7 @@ try:
         HighLevelCall,
         Index,
         InternalCall,
+        Length,
         LibraryCall,
         LowLevelCall,
         Member,
@@ -279,6 +280,8 @@ class ProvenanceEngine:
             return self._handle_unary(ir)
         if isinstance(ir, Index):
             return self._handle_index(ir)
+        if isinstance(ir, Length):
+            return self._handle_length(ir)
         if isinstance(ir, Member):
             return self._handle_member(ir)
         if isinstance(ir, SolidityCall):
@@ -385,6 +388,29 @@ class ProvenanceEngine:
         key_sources = self._sources_for_value(key) if key is not None else EMPTY
         result = union(base_sources, key_sources)
         return self.provenance.set(self._var_name(ir.lvalue), result)
+
+    def _handle_length(self, ir: Any) -> bool:
+        """``arr.length`` / ``str.length`` — propagates the array's
+        provenance to the length value, tagged with
+        ``computed_kind="length"``. Loop bounds reading
+        ``params.length`` thus inherit the parameter taint of the
+        array, which lets the worklist converge on loop-carried
+        values without saturating to TOP.
+        """
+        base = getattr(ir, "value", None)
+        sources = self._sources_for_value(base) if base is not None else EMPTY
+        if is_top(sources) or sources == EMPTY:
+            return self.provenance.set(self._var_name(ir.lvalue), sources or TOP)
+        wrapper = frozenset(
+            {
+                Source(
+                    kind="computed",
+                    computed_kind="length",
+                    callee_args_digest=_digest(sources),
+                )
+            }
+        )
+        return self.provenance.set(self._var_name(ir.lvalue), union(sources, wrapper))
 
     def _handle_member(self, ir: Any) -> bool:
         """``s.field`` — propagate base sources AND tag the result with
