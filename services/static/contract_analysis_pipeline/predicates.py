@@ -246,6 +246,20 @@ def _build_binary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) -> LeafPr
         # Apply if-revert polarity flip to operator.
         operator = _apply_polarity(op_name, gate.polarity)
         kind: LeafKind = "equality" if operator in ("eq", "ne") else "comparison"
+        # Signature-auth detection: an equality between a
+        # signature_recovery operand and an address operand is the
+        # canonical ECDSA-recover-then-compare pattern. Emit kind=
+        # signature_auth (shape-tight by construction; always
+        # caller_authority).
+        if kind == "equality" and operator == "eq" and any(o["source"] == "signature_recovery" for o in operands):
+            leaf = _make_leaf(
+                kind="signature_auth",
+                operator=operator,
+                operands=operands,
+                gate=gate,
+            )
+            leaf["authority_role"] = "caller_authority"
+            return leaf
         leaf = _make_leaf(
             kind=kind,
             operator=operator,

@@ -346,6 +346,102 @@ def test_logical_and_splits_into_and_subtree(tmp_path):
     assert kinds == ["comparison", "equality"]
 
 
+def test_ecrecover_equality_classifies_signature_auth(tmp_path):
+    """``address recovered = ecrecover(...); require(recovered == signerAddr)``
+    — an equality between a signature_recovery operand and an
+    address operand is the canonical signature-auth pattern. Leaf
+    kind must be ``signature_auth`` (shape-tight by construction;
+    always caller_authority)."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public signerAddr;
+            function f(bytes32 h, uint8 v, bytes32 r, bytes32 s) external view {
+                address recovered = ecrecover(h, v, r, s);
+                require(recovered == signerAddr);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1
+    leaf = leaves[0]
+    assert leaf["kind"] == "signature_auth"
+    assert leaf["operator"] == "eq"
+    assert leaf["authority_role"] == "caller_authority"
+
+
+def test_inline_ecrecover_in_require(tmp_path):
+    """Inline form: ``require(msg.sender == ecrecover(...))``. The
+    ecrecover output goes through TMP propagation. Should still
+    classify as signature_auth."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            function f(bytes32 h, uint8 v, bytes32 r, bytes32 s) external view {
+                require(msg.sender == ecrecover(h, v, r, s));
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1
+    assert leaves[0]["kind"] == "signature_auth"
+    assert leaves[0]["authority_role"] == "caller_authority"
+
+
+@pytest.mark.parametrize(
+    "source_template,expected_kind,expected_op",
+    [
+        # Equality / inequality
+        ("require(a == b);", "equality", "eq"),
+        ("require(a != b);", "equality", "ne"),
+        ("if (a == b) revert();", "equality", "ne"),
+        ("if (a != b) revert();", "equality", "eq"),
+        # Comparison
+        ("require(a > b);", "comparison", "gt"),
+        ("require(a < b);", "comparison", "lt"),
+        ("require(a >= b);", "comparison", "gte"),
+        ("require(a <= b);", "comparison", "lte"),
+        ("if (a > b) revert();", "comparison", "lte"),
+        ("if (a < b) revert();", "comparison", "gte"),
+        ("if (a >= b) revert();", "comparison", "lt"),
+        ("if (a <= b) revert();", "comparison", "gt"),
+    ],
+)
+def test_polarity_normalization_truth_table(tmp_path, source_template, expected_kind, expected_op):
+    """For each of {require, if-revert} × {eq, ne, lt, lte, gt, gte},
+    assert the normalized leaf has the expected kind + operator.
+    No NOT survives the normalization."""
+    sl = _compile(
+        tmp_path,
+        f"""
+        pragma solidity ^0.8.19;
+        contract C {{
+            uint256 public x;
+            function f(uint256 a, uint256 b) external {{
+                {source_template}
+                x = 1;
+            }}
+        }}
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1, f"got {len(leaves)} leaves: {leaves}"
+    assert leaves[0]["kind"] == expected_kind, leaves[0]
+    assert leaves[0]["operator"] == expected_op, leaves[0]
+
+
 def test_unguarded_function_returns_none(tmp_path):
     sl = _compile(
         tmp_path,
