@@ -198,10 +198,11 @@ def _build_leaf_from_gate(
 
     leaf = _classify_leaf_from_ir(defining_ir, prov, gate, function)
     if leaf is None:
-        return _unsupported_leaf(
-            reason="unrecognized_condition_shape",
-            expression=gate.expression_text,
-        )
+        # Phi / Assignment defining IRs forward bare values; build a
+        # truthy/falsy leaf from the original condition. This covers
+        # ``require(!flag)`` where flag is a bool state var read
+        # directly through a Phi.
+        return _build_truthy_leaf(cond, prov, gate)
     return leaf
 
 
