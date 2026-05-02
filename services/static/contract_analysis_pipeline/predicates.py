@@ -996,25 +996,57 @@ def _sources_from_destination(ir: Any, prov: ProvenanceMap) -> SourceSet:
 # ---------------------------------------------------------------------------
 
 
+_CALLER_SOURCES = ("msg_sender", "tx_origin", "signature_recovery")
+# Sources that can plausibly carry an Ethereum address. ``computed``,
+# ``external_call``, ``top``, and ``block_context`` are excluded — a
+# `require(msg.sender == X)` against an opaque/non-address X is
+# almost certainly NOT an authorization gate.
+_ADDRESS_TYPED_SOURCES = (
+    "state_variable",
+    "view_call",
+    "parameter",
+    "signature_recovery",
+    "constant",
+)
+
+
 def _classify_authority_equality(leaf: LeafPredicate, kind: LeafKind) -> AuthorityRole:
     """Rule A (caller equality): kind=="equality", op=="eq", one
     operand is msg_sender/tx_origin/signature_recovery, the OTHER is
-    address-typed (state/view/parameter/sig). Otherwise business.
+    address-typed (state/view/parameter/sig/constant). Otherwise
+    business.
+
+    The "other operand must be address-typed" check (v6 round-5 #1
+    expansion) prevents misclassifying weird shapes like
+    ``require(msg.sender == block.timestamp)`` or
+    ``require(msg.sender == keccak256(x))`` as caller_authority just
+    because msg.sender appears.
 
     Time gate: at least one operand sources from block_context AND
     no operand sources from msg.sender/tx.origin/signature_recovery
-    (the caller takes priority — `require(block.timestamp >
-    cooldown[msg.sender])` is still primarily a caller-keyed check).
+    (the caller takes priority — ``require(block.timestamp >
+    cooldown[msg.sender])`` is still primarily a caller-keyed check).
     """
     operands = leaf.get("operands", [])
     if not operands:
         return "business"
-    has_caller = any(o["source"] in ("msg_sender", "tx_origin", "signature_recovery") for o in operands)
-    has_block_context = any(o["source"] == "block_context" for o in operands)
+    has_caller = any(o.get("source") in _CALLER_SOURCES for o in operands)
+    has_block_context = any(o.get("source") == "block_context" for o in operands)
     if has_block_context and not has_caller:
         return "time"
-    if kind == "equality" and leaf["operator"] == "eq" and has_caller:
-        return "caller_authority"
+    if kind == "equality" and leaf.get("operator") == "eq" and has_caller:
+        non_caller = [o for o in operands if o.get("source") not in _CALLER_SOURCES]
+        # Single-operand truthy/falsy paths don't reach here, but
+        # defend anyway: a leaf with only a caller-source operand
+        # is shape-tight (someone-else-implicit) and stays auth.
+        if not non_caller:
+            return "caller_authority"
+        # Every non-caller operand must look address-typed. A leaf
+        # like ``require(msg.sender == 0x1234)`` (constant), ``==
+        # ownerVar`` (state_variable), ``== auth.admin()``
+        # (view_call), or ``== adminParam`` (parameter) all qualify.
+        if all(o.get("source") in _ADDRESS_TYPED_SOURCES for o in non_caller):
+            return "caller_authority"
     return "business"
 
 

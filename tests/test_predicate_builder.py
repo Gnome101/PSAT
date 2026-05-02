@@ -650,6 +650,80 @@ def test_confidence_low_for_unsupported(tmp_path):
     assert leaves[0]["confidence"] == "low"
 
 
+# ---------------------------------------------------------------------------
+# AuthorityClassifier rule expansion (v6 round-5 #1)
+# ---------------------------------------------------------------------------
+
+
+def test_caller_equals_constant_address_classifies_caller_authority(tmp_path):
+    """``require(msg.sender == 0x1234...)`` — the other operand is
+    a constant address. This is a hardcoded auth check; the
+    expanded Rule A accepts ``constant`` as address-typed."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public x;
+            function f() external {
+                require(msg.sender == 0x1111111111111111111111111111111111111111);
+                x = 1;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["authority_role"] == "caller_authority"
+
+
+def test_caller_equals_block_context_does_not_classify_as_caller_authority(tmp_path):
+    """Pre-expansion this would have classified as caller_authority
+    just because msg.sender appears, but `require(uint256(uint160(
+    msg.sender)) == block.number)` is nonsense as auth — block.number
+    isn't address-typed. After Rule A expansion this stays
+    business."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public x;
+            function f() external {
+                require(uint256(uint160(msg.sender)) == block.number);
+                x = 1;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["authority_role"] != "caller_authority"
+
+
+def test_caller_equals_keccak_does_not_classify_as_caller_authority(tmp_path):
+    """``require(uint256(uint160(msg.sender)) == keccak256(...))``
+    — the other side is computed (hash output). After Rule A
+    expansion this stays business, since the operand isn't
+    address-typed by source."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public x;
+            function f(bytes calldata seed) external {
+                require(uint256(uint160(msg.sender)) == uint256(keccak256(seed)));
+                x = 1;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["authority_role"] != "caller_authority"
+
+
 def test_confidence_high_for_time_gate(tmp_path):
     """``require(block.timestamp >= deadline)`` is a time gate.
     The classifier reads block_context with no caller, so the
