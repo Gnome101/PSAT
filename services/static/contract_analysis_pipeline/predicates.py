@@ -500,24 +500,115 @@ def _build_internal_call_or_and_subtree(
     previously ``_classify_leaf_from_ir`` saw a Binary with op_name
     ``and`` / ``or``, ``_build_binary_leaf`` only handles comparison
     ops, so the function fell through to ``authority_role=business``.
+
+    Two paths:
+
+    1. Direct Binary OR/AND in the helper's return IR — walk each
+       side as its own subtree.
+    2. Inline-assembly logical combinator (Maker's ``either`` /
+       ``both``) where the helper body is just ``assembly { z := or
+       (x, y) }`` or ``and(x, y)``. Slither doesn't expose these as
+       Binary IRs (the assembly is below the IR level), so the inner
+       defining IR comes back as None. Detect the shape structurally:
+       a function whose body is ASSEMBLY-only and whose ``inline_asm``
+       text starts with ``or(`` or ``and(``. Walk the call-site args
+       as the children of the OR/AND tree (they're the bool inputs
+       to the assembly combinator).
     """
     resolved = _resolve_internal_call_return(ir, prov)
     if resolved is None:
         return None
     callee, sub_prov, _return_value, inner = resolved
-    if not isinstance(inner, Binary):
+    op_name: str | None = None
+    children: list[PredicateTree] = []
+    if isinstance(inner, Binary):
+        # Path 1: helper returns Binary AND/OR directly (Solmate Auth.
+        # isAuthorized's `(... && canCall) || user==owner`).
+        op_name = _binary_op(getattr(inner, "type", None))
+        if op_name not in ("and", "or"):
+            return None
+        children = [
+            _build_subtree_from_value(inner.variable_left, sub_prov, gate, callee),
+            _build_subtree_from_value(inner.variable_right, sub_prov, gate, callee),
+        ]
+    elif isinstance(inner, (InternalCall, LibraryCall)):
+        # Path 3: helper returns ``return combinator(a, b)`` where
+        # ``combinator`` is itself an assembly OR/AND helper. Maker's
+        # ``wish`` does this: ``return either(bit == usr,
+        # can[bit][usr] == 1)``. Detect by looking at the inner-call's
+        # callee for the assembly-combinator shape, and use the inner-
+        # call's ARGS (resolved through the outer helper's sub_prov)
+        # as the children.
+        inner_callee = getattr(inner, "function", None)
+        asm_op = _detect_assembly_combinator_op(inner_callee) if inner_callee else None
+        if asm_op is None:
+            return None
+        op_name = asm_op
+        call_args = list(getattr(inner, "arguments", []) or [])
+        if not call_args:
+            return None
+        children = [
+            _build_subtree_from_value(arg, sub_prov, gate, callee)
+            for arg in call_args
+        ]
+    else:
+        # Path 2: helper IS the assembly OR/AND combinator (Maker's
+        # ``either`` / ``both``). Slither doesn't expose the assembly
+        # OR/AND as Binary IR (it lives below the IR layer), so the
+        # inner defining IR comes back as None or some non-classifying
+        # shape. Detect structurally: helper's body has an ASSEMBLY
+        # node whose inline_asm reduces to ``or(...)`` / ``and(...)``.
+        # Walk the call-site args as the children.
+        asm_op = _detect_assembly_combinator_op(callee)
+        if asm_op is None:
+            return None
+        op_name = asm_op
+        call_args = list(getattr(ir, "arguments", []) or [])
+        if not call_args:
+            return None
+        children = [
+            _build_subtree_from_value(arg, prov, gate, gate.containing_function or callee)
+            for arg in call_args
+        ]
+    if op_name is None or not children:
         return None
-    op_name = _binary_op(getattr(inner, "type", None))
-    if op_name not in ("and", "or"):
-        return None
-    left_tree = _build_subtree_from_value(inner.variable_left, sub_prov, gate, callee)
-    right_tree = _build_subtree_from_value(inner.variable_right, sub_prov, gate, callee)
-    children = [left_tree, right_tree]
     # Polarity propagates the same way as the inline AND/OR case in
     # _build_subtree_from_value's main path.
     if gate.polarity == "allowed_when_true":
         return make_and_node(children) if op_name == "and" else make_or_node(children)
     return make_or_node(children) if op_name == "and" else make_and_node(children)
+
+
+def _detect_assembly_combinator_op(callee: Any) -> str | None:
+    """Detect Maker-style ``either(x,y){assembly{z:=or(x,y)}}`` /
+    ``both(x,y){assembly{z:=and(x,y)}}`` helpers. Returns ``"or"`` /
+    ``"and"`` / None.
+
+    Detection is structural: the helper has an ASSEMBLY node whose
+    ``inline_asm`` text contains a top-level ``or(`` or ``and(`` Yul
+    expression. We're not matching by FUNCTION NAME — any helper
+    whose body reduces to a Yul OR/AND over its parameters lights
+    up here, regardless of identifier choice.
+    """
+    nodes = list(getattr(callee, "nodes", []) or [])
+    asm_text = ""
+    for n in nodes:
+        if str(getattr(n, "type", "")) == "NodeType.ASSEMBLY":
+            asm = getattr(n, "inline_asm", None)
+            if asm:
+                asm_text = str(asm)
+                break
+    if not asm_text:
+        return None
+    # Look for a Yul top-level op. Maker convention is
+    # ``{ z := or(x, y) }`` / ``{ z := and(x, y) }``. Match whichever
+    # appears as a function-call form (the trailing paren disambiguates
+    # ``or`` keyword-vs-prefix matches in identifiers).
+    if "or(" in asm_text and "and(" not in asm_text:
+        return "or"
+    if "and(" in asm_text and "or(" not in asm_text:
+        return "and"
+    return None
 
 
 def _resolve_internal_call_return(
