@@ -735,12 +735,20 @@ def _reconstruct_index_chain(ir: Any, prov: ProvenanceMap, function: Any | None 
     Slither emits N nested Index IRs, each whose variable_left is
     the previous Index's lvalue. We walk back through the function
     to collect each key in source order.
+
+    Per codex round-7 review (F4 fix): when a key dimension is the
+    result of ``keccak256(abi.encode(a, b, ...))``, we unwrap the
+    hash inputs into separate operand entries instead of recording
+    a single ``computed`` source. This treats hashed-key membership
+    as a symbolic tuple key — preserving every component (role,
+    domain separator, msg.sender, etc.) so the writer-gate / auth
+    classifier sees them all, not just the collapsed hash output.
     """
-    keys: list[Operand] = []
+    keys: list[list[Operand]] = []  # per-dimension list of operands
     visited: set[str] = set()
     current = ir
     while isinstance(current, Index):
-        keys.insert(0, _operand_for_value(current.variable_right, prov))
+        keys.insert(0, _expand_key_operand(current.variable_right, prov, function))
         left = current.variable_left
         left_name = getattr(left, "name", None)
         if left_name in visited:
@@ -755,7 +763,65 @@ def _reconstruct_index_chain(ir: Any, prov: ProvenanceMap, function: Any | None 
         if not isinstance(defining, Index):
             break
         current = defining
-    return keys
+    # Flatten: each Index dimension contributes one or more operands.
+    # Hashed-key dimensions expand to N operands; plain keys stay as
+    # a single operand. The result is the full symbolic tuple key.
+    flat: list[Operand] = []
+    for dim in keys:
+        flat.extend(dim)
+    return flat
+
+
+def _expand_key_operand(value: Any, prov: ProvenanceMap, function: Any | None = None) -> list[Operand]:
+    """If ``value`` is a hash result (keccak256 of abi.encode of N
+    args), return one Operand per ultimate input. Otherwise return
+    a single-element list with the value's standard operand.
+
+    The unwrap chain handles common nested forms:
+      - keccak256(bytes)
+      - abi.encode(...) / abi.encodePacked(...) / abi.encodeWithSelector(...)
+      - keccak256(abi.encode(a, b, c)) → walks both calls
+    """
+    if function is None:
+        return [_operand_for_value(value, prov)]
+    defining = _find_defining_ir(value, None, function)
+    if not isinstance(defining, SolidityCall):
+        return [_operand_for_value(value, prov)]
+    fn_name = getattr(getattr(defining, "function", None), "name", None) or ""
+    if not _is_hash_or_encode_call(fn_name):
+        return [_operand_for_value(value, prov)]
+
+    # Walk into the hash/encode arguments. Each argument may itself
+    # be a hash/encode lvalue (chained) — recurse.
+    out: list[Operand] = []
+    for arg in getattr(defining, "arguments", []) or []:
+        out.extend(_expand_key_operand(arg, prov, function))
+    if not out:
+        # Defensive: hash with no resolvable args → fall back.
+        return [_operand_for_value(value, prov)]
+    return out
+
+
+def _is_hash_or_encode_call(fn_name: str) -> bool:
+    """Recognize Solidity hashing + abi-encoding functions whose
+    arguments form the components of a symbolic tuple key. Detection
+    is by canonical signature, not identifier name — the function
+    name here is the Solidity built-in's signature (e.g.,
+    ``keccak256(bytes)``), which is structural metadata, not a
+    user-chosen identifier."""
+    if not fn_name:
+        return False
+    return (
+        fn_name.startswith("keccak256(")
+        or fn_name.startswith("sha256(")
+        or fn_name.startswith("sha3(")
+        or fn_name.startswith("ripemd160(")
+        or fn_name.startswith("abi.encode(")
+        or fn_name.startswith("abi.encodePacked(")
+        or fn_name.startswith("abi.encodeWithSelector(")
+        or fn_name.startswith("abi.encodeWithSignature(")
+        or fn_name.startswith("abi.encodeCall(")
+    )
 
 
 def _find_index_base(ir: Any, function: Any | None = None) -> Any | None:

@@ -277,23 +277,19 @@ def test_eip1271_classifies_signature_auth(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Some contracts compute the storage key via a hash: "
-        "``require(_authorized[keccak256(abi.encode(role, "
-        "msg.sender))])``. Structurally a 1-key mapping read with "
-        "the key derived from msg.sender + role. Currently classifies "
-        "as 1-key membership business (the key source is `computed`, "
-        "not msg_sender directly). "
-        "FIX: in operand classification, when the key is a "
-        "`computed` source whose taint includes msg.sender, treat "
-        "it equivalently to a multi-key mapping with msg.sender as "
-        "one of the conceptual keys. Generic via taint analysis — "
-        "no per-pattern code."
-    ),
-    strict=True,
-)
 def test_hashed_key_membership_classifies_caller_authority(tmp_path):
+    """LANDED (codex F4): hashed-key membership unwrapped via
+    symbolic-tuple-key recognition. ``_authorized[keccak256(
+    abi.encode(role, msg.sender))]`` now produces a 2-key
+    membership leaf where the key_sources are ``[parameter(role),
+    msg_sender]`` instead of a single ``computed`` source. Multi-key
+    rule then promotes to caller_authority directly.
+
+    Implementation: predicates.py:_expand_key_operand walks back
+    through hash and abi.encode calls and returns one Operand per
+    ultimate input. Detection is by Solidity built-in signature
+    (``keccak256(bytes)``, ``abi.encode()``, etc.) — structural
+    metadata, not user-identifier-name matching."""
     sl = _compile(
         tmp_path,
         """
