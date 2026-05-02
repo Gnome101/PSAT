@@ -138,17 +138,32 @@ def _build_subtree_from_gate(
     # ParameterBindingEnv per v4 plan §predicates (round-2 #2 fix).
     operating_fn = gate.containing_function or function
     if operating_fn is not function:
-        bindings = _build_chain_bindings(gate.call_chain or [], operating_fn, function)
-        helper_engine = ProvenanceEngine(operating_fn, parameter_bindings=bindings)
-        helper_engine.run()
-        prov = helper_engine.provenance
+        # Pass the caller's already-computed provenance down so
+        # _build_chain_bindings doesn't re-run the top-function
+        # engine. Walk also returns the final hop's provenance —
+        # if the chain ENDS at operating_fn (the common case), we
+        # can use that prov directly and skip the helper_engine
+        # rebuild. Saves ~6-10ms per cross-fn gate.
+        bindings, chain_end_prov, chain_end_fn = _build_chain_bindings(
+            gate.call_chain or [], operating_fn, function, top_prov=prov
+        )
+        if chain_end_fn is operating_fn and chain_end_prov is not None:
+            prov = chain_end_prov
+        else:
+            helper_engine = ProvenanceEngine(operating_fn, parameter_bindings=bindings)
+            helper_engine.run()
+            prov = helper_engine.provenance
 
     return _build_subtree_from_value(cond, prov, gate, operating_fn)
 
 
 def _build_chain_bindings(
-    call_chain: list[Any], helper: Any, top_function: Any
-) -> dict[str, Any]:
+    call_chain: list[Any],
+    helper: Any,
+    top_function: Any,
+    *,
+    top_prov: ProvenanceMap | None = None,
+) -> tuple[dict[str, Any], ProvenanceMap | None, Any]:
     """Walk the call chain forward to build parameter bindings for
     the helper's scope. Each link is an InternalCall (or
     modifier-call InternalCall) IR taken to enter the next callee.
@@ -171,11 +186,18 @@ def _build_chain_bindings(
     promotes to caller_authority.
     """
     if not call_chain:
-        return {}
-    # Start from the top function's provenance.
-    top_engine = ProvenanceEngine(top_function)
-    top_engine.run()
-    current_prov = top_engine.provenance
+        return {}, top_prov, top_function
+    # Start from the top function's provenance. Reuse the
+    # caller-provided prov when available — build_predicate_tree
+    # has already run ProvenanceEngine on top_function, so a
+    # second walk is pure overhead. The fallback path keeps the
+    # function self-contained for direct test calls.
+    if top_prov is not None:
+        current_prov = top_prov
+    else:
+        top_engine = ProvenanceEngine(top_function)
+        top_engine.run()
+        current_prov = top_engine.provenance
     current_fn = top_function
 
     for ir in call_chain:
@@ -200,7 +222,7 @@ def _build_chain_bindings(
         name = getattr(param, "name", None)
         if name and name in current_prov.sources:
             helper_bindings[name] = current_prov.sources[name]
-    return helper_bindings
+    return helper_bindings, current_prov, current_fn
 
 
 def _operand_value_provenance(value: Any, prov: ProvenanceMap) -> Any:
