@@ -28,71 +28,21 @@ RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
 
 def _load_semantic_guards_with_v2_fallback(session: Session, job: Job) -> dict | None:
-    """Load the ``semantic_guards`` artifact for ``job``, optionally
-    swapping in the v2-derived synthetic when ``PSAT_POLICY_USE_V2_SHIM``
-    is truthy.
+    """Load the ``semantic_guards`` artifact for ``job``.
 
-    Selection logic:
+    Schema-v2 cutover state: the artifact is now v2-shim-derived at
+    static-stage emit time (see services/static/contract_analysis_-
+    pipeline/semantic_guards.py — ``build_semantic_guards`` runs the
+    shim against the embedded ``_v2_predicate_trees``). The legacy
+    PSAT_POLICY_USE_V2_SHIM flag and the in-policy-stage shim-runtime
+    branch are gone — the artifact is the source of truth and is
+    always v2-derived.
 
-      1. Flag off (default) — return the native ``semantic_guards``
-         artifact unchanged. Production behavior today.
-      2. Flag on AND ``predicate_trees`` artifact exists AND the
-         shim produces output without raising — return the
-         synthetic dict (carries ``_synthetic_from`` =
-         "v2_predicate_trees" so downstream can tell).
-      3. Flag on but the v2 path can't produce a synthetic for
-         any reason — fall back to native ``semantic_guards`` and
-         log. Strictly safer than failing the whole job.
-
-    The flag is the cutover lever for #17 checkpoint 1: turn it
-    on per-environment to validate the v2-derived guards drive
-    effective_permissions equivalently to v1, then delete the
-    native v1 emit.
+    Function name kept for caller-site stability across the flag
+    removal; will rename in a follow-up sweep.
     """
-    flag = os.environ.get("PSAT_POLICY_USE_V2_SHIM", "").strip().lower()
-    use_v2 = flag in ("1", "true", "yes", "on")
-
-    if use_v2:
-        try:
-            predicate_trees = get_artifact(session, job.id, "predicate_trees")
-            if isinstance(predicate_trees, dict) and "trees" in predicate_trees:
-                from services.static.contract_analysis_pipeline.v2_to_v1_shim import (
-                    synthesize_semantic_guards_from_predicate_trees,
-                )
-
-                contract_analysis = get_artifact(session, job.id, "contract_analysis")
-                subj = (
-                    (contract_analysis or {}).get("subject", {})
-                    if isinstance(contract_analysis, dict)
-                    else {}
-                )
-                synthetic = synthesize_semantic_guards_from_predicate_trees(
-                    predicate_trees,
-                    contract_address=subj.get("address") or job.address or "",
-                    contract_name=subj.get("name") or "",
-                )
-                logger.info(
-                    "Policy stage: using v2-shim synthetic semantic_guards "
-                    "for job %s (%d functions)",
-                    job.id,
-                    len(synthetic.get("functions", [])),
-                )
-                return synthetic
-            else:
-                logger.warning(
-                    "PSAT_POLICY_USE_V2_SHIM set but no predicate_trees "
-                    "artifact for job %s — falling back to native semantic_guards",
-                    job.id,
-                )
-        except Exception:
-            logger.exception(
-                "PSAT_POLICY_USE_V2_SHIM enabled but v2 shim raised for job %s; "
-                "falling back to native semantic_guards",
-                job.id,
-            )
-
-    native = get_artifact(session, job.id, "semantic_guards")
-    return native if isinstance(native, dict) else None
+    artifact = get_artifact(session, job.id, "semantic_guards")
+    return artifact if isinstance(artifact, dict) else None
 
 
 def _resolve_target_state_var_address(
