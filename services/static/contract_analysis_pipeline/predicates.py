@@ -128,6 +128,16 @@ def _build_subtree_from_gate(
     # If gate is in a cross-fn helper, run provenance + IR walks
     # against the helper so we can resolve the condition's defining
     # IR + operand sources.
+    #
+    # Full caller-side ParameterBindingEnv (substituting helper
+    # parameters with call-site provenance through the entire call
+    # chain) is more involved when the chain crosses a modifier —
+    # modifiers are walked separately by RevertDetector and their
+    # parameters need to be reconstructed from the modifier-call
+    # site. Pinned in the v4 plan §predicates as a follow-up; the
+    # 2-hop case (modifier → helper-with-revert reading msg.sender
+    # directly) covers most production OZ AC <5.0 patterns and
+    # works today.
     operating_fn = gate.containing_function or function
     if operating_fn is not function:
         helper_engine = ProvenanceEngine(operating_fn)

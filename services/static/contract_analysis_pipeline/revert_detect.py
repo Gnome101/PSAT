@@ -93,6 +93,12 @@ class RevertGate:
     # the predicate builder uses it to walk the condition's defining
     # IR through the right scope.
     containing_function: Any = None
+    # Cross-fn call chain: list of InternalCall/LibraryCall IRs taken
+    # to reach the gate's containing_function from the top-level
+    # function being analyzed. Used by the predicate builder to
+    # substitute the helper's parameters with the caller's argument
+    # provenance (full ParameterBindingEnv per v4 plan §predicates).
+    call_chain: list[Any] = field(default_factory=list)
     # Diagnostic text for predicate.expression / leaf.basis.
     expression_text: str = ""
     basis: list[str] = field(default_factory=list)
@@ -165,6 +171,10 @@ class RevertDetector:
         self.internal_call_depth = internal_call_depth
         self._gates: list[RevertGate] = []
         self._call_stack: list[str] = []
+        # Stack of InternalCall IRs traversed to reach the current
+        # node. Each gate found inside a helper records this chain
+        # so the predicate builder can build parameter bindings.
+        self._call_chain_irs: list[Any] = []
 
     def run(self) -> list[RevertGate]:
         # Walk the function's own body.
@@ -222,11 +232,13 @@ class RevertDetector:
                 if len(self._call_stack) >= self.internal_call_depth:
                     continue
                 self._call_stack.append(callee_id)
+                self._call_chain_irs.append(ir)
                 try:
                     for sub_node in getattr(callee, "nodes", []) or []:
                         self._scan_node(sub_node, container=callee)
                 finally:
                     self._call_stack.pop()
+                    self._call_chain_irs.pop()
 
         # Cases 3-4: if (C) revert ErrorName / SolidityCall(revert) in
         # the THIS node OR a one-hop successor (slither splits these).
@@ -253,6 +265,7 @@ class RevertDetector:
                             polarity=polarity,
                             node=node,
                             containing_function=container,
+                            call_chain=list(self._call_chain_irs),
                             expression_text=str(node.expression) if node.expression else "",
                             basis=[f"if-revert via successor {son.type}"],
                         )
@@ -268,6 +281,7 @@ class RevertDetector:
                     polarity="allowed_when_true",
                     node=node,
                     containing_function=container,
+                    call_chain=list(self._call_chain_irs),
                     expression_text=str(node.expression) if node.expression else "<asm>",
                     basis=["inline assembly conditional revert"],
                     unsupported_reason=None,  # captured but limited
@@ -288,6 +302,7 @@ class RevertDetector:
             polarity="allowed_when_true",
             node=node,
             containing_function=container,
+            call_chain=list(self._call_chain_irs),
             expression_text=str(node.expression) if node.expression else "",
             basis=[f"{kind}({cond})" if cond is not None else kind],
         )

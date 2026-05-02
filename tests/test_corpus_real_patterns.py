@@ -179,6 +179,92 @@ def test_oz_ownable_pattern(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(
+    reason=(
+        "OZ 5.0+ uses a 3-hop helper chain where the deepest helper "
+        "(_checkRoleAddr) takes ``account`` as a PARAMETER bound to "
+        "_msgSender() at the call site. Without full caller-side "
+        "ParameterBindingEnv substitution back through the chain, "
+        "the membership leaf inside the helper has key_sources = "
+        "[parameter(role), parameter(account)] — both parameters, "
+        "neither tagged as msg.sender. Rule B's multi-key promotion "
+        "requires at least one key from {msg_sender, tx_origin, "
+        "signature_recovery}, so the leaf classifies as business. "
+        "FIX: extend RevertDetector to record the call_chain (caller "
+        "fn + arg expressions at each hop), then the predicate "
+        "builder substitutes helper parameters with caller-site "
+        "provenance. ``_msgSender()`` returning msg.sender chains "
+        "through to mark the helper's account parameter as "
+        "msg_sender-tainted. Open work item — the simpler 2-hop "
+        "case (modifier → helper-with-revert reading msg.sender "
+        "directly) passes today, covering the EtherFiTimelock + "
+        "OZ <5.0 patterns."
+    ),
+    strict=True,
+)
+def test_oz_access_control_full_3_hop_helper_chain(tmp_path):
+    """The actual production OZ AccessControl (5.0+) uses a 3-hop
+    helper chain:
+
+      onlyRole(role)
+        → _checkRole(role)
+          → _checkRoleAddr(role, _msgSender())
+            → if (!hasRole(role, account)) revert ...
+
+    Pins the ParameterBindingEnv gap until full caller-side
+    substitution lands."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            struct RoleData {
+                mapping(address => bool) hasRoleMembers;
+                bytes32 adminRole;
+            }
+            mapping(bytes32 => RoleData) private _roles;
+
+            error AccessControlUnauthorizedAccount(address account, bytes32 needed);
+
+            function _msgSender() internal view returns (address) {
+                return msg.sender;
+            }
+            function hasRole(bytes32 role, address account) public view returns (bool) {
+                return _roles[role].hasRoleMembers[account];
+            }
+            function _checkRoleAddr(bytes32 role, address account) internal view {
+                if (!hasRole(role, account)) {
+                    revert AccessControlUnauthorizedAccount(account, role);
+                }
+            }
+            function _checkRole(bytes32 role) internal view {
+                _checkRoleAddr(role, _msgSender());
+            }
+            function getRoleAdmin(bytes32 role) public view returns (bytes32) {
+                return _roles[role].adminRole;
+            }
+            modifier onlyRole(bytes32 role) {
+                _checkRole(role);
+                _;
+            }
+            function grantRole(bytes32 role, address account) public onlyRole(getRoleAdmin(role)) {
+                _roles[role].hasRoleMembers[account] = true;
+            }
+        }
+    """,
+    )
+    contract = next(c for c in sl.contracts if c.name == "C")
+    trees = _build_pipeline(contract)
+    tree = trees["grantRole(bytes32,address)"]
+    assert tree is not None, "3-hop cross-fn revert chain must resolve"
+    leaves = _all_leaves(tree)
+    assert len(leaves) >= 1
+    # Membership leaf via 2-key roles[role].hasRoleMembers[caller]
+    # — caller_authority via Rule B multi-key direct-promote.
+    leaf = leaves[0]
+    assert leaf["authority_role"] == "caller_authority"
+
+
 def test_oz_access_control_grantrole_via_onlyrole(tmp_path):
     """The OZ AccessControl ``grantRole`` is gated by ``onlyRole(
     getRoleAdmin(role))`` which dispatches to ``_checkRole`` which
