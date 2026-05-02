@@ -334,13 +334,61 @@ def _try_membership_via_value_compare(
 
 def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, Any | None]:
     """Return (index_ir, const_value) if ``a`` is the lvalue of an
-    Index IR and ``b`` is a Constant; otherwise (None, None)."""
+    Index IR (possibly with a bitwise mask applied) and ``b`` is a
+    Constant; otherwise (None, None).
+
+    Per codex round-7 review (F1 fix): in addition to the direct
+    ``map[k] == const`` form, recognize bitwise-mask forms:
+      - ``(map[k] & MASK) != 0``  (the canonical bitwise role-flag check)
+      - ``(map[k] & MASK) == V``  (bit-equality)
+    These all reduce to membership-with-value-compare structurally.
+    """
     if not isinstance(b, Constant):
         return None, None
     defining = _find_defining_ir(a, None, function)
     if isinstance(defining, Index):
         return defining, b.value
+    # Bitwise mask: ``a`` is the lvalue of a Binary AND whose left
+    # is the Index lvalue and whose right is a constant. The outer
+    # comparison ``(map[k] & MASK) op CONST`` is structurally a
+    # value-compare on Index — emit the underlying Index, with the
+    # bitwise mask folded into the value side. We don't lose the
+    # mask information: when the value-predicate adapter populates
+    # members later, it filters by `(value & MASK) op CONST`.
+    if isinstance(defining, Binary):
+        bt_name = getattr(getattr(defining, "type", None), "name", "").upper()
+        if bt_name == "AND":  # bitwise & (Slither's BinaryType.AND); &&  is ANDAND
+            left = defining.variable_left
+            right = defining.variable_right
+            # The "mask" side of `(value & MASK)` can be a literal
+            # Constant OR a state-level `constant`/`immutable` value
+            # (which Slither emits as a StateIRVariable). Either is
+            # acceptable as the mask. Make sure the OTHER side is
+            # the Index lvalue.
+            if _is_mask_operand(left) and not _is_mask_operand(right):
+                left, right = right, left
+            if not _is_mask_operand(right):
+                return None, None
+            inner = _find_defining_ir(left, None, function)
+            if isinstance(inner, Index):
+                return inner, b.value
     return None, None
+
+
+def _is_mask_operand(value: Any) -> bool:
+    """A bitwise mask operand is either a literal Constant or a
+    state-level `constant` / `immutable` declaration. Both are
+    fixed-ish at the structural level — the value can be folded into
+    the SetDescriptor for downstream enumeration. Mutable state vars
+    aren't masks (the value changes), so they're excluded."""
+    if isinstance(value, Constant):
+        return True
+    # StateIRVariable for declared `constant`/`immutable` storage.
+    nsv = getattr(value, "non_ssa_version", None)
+    if nsv is not None:
+        if getattr(nsv, "is_constant", False) or getattr(nsv, "is_immutable", False):
+            return True
+    return False
 
 
 def _build_unary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate, function: Any | None) -> LeafPredicate:

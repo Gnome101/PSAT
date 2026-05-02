@@ -123,24 +123,23 @@ def test_diamond_acl_membership_classifies_caller_authority(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Bitwise role flags: ``require((roles[msg.sender] & "
-        "FLAG) != 0)``. Structurally a membership check — "
-        "msg.sender is in the set of addresses with bit FLAG set "
-        "in `roles`. Current pipeline produces a comparison leaf "
-        "(business). "
-        "FIX: extend the value-predicate recognition I already added "
-        "for `map[k] == 1` (Maker wards) to also cover `(map[k] & "
-        "V) != 0` and `map[k] >= V`. Add a `value_predicate` field "
-        "to SetDescriptor that records {kind: 'eq'|'bitmask'|"
-        "'threshold', value: ...}. Adapter then enumerates members "
-        "where the predicate holds. Structural — no per-pattern "
-        "adapter."
-    ),
-    strict=True,
-)
 def test_bitwise_flag_membership_classifies_caller_authority(tmp_path):
+    """LANDED (codex F1): bitwise role flag check
+    ``(roles[msg.sender] & FLAG) != 0`` recognized as a value-
+    predicate membership. The bitwise AND between an Index lvalue
+    and a constant mask folds into the descriptor's truthy_value;
+    the outer != 0 yields operator=falsy (canonical "value not
+    masked-out"). Mask operand accepts both literal Constants and
+    state-level `constant`/`immutable` declarations — both are
+    fixed structurally, so the value-predicate adapter can fold
+    the mask in at enumeration time. Mutable state vars are
+    excluded.
+
+    Implementation: predicates.py:_find_index_value_pair extended
+    to recognize ``Binary(AND, Index_lvalue, Constant_or_immutable)``
+    as the same shape as plain ``Index_lvalue == const``. Writer-
+    gate rule b.i then promotes to caller_authority when the
+    underlying mapping is admin-written."""
     sl = _compile(
         tmp_path,
         """
