@@ -247,7 +247,7 @@ def _bulk_insert_logs(
         index_elements=["chain_id", "acl_contract_id", "tx_hash", "log_index"]
     )
     result = session.execute(stmt)
-    return result.rowcount or 0
+    return getattr(result, "rowcount", 0) or 0
 
 
 def _upsert_cursor(

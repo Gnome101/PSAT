@@ -619,8 +619,8 @@ def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, A
     if isinstance(defining, Binary):
         bt_name = getattr(getattr(defining, "type", None), "name", "").upper()
         if bt_name == "AND":  # bitwise & (Slither's BinaryType.AND); &&  is ANDAND
-            left = defining.variable_left
-            right = defining.variable_right
+            left = defining.variable_left  # type: ignore[union-attr]
+            right = defining.variable_right  # type: ignore[union-attr]
             # The "mask" side of `(value & MASK)` can be a literal
             # Constant OR a state-level `constant`/`immutable` value
             # (which Slither emits as a StateIRVariable). Either is
@@ -1395,8 +1395,8 @@ def _reconstruct_index_chain(ir: Any, prov: ProvenanceMap, function: Any | None 
     visited: set[str] = set()
     current = ir
     while isinstance(current, Index):
-        keys.insert(0, _expand_key_operand(current.variable_right, prov, function))
-        left = current.variable_left
+        keys.insert(0, _expand_key_operand(current.variable_right, prov, function))  # type: ignore[union-attr]
+        left = current.variable_left  # type: ignore[union-attr]
         left_name = getattr(left, "name", None)
         if left_name in visited:
             break  # cycle guard
