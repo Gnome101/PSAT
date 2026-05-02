@@ -213,7 +213,7 @@ def _classify_leaf_from_ir(
 ) -> LeafPredicate | None:
     """Dispatch on the defining IR class to build a LeafPredicate."""
     if isinstance(defining_ir, Binary):
-        return _build_binary_leaf(defining_ir, prov, gate)
+        return _build_binary_leaf(defining_ir, prov, gate, function)
     if isinstance(defining_ir, Unary):
         return _build_unary_leaf(defining_ir, prov, gate, function)
     if isinstance(defining_ir, Index):
@@ -233,7 +233,7 @@ def _classify_leaf_from_ir(
 # ---------------------------------------------------------------------------
 
 
-def _build_binary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) -> LeafPredicate:
+def _build_binary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate, function: Any | None = None) -> LeafPredicate:
     """A Binary IR drives the gate. Type maps to operator; operands
     are classified via provenance."""
     bt = getattr(ir, "type", None)
@@ -246,6 +246,16 @@ def _build_binary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) -> LeafPr
         # Apply if-revert polarity flip to operator.
         operator = _apply_polarity(op_name, gate.polarity)
         kind: LeafKind = "equality" if operator in ("eq", "ne") else "comparison"
+        # Maker-wards / value-flag membership: ``map[k] == 1`` is
+        # semantically a membership check, not a generic equality.
+        # Recognize when one operand is the lvalue of an Index IR
+        # and the other is a constant — emit a membership leaf with
+        # truthy_value=<constant> so writer-gate pass-2 (b.ii) and
+        # the resolver can route on it.
+        if kind == "equality" and function is not None:
+            ml = _try_membership_via_value_compare(ir, prov, gate, function, operator)
+            if ml is not None:
+                return ml
         # Signature-auth detection: an equality between a
         # signature_recovery operand and an address operand is the
         # canonical ECDSA-recover-then-compare pattern. Emit kind=
@@ -273,6 +283,63 @@ def _build_binary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) -> LeafPr
     # let the predicate-tree composition layer (week 2) split them
     # into AND/OR tree nodes properly.
     return _unsupported_leaf(reason=f"binary_op_{op_name}_unsupported", expression=str(ir))
+
+
+def _try_membership_via_value_compare(
+    ir: Any, prov: ProvenanceMap, gate: RevertGate, function: Any, operator: LeafOperator
+) -> LeafPredicate | None:
+    """Recognize ``map[k] == constant`` as a membership leaf.
+
+    Maker uses ``wards[ilk][user] == 1`` as the canonical "is this
+    user authorized" check. By default our binary handler produces an
+    equality leaf, which doesn't trip writer-gate's b.ii promotion
+    rule. Detect when one operand is the lvalue of an Index IR and
+    the other is a constant: emit a membership leaf with
+    truthy_value=<constant> instead, so the descriptor carries the
+    same shape as a bool-membership and pass-2 promotion can fire.
+    """
+    left = ir.variable_left
+    right = ir.variable_right
+    # Try: left is Index, right is Constant.
+    index_ir, const_value = _find_index_value_pair(left, right, function)
+    if index_ir is None:
+        index_ir, const_value = _find_index_value_pair(right, left, function)
+    if index_ir is None or const_value is None:
+        return None
+
+    # Build the same descriptor shape as _build_index_membership_leaf.
+    keys = _reconstruct_index_chain(index_ir, prov, function)
+    descriptor: SetDescriptor = {
+        "kind": "mapping_membership",
+        "key_sources": keys,
+        "truthy_value": str(const_value),
+    }
+    base_var = _find_index_base(index_ir, function)
+    if base_var is not None:
+        descriptor["storage_var"] = getattr(base_var, "name", None)
+
+    # Operator: == const becomes truthy; != const becomes falsy.
+    membership_op: LeafOperator = "truthy" if operator == "eq" else "falsy"
+    leaf = _make_leaf(
+        kind="membership",
+        operator=membership_op,
+        operands=keys,
+        gate=gate,
+    )
+    leaf["set_descriptor"] = descriptor
+    leaf["authority_role"] = _classify_authority_membership(leaf, descriptor)
+    return leaf
+
+
+def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, Any | None]:
+    """Return (index_ir, const_value) if ``a`` is the lvalue of an
+    Index IR and ``b`` is a Constant; otherwise (None, None)."""
+    if not isinstance(b, Constant):
+        return None, None
+    defining = _find_defining_ir(a, None, function)
+    if isinstance(defining, Index):
+        return defining, b.value
+    return None, None
 
 
 def _build_unary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate, function: Any | None) -> LeafPredicate:

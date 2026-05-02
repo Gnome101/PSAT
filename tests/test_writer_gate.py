@@ -132,9 +132,15 @@ def test_blacklist_writer_gated_promotes(tmp_path):
 
 def test_self_administered_wards_promotes(tmp_path):
     """Maker wards-style: ``rely(addr)`` is gated by ``wards[msg.
-    sender]`` (the same map). Reading ``wards[msg.sender]`` in a
-    function should promote because the writer is gated by the same
-    storage var."""
+    sender] == 1`` (same map, value-compare form). Reading
+    ``wards[msg.sender] == 1`` in someAction should promote via
+    rule b.ii because the writer is gated by the same storage var.
+
+    Critical for real Maker contracts: this is THE canonical 'auth'
+    pattern in MakerDAO. Without ``map[k]==1`` recognition the leaf
+    stays equality, the writer-gate pass-2 doesn't see a membership
+    leaf to gate on, and the wards mapping looks like just a uint
+    state-var read."""
     sl = _compile(
         tmp_path,
         """
@@ -154,16 +160,15 @@ def test_self_administered_wards_promotes(tmp_path):
     contract = sl.contracts[0]
     trees = _build_trees(contract)
     apply_writer_gate_pass(contract, trees)
-    # someAction's leaf — note this is a comparison (==1), not bare
-    # membership. The current builder produces an equality leaf with
-    # the LHS being the Index reference. Writer-gate promotion
-    # currently targets membership leaves only, so this case isn't
-    # promoted in the initial cut. Document the expectation.
     leaves = _all_leaves(trees["someAction()"])
     assert len(leaves) == 1
-    # TODO: when we treat ``map[a][b] == 1`` as a membership leaf
-    # (truthy_value=1), this will promote. Currently equality, stays
-    # business. Pin as TODO for week-3 follow-up.
+    leaf = leaves[0]
+    # Recognized as membership (value-compare pattern) with
+    # truthy_value="1".
+    assert leaf["kind"] == "membership"
+    assert leaf["set_descriptor"]["truthy_value"] == "1"
+    # Promoted via rule b.ii (self-administered).
+    assert leaf["authority_role"] == "caller_authority"
 
 
 # ---------------------------------------------------------------------------
