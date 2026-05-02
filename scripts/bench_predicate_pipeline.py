@@ -167,7 +167,16 @@ def _pct(sorted_samples: list[float], pct: int) -> float:
 def _bench_one_fixture(name: str, source: str, *, runs: int) -> dict[str, Any]:
     """Compile once, then time build_predicate_tree per function
     and evaluate_tree_with_registry per function across ``runs``
-    iterations. Returns the per-fixture report dict."""
+    iterations. Returns the per-fixture report dict.
+
+    Also measures ``build_predicate_artifacts`` (the production code
+    path that runs all functions in one go with the artifact-level
+    helper-engine cache active). The per-call build_predicate_tree
+    samples bypass that cache; the artifact-level samples reflect
+    deployed perf — which can be markedly faster on contracts with
+    multiple functions sharing helpers (OZ AccessControl: grantRole/
+    revokeRole/renounceRole all funnel through onlyRole→_checkRole).
+    """
     from slither import Slither
 
     from services.resolution.adapters import AdapterRegistry, EvaluationContext
@@ -180,6 +189,9 @@ def _bench_one_fixture(name: str, source: str, *, runs: int) -> dict[str, Any]:
     from services.resolution.adapters.event_indexed import EventIndexedAdapter
     from services.resolution.adapters.safe import SafeAdapter
     from services.resolution.predicate_evaluator import evaluate_tree_with_registry
+    from services.static.contract_analysis_pipeline.predicate_artifacts import (
+        build_predicate_artifacts,
+    )
     from services.static.contract_analysis_pipeline.predicates import (
         build_predicate_tree,
     )
@@ -211,6 +223,7 @@ def _bench_one_fixture(name: str, source: str, *, runs: int) -> dict[str, Any]:
 
         build_samples: list[float] = []
         eval_samples: list[float] = []
+        artifact_samples: list[float] = []
 
         # First pass: build trees so eval has something to time.
         # Time both phases on the same iterations to amortize Slither
@@ -228,10 +241,20 @@ def _bench_one_fixture(name: str, source: str, *, runs: int) -> dict[str, Any]:
                     e1 = time.perf_counter()
                     eval_samples.append((e1 - e0) * 1000.0)
 
+            # Artifact-level run: reflects production cost where the
+            # helper-engine cache is active across all the contract's
+            # functions. Per-function cost = total / function_count.
+            a0 = time.perf_counter()
+            build_predicate_artifacts(contract)
+            a1 = time.perf_counter()
+            if functions:
+                artifact_samples.append(((a1 - a0) * 1000.0) / len(functions))
+
         return {
             "fixture": name,
             "function_count": len(functions),
             "build": _percentiles(build_samples),
+            "build_artifact_per_fn": _percentiles(artifact_samples),
             "eval": _percentiles(eval_samples),
         }
 
@@ -269,15 +292,18 @@ def _format_text(report: dict[str, Any]) -> str:
         f"Predicate-pipeline benchmark — {len(report['fixtures'])} fixtures, "
         f"{report['runs_per_fixture']} runs each"
     )
-    lines.append("=" * 72)
-    lines.append(f"  {'fixture':<24} {'fns':>4} {'build p99 ms':>14} {'eval p99 ms':>14}")
-    lines.append(f"  {'-' * 24} {'-' * 4} {'-' * 14} {'-' * 14}")
+    lines.append("=" * 78)
+    lines.append(
+        f"  {'fixture':<24} {'fns':>4} {'build p99':>10} {'artifact p99':>13} {'eval p99':>10}"
+    )
+    lines.append(f"  {'-' * 24} {'-' * 4} {'-' * 10} {'-' * 13} {'-' * 10}")
     for r in report["fixtures"]:
         bp = r["build"].get("p99", 0.0)
+        ap = r.get("build_artifact_per_fn", {}).get("p99", 0.0) if r.get("build_artifact_per_fn") else 0.0
         ep = r["eval"].get("p99", 0.0)
         lines.append(
             f"  {r['fixture']:<24} {r['function_count']:>4} "
-            f"{bp:>14.3f} {ep:>14.3f}"
+            f"{bp:>10.3f} {ap:>13.3f} {ep:>10.3f}"
         )
     s = report["summary"]
     lines.append("")
