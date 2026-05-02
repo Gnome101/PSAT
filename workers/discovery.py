@@ -34,6 +34,7 @@ from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, p
 from services.discovery.inventory import merge_inventory, search_protocol_inventory
 from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
 from utils import etherscan
+from utils.logging import record_degraded
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.discovery")
@@ -164,6 +165,12 @@ class DiscoveryWorker(BaseWorker):
             if audit_count:
                 logger.info("Job %s: found %d audit report(s) for %s", job.id, audit_count, company)
         except Exception as exc:
+            record_degraded(
+                phase="audit_discovery",
+                exc=exc,
+                context={"company": company},
+                include_traceback=True,
+            )
             logger.warning("Job %s: audit report discovery failed: %s", job.id, exc)
 
         discovered = [e for e in inventory.get("contracts", []) if e.get("address")]

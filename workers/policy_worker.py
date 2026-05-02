@@ -28,6 +28,7 @@ from services.policy import build_effective_permissions, build_principal_labels
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from utils.concurrency import parallel_map
+from utils.logging import record_degraded
 from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.policy_worker")
@@ -726,6 +727,11 @@ class PolicyWorker(BaseWorker):
         sibling_analyses: dict[str, dict] = {}
         for (_sj_id, addr), outcome in parallel_map(_fetch_sibling_analysis, sibling_targets, max_workers=8):
             if isinstance(outcome, BaseException):
+                record_degraded(
+                    phase="cross_contract_enrichment",
+                    exc=outcome,
+                    context={"sibling_address": addr, "sibling_job_id": str(_sj_id)},
+                )
                 logger.warning("sibling artifact fetch failed for %s: %s", addr, outcome)
                 continue
             _addr, payload = outcome
