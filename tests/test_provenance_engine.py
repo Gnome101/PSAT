@@ -624,6 +624,54 @@ def test_loop_iteration_cap_terminates(tmp_path):
     eng.run()  # must terminate, must not raise
 
 
+def test_sub_engine_memo_collapses_repeated_internal_calls(tmp_path):
+    """Per-engine memo on (callee_full_name, frozenset(bindings.items()))
+    should make repeat InternalCall handling within ONE run() return a
+    cache hit instead of spawning a fresh sub-engine each time. The
+    worklist iterates to fixed point and re-visits the same IR nodes
+    multiple times — without the memo, each visit re-runs the callee's
+    sub-engine which compounds quadratically.
+
+    Memo only fires for InternalCall IRs WITH an lvalue (i.e. helpers
+    that return a value). Modifier-style void internal calls take a
+    different path. Use a return-value helper here so the memo is
+    exercised.
+    """
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public x;
+            function _resolve(address u) internal view returns (uint256) {
+                return uint256(uint160(u));
+            }
+            function f(address u) external {
+                require(_resolve(u) > 0);
+                require(_resolve(u) < type(uint128).max);
+                x = 1;
+            }
+        }
+        """,
+    )
+    fn = _function(sl, "f")
+    eng = ProvenanceEngine(fn)
+    eng.run()
+    # The two `_resolve(u)` call sites have identical bindings; the
+    # memo must collapse them so both are served from one cache entry.
+    assert eng._sub_engine_memo, (
+        "expected _sub_engine_memo to be populated after a value-returning "
+        "internal-call run; the optimization path didn't fire"
+    )
+    # Stability across re-runs: keys must not multiply.
+    pre_keys = set(eng._sub_engine_memo.keys())
+    eng.run()
+    assert set(eng._sub_engine_memo.keys()) == pre_keys, (
+        "re-running the same engine introduced new memo keys — bindings "
+        "may have shifted, breaking memo stability"
+    )
+
+
 def test_unpack_propagates_tuple_provenance(tmp_path):
     """After ``(bool ok, ) = target.call(data);``, the unpacked ``ok``
     SSA value inherits the tuple's full provenance set."""
