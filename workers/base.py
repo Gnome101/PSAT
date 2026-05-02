@@ -18,7 +18,6 @@ from db.models import Job, JobStage, JobStatus, SessionLocal
 from db.queue import (
     advance_job,
     claim_job,
-    claim_jobs,
     fail_job,
     reclaim_stuck_jobs,
     store_artifact,

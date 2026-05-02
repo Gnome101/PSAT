@@ -20,10 +20,10 @@ from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage
 from db.queue import (
+    bulk_upsert_discovered_contracts,
     complete_job,
     get_or_create_protocol,
     store_artifact,
-    bulk_upsert_discovered_contracts,
 )
 from services.crawlers.defillama.scan import scan_protocol
 from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol

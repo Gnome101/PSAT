@@ -118,7 +118,7 @@ def bulk_upsert_discovered_contracts(
     protocol_id: int | None,
     entries: list[dict[str, Any]],
 ) -> list[Contract]:
-    """Bulk-upsert many discovered contracts with the same first-writer-wins semantics as ``upsert_discovered_contract``.
+    """Bulk variant of :func:`upsert_discovered_contract` with identical first-writer-wins semantics.
 
     Each *entries* item is a dict with keys: ``address`` (required),
     ``chain``, ``new_sources`` (list[str]), ``contract_name``, ``confidence``,
@@ -769,10 +769,15 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
     # 30-100 sequential MinIO/S3 RTTs each.
     from utils.concurrency import parallel_map
 
+    # Capture into a non-None local so the closure's type narrows past pyright
+    # (the loop above already raised when client was None for any storage_row).
+    storage_client = client
+    assert storage_client is not None
+
     def _fetch(item: tuple[str, str]) -> tuple[str, str | None]:
         path, key = item
         try:
-            return path, client.get(key).decode("utf-8")
+            return path, storage_client.get(key).decode("utf-8")
         except StorageKeyMissing:
             return path, None
 
