@@ -266,6 +266,85 @@ contract C {
 }
 """
 
+_OZ_AC_MULTI_ROLE = """
+pragma solidity ^0.8.19;
+contract C {
+    mapping(bytes32 => mapping(address => bool)) private _roles;
+    bytes32 public constant MINTER = keccak256("MINTER");
+    bytes32 public constant BURNER = keccak256("BURNER");
+    bytes32 public constant ADMIN = keccak256("ADMIN");
+    uint256 public x;
+
+    function mint(uint256 v) external {
+        require(_roles[MINTER][msg.sender]);
+        x = x + v;
+    }
+    function burn(uint256 v) external {
+        require(_roles[BURNER][msg.sender]);
+        x = x - v;
+    }
+    function setX(uint256 v) external {
+        require(_roles[ADMIN][msg.sender]);
+        x = v;
+    }
+}
+"""
+
+_BITWISE_ROLE_FLAG = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    mapping(address => uint256) public roles;
+    uint256 constant FLAG_MINT = 1;
+    uint256 constant FLAG_BURN = 2;
+    uint256 public x;
+
+    // Admin writer — without it the 1-key caller-keyed
+    // membership stays business per writer-gate rule a (no
+    // external_keyed writers). Realistic contracts always have
+    // an admin function that flips role flags.
+    function setRole(address u, uint256 mask) external {
+        require(msg.sender == ownerVar);
+        roles[u] = mask;
+    }
+
+    function mint(uint256 v) external {
+        require((roles[msg.sender] & FLAG_MINT) != 0);
+        x = x + v;
+    }
+    function burn(uint256 v) external {
+        require((roles[msg.sender] & FLAG_BURN) != 0);
+        x = x - v;
+    }
+}
+"""
+
+_MULTI_MODIFIER = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    bool public _paused;
+    uint256 public x;
+
+    modifier onlyOwner() {
+        require(msg.sender == ownerVar);
+        _;
+    }
+    modifier whenNotPaused() {
+        require(!_paused);
+        _;
+    }
+
+    function privileged(uint256 v) external onlyOwner whenNotPaused {
+        x = v;
+    }
+    function pause() external onlyOwner {
+        _paused = true;
+    }
+}
+"""
+
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
@@ -273,6 +352,9 @@ _FIXTURES = [
     ("maker_wards", _MAKER_WARDS),
     ("oz_reentrancy_guard", _OZ_REENTRANCY_GUARD),
     ("oz_ac_cross_fn_helper", _OZ_AC_CROSS_FN_HELPER),
+    ("oz_ac_multi_role", _OZ_AC_MULTI_ROLE),
+    ("bitwise_role_flag", _BITWISE_ROLE_FLAG),
+    ("multi_modifier", _MULTI_MODIFIER),
 ]
 
 
