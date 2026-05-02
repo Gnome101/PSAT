@@ -1,0 +1,460 @@
+"""CapabilityExpr — resolver-side authority-set algebra.
+
+The static stage produces a ``PredicateTree`` per privileged function;
+the resolver evaluates the tree against on-chain state and emits a
+``CapabilityExpr``. This module defines that type plus the closed,
+total combinators (intersect/union/negate) called by the evaluator.
+
+Per v4 plan + v6 round-3 fix #4 (closed combinators with confidence-
+aware quality), the capability vocabulary is:
+
+  finite_set            — exact / lower_bound / upper_bound members
+  threshold_group       — Safe-style M-of-N
+  cofinite_blacklist    — "anyone except these"
+  signature_witness     — anyone with a valid signature from <signer>
+  external_check_only   — query-only (EIP-1271, oracle policy)
+  conditional_universal — anyone, given side conditions (time/business/etc.)
+  unsupported           — typed reason; propagates fail-closed under AND
+  AND, OR               — structural composition when no closed-form result
+
+Combinators are TOTAL functions: every combination either resolves to
+a typed capability or returns ``unsupported(reason)``. Never raises.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+
+# ---------------------------------------------------------------------------
+# Type aliases
+# ---------------------------------------------------------------------------
+
+
+CapKind = Literal[
+    "finite_set",
+    "threshold_group",
+    "cofinite_blacklist",
+    "signature_witness",
+    "external_check_only",
+    "conditional_universal",
+    "unsupported",
+    "AND",
+    "OR",
+]
+
+MembershipQuality = Literal["exact", "lower_bound", "upper_bound"]
+Confidence = Literal["enumerable", "partial", "check_only"]
+
+
+# ---------------------------------------------------------------------------
+# Helper records
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Condition:
+    """A side condition that doesn't restrict the principal set but
+    must hold at runtime for the function to succeed (time, pause,
+    reentrancy, business invariants)."""
+
+    kind: Literal["time", "pause", "reentrancy", "business", "self_service"]
+    description: str = ""
+    parameter_index: int | None = None
+    parameter_name: str | None = None
+
+
+@dataclass(frozen=True)
+class ExternalCheck:
+    """Descriptor for an external_check_only capability — a probe
+    interface the UI / API can call to ask 'is this address
+    authorized'. The resolver populates the address + selector from
+    the predicate's set_descriptor."""
+
+    target_address: str | None
+    target_call_selector: str | None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# CapabilityExpr
+# ---------------------------------------------------------------------------
+
+
+def _canon_addresses(values: list[str]) -> list[str]:
+    """Lowercase + sort + dedup the address list for stable equality.
+    Members are the universal canonical form for set ops."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in sorted(values, key=lambda x: x.lower() if isinstance(x, str) else str(x)):
+        key = v.lower() if isinstance(v, str) else str(v)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out
+
+
+@dataclass
+class CapabilityExpr:
+    kind: CapKind
+    members: list[str] | None = None
+    threshold: tuple[int, list[str]] | None = None
+    blacklist: list[str] | None = None
+    signer: "CapabilityExpr | None" = None
+    check: ExternalCheck | None = None
+    conditions: list[Condition] = field(default_factory=list)
+    unsupported_reason: str | None = None
+    children: list["CapabilityExpr"] = field(default_factory=list)
+    membership_quality: MembershipQuality = "exact"
+    confidence: Confidence = "enumerable"
+    last_indexed_block: int | None = None
+
+    # ------------------------------------------------------------------
+    # Factories
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def finite_set(
+        cls,
+        members: list[str],
+        *,
+        quality: MembershipQuality = "exact",
+        confidence: Confidence = "enumerable",
+        conditions: list[Condition] | None = None,
+        last_indexed_block: int | None = None,
+    ) -> "CapabilityExpr":
+        return cls(
+            kind="finite_set",
+            members=_canon_addresses(members),
+            membership_quality=quality,
+            confidence=confidence,
+            conditions=list(conditions or []),
+            last_indexed_block=last_indexed_block,
+        )
+
+    @classmethod
+    def threshold_group(
+        cls,
+        m: int,
+        signers: list[str],
+        *,
+        confidence: Confidence = "enumerable",
+        conditions: list[Condition] | None = None,
+    ) -> "CapabilityExpr":
+        return cls(
+            kind="threshold_group",
+            threshold=(m, _canon_addresses(signers)),
+            confidence=confidence,
+            conditions=list(conditions or []),
+        )
+
+    @classmethod
+    def cofinite_blacklist(
+        cls,
+        blacklist: list[str],
+        *,
+        confidence: Confidence = "enumerable",
+        conditions: list[Condition] | None = None,
+    ) -> "CapabilityExpr":
+        return cls(
+            kind="cofinite_blacklist",
+            blacklist=_canon_addresses(blacklist),
+            confidence=confidence,
+            conditions=list(conditions or []),
+        )
+
+    @classmethod
+    def signature_witness(
+        cls,
+        signer: "CapabilityExpr",
+        *,
+        conditions: list[Condition] | None = None,
+    ) -> "CapabilityExpr":
+        return cls(
+            kind="signature_witness",
+            signer=signer,
+            conditions=list(conditions or []),
+            confidence="check_only",
+        )
+
+    @classmethod
+    def external_check_only(
+        cls,
+        check: ExternalCheck,
+        *,
+        conditions: list[Condition] | None = None,
+    ) -> "CapabilityExpr":
+        return cls(
+            kind="external_check_only",
+            check=check,
+            confidence="check_only",
+            conditions=list(conditions or []),
+        )
+
+    @classmethod
+    def conditional_universal(cls, condition: Condition) -> "CapabilityExpr":
+        """Universal set with side conditions (time gates, pause,
+        reentrancy, business invariants). Anyone may call, but the
+        condition must hold."""
+        return cls(
+            kind="conditional_universal",
+            conditions=[condition],
+            confidence="enumerable",
+        )
+
+    @classmethod
+    def unsupported(cls, reason: str) -> "CapabilityExpr":
+        return cls(kind="unsupported", unsupported_reason=reason, confidence="check_only")
+
+    @classmethod
+    def structural_and(cls, children: list["CapabilityExpr"]) -> "CapabilityExpr":
+        if len(children) == 1:
+            return children[0]
+        return cls(kind="AND", children=list(children))
+
+    @classmethod
+    def structural_or(cls, children: list["CapabilityExpr"]) -> "CapabilityExpr":
+        if len(children) == 1:
+            return children[0]
+        return cls(kind="OR", children=list(children))
+
+
+# ---------------------------------------------------------------------------
+# Combinators
+# ---------------------------------------------------------------------------
+
+
+def intersect(a: CapabilityExpr, b: CapabilityExpr) -> CapabilityExpr:
+    """``a AND b`` — every caller in both. Total over all kinds."""
+    # unsupported absorbs.
+    if a.kind == "unsupported":
+        return CapabilityExpr.unsupported(f"intersect_with_unsupported_{a.unsupported_reason}")
+    if b.kind == "unsupported":
+        return CapabilityExpr.unsupported(f"intersect_with_unsupported_{b.unsupported_reason}")
+
+    # finite_set ∩ finite_set
+    if a.kind == "finite_set" and b.kind == "finite_set":
+        return _intersect_finite(a, b)
+
+    # finite_set ∩ cofinite_blacklist (and reverse)
+    if a.kind == "finite_set" and b.kind == "cofinite_blacklist":
+        return _intersect_finite_blacklist(a, b)
+    if a.kind == "cofinite_blacklist" and b.kind == "finite_set":
+        return _intersect_finite_blacklist(b, a)
+
+    # cofinite_blacklist ∩ cofinite_blacklist
+    if a.kind == "cofinite_blacklist" and b.kind == "cofinite_blacklist":
+        # Anyone not in (a.blacklist ∪ b.blacklist).
+        return CapabilityExpr.cofinite_blacklist(_canon_addresses((a.blacklist or []) + (b.blacklist or [])))
+
+    # X ∩ conditional_universal(c) — preserve X with c appended.
+    if a.kind == "conditional_universal":
+        return _attach_conditions(b, a.conditions)
+    if b.kind == "conditional_universal":
+        return _attach_conditions(a, b.conditions)
+
+    # threshold_group ∩ X — defer to structural AND.
+    if a.kind == "threshold_group" or b.kind == "threshold_group":
+        return CapabilityExpr.structural_and([a, b])
+
+    # signature_witness / external_check_only — structural AND.
+    return CapabilityExpr.structural_and([a, b])
+
+
+def union(a: CapabilityExpr, b: CapabilityExpr) -> CapabilityExpr:
+    """``a OR b`` — caller in either. Total."""
+    if a.kind == "unsupported":
+        return CapabilityExpr.structural_or([a, b])
+    if b.kind == "unsupported":
+        return CapabilityExpr.structural_or([a, b])
+
+    if a.kind == "finite_set" and b.kind == "finite_set":
+        return _union_finite(a, b)
+
+    if a.kind == "cofinite_blacklist" and b.kind == "cofinite_blacklist":
+        # Anyone not in (a.blacklist ∩ b.blacklist).
+        ab = set((a.blacklist or []))
+        bb = set((b.blacklist or []))
+        return CapabilityExpr.cofinite_blacklist(_canon_addresses(list(ab & bb)))
+
+    # finite_set ∪ cofinite_blacklist: cofinite minus members already in
+    # finite_set (those are still in finite_set, so allowed).
+    if a.kind == "finite_set" and b.kind == "cofinite_blacklist":
+        return _union_finite_blacklist(a, b)
+    if a.kind == "cofinite_blacklist" and b.kind == "finite_set":
+        return _union_finite_blacklist(b, a)
+
+    # X ∪ conditional_universal — structural OR (anyone, with c) is
+    # not the same as X.
+    return CapabilityExpr.structural_or([a, b])
+
+
+def negate(a: CapabilityExpr) -> CapabilityExpr:
+    """``NOT a`` — used when a leaf has operator=falsy / op=ne and the
+    underlying capability needs inversion. Total."""
+    if a.kind == "finite_set":
+        if a.membership_quality != "exact":
+            return CapabilityExpr.unsupported("negate_partial_set")
+        return CapabilityExpr.cofinite_blacklist(
+            list(a.members or []),
+            confidence=a.confidence,
+            conditions=a.conditions,
+        )
+    if a.kind == "cofinite_blacklist":
+        return CapabilityExpr.finite_set(
+            list(a.blacklist or []),
+            quality="exact",
+            confidence=a.confidence,
+            conditions=a.conditions,
+        )
+    if a.kind == "conditional_universal":
+        # Negation of "anyone if C" is "no one if C" — empty set with
+        # the condition negated. Concretely: empty set if C, full
+        # set if NOT C. We emit unsupported because the negation of
+        # a condition isn't always representable as a typed
+        # condition (e.g., negation of a business invariant).
+        return CapabilityExpr.unsupported("negate_conditional_universal")
+    if a.kind in ("threshold_group", "signature_witness", "external_check_only"):
+        return CapabilityExpr.unsupported(f"negate_unsupported_capability_{a.kind}")
+    if a.kind == "unsupported":
+        return CapabilityExpr.unsupported(f"negate_of_{a.unsupported_reason}")
+    if a.kind in ("AND", "OR"):
+        # De Morgan: NOT(AND) = OR(NOT each); NOT(OR) = AND(NOT each).
+        # But each child's negate may produce unsupported; that's
+        # propagated.
+        flipped = [negate(c) for c in a.children]
+        if a.kind == "AND":
+            return CapabilityExpr.structural_or(flipped)
+        return CapabilityExpr.structural_and(flipped)
+    return CapabilityExpr.unsupported(f"negate_unknown_kind_{a.kind}")
+
+
+# ---------------------------------------------------------------------------
+# Internals
+# ---------------------------------------------------------------------------
+
+
+def _intersect_finite(a: CapabilityExpr, b: CapabilityExpr) -> CapabilityExpr:
+    am = set(a.members or [])
+    bm = set(b.members or [])
+    common = _canon_addresses(list(am & bm))
+    quality = _intersect_quality(a.membership_quality, b.membership_quality)
+    if quality is None:
+        return CapabilityExpr.structural_and([a, b])
+    confidence = _meet_confidence(a.confidence, b.confidence)
+    conditions = list(a.conditions) + list(b.conditions)
+    return CapabilityExpr.finite_set(
+        common,
+        quality=quality,
+        confidence=confidence,
+        conditions=conditions,
+    )
+
+
+def _union_finite(a: CapabilityExpr, b: CapabilityExpr) -> CapabilityExpr:
+    am = list(a.members or [])
+    bm = list(b.members or [])
+    merged = _canon_addresses(am + bm)
+    quality = _union_quality(a.membership_quality, b.membership_quality)
+    if quality is None:
+        return CapabilityExpr.structural_or([a, b])
+    confidence = _meet_confidence(a.confidence, b.confidence)
+    conditions = list(a.conditions) + list(b.conditions)
+    return CapabilityExpr.finite_set(
+        merged,
+        quality=quality,
+        confidence=confidence,
+        conditions=conditions,
+    )
+
+
+def _intersect_finite_blacklist(finite: CapabilityExpr, blacklist: CapabilityExpr) -> CapabilityExpr:
+    """``finite ∩ cofinite_blacklist`` = ``finite − blacklist``."""
+    members_set = set(finite.members or [])
+    bl = set(blacklist.blacklist or [])
+    out = _canon_addresses(list(members_set - bl))
+    return CapabilityExpr.finite_set(
+        out,
+        quality=finite.membership_quality,
+        confidence=_meet_confidence(finite.confidence, blacklist.confidence),
+        conditions=list(finite.conditions) + list(blacklist.conditions),
+    )
+
+
+def _union_finite_blacklist(finite: CapabilityExpr, blacklist: CapabilityExpr) -> CapabilityExpr:
+    """``finite ∪ cofinite_blacklist`` = ``cofinite_blacklist − finite``."""
+    bl = set(blacklist.blacklist or [])
+    fin = set(finite.members or [])
+    out = _canon_addresses(list(bl - fin))
+    return CapabilityExpr.cofinite_blacklist(
+        out,
+        confidence=_meet_confidence(finite.confidence, blacklist.confidence),
+        conditions=list(finite.conditions) + list(blacklist.conditions),
+    )
+
+
+def _intersect_quality(qa: MembershipQuality, qb: MembershipQuality) -> MembershipQuality | None:
+    """Quality lattice for intersect:
+    exact ∩ exact   = exact
+    exact ∩ lower   = lower_bound (members must be in both;
+                       the partial side may have more)
+    lower ∩ lower   = lower_bound
+    upper ∩ upper   = structural (lose the upper bound)
+    mixed lower/upper → structural
+    """
+    if qa == qb == "exact":
+        return "exact"
+    if {qa, qb} <= {"exact", "lower_bound"}:
+        return "lower_bound"
+    if qa == qb == "upper_bound":
+        return None  # signal: defer to structural
+    return None
+
+
+def _union_quality(qa: MembershipQuality, qb: MembershipQuality) -> MembershipQuality | None:
+    """Quality lattice for union:
+    exact ∪ exact     = exact (members from either are in result)
+    exact ∪ lower     = lower_bound (known-in-either, may have more)
+    lower ∪ lower     = lower_bound
+    upper ∪ upper     = upper_bound (possible-in-either)
+    mixed lower/upper → structural
+    """
+    if qa == qb == "exact":
+        return "exact"
+    if {qa, qb} <= {"exact", "lower_bound"}:
+        return "lower_bound"
+    if qa == qb == "upper_bound":
+        return "upper_bound"
+    return None
+
+
+def _meet_confidence(a: Confidence, b: Confidence) -> Confidence:
+    """Confidence lattice meet (least-confident wins)."""
+    order = {"enumerable": 2, "partial": 1, "check_only": 0}
+    if order[a] <= order[b]:
+        return a
+    return b
+
+
+def _attach_conditions(cap: CapabilityExpr, conditions: list[Condition]) -> CapabilityExpr:
+    """Returns a copy of ``cap`` with ``conditions`` appended.
+    conditional_universal stays conditional_universal but with the
+    extra conditions in the list (no special compress)."""
+    if not conditions:
+        return cap
+    return CapabilityExpr(
+        kind=cap.kind,
+        members=list(cap.members) if cap.members is not None else None,
+        threshold=cap.threshold,
+        blacklist=list(cap.blacklist) if cap.blacklist is not None else None,
+        signer=cap.signer,
+        check=cap.check,
+        conditions=list(cap.conditions) + list(conditions),
+        unsupported_reason=cap.unsupported_reason,
+        children=list(cap.children),
+        membership_quality=cap.membership_quality,
+        confidence=cap.confidence,
+        last_indexed_block=cap.last_indexed_block,
+    )
