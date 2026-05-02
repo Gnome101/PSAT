@@ -411,6 +411,18 @@ contract C {
 }
 """
 
+_TIME_GATE = """
+pragma solidity ^0.8.19;
+contract C {
+    uint256 public deadline;
+    uint256 public x;
+    function f() external {
+        require(block.timestamp > deadline);
+        x = 1;
+    }
+}
+"""
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
@@ -425,6 +437,7 @@ _FIXTURES = [
     ("m_of_n_threshold", _M_OF_N_THRESHOLD),
     ("ecdsa_signature_auth", _ECDSA_SIGNATURE_AUTH),
     ("eip1271_magic", _EIP1271_MAGIC),
+    ("time_gate", _TIME_GATE),
 ]
 
 
