@@ -322,6 +322,32 @@ def _build_subtree_from_value(
         leaf = _build_truthy_leaf(cond_value, prov, gate)
         return make_leaf_node(leaf)
 
+    # Unary NOT wrapping a Binary AND / OR — flip polarity and
+    # recurse on the inner. _build_unary_leaf only produces a single
+    # leaf, so without this branch ``require(!(A && B))`` falls
+    # through to a single bare-bool leaf with operands=[] (USDT.approve
+    # was the case found empirically). De Morgan handling for the
+    # AND/OR connective is already wired into the polarity-aware
+    # branch below.
+    if isinstance(defining_ir, Unary):
+        op_type = getattr(defining_ir, "type", None)
+        if op_type == getattr(UnaryType, "BANG", "!"):
+            inner_value = defining_ir.rvalue
+            flipped_polarity = (
+                "allowed_when_true" if gate.polarity == "allowed_when_false" else "allowed_when_false"
+            )
+            inner_gate = RevertGate(
+                kind=gate.kind,
+                condition_value=inner_value,
+                polarity=flipped_polarity,
+                node=gate.node,
+                containing_function=gate.containing_function,
+                call_chain=list(gate.call_chain),
+                expression_text=gate.expression_text,
+                basis=list(gate.basis),
+            )
+            return _build_subtree_from_value(inner_value, prov, inner_gate, function)
+
     if isinstance(defining_ir, Binary):
         op_name = _binary_op(getattr(defining_ir, "type", None))
         if op_name in ("and", "or"):
