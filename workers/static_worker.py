@@ -32,6 +32,7 @@ from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
 from services.static import collect_contract_analysis
 from services.static.contract_analysis_pipeline import build_semantic_guards
+from utils.logging import record_degraded
 from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import BaseWorker, JobHandledDirectly
 
@@ -839,6 +840,11 @@ class StaticWorker(BaseWorker):
         try:
             classification = classify_single(address, rpc_url)
         except Exception as exc:
+            record_degraded(
+                phase="proxy_classification",
+                exc=exc,
+                context={"address": address},
+            )
             logger.warning("Job %s: proxy classification failed: %s", job.id, exc)
             store_artifact(
                 session,
@@ -1038,7 +1044,6 @@ class StaticWorker(BaseWorker):
         dynamic_rpc = request.get("dynamic_rpc") or deps_rpc
         dynamic_tx_limit = request.get("dynamic_tx_limit", 10)
         dynamic_tx_hashes = request.get("dynamic_tx_hashes")
-        dependency_errors: dict[str, str] = {}
 
         logger.info(
             "Static stage dependency discovery started for job %s address=%s contract=%s",
@@ -1117,7 +1122,11 @@ class StaticWorker(BaseWorker):
         deps_output: dict | None = None
         static_outcome = outcomes["static"]
         if isinstance(static_outcome, BaseException):
-            dependency_errors["static"] = str(static_outcome)
+            record_degraded(
+                phase="dependency_static",
+                exc=static_outcome,
+                context={"address": address},
+            )
             logger.warning(
                 "Static stage static dependency discovery failed for job %s address=%s: %s",
                 job.id,
@@ -1144,9 +1153,17 @@ class StaticWorker(BaseWorker):
                 dyn_output = prev_dyn
                 store_artifact(session, job.id, "dynamic_dependencies", data=prev_dyn)
             else:
-                dependency_errors["dynamic"] = "No representative transactions found"
+                record_degraded(
+                    phase="dependency_dynamic",
+                    exc=dyn_outcome,
+                    context={"address": address, "reason": "no_representative_transactions"},
+                )
         elif isinstance(dyn_outcome, BaseException):
-            dependency_errors["dynamic"] = str(dyn_outcome)
+            record_degraded(
+                phase="dependency_dynamic",
+                exc=dyn_outcome,
+                context={"address": address},
+            )
             logger.warning(
                 "Static stage dynamic dependency discovery failed for job %s address=%s: %s",
                 job.id,
@@ -1170,6 +1187,11 @@ class StaticWorker(BaseWorker):
         uh_outcome_raw = outcomes["upgrade_history"]
         uh_pre: dict | None
         if isinstance(uh_outcome_raw, BaseException):
+            record_degraded(
+                phase="dependency_upgrade_history",
+                exc=uh_outcome_raw,
+                context={"address": address, "subphase": "parallel"},
+            )
             logger.warning(
                 "Static stage upgrade history failed for job %s address=%s: %s",
                 job.id,
@@ -1237,7 +1259,11 @@ class StaticWorker(BaseWorker):
                     len(cls_output.get("discovered_addresses", [])),
                 )
             except Exception as exc:
-                dependency_errors["classification"] = str(exc)
+                record_degraded(
+                    phase="dependency_classification",
+                    exc=exc,
+                    context={"address": address},
+                )
                 logger.warning(
                     "Static stage dependency classification failed for job %s address=%s: %s",
                     job.id,
@@ -1353,6 +1379,11 @@ class StaticWorker(BaseWorker):
                         uh.get("total_upgrades", 0),
                     )
             except Exception as exc:
+                record_degraded(
+                    phase="dependency_upgrade_history",
+                    exc=exc,
+                    context={"address": address, "subphase": "finalize"},
+                )
                 logger.warning(
                     "Static stage upgrade history failed for job %s address=%s: %s",
                     job.id,
@@ -1365,9 +1396,6 @@ class StaticWorker(BaseWorker):
                 job.id,
                 address,
             )
-
-        if dependency_errors:
-            store_artifact(session, job.id, "dependency_errors", data=dependency_errors)
 
     def _run_analysis_phase(
         self, session, job, project_dir: Path, contract_name: str, address: str
@@ -1483,6 +1511,11 @@ class StaticWorker(BaseWorker):
                 contract_name,
             )
         except Exception as exc:
+            record_degraded(
+                phase="tracking_plan",
+                exc=exc,
+                context={"address": address, "contract_name": contract_name},
+            )
             _log_phase_error(str(job.id), address, contract_name, "tracking_plan", str(exc))
             store_artifact(session, job.id, "tracking_plan_error", data={"error": str(exc)})
 
