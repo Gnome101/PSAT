@@ -338,6 +338,21 @@ def _build_subtree_from_value(
             # if-revert polarity flips AND ↔ OR via De Morgan.
             return make_or_node(children) if op_name == "and" else make_and_node(children)
 
+    # Cross-fn helper with Binary AND/OR in the return value. Without
+    # this branch the helper bottoms out as ``unsupported_reason=
+    # binary_op_{or,and}_unsupported`` and the function falls through
+    # to authority_role=business — a real classification gap on every
+    # Solmate Auth / DSAuth contract (BoringVault.manage, MKR DSToken,
+    # Maker Vat's wish() permissioned methods, USDT.approve, etc).
+    # The helper's return-defining IR is a Binary AND/OR: recurse into
+    # the helper's bindings + sub-engine, then build the AND/OR
+    # subtree from each side. Polarity propagates the same way as
+    # the inline AND/OR case above.
+    if isinstance(defining_ir, (InternalCall, LibraryCall)):
+        subtree = _build_internal_call_or_and_subtree(defining_ir, prov, gate)
+        if subtree is not None:
+            return subtree
+
     leaf = _classify_leaf_from_ir(defining_ir, prov, gate, function)
     if leaf is None:
         # Defining IR isn't one we have a typed builder for (Assignment,
@@ -436,6 +451,55 @@ def _build_internal_call_leaf(
     actually being negated may itself come from a deeper helper. The
     OZ AC 5.0+ shape ``hasRole(role,account) → _roles[role][account]``
     is the canonical case."""
+    resolved = _resolve_internal_call_return(ir, prov)
+    if resolved is None:
+        return None
+    callee, sub_prov, return_value, inner = resolved
+    if inner is None:
+        return _build_truthy_leaf(return_value, sub_prov, gate)
+    return _classify_leaf_from_ir(inner, sub_prov, gate, callee)
+
+
+def _build_internal_call_or_and_subtree(
+    ir: Any, prov: ProvenanceMap, gate: RevertGate
+) -> PredicateTree | None:
+    """If the helper's return-defining IR is a Binary AND/OR,
+    recursively build an AND/OR subtree where each child is itself
+    walked through ``_build_subtree_from_value`` (so deeper
+    AND/OR / typed-leaf classification all kicks in per side).
+
+    This closes the gap on real-world auth helpers that returned a
+    Binary OR/AND result (Solmate Auth.isAuthorized, DSAuth.is-
+    Authorized, Maker Vat's wish, USDT's allowance check, etc) —
+    previously ``_classify_leaf_from_ir`` saw a Binary with op_name
+    ``and`` / ``or``, ``_build_binary_leaf`` only handles comparison
+    ops, so the function fell through to ``authority_role=business``.
+    """
+    resolved = _resolve_internal_call_return(ir, prov)
+    if resolved is None:
+        return None
+    callee, sub_prov, _return_value, inner = resolved
+    if not isinstance(inner, Binary):
+        return None
+    op_name = _binary_op(getattr(inner, "type", None))
+    if op_name not in ("and", "or"):
+        return None
+    left_tree = _build_subtree_from_value(inner.variable_left, sub_prov, gate, callee)
+    right_tree = _build_subtree_from_value(inner.variable_right, sub_prov, gate, callee)
+    children = [left_tree, right_tree]
+    # Polarity propagates the same way as the inline AND/OR case in
+    # _build_subtree_from_value's main path.
+    if gate.polarity == "allowed_when_true":
+        return make_and_node(children) if op_name == "and" else make_or_node(children)
+    return make_or_node(children) if op_name == "and" else make_and_node(children)
+
+
+def _resolve_internal_call_return(
+    ir: Any, prov: ProvenanceMap
+) -> tuple[Any, ProvenanceMap, Any, Any | None] | None:
+    """Shared helper: bind args + run sub-engine + locate return
+    value's defining IR. Returns ``(callee, sub_prov, return_value,
+    inner_ir)`` or None when the call can't be resolved."""
     callee = getattr(ir, "function", None)
     if callee is None:
         return None
@@ -453,9 +517,7 @@ def _build_internal_call_leaf(
     if return_value is None:
         return None
     inner = _find_defining_ir(return_value, None, callee)
-    if inner is None:
-        return _build_truthy_leaf(return_value, sub_prov, gate)
-    return _classify_leaf_from_ir(inner, sub_prov, gate, callee)
+    return callee, sub_prov, return_value, inner
 
 
 def _find_callee_return_value(callee: Any) -> Any | None:
