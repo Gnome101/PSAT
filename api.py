@@ -3796,6 +3796,113 @@ def _capabilities_cache_put(key: tuple[str, int, int | None], value: dict[str, A
     _capabilities_cache[key] = (_time.time() + _CAPABILITIES_CACHE_TTL_S, value)
 
 
+class _ProbeSignatureRequest(BaseModel):
+    function_signature: str = Field(..., description="Full signature, e.g. 'execute(bytes32,bytes)'")
+    predicate_index: int = Field(..., ge=0, description="DFS-order leaf index for the signature_auth leaf")
+    recovered_signer: str = Field(
+        ...,
+        description=(
+            "Address ECDSA-recovered from (hash, sig) by the caller, OR the address "
+            "approving the signature via EIP-1271 isValidSignature. The route checks "
+            "whether this address is in the leaf's allowed-signer set."
+        ),
+    )
+    chain_id: int = Field(default=1)
+    block: int | None = Field(default=None)
+
+    @field_validator("recovered_signer")
+    @classmethod
+    def _check_signer_address(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.startswith("0x") or len(v) != 42:
+            raise ValueError("recovered_signer must be a 0x-prefixed 20-byte address")
+        return v.lower()
+
+
+@app.post(
+    "/api/contract/{address}/probe/signature",
+    dependencies=[Depends(require_admin_key)],
+)
+def probe_contract_signature(
+    address: str, req: _ProbeSignatureRequest
+) -> dict[str, Any]:
+    """Counterpart to /probe/membership for signature_auth leaves.
+    Caller already did ECDSA recovery (or EIP-1271 verification);
+    we check whether the recovered signer is in the leaf's
+    allowed-signer set."""
+    from services.resolution.adapters import AdapterRegistry, EvaluationContext
+    from services.resolution.adapters.access_control import AccessControlAdapter
+    from services.resolution.adapters.aragon_acl import (
+        AragonACLAdapter,
+        DSAuthAdapter,
+        EIP1271Adapter,
+    )
+    from services.resolution.adapters.event_indexed import EventIndexedAdapter
+    from services.resolution.adapters.safe import SafeAdapter
+    from services.resolution.probe import probe_signature
+    from services.resolution.repos import PostgresAragonACLRepo, PostgresRoleGrantsRepo
+
+    addr = _normalize_address_or_400(address)
+    with SessionLocal() as session:
+        job = session.execute(
+            select(Job)
+            .where(Job.address == addr)
+            .where(Job.status == JobStatus.completed)
+            .order_by(Job.updated_at.desc(), Job.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(
+                status_code=404, detail=f"No completed analysis job found for {addr}"
+            )
+        artifact = get_artifact(session, job.id, "predicate_trees")
+        if artifact is None:
+            raise HTTPException(
+                status_code=404,
+                detail="predicate_trees artifact missing for the latest analysis",
+            )
+        if not isinstance(artifact, dict) or "trees" not in artifact:
+            return {
+                "result": "unknown",
+                "reason": "predicate_trees_unavailable",
+                "detail": (
+                    artifact.get("error") if isinstance(artifact, dict) else "malformed"
+                ),
+            }
+        tree = artifact["trees"].get(req.function_signature)
+        if tree is None:
+            return {
+                "result": "yes",
+                "reason": "function_unguarded",
+                "function_signature": req.function_signature,
+            }
+
+        registry = AdapterRegistry()
+        for cls in (
+            AccessControlAdapter,
+            SafeAdapter,
+            AragonACLAdapter,
+            DSAuthAdapter,
+            EIP1271Adapter,
+            EventIndexedAdapter,
+        ):
+            registry.register(cls)
+        ctx = EvaluationContext(
+            chain_id=req.chain_id,
+            contract_address=addr,
+            block=req.block,
+            role_grants=PostgresRoleGrantsRepo(session),
+            meta={"aragon_acl_repo": PostgresAragonACLRepo(session)},
+        )
+
+        return probe_signature(
+            tree,
+            predicate_index=req.predicate_index,
+            recovered_signer=req.recovered_signer,
+            registry=registry,
+            ctx=ctx,
+        )
+
+
 @app.get("/api/contract/{address}/capabilities")
 def get_contract_capabilities(
     address: str,

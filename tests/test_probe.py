@@ -383,6 +383,92 @@ def test_or_all_no_returns_no():
     assert res["reason"] == "or_all_no"
 
 
+def _signature_auth_leaf(signer_state_var: str = "trustedSigner") -> dict:
+    return {
+        "kind": "signature_auth",
+        "operator": "eq",
+        "authority_role": "caller_authority",
+        "operands": [
+            {"source": "signature_recovery"},
+            {"source": "state_variable", "state_variable_name": signer_state_var},
+        ],
+        "references_msg_sender": False,
+        "parameter_indices": [],
+        "expression": "ecrecover(...) == trustedSigner",
+        "basis": [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# probe_signature
+# ---------------------------------------------------------------------------
+
+
+def test_probe_signature_returns_unknown_for_non_signature_leaf():
+    """A non-signature_auth leaf at predicate_index returns
+    ``unknown`` with reason=non_signature_leaf — distinct from the
+    membership probe's non_membership_leaf reason."""
+    from services.resolution.probe import probe_signature
+
+    tree = _leaf_node(_membership_leaf())
+    res = probe_signature(
+        tree,
+        predicate_index=0,
+        recovered_signer="0x" + "11" * 20,
+        registry=_StubRegistry(),
+        ctx=EvaluationContext(),
+    )
+    assert res["result"] == "unknown"
+    assert res["reason"] == "non_signature_leaf"
+    assert res["leaf_kind"] == "membership"
+
+
+def test_probe_signature_index_out_of_range():
+    from services.resolution.probe import probe_signature
+
+    tree = _leaf_node(_signature_auth_leaf())
+    res = probe_signature(
+        tree,
+        predicate_index=5,
+        recovered_signer="0x" + "11" * 20,
+        registry=_StubRegistry(),
+        ctx=EvaluationContext(),
+    )
+    assert res["result"] == "unknown"
+    assert res["reason"] == "leaf_index_out_of_range"
+
+
+def test_probe_signature_real_evaluator_for_state_var_signer():
+    """For a signature_auth leaf with a state-var signer, the
+    real predicate_evaluator produces a signature_witness wrapping
+    a finite_set placeholder (lower_bound). The supplied
+    recovered_signer either matches the placeholder list (yes) or
+    is unknown (lower_bound + absent).
+
+    Pinned because this is the integration point between the
+    predicate evaluator and the probe — a regression in either
+    side breaks the EIP-1271 / ecrecover client flow."""
+    from services.resolution.adapters import AdapterRegistry
+    from services.resolution.probe import probe_signature
+
+    tree = _leaf_node(_signature_auth_leaf())
+    res = probe_signature(
+        tree,
+        predicate_index=0,
+        recovered_signer="0x" + "ee" * 20,
+        registry=AdapterRegistry(),
+        ctx=EvaluationContext(contract_address="0x" + "ab" * 20),
+    )
+    # The eval path should wrap a signer_capability (finite_set
+    # placeholder for state-var-typed signer).
+    assert res["leaf_kind"] == "signature_auth"
+    assert res["capability_kind"] == "signature_witness"
+    # Result is unknown until a backend resolves the signer; this
+    # is the lower_bound finite_set absent case, OR a clean no
+    # if the placeholder was empty exact.
+    assert res["result"] in ("yes", "no", "unknown")
+
+
 def test_or_with_unknown_returns_unknown():
     addr = "0x" + "11" * 20
     cap = _composite(

@@ -13,6 +13,7 @@ uses for other admin-gated endpoints).
 from __future__ import annotations
 
 import os
+import uuid
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -409,6 +410,163 @@ def test_probe_membership_returns_yes_via_postgres_role_grants_repo(
     assert no_resp.status_code == 200, no_resp.text
     no_body = no_resp.json()
     assert no_body["result"] == "no", no_body
+
+
+@requires_postgres
+def test_probe_signature_returns_unknown_for_non_signature_leaf(
+    api_client, db_session
+):
+    """The signature probe at index 0 of a membership leaf returns
+    unknown with reason=non_signature_leaf — the routes are
+    differentiated."""
+    import api as api_module
+
+    _no_auth(api_module)
+    address = "0x" + uuid.uuid4().hex[:8] + "8a" * 16
+    artifact = {
+        "schema_version": "v2",
+        "contract_name": "T",
+        "trees": {
+            "f()": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "membership",
+                    "operator": "truthy",
+                    "authority_role": "caller_authority",
+                    "operands": [{"source": "msg_sender"}],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "key_sources": [{"source": "msg_sender"}],
+                        "storage_var": "_x",
+                    },
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "_x[msg.sender]",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    _seed_completed_job_with_artifact(
+        db_session, address=address, predicate_trees=artifact
+    )
+
+    resp = api_client.post(
+        f"/api/contract/{address}/probe/signature",
+        json={
+            "function_signature": "f()",
+            "predicate_index": 0,
+            "recovered_signer": "0x" + "11" * 20,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["result"] == "unknown"
+    assert body["reason"] == "non_signature_leaf"
+    assert body["leaf_kind"] == "membership"
+
+
+@requires_postgres
+def test_probe_signature_route_for_signature_auth_leaf(api_client, db_session):
+    """Happy-ish path: signature_auth leaf wraps a state-var
+    signer. Without an adapter backend resolving the signer, the
+    underlying signature_witness wraps a finite_set placeholder
+    (lower_bound). The probe response surfaces the
+    capability_kind so consumers can decide how to fall through."""
+    import api as api_module
+
+    _no_auth(api_module)
+    address = "0x" + uuid.uuid4().hex[:8] + "8b" * 16
+    artifact = {
+        "schema_version": "v2",
+        "contract_name": "T",
+        "trees": {
+            "execute()": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "signature_auth",
+                    "operator": "eq",
+                    "authority_role": "caller_authority",
+                    "operands": [
+                        {"source": "signature_recovery"},
+                        {"source": "state_variable", "state_variable_name": "trustedSigner"},
+                    ],
+                    "references_msg_sender": False,
+                    "parameter_indices": [],
+                    "expression": "ecrecover(...) == trustedSigner",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    _seed_completed_job_with_artifact(
+        db_session, address=address, predicate_trees=artifact
+    )
+
+    resp = api_client.post(
+        f"/api/contract/{address}/probe/signature",
+        json={
+            "function_signature": "execute()",
+            "predicate_index": 0,
+            "recovered_signer": "0x" + "ee" * 20,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["leaf_kind"] == "signature_auth"
+    assert body.get("capability_kind") == "signature_witness"
+    # result is yes/no/unknown depending on whether the resolver
+    # had a concrete signer set; pin the protocol shape only.
+    assert body["result"] in ("yes", "no", "unknown")
+
+
+@requires_postgres
+def test_probe_signature_rejects_malformed_signer(api_client, db_session):
+    """Pydantic Field validator pins recovered_signer shape (0x +
+    40 hex)."""
+    import api as api_module
+
+    _no_auth(api_module)
+    address = "0x" + uuid.uuid4().hex[:8] + "8c" * 16
+    _seed_completed_job_with_artifact(
+        db_session,
+        address=address,
+        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+    )
+    resp = api_client.post(
+        f"/api/contract/{address}/probe/signature",
+        json={
+            "function_signature": "f()",
+            "predicate_index": 0,
+            "recovered_signer": "not-an-address",
+        },
+    )
+    assert resp.status_code == 422
+
+
+@requires_postgres
+def test_probe_signature_unguarded_function_returns_yes(api_client, db_session):
+    import api as api_module
+
+    _no_auth(api_module)
+    address = "0x" + uuid.uuid4().hex[:8] + "8d" * 16
+    _seed_completed_job_with_artifact(
+        db_session,
+        address=address,
+        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+    )
+    resp = api_client.post(
+        f"/api/contract/{address}/probe/signature",
+        json={
+            "function_signature": "open()",
+            "predicate_index": 0,
+            "recovered_signer": "0x" + "11" * 20,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"] == "yes"
+    assert body["reason"] == "function_unguarded"
 
 
 @requires_postgres

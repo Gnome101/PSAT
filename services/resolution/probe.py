@@ -82,6 +82,77 @@ def probe_membership(
     }
 
 
+def probe_signature(
+    tree: dict[str, Any],
+    *,
+    predicate_index: int,
+    recovered_signer: str,
+    registry: AdapterRegistry,
+    ctx: EvaluationContext,
+) -> dict[str, Any]:
+    """Counterpart to ``probe_membership`` for ``signature_auth``
+    leaves. The caller has already done ECDSA recovery (or
+    EIP-1271 isValidSignature) and supplies the recovered signer
+    address; we return whether that address is in the leaf's
+    allowed-signer set.
+
+    For ECDSA leaves (``ecrecover(hash, v, r, s) == knownSigner``)
+    the signer set is the resolved address-typed operand —
+    typically a state-var read or constant. For EIP-1271 leaves,
+    the leaf carries a signature_witness shape that wraps an
+    ``external_check_only`` indicating the caller must invoke
+    ``isValidSignature(hash, sig)`` on the signing contract; we
+    surface that probe target+selector via ``unknown``.
+
+    Returns ``{"result": "yes"|"no"|"unknown", ...}`` on the same
+    contract as ``probe_membership``.
+    """
+    from .predicate_evaluator import evaluate_tree_with_registry
+    from ..static.contract_analysis_pipeline.predicate_types import make_leaf_node
+
+    leaves = list(_walk_leaves(tree))
+    if not 0 <= predicate_index < len(leaves):
+        return {
+            "result": "unknown",
+            "reason": "leaf_index_out_of_range",
+            "leaf_count": len(leaves),
+        }
+
+    leaf = leaves[predicate_index]
+    leaf_kind = leaf.get("kind")
+    role = leaf.get("authority_role")
+    if leaf_kind != "signature_auth":
+        return {
+            "result": "unknown",
+            "reason": "non_signature_leaf",
+            "leaf_kind": leaf_kind,
+            "authority_role": role,
+        }
+
+    # Resolve the leaf by itself — wrap in a make_leaf_node so the
+    # evaluator handles it cleanly. The evaluator returns a
+    # signature_witness whose .signer is the address-set the
+    # signature must recover to.
+    isolated_tree = make_leaf_node(leaf)
+    cap = evaluate_tree_with_registry(isolated_tree, registry, ctx)
+    if cap.kind == "signature_witness" and cap.signer is not None:
+        answer = _resolve_in_capability(cap.signer, recovered_signer)
+        answer["capability_kind"] = "signature_witness"
+        answer["signer_capability_kind"] = cap.signer.kind
+        answer["leaf_kind"] = leaf_kind
+        answer["authority_role"] = role
+        return answer
+    # Fall-through: leaf resolved to something other than a
+    # signature_witness — surface for diagnostic.
+    return {
+        "result": "unknown",
+        "reason": f"unexpected_signature_capability_{cap.kind}",
+        "leaf_kind": leaf_kind,
+        "authority_role": role,
+        "capability_kind": cap.kind,
+    }
+
+
 def _walk_leaves(tree: dict[str, Any] | None) -> Iterator[dict[str, Any]]:
     if tree is None:
         return
