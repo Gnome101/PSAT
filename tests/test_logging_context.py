@@ -107,14 +107,30 @@ def test_bind_trace_context_nests_cleanly():
         assert trace_id_var.get() == "outer"
 
 
-def test_configure_logging_replaces_handlers_idempotently():
-    """Calling configure_logging twice does not stack handlers."""
+def test_configure_logging_is_idempotent_across_calls():
+    """Calling configure_logging twice does not stack handlers, and a
+    second call is a no-op so test harnesses (pytest's caplog) can add
+    their own handlers without being wiped on a later worker init."""
+    root = logging.getLogger()
+    # Reset the per-process guard flag and any previous JSON handler so
+    # this test exercises the first-call path deterministically — other
+    # tests in the file may have triggered it via ``configure_logging``
+    # or via ``BaseWorker.__init__`` indirectly.
+    if hasattr(root, "_psat_json_logging_configured"):
+        delattr(root, "_psat_json_logging_configured")
+    for h in list(root.handlers):
+        root.removeHandler(h)
+
     configure_logging()
-    n_after_first = len(logging.getLogger().handlers)
+    n_after_first = len(root.handlers)
+    extra = logging.NullHandler()
+    root.addHandler(extra)
     configure_logging()
-    n_after_second = len(logging.getLogger().handlers)
+    n_after_second = len(root.handlers)
     assert n_after_first == 1
-    assert n_after_second == 1
+    # Second call must NOT remove the test harness's added handler.
+    assert n_after_second == 2
+    assert extra in root.handlers
 
 
 # ---------------------------------------------------------------------------

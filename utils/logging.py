@@ -128,23 +128,33 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-def configure_logging(level: int | str | None = None) -> None:
-    """Install :class:`JsonFormatter` on the root logger.
+_CONFIGURED_FLAG = "_psat_json_logging_configured"
 
-    Idempotent: subsequent calls replace existing handlers so a worker
-    process whose ``main()`` previously called ``logging.basicConfig``
-    still ends up emitting JSON. Reads the level from the
-    ``PSAT_LOG_LEVEL`` env var (default INFO) when *level* is omitted.
+
+def configure_logging(level: int | str | None = None) -> None:
+    """Install :class:`JsonFormatter` on the root logger once per process.
+
+    On first call this clears any pre-existing handlers (e.g. from
+    ``logging.basicConfig`` in a worker ``main()``) and installs a JSON
+    stream handler on stderr. Subsequent calls in the same process
+    short-circuit so test harnesses (notably pytest's ``caplog``) can
+    add their own handlers without our re-init wiping them mid-test.
+
+    Reads the level from ``PSAT_LOG_LEVEL`` (default INFO) when *level*
+    is omitted.
     """
+    root = logging.getLogger()
+    if getattr(root, _CONFIGURED_FLAG, False):
+        return
     if level is None:
         level = os.getenv("PSAT_LOG_LEVEL", "INFO").upper()
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(JsonFormatter())
-    root = logging.getLogger()
     for existing in list(root.handlers):
         root.removeHandler(existing)
     root.addHandler(handler)
     root.setLevel(level)
+    setattr(root, _CONFIGURED_FLAG, True)
 
 
 @contextmanager

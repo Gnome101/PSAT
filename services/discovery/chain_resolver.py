@@ -191,9 +191,9 @@ def _probe_chains(
         future_to_chain = {}
         for chain_name in chains:
             ctx = contextvars.copy_context()
-            future_to_chain[
-                executor.submit(ctx.run, _probe_chain_batch, addresses, chain_name, api_key, debug)
-            ] = chain_name
+            future_to_chain[executor.submit(ctx.run, _probe_chain_batch, addresses, chain_name, api_key, debug)] = (
+                chain_name
+            )
         for future in as_completed(future_to_chain):
             chain_name = future_to_chain[future]
             try:

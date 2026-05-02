@@ -207,7 +207,7 @@ def parallel_rpc_calls(
         chunks.append((chunk_start, calls[chunk_start : chunk_start + MAX_BATCH_SIZE]))
 
     results: list[tuple[Any, bool]] = [(None, True)] * len(calls)
-    futures: dict[Future[list[tuple[Any, bool]]], int] = {}
+    futures: dict[Future[Any], int] = {}
     for offset, chunk in chunks:
         # Per-chunk context copy — see ``parallel_map`` above for why a
         # shared ``Context`` object cannot be concurrently entered.
