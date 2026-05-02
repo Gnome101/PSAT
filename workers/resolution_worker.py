@@ -26,7 +26,7 @@ from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
-from workers.base import DEBUG_TIMING, BaseWorker
+from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.resolution_worker")
 
@@ -91,8 +91,10 @@ class ResolutionWorker(BaseWorker):
         self.update_detail(session, job, "Reading current controller state")
         t0 = time.monotonic()
         snapshot = build_control_snapshot(cast(ControlTrackingPlan, tracking_plan), rpc_url)
-        if DEBUG_TIMING:
-            logger.info("[TIMING] control snapshot: %.1fs", time.monotonic() - t0)
+        logger.info(
+            "resolution phase complete: control snapshot",
+            extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "control_snapshot"},
+        )
         # Keep as artifact — policy stage reads it as JSON
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
 
@@ -143,8 +145,10 @@ class ResolutionWorker(BaseWorker):
             heartbeat=lambda: self._heartbeat(session, job),
         )
 
-        if DEBUG_TIMING:
-            logger.info("[TIMING] recursive graph: %.1fs", time.monotonic() - t0)
+        logger.info(
+            "resolution phase complete: recursive graph",
+            extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "recursive_graph"},
+        )
 
         if resolved_graph:
             # Persist each nested contract's artifacts so the policy stage can

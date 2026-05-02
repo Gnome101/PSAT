@@ -67,6 +67,11 @@ class Job(Base):
     request: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Correlation id shared with the originating HTTP request and any
+    # spawned child jobs. 16-char hex (uuid4().hex[:16]); nullable so
+    # pre-migration rows remain valid. Persisted so a fly-log scrape can
+    # join HTTP logs to worker logs without timestamp guesswork.
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     protocol_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
     )
@@ -82,7 +87,10 @@ class Job(Base):
         "SourceFile", back_populates="job", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("ix_jobs_stage_status", "stage", "status"),)
+    __table_args__ = (
+        Index("ix_jobs_stage_status", "stage", "status"),
+        Index("ix_jobs_trace_id", "trace_id"),
+    )
 
     def to_dict(self) -> dict:
         return {
@@ -96,6 +104,7 @@ class Job(Base):
             "request": self.request,
             "error": self.error,
             "worker_id": self.worker_id,
+            "trace_id": self.trace_id,
             "is_proxy": self.is_proxy,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),

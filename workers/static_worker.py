@@ -33,7 +33,7 @@ from services.resolution.tracking_plan import build_control_tracking_plan
 from services.static import collect_contract_analysis
 from services.static.contract_analysis_pipeline import build_semantic_guards
 from utils.rpc import normalize_hex  # used for address comparison
-from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
+from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
 
@@ -786,8 +786,10 @@ class StaticWorker(BaseWorker):
                 # of the cascade pipeline).
                 t0 = time.monotonic()
                 analysis_data = self._run_analysis_phase(session, job, project_dir, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
+                logger.info(
+                    "static phase complete: contract analysis",
+                    extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "contract_analysis"},
+                )
 
                 if analysis_data is None:
                     raise RuntimeError(f"Contract analysis failed for {contract_name} ({address}).")
@@ -795,8 +797,10 @@ class StaticWorker(BaseWorker):
                 # Phase 2: Control tracking plan
                 t0 = time.monotonic()
                 self._run_tracking_plan_phase(session, job, analysis_data, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
+                logger.info(
+                    "static phase complete: tracking plan",
+                    extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "tracking_plan"},
+                )
 
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
@@ -1100,8 +1104,10 @@ class StaticWorker(BaseWorker):
         sub_phases = [("static", run_static), ("dynamic", run_dynamic), ("upgrade_history", run_upgrade_history)]
         results = parallel_map(lambda task: task[1](), sub_phases, max_workers=3, heartbeat=_hb)
         elapsed_parallel = time.monotonic() - t0
-        if DEBUG_TIMING:
-            logger.info("[TIMING] dependency parallel section: %.1fs", elapsed_parallel)
+        logger.info(
+            "static phase complete: dependency parallel section",
+            extra={"duration_ms": int(elapsed_parallel * 1000), "phase": "dependency_parallel"},
+        )
 
         outcomes: dict[str, object | BaseException] = {
             name: outcome for (name, _fn), (_task, outcome) in zip(sub_phases, results)
@@ -1215,8 +1221,15 @@ class StaticWorker(BaseWorker):
                 )
                 # Store classifications artifact for future cache hits
                 store_artifact(session, job.id, "classifications", data=cls_output)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
+                logger.info(
+                    "static phase complete: classification (%d deps)",
+                    len(unique_deps),
+                    extra={
+                        "duration_ms": int((time.monotonic() - t0) * 1000),
+                        "phase": "classification",
+                        "dep_count": len(unique_deps),
+                    },
+                )
                 logger.info(
                     "Static stage dependency classification complete for job %s address=%s discovered=%d",
                     job.id,
@@ -1252,8 +1265,10 @@ class StaticWorker(BaseWorker):
 
             t0 = time.monotonic()
             enrich_dependency_metadata(unified, info_cache=info_cache)
-            if DEBUG_TIMING:
-                logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
+            logger.info(
+                "static phase complete: dependency enrichment",
+                extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "enrichment"},
+            )
 
             # Store updated enrichment cache (includes any newly fetched entries)
             enrichment_data = {

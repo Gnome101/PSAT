@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import signal
@@ -23,6 +24,7 @@ from db.queue import (
     store_artifact,
     update_job_detail,
 )
+from utils.logging import bind_trace_context, configure_logging
 from utils.memory import (
     cgroup_memory_current_bytes,
     cgroup_memory_max_bytes,
@@ -33,7 +35,6 @@ from utils.memory import (
 
 logger = logging.getLogger(__name__)
 
-DEBUG_TIMING = os.getenv("PSAT_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
 # Bumped to 600 alongside the threaded fan-outs: any single fan-out section can now legitimately go
 # minutes without a status/detail write, so the previous 180s default would requeue live jobs.
 # Mid-fan-out heartbeats (``BaseWorker._heartbeat``) keep ``updated_at`` fresh inside the long sections.
@@ -84,6 +85,10 @@ class BaseWorker:
     poll_interval: float = 2.0
 
     def __init__(self) -> None:
+        # Idempotent — the per-worker ``main()`` may have already called
+        # this, but a bare ``BaseWorker()`` constructed in tests still
+        # gets the JSON formatter installed so emitted log lines parse.
+        configure_logging()
         self.worker_id = f"{self.__class__.__name__}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._running = True
         # -inf = "never swept; sweep now"; throttles _claim_job to RECLAIM_INTERVAL_S between sweeps.
@@ -177,115 +182,145 @@ class BaseWorker:
         responsible for closing *session* afterwards. Both the legacy
         single-job loop and the K>1 dispatcher route through here so the
         success/JobHandledDirectly/exception branches stay in one place.
-        """
-        logger.info("Worker %s claimed job %s", self.worker_id, job.id)
-        t0 = time.monotonic()
-        rss_before = current_rss_bytes()
-        started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-        try:
-            self.process(session, job)
-            elapsed = time.monotonic() - t0
-            ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-            rss_after = current_rss_bytes()
-            rss_delta_mb = (rss_after - rss_before) / (1024 * 1024)
-            logger.info(
-                "[JOB] worker=%s job=%s stage=%s elapsed_s=%.1f rss_mb=%s delta_mb=%+.0f cgroup_used_mb=%s",
-                self.worker_id,
-                job.id,
-                self.stage.value,
-                elapsed,
-                mb(rss_after),
-                rss_delta_mb,
-                mb(cgroup_memory_current_bytes()),
-            )
-            # Record timing before advancing — otherwise the next-stage worker can race read-modify-write on the
-            # shared stage_timings artifact.
-            self._record_stage_timing(
-                session,
-                job,
-                started_at=started_at_iso,
-                ended_at=ended_at_iso,
-                elapsed_s=elapsed,
-                status="success",
-            )
-            if self.next_stage == JobStage.done:
-                from db.queue import complete_job
 
-                complete_job(session, job.id)
-            else:
-                advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
-            logger.info(
-                "Worker %s completed job %s in %.1fs",
-                self.worker_id,
-                job.id,
-                elapsed,
-            )
-        except JobHandledDirectly:
-            elapsed = time.monotonic() - t0
-            ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-            # Fresh session — process() may have left the original in an inconsistent state.
+        The whole body runs inside a ``bind_trace_context`` so every
+        log line emitted from any helper called by ``process()`` carries
+        the same ``trace_id`` / ``job_id`` / ``stage`` / ``worker_id``
+        without callers having to thread them through.
+        """
+        # ``getattr`` defaults guard the test stubs that pass a bare
+        # ``SimpleNamespace`` job without a request/trace_id field.
+        raw_request = getattr(job, "request", None)
+        request = raw_request if isinstance(raw_request, dict) else {}
+        with bind_trace_context(
+            trace_id=getattr(job, "trace_id", None),
+            job_id=str(job.id),
+            stage=self.stage.value,
+            worker_id=self.worker_id,
+            address=getattr(job, "address", None),
+            chain=request.get("chain"),
+        ):
+            logger.info("Worker %s claimed job %s", self.worker_id, job.id)
+            t0 = time.monotonic()
+            rss_before = current_rss_bytes()
+            started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             try:
-                fresh_for_timing = SessionLocal()
-                self._record_stage_timing(
-                    fresh_for_timing,
-                    job,
-                    started_at=started_at_iso,
-                    ended_at=ended_at_iso,
-                    elapsed_s=elapsed,
-                    status="handled_directly",
+                self.process(session, job)
+                elapsed = time.monotonic() - t0
+                ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                rss_after = current_rss_bytes()
+                rss_delta_mb = (rss_after - rss_before) / (1024 * 1024)
+                logger.info(
+                    "[JOB] worker=%s job=%s stage=%s elapsed_s=%.1f rss_mb=%s delta_mb=%+.0f cgroup_used_mb=%s",
+                    self.worker_id,
+                    job.id,
+                    self.stage.value,
+                    elapsed,
+                    mb(rss_after),
+                    rss_delta_mb,
+                    mb(cgroup_memory_current_bytes()),
+                    extra={
+                        "duration_ms": int(elapsed * 1000),
+                        "phase": "job",
+                        "rss_mb": mb(rss_after),
+                        "rss_delta_mb": round(rss_delta_mb, 1),
+                    },
                 )
-                fresh_for_timing.close()
-            except Exception:
-                logger.exception("Worker %s: failed to record handled_directly timing", self.worker_id)
-            logger.info("Worker %s: job %s handled directly by process()", self.worker_id, job.id)
-        except Exception:
-            elapsed = time.monotonic() - t0
-            ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-            error = traceback.format_exc()
-            logger.error(
-                "\n=================== WORKER FAILURE ===================\n"
-                "Worker:   %s\n"
-                "Job:      %s\n"
-                "Address:  %s\n"
-                "Name:     %s\n"
-                "Stage:    %s\n"
-                "-------------------------------------------------------\n"
-                "%s"
-                "=======================================================",
-                self.worker_id,
-                job.id,
-                getattr(job, "address", "?"),
-                getattr(job, "name", "?"),
-                self.stage.value,
-                error,
-            )
-            try:
-                session.rollback()
-                fail_job(session, job.id, error)
+                # Record timing before advancing — otherwise the next-stage worker can race read-modify-write on the
+                # shared stage_timings artifact.
                 self._record_stage_timing(
                     session,
                     job,
                     started_at=started_at_iso,
                     ended_at=ended_at_iso,
                     elapsed_s=elapsed,
-                    status="failed",
+                    status="success",
+                )
+                if self.next_stage == JobStage.done:
+                    from db.queue import complete_job
+
+                    complete_job(session, job.id)
+                else:
+                    advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
+                logger.info(
+                    "Worker %s completed job %s in %.1fs",
+                    self.worker_id,
+                    job.id,
+                    elapsed,
+                    extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "success"},
+                )
+            except JobHandledDirectly:
+                elapsed = time.monotonic() - t0
+                ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                # Fresh session — process() may have left the original in an inconsistent state.
+                try:
+                    fresh_for_timing = SessionLocal()
+                    self._record_stage_timing(
+                        fresh_for_timing,
+                        job,
+                        started_at=started_at_iso,
+                        ended_at=ended_at_iso,
+                        elapsed_s=elapsed,
+                        status="handled_directly",
+                    )
+                    fresh_for_timing.close()
+                except Exception:
+                    logger.exception("Worker %s: failed to record handled_directly timing", self.worker_id)
+                logger.info(
+                    "Worker %s: job %s handled directly by process()",
+                    self.worker_id,
+                    job.id,
+                    extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "handled_directly"},
                 )
             except Exception:
-                logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
+                elapsed = time.monotonic() - t0
+                ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                error = traceback.format_exc()
+                logger.error(
+                    "\n=================== WORKER FAILURE ===================\n"
+                    "Worker:   %s\n"
+                    "Job:      %s\n"
+                    "Address:  %s\n"
+                    "Name:     %s\n"
+                    "Stage:    %s\n"
+                    "-------------------------------------------------------\n"
+                    "%s"
+                    "=======================================================",
+                    self.worker_id,
+                    job.id,
+                    getattr(job, "address", "?"),
+                    getattr(job, "name", "?"),
+                    self.stage.value,
+                    error,
+                    extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "failed"},
+                )
                 try:
-                    fresh = SessionLocal()
-                    fail_job(fresh, job.id, error[-4000:])
+                    session.rollback()
+                    fail_job(session, job.id, error)
                     self._record_stage_timing(
-                        fresh,
+                        session,
                         job,
                         started_at=started_at_iso,
                         ended_at=ended_at_iso,
                         elapsed_s=elapsed,
                         status="failed",
                     )
-                    fresh.close()
                 except Exception:
-                    logger.exception("Could not mark job %s as failed even with fresh session", job.id)
+                    logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
+                    try:
+                        fresh = SessionLocal()
+                        fail_job(fresh, job.id, error[-4000:])
+                        self._record_stage_timing(
+                            fresh,
+                            job,
+                            started_at=started_at_iso,
+                            ended_at=ended_at_iso,
+                            elapsed_s=elapsed,
+                            status="failed",
+                        )
+                        fresh.close()
+                    except Exception:
+                        logger.exception("Could not mark job %s as failed even with fresh session", job.id)
 
     def _run_one_job(self, job_id) -> None:
         """K>1 dispatcher entry point: open a per-job session, re-fetch the job
@@ -400,7 +435,13 @@ class BaseWorker:
                     time.sleep(self.poll_interval)
                 continue
 
-            future = self._job_pool.submit(self._run_one_job, job_id_for_dispatch)
+            # ``ThreadPoolExecutor.submit`` does not propagate contextvars
+            # by default; wrap with ``copy_context().run`` so the dispatched
+            # job inherits the claim-loop's contextvar state. The per-job
+            # ``bind_trace_context`` inside ``_execute_job`` then layers on
+            # the job-specific bind once the row is loaded.
+            ctx = contextvars.copy_context()
+            future = self._job_pool.submit(ctx.run, self._run_one_job, job_id_for_dispatch)
             self._inflight.add(future)
 
         # Drain on shutdown so in-flight jobs land cleanly. Anything still

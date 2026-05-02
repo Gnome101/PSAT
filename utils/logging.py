@@ -35,6 +35,7 @@ import logging
 import os
 import sys
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Iterator
 
 trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("psat_trace_id", default=None)
@@ -98,8 +99,14 @@ class JsonFormatter(logging.Formatter):
     )
 
     def format(self, record: logging.LogRecord) -> str:
+        # ``logging.Formatter.formatTime`` routes through ``time.strftime``
+        # which doesn't expand ``%f`` to microseconds — build the ISO
+        # timestamp by hand off the record's ``created`` epoch instead.
+        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec="milliseconds")
+        if ts.endswith("+00:00"):
+            ts = ts[: -len("+00:00")] + "Z"
         payload: dict[str, Any] = {
-            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%fZ"),
+            "timestamp": ts,
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

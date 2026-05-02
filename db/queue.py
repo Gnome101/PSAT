@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
 from typing import Any
 
 from sqlalchemy import func, select, text
@@ -95,7 +96,16 @@ def create_job(
     request_dict: dict[str, Any],
     initial_stage: JobStage = JobStage.discovery,
 ) -> Job:
-    """Insert a new job at the given stage with status=queued."""
+    """Insert a new job at the given stage with status=queued.
+
+    ``trace_id`` is read from the ambient contextvar (set by the API
+    ingress middleware on HTTP-triggered creates, or by the parent
+    worker on child-job spawns). When neither is bound, a fresh id is
+    minted so every job in the system is correlatable end-to-end.
+    """
+    from utils.logging import trace_id_var
+
+    trace_id = trace_id_var.get() or uuid.uuid4().hex[:16]
     job = Job(
         address=request_dict.get("address"),
         company=request_dict.get("company"),
@@ -105,6 +115,7 @@ def create_job(
         detail="Queued for analysis",
         request=request_dict,
         protocol_id=request_dict.get("protocol_id"),
+        trace_id=trace_id,
     )
     session.add(job)
     session.commit()
