@@ -340,12 +340,17 @@ def _build_subtree_from_value(
 
     leaf = _classify_leaf_from_ir(defining_ir, prov, gate, function)
     if leaf is None:
-        return make_leaf_node(
-            _unsupported_leaf(
-                reason="unrecognized_condition_shape",
-                expression=gate.expression_text,
-            )
-        )
+        # Defining IR isn't one we have a typed builder for (Assignment,
+        # TypeConversion, Phi, etc.). The condition still gates an
+        # if-revert / require, so it MUST be bool-typed. Fall back to
+        # the bare-bool truthy/falsy leaf — operand resolution walks
+        # the value's provenance and picks up the underlying state var
+        # / parameter / signature_recovery source. Pause/reentrancy
+        # passes can then promote business -> pause/reentrancy when
+        # the operand reads a recognized guard var. The OZ 5.0+
+        # cross-fn pause shape (``_requireNotPaused`` calling
+        # ``if (_paused) revert``) hits this path.
+        return make_leaf_node(_build_truthy_leaf(cond_value, prov, gate))
     return make_leaf_node(leaf)
 
 

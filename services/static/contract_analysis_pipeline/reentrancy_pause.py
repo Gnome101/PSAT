@@ -199,10 +199,32 @@ class PauseAnalyzer:
 
     def _read_with_revert_in_others(self, var_name: str, writer_fns: list[Any]) -> bool:
         writer_ids = {id(w) for w in writer_fns}
+        # Fast path 1: scan already-built predicate_trees. A leaf with
+        # an operand carrying ``state_variable_name == var_name`` came
+        # from a revert-detected gate by construction (build_predicate-
+        # _tree only emits leaves from RevertGate paths). This catches
+        # cross-fn cases like OZ 5.0+ Pausable where the actual read
+        # lives in a helper (``_requireNotPaused`` calling
+        # ``if (_paused) revert``) — the helper's revert doesn't show
+        # up in the modifier's body IRs but the predicate builder has
+        # already resolved it via cross-fn provenance walking.
         for fn in self.contract.functions:
             if fn.is_constructor or id(fn) in writer_ids:
                 continue
-            # Read in either fn body or any of its modifiers.
+            full_name = getattr(fn, "full_name", None)
+            if not isinstance(full_name, str):
+                continue
+            tree = self.predicate_trees.get(full_name)
+            if tree is not None and _tree_has_state_var_operand(tree, var_name):
+                return True
+        # Fast path 2: legacy direct-IR walk for the inline patterns
+        # (``require(!_paused)`` in the modifier itself). Kept for
+        # belt-and-braces — there are shapes where the predicate tree
+        # might emit unsupported but the underlying body still has a
+        # direct revert-with-statevar read.
+        for fn in self.contract.functions:
+            if fn.is_constructor or id(fn) in writer_ids:
+                continue
             containers = [fn] + (list(getattr(fn, "modifiers", []) or []))
             for c in containers:
                 if self._reads_with_revert(c, var_name):
@@ -269,6 +291,25 @@ def _ir_is_require_or_revert(ir: Any) -> bool:
     fn = getattr(ir, "function", None)
     nm = getattr(fn, "name", None) or str(fn or "")
     return nm.startswith("require(") or nm.startswith("revert(") or nm.startswith("revert ") or nm == "assert(bool)"
+
+
+def _tree_has_state_var_operand(tree: PredicateTree, var_name: str) -> bool:
+    """True iff some leaf in ``tree`` has an operand reading the
+    state-variable ``var_name``. Used by PauseAnalyzer to detect
+    cross-fn revert paths (helper calls if-revert on _paused) where
+    the var read doesn't appear in the outer function's IRs."""
+    if tree.get("op") == "LEAF":
+        leaf = tree.get("leaf")
+        if leaf is None:
+            return False
+        for op in leaf.get("operands") or []:
+            if op.get("state_variable_name") == var_name:
+                return True
+        return False
+    for child in tree.get("children") or []:
+        if _tree_has_state_var_operand(child, var_name):
+            return True
+    return False
 
 
 def _tree_has_authority(tree: PredicateTree) -> bool:
