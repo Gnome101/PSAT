@@ -174,6 +174,44 @@ def test_membership_maps_to_mapping_membership():
     assert p["controller_label"] == "0x" + "01" * 32
 
 
+def test_caller_only_1key_membership_falls_back_to_storage_var():
+    """For 1-key caller-only mappings (Maker wards, OZ Pausable's
+    _paused, blacklists keyed only on msg.sender), all key_sources
+    are caller-related — the previous shim picked None as the
+    controller_op and emitted controller_source=null. v1's native
+    emit uses the mapping's OWN NAME as controller_source so
+    downstream effective_permissions can resolve via
+    controller_lookup. This regression test pins the storage_var
+    fallback.
+    """
+    leaf = {
+        "kind": "membership",
+        "operator": "truthy",
+        "authority_role": "caller_authority",
+        "operands": [{"source": "msg_sender"}],
+        "set_descriptor": {
+            "kind": "mapping_membership",
+            "key_sources": [{"source": "msg_sender"}],
+            "truthy_value": "1",
+            "storage_var": "wards",
+        },
+        "references_msg_sender": True,
+        "parameter_indices": [],
+        "expression": "wards[msg.sender] == 1",
+        "basis": [],
+    }
+    out = synthesize_semantic_guards_from_predicate_trees(
+        _trees(("rely(address)", leaf)),
+        contract_address="0x1",
+        contract_name="C",
+    )
+    p = out["functions"][0]["predicates"][0]
+    assert p["kind"] == "mapping_membership"
+    assert p["controller_source"] == "wards"
+    assert p["controller_label"] == "wards"
+    assert p["controller_kind"] == "mapping_membership"
+
+
 def test_signature_auth_maps_to_policy_check():
     out = synthesize_semantic_guards_from_predicate_trees(
         _trees(("f()", _signature_auth_leaf())),

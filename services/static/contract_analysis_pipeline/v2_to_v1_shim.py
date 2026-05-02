@@ -164,7 +164,8 @@ def _leaf_to_v1_predicate(leaf: dict[str, Any]) -> dict[str, Any] | None:
         # equivalence comparator in tests treats role_member and
         # mapping_membership as semantically equivalent for cutover
         # purposes.
-        keys = (leaf.get("set_descriptor") or {}).get("key_sources") or operands
+        descriptor = leaf.get("set_descriptor") or {}
+        keys = descriptor.get("key_sources") or operands
         controller_op = next(
             (
                 k
@@ -173,11 +174,28 @@ def _leaf_to_v1_predicate(leaf: dict[str, Any]) -> dict[str, Any] | None:
             ),
             None,
         )
+        controller_source = _operand_source_id(controller_op)
+        controller_kind = _operand_to_controller_kind(controller_op)
+        controller_label = _operand_label(controller_op)
+        # Fallback for 1-key caller-only mappings (Maker wards, OZ
+        # Pausable's _paused, blacklists keyed only on msg.sender):
+        # all keys were caller-related so controller_op is None. v1's
+        # native emit uses the mapping's OWN NAME as controller_source
+        # so downstream effective_permissions can resolve via
+        # controller_lookup. The set_descriptor's ``storage_var`` field
+        # carries that name structurally — fall back to it to match
+        # v1's contract for downstream consumers.
+        if controller_source is None:
+            storage_var = descriptor.get("storage_var")
+            if isinstance(storage_var, str) and storage_var:
+                controller_source = storage_var
+                controller_kind = "mapping_membership"
+                controller_label = storage_var
         return {
             "kind": "mapping_membership",
-            "controller_kind": _operand_to_controller_kind(controller_op),
-            "controller_label": _operand_label(controller_op),
-            "controller_source": _operand_source_id(controller_op),
+            "controller_kind": controller_kind,
+            "controller_label": controller_label,
+            "controller_source": controller_source,
             "read_spec": None,
         }
 
