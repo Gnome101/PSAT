@@ -3643,6 +3643,67 @@ def probe_contract_membership(address: str, req: _ProbeMembershipRequest) -> dic
         )
 
 
+@app.get("/api/contract/{address}/capabilities")
+def get_contract_capabilities(
+    address: str,
+    chain_id: int = 1,
+    block: int | None = None,
+) -> dict[str, Any]:
+    """Return the v2 capability per externally-callable function on
+    ``address``. Read path for the schema-v2 cutover (#18) — UI /
+    external consumers query this and fall back to v1 endpoints
+    when the response is 404 (legacy pre-v2 contract).
+
+    Response shape:
+
+        {
+          "contract_address": "0x...",
+          "chain_id": 1,
+          "block": null,
+          "capabilities": {
+            "grantRole(bytes32,address)": {
+              "kind": "finite_set",
+              "members": ["0x..."],
+              "membership_quality": "exact",
+              "confidence": "enumerable",
+              ...
+            },
+            ...
+          }
+        }
+
+    Empty ``capabilities`` dict means every function on the
+    contract is unguarded (publicly callable) per the resolver
+    convention.
+
+    Returns 404 if no completed analysis Job exists for the
+    address, or no predicate_trees artifact has been written for
+    the latest analysis (legacy pre-v2 contract).
+    """
+    from services.resolution.capability_resolver import resolve_contract_capabilities
+
+    addr = _normalize_address_or_400(address)
+    with SessionLocal() as session:
+        capabilities = resolve_contract_capabilities(
+            session, address=addr, chain_id=chain_id, block=block
+        )
+    if capabilities is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No v2 capabilities for this address — either no completed "
+                "analysis exists or it predates the schema-v2 emit. Fall "
+                "back to /api/company/* or /api/jobs?address=..."
+            ),
+        )
+    return {
+        "contract_address": addr,
+        "chain_id": chain_id,
+        "block": block,
+        "capabilities": capabilities,
+    }
+
+
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):
     if full_path == "api" or full_path.startswith("api/"):
