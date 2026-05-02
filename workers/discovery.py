@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from db.models import Contract, Job, JobStage
 from db.queue import (
     advance_job,
+    bulk_upsert_discovered_contracts,
     copy_static_cache,
     create_job,
     find_completed_static_cache,
@@ -26,7 +27,6 @@ from db.queue import (
     get_or_create_protocol,
     store_artifact,
     store_source_files,
-    upsert_discovered_contract,
 )
 from services.discovery.audit_reports import merge_audit_reports, search_audit_reports
 from services.discovery.deployer import _batch_get_creators
@@ -176,28 +176,31 @@ class DiscoveryWorker(BaseWorker):
         # The upsert unions ``discovery_sources`` so a contract that's
         # already in the table from a prior source gains this one as
         # corroboration rather than being dropped.
+        # Build the bulk payload in one pass. Inventory entries carry their
+        # own ``source`` list (e.g. ``["tavily_ai_inventory", "deployer_expansion"]``)
+        # when multiple inventory signals agreed; preserve that granularity
+        # so ranking sees the richer corroboration story.
+        bulk_entries: list[dict] = []
         for entry in discovered:
             entry_chains = entry.get("chains")
             entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
-            # Inventory entries carry their own ``source`` list (e.g.
-            # ``["tavily_ai_inventory", "deployer_expansion"]``) when
-            # multiple inventory signals agreed. Preserve that granularity
-            # so ranking sees the richer corroboration story; fall back
-            # to the generic ``inventory`` tag when the entry didn't
-            # expose one (legacy cached entries).
             entry_sources = entry.get("source") or ["inventory"]
             if not isinstance(entry_sources, list):
                 entry_sources = [str(entry_sources)]
-            upsert_discovered_contract(
-                session,
-                address=str(entry["address"]),
-                chain=entry_chain,
-                protocol_id=protocol_row.id,
-                new_sources=entry_sources,
-                contract_name=entry.get("name"),
-                confidence=entry.get("confidence"),
-                chains=entry.get("chains"),
+            bulk_entries.append(
+                {
+                    "address": str(entry["address"]),
+                    "chain": entry_chain,
+                    "new_sources": entry_sources,
+                    "contract_name": entry.get("name"),
+                    "confidence": entry.get("confidence"),
+                    "chains": entry.get("chains"),
+                }
             )
+        # One SELECT for all existing rows + a single bulk add for new ones —
+        # collapses 100-300 sequential SELECTs that delayed the cascade kickoff
+        # into roughly one round-trip.
+        bulk_upsert_discovered_contracts(session, protocol_id=protocol_row.id, entries=bulk_entries)
         session.commit()
 
         store_artifact(

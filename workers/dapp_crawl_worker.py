@@ -21,7 +21,7 @@ from db.queue import (
     complete_job,
     get_or_create_protocol,
     store_artifact,
-    upsert_discovered_contract,
+    bulk_upsert_discovered_contracts,
 )
 from services.crawlers.dapp.crawl import crawl_dapp
 from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
@@ -139,19 +139,21 @@ class DAppCrawlWorker(BaseWorker):
             if addr:
                 detail_by_addr[addr] = detail
 
+        bulk_entries: list[dict] = []
         for addr in addresses:
             normalized = addr.lower()
             info = detail_by_addr.get(normalized, {})
             addr_chain = info.get("chain") or default_chain
             source_urls = info.get("source_urls", [])
-            upsert_discovered_contract(
-                session,
-                address=normalized,
-                chain=addr_chain,
-                protocol_id=protocol_id,
-                new_sources=["dapp_crawl"],
-                discovery_url=source_urls[0] if source_urls else None,
+            bulk_entries.append(
+                {
+                    "address": normalized,
+                    "chain": addr_chain,
+                    "new_sources": ["dapp_crawl"],
+                    "discovery_url": source_urls[0] if source_urls else None,
+                }
             )
+        bulk_upsert_discovered_contracts(session, protocol_id=protocol_id, entries=bulk_entries)
         session.commit()
 
         store_artifact(

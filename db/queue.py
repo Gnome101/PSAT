@@ -112,6 +112,83 @@ def create_job(
     return job
 
 
+def bulk_upsert_discovered_contracts(
+    session: Session,
+    *,
+    protocol_id: int | None,
+    entries: list[dict[str, Any]],
+) -> list[Contract]:
+    """Bulk-upsert many discovered contracts with the same first-writer-wins semantics as ``upsert_discovered_contract``.
+
+    Each *entries* item is a dict with keys: ``address`` (required),
+    ``chain``, ``new_sources`` (list[str]), ``contract_name``, ``confidence``,
+    ``chains``, ``discovery_url``. The single-row helper does one SELECT per
+    address, which dominates wall time when discovery surfaces 100-300
+    contracts at once. This collapses every SELECT into one ``IN (...)`` and
+    keeps the merge logic identical so semantics don't drift.
+
+    Commit is the caller's responsibility — typical use is one bulk call
+    per discovery source followed by a single commit.
+    """
+    if not entries:
+        return []
+
+    # Normalize once so the lookup map and the merge loop see identical keys.
+    norm_entries: list[tuple[str, str | None, dict[str, Any]]] = []
+    for entry in entries:
+        address = str(entry["address"]).lower()
+        chain = entry.get("chain")
+        norm_entries.append((address, chain, entry))
+
+    # One round-trip for every existing row across the requested (address, chain) tuples.
+    # We can't use a single tuple-IN against a composite key efficiently in SQLAlchemy
+    # core without raw SQL, so query by address set and filter chain in Python — the
+    # set is small (typically 100-300 addresses) and the chain comparison is O(1).
+    addresses = list({a for a, _c, _e in norm_entries})
+    existing_rows = session.execute(select(Contract).where(Contract.address.in_(addresses))).scalars().all()
+    existing_by_key: dict[tuple[str, str | None], Contract] = {(row.address, row.chain): row for row in existing_rows}
+
+    out: list[Contract] = []
+    for address, chain, entry in norm_entries:
+        clean_sources = [s for s in (entry.get("new_sources") or []) if s]
+        existing = existing_by_key.get((address, chain))
+        if existing is None:
+            row = Contract(
+                address=address,
+                chain=chain,
+                protocol_id=protocol_id,
+                contract_name=entry.get("contract_name"),
+                confidence=entry.get("confidence"),
+                discovery_sources=list(clean_sources) or None,
+                chains=entry.get("chains"),
+                discovery_url=entry.get("discovery_url"),
+            )
+            session.add(row)
+            existing_by_key[(address, chain)] = row
+            out.append(row)
+            continue
+
+        merged = list(existing.discovery_sources or [])
+        for src in clean_sources:
+            if src not in merged:
+                merged.append(src)
+        if merged:
+            existing.discovery_sources = merged
+        if existing.protocol_id is None and protocol_id is not None:
+            existing.protocol_id = protocol_id
+        if not existing.contract_name and entry.get("contract_name"):
+            existing.contract_name = entry["contract_name"]
+        if existing.confidence is None and entry.get("confidence") is not None:
+            existing.confidence = entry["confidence"]
+        if not existing.chains and entry.get("chains"):
+            existing.chains = entry["chains"]
+        if not existing.discovery_url and entry.get("discovery_url"):
+            existing.discovery_url = entry["discovery_url"]
+        out.append(existing)
+
+    return out
+
+
 def upsert_discovered_contract(
     session: Session,
     *,
