@@ -95,16 +95,31 @@ def _try_enumerable_role_members(
 
     if count > MAX_ENUMERABLE_ROLE_MEMBERS:
         return None
+    if count == 0:
+        return [], {"adapter": "access_control_enumerable", "member_count": 0}
+
+    # Fan out the per-index ``getRoleMember`` reads — the prior sequential
+    # loop paid ``count`` RTTs for fully-independent eth_calls against the
+    # same contract. ``parallel_map`` keeps the per-call surface (each call
+    # still flows through ``_eth_call_raw``) so the failure semantics match
+    # the prior single-call-failure-invalidates-enumeration behaviour, and
+    # the test mocks that intercept ``_eth_call_raw`` continue to fire.
+    from utils.concurrency import parallel_map
+
+    member_selector = _selector("getRoleMember(bytes32,uint256)")
+    calldatas = [member_selector + role_arg + _encode_uint256(index) for index in range(count)]
+    results = parallel_map(
+        lambda calldata: _eth_call_raw(rpc_url, contract_address, calldata, block_tag),
+        calldatas,
+    )
 
     members: list[str] = []
-    member_selector = _selector("getRoleMember(bytes32,uint256)")
-    for index in range(count):
-        calldata = member_selector + role_arg + _encode_uint256(index)
-        try:
-            member_raw = _eth_call_raw(rpc_url, contract_address, calldata, block_tag)
-        except Exception:
+    for _calldata, outcome in results:
+        if isinstance(outcome, BaseException):
+            # Match the previous behaviour: any single-call failure
+            # invalidates the whole enumeration.
             return None
-        member = _decode_address(member_raw)
+        member = _decode_address(outcome)  # type: ignore[arg-type]
         if member:
             members.append(member.lower())
 
@@ -221,11 +236,24 @@ def _role_members_from_events(
     role_id: str,
     block_tag: str = "latest",
 ) -> tuple[list[str], dict[str, object]] | None:
-    try:
-        granted = _logs_for_topic(rpc_url, contract_address, ROLE_GRANTED_TOPIC0, role_id, block_tag)
-        revoked = _logs_for_topic(rpc_url, contract_address, ROLE_REVOKED_TOPIC0, role_id, block_tag)
-    except Exception:
-        return None
+    # GRANTED + REVOKED histories are independent — fan them out so the
+    # adapter pays one log-fetch RTT instead of two.
+    from utils.concurrency import parallel_map
+
+    log_results = parallel_map(
+        lambda topic: _logs_for_topic(rpc_url, contract_address, topic, role_id, block_tag),
+        [ROLE_GRANTED_TOPIC0, ROLE_REVOKED_TOPIC0],
+        max_workers=2,
+    )
+    granted: list[dict[str, Any]] = []
+    revoked: list[dict[str, Any]] = []
+    for topic, outcome in log_results:
+        if isinstance(outcome, BaseException):
+            return None
+        if topic == ROLE_GRANTED_TOPIC0:
+            granted = outcome  # type: ignore[assignment]
+        else:
+            revoked = outcome  # type: ignore[assignment]
 
     if not granted and not revoked:
         return None
@@ -388,6 +416,10 @@ def _try_access_control_details(rpc_url: str, address: str, block_tag: str = "la
 
 
 def type_authority_contract(rpc_url: str, address: str, block_tag: str = "latest") -> dict[str, object]:
+    # Sequential on purpose: Aragon hits short-circuit the AccessControl
+    # probe entirely. Parallelising would always pay both RTTs even when
+    # Aragon answers, which is the wrong trade for the common
+    # not-an-authority case where both probes return cheaply anyway.
     aragon = _try_aragon_app_details(rpc_url, address, block_tag)
     if aragon is not None:
         return aragon

@@ -17,6 +17,7 @@ import json
 import logging
 
 from services.discovery.static_dependencies import get_code, normalize_address, rpc_call
+from utils.rpc import rpc_batch_request_with_status
 
 logger = logging.getLogger(__name__)
 
@@ -264,6 +265,40 @@ def _try_facet_addresses_call(rpc_url: str, address: str) -> list[str] | None:
 # ---------------------------------------------------------------------------
 
 
+_PROXY_SLOT_BATCH = (
+    EIP1967_IMPL_SLOT,
+    EIP1967_BEACON_SLOT,
+    EIP1967_ADMIN_SLOT,
+    EIP1822_LOGIC_SLOT,
+    OZ_IMPL_SLOT,
+)
+
+
+def _read_proxy_slots_batched(rpc_url: str, address: str) -> tuple[str | None, ...]:
+    """Read the five proxy-detection slots in one JSON-RPC batch.
+
+    Returns ``(impl, beacon, admin, uups, oz)`` decoded via :func:`_slot_to_address`.
+    On whole-batch failure each slot falls back to a single ``eth_getStorageAt`` —
+    matches the prior sequential behaviour where each call could individually
+    raise and we'd surface a None.
+    """
+    calls = [("eth_getStorageAt", [address, slot, "latest"]) for slot in _PROXY_SLOT_BATCH]
+    try:
+        results = rpc_batch_request_with_status(rpc_url, calls)
+    except Exception:
+        results = [(None, True)] * len(_PROXY_SLOT_BATCH)
+
+    decoded: list[str | None] = []
+    for idx, (raw, had_error) in enumerate(results):
+        if had_error or raw is None:
+            try:
+                raw = get_storage_at(rpc_url, address, _PROXY_SLOT_BATCH[idx])
+            except RuntimeError:
+                raw = None
+        decoded.append(_slot_to_address(raw) if isinstance(raw, str) else None)
+    return tuple(decoded)
+
+
 def classify_single(
     address: str,
     rpc_url: str,
@@ -295,10 +330,13 @@ def classify_single(
         info.update(type="proxy", proxy_type="eip1167", implementation=eip1167_impl)
         return info
 
-    # 2. EIP-1967 storage slots
-    impl = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_IMPL_SLOT))
-    beacon = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_BEACON_SLOT))
-    admin = _slot_to_address(get_storage_at(rpc_url, address, EIP1967_ADMIN_SLOT))
+    # 2. Batch the proxy-slot reads: EIP-1967 impl/beacon/admin + EIP-1822 logic + OZ legacy.
+    # Reading all five upfront costs at most two extra slot reads when a proxy is detected on
+    # the first slot (rare: the contract is more often non-proxy, where we'd have read all five
+    # anyway), and trades five sequential RTTs for one. Order matches the historical sequential
+    # reads so downstream branch logic is unchanged.
+    slot_addrs = _read_proxy_slots_batched(rpc_url, address)
+    impl, beacon, admin, uups, oz = slot_addrs
     logger.debug("%s EIP-1967 slots: impl=%s beacon=%s admin=%s", address, impl, beacon, admin)
 
     if beacon:
@@ -322,15 +360,13 @@ def classify_single(
             info["admin"] = admin
         return info
 
-    # 3. EIP-1822 UUPS
-    uups = _slot_to_address(get_storage_at(rpc_url, address, EIP1822_LOGIC_SLOT))
+    # 3. EIP-1822 UUPS (decoded from the batch above)
     if uups:
         logger.debug("%s → eip1822 proxy, impl=%s", address, uups)
         info.update(type="proxy", proxy_type="eip1822", implementation=uups)
         return info
 
-    # 4. OpenZeppelin legacy slot
-    oz = _slot_to_address(get_storage_at(rpc_url, address, OZ_IMPL_SLOT))
+    # 4. OpenZeppelin legacy slot (decoded from the batch above)
     if oz:
         logger.debug("%s → oz_legacy proxy, impl=%s", address, oz)
         info.update(type="proxy", proxy_type="oz_legacy", implementation=oz)
@@ -448,6 +484,8 @@ def classify_contracts(
     ``_resolve_proxy`` call).  These are reused in Phase 1, avoiding
     duplicate RPC calls.
     """
+    from utils.concurrency import parallel_map
+
     target = normalize_address(target)
     all_addrs = list(dict.fromkeys([target] + [normalize_address(a) for a in dependencies]))
     logger.debug("classify_contracts: target=%s, %d dependencies", target, len(dependencies))
@@ -459,18 +497,33 @@ def classify_contracts(
     discovered: set[str] = set()
     all_addrs_set = set(all_addrs)
 
+    # Fan out every address that isn't already pre-classified. ``code_cache`` is
+    # intentionally not threaded through — ``classify_single`` falls through to
+    # the locked process-wide ``_GETCODE_CACHE`` in utils.rpc, which already
+    # serialises bytecode reads safely.
+    addrs_to_classify = [addr for addr in all_addrs if not (pre_classified and addr in pre_classified)]
+    parallel_results = parallel_map(
+        lambda addr: classify_single(addr, rpc_url, code_cache=None),
+        addrs_to_classify,
+        max_workers=8,
+    )
+    classified_phase1: dict[str, dict] = {}
+    for addr, result in parallel_results:
+        if isinstance(result, BaseException):
+            logger.debug("Phase 1: classify error for %s (%s) — defaulting to regular", addr, result)
+            classified_phase1[addr] = {"address": addr, "type": "regular"}
+        else:
+            classified_phase1[addr] = result
+
     for addr in all_addrs:
         if pre_classified and addr in pre_classified:
             info = pre_classified[addr]
         else:
-            try:
-                info = classify_single(addr, rpc_url, code_cache=code_cache)
-            except RuntimeError:
-                logger.debug("Phase 1: RPC error classifying %s, defaulting to regular", addr)
-                info = {"address": addr, "type": "regular"}
+            info = classified_phase1[addr]
         classifications[addr] = info
 
-        # Track reverse mappings
+        # Track reverse mappings — sequential so the deterministic "first
+        # encounter wins" ordering of the proxies list is preserved.
         if impl := info.get("implementation"):
             impl_to_proxies.setdefault(impl, []).append(addr)
             if impl not in all_addrs_set:
@@ -487,16 +540,19 @@ def classify_contracts(
     if discovered:
         logger.debug("Phase 1 discovered %d new addresses from proxy slots: %s", len(discovered), sorted(discovered))
 
-    # Classify newly-discovered addresses (found in proxy slots), skip any
-    # that were already classified in Phase 1.
-    for addr in sorted(discovered):
-        if addr in classifications:
-            continue
-        try:
-            info = classify_single(addr, rpc_url, code_cache=code_cache)
-        except RuntimeError:
-            info = {"address": addr, "type": "regular"}
-        classifications[addr] = info
+    # Classify newly-discovered addresses (found in proxy slots) in parallel, skipping
+    # any already covered by Phase 1.
+    discovered_to_classify = sorted(addr for addr in discovered if addr not in classifications)
+    discovered_results = parallel_map(
+        lambda addr: classify_single(addr, rpc_url, code_cache=None),
+        discovered_to_classify,
+        max_workers=8,
+    )
+    for addr, result in discovered_results:
+        if isinstance(result, BaseException):
+            classifications[addr] = {"address": addr, "type": "regular"}
+        else:
+            classifications[addr] = result
 
     # Phase 2 -- relational: mark implementations and beacons
     for addr, info in classifications.items():

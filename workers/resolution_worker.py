@@ -138,6 +138,7 @@ class ResolutionWorker(BaseWorker):
             max_depth=RECURSION_MAX_DEPTH,
             workspace_prefix="recursive",
             classify_cache=classify_cache,
+            heartbeat=lambda: self._heartbeat(session, job),
         )
 
         if DEBUG_TIMING:
@@ -211,7 +212,7 @@ class ResolutionWorker(BaseWorker):
 
     def _fetch_balances(self, session: Session, job: Job, contract_row: Contract | None) -> None:
         """Fetch ETH + token balances and store in contract_balances table."""
-        from utils.etherscan import get_eth_balance, get_eth_price, get_token_balances
+        from utils.etherscan import get_eth_balance, get_eth_price, get_token_balances, parallel_get
 
         address = job.address
         if not address or not contract_row:
@@ -221,25 +222,44 @@ class ResolutionWorker(BaseWorker):
         target_address = request.get("proxy_address") or address
 
         self.update_detail(session, job, "Fetching token balances")
-        try:
-            eth_wei = get_eth_balance(target_address)
-            tokens = get_token_balances(target_address)
-        except Exception as exc:
-            logger.warning("Job %s: balance fetch failed: %s", job.id, exc)
+        # Fan out the three Etherscan calls (eth balance, token balances, eth
+        # price). All three serialise on the global rate lock, so threading
+        # only stacks RTTs — the limiter is preserved.
+        results = parallel_get(
+            {
+                "eth_wei": (lambda: get_eth_balance(target_address)),
+                "tokens": (lambda: get_token_balances(target_address)),
+                "eth_price": get_eth_price,
+            }
+        )
+
+        eth_wei_raw = results.get("eth_wei")
+        tokens_raw = results.get("tokens")
+        if isinstance(eth_wei_raw, BaseException) or isinstance(tokens_raw, BaseException):
+            logger.warning(
+                "Job %s: balance fetch failed: eth=%r tokens=%r",
+                job.id,
+                eth_wei_raw,
+                tokens_raw,
+            )
             return
+        eth_wei = cast(int, eth_wei_raw)
+        tokens = cast(list, tokens_raw)
 
         # Clear old balances
         session.query(ContractBalance).filter(ContractBalance.contract_id == contract_row.id).delete()
 
         # Native ETH balance
         if eth_wei > 0:
-            eth_price = None
-            eth_usd = None
-            try:
-                eth_price = get_eth_price()
+            eth_price_raw = results.get("eth_price")
+            eth_price: float | None
+            eth_usd: float | None = None
+            if isinstance(eth_price_raw, BaseException):
+                logger.warning("Job %s: ETH price fetch failed: %s", job.id, eth_price_raw)
+                eth_price = None
+            else:
+                eth_price = cast(float, eth_price_raw)
                 eth_usd = (eth_wei / 1e18) * eth_price
-            except Exception as exc:
-                logger.warning("Job %s: ETH price fetch failed: %s", job.id, exc)
             session.add(
                 ContractBalance(
                     contract_id=contract_row.id,

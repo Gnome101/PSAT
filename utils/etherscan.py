@@ -10,6 +10,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import requests
@@ -258,6 +259,37 @@ def _build_selector_map(abi_json: str) -> dict[str, str]:
         selector = "0x" + keccak(text=sig).hex()[:8]
         selector_map[selector] = name
     return selector_map
+
+
+def parallel_get(calls: Mapping[str, Callable[[], object]]) -> dict[str, object | BaseException]:
+    """Submit Etherscan callables concurrently and return ``{call_id: result_or_exception}``.
+
+    Each callable is expected to be a thunk over an existing helper (typically
+    ``functools.partial(etherscan.get_contract_name, addr)`` or a lambda over
+    :func:`get`). Submission goes through the shared ``RpcExecutor`` so threads
+    stack request RTTs across siblings, but every wire call still routes
+    through :func:`_wait_rate_limit` — the rate limit is preserved, only the
+    serial dead time between calls is removed.
+
+    Failures are returned in-place rather than raised so the caller can
+    decide which IDs to skip (mirrors :func:`utils.concurrency.parallel_map`).
+    """
+    from concurrent.futures import as_completed
+
+    from utils.concurrency import RpcExecutor
+
+    if not calls:
+        return {}
+
+    futures = {RpcExecutor.submit(fn): call_id for call_id, fn in calls.items()}
+    results: dict[str, object | BaseException] = {}
+    for fut in as_completed(futures):
+        call_id = futures[fut]
+        try:
+            results[call_id] = fut.result()
+        except BaseException as exc:  # noqa: BLE001 — preserve every exception type
+            results[call_id] = exc
+    return results
 
 
 def get_contract_info(address: str) -> tuple[str | None, dict[str, str]]:

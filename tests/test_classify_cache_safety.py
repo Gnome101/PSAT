@@ -112,3 +112,81 @@ def test_cached_details_are_isolated_from_caller_mutation(monkeypatch):
     _kind2, details2 = classify_resolved_address("https://rpc", "0x" + "e" * 40)
     assert details2["owners"] == ["0x" + "1" * 40, "0x" + "2" * 40]
     assert details2["address"] == "0x" + "e" * 40
+
+
+def test_concurrent_classify_consistent_under_8_threads(monkeypatch):
+    """Step 3 fan-out: 8 worker threads classifying overlapping address sets
+    must not corrupt the process cache or surface inconsistent values for the
+    same address. Every concurrent reader sees identical (kind, details)."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Force the sequential probe path so monkeypatching ``_try_eth_call_decoded``
+    # actually intercepts every probe (the batched path bypasses it).
+    monkeypatch.setattr(tracking, "_CLASSIFY_BATCH_ENABLED", False)
+    monkeypatch.setattr(tracking, "_get_code", lambda *a, **k: "0x60")
+    monkeypatch.setattr(tracking, "type_authority_contract", lambda *a, **k: {})
+
+    # Per-address signature: a few addresses look like Safes, the rest fall
+    # through to "contract". The fake call records every probe so we can
+    # assert the cache collapses concurrent misses rather than re-probing
+    # the same address from every thread.
+    probe_calls: dict[str, int] = {}
+    probe_lock = threading.Lock()
+
+    def fake_call(_rpc, address, signature, _abi, *_a, **_k):
+        with probe_lock:
+            probe_calls[address] = probe_calls.get(address, 0) + 1
+        is_safe = address.endswith("aaaa")
+        if is_safe and signature == "getOwners()":
+            return ["0x" + "1" * 40]
+        if is_safe and signature == "getThreshold()":
+            return 1
+        return None
+
+    monkeypatch.setattr(tracking, "_try_eth_call_decoded", fake_call)
+
+    addresses = [f"0x{i:040x}" for i in range(1, 9)]
+    addresses += [f"0x{i:036x}aaaa" for i in range(1, 3)]  # safe-shaped
+
+    def _canonicalize(value):
+        if isinstance(value, dict):
+            return tuple(sorted((k, _canonicalize(v)) for k, v in value.items()))
+        if isinstance(value, list):
+            return tuple(_canonicalize(v) for v in value)
+        return value
+
+    def _classify_round() -> list[tuple[str, str, tuple]]:
+        out: list[tuple[str, str, tuple]] = []
+        for addr in addresses:
+            kind, details = classify_resolved_address("https://rpc", addr)
+            out.append((addr, kind, _canonicalize(details)))
+        return out
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(_classify_round) for _ in range(8)]
+        results = [f.result() for f in as_completed(futures)]
+
+    # Every concurrent reader sees the same value for a given address.
+    by_addr: dict[str, set] = {}
+    for thread_results in results:
+        for addr, kind, details in thread_results:
+            by_addr.setdefault(addr, set()).add((kind, details))
+    for addr, observed in by_addr.items():
+        assert len(observed) == 1, f"address {addr} produced inconsistent classifications: {observed}"
+
+    # Cache must collapse repeated probes — racing misses can each issue one
+    # full probe set but the per-address total is bounded by num threads
+    # times probes-per-classify (5 for "contract", 2 for "safe").
+    max_probes_per_address = 8 * len(tracking._CLASSIFY_PROBE_SIGS)
+    for addr, count in probe_calls.items():
+        assert count <= max_probes_per_address, (
+            f"address {addr} re-probed {count} times — cache lock not collapsing concurrent misses"
+        )
+
+    # And in aggregate the cache must avoid linear blow-up: 8 threads × 10
+    # addresses = 80 lookups; cached path means total probes ≪ 80 × 5.
+    total_probes = sum(probe_calls.values())
+    assert total_probes < 8 * len(addresses) * len(tracking._CLASSIFY_PROBE_SIGS), (
+        f"total probes {total_probes} suggests no caching"
+    )

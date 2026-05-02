@@ -651,6 +651,34 @@ def _verify_single_repo(
     any_transient = False  # saw a 5xx / transport err → retry later
     details: list[str] = []
 
+    # Flatten the (commit × path) cross-product into one parallel fetch.
+    # Each ``fetch_github_source_hash`` is an independent HTTP call; the
+    # prior nested loop walked the cross-product serially so a wide audit
+    # paid one RTT per pair (5 commits × 20 paths = 100 sequential GitHub
+    # round-trips per scope name). Skips pairs whose Etherscan path is
+    # missing so ``candidate_path_missing`` stays accurate.
+    from utils.concurrency import parallel_map
+
+    fetch_pairs: list[tuple[str, str]] = []
+    for commit in reviewed_commits:
+        for path in candidate_paths:
+            if not impl_source.files.get(path):
+                continue
+            fetch_pairs.append((commit, path))
+
+    fetch_results: dict[tuple[str, str], object] = {}
+    if fetch_pairs:
+        results = parallel_map(
+            lambda pair: fetch_github_source_hash(source_repo, pair[0], pair[1], token=github_token),
+            fetch_pairs,
+        )
+        for pair, outcome in results:
+            fetch_results[pair] = outcome
+
+    # Replay the per-commit branching logic against the pre-fetched results.
+    # ``commit_hit_anything`` / ``commit_had_404`` / ``commit_had_transient``
+    # are still reasoned about per-commit so the negative-signal classification
+    # below stays identical to the prior sequential implementation.
     for commit in reviewed_commits:
         commit_hit_anything = False
         commit_had_transient = False
@@ -658,10 +686,17 @@ def _verify_single_repo(
         for path in candidate_paths:
             etherscan_hash = impl_source.files.get(path)
             if not etherscan_hash:
-                # Path isn't in Etherscan's bundle — not a GitHub-side failure.
-                # Record so ``candidate_path_missing`` stays accurate.
                 continue
-            gh = _coerce_github_hash_result(fetch_github_source_hash(source_repo, commit, path, token=github_token))
+            raw_outcome = fetch_results.get((commit, path))
+            if isinstance(raw_outcome, BaseException):
+                # Treat fetch crashes the same as transport errors so the
+                # parallel path can't escalate a failure mode the serial
+                # path would have caught.
+                commit_had_transient = True
+                any_transient = True
+                details.append(f"{commit[:8]} {path}: crash: {raw_outcome}")
+                continue
+            gh = _coerce_github_hash_result(raw_outcome)
             if gh.status == "ok" and gh.sha256 is not None:
                 commit_hit_anything = True
                 if gh.sha256 == etherscan_hash:

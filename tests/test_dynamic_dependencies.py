@@ -608,3 +608,65 @@ def test_fetch_contract_transactions_no_asc_when_selectors_present(monkeypatch):
     assert len(txlist_calls) == 1
     assert txlist_calls[0]["sort"] == "desc"
     assert len(txs) == 1
+
+
+# ---------------------------------------------------------------------------
+# Trace fan-out parity: parallel + sequential produce identical edge sets
+# and identical trace_errors ordering.
+# ---------------------------------------------------------------------------
+
+
+def _trace_parity_helper(monkeypatch, fanout: str):
+    """Run ``find_dynamic_dependencies`` over a 5-tx fixture under a given fanout."""
+    monkeypatch.setenv("PSAT_RPC_FANOUT", fanout)
+    target = "0x1111111111111111111111111111111111111111"
+    deps = [f"0x{i:040x}" for i in range(2, 7)]
+    tx_hashes = [f"0x{(0xA + i):064x}" for i in range(5)]
+
+    _mock_code_checks(monkeypatch)
+    monkeypatch.setattr(ddc, "load_dotenv", lambda _path: None)
+    monkeypatch.setenv("ETH_RPC", "https://trace.example")
+    monkeypatch.setattr(
+        ddc,
+        "fetch_contract_transactions",
+        lambda _addr, limit=0, start_block=0: [
+            {
+                "hash": tx_hashes[i],
+                "to": target,
+                "isError": "0",
+                "blockNumber": str(10 + i),
+                "input": f"0x{(0xA1 + i):08x}",
+            }
+            for i in range(5)
+        ],
+    )
+
+    def fake_trace(_rpc, tx_hash):
+        # Tx index 2 fails; the rest yield a CALL edge to a distinct dep.
+        idx = tx_hashes.index(tx_hash)
+        if idx == 2:
+            raise RuntimeError(f"trace failed for tx{idx}")
+        return "debug_traceTransaction", {
+            "type": "CALL",
+            "from": target,
+            "to": deps[idx],
+        }
+
+    monkeypatch.setattr(ddc, "trace_transaction", fake_trace)
+    return ddc.find_dynamic_dependencies(target, tx_limit=5)
+
+
+def test_find_dynamic_dependencies_parity_parallel_vs_sequential(monkeypatch):
+    """Parallel trace fan-out must produce the same dependencies, edges, and trace_errors as sequential."""
+    seq = _trace_parity_helper(monkeypatch, "1")
+    par = _trace_parity_helper(monkeypatch, "10")
+
+    # Dependencies are sorted in find_dynamic_dependencies output, so an
+    # exact equality check is the right assertion here.
+    assert seq["dependencies"] == par["dependencies"]
+    # trace_errors is appended in input order in both modes; check exact equality.
+    assert seq["trace_errors"] == par["trace_errors"]
+    # dependency_graph is built via _build_graph which sorts keys, so equality
+    # is meaningful.
+    assert seq["dependency_graph"] == par["dependency_graph"]
+    assert seq["transactions_analyzed"] == par["transactions_analyzed"]

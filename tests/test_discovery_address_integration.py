@@ -418,3 +418,100 @@ def test_runs_custom_value(monkeypatch):
 
     contract = session.add.call_args[0][0]
     assert contract.optimization_runs == 10000
+
+
+# ---------------------------------------------------------------------------
+# Step 4 fan-out: fetch + _batch_get_creators run as concurrent Etherscan calls
+# via parallel_get. Both must execute, and the deployer flows through.
+# ---------------------------------------------------------------------------
+
+
+def test_process_address_fanout_invokes_fetch_and_creators(monkeypatch):
+    """Both Etherscan calls fire under the parallel_get fan-out; deployer
+    derived from creators is recorded on the Contract row."""
+    from utils.concurrency import RpcExecutor
+
+    RpcExecutor.reset_for_tests()
+    result = _etherscan_result()
+    _patch_discovery(monkeypatch, result)
+
+    fetch_calls: list[str] = []
+    creators_calls: list[list[str]] = []
+
+    def fake_fetch(addr: str) -> dict:
+        fetch_calls.append(addr)
+        return result
+
+    def fake_batch_creators(addrs: list[str]) -> dict[str, str]:
+        creators_calls.append(list(addrs))
+        return {addrs[0].lower(): "0xc0ffee0000000000000000000000000000000001"}
+
+    monkeypatch.setattr("workers.discovery.fetch", fake_fetch)
+    monkeypatch.setattr("workers.discovery._batch_get_creators", fake_batch_creators)
+
+    worker = DiscoveryWorker()
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    job = _job()
+
+    worker._process_address(session, job)
+
+    assert fetch_calls == [job.address]
+    assert creators_calls == [[job.address]]
+    contract = session.add.call_args[0][0]
+    assert contract.deployer == "0xc0ffee0000000000000000000000000000000001"
+
+
+def test_process_address_fanout_swallows_creators_exception(monkeypatch):
+    """A failing creators lookup must not abort the discovery pipeline —
+    parallel_get returns the exception in-place; deployer stays None."""
+    from utils.concurrency import RpcExecutor
+
+    RpcExecutor.reset_for_tests()
+    result = _etherscan_result()
+    _patch_discovery(monkeypatch, result)
+
+    monkeypatch.setattr("workers.discovery.fetch", lambda _addr: result)
+
+    def boom(_addrs):
+        raise RuntimeError("creators API down")
+
+    monkeypatch.setattr("workers.discovery._batch_get_creators", boom)
+
+    worker = DiscoveryWorker()
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    job = _job()
+
+    worker._process_address(session, job)
+
+    contract = session.add.call_args[0][0]
+    assert contract.deployer is None
+
+
+def test_process_address_fanout_propagates_fetch_exception(monkeypatch):
+    """A failing source fetch must propagate so the worker marks the job
+    failed; partial state is not committed."""
+    from utils.concurrency import RpcExecutor
+
+    RpcExecutor.reset_for_tests()
+    monkeypatch.setattr(
+        "workers.discovery.fetch",
+        MagicMock(side_effect=RuntimeError("etherscan rate-limited")),
+    )
+    monkeypatch.setattr("workers.discovery._batch_get_creators", lambda addrs: {})
+    monkeypatch.setattr("workers.discovery.store_source_files", lambda *a, **kw: None)
+    monkeypatch.setattr("workers.discovery.store_artifact", lambda *a, **kw: None)
+
+    worker = DiscoveryWorker()
+    monkeypatch.setattr(worker, "update_detail", lambda *a, **kw: None)
+    session = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    job = _job()
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="etherscan rate-limited"):
+        worker._process_address(session, job)

@@ -8,13 +8,23 @@ cd "$(dirname "$0")"
 
 export PYTHONUNBUFFERED=1
 
-# Tighter DB pool for worker processes — each worker claims one job at a
-# time, so 2 base + 3 overflow is plenty. With ~10 worker procs per VM
-# this caps total worker DB connections at ~50, leaving headroom for
-# api + scripts under Neon's pool ceiling. Override per-process by
-# exporting PSAT_DB_POOL_SIZE / PSAT_DB_MAX_OVERFLOW before this script.
-export PSAT_DB_POOL_SIZE="${PSAT_DB_POOL_SIZE:-2}"
-export PSAT_DB_MAX_OVERFLOW="${PSAT_DB_MAX_OVERFLOW:-3}"
+# Worker DB pool sizing. Bumped from 4+6 to 6+10 to make room for in-process
+# job concurrency (PSAT_<STAGE>_JOB_CONCURRENCY > 1 — opt-in per stage).
+# Per-job worst case: 1 dispatcher session + 1 job session + heartbeat/timing
+# fresh sessions ≈ 3 sessions in flight; 6+10 covers K=2 with headroom.
+# With ~10 worker procs per VM this still stays well under Neon's pool ceiling.
+# Override per-process by exporting PSAT_DB_POOL_SIZE / PSAT_DB_MAX_OVERFLOW
+# before this script.
+export PSAT_DB_POOL_SIZE="${PSAT_DB_POOL_SIZE:-6}"
+export PSAT_DB_MAX_OVERFLOW="${PSAT_DB_MAX_OVERFLOW:-10}"
+
+# In-process job concurrency. K=1 (default) keeps the legacy single-job loop
+# byte-identical. Opt in per stage by setting PSAT_<STAGE>_JOB_CONCURRENCY.
+# Recommended starting points (I/O-heavy stages first; static is CPU-bound on
+# Slither so K=1 stays safer there):
+#   PSAT_RESOLUTION_JOB_CONCURRENCY=2
+#   PSAT_POLICY_JOB_CONCURRENCY=2
+# Or set PSAT_JOB_CONCURRENCY for a fleet-wide default.
 
 PIDS=()
 

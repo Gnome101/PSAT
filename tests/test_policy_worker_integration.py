@@ -423,3 +423,164 @@ class TestCrossContractEnrichmentArtifactSync:
         effective_payloads = [data for name, data in store_calls if name == "effective_permissions"]
         assert len(effective_payloads) == 2
         assert effective_payloads[-1]["functions"][0]["effect_labels"] == ["mint", "role_management"]
+
+
+# ---------------------------------------------------------------------------
+# Step 3 parallelism: full process() with 50+ principals must produce identical
+# stored artifacts under PSAT_RPC_FANOUT=1 vs =8, and the per-job classify_cache
+# must collapse repeated probes deterministically.
+# ---------------------------------------------------------------------------
+
+
+class TestProcessFanoutParity:
+    """Drive ``PolicyWorker.process`` end-to-end (real ``build_principal_labels``)
+    with a 50+ principal fixture and assert sequential vs parallel parity."""
+
+    @staticmethod
+    def _run(monkeypatch: pytest.MonkeyPatch, fanout: str) -> tuple[Any, dict[str, Any]]:
+        from utils.concurrency import RpcExecutor
+
+        monkeypatch.setenv("PSAT_RPC_FANOUT", fanout)
+        RpcExecutor.reset_for_tests()
+
+        worker = PolicyWorker()
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = None
+        job = _job()
+
+        target = TARGET_ADDRESS
+        principal_addrs = [f"0x{(i + 0x100):040x}" for i in range(60)]
+
+        def role_principals(addrs: list[str]) -> list[dict]:
+            return [{"address": a, "resolved_type": "unknown", "details": {}} for a in addrs]
+
+        ep_data: dict = {
+            "schema_version": "0.1",
+            "contract_address": target,
+            "contract_name": "VaultBig",
+            "functions": [
+                {
+                    "function": "manage(address,bytes,uint256)",
+                    "abi_signature": "manage(address,bytes,uint256)",
+                    "selector": "0x12345678",
+                    "direct_owner": None,
+                    "authority_public": False,
+                    "authority_roles": [{"role": 1, "principals": role_principals(principal_addrs[:30])}],
+                    "controllers": [],
+                    "effect_targets": [],
+                    "effect_labels": ["arbitrary_external_call"],
+                    "action_summary": "Manage",
+                    "notes": [],
+                },
+                {
+                    "function": "setAuthority(address)",
+                    "abi_signature": "setAuthority(address)",
+                    "selector": "0x12345679",
+                    "direct_owner": None,
+                    "authority_public": False,
+                    "authority_roles": [{"role": 8, "principals": role_principals(principal_addrs[30:])}],
+                    "controllers": [],
+                    "effect_targets": [],
+                    "effect_labels": ["authority_update"],
+                    "action_summary": "Set authority",
+                    "notes": [],
+                },
+            ],
+        }
+        contract_analysis = _minimal_contract_analysis()
+        control_snapshot = _minimal_snapshot({})
+        resolved_graph = _graph_with_nodes(
+            [
+                {
+                    "id": "address:" + target,
+                    "address": target,
+                    "node_type": "contract",
+                    "resolved_type": "contract",
+                    "label": "VaultBig",
+                    "contract_name": "VaultBig",
+                    "depth": 0,
+                    "analyzed": True,
+                    "details": {"address": target},
+                    "artifacts": {},
+                }
+            ]
+        )
+        tracking_plan = {
+            "schema_version": "0.1",
+            "contract_address": target,
+            "contract_name": "VaultBig",
+            "tracked_controllers": [],
+            "tracked_policies": [],
+        }
+
+        def fake_get_artifact(_session: Any, _job_id: Any, name: str) -> Any:
+            return {
+                "contract_analysis": contract_analysis,
+                "control_snapshot": control_snapshot,
+                "resolved_control_graph": resolved_graph,
+                "control_tracking_plan": tracking_plan,
+                "semantic_guards": None,
+                "classified_addresses": None,
+            }.get(name)
+
+        store_calls: list[tuple[str, Any]] = []
+
+        def fake_store_artifact(
+            _session: Any, _job_id: Any, name: str, data: Any = None, text_data: Any = None
+        ) -> None:
+            store_calls.append((name, data))
+
+        # Track every classify call so we can assert no spurious re-probes
+        # leak through the parallel path.
+        classify_calls: list[str] = []
+
+        def fake_classify(_rpc, address):
+            classify_calls.append(address)
+            return "eoa", {"address": address}, True
+
+        monkeypatch.setattr("workers.policy_worker.get_artifact", fake_get_artifact)
+        monkeypatch.setattr("workers.policy_worker.store_artifact", fake_store_artifact)
+        monkeypatch.setattr("workers.policy_worker._load_nested_artifacts", lambda *_a, **_kw: {})
+        monkeypatch.setattr(
+            "workers.policy_worker.build_effective_permissions",
+            lambda *a, **kw: ep_data,
+        )
+        monkeypatch.setattr(
+            "workers.policy_worker.resolve_control_graph",
+            lambda **kw: (resolved_graph, {}),
+        )
+        monkeypatch.setattr(
+            "services.policy.principal_enrichment.classify_resolved_address_with_status",
+            fake_classify,
+        )
+        monkeypatch.setattr(
+            PolicyWorker,
+            "_enrich_cross_contract",
+            lambda self, session, job, contract_analysis, control_snapshot: {},
+        )
+
+        worker.process(session, cast(Any, job))
+
+        labels_payload = next(data for name, data in store_calls if name == "principal_labels")
+        return labels_payload, {"classify_calls": classify_calls}
+
+    def test_process_fanout_parity_50_plus_principals(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Sequential and parallel runs must produce identical principal_labels."""
+        seq_payload, seq_stats = self._run(monkeypatch, "1")
+        par_payload, par_stats = self._run(monkeypatch, "8")
+
+        assert seq_payload["contract_address"] == par_payload["contract_address"]
+        assert seq_payload["contract_name"] == par_payload["contract_name"]
+        assert len(seq_payload["principals"]) == len(par_payload["principals"])
+
+        # Principals are emitted in sorted-address order — direct equality holds.
+        for seq_p, par_p in zip(seq_payload["principals"], par_payload["principals"]):
+            assert seq_p == par_p
+
+        # Cache discipline: 60 unknown principals should each classify roughly
+        # once. The parallel path tolerates a benign per-address race where
+        # two threads miss before the first writes back, but the total must
+        # remain bounded by 2× the sequential count — anything more means
+        # the cache lock isn't collapsing concurrent misses.
+        assert len(seq_stats["classify_calls"]) == 60
+        assert len(par_stats["classify_calls"]) <= 60 * 2

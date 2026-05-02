@@ -366,19 +366,35 @@ def find_dynamic_dependencies(
     if not selected_txs:
         raise NoNewTransactionsError(f"No representative transactions found for {tx_source}")
 
+    from utils.concurrency import parallel_map
+
     all_edges = []
     trace_methods = set()
     trace_errors: list[dict] = []
-    for tx in selected_txs:
+
+    # Trace calls are RTT-dominated and independent — fan out across the shared
+    # executor and reassemble results in input order so trace_errors stays
+    # deterministic relative to selected_txs.
+    parallel_traces = parallel_map(
+        lambda tx: trace_transaction(trace_rpc, tx["tx_hash"]),
+        selected_txs,
+        max_workers=10,
+    )
+    for tx, result in parallel_traces:
         tx_hash = tx["tx_hash"]
         block_number = tx["block_number"]
-        try:
-            method, trace_result = trace_transaction(trace_rpc, tx_hash)
-            trace_methods.add(method)
-            all_edges.extend(extract_edges_from_trace(method, trace_result, tx_hash, block_number))
-        except RuntimeError as exc:
-            trace_errors.append({"tx_hash": tx_hash, "error": str(exc)})
-            print(f"         Warning: trace failed for {tx_hash}: {exc}")
+        if isinstance(result, RuntimeError):
+            trace_errors.append({"tx_hash": tx_hash, "error": str(result)})
+            print(f"         Warning: trace failed for {tx_hash}: {result}")
+            continue
+        if isinstance(result, BaseException):
+            # Non-RuntimeError unexpected failure — preserve the existing surface
+            # by raising. trace_transaction is documented to raise RuntimeError
+            # on tracing failure; anything else is a bug we want surfaced.
+            raise result
+        method, trace_result = result
+        trace_methods.add(method)
+        all_edges.extend(extract_edges_from_trace(method, trace_result, tx_hash, block_number))
 
     if not trace_methods and trace_errors:
         raise RuntimeError(
