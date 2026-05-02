@@ -1,0 +1,29 @@
+contract_name: C
+description: |
+  OZ ReentrancyGuard's nonReentrant modifier. Guard state-var with
+  pre/post-placeholder writes; the leaf reads ``_status != _ENTERED``.
+  ReentrancyAnalyzer's structural match promotes the leaf to
+  reentrancy + HIGH confidence.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      uint256 private _status;
+      uint256 private constant _NOT_ENTERED = 1;
+      uint256 private constant _ENTERED = 2;
+      uint256 public x;
+      modifier nonReentrant() {
+          require(_status != _ENTERED);
+          _status = _ENTERED;
+          _;
+          _status = _NOT_ENTERED;
+      }
+      function withdraw() external nonReentrant {
+          x = x + 1;
+      }
+  }
+
+expected_functions:
+  "withdraw()":
+    authority_role: reentrancy
+    confidence: high

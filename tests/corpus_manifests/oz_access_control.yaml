@@ -1,0 +1,31 @@
+contract_name: C
+description: |
+  OZ AccessControl: 2-key role mapping with ``hasRole(role, msg.sender)``.
+  Canonical pattern for newer protocols. The membership leaf has
+  multi-key direct-promote (>=2 keys + caller key) so it's HIGH
+  confidence caller_authority.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      mapping(bytes32 => mapping(address => bool)) private _roles;
+      bytes32 public constant MINTER = keccak256("MINTER");
+      uint256 public x;
+      function mint(uint256 v) external {
+          require(_roles[MINTER][msg.sender]);
+          x = v;
+      }
+      function totalSupply() external view returns (uint256) {
+          return x;
+      }
+  }
+
+expected_functions:
+  "mint(uint256)":
+    authority_role: caller_authority
+    kind: membership
+    confidence: high
+    references_msg_sender: true
+
+unguarded:
+  - "totalSupply()"
