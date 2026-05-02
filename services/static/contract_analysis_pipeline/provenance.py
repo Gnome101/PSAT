@@ -208,6 +208,16 @@ class ProvenanceEngine:
             self._binding_frames.append(dict(parameter_bindings))
         # Track in-flight callees to break cycles.
         self._call_stack: list[str] = []
+        # Per-engine memo: (callee_full_name, frozenset(bindings.items()))
+        # → return_sources. The worklist iterates to fixed point so a
+        # callee may be re-visited many times within ONE run() — caching
+        # keeps each unique (callee, bindings) sub-engine run to a single
+        # invocation rather than O(worklist_iterations) re-walks.
+        # Sub-engines created by _handle_internal_call inherit a fresh
+        # cache; the memo is intentionally not propagated downward
+        # because the call_stack at the deeper level differs and would
+        # invalidate the keys.
+        self._sub_engine_memo: dict[tuple[str, frozenset], frozenset] = {}
 
     # ------------------------------------------------------------------
     # Public entry
@@ -636,6 +646,10 @@ class ProvenanceEngine:
             name = self._var_name(param)
             if name:
                 bindings[name] = self._sources_for_value(arg)
+        memo_key = (callee_name or "?", frozenset(bindings.items()))
+        cached = self._sub_engine_memo.get(memo_key)
+        if cached is not None:
+            return self.provenance.set(self._var_name(ir.lvalue), cached)
         sub = ProvenanceEngine(
             callee,
             internal_call_depth=self.internal_call_depth - 1,
@@ -656,6 +670,7 @@ class ProvenanceEngine:
                     )
                 }
             )
+        self._sub_engine_memo[memo_key] = return_sources
         return self.provenance.set(self._var_name(ir.lvalue), return_sources)
 
     def _handle_new(self, ir: Any) -> bool:

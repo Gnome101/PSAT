@@ -117,6 +117,29 @@ def _ir_class(ir: Any) -> str:
     return type(ir).__name__
 
 
+# Module-level memo for str(node.expression). Slither expression objects
+# are stable for the lifetime of the parsed Slither instance and the
+# repeated calls (one per build_predicate_tree invocation per node) are
+# the dominant cost in the Maker-wards bench profile (300ms of 2s ~=
+# 14% of runtime, all in literal/binary __str__ chains). Keyed by
+# id(expression) since Slither expression objects aren't hashable.
+# Memory bound: O(unique expressions in parsed contracts) per process.
+_EXPRESSION_TEXT_CACHE: dict[int, str] = {}
+
+
+def _expression_text(node: Any) -> str:
+    expr = getattr(node, "expression", None)
+    if expr is None:
+        return ""
+    key = id(expr)
+    cached = _EXPRESSION_TEXT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    text = str(expr)
+    _EXPRESSION_TEXT_CACHE[key] = text
+    return text
+
+
 def _ir_is_solidity_revert(ir: Any) -> bool:
     """Slither emits SolidityCall(``revert(...)``) for both Solidity-
     level reverts and Yul-level revert(offset, length). The signature
@@ -229,7 +252,7 @@ class RevertDetector:
                         node=node,
                         containing_function=container,
                         call_chain=list(self._call_chain_irs),
-                        expression_text=str(node.expression) if node.expression else "<try/catch>",
+                        expression_text=_expression_text(node) or "<try/catch>",
                         basis=["try/catch with revert in catch"],
                         unsupported_reason="opaque_try_catch",
                     )
@@ -292,7 +315,7 @@ class RevertDetector:
                             node=node,
                             containing_function=container,
                             call_chain=list(self._call_chain_irs),
-                            expression_text=str(node.expression) if node.expression else "",
+                            expression_text=_expression_text(node),
                             basis=[f"if-revert via successor {son.type}"],
                         )
                     )
@@ -308,7 +331,7 @@ class RevertDetector:
                     node=node,
                     containing_function=container,
                     call_chain=list(self._call_chain_irs),
-                    expression_text=str(node.expression) if node.expression else "<asm>",
+                    expression_text=_expression_text(node) or "<asm>",
                     basis=["inline assembly conditional revert"],
                     unsupported_reason=None,  # captured but limited
                 )
@@ -329,7 +352,7 @@ class RevertDetector:
             node=node,
             containing_function=container,
             call_chain=list(self._call_chain_irs),
-            expression_text=str(node.expression) if node.expression else "",
+            expression_text=_expression_text(node),
             basis=[f"{kind}({cond})" if cond is not None else kind],
         )
 
