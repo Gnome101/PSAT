@@ -226,27 +226,25 @@ def test_custom_m_of_n_classifies_threshold_group(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "EIP-1271: ``IERC1271(signer).isValidSignature(hash, sig) "
-        "== 0x1626ba7e``. The structural shape is an external_bool "
-        "with magic-value comparison; the signer is a contract "
-        "address (state var or parameter). Currently classifies as "
-        "equality(external_call_result, constant) → business. "
-        "FIX: detect external_call to ``isValidSignature(bytes32,"
-        "bytes)`` returning bytes4, compared to 0x1626ba7e — emit "
-        "signature_auth leaf with the signer as the operand. The "
-        "resolver returns signature_witness with check_only "
-        "confidence. Enumeration is intrinsically impossible (the "
-        "signer contract decides arbitrarily); detection is "
-        "generic via selector + magic-value pattern. Detection "
-        "fires on selector match, not name match — so Slither's "
-        "function_name=='isValidSignature' is a structural attribute "
-        "of the selector hash, not identifier-name matching."
-    ),
-    strict=True,
-)
 def test_eip1271_classifies_signature_auth(tmp_path):
+    """LANDED (codex F3): EIP-1271 magic-value comparison
+    ``call_result == 0x1626ba7e`` recognized as signature_auth.
+    Detection is purely structural — by the magic value (which is
+    a structural protocol fingerprint), not by function-name match.
+
+    Implementation: predicates.py:_try_external_auth_oracle
+    detects ``Binary(EQ, external_call_result, constant)``. When
+    the constant matches 0x1626ba7e (in any representation: hex
+    string, decimal int, decimal string, bytes), emit
+    signature_auth leaf with caller_authority. For other constants
+    (generic external-auth oracle), require the call args to
+    include msg.sender / signature_recovery — otherwise it's not
+    an authentication predicate.
+
+    Codex's broader generalization preserved: this is the
+    'external-auth oracle' pattern; EIP-1271 is one specialization.
+    Aragon canPerform / AccessManager canCall would surface here
+    too once those structural shapes are exercised in tests."""
     sl = _compile(
         tmp_path,
         """

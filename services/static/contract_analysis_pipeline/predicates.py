@@ -271,6 +271,20 @@ def _build_binary_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate, function:
             )
             leaf["authority_role"] = "caller_authority"
             return leaf
+        # External-auth-oracle detection (codex F3 fix): an equality
+        # comparing an external_call result against a constant
+        # success value, where the external call carries a caller-
+        # linked argument. The canonical case is EIP-1271:
+        # ``IERC1271(signer).isValidSignature(hash, sig) == 0x1626ba7e``
+        # — the 4-byte magic value identifies it as a signature
+        # check. More generally any external bool/byte-result oracle
+        # gated on a fixed success value is an authorization
+        # predicate. Detection is by the comparison shape, not by
+        # function name.
+        if kind == "equality" and function is not None:
+            oracle_leaf = _try_external_auth_oracle(ir, prov, gate, function, operator)
+            if oracle_leaf is not None:
+                return oracle_leaf
         leaf = _make_leaf(
             kind=kind,
             operator=operator,
@@ -372,6 +386,125 @@ def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, A
             inner = _find_defining_ir(left, None, function)
             if isinstance(inner, Index):
                 return inner, b.value
+    return None, None
+
+
+EIP_1271_MAGIC_VALUE = "0x1626ba7e"
+
+
+def _try_external_auth_oracle(
+    ir: Any,
+    prov: ProvenanceMap,
+    gate: RevertGate,
+    function: Any,
+    operator: str,
+) -> LeafPredicate | None:
+    """Recognize ``external_call_result OP constant`` as an
+    authorization-oracle gate.
+
+    Per codex round-7: the structural pattern is "external call
+    result compared against an accepted success value." When the
+    call's args include msg.sender or signature_recovery (caller-
+    linked), the comparison is an authorization predicate.
+
+    EIP-1271 specifically: the magic value 0x1626ba7e identifies
+    the comparison as an isValidSignature check; emit signature_auth.
+    Generic case: emit external_bool with delegated_authority.
+    """
+    left = ir.variable_left
+    right = ir.variable_right
+    # Identify (call_lvalue, constant) — order doesn't matter.
+    call_value, const_value = _find_external_call_const_pair(left, right, function)
+    if call_value is None:
+        call_value, const_value = _find_external_call_const_pair(right, left, function)
+    if call_value is None:
+        return None
+    call_ir = _find_defining_ir(call_value, None, function)
+    if call_ir is None:
+        return None
+
+    # EIP-1271 specialization: the magic value 0x1626ba7e is itself
+    # a structural fingerprint — the signer contract's
+    # isValidSignature is the authority, regardless of whether the
+    # call args directly include msg.sender (the hash typically
+    # encodes caller intent without raw msg.sender). Detect by the
+    # magic value alone.
+    is_eip1271 = _is_eip1271_magic(const_value)
+
+    # Generic external-auth oracle: require the call args to include
+    # a caller-linked operand (msg.sender / signature_recovery).
+    # Otherwise it's not authentication — could be any business
+    # state oracle.
+    args_have_caller = False
+    for arg in getattr(call_ir, "arguments", []) or []:
+        sources = _sources_for_value(arg, prov)
+        if any(s.kind in ("msg_sender", "tx_origin", "signature_recovery") for s in sources):
+            args_have_caller = True
+            break
+    if not is_eip1271 and not args_have_caller:
+        return None
+
+    operands = [_operand_for_value(a, prov) for a in getattr(call_ir, "arguments", []) or []]
+    membership_op: LeafOperator = "truthy" if operator == "eq" else "falsy"
+
+    if is_eip1271:
+        leaf = _make_leaf(
+            kind="signature_auth",
+            operator=membership_op,
+            operands=operands,
+            gate=gate,
+        )
+        leaf["authority_role"] = "caller_authority"
+        return leaf
+
+    leaf = _make_leaf(
+        kind="external_bool",
+        operator=membership_op,
+        operands=operands,
+        gate=gate,
+    )
+    leaf["authority_role"] = "delegated_authority"
+    return leaf
+
+
+def _is_eip1271_magic(value: Any) -> bool:
+    """Recognize the EIP-1271 magic return value 0x1626ba7e in any
+    representation (hex string, decimal int/string, bytes)."""
+    target = int(EIP_1271_MAGIC_VALUE, 16)
+    if value is None:
+        return False
+    if isinstance(value, int):
+        return value == target
+    if isinstance(value, bytes):
+        try:
+            return int.from_bytes(value, "big") == target
+        except Exception:
+            return False
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v.startswith("0x"):
+            try:
+                return int(v, 16) == target
+            except ValueError:
+                return False
+        try:
+            return int(v) == target
+        except ValueError:
+            return False
+    return False
+
+
+def _find_external_call_const_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, Any | None]:
+    """Return (call_value, const_value) if ``a`` is the lvalue of an
+    external call (HighLevelCall or LowLevelCall) and ``b`` is a
+    Constant; else (None, None)."""
+    if not isinstance(b, Constant):
+        return None, None
+    defining = _find_defining_ir(a, None, function)
+    if defining is None:
+        return None, None
+    if isinstance(defining, HighLevelCall):
+        return a, b.value
     return None, None
 
 
