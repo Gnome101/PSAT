@@ -17,6 +17,7 @@ across chunks so a 2000-call batch finishes in roughly the time of one chunk.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import threading
@@ -94,10 +95,16 @@ def parallel_map(
 
     def _submit(idx: int, item: T) -> Future[R]:
         semaphore.acquire()
+        # Per-submission ``copy_context`` is mandatory: a single Context
+        # object cannot be entered by ``Context.run`` concurrently from
+        # two threads. Each worker thread needs its own snapshot of the
+        # caller's contextvars (trace_id, job_id, …) so the bind survives
+        # the fan-out without serializing the pool on a shared context.
+        ctx = contextvars.copy_context()
 
         def _wrapped() -> R:
             try:
-                return fn(item)
+                return ctx.run(fn, item)
             finally:
                 semaphore.release()
 
@@ -202,7 +209,10 @@ def parallel_rpc_calls(
     results: list[tuple[Any, bool]] = [(None, True)] * len(calls)
     futures: dict[Future[list[tuple[Any, bool]]], int] = {}
     for offset, chunk in chunks:
-        futures[RpcExecutor.submit(rpc_batch_request_with_status, rpc_url, chunk)] = offset
+        # Per-chunk context copy — see ``parallel_map`` above for why a
+        # shared ``Context`` object cannot be concurrently entered.
+        ctx = contextvars.copy_context()
+        futures[RpcExecutor.submit(ctx.run, rpc_batch_request_with_status, rpc_url, chunk)] = offset
 
     for fut in as_completed(futures):
         offset = futures[fut]
