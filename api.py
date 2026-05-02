@@ -4074,6 +4074,36 @@ def get_contract_v1_v2_diff(address: str) -> dict[str, Any]:
     return {**report, "safe_to_cut_over": is_safe_to_cut_over(report)}
 
 
+@app.get(
+    "/api/v2/migration_status",
+    dependencies=[Depends(require_admin_key)],
+)
+def get_v2_migration_status(
+    address_prefix: str | None = None, max_regressions: int = 50
+) -> dict[str, Any]:
+    """Fleet-wide v2 cutover-readiness snapshot. Operationally
+    equivalent to scripts/cutover_dry_run.py but live over HTTP
+    so an operator dashboard can poll it without DB access.
+
+    Same severity buckets as the per-contract /v1_v2_diff:
+    clean, new_coverage, role_drift, regression, not_eligible.
+    Returns counts + the regression / role_drift address lists
+    + safe_to_cut_count + safe_pct.
+
+    Admin-gated because the report leaks per-contract classifier
+    detail.
+    """
+    from scripts.cutover_dry_run import run_dry_run
+
+    with SessionLocal() as session:
+        report = run_dry_run(
+            session,
+            address_prefix=address_prefix,
+            max_regressions=max_regressions,
+        )
+    return report
+
+
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):
     if full_path == "api" or full_path.startswith("api/"):
