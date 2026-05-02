@@ -1,0 +1,40 @@
+contract_name: C
+description: |
+  F4 (codex round-7): hashed-key membership unwrapped via symbolic-
+  tuple-key recognition. ``_authorized[keccak256(abi.encode(role,
+  msg.sender))]`` produces a 2-key membership leaf where the
+  key_sources are ``[parameter(role), msg_sender]`` instead of a
+  single opaque ``computed`` source. Multi-key Rule B then
+  direct-promotes to caller_authority.
+
+  ``_expand_key_operand`` walks back through hash + abi.encode
+  SolidityCalls structurally — detection is by Solidity built-in
+  signature (``keccak256(bytes)``, ``abi.encode()``), NOT by
+  user-identifier name matching.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      address public ownerVar;
+      mapping(bytes32 => bool) public _authorized;
+      function authorize(bytes32 role, address user) external {
+          require(msg.sender == ownerVar);
+          _authorized[keccak256(abi.encode(role, user))] = true;
+      }
+      function f(bytes32 role) external view {
+          require(_authorized[keccak256(abi.encode(role, msg.sender))]);
+      }
+  }
+
+expected_functions:
+  "f(bytes32)":
+    authority_role: caller_authority
+    kind: membership
+    operator: truthy
+    confidence: high
+    references_msg_sender: true
+  "authorize(bytes32,address)":
+    authority_role: caller_authority
+    kind: equality
+    operator: eq
+    confidence: high

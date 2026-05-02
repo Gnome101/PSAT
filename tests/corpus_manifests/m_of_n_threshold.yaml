@@ -1,0 +1,53 @@
+contract_name: C
+description: |
+  F2 (codex round-7 + fixed-point writer-gate): authority-derived
+  state inference for M-of-N approval counters.
+  ``approvals[txHash] >= THRESHOLD`` promotes to caller_authority
+  when:
+    1. The counter is incremented additively (``map[k] += N``)
+    2. The incrementing function is itself authority-gated
+       (``approve`` requires ``isOwner[msg.sender]``)
+    3. The increment key sources from a parameter (txHash) NOT
+       msg.sender (which would make it a per-caller cooldown,
+       not a multi-party threshold)
+    4. No unguarded settable writers exist
+
+  ``apply_writer_gate_pass`` iterates to fixed point so chained
+  promotions (``isOwner`` promotes via b.i, then ``approve`` gains
+  caller_authority, then ``execute``'s threshold check promotes)
+  all converge.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      address public ownerVar;
+      mapping(address => bool) public isOwner;
+      mapping(bytes32 => uint256) public approvals;
+      uint256 constant THRESHOLD = 2;
+      function addOwner(address user) external {
+          require(msg.sender == ownerVar);
+          isOwner[user] = true;
+      }
+      function approve(bytes32 txHash) external {
+          require(isOwner[msg.sender]);
+          approvals[txHash] += 1;
+      }
+      function execute(bytes32 txHash) external view {
+          require(approvals[txHash] >= THRESHOLD);
+      }
+  }
+
+expected_functions:
+  "addOwner(address)":
+    authority_role: caller_authority
+    kind: equality
+    operator: eq
+    confidence: high
+  "approve(bytes32)":
+    authority_role: caller_authority
+    kind: membership
+    references_msg_sender: true
+  "execute(bytes32)":
+    authority_role: caller_authority
+    kind: comparison
+    operator: gte
