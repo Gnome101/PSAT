@@ -134,9 +134,22 @@ def enrich_dependency_metadata(
 
     if info_cache is None:
         info_cache = {}
-    for addr in sorted(addrs_to_fetch):
-        if addr not in info_cache:
-            info_cache[addr] = get_contract_info(addr)
+    missing = sorted(addr for addr in addrs_to_fetch if addr not in info_cache)
+    if missing:
+        from utils.etherscan import parallel_get
+
+        # Each ``get_contract_info`` call still routes through the shared
+        # _rate_lock — parallel_get only stacks the inter-call dead time.
+        calls = {addr: (lambda a=addr: get_contract_info(a)) for addr in missing}
+        results = parallel_get(calls)
+        for addr in missing:
+            value = results.get(addr)
+            if isinstance(value, BaseException) or not isinstance(value, tuple):
+                # ``get_contract_info`` already swallows Etherscan failures and
+                # returns ``(None, {})``; a raised exception here is unexpected.
+                info_cache[addr] = (None, {})
+            else:
+                info_cache[addr] = value  # type: ignore[assignment]
 
     for addr, info in deps.items():
         if not isinstance(info, dict):

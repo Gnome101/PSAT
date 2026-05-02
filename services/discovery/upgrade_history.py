@@ -264,10 +264,31 @@ def fetch_upgrade_events(proxy_addresses: list[str], from_block: int = 0) -> lis
     """
     all_events: list[dict] = []
 
+    # Flatten the address × topic matrix into one task list. Each
+    # ``_fetch_logs_etherscan`` call goes through the global Etherscan rate
+    # lock so threading only stacks RTTs — the limiter still serialises wire
+    # calls.
+    tasks: list[tuple[str, str]] = []
     for addr in proxy_addresses:
         addr = normalize_address(addr)
         for topic0 in EVENT_TOPICS:
-            raw_logs = _fetch_logs_etherscan(addr, topic0, from_block=from_block)
+            tasks.append((addr, topic0))
+
+    if tasks:
+        from utils.etherscan import parallel_get
+
+        calls = {
+            f"{addr}|{topic0}": (lambda a=addr, t=topic0: _fetch_logs_etherscan(a, t, from_block=from_block))
+            for addr, topic0 in tasks
+        }
+        results = parallel_get(calls)
+
+        # Iterate tasks in their original (addr, topic) order so the parsed
+        # events list is reconstructed deterministically before sorting.
+        for addr, topic0 in tasks:
+            raw_logs = results.get(f"{addr}|{topic0}", [])
+            if isinstance(raw_logs, BaseException) or not isinstance(raw_logs, list):
+                continue
             for log in raw_logs:
                 event = parse_upgrade_log(log)
                 if event:
@@ -319,18 +340,26 @@ def _build_implementation_timeline(
 
 def _enrich_implementations(implementations: list[dict], known_names: dict[str, str]) -> None:
     """Add contract names to historical implementations not already named in dependencies.json."""
-    from utils.etherscan import get_contract_info
+    from utils.etherscan import get_contract_info, parallel_get
 
+    addrs_to_fetch = sorted({impl["address"] for impl in implementations if impl["address"] not in known_names})
     fetched: dict[str, str | None] = {}
+    if addrs_to_fetch:
+        calls = {addr: (lambda a=addr: get_contract_info(a)) for addr in addrs_to_fetch}
+        results = parallel_get(calls)
+        for addr in addrs_to_fetch:
+            value = results.get(addr)
+            if isinstance(value, tuple) and len(value) == 2:
+                fetched[addr] = value[0]
+            else:
+                fetched[addr] = None
+
     for impl in implementations:
         addr = impl["address"]
         if addr in known_names:
             impl["contract_name"] = known_names[addr]
             continue
-        if addr not in fetched:
-            name, _ = get_contract_info(addr)
-            fetched[addr] = name
-        if fetched[addr]:
+        if fetched.get(addr):
             impl["contract_name"] = fetched[addr]
 
 
