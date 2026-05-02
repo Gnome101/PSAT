@@ -34,9 +34,13 @@ import json
 import logging
 import os
 import sys
+import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
+
+if TYPE_CHECKING:
+    from schemas.stage_errors import StageError
 
 trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("psat_trace_id", default=None)
 job_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("psat_job_id", default=None)
@@ -44,6 +48,16 @@ stage_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("psat_sta
 worker_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("psat_worker_id", default=None)
 address_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("psat_address", default=None)
 chain_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("psat_chain", default=None)
+
+# Per-job accumulator for degraded-but-continuing failures. ``BaseWorker``
+# binds a fresh list at the start of every ``_execute_job`` and drains it
+# when the job completes. ``record_degraded`` (below) appends to this list.
+# Default is ``None`` so calls outside a worker's job context become no-ops.
+# Threading-wise this is intentional: the dispatcher in ``BaseWorker`` does a
+# ``copy_context().run(...)`` per job, so each pool thread sees its own list.
+degraded_errors_var: contextvars.ContextVar[list["StageError"] | None] = contextvars.ContextVar(
+    "psat_degraded_errors", default=None
+)
 
 # Standard ``LogRecord`` attributes we shouldn't echo into the JSON body —
 # the formatter already promotes the ones it cares about (level, logger,
@@ -193,10 +207,59 @@ def bind_trace_context(
             var.reset(token)
 
 
+def record_degraded(
+    *,
+    phase: str | None,
+    exc: BaseException,
+    context: dict[str, Any] | None = None,
+    include_traceback: bool = False,
+) -> None:
+    """Record a degraded-but-continuing failure on the current job.
+
+    Reads ``trace_id`` / ``job_id`` / ``stage`` / ``worker_id`` from the
+    ambient ``ContextVar``s set by :func:`bind_trace_context`, so callers
+    don't have to thread them through. Appends a ``StageError`` (severity
+    ``"degraded"``) onto the per-job accumulator that ``BaseWorker`` will
+    drain into a ``stage_errors`` artifact on job completion.
+
+    A no-op when called outside a worker's job context (no accumulator
+    bound) — services and helpers can safely call this from contexts that
+    aren't always under a worker, and tests don't have to install the
+    accumulator just to import a service module.
+    """
+    accumulator = degraded_errors_var.get()
+    if accumulator is None:
+        return
+    # Imported lazily to avoid a startup cycle: the schema module already
+    # touches pydantic which transitively pulls in things we don't want
+    # ``utils.logging`` to require at import time (notably during pytest's
+    # very-early plugin discovery).
+    from schemas.stage_errors import StageError
+
+    job_id = job_id_var.get() or "0"
+    tb = traceback.format_exception(type(exc), exc, exc.__traceback__) if include_traceback else None
+    error = StageError(
+        stage=stage_var.get() or "?",
+        severity="degraded",
+        exc_type=f"{type(exc).__module__}.{type(exc).__name__}",
+        message=str(exc),
+        traceback="".join(tb) if tb else None,
+        phase=phase,
+        trace_id=trace_id_var.get(),
+        job_id=str(job_id),
+        worker_id=worker_id_var.get() or "?",
+        failed_at=datetime.now(timezone.utc),
+        context=context,
+    )
+    accumulator.append(error)
+
+
 __all__ = [
     "JsonFormatter",
     "bind_trace_context",
     "configure_logging",
+    "degraded_errors_var",
+    "record_degraded",
     "trace_id_var",
     "job_id_var",
     "stage_var",
