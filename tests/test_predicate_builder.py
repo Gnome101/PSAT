@@ -238,6 +238,114 @@ def test_two_requires_combine_via_and(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_time_gate_classifies_as_time(tmp_path):
+    """``require(block.timestamp > deadline)`` — at least one operand
+    is block_context and no operand is caller-related, so leaf
+    authority_role is "time"."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public deadline;
+            function f() external view {
+                require(block.timestamp > deadline);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1
+    assert leaves[0]["authority_role"] == "time"
+
+
+def test_caller_keyed_time_check_stays_caller_authority(tmp_path):
+    """``require(block.timestamp > cooldown[msg.sender])`` has both
+    block_context AND msg.sender — caller takes priority. The leaf
+    classifies based on the comparison structure; current logic
+    keeps it as business since comparison + caller-key isn't an
+    authority shape we recognize. Documents the expectation."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(address => uint256) public cooldown;
+            function f() external view {
+                require(block.timestamp > cooldown[msg.sender]);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1
+    # The leaf has both msg.sender (in the cooldown index) and
+    # block_context. Caller-priority means it doesn't classify as
+    # time. Without a writer-gate or explicit auth shape this is
+    # business.
+    assert leaves[0]["authority_role"] != "time"
+
+
+def test_logical_or_splits_into_or_subtree(tmp_path):
+    """``require(msg.sender == owner || amount > threshold)`` should
+    produce an OR root with two leaves: a caller_authority equality
+    and a comparison/business. Codex round-3 blocker #2 fix:
+    business preserved under OR so admission is correct."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            uint256 public threshold;
+            function f(uint256 amount) external view {
+                require(msg.sender == ownerVar || amount > threshold);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    assert tree is not None
+    assert tree["op"] == "OR", tree
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 2
+    kinds = sorted(leaf["kind"] for leaf in leaves)
+    assert kinds == ["comparison", "equality"]
+    # Caller authority leaf is present.
+    auth_roles = [leaf["authority_role"] for leaf in leaves]
+    assert "caller_authority" in auth_roles
+
+
+def test_logical_and_splits_into_and_subtree(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            uint256 public threshold;
+            function f(uint256 amount) external view {
+                require(msg.sender == ownerVar && amount > threshold);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    assert tree is not None
+    # Multiple AND levels are allowed (top-level AND from gates wraps
+    # the inner AND from && operator). Either flat AND or nested.
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 2
+    kinds = sorted(leaf["kind"] for leaf in leaves)
+    assert kinds == ["comparison", "equality"]
+
+
 def test_unguarded_function_returns_none(tmp_path):
     sl = _compile(
         tmp_path,

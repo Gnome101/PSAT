@@ -53,6 +53,7 @@ from .predicate_types import (
     SetDescriptor,
     make_and_node,
     make_leaf_node,
+    make_or_node,
 )
 from .provenance import (
     EMPTY,
@@ -86,15 +87,79 @@ def build_predicate_tree(function: Any) -> PredicateTree | None:
     engine.run()
     prov = engine.provenance
 
-    leaves = []
+    subtrees: list[PredicateTree] = []
     for gate in gates:
-        leaf = _build_leaf_from_gate(gate, prov, function)
-        if leaf is not None:
-            leaves.append(make_leaf_node(leaf))
+        subtree = _build_subtree_from_gate(gate, prov, function)
+        if subtree is not None:
+            subtrees.append(subtree)
 
-    if not leaves:
+    if not subtrees:
         return None
-    return make_and_node(leaves)
+    return make_and_node(subtrees)
+
+
+def _build_subtree_from_gate(
+    gate: RevertGate,
+    prov: ProvenanceMap,
+    function: Any,
+) -> PredicateTree | None:
+    """Like ``_build_leaf_from_gate``, but returns a PredicateTree
+    so binary ``&&`` / ``||`` at the gate's condition can split into
+    AND/OR tree nodes instead of collapsing into a single
+    ``unsupported`` leaf."""
+    if gate.kind == "opaque":
+        leaf = _unsupported_leaf(
+            reason=gate.unsupported_reason or "opaque_control_flow",
+            expression=gate.expression_text,
+        )
+        return make_leaf_node(leaf)
+
+    cond = gate.condition_value
+    if cond is None:
+        return make_leaf_node(_unsupported_leaf(reason="missing_condition", expression=gate.expression_text))
+
+    return _build_subtree_from_value(cond, prov, gate, function)
+
+
+def _build_subtree_from_value(
+    cond_value: Any,
+    prov: ProvenanceMap,
+    gate: RevertGate,
+    function: Any,
+) -> PredicateTree:
+    """Walk back from ``cond_value`` to its defining IR. If the IR
+    is a Binary with type ANDAND / OROR, split into a subtree
+    recursively. Otherwise build a single LeafPredicate."""
+    defining_ir = _find_defining_ir(cond_value, gate.node, function)
+    if defining_ir is None:
+        leaf = _build_truthy_leaf(cond_value, prov, gate)
+        return make_leaf_node(leaf)
+
+    if isinstance(defining_ir, Binary):
+        op_name = _binary_op(getattr(defining_ir, "type", None))
+        if op_name in ("and", "or"):
+            left_tree = _build_subtree_from_value(defining_ir.variable_left, prov, gate, function)
+            right_tree = _build_subtree_from_value(defining_ir.variable_right, prov, gate, function)
+            children = [left_tree, right_tree]
+            # Apply if-revert polarity flip at the AND/OR level too:
+            # `if (A || B) revert` means allowed iff !A && !B (De
+            # Morgan). For now, polarity is propagated to leaves via
+            # _build_leaf_from_gate; AND/OR composition uses the
+            # source-level connective.
+            if gate.polarity == "allowed_when_true":
+                return make_and_node(children) if op_name == "and" else make_or_node(children)
+            # if-revert polarity flips AND ↔ OR via De Morgan.
+            return make_or_node(children) if op_name == "and" else make_and_node(children)
+
+    leaf = _classify_leaf_from_ir(defining_ir, prov, gate, function)
+    if leaf is None:
+        return make_leaf_node(
+            _unsupported_leaf(
+                reason="unrecognized_condition_shape",
+                expression=gate.expression_text,
+            )
+        )
+    return make_leaf_node(leaf)
 
 
 # ---------------------------------------------------------------------------
@@ -430,16 +495,17 @@ def _classify_authority_equality(leaf: LeafPredicate, kind: LeafKind) -> Authori
     operand is msg_sender/tx_origin/signature_recovery, the OTHER is
     address-typed (state/view/parameter/sig). Otherwise business.
 
-    Block_context-only varying operand → time. Comparison kind
-    defaults to business unless one operand is msg_sender (rare in
-    practice).
+    Time gate: at least one operand sources from block_context AND
+    no operand sources from msg.sender/tx.origin/signature_recovery
+    (the caller takes priority — `require(block.timestamp >
+    cooldown[msg.sender])` is still primarily a caller-keyed check).
     """
     operands = leaf.get("operands", [])
     if not operands:
         return "business"
     has_caller = any(o["source"] in ("msg_sender", "tx_origin", "signature_recovery") for o in operands)
-    has_block_only = all(o["source"] == "block_context" for o in operands if o["source"] != "constant")
-    if has_block_only and not has_caller:
+    has_block_context = any(o["source"] == "block_context" for o in operands)
+    if has_block_context and not has_caller:
         return "time"
     if kind == "equality" and leaf["operator"] == "eq" and has_caller:
         return "caller_authority"
