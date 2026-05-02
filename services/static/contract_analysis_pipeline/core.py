@@ -81,9 +81,23 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
     if subject_contract is None:
         raise RuntimeError(f"No analyzable contracts found in {project_dir}")
 
+    # Schema-v2 cutover: build predicate_trees FIRST so _detect_access_control
+    # can use it as the privileged-function inclusion signal. Defensive:
+    # a v2 emit failure must not fail the v1 path — fall back to the empty
+    # trees dict so downstream gating sees no v2 evidence (functions are
+    # then gated purely on permission_graph evidence, same as before).
+    v2_predicate_trees: dict
+    try:
+        v2_predicate_trees = build_predicate_artifacts(subject_contract)
+    except Exception as exc:
+        logger.exception("v2 predicate_trees emit failed for %s", project_dir)
+        v2_predicate_trees = {"schema_version": "v2", "error": str(exc)}
+
     permission_graph = build_permission_graph(subject_contract, project_dir)
     classification = _detect_contract_classification(subject_contract, project_dir)
-    access_control = _detect_access_control(subject_contract, project_dir, permission_graph)
+    access_control = _detect_access_control(
+        subject_contract, project_dir, permission_graph, v2_predicate_trees
+    )
     controller_tracking = build_controller_tracking(subject_contract, project_dir, permission_graph, access_control)
     policy_tracking = build_policy_tracking(subject_contract, project_dir, permission_graph)
     upgradeability = _detect_upgradeability(subject_contract, project_dir)
@@ -106,20 +120,6 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
         "is_factory": classification["is_factory"],
         "is_nft": classification["is_nft"],
     }
-
-    # Schema-v2 shadow-mode embed. We compute it here while the
-    # parsed Slither subject is still in scope, so callers don't pay
-    # for a second Slither parse. The v2 artifact is namespaced
-    # under ``_v2_predicate_trees`` so the v1 ContractAnalysis dict
-    # itself is unchanged — callers that only want v1 ignore the
-    # key (or pop it before serializing). Defensive: a v2 emit
-    # failure MUST NOT fail the v1 path.
-    v2_predicate_trees: dict
-    try:
-        v2_predicate_trees = build_predicate_artifacts(subject_contract)
-    except Exception as exc:
-        logger.exception("v2 predicate_trees emit failed for %s", project_dir)
-        v2_predicate_trees = {"schema_version": "v2", "error": str(exc)}
 
     return {
         "schema_version": "0.1",

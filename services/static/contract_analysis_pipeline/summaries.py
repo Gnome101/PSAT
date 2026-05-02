@@ -817,7 +817,12 @@ def _build_method_to_role_map(contract, project_dir: Path) -> dict[str, list[str
     return result
 
 
-def _detect_access_control(contract, project_dir: Path, permission_graph: PermissionGraph) -> AccessControlAnalysis:
+def _detect_access_control(
+    contract,
+    project_dir: Path,
+    permission_graph: PermissionGraph,
+    v2_predicate_trees: dict | None = None,
+) -> AccessControlAnalysis:
     state_variables = _all_state_variables(contract)
     modifiers = _all_modifiers(contract)
     functions = _entry_points(contract)
@@ -855,6 +860,26 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
                 )
 
     privileged_functions_by_signature = privileged_functions_from_graph(contract, permission_graph)
+    # Schema-v2 cutover: use the v2 predicate_trees as a privileged-
+    # function inclusion signal — a function with a non-trivial v2
+    # tree is structurally guarded and belongs in privileged_functions
+    # even if permission_graph's effects-only detection didn't flag it
+    # (e.g. functions whose only authority signal was a modifier-name
+    # heuristic, like ``onlyOwner``-decorated asset-send paths). This
+    # replaces the deleted v1 _access_control_inferred_guards.
+    #
+    # If the caller didn't pass v2_predicate_trees (legacy direct
+    # callers — tests etc.), build them here so the gating still
+    # works. core.collect_contract_analysis passes them explicitly
+    # to avoid the second build.
+    if v2_predicate_trees is None:
+        try:
+            from .predicate_artifacts import build_predicate_artifacts
+
+            v2_predicate_trees = build_predicate_artifacts(contract)
+        except Exception:
+            v2_predicate_trees = {"schema_version": "v2", "trees": {}}
+    v2_trees = (v2_predicate_trees or {}).get("trees") or {}
     privileged_functions = []
     for function in functions:
         function_signature = getattr(function, "full_name", getattr(function, "name", ""))
@@ -869,7 +894,12 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
         target_controller_refs = _controller_refs_from_effect_targets(effect_targets)
         effect_labels = _effect_labels(function, effects, effect_targets, graph_entry)
         action_summary = _action_summary(effect_labels, effect_targets)
-        if not _has_graph_permission_evidence(graph_entry) and not inferred_guards:
+        v2_guarded = function_signature in v2_trees
+        if (
+            not _has_graph_permission_evidence(graph_entry)
+            and not inferred_guards
+            and not v2_guarded
+        ):
             continue
 
         guards = _dedupe_strings((graph_entry["guards"] if graph_entry else []) + inferred_guards)
