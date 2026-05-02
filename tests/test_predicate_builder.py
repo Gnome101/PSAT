@@ -701,6 +701,63 @@ def test_caller_equals_block_context_does_not_classify_as_caller_authority(tmp_p
     assert leaves[0]["authority_role"] != "caller_authority"
 
 
+def test_parameter_indices_resolved_caller_side_through_modifier(tmp_path):
+    """The leaf's ``parameter_indices`` field must reference the
+    FUNCTION's parameter positions, not the modifier's. Without
+    caller-side ParameterBindingEnv substitution, a modifier-bound
+    operand would carry the modifier's parameter index (0) which
+    happens to coincide with f's index 0 — so use a function with
+    ≥2 params and a modifier that takes one to make the mapping
+    distinguishable."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            modifier onlyAddr(address authorized) {
+                require(msg.sender == authorized);
+                _;
+            }
+            // The 'extra' first param ensures the modifier-side
+            // param index (0) is NOT the same as the function-side
+            // index for 'admin' (1) — a regression where the
+            // modifier's index leaks would show parameter_indices=[0].
+            function privileged(uint256 extra, address admin) external onlyAddr(admin) {}
+        }
+    """,
+    )
+    fn = _function(sl, "privileged")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["parameter_indices"] == [1]
+    operand_param = next(o for o in leaves[0]["operands"] if o.get("source") == "parameter")
+    assert operand_param.get("parameter_index") == 1
+    assert operand_param.get("parameter_name") == "admin"
+
+
+def test_parameter_indices_resolved_caller_side_through_helper(tmp_path):
+    """Two-hop chain (modifier → internal helper) — the leaf still
+    reports the function's parameter_index, not the helper's."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            modifier onlyAddr(address authorized) {
+                _check(authorized);
+                _;
+            }
+            function _check(address allowed) internal view {
+                require(msg.sender == allowed);
+            }
+            function privileged(uint256 extra, address admin) external onlyAddr(admin) {}
+        }
+    """,
+    )
+    fn = _function(sl, "privileged")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["parameter_indices"] == [1]
+
+
 def test_caller_equals_keccak_does_not_classify_as_caller_authority(tmp_path):
     """``require(uint256(uint160(msg.sender)) == keccak256(...))``
     — the other side is computed (hash output). After Rule A
