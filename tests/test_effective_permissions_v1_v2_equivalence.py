@@ -360,6 +360,81 @@ contract C {
 }
 """
 
+# OZ 5.0+ ReentrancyGuard - split _nonReentrantBefore/After helpers.
+# Both v1 (no functions; nonReentrant doesn't classify as auth) and
+# v2-shim (reentrancy leaf dropped) produce empty privileged sets.
+_OZ_REENTRANCY_5X = """
+pragma solidity ^0.8.19;
+contract C {
+    uint256 private constant NOT_ENTERED = 1;
+    uint256 private constant ENTERED = 2;
+    uint256 private _status;
+    uint256 public x;
+    error ReentrancyGuardReentrantCall();
+    function _nonReentrantBefore() private {
+        if (_status == ENTERED) revert ReentrancyGuardReentrantCall();
+        _status = ENTERED;
+    }
+    function _nonReentrantAfter() private { _status = NOT_ENTERED; }
+    modifier nonReentrant() { _nonReentrantBefore(); _; _nonReentrantAfter(); }
+    function withdraw() external nonReentrant { x = x + 1; }
+}
+"""
+
+# EIP-1271 magic-value oracle - external call result == 0x1626ba7e.
+# v1 emits 0 functions (no msg.sender literal); v2 catches via
+# signature_auth -> shim emits policy_check producing empty
+# controllers in EP. Both EP outputs treat f as non-privileged.
+_EIP1271 = """
+pragma solidity ^0.8.19;
+interface IERC1271 {
+    function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4);
+}
+contract C {
+    address public signerContract;
+    uint256 public x;
+    function f(bytes32 hash, bytes calldata sig) external {
+        require(IERC1271(signerContract).isValidSignature(hash, sig) == 0x1626ba7e);
+        x = 1;
+    }
+}
+"""
+
+# OR composition - require(msg.sender == owner || amount > threshold).
+# Both v1 and v2 produce caller_equals_controller with
+# controller_source='ownerVar' for the caller side; the business
+# branch is structurally distinct in v2 (OR child) but not relevant
+# to controllers. Equivalence pinned at ownerVar.
+_OWNER_OR_BUSINESS = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    uint256 public minThreshold;
+    uint256 public x;
+    function f(uint256 amount) external {
+        require(msg.sender == ownerVar || amount > minThreshold);
+        x = amount;
+    }
+}
+"""
+
+# Time gate - require(block.timestamp > deadline). v1 emits 0
+# functions (no caller-related operand); v2 catches via time
+# authority_role -> shim drops it. Both EP outputs treat f as
+# non-privileged. Pins that pure time gates don't accidentally
+# produce controllers in either path.
+_TIME_GATE = """
+pragma solidity ^0.8.19;
+contract C {
+    uint256 public deadline;
+    uint256 public x;
+    function f() external {
+        require(block.timestamp > deadline);
+        x = 1;
+    }
+}
+"""
+
 # OZ AC multi-role — three functions each gated by a different
 # role constant. v1 and v2 should agree per-function: each gets
 # a single mapping_membership predicate with controller_source=
@@ -486,6 +561,10 @@ _FIXTURES = [
     ("oz_ac_5x_overloaded", _OZ_AC_5X_OVERLOADED),
     ("m_of_n_threshold", _M_OF_N),
     ("ecdsa_signature_auth", _ECDSA_SIG),
+    ("oz_reentrancy_5x", _OZ_REENTRANCY_5X),
+    ("eip1271_magic", _EIP1271),
+    ("owner_or_business", _OWNER_OR_BUSINESS),
+    ("time_gate", _TIME_GATE),
 ]
 
 
