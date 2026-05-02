@@ -3513,6 +3513,123 @@ def delete_address_label(address: str) -> dict[str, Any]:
         return {"address": a, "deleted": True}
 
 
+class _ProbeMembershipRequest(BaseModel):
+    function_signature: str = Field(..., description="Full signature, e.g. 'grantRole(bytes32,address)'")
+    predicate_index: int = Field(..., ge=0, description="DFS-order leaf index in the function's predicate tree")
+    member: str = Field(..., description="Address being tested for membership in the leaf's set")
+
+    @field_validator("member")
+    @classmethod
+    def _check_member_address(cls, v: str) -> str:
+        if not isinstance(v, str) or not v.startswith("0x") or len(v) != 42:
+            raise ValueError("member must be a 0x-prefixed 20-byte address")
+        return v.lower()
+
+
+@app.post(
+    "/api/contract/{address}/probe/membership",
+    dependencies=[Depends(require_admin_key)],
+)
+def probe_contract_membership(address: str, req: _ProbeMembershipRequest) -> dict[str, Any]:
+    """v2 schema probe: 'is ``member`` allowed by leaf
+    ``predicate_index`` of ``function_signature`` on ``address``?'
+
+    Resolves the predicate_trees artifact server-side from the most
+    recent successful job for ``address``; the descriptor is NEVER
+    client-supplied — clients only carry the leaf index they
+    received from the v2 capability rendering.
+    """
+    addr = _normalize_address_or_400(address)
+    with SessionLocal() as session:
+        job = session.execute(
+            select(Job)
+            .where(Job.address == addr)
+            .where(Job.status == JobStatus.completed)
+            .order_by(Job.updated_at.desc(), Job.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if job is None:
+            raise HTTPException(
+                status_code=404, detail=f"No completed analysis job found for {addr}"
+            )
+
+        artifact = get_artifact(session, job.id, "predicate_trees")
+        if artifact is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "predicate_trees artifact missing for the latest analysis "
+                    "(contract was analyzed before schema-v2 emit landed, or v2 emit failed)"
+                ),
+            )
+
+    if not isinstance(artifact, dict) or "trees" not in artifact:
+        # Either an error-path placeholder ({"error": "..."}) or
+        # a malformed payload — surface the reason rather than
+        # silently treating as no-tree.
+        reason = (
+            artifact.get("error")
+            if isinstance(artifact, dict)
+            else "predicate_trees payload was not a dict"
+        )
+        return {
+            "result": "unknown",
+            "reason": "predicate_trees_unavailable",
+            "detail": reason,
+        }
+
+    tree = artifact["trees"].get(req.function_signature)
+    if tree is None:
+        # Resolver convention: absent function = unguarded (publicly
+        # callable). For probe semantics, that means anyone is in
+        # the set.
+        return {
+            "result": "yes",
+            "reason": "function_unguarded",
+            "function_signature": req.function_signature,
+        }
+
+    # Lazy-import the resolver bits so the probe route doesn't
+    # impose its dependency surface on the rest of the API.
+    from services.resolution.adapters import AdapterRegistry, EvaluationContext
+    from services.resolution.adapters.access_control import AccessControlAdapter
+    from services.resolution.adapters.aragon_acl import (
+        AragonACLAdapter,
+        DSAuthAdapter,
+        EIP1271Adapter,
+    )
+    from services.resolution.adapters.event_indexed import EventIndexedAdapter
+    from services.resolution.adapters.safe import SafeAdapter
+    from services.resolution.probe import probe_membership
+
+    registry = AdapterRegistry()
+    for cls in (
+        AccessControlAdapter,
+        SafeAdapter,
+        AragonACLAdapter,
+        DSAuthAdapter,
+        EIP1271Adapter,
+        EventIndexedAdapter,
+    ):
+        registry.register(cls)
+
+    # The probe runs without a wired RoleGrantsRepo / SafeRepo /
+    # bytecode repo for now; adapters fall back to
+    # ``external_check_only`` when no backend is available, which
+    # the probe surface translates into ``unknown`` with the probe
+    # target+selector for the caller to invoke directly. Wiring
+    # the Postgres-backed repos here is a follow-up.
+    ctx = EvaluationContext(contract_address=addr)
+
+    return probe_membership(
+        tree,
+        predicate_index=req.predicate_index,
+        member=req.member,
+        registry=registry,
+        ctx=ctx,
+    )
+
+
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):
     if full_path == "api" or full_path.startswith("api/"):
