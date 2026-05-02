@@ -98,35 +98,28 @@ def _try_enumerable_role_members(
     if count == 0:
         return [], {"adapter": "access_control_enumerable", "member_count": 0}
 
-    # Fan out the per-index ``getRoleMember`` reads through a single
-    # JSON-RPC batch — every call is independent and against the same
-    # contract, so the previous sequential loop was paying ``count`` RTTs
-    # for what fits in one. ``parallel_rpc_calls`` chunks at MAX_BATCH_SIZE
-    # so this stays under provider limits even at the 256-member ceiling.
-    from utils.concurrency import parallel_rpc_calls
+    # Fan out the per-index ``getRoleMember`` reads — the prior sequential
+    # loop paid ``count`` RTTs for fully-independent eth_calls against the
+    # same contract. ``parallel_map`` keeps the per-call surface (each call
+    # still flows through ``_eth_call_raw``) so the failure semantics match
+    # the prior single-call-failure-invalidates-enumeration behaviour, and
+    # the test mocks that intercept ``_eth_call_raw`` continue to fire.
+    from utils.concurrency import parallel_map
 
     member_selector = _selector("getRoleMember(bytes32,uint256)")
-    calls: list[tuple[str, list[Any]]] = [
-        (
-            "eth_call",
-            [
-                {"to": contract_address, "data": member_selector + role_arg + _encode_uint256(index)},
-                block_tag,
-            ],
-        )
-        for index in range(count)
-    ]
-    results = parallel_rpc_calls(rpc_url, calls)
+    calldatas = [member_selector + role_arg + _encode_uint256(index) for index in range(count)]
+    results = parallel_map(
+        lambda calldata: _eth_call_raw(rpc_url, contract_address, calldata, block_tag),
+        calldatas,
+    )
 
     members: list[str] = []
-    for raw, had_error in results:
-        if had_error:
+    for _calldata, outcome in results:
+        if isinstance(outcome, BaseException):
             # Match the previous behaviour: any single-call failure
             # invalidates the whole enumeration.
             return None
-        if not isinstance(raw, str):
-            continue
-        member = _decode_address(raw)
+        member = _decode_address(outcome)  # type: ignore[arg-type]
         if member:
             members.append(member.lower())
 
@@ -423,28 +416,14 @@ def _try_access_control_details(rpc_url: str, address: str, block_tag: str = "la
 
 
 def type_authority_contract(rpc_url: str, address: str, block_tag: str = "latest") -> dict[str, object]:
-    # Both probes are eth_call fan-outs against the same address with no
-    # data dependency — fan them out so we pay one RTT instead of two on
-    # the common access-control authority path. Aragon still wins when both
-    # match, matching the prior preference order.
-    from utils.concurrency import parallel_map
-
-    probes = parallel_map(
-        lambda fn: fn(rpc_url, address, block_tag),
-        [_try_aragon_app_details, _try_access_control_details],
-        max_workers=2,
-    )
-    aragon: dict[str, object] | None = None
-    access_control: dict[str, object] | None = None
-    for fn, outcome in probes:
-        if isinstance(outcome, BaseException):
-            continue
-        if fn is _try_aragon_app_details:
-            aragon = outcome  # type: ignore[assignment]
-        else:
-            access_control = outcome  # type: ignore[assignment]
+    # Sequential on purpose: Aragon hits short-circuit the AccessControl
+    # probe entirely. Parallelising would always pay both RTTs even when
+    # Aragon answers, which is the wrong trade for the common
+    # not-an-authority case where both probes return cheaply anyway.
+    aragon = _try_aragon_app_details(rpc_url, address, block_tag)
     if aragon is not None:
         return aragon
+    access_control = _try_access_control_details(rpc_url, address, block_tag)
     if access_control is not None:
         return access_control
     return {}
