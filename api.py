@@ -948,9 +948,38 @@ def analysis_detail(run_name: str) -> dict:
             "resolved_control_graph",
             "dependency_graph_viz",
             "upgrade_history",
+            # Schema-v2: raw predicate trees per externally-callable
+            # function. Existing consumers ignore the new key; v2
+            # consumers read it directly OR fetch the resolved
+            # ``v2_capabilities`` below.
+            "predicate_trees",
         ):
             if artifact_name in all_artifacts and isinstance(all_artifacts[artifact_name], dict):
                 payload[artifact_name] = all_artifacts[artifact_name]
+
+        # Schema-v2 resolved capabilities. Computed lazily — the
+        # raw predicate_trees lives on the artifact; resolving it to
+        # the typed CapabilityExpr requires the AdapterRegistry +
+        # repos. Defensive: a v2-resolution failure MUST NOT fail
+        # the whole analysis_detail response (the v1 fields above
+        # stay authoritative through the cutover).
+        if "predicate_trees" in all_artifacts and job.address:
+            try:
+                from services.resolution.capability_resolver import (
+                    resolve_contract_capabilities,
+                )
+
+                v2_caps = resolve_contract_capabilities(
+                    session, address=job.address.lower()
+                )
+                if v2_caps is not None:
+                    payload["v2_capabilities"] = v2_caps
+            except Exception:
+                logger.exception(
+                    "v2 capability resolution failed for job %s; "
+                    "v1 fields remain authoritative",
+                    job.id,
+                )
 
         if contract_row:
             ef_rows = list(
