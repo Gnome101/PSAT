@@ -27,6 +27,13 @@ _GETCODE_CACHE_LOCK = threading.Lock()
 _GETCODE_CACHE_MAX = 8192
 _GETCODE_CACHE_TTL_S = float(os.getenv("PSAT_GETCODE_CACHE_TTL_S", "1800"))
 
+# Cross-process bytecode cache: layered in-memory → Postgres → wire. Bytecode at
+# a deployed address is effectively immutable, so the PG layer skips the TTL
+# the in-memory layer carries. Disabled flag makes the CLI usable without a DB.
+_PG_BYTECODE_CACHE_ENABLED = os.getenv("PSAT_BYTECODE_PG_CACHE", "1").lower() in ("1", "true", "yes")
+_chain_id_cache: dict[str, int] = {}
+_chain_id_cache_lock = threading.Lock()
+
 
 def clear_getcode_cache() -> None:
     """Clear the process-wide eth_getCode cache. For tests + manual reset."""
@@ -35,6 +42,155 @@ def clear_getcode_cache() -> None:
     with _GETCODE_CACHE_LOCK:
         _GETCODE_CACHE.clear()
     reset_cache_pressure_state("getcode")
+    with _chain_id_cache_lock:
+        _chain_id_cache.clear()
+
+
+def _resolve_chain_id(rpc_url: str, chain_hint: int | None = None) -> int | None:
+    """Return the EIP-155 chain id for *rpc_url*, or None if discovery fails.
+
+    When *chain_hint* is supplied, it wins and is cached for future calls
+    against the same URL. Otherwise we issue one ``eth_chainId`` per URL per
+    process and memoise the result. Any RPC failure returns None so the caller
+    skips the PG layer cleanly — the in-memory dict + wire fetch keep working.
+    """
+    if chain_hint is not None:
+        with _chain_id_cache_lock:
+            _chain_id_cache[rpc_url] = chain_hint
+        return chain_hint
+    with _chain_id_cache_lock:
+        cached = _chain_id_cache.get(rpc_url)
+    if cached is not None:
+        return cached
+    try:
+        raw = rpc_request(rpc_url, "eth_chainId", [], retries=0)
+    except Exception:
+        return None
+    if not isinstance(raw, str) or not raw.startswith("0x"):
+        return None
+    try:
+        chain_id = int(raw, 16)
+    except ValueError:
+        return None
+    with _chain_id_cache_lock:
+        _chain_id_cache[rpc_url] = chain_id
+    return chain_id
+
+
+def _pg_bytecode_get(chain_id: int, address: str) -> tuple[str, str] | None:
+    """Postgres read-through; returns ``(bytecode, code_keccak)`` or None on miss/DB-unavailable."""
+    if not _PG_BYTECODE_CACHE_ENABLED:
+        return None
+    try:
+        from sqlalchemy import text
+
+        from db.models import SessionLocal
+    except Exception:
+        return None
+    try:
+        with SessionLocal() as session:
+            row = session.execute(
+                text(
+                    "SELECT bytecode, code_keccak FROM bytecode_cache "
+                    "WHERE chain_id = :c AND address = :a "
+                    "  AND selfdestructed_at IS NULL "
+                    "LIMIT 1"
+                ),
+                {"c": chain_id, "a": address.lower()},
+            ).first()
+        if row is None:
+            return None
+        return str(row[0]), str(row[1])
+    except Exception as exc:
+        logger.debug("Bytecode PG cache lookup failed (%s) — falling through", exc)
+        return None
+
+
+def _pg_bytecode_put(chain_id: int, address: str, bytecode: str, code_keccak: str) -> None:
+    """Best-effort upsert into bytecode_cache. DB errors swallowed (in-memory cache is the safety net)."""
+    if not _PG_BYTECODE_CACHE_ENABLED:
+        return
+    try:
+        from sqlalchemy import text
+
+        from db.models import SessionLocal
+    except Exception:
+        return
+    try:
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "INSERT INTO bytecode_cache (chain_id, address, bytecode, code_keccak) "
+                    "VALUES (:c, :a, :b, :k) "
+                    "ON CONFLICT (chain_id, address) DO UPDATE "
+                    "  SET bytecode = EXCLUDED.bytecode, "
+                    "      code_keccak = EXCLUDED.code_keccak, "
+                    "      cached_at = NOW(), "
+                    "      selfdestructed_at = NULL"
+                ),
+                {"c": chain_id, "a": address.lower(), "b": bytecode, "k": code_keccak},
+            )
+            session.commit()
+    except Exception as exc:
+        logger.debug("Bytecode PG cache write failed (%s) — keeping in-memory only", exc)
+
+
+def _pg_bytecode_get_many(chain_id: int, addresses: list[str]) -> dict[str, tuple[str, str]]:
+    """Batch read for bytecode_cache; returns ``{address_lower: (bytecode, keccak)}``. Empty dict on disable/failure."""
+    if not _PG_BYTECODE_CACHE_ENABLED or not addresses:
+        return {}
+    try:
+        from sqlalchemy import text
+
+        from db.models import SessionLocal
+    except Exception:
+        return {}
+    try:
+        with SessionLocal() as session:
+            rows = session.execute(
+                text(
+                    "SELECT address, bytecode, code_keccak FROM bytecode_cache "
+                    "WHERE chain_id = :c AND address = ANY(:addrs) "
+                    "  AND selfdestructed_at IS NULL"
+                ),
+                {"c": chain_id, "addrs": [a.lower() for a in addresses]},
+            ).all()
+        return {str(addr).lower(): (str(code), str(kek)) for addr, code, kek in rows}
+    except Exception as exc:
+        logger.debug("Bytecode PG cache batch lookup failed (%s) — falling through", exc)
+        return {}
+
+
+def _pg_bytecode_put_many(chain_id: int, rows: list[tuple[str, str, str]]) -> None:
+    """Batch upsert; *rows* is ``[(address, bytecode, code_keccak), ...]``."""
+    if not _PG_BYTECODE_CACHE_ENABLED or not rows:
+        return
+    try:
+        from sqlalchemy import text
+
+        from db.models import SessionLocal
+    except Exception:
+        return
+    try:
+        payload = [
+            {"c": chain_id, "a": addr.lower(), "b": bytecode, "k": code_keccak} for addr, bytecode, code_keccak in rows
+        ]
+        with SessionLocal() as session:
+            session.execute(
+                text(
+                    "INSERT INTO bytecode_cache (chain_id, address, bytecode, code_keccak) "
+                    "VALUES (:c, :a, :b, :k) "
+                    "ON CONFLICT (chain_id, address) DO UPDATE "
+                    "  SET bytecode = EXCLUDED.bytecode, "
+                    "      code_keccak = EXCLUDED.code_keccak, "
+                    "      cached_at = NOW(), "
+                    "      selfdestructed_at = NULL"
+                ),
+                payload,
+            )
+            session.commit()
+    except Exception as exc:
+        logger.debug("Bytecode PG cache batch write failed (%s) — keeping in-memory only", exc)
 
 
 def _log_getcode_pressure() -> None:
@@ -97,21 +253,28 @@ def rpc_request(rpc_url: str, method: str, params: list[Any], retries: int = 1) 
     raise RuntimeError(f"RPC request failed for {rpc_url}: all {retries + 1} attempts exhausted")
 
 
-def get_code(rpc_url: str, address: str) -> str:
+def get_code(rpc_url: str, address: str, *, chain_id: int | None = None) -> str:
     """Fetch deployed EVM bytecode at an address via eth_getCode.
 
     Process-wide cached (TTL ``PSAT_GETCODE_CACHE_TTL_S``, default 30 min)
     so repeated probes of the same address across stages and jobs hit
     the cache instead of the wire. RPC errors are NOT cached — they
     propagate as ``RuntimeError`` so callers can decide retry behavior.
+    Pass *chain_id* to skip the one-time ``eth_chainId`` discovery used by
+    the cross-process Postgres cache layer.
     """
-    code, _keccak = get_code_with_keccak(rpc_url, address)
+    code, _keccak = get_code_with_keccak(rpc_url, address, chain_id=chain_id)
     return code
 
 
-def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
+def get_code_with_keccak(rpc_url: str, address: str, *, chain_id: int | None = None) -> tuple[str, str]:
     """Return ``(bytecode_hex, keccak_hex)`` cached together so downstream content-addressed lookups get the keccak for
-    free."""
+    free.
+
+    Cache layering: in-memory dict (TTL'd) → Postgres ``bytecode_cache`` (no
+    TTL — bytecode is immutable per ``(chain_id, address)``) → wire fetch.
+    Pass *chain_id* explicitly to skip the one-time ``eth_chainId`` lookup.
+    """
     addr = _normalized_addr(address)
     key = (rpc_url, addr)
     now = time.monotonic()
@@ -123,6 +286,18 @@ def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
                 return code, keccak_hex
             # TTL expired; fall through to re-fetch.
             del _GETCODE_CACHE[key]
+
+    # PG cache: cross-process layer; only consulted when we can resolve a chain id.
+    chain_id_eff = _resolve_chain_id(rpc_url, chain_id) if _PG_BYTECODE_CACHE_ENABLED else None
+    if chain_id_eff is not None:
+        pg_hit = _pg_bytecode_get(chain_id_eff, addr)
+        if pg_hit is not None:
+            code, keccak_hex = pg_hit
+            with _GETCODE_CACHE_LOCK:
+                _evict_getcode_if_needed()
+                _GETCODE_CACHE[key] = (code, keccak_hex, now)
+                _log_getcode_pressure()
+            return code, keccak_hex
 
     # RPC outside the lock so concurrent misses for different addresses don't serialize.
     raw = rpc_request(rpc_url, "eth_getCode", [address, "latest"])
@@ -137,6 +312,8 @@ def get_code_with_keccak(rpc_url: str, address: str) -> tuple[str, str]:
         _evict_getcode_if_needed()
         _GETCODE_CACHE[key] = (code, keccak_hex, now)
         _log_getcode_pressure()
+    if chain_id_eff is not None:
+        _pg_bytecode_put(chain_id_eff, addr, code, keccak_hex)
     return code, keccak_hex
 
 
@@ -149,8 +326,12 @@ def _evict_getcode_if_needed() -> None:
         _GETCODE_CACHE.pop(k, None)
 
 
-def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
-    """Cache-aware batched eth_getCode; errored slots are omitted from the returned ``{address: bytecode}`` map."""
+def get_code_batch(rpc_url: str, addresses: list[str], *, chain_id: int | None = None) -> dict[str, str]:
+    """Cache-aware batched eth_getCode; errored slots are omitted from the returned ``{address: bytecode}`` map.
+
+    Cache layering matches :func:`get_code_with_keccak`: in-memory → Postgres
+    ``bytecode_cache`` (one bulk SELECT for the misses) → wire batch.
+    """
     if not addresses:
         return {}
 
@@ -172,8 +353,30 @@ def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
     if not to_fetch:
         return out
 
+    # PG layer: bulk SELECT for the in-memory misses; promote hits into the
+    # in-memory cache so a later same-process call short-circuits.
+    chain_id_eff = _resolve_chain_id(rpc_url, chain_id) if _PG_BYTECODE_CACHE_ENABLED else None
+    if chain_id_eff is not None and to_fetch:
+        pg_hits = _pg_bytecode_get_many(chain_id_eff, to_fetch)
+        if pg_hits:
+            with _GETCODE_CACHE_LOCK:
+                for addr in list(to_fetch):
+                    payload = pg_hits.get(addr)
+                    if payload is None:
+                        continue
+                    code, keccak_hex = payload
+                    _evict_getcode_if_needed()
+                    _GETCODE_CACHE[(rpc_url, addr)] = (code, keccak_hex, now)
+                    _log_getcode_pressure()
+                    out[addr] = code
+            to_fetch = [addr for addr in to_fetch if addr not in pg_hits]
+
+    if not to_fetch:
+        return out
+
     calls: list[tuple[str, list[Any]]] = [("eth_getCode", [addr, "latest"]) for addr in to_fetch]
     raw_results = rpc_batch_request_with_status(rpc_url, calls)
+    pg_writes: list[tuple[str, str, str]] = []
     with _GETCODE_CACHE_LOCK:
         for addr, (raw, had_error) in zip(to_fetch, raw_results):
             if had_error:
@@ -192,6 +395,9 @@ def get_code_batch(rpc_url: str, addresses: list[str]) -> dict[str, str]:
             _GETCODE_CACHE[(rpc_url, addr)] = (code, keccak_hex, now)
             _log_getcode_pressure()
             out[addr] = code
+            pg_writes.append((addr, code, keccak_hex))
+    if chain_id_eff is not None and pg_writes:
+        _pg_bytecode_put_many(chain_id_eff, pg_writes)
     return out
 
 
