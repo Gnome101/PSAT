@@ -56,6 +56,7 @@ try:
         Transfer,
         TypeConversion,
         Unary,
+        Unpack,
     )
     from slither.slithir.variables import Constant, ReferenceVariable, TemporaryVariable  # type: ignore[import]
 
@@ -282,10 +283,14 @@ class ProvenanceEngine:
             return self._handle_member(ir)
         if isinstance(ir, SolidityCall):
             return self._handle_solidity_call(ir)
-        if isinstance(ir, (HighLevelCall, LowLevelCall)):
+        if isinstance(ir, LowLevelCall):
+            return self._handle_low_level_call(ir)
+        if isinstance(ir, HighLevelCall):
             return self._handle_external_call(ir)
         if isinstance(ir, (InternalCall, LibraryCall)):
             return self._handle_internal_call(ir)
+        if isinstance(ir, Unpack):
+            return self._handle_unpack(ir)
         if isinstance(ir, (NewContract, NewArray, NewElementaryType)):
             return self._handle_new(ir)
         if isinstance(ir, (Send, Transfer)):
@@ -422,6 +427,9 @@ class ProvenanceEngine:
         return self.provenance.set(self._var_name(ir.lvalue), result)
 
     def _handle_external_call(self, ir: Any) -> bool:
+        """High-level call to a known interface — ``other.method(args)``.
+        Records the callee name (function symbol) so the predicate
+        builder can route on it."""
         if not isinstance(ir, OperationWithLValue) or ir.lvalue is None:
             return False
         callee_name = getattr(getattr(ir, "function", None), "name", None) or getattr(ir, "function_name", None)
@@ -436,6 +444,64 @@ class ProvenanceEngine:
             }
         )
         return self.provenance.set(self._var_name(ir.lvalue), result)
+
+    def _handle_low_level_call(self, ir: Any) -> bool:
+        """``addr.call(data)`` / ``staticcall`` / ``delegatecall``.
+
+        LowLevelCall has no resolved function symbol (the target is an
+        arbitrary address). What matters for downstream analysis:
+          - the call kind (call/staticcall/delegatecall) — delegatecall
+            in particular executes target code in our context, so we
+            preserve the kind in ``computed_kind``;
+          - the destination's provenance (where the target address
+            came from) — propagated into the result so a later check
+            on the call result can see if the target was caller-
+            controlled / state-loaded / parameter-loaded.
+
+        Result is a tuple (bool, bytes) which Slither models as a
+        TupleVariable lvalue; subsequent ``Unpack`` IRs split it into
+        the individual return values. Each unpacked value inherits the
+        tuple's provenance.
+        """
+        if not isinstance(ir, OperationWithLValue) or ir.lvalue is None:
+            return False
+        kind = getattr(ir, "function_name", None) or "low_level_call"
+        dest_sources = self._sources_for_value(getattr(ir, "destination", None))
+        args_union = self._union_of_args(getattr(ir, "arguments", ()))
+        # delegatecall is special — we tag it as external_call (it's still
+        # external from a control-flow perspective; the predicate builder
+        # treats delegatecall result the same as call result), but the
+        # destination provenance travels through so a downstream check
+        # can flag delegatecall-to-untrusted-target if needed.
+        result = frozenset(
+            {
+                Source(
+                    kind="external_call",
+                    callee=kind,  # "call" / "staticcall" / "delegatecall"
+                    callee_args_digest=_digest(union(dest_sources, args_union)),
+                )
+            }
+        )
+        # Also propagate destination + args sources so unpacked tuple
+        # inherits caller/state/parameter taint.
+        result = union(result, dest_sources)
+        result = union(result, args_union)
+        return self.provenance.set(self._var_name(ir.lvalue), result)
+
+    def _handle_unpack(self, ir: Any) -> bool:
+        """``Unpack`` splits a tuple lvalue into its components. Each
+        component inherits the tuple's full provenance — Slither doesn't
+        track per-tuple-position taint, so we conservatively forward
+        the whole set."""
+        if not isinstance(ir, OperationWithLValue) or ir.lvalue is None:
+            return False
+        # The tuple operand is exposed as `ir.tuple` on Slither; fall
+        # back to ``ir.rvalue`` for older versions.
+        tup = getattr(ir, "tuple", None) or getattr(ir, "rvalue", None)
+        if tup is None:
+            return self.provenance.set(self._var_name(ir.lvalue), TOP)
+        sources = self._sources_for_value(tup)
+        return self.provenance.set(self._var_name(ir.lvalue), sources)
 
     def _handle_internal_call(self, ir: Any) -> bool:
         """Recurse into the callee's body, with parameter bindings

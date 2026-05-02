@@ -397,3 +397,124 @@ def test_block_timestamp_classified(tmp_path):
     assert has_block, (
         f"binary op with block.timestamp didn't yield block_context source. map={dict(eng.provenance.sources)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Low-level calls + tuple unpacking.
+# ---------------------------------------------------------------------------
+
+
+def test_low_level_call_classified(tmp_path):
+    """``target.call(data)`` produces a tuple lvalue. The tuple's
+    provenance must include ``external_call`` AND the destination/args
+    taint (both parameters here)."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            function f(address target, bytes calldata data) external returns (bool, bytes memory) {
+                (bool ok, bytes memory r) = target.call(data);
+                return (ok, r);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    eng = ProvenanceEngine(fn)
+    eng.run()
+    # Find a value with external_call source AND parameter taint.
+    found = False
+    for srcs in eng.provenance.sources.values():
+        if _has_source_kind(srcs, "external_call") and _has_source_kind(srcs, "parameter"):
+            external = _find_source_with_kind(srcs, "external_call")
+            assert external is not None
+            assert external.callee == "call", f"expected callee='call', got {external.callee!r}"
+            found = True
+            break
+    assert found, f"low_level_call didn't produce external_call+parameter taint. map={dict(eng.provenance.sources)}"
+
+
+def test_staticcall_classified(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            function f(address target, bytes calldata data) external view returns (bool, bytes memory) {
+                return target.staticcall(data);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    eng = ProvenanceEngine(fn)
+    eng.run()
+    found_staticcall = False
+    for srcs in eng.provenance.sources.values():
+        ext = _find_source_with_kind(srcs, "external_call")
+        if ext and ext.callee == "staticcall":
+            found_staticcall = True
+            break
+    assert found_staticcall, f"staticcall not classified with callee='staticcall'. map={dict(eng.provenance.sources)}"
+
+
+def test_delegatecall_preserves_destination_taint(tmp_path):
+    """delegatecall is structurally distinguished by ``callee==
+    'delegatecall'``. The destination's provenance must travel
+    through into the result so a downstream analyzer can see if the
+    target was caller-controlled."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            function f(bytes calldata data) external returns (bool) {
+                (bool ok, ) = msg.sender.delegatecall(data);
+                return ok;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    eng = ProvenanceEngine(fn)
+    eng.run()
+    # The result must carry both external_call(callee=delegatecall)
+    # AND msg_sender (because the destination was msg.sender).
+    found = False
+    for srcs in eng.provenance.sources.values():
+        ext = _find_source_with_kind(srcs, "external_call")
+        if ext and ext.callee == "delegatecall" and _has_source_kind(srcs, "msg_sender"):
+            found = True
+            break
+    assert found, (
+        f"delegatecall with msg.sender destination didn't preserve msg_sender taint. map={dict(eng.provenance.sources)}"
+    )
+
+
+def test_unpack_propagates_tuple_provenance(tmp_path):
+    """After ``(bool ok, ) = target.call(data);``, the unpacked ``ok``
+    SSA value inherits the tuple's full provenance set."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            function f(address target, bytes calldata data) external returns (bool) {
+                (bool ok, ) = target.call(data);
+                return ok;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    eng = ProvenanceEngine(fn)
+    eng.run()
+    # `ok` is unpacked from the tuple; it should carry external_call source.
+    has_ok_with_external = any(
+        name.startswith("ok") and _has_source_kind(srcs, "external_call")
+        for name, srcs in eng.provenance.sources.items()
+    )
+    assert has_ok_with_external, (
+        f"unpacked `ok` didn't inherit external_call source. map={dict(eng.provenance.sources)}"
+    )
