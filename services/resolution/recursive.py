@@ -601,12 +601,19 @@ def resolve_control_graph(
             continue
 
         # Parallel materialization. ``_materialize_contract_artifacts`` hits
-        # the locked ``_ARTIFACT_CACHE`` and runs Slither in a fresh tempdir
-        # per call, so concurrent invocations are safe.
+        # the locked ``_ARTIFACT_CACHE`` and runs Slither + ``forge build`` in
+        # a fresh tempdir per call. The fan-out is **CPU-bound** (Slither's
+        # IR build + solc + foundry compile are not GIL-friendly), so the cap
+        # has to track host vCPU count rather than the I/O-bound RPC fan-out
+        # ceiling — running ``max_workers=8`` on a shared-cpu-2x VM thrashes
+        # the load average to >5 and wedges sibling workers (observed on
+        # psat-pr-60 at 2026-05-02). Default 2 matches the smallest worker
+        # VM size; bumpable via env for performance-2x / shared-cpu-4x.
+        materialize_fanout = max(1, int(os.getenv("PSAT_RESOLUTION_MATERIALIZE_FANOUT", "2")))
         materialized = parallel_map(
             _materialize_for_pending,
             level_pending,
-            max_workers=8,
+            max_workers=materialize_fanout,
             heartbeat=heartbeat,
         )
 
