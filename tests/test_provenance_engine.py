@@ -492,6 +492,46 @@ def test_delegatecall_preserves_destination_taint(tmp_path):
     )
 
 
+def test_member_records_field_name(tmp_path):
+    """``s.field`` should produce a ``computed`` source whose
+    ``computed_kind`` is ``member.<field_name>`` AND preserve the
+    base's provenance. Critical for the OZ AccessControl pattern:
+    ``_roles[role].adminRole`` must surface both the parameter taint
+    (so the predicate builder marks it parametric) AND the field name
+    (so the builder can recognize the getRoleAdmin shape)."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            struct Role { bytes32 adminRole; uint256 nonce; }
+            mapping(bytes32 => Role) _roles;
+            function f(bytes32 role) external view returns (bytes32) {
+                return _roles[role].adminRole;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    eng = ProvenanceEngine(fn)
+    eng.run()
+    # We want a value whose source set has BOTH:
+    #   - parameter taint (from `role`)
+    #   - state_variable taint (from `_roles`)
+    #   - computed source with computed_kind == "member.adminRole"
+    found = False
+    for srcs in eng.provenance.sources.values():
+        member = next((s for s in srcs if s.kind == "computed" and (s.computed_kind or "").startswith("member.")), None)
+        if member and member.computed_kind == "member.adminRole":
+            assert _has_source_kind(srcs, "parameter")
+            assert _has_source_kind(srcs, "state_variable")
+            found = True
+            break
+    assert found, (
+        f"member access didn't record field name 'adminRole' alongside base taint. map={dict(eng.provenance.sources)}"
+    )
+
+
 def test_unpack_propagates_tuple_provenance(tmp_path):
     """After ``(bool ok, ) = target.call(data);``, the unpacked ``ok``
     SSA value inherits the tuple's full provenance set."""

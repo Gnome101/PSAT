@@ -387,12 +387,34 @@ class ProvenanceEngine:
         return self.provenance.set(self._var_name(ir.lvalue), result)
 
     def _handle_member(self, ir: Any) -> bool:
-        """``s.field`` — propagate base sources to the field's
-        reference. Field name preserved in the IR (downstream operand
-        classifier reads it back)."""
+        """``s.field`` — propagate base sources AND tag the result with
+        a ``computed`` source whose ``computed_kind`` is
+        ``member.<field_name>``. Predicate builder reads computed_kind
+        to surface the field path; e.g. for OZ's
+        ``_roles[role].adminRole`` the leaf will see both the base
+        provenance (state_variable _roles + parameter role) and the
+        field tag (``member.adminRole``).
+        """
         base = getattr(ir, "variable_left", None)
-        sources = self._sources_for_value(base) if base is not None else EMPTY
-        return self.provenance.set(self._var_name(ir.lvalue), sources)
+        field = getattr(ir, "variable_right", None)
+        base_sources = self._sources_for_value(base) if base is not None else EMPTY
+        # Slither's Member.variable_right is a Constant whose value is
+        # the field name string. Fall back to repr for unusual shapes.
+        field_name: str | None = None
+        if field is not None:
+            field_name = getattr(field, "value", None) or getattr(field, "name", None) or str(field)
+        if not field_name or is_top(base_sources):
+            return self.provenance.set(self._var_name(ir.lvalue), base_sources)
+        wrapper = frozenset(
+            {
+                Source(
+                    kind="computed",
+                    computed_kind=f"member.{field_name}",
+                    callee_args_digest=_digest(base_sources),
+                )
+            }
+        )
+        return self.provenance.set(self._var_name(ir.lvalue), union(base_sources, wrapper))
 
     def _handle_solidity_call(self, ir: Any) -> bool:
         """``ecrecover``, ``keccak256``, ``addmod``, etc. ecrecover
