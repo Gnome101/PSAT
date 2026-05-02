@@ -217,6 +217,95 @@ def test_artifact_runs_reentrancy_pause_pass(tmp_path):
     assert leaf["confidence"] == "high"
 
 
+def test_artifact_helper_engine_cache_skips_repeated_callees(tmp_path):
+    """When multiple functions share a cross-fn helper (e.g.
+    grantRole / revokeRole / renounceRole all funneling through
+    ``_checkRole``), build_predicate_artifacts wires a per-call
+    helper-engine cache so the second + third cross-fn build
+    don't re-run ProvenanceEngine on the helper.
+
+    Pinned by counting ProvenanceEngine instantiations: with the
+    cache active, fewer engines should be created than without.
+    Correctness is validated by every other corpus test — this
+    test specifically guards the cache HITS HAPPEN."""
+    from services.static.contract_analysis_pipeline import predicates
+    from services.static.contract_analysis_pipeline.predicates import (
+        _helper_engine_cache,
+    )
+
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(bytes32 => mapping(address => bool)) private _roles;
+            mapping(bytes32 => bytes32) private _admins;
+            modifier onlyRole(bytes32 role) {
+                _checkRole(role);
+                _;
+            }
+            function _checkRole(bytes32 role) internal view {
+                if (!_roles[role][msg.sender]) revert();
+            }
+            function getRoleAdmin(bytes32 role) public view returns (bytes32) {
+                return _admins[role];
+            }
+            function grantRole(bytes32 role, address account) public onlyRole(getRoleAdmin(role)) {
+                _roles[role][account] = true;
+            }
+            function revokeRole(bytes32 role, address account) public onlyRole(getRoleAdmin(role)) {
+                _roles[role][account] = false;
+            }
+        }
+    """,
+    )
+    contract = _contract(sl)
+
+    # Count ProvenanceEngine constructions during the artifact
+    # build. With cache hits across grantRole/revokeRole the
+    # number is lower than the no-cache baseline.
+    instantiations: list[None] = []
+    original_init = predicates.ProvenanceEngine.__init__
+
+    def _counting_init(self, *args, **kwargs):
+        instantiations.append(None)
+        return original_init(self, *args, **kwargs)
+
+    try:
+        predicates.ProvenanceEngine.__init__ = _counting_init  # type: ignore[method-assign]
+        # With cache active (entered by build_predicate_artifacts).
+        artifact = build_predicate_artifacts(contract)
+        cached_count = len(instantiations)
+        assert "grantRole(bytes32,address)" in artifact["trees"]
+        assert "revokeRole(bytes32,address)" in artifact["trees"]
+
+        # Now run the exact same work WITHOUT the cache scope —
+        # build_predicate_tree directly without entering the
+        # build_predicate_artifacts wrapper.
+        instantiations.clear()
+        # Ensure no ambient cache.
+        token = _helper_engine_cache.set(None)
+        try:
+            for fn in contract.functions:
+                if getattr(fn, "visibility", None) in ("external", "public"):
+                    if not getattr(fn, "is_constructor", False):
+                        from services.static.contract_analysis_pipeline.predicates import (
+                            build_predicate_tree,
+                        )
+                        build_predicate_tree(fn)
+        finally:
+            _helper_engine_cache.reset(token)
+        uncached_count = len(instantiations)
+    finally:
+        predicates.ProvenanceEngine.__init__ = original_init  # type: ignore[method-assign]
+
+    # Cached path runs strictly fewer engines than uncached.
+    assert cached_count < uncached_count, (
+        f"helper-engine cache did not reduce engine count: "
+        f"cached={cached_count} uncached={uncached_count}"
+    )
+
+
 def test_artifact_empty_contract(tmp_path):
     """An interface-only contract with no externally-callable
     body produces an empty trees dict (still valid)."""

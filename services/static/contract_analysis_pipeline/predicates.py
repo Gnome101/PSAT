@@ -77,6 +77,50 @@ from .revert_detect import RevertDetector, RevertGate
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Helper-engine cache (perf optimization for cross-fn build path)
+# ---------------------------------------------------------------------------
+#
+# When ``build_predicate_artifacts`` walks every function on a
+# contract, the same helper (e.g. ``_checkRole(role)``) often
+# appears on the call_chain of multiple functions (grantRole /
+# revokeRole / renounceRole all funnel through it). Each
+# ``_build_chain_bindings`` invocation re-runs ProvenanceEngine on
+# every helper in its chain — work that's pure repetition when
+# the (callee, parameter_bindings) tuple matches a previous call.
+#
+# This contextvar holds an optional dict mapping
+# ``(callee_id, bindings_signature)`` → ``ProvenanceMap``. The
+# artifact builder sets it on entry and clears on exit; tests
+# calling ``build_predicate_tree`` directly see ``None`` and run
+# the engine as before (correctness is identical either way; the
+# cache is a pure perf optimization).
+
+import contextvars as _contextvars  # noqa: E402
+
+_helper_engine_cache: _contextvars.ContextVar[dict | None] = _contextvars.ContextVar(
+    "psat_predicate_helper_engine_cache", default=None
+)
+
+
+def _cache_key_for(callee: Any, bindings: dict[str, Any]) -> tuple | None:
+    """Build a stable hashable key from a callee + parameter
+    bindings. Returns None if any element isn't hashable —
+    cache misses on unusual bindings rather than crashing."""
+    try:
+        callee_id = getattr(callee, "full_name", None) or getattr(callee, "name", None)
+        if callee_id is None:
+            return None
+        # Bindings values are frozenset[Source] (Source is a
+        # frozen dataclass) — hashable. Sort by name for
+        # determinism.
+        items = tuple((name, bindings[name]) for name in sorted(bindings))
+        hash(items)
+        return (callee_id, items)
+    except Exception:
+        return None
+
+
 def build_predicate_tree(function: Any) -> PredicateTree | None:
     """Construct a PredicateTree for one function. Returns None if
     the function has no revert paths (i.e., is unguarded — not in
@@ -200,6 +244,7 @@ def _build_chain_bindings(
         current_prov = top_engine.provenance
     current_fn = top_function
 
+    cache = _helper_engine_cache.get()
     for ir in call_chain:
         callee = getattr(ir, "function", None)
         if callee is None:
@@ -212,9 +257,23 @@ def _build_chain_bindings(
             if not param_name:
                 continue
             new_bindings[param_name] = _operand_value_provenance(arg, current_prov)
-        callee_engine = ProvenanceEngine(callee, parameter_bindings=new_bindings)
-        callee_engine.run()
-        current_prov = callee_engine.provenance
+
+        # Cache hit: skip the engine.run() for this callee +
+        # bindings. The cache is scoped to one
+        # build_predicate_artifacts call (set/reset by that
+        # entry point); tests that call build_predicate_tree
+        # directly see no cache and run the engine as before.
+        cache_key = None
+        if cache is not None:
+            cache_key = _cache_key_for(callee, new_bindings)
+        if cache is not None and cache_key is not None and cache_key in cache:
+            current_prov = cache[cache_key]
+        else:
+            callee_engine = ProvenanceEngine(callee, parameter_bindings=new_bindings)
+            callee_engine.run()
+            current_prov = callee_engine.provenance
+            if cache is not None and cache_key is not None:
+                cache[cache_key] = current_prov
         current_fn = callee
 
     helper_bindings: dict[str, Any] = {}

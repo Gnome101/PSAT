@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import Any
 
 from .predicate_types import PredicateTree
-from .predicates import build_predicate_tree
+from .predicates import _helper_engine_cache, build_predicate_tree
 from .reentrancy_pause import apply_reentrancy_pause_pass
 from .writer_gate import apply_writer_gate_pass
 
@@ -43,14 +43,23 @@ def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
     from the output. The resolver treats absent entries as
     unguarded.
     """
-    trees: dict[str, PredicateTree] = {}
-    for fn in getattr(contract, "functions", []) or []:
-        if not _is_externally_callable(fn):
-            continue
-        tree = build_predicate_tree(fn)
-        if tree is None:
-            continue
-        trees[fn.full_name] = tree
+    # Scope a per-contract helper-engine cache for the cross-fn
+    # build path. Multiple functions on the same AC contract
+    # often share helpers (grantRole / revokeRole / renounceRole
+    # all funnel through onlyRole→_checkRole); this cache makes
+    # the second + third cross-fn build effectively free.
+    cache_token = _helper_engine_cache.set({})
+    try:
+        trees: dict[str, PredicateTree] = {}
+        for fn in getattr(contract, "functions", []) or []:
+            if not _is_externally_callable(fn):
+                continue
+            tree = build_predicate_tree(fn)
+            if tree is None:
+                continue
+            trees[fn.full_name] = tree
+    finally:
+        _helper_engine_cache.reset(cache_token)
 
     # Cross-contract passes mutate trees in place: writer-gate's
     # writer-side analysis can promote 1-key membership leaves to
