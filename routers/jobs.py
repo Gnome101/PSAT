@@ -6,11 +6,13 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import not_ as sa_not_
 from sqlalchemy import select, text
 
 from db.models import Artifact, Contract, Job, JobStage, Protocol
 from schemas.api_requests import AnalyzeRequest
+from schemas.stage_errors import StageError, StageErrors
 
 from . import deps
 
@@ -161,6 +163,57 @@ def get_job(job_id: str) -> dict[str, Any]:
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
         return job.to_dict()
+
+
+class JobErrorsResponse(BaseModel):
+    """Response shape for ``GET /api/jobs/{job_id}/errors``."""
+
+    job_id: str
+    trace_id: str | None
+    status: str
+    stage: str
+    errors: list[StageError]
+
+
+@router.get("/api/jobs/{job_id}/errors", response_model=JobErrorsResponse)
+def get_job_errors(job_id: str) -> JobErrorsResponse:
+    """Return the deserialized ``stage_errors`` artifact for a job.
+
+    Returns an empty list when the artifact is missing — every job either
+    has zero degraded events and zero failures, or it has the artifact
+    documenting them. A 404 is reserved for "no such job".
+    """
+    # Job.id is a UUID column; a non-UUID string would otherwise raise
+    # ``DataError`` at the dialect level — surface as 404 instead so the
+    # endpoint matches the rest of the job-routes' behaviour for bad ids.
+    import uuid as _uuid
+
+    try:
+        parsed = _uuid.UUID(job_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+    with deps.SessionLocal() as session:
+        job = session.get(Job, parsed)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        raw = deps.get_artifact(session, job.id, "stage_errors")
+        errors: list[StageError] = []
+        if isinstance(raw, dict):
+            try:
+                errors = StageErrors.model_validate(raw).errors
+            except Exception:
+                # Legacy/corrupt payloads shouldn't 500 the endpoint —
+                # return them empty and let the operator inspect the
+                # underlying artifact directly.
+                logger.exception("stage_errors artifact for job %s did not validate", job.id)
+                errors = []
+        return JobErrorsResponse(
+            job_id=str(job.id),
+            trace_id=job.trace_id,
+            status=job.status.value,
+            stage=job.stage.value,
+            errors=errors,
+        )
 
 
 @router.get("/api/jobs/{job_id}/stage_timings", dependencies=[Depends(deps.require_admin_key)])
