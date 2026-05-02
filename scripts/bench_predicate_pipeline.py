@@ -136,6 +136,37 @@ _FIXTURES: list[tuple[str, str]] = [
         }
         """,
     ),
+    (
+        # Real OZ 5.0+ AccessControl shape — 4-hop overloaded helper
+        # chain (modifier -> _checkRole(role) -> _checkRole(role,addr)
+        # -> hasRole getter -> state read), custom error, _msgSender()
+        # Context wrapper. Tracks the worst-case real-world cost the
+        # production analyzer hits on AccessControl-inheriting contracts.
+        "oz_ac_5x_overloaded",
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(bytes32 => mapping(address => bool)) private _roles;
+            uint256 public x;
+            error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+            function _msgSender() internal view returns (address) { return msg.sender; }
+            function hasRole(bytes32 role, address account) public view returns (bool) {
+                return _roles[role][account];
+            }
+            function _checkRole(bytes32 role, address account) internal view {
+                if (!hasRole(role, account))
+                    revert AccessControlUnauthorizedAccount(account, role);
+            }
+            function _checkRole(bytes32 role) internal view {
+                _checkRole(role, _msgSender());
+            }
+            modifier onlyRole(bytes32 role) { _checkRole(role); _; }
+            function grantRole(bytes32 role, address account) public onlyRole(role) {
+                _roles[role][account] = true;
+            }
+        }
+        """,
+    ),
 ]
 
 
