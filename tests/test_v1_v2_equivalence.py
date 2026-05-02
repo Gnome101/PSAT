@@ -423,6 +423,23 @@ contract C {
 }
 """
 
+_OZ_OWNABLE_5X = """
+pragma solidity ^0.8.19;
+contract C {
+    address private _owner;
+    uint256 public x;
+    error OwnableUnauthorizedAccount(address account);
+    function _msgSender() internal view returns (address) { return msg.sender; }
+    function owner() public view returns (address) { return _owner; }
+    function _checkOwner() internal view {
+        if (owner() != _msgSender()) revert OwnableUnauthorizedAccount(_msgSender());
+    }
+    modifier onlyOwner() { _checkOwner(); _; }
+    function setX(uint256 v) external onlyOwner { x = v; }
+    function open() external { x = 0; }
+}
+"""
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
@@ -438,6 +455,7 @@ _FIXTURES = [
     ("ecdsa_signature_auth", _ECDSA_SIGNATURE_AUTH),
     ("eip1271_magic", _EIP1271_MAGIC),
     ("time_gate", _TIME_GATE),
+    ("oz_ownable_5x", _OZ_OWNABLE_5X),
 ]
 
 
