@@ -36,14 +36,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Callable, Iterable, Protocol
 
 from sqlalchemy import and_, delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from db.models import AragonAclCursor, AragonAclEvent
+from db.models import AragonAclCursor, AragonAclEvent, ChainFinalityConfig, Contract
 
 logger = logging.getLogger(__name__)
 
@@ -288,3 +289,120 @@ def enroll_acl_contract(
         last_indexed_block=0,
     ).on_conflict_do_nothing(index_elements=["chain_id", "acl_contract_id"])
     session.execute(stmt)
+
+
+# ---------------------------------------------------------------------------
+# Scan loop
+# ---------------------------------------------------------------------------
+
+
+class HeadBlockFetcher(Protocol):
+    """Returns the current chain head per chain_id. Same shape as
+    the role_grants HeadBlockFetcher — a single eth_blockNumber
+    call per chain per pass, cached across all ACL contracts on
+    that chain."""
+
+    def head_block(self, *, chain_id: int) -> int: ...
+
+
+def scan_enrolled_acl_contracts(
+    session: Session,
+    *,
+    log_fetcher_for_chain: dict[int, "LogFetcher"],
+    block_hash_fetcher_for_chain: dict[int, "BlockHashFetcher"],
+    head_block_fetcher: HeadBlockFetcher,
+    finality_for_chain: dict[int, int] | None = None,
+    use_advisory_lock: bool = True,
+) -> list["IndexResult"]:
+    """One scan pass over every ``aragon_acl_cursors`` row. Each
+    ACL contract runs in its own transaction (commit between
+    contracts) so an advisory lock is released before moving on,
+    and a failure on one ACL rolls back ONLY that pass.
+
+    Same skip semantics as ``scan_enrolled_contracts`` for
+    role_grants: chains without configured fetchers are skipped
+    silently; chains with head=0 (RPC unreachable) skip without
+    even attempting a log fetch.
+    """
+    if finality_for_chain is None:
+        finality_for_chain = _load_finality_config(session)
+
+    cursors = session.execute(
+        select(
+            AragonAclCursor.chain_id,
+            AragonAclCursor.acl_contract_id,
+            Contract.address,
+        ).join(Contract, AragonAclCursor.acl_contract_id == Contract.id)
+    ).all()
+
+    head_cache: dict[int, int] = {}
+    results: list[IndexResult] = []
+    for chain_id, acl_contract_id, address in cursors:
+        if chain_id not in log_fetcher_for_chain:
+            continue
+        if chain_id not in block_hash_fetcher_for_chain:
+            continue
+
+        if chain_id not in head_cache:
+            head_cache[chain_id] = head_block_fetcher.head_block(chain_id=chain_id)
+        head = head_cache[chain_id]
+        if head <= 0:
+            continue
+
+        try:
+            result = index_aragon_acl_step(
+                session,
+                chain_id=chain_id,
+                acl_contract_id=acl_contract_id,
+                acl_address=address,
+                head_block=head,
+                log_fetcher=log_fetcher_for_chain[chain_id],
+                block_hash_fetcher=block_hash_fetcher_for_chain[chain_id],
+                finality_depth=finality_for_chain.get(chain_id, 12),
+                use_advisory_lock=use_advisory_lock,
+            )
+            session.commit()
+            results.append(result)
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "aragon_acl indexer pass failed for chain=%s acl_contract_id=%s address=%s",
+                chain_id,
+                acl_contract_id,
+                address,
+            )
+    return results
+
+
+def run_aragon_acl_indexer_loop(
+    session_factory: Callable[[], Session],
+    *,
+    log_fetcher_for_chain: dict[int, "LogFetcher"],
+    block_hash_fetcher_for_chain: dict[int, "BlockHashFetcher"],
+    head_block_fetcher: HeadBlockFetcher,
+    interval: float = 30.0,
+) -> None:
+    """Blocking polling loop, mirroring
+    ``run_role_grants_indexer_loop``. Designed to run as a
+    long-lived worker process behind a supervisor. Per-pass
+    exceptions are logged and the loop continues."""
+    logger.info("starting aragon_acl indexer loop interval=%ss", interval)
+    while True:
+        try:
+            with session_factory() as session:
+                scan_enrolled_acl_contracts(
+                    session,
+                    log_fetcher_for_chain=log_fetcher_for_chain,
+                    block_hash_fetcher_for_chain=block_hash_fetcher_for_chain,
+                    head_block_fetcher=head_block_fetcher,
+                )
+        except Exception:
+            logger.exception("aragon_acl indexer pass failed")
+        time.sleep(interval)
+
+
+def _load_finality_config(session: Session) -> dict[int, int]:
+    rows = session.execute(
+        select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)
+    ).all()
+    return {cid: depth for cid, depth in rows}
