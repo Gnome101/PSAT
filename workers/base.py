@@ -33,7 +33,10 @@ from utils.memory import (
 logger = logging.getLogger(__name__)
 
 DEBUG_TIMING = os.getenv("PSAT_DEBUG_TIMING", "").lower() in ("1", "true", "yes")
-STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "180"))  # seconds
+# Bumped to 600 alongside the threaded fan-outs: any single fan-out section can now legitimately go
+# minutes without a status/detail write, so the previous 180s default would requeue live jobs.
+# Mid-fan-out heartbeats (``BaseWorker._heartbeat``) keep ``updated_at`` fresh inside the long sections.
+STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "600"))  # seconds
 
 # Per-worker throttle for the stuck-job sweep; default 30s keeps fleet sweeps well under the 900s stale_timeout while
 # cutting per-poll DB load.
@@ -261,6 +264,28 @@ class BaseWorker:
     def update_detail(self, session: Session, job: Job, detail: str) -> None:
         """Update the job's progress detail message."""
         update_job_detail(session, job.id, detail)
+
+    def _heartbeat(self, session: Session, job: Job) -> None:
+        """Bump ``Job.updated_at`` without changing any other state.
+
+        Used inside long parallel sections so the stale-job sweep doesn't
+        requeue live work. Issues a stand-alone UPDATE rather than touching
+        ``job.detail`` so concurrent ``update_detail`` writes from the same
+        worker don't fight over the message.
+        """
+        from sqlalchemy import update as sa_update
+
+        try:
+            session.execute(sa_update(Job).where(Job.id == job.id).values(updated_at=datetime.now(timezone.utc)))
+            session.commit()
+        except Exception:
+            # Best-effort: a heartbeat failure is never fatal — worst case we
+            # eat a redundant requeue on the next sweep, which the idempotent
+            # claim path tolerates.
+            try:
+                session.rollback()
+            except Exception:
+                logger.debug("heartbeat rollback failed", exc_info=True)
 
     def _record_stage_timing(
         self,

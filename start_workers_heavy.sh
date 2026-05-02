@@ -9,6 +9,11 @@ cd "$(dirname "$0")"
 
 export PYTHONUNBUFFERED=1
 
+# Match start_workers.sh: parallel fan-outs occasionally need a second
+# session inside the same job, so bump base+overflow from 2+3 to 4+6.
+export PSAT_DB_POOL_SIZE="${PSAT_DB_POOL_SIZE:-4}"
+export PSAT_DB_MAX_OVERFLOW="${PSAT_DB_MAX_OVERFLOW:-6}"
+
 PIDS=()
 
 cleanup() {
