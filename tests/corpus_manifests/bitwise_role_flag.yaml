@@ -1,0 +1,41 @@
+contract_name: C
+description: |
+  F1 (codex round-7): bitwise role flag check
+  ``(roles[msg.sender] & FLAG) != 0`` recognized as a value-
+  predicate membership. The bitwise AND between an Index lvalue
+  and a constant mask folds into the descriptor's truthy_value;
+  the outer ``!= 0`` yields operator=falsy (canonical "value not
+  masked-out").
+
+  An admin-gated writer (``setRole onlyOwner``) provides Path-1
+  b.i evidence so the writer-gate pass promotes the 1-key caller-
+  keyed membership to caller_authority.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      address public ownerVar;
+      mapping(address => uint256) public roles;
+      uint256 constant MINTER_FLAG = 1;
+      function setRole(address user, uint256 mask) external {
+          require(msg.sender == ownerVar);
+          roles[user] = mask;
+      }
+      function f() external view {
+          require((roles[msg.sender] & MINTER_FLAG) != 0);
+      }
+  }
+
+expected_functions:
+  "f()":
+    authority_role: caller_authority
+    kind: membership
+    operator: falsy
+    confidence: medium
+    references_msg_sender: true
+  "setRole(address,uint256)":
+    authority_role: caller_authority
+    kind: equality
+    operator: eq
+    confidence: high
+    references_msg_sender: true
