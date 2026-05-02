@@ -24,7 +24,8 @@ from db.queue import (
     store_artifact,
     update_job_detail,
 )
-from utils.logging import bind_trace_context, configure_logging
+from schemas.stage_errors import StageError, StageErrors
+from utils.logging import bind_trace_context, configure_logging, degraded_errors_var
 from utils.memory import (
     cgroup_memory_current_bytes,
     cgroup_memory_max_bytes,
@@ -200,127 +201,161 @@ class BaseWorker:
             address=getattr(job, "address", None),
             chain=request.get("chain"),
         ):
-            logger.info("Worker %s claimed job %s", self.worker_id, job.id)
-            t0 = time.monotonic()
-            rss_before = current_rss_bytes()
-            started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            # Per-job accumulator for ``record_degraded`` calls. Reset
+            # alongside ``bind_trace_context`` so K>1 jobs running in
+            # parallel pool threads don't share a list (each thread's
+            # context is a copy from the dispatcher).
+            degraded_accumulator: list[StageError] = []
+            accumulator_token = degraded_errors_var.set(degraded_accumulator)
             try:
-                self.process(session, job)
-                elapsed = time.monotonic() - t0
-                ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                rss_after = current_rss_bytes()
-                rss_delta_mb = (rss_after - rss_before) / (1024 * 1024)
-                logger.info(
-                    "[JOB] worker=%s job=%s stage=%s elapsed_s=%.1f rss_mb=%s delta_mb=%+.0f cgroup_used_mb=%s",
-                    self.worker_id,
-                    job.id,
-                    self.stage.value,
-                    elapsed,
-                    mb(rss_after),
-                    rss_delta_mb,
-                    mb(cgroup_memory_current_bytes()),
-                    extra={
-                        "duration_ms": int(elapsed * 1000),
-                        "phase": "job",
-                        "rss_mb": mb(rss_after),
-                        "rss_delta_mb": round(rss_delta_mb, 1),
-                    },
-                )
-                # Record timing before advancing — otherwise the next-stage worker can race read-modify-write on the
-                # shared stage_timings artifact.
-                self._record_stage_timing(
-                    session,
-                    job,
-                    started_at=started_at_iso,
-                    ended_at=ended_at_iso,
-                    elapsed_s=elapsed,
-                    status="success",
-                )
-                if self.next_stage == JobStage.done:
-                    from db.queue import complete_job
-
-                    complete_job(session, job.id)
-                else:
-                    advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
-                logger.info(
-                    "Worker %s completed job %s in %.1fs",
-                    self.worker_id,
-                    job.id,
-                    elapsed,
-                    extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "success"},
-                )
-            except JobHandledDirectly:
-                elapsed = time.monotonic() - t0
-                ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                # Fresh session — process() may have left the original in an inconsistent state.
+                logger.info("Worker %s claimed job %s", self.worker_id, job.id)
+                t0 = time.monotonic()
+                rss_before = current_rss_bytes()
+                started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                 try:
-                    fresh_for_timing = SessionLocal()
-                    self._record_stage_timing(
-                        fresh_for_timing,
-                        job,
-                        started_at=started_at_iso,
-                        ended_at=ended_at_iso,
-                        elapsed_s=elapsed,
-                        status="handled_directly",
+                    self.process(session, job)
+                    elapsed = time.monotonic() - t0
+                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    rss_after = current_rss_bytes()
+                    rss_delta_mb = (rss_after - rss_before) / (1024 * 1024)
+                    logger.info(
+                        "[JOB] worker=%s job=%s stage=%s elapsed_s=%.1f rss_mb=%s delta_mb=%+.0f cgroup_used_mb=%s",
+                        self.worker_id,
+                        job.id,
+                        self.stage.value,
+                        elapsed,
+                        mb(rss_after),
+                        rss_delta_mb,
+                        mb(cgroup_memory_current_bytes()),
+                        extra={
+                            "duration_ms": int(elapsed * 1000),
+                            "phase": "job",
+                            "rss_mb": mb(rss_after),
+                            "rss_delta_mb": round(rss_delta_mb, 1),
+                        },
                     )
-                    fresh_for_timing.close()
-                except Exception:
-                    logger.exception("Worker %s: failed to record handled_directly timing", self.worker_id)
-                logger.info(
-                    "Worker %s: job %s handled directly by process()",
-                    self.worker_id,
-                    job.id,
-                    extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "handled_directly"},
-                )
-            except Exception:
-                elapsed = time.monotonic() - t0
-                ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                error = traceback.format_exc()
-                logger.error(
-                    "\n=================== WORKER FAILURE ===================\n"
-                    "Worker:   %s\n"
-                    "Job:      %s\n"
-                    "Address:  %s\n"
-                    "Name:     %s\n"
-                    "Stage:    %s\n"
-                    "-------------------------------------------------------\n"
-                    "%s"
-                    "=======================================================",
-                    self.worker_id,
-                    job.id,
-                    getattr(job, "address", "?"),
-                    getattr(job, "name", "?"),
-                    self.stage.value,
-                    error,
-                    extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "failed"},
-                )
-                try:
-                    session.rollback()
-                    fail_job(session, job.id, error)
+                    # Record timing before advancing — otherwise the next-stage worker can race read-modify-write on the
+                    # shared stage_timings artifact.
                     self._record_stage_timing(
                         session,
                         job,
                         started_at=started_at_iso,
                         ended_at=ended_at_iso,
                         elapsed_s=elapsed,
-                        status="failed",
+                        status="success",
                     )
-                except Exception:
-                    logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
+                    # Drain degraded entries before advancing so a stage_errors
+                    # artifact is visible to the next-stage worker at its claim.
+                    if degraded_accumulator:
+                        self._persist_stage_errors(job, degraded_accumulator)
+                    if self.next_stage == JobStage.done:
+                        from db.queue import complete_job
+
+                        complete_job(session, job.id)
+                    else:
+                        advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
+                    logger.info(
+                        "Worker %s completed job %s in %.1fs",
+                        self.worker_id,
+                        job.id,
+                        elapsed,
+                        extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "success"},
+                    )
+                except JobHandledDirectly:
+                    elapsed = time.monotonic() - t0
+                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    # Fresh session — process() may have left the original in an inconsistent state.
                     try:
-                        fresh = SessionLocal()
-                        fail_job(fresh, job.id, error[-4000:])
+                        fresh_for_timing = SessionLocal()
                         self._record_stage_timing(
-                            fresh,
+                            fresh_for_timing,
+                            job,
+                            started_at=started_at_iso,
+                            ended_at=ended_at_iso,
+                            elapsed_s=elapsed,
+                            status="handled_directly",
+                        )
+                        fresh_for_timing.close()
+                    except Exception:
+                        logger.exception("Worker %s: failed to record handled_directly timing", self.worker_id)
+                    if degraded_accumulator:
+                        self._persist_stage_errors(job, degraded_accumulator)
+                    logger.info(
+                        "Worker %s: job %s handled directly by process()",
+                        self.worker_id,
+                        job.id,
+                        extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "handled_directly"},
+                    )
+                except Exception as exc:
+                    elapsed = time.monotonic() - t0
+                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+                    error = traceback.format_exc()
+                    logger.error(
+                        "\n=================== WORKER FAILURE ===================\n"
+                        "Worker:   %s\n"
+                        "Job:      %s\n"
+                        "Address:  %s\n"
+                        "Name:     %s\n"
+                        "Stage:    %s\n"
+                        "-------------------------------------------------------\n"
+                        "%s"
+                        "=======================================================",
+                        self.worker_id,
+                        job.id,
+                        getattr(job, "address", "?"),
+                        getattr(job, "name", "?"),
+                        self.stage.value,
+                        error,
+                        extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "failed"},
+                    )
+                    # Append the job-failing exception alongside any degraded
+                    # entries the run produced before the crash. Persist via
+                    # a fresh session so the failed primary transaction can't
+                    # take the artifact down with it.
+                    degraded_accumulator.append(
+                        StageError(
+                            stage=self.stage.value,
+                            severity="error",
+                            exc_type=f"{type(exc).__module__}.{type(exc).__name__}",
+                            message=str(exc),
+                            traceback=error,
+                            phase=None,
+                            trace_id=getattr(job, "trace_id", None),
+                            job_id=str(job.id),
+                            worker_id=self.worker_id,
+                            failed_at=datetime.now(timezone.utc),
+                        )
+                    )
+                    self._persist_stage_errors(job, degraded_accumulator)
+                    try:
+                        session.rollback()
+                        fail_job(session, job.id, error)
+                        self._record_stage_timing(
+                            session,
                             job,
                             started_at=started_at_iso,
                             ended_at=ended_at_iso,
                             elapsed_s=elapsed,
                             status="failed",
                         )
-                        fresh.close()
                     except Exception:
-                        logger.exception("Could not mark job %s as failed even with fresh session", job.id)
+                        logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
+                        try:
+                            fresh = SessionLocal()
+                            fail_job(fresh, job.id, error[-4000:])
+                            self._record_stage_timing(
+                                fresh,
+                                job,
+                                started_at=started_at_iso,
+                                ended_at=ended_at_iso,
+                                elapsed_s=elapsed,
+                                status="failed",
+                            )
+                            fresh.close()
+                        except Exception:
+                            logger.exception("Could not mark job %s as failed even with fresh session", job.id)
+            finally:
+                degraded_errors_var.reset(accumulator_token)
 
     def _run_one_job(self, job_id) -> None:
         """K>1 dispatcher entry point: open a per-job session, re-fetch the job
@@ -497,6 +532,37 @@ class BaseWorker:
                 session.rollback()
             except Exception:
                 logger.debug("heartbeat rollback failed", exc_info=True)
+
+    def _persist_stage_errors(self, job: Job, errors: list[StageError]) -> None:
+        """Write the ``stage_errors`` artifact via a fresh session.
+
+        Used on both the success and failure paths so the artifact survives a
+        broken primary transaction. ``store_artifact`` does its own commit, so
+        the only state to clean up is the fresh session itself. Best-effort —
+        we never want a stage_errors write failure to mask the underlying job
+        failure or block the success advance.
+        """
+        if not errors:
+            return
+        fresh = SessionLocal()
+        try:
+            store_artifact(
+                fresh,
+                job.id,
+                "stage_errors",
+                data=StageErrors(errors=errors).model_dump(mode="json"),
+            )
+        except Exception:
+            logger.exception(
+                "Worker %s: failed to write stage_errors artifact for job %s (non-fatal)",
+                self.worker_id,
+                job.id,
+            )
+        finally:
+            try:
+                fresh.close()
+            except Exception:
+                logger.debug("stage_errors session close failed", exc_info=True)
 
     def _record_stage_timing(
         self,
