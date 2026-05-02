@@ -206,10 +206,73 @@ contract C {
 """
 
 
+_MAKER_WARDS = """
+pragma solidity ^0.8.19;
+contract C {
+    mapping(address => uint256) public wards;
+    uint256 public x;
+    function rely(address addr) external {
+        require(wards[msg.sender] == 1);
+        wards[addr] = 1;
+    }
+    function deny(address addr) external {
+        require(wards[msg.sender] == 1);
+        wards[addr] = 0;
+    }
+    function mint(uint256 v) external {
+        require(wards[msg.sender] == 1);
+        x = v;
+    }
+}
+"""
+
+_OZ_REENTRANCY_GUARD = """
+pragma solidity ^0.8.19;
+contract C {
+    uint256 private _status;
+    uint256 private constant _NOT_ENTERED = 1;
+    uint256 private constant _ENTERED = 2;
+    uint256 public x;
+    modifier nonReentrant() {
+        require(_status != _ENTERED);
+        _status = _ENTERED;
+        _;
+        _status = _NOT_ENTERED;
+    }
+    function withdraw() external nonReentrant {
+        x = x + 1;
+    }
+}
+"""
+
+_OZ_AC_CROSS_FN_HELPER = """
+pragma solidity ^0.8.19;
+contract C {
+    mapping(bytes32 => mapping(address => bool)) private _roles;
+    mapping(bytes32 => bytes32) private _roleAdmins;
+    modifier onlyRole(bytes32 role) {
+        _checkRole(role);
+        _;
+    }
+    function _checkRole(bytes32 role) internal view {
+        if (!_roles[role][msg.sender]) revert();
+    }
+    function getRoleAdmin(bytes32 role) public view returns (bytes32) {
+        return _roleAdmins[role];
+    }
+    function grantRole(bytes32 role, address account) public onlyRole(getRoleAdmin(role)) {
+        _roles[role][account] = true;
+    }
+}
+"""
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
     ("oz_pausable", _OZ_PAUSABLE),
+    ("maker_wards", _MAKER_WARDS),
+    ("oz_reentrancy_guard", _OZ_REENTRANCY_GUARD),
+    ("oz_ac_cross_fn_helper", _OZ_AC_CROSS_FN_HELPER),
 ]
 
 
