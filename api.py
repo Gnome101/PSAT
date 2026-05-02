@@ -2033,6 +2033,95 @@ def _audit_report_to_dict(ar: Any) -> dict[str, Any]:
     }
 
 
+@app.get("/api/company/{company_name}/v2_capabilities")
+def company_v2_capabilities(company_name: str) -> dict[str, Any]:
+    """v2 capability map for every analyzed contract in a company.
+
+    Returned as a separate endpoint (not embedded in the company-
+    overview payload) because resolving capabilities requires
+    running the AdapterRegistry over each contract's predicate
+    trees + repo lookups — adds tens of milliseconds per contract,
+    not free to include in the already-1-3MB overview response.
+    UI consumers fetch this when they want to render guard
+    details for the v2 cutover; otherwise they keep using the
+    overview's v1 fields.
+
+    Response shape::
+
+        {
+          "company": "<name>",
+          "contracts": {
+            "0xab...": {
+              "guardedFn()": {
+                "kind": "finite_set", "members": [...],
+                "membership_quality": "exact",
+                "confidence": "enumerable", ...
+              },
+              ...
+            },
+            "0xcd...": {...},
+            "0xef...": null   // analyzed but no v2 artifact (legacy)
+          },
+          "missing_v2_count": <int>
+        }
+
+    A contract with no v2 artifact maps to ``null`` so consumers
+    can distinguish "not yet v2-analyzed" from "v2-analyzed and
+    has no guarded functions" (the latter maps to ``{}``).
+
+    NOT admin-gated — read-only / idempotent, the same shape
+    contract as ``/api/contract/{addr}/capabilities``.
+    """
+    from services.resolution.capability_resolver import resolve_contract_capabilities
+
+    with SessionLocal() as session:
+        protocol_row = session.execute(
+            select(Protocol).where(Protocol.name == company_name)
+        ).scalar_one_or_none()
+        if protocol_row is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+
+        # Distinct addresses with completed jobs in this company.
+        # Same dedupe rule as cutover_dry_run: most-recent Job per
+        # address wins via the resolver's own ordering.
+        addresses = sorted(
+            {
+                (job.address or "").lower()
+                for job in session.execute(
+                    select(Job).where(
+                        Job.protocol_id == protocol_row.id,
+                        Job.status == JobStatus.completed,
+                        Job.address.isnot(None),
+                    )
+                ).scalars()
+                if job.address
+            }
+        )
+
+        contracts: dict[str, Any] = {}
+        missing = 0
+        for addr in addresses:
+            try:
+                caps = resolve_contract_capabilities(session, address=addr)
+            except Exception:
+                logger.exception(
+                    "v2 capabilities resolution failed for %s in company %s; "
+                    "treating as missing",
+                    addr,
+                    company_name,
+                )
+                caps = None
+            if caps is None:
+                missing += 1
+            contracts[addr] = caps
+
+        return {
+            "company": company_name,
+            "contracts": contracts,
+            "missing_v2_count": missing,
+        }
+
+
 @app.get("/api/company/{company_name}/audits")
 def company_audits(company_name: str) -> dict[str, Any]:
     """List all known audit reports for a company."""
