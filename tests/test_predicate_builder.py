@@ -442,6 +442,106 @@ def test_polarity_normalization_truth_table(tmp_path, source_template, expected_
     assert leaves[0]["operator"] == expected_op, leaves[0]
 
 
+def test_modifier_only_owner_admits(tmp_path):
+    """Function gated entirely by an `onlyOwner` modifier (no inline
+    require) — RevertDetector now walks modifier bodies, so the gate
+    is found and the function admits with caller_authority."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            uint256 public x;
+            modifier onlyOwner() {
+                require(msg.sender == ownerVar);
+                _;
+            }
+            function f() external onlyOwner {
+                x = 1;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    assert tree is not None
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1, leaves
+    leaf = leaves[0]
+    assert leaf["kind"] == "equality"
+    assert leaf["operator"] == "eq"
+    assert leaf["authority_role"] == "caller_authority"
+
+
+def test_modifier_with_external_bool_call(tmp_path):
+    """Modifier body contains an external authority call. Provenance
+    runs over the modifier nodes, finds the HighLevelCall whose
+    target is a state-var and whose args include msg.sender. Leaf
+    classifies as delegated_authority."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IAuthority {
+            function canCall(address) external view returns (bool);
+        }
+        contract C {
+            IAuthority public authority;
+            uint256 public x;
+            modifier authed() {
+                require(authority.canCall(msg.sender));
+                _;
+            }
+            function f() external authed {
+                x = 1;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    assert tree is not None
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1
+    leaf = leaves[0]
+    assert leaf["kind"] == "external_bool"
+    assert leaf["authority_role"] == "delegated_authority"
+
+
+def test_modifier_chained_yields_multiple_gates(tmp_path):
+    """Two modifiers chained — both reverts get captured."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            uint256 public threshold;
+            uint256 public x;
+            modifier onlyOwner() {
+                require(msg.sender == ownerVar);
+                _;
+            }
+            modifier minThreshold(uint256 amount) {
+                require(amount > threshold);
+                _;
+            }
+            function f(uint256 amount) external onlyOwner minThreshold(amount) {
+                x = amount;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    assert tree is not None
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 2
+    kinds = sorted(leaf["kind"] for leaf in leaves)
+    assert kinds == ["comparison", "equality"]
+
+
 def test_unguarded_function_returns_none(tmp_path):
     sl = _compile(
         tmp_path,

@@ -145,8 +145,17 @@ class RevertDetector:
         self._gates: list[RevertGate] = []
 
     def run(self) -> list[RevertGate]:
+        # Walk the function's own body.
         for node in self.function.nodes:
             self._scan_node(node)
+        # Walk each modifier's body. Slither doesn't inline modifiers
+        # (it emits an ``InternalCall: MODIFIER_CALL`` IR in the
+        # function body but keeps the modifier as a separate Function-
+        # like object). Each modifier body's reverts gate the function
+        # too, so we collect them here.
+        for modifier in getattr(self.function, "modifiers", []) or []:
+            for node in getattr(modifier, "nodes", []) or []:
+                self._scan_node(node)
         # Case 8: opaque-Yul fallback. We only emit ``opaque`` when an
         # InlineAssemblyOperation IR contains a textual ``revert`` we
         # couldn't structurally extract — i.e., Yul control flow we

@@ -618,25 +618,46 @@ def _unsupported_leaf(reason: str, expression: str) -> LeafPredicate:
 def _find_defining_ir(value: Any, node: Any, function: Any) -> Any | None:
     """Find the IR opcode whose lvalue equals ``value``. Looks in
     the gate's home node first, then walks back through the
-    function's nodes (covers cases where the condition is computed
-    a few lines before the gate)."""
+    function's nodes AND each modifier's nodes (gates inside
+    modifier bodies still admit the function and need their own
+    operand resolution)."""
     name = getattr(value, "name", None)
     if name is None:
         return None
-    # Search in CFG order, starting from the gate's node and walking
-    # backward. Slither's nodes list is in source order, so the
-    # defining IR for a temp/local appears earlier than its use.
-    nodes = list(getattr(function, "nodes", []) or [])
-    if node is not None and node in nodes:
-        idx = nodes.index(node)
-        candidate_nodes = nodes[idx::-1]
-    else:
-        candidate_nodes = list(reversed(nodes))
-    for n in candidate_nodes:
-        for ir in reversed(getattr(n, "irs_ssa", None) or getattr(n, "irs", []) or []):
-            lv = getattr(ir, "lvalue", None)
-            if lv is not None and getattr(lv, "name", None) == name:
-                return ir
+    # Build the search node list: start from the gate's node and walk
+    # backward through whichever container (function or modifier) it
+    # lives in. If we don't find the defining IR there, fall back to
+    # scanning all containers' nodes in reverse.
+    containers = [function]
+    containers.extend(getattr(function, "modifiers", []) or [])
+    # Prefer the container the gate lives in.
+    if node is not None:
+        for c in containers:
+            cnodes = list(getattr(c, "nodes", []) or [])
+            if node in cnodes:
+                idx = cnodes.index(node)
+                # Search backward from gate, then forward, then other
+                # containers.
+                ordered = cnodes[idx::-1] + cnodes[idx + 1 :]
+                for n in ordered:
+                    found = _scan_node_for_lvalue(n, name)
+                    if found is not None:
+                        return found
+                break
+    # Fallback: scan all containers.
+    for c in containers:
+        for n in reversed(list(getattr(c, "nodes", []) or [])):
+            found = _scan_node_for_lvalue(n, name)
+            if found is not None:
+                return found
+    return None
+
+
+def _scan_node_for_lvalue(node: Any, name: str) -> Any | None:
+    for ir in reversed(getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []):
+        lv = getattr(ir, "lvalue", None)
+        if lv is not None and getattr(lv, "name", None) == name:
+            return ir
     return None
 
 

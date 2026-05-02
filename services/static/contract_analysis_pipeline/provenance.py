@@ -238,7 +238,9 @@ class ProvenanceEngine:
     # ------------------------------------------------------------------
 
     def _seed_parameters(self) -> None:
-        """Bind each formal parameter to a `parameter` source."""
+        """Bind each formal parameter to a `parameter` source. Also
+        seeds modifier-scope parameters so the engine can resolve
+        operands inside modifier bodies."""
         bindings = self._active_bindings()
         for idx, param in enumerate(self.function.parameters):
             name = self._var_name(param)
@@ -260,6 +262,31 @@ class ProvenanceEngine:
                     }
                 ),
             )
+        # Modifier parameters: each modifier's formal parameters get
+        # seeded as local `parameter` sources. ParameterBindingEnv (a
+        # later sub-task) will substitute these with the invocation
+        # arguments at the call site so the leaf reports the
+        # function-level parameter index correctly. For now, the
+        # modifier-scope parameter index is what's recorded — fine
+        # for operand classification but not for argument binding to
+        # the calling function.
+        for modifier in getattr(self.function, "modifiers", []) or []:
+            for idx, param in enumerate(getattr(modifier, "parameters", []) or []):
+                name = self._var_name(param)
+                if not name or name in self.provenance.sources:
+                    continue
+                self.provenance.set(
+                    name,
+                    frozenset(
+                        {
+                            Source(
+                                kind="parameter",
+                                parameter_index=idx,
+                                parameter_name=getattr(param, "name", None),
+                            )
+                        }
+                    ),
+                )
 
     def _active_bindings(self) -> dict[str, SourceSet] | None:
         return self._binding_frames[-1] if self._binding_frames else None
@@ -269,8 +296,17 @@ class ProvenanceEngine:
     # ------------------------------------------------------------------
 
     def _iter_nodes(self) -> Iterable[Any]:
+        # Walk the function's own body first.
         for node in self.function.nodes:
             yield node
+        # Then walk each modifier's body. Slither doesn't inline
+        # modifiers, so any TMP / Phi defined inside a modifier body
+        # would otherwise be invisible to the engine. We process
+        # modifier nodes in the same SSA name space — Slither uses
+        # distinct names per modifier scope, so no clash.
+        for modifier in getattr(self.function, "modifiers", []) or []:
+            for node in getattr(modifier, "nodes", []) or []:
+                yield node
 
     def _step_node(self, node: Any) -> bool:
         """Apply transfer functions to all IRs in this CFG node.
