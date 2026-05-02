@@ -480,6 +480,24 @@ contract C {
 }
 """
 
+_OZ_PAUSABLE_5X = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    bool private _paused;
+    uint256 public x;
+    error EnforcedPause();
+    function paused() public view returns (bool) { return _paused; }
+    function _requireNotPaused() internal view {
+        if (paused()) revert EnforcedPause();
+    }
+    modifier whenNotPaused() { _requireNotPaused(); _; }
+    function pause() external { require(msg.sender == ownerVar); _paused = true; }
+    function unpause() external { require(msg.sender == ownerVar); _paused = false; }
+    function transfer() external whenNotPaused { x = x + 1; }
+}
+"""
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
@@ -497,6 +515,7 @@ _FIXTURES = [
     ("time_gate", _TIME_GATE),
     ("oz_ownable_5x", _OZ_OWNABLE_5X),
     ("oz_ac_5x_overloaded", _OZ_AC_5X_OVERLOADED),
+    ("oz_pausable_5x", _OZ_PAUSABLE_5X),
 ]
 
 
