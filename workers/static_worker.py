@@ -1279,20 +1279,21 @@ class StaticWorker(BaseWorker):
             store_artifact(session, job.id, "analysis_error", data={"error": str(exc)})
             return None
 
-        # Schema-v2 predicate_trees emit (shadow-mode). The v2
-        # artifact is embedded in collect_contract_analysis's return
-        # dict under ``_v2_predicate_trees`` so we don't pay for a
-        # second Slither parse. Pop it before persisting v1 so the
-        # v1 contract_analysis artifact's shape stays unchanged;
-        # store v2 as its own artifact (``predicate_trees``) keyed
-        # off the same job_id. Downstream consumers (probe API,
-        # resolver) opt in by reading the v2 artifact when present.
+        # Schema-v2 cutover: semantic_guards is now derived from the
+        # embedded ``_v2_predicate_trees`` (populated by
+        # collect_contract_analysis) via the shim — see
+        # services/static/contract_analysis_pipeline/semantic_guards.py.
+        # Build it BEFORE popping the v2 key so the shim has the data
+        # it needs; the v2 trees are then persisted as their own
+        # ``predicate_trees`` artifact for downstream resolver / probe
+        # consumers, and the contract_analysis artifact is stored
+        # without the embedded v2 dict.
+        semantic_guards = build_semantic_guards(analysis_data)
         v2_predicate_trees = analysis_data.pop("_v2_predicate_trees", None)
 
         # Persist side artifacts into the temp workspace so later static
         # subphases (tracking plan) can read them from disk.
         (project_dir / "contract_analysis.json").write_text(json.dumps(analysis_data, indent=2) + "\n")
-        semantic_guards = build_semantic_guards(analysis_data)
         (project_dir / "semantic_guards.json").write_text(json.dumps(semantic_guards, indent=2) + "\n")
         if v2_predicate_trees is not None:
             (project_dir / "predicate_trees.json").write_text(
