@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -809,6 +810,84 @@ class TvlSnapshot(Base):
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="on_chain")
 
     __table_args__ = (Index("ix_tvl_snapshots_protocol_timestamp", "protocol_id", "timestamp"),)
+
+
+class RoleGrantsEvent(Base):
+    """Append-only log of RoleGranted / RoleRevoked events observed
+    on AccessControl-style contracts. Used by AccessControlAdapter
+    (services/resolution/adapters/access_control.py) to enumerate
+    role members exactly. Indexed by the role_grants_indexer worker
+    (workers/role_grants_indexer.py) per (chain_id, contract_id)
+    using advisory locks for reorg-safe replay."""
+
+    __tablename__ = "role_grants_events"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True
+    )
+    tx_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    log_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    member: Mapped[str] = mapped_column(String(42), nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    block_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    transaction_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_role_grants_events_lookup",
+            "chain_id",
+            "contract_id",
+            "role",
+            "member",
+            "block_number",
+            "log_index",
+        ),
+        Index(
+            "ix_role_grants_events_block",
+            "chain_id",
+            "contract_id",
+            "block_number",
+            "log_index",
+        ),
+    )
+
+
+class RoleGrantsCursor(Base):
+    """One row per (chain_id, contract_id). Tracks the indexer's
+    last-indexed block + block-hash for reorg detection. The indexer
+    takes a Postgres advisory lock on (contract_id) to serialize
+    work across worker replicas."""
+
+    __tablename__ = "role_grants_cursors"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True
+    )
+    last_indexed_block: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    last_indexed_block_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32), nullable=True)
+    last_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ChainFinalityConfig(Base):
+    """Per-chain confirmation depth — how many blocks deep an event
+    must be before considered final (not subject to reorg). Seeded
+    by the migration; can be overridden per deployment by updating
+    the row directly."""
+
+    __tablename__ = "chain_finality_config"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    confirmation_depth: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class EtherscanCache(Base):
