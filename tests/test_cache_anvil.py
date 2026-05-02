@@ -450,7 +450,9 @@ class TestAnvilProxyCache:
             "workers.static_worker.build_dependency_visualization",
             lambda *a, **kw: {"nodes": [], "edges": [], "metadata": {}},
         )
-        monkeypatch.setattr("workers.static_worker._resolve_upgrade_history", lambda *a, **kw: None)
+        # Step 1 inlined the upgrade-history resolver into _run_dependency_phase;
+        # monkeypatch the underlying builder it now calls instead.
+        monkeypatch.setattr("services.discovery.upgrade_history.build_upgrade_history", lambda *a, **kw: None)
 
         # Run the dependency phase
         from workers.static_worker import StaticWorker
