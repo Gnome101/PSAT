@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from slither.slither import Slither
@@ -11,6 +12,7 @@ from schemas.contract_analysis import AuditAlignment, ContractAnalysis, Summary
 from services.static.vyper_analysis import collect_vyper_contract_analysis, is_vyper_project
 
 from .graph import build_permission_graph
+from .predicate_artifacts import build_predicate_artifacts
 from .semantic_guards import build_semantic_guards
 from .shared import _load_json, _select_subject_contract
 from .summaries import (
@@ -26,6 +28,8 @@ from .summaries import (
 )
 from .tracking import build_controller_tracking, build_policy_tracking
 
+logger = logging.getLogger(__name__)
+
 
 def analyze_contract(project_dir: Path) -> Path:
     """Generate contract_analysis.json for a scaffolded project."""
@@ -34,7 +38,34 @@ def analyze_contract(project_dir: Path) -> Path:
     output_path.write_text(json.dumps(analysis, indent=2) + "\n")
     semantic_guards_path = project_dir / "semantic_guards.json"
     semantic_guards_path.write_text(json.dumps(build_semantic_guards(analysis), indent=2) + "\n")
+
+    # Schema-v2 shadow artifact — emit predicate_trees.json alongside
+    # the existing v1 outputs. Defensive try/except: a failure here
+    # MUST NOT fail the whole analysis (the v1 path is still
+    # authoritative; v2 is opt-in for downstream consumers during
+    # the rollout).
+    try:
+        predicate_trees_path = project_dir / "predicate_trees.json"
+        predicate_artifact = _build_predicate_trees_for_project(project_dir)
+        predicate_trees_path.write_text(json.dumps(predicate_artifact, indent=2) + "\n")
+    except Exception:
+        logger.exception("predicate_trees.json emit failed for %s", project_dir)
+
     return output_path
+
+
+def _build_predicate_trees_for_project(project_dir: Path) -> dict:
+    """Re-parse with Slither and run the predicate pipeline. Vyper
+    projects skip the artifact (the predicate pipeline operates on
+    Slither IR; Vyper has its own static path)."""
+    meta = _load_json(project_dir / "contract_meta.json", {})
+    if is_vyper_project(project_dir, meta):
+        return {"schema_version": "v2", "skipped": "vyper"}
+    slither = Slither(str(project_dir))
+    subject = _select_subject_contract(slither, meta.get("contract_name"))
+    if subject is None:
+        return {"schema_version": "v2", "skipped": "no_subject_contract"}
+    return build_predicate_artifacts(subject)
 
 
 def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
