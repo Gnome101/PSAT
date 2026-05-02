@@ -85,6 +85,13 @@ def apply_writer_gate_pass(
         if after == before:
             break
 
+    # Re-stamp confidence on every leaf so writer-gate-promoted
+    # leaves don't carry the pre-promotion (low/business) value.
+    from .predicates import apply_confidence_to_tree
+
+    for tree in predicate_trees.values():
+        apply_confidence_to_tree(tree)
+
 
 def _snapshot_authority_roles(trees: dict[str, PredicateTree]) -> tuple:
     """Return a hashable snapshot of every leaf's authority_role —
@@ -150,7 +157,12 @@ def _maybe_promote_leaf(
         if keys[0]["source"] not in ("msg_sender", "tx_origin", "signature_recovery"):
             return
         classification = _classify_writers(storage_var, writers, all_trees)
-        if classification == "promote":
+        if classification == "promote_self_admin":
+            leaf["authority_role"] = "caller_authority"
+            leaf["basis"] = list(leaf.get("basis", [])) + [
+                f"writer-gate promoted: {storage_var} self-administered (writer reads same map)",
+            ]
+        elif classification == "promote":
             leaf["authority_role"] = "caller_authority"
             leaf["basis"] = list(leaf.get("basis", [])) + [
                 f"writer-gate promoted: {storage_var} writers are authority-gated",
@@ -181,25 +193,35 @@ def _classify_writers(
     all_trees: dict[str, PredicateTree],
 ) -> str:
     """Returns one of:
-    - "promote"  — at least one external_keyed writer is gated
-      (rule b.i / b.ii) → leaf gets caller_authority
+    - "promote_self_admin"  — at least one external_keyed writer is
+      itself gated by reading the same storage var (rule b.ii). Tight
+      self-admin ACL shape; downstream confidence is HIGH.
+    - "promote"  — at least one external_keyed writer is gated by
+      some other authority leaf (rule b.i). Confidence is MEDIUM
+      because the auth signal is transitive.
     - "keep_business" — rule a (all self-keyed) or rule c (open
       registration)
     """
     write_kinds: list[str] = []  # per writer
-    has_external_keyed_gated = False
+    has_external_keyed_self_admin = False
+    has_external_keyed_other_auth = False
     for fn in writers:
         kinds = _classify_writer_keys(fn, storage_var)
         write_kinds.extend(kinds)
         if "external_keyed" in kinds:
-            if _writer_is_gated(fn, storage_var, all_trees):
-                has_external_keyed_gated = True
+            gating = _writer_gating_kind(fn, storage_var, all_trees)
+            if gating == "self_admin":
+                has_external_keyed_self_admin = True
+            elif gating == "other_auth":
+                has_external_keyed_other_auth = True
 
     # Rule a: ALL self_keyed → business.
     if write_kinds and all(k == "self_keyed" for k in write_kinds):
         return "keep_business"
 
-    if has_external_keyed_gated:
+    if has_external_keyed_self_admin:
+        return "promote_self_admin"
+    if has_external_keyed_other_auth:
         return "promote"
 
     return "keep_business"
@@ -259,35 +281,51 @@ def _classify_key(key: Any) -> str:
     return "external_keyed"
 
 
-def _writer_is_gated(
+def _writer_gating_kind(
     fn: Any,
     storage_var: str,
     all_trees: dict[str, PredicateTree],
-) -> bool:
-    """A writer is "gated" if its own predicate tree contains a
-    caller_authority or delegated_authority leaf, OR a membership
-    leaf reading the same storage_var (rule b.ii self-administered)."""
+) -> str | None:
+    """Returns 'self_admin' (rule b.ii: writer's own gate reads the
+    same map M), 'other_auth' (rule b.i: writer has caller_authority
+    or delegated_authority on something else), or None (ungated).
+    Self-admin takes precedence when both shapes are present —
+    Maker-style wards are the canonical case and treated as the
+    tighter signal."""
     tree = all_trees.get(fn.full_name)
     if tree is None:
-        return False
-    return _tree_has_authority_or_self_admin(tree, storage_var)
+        return None
+    if _tree_has_self_admin(tree, storage_var):
+        return "self_admin"
+    if _tree_has_other_authority(tree):
+        return "other_auth"
+    return None
 
 
-def _tree_has_authority_or_self_admin(tree: PredicateTree, storage_var: str) -> bool:
+def _tree_has_self_admin(tree: PredicateTree, storage_var: str) -> bool:
     if tree.get("op") == "LEAF":
         leaf = tree.get("leaf")
         if leaf is None:
             return False
-        if leaf.get("authority_role") in ("caller_authority", "delegated_authority"):
-            return True
-        # Self-administered (rule b.ii): writer's gate reads the same map.
         if leaf.get("kind") == "membership":
             sd = leaf.get("set_descriptor") or {}
             if sd.get("storage_var") == storage_var:
                 return True
         return False
     for child in tree.get("children") or []:
-        if _tree_has_authority_or_self_admin(child, storage_var):
+        if _tree_has_self_admin(child, storage_var):
+            return True
+    return False
+
+
+def _tree_has_other_authority(tree: PredicateTree) -> bool:
+    if tree.get("op") == "LEAF":
+        leaf = tree.get("leaf")
+        if leaf is None:
+            return False
+        return leaf.get("authority_role") in ("caller_authority", "delegated_authority")
+    for child in tree.get("children") or []:
+        if _tree_has_other_authority(child):
             return True
     return False
 
@@ -330,7 +368,7 @@ def _is_authority_derived_counter(
             # Non-additive writer — risk of admin-set / reset.
             if _has_state_var_assignment(fn, storage_var):
                 tree = all_trees.get(fn.full_name)
-                if tree is None or not _tree_has_authority_or_self_admin(tree, storage_var):
+                if tree is None or not (_tree_has_other_authority(tree) or _tree_has_self_admin(tree, storage_var)):
                     has_unguarded_settable_writer = True
             continue
         # All write sites in this function are additive. Check
@@ -341,7 +379,7 @@ def _is_authority_derived_counter(
         tree = all_trees.get(fn.full_name)
         if tree is None:
             continue
-        if _tree_has_authority_or_self_admin(tree, storage_var):
+        if (_tree_has_other_authority(tree) or _tree_has_self_admin(tree, storage_var)):
             has_authority_additive_writer = True
 
     return has_authority_additive_writer and not has_unguarded_settable_writer

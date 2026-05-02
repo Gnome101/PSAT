@@ -144,10 +144,14 @@ AuthorityRole = Literal[
 ]
 
 
+Confidence = Literal["high", "medium", "low"]
+
+
 class LeafPredicate(TypedDict):
     kind: LeafKind
     operator: LeafOperator
     authority_role: AuthorityRole
+    confidence: NotRequired[Confidence]
     operands: list[Operand]
     set_descriptor: NotRequired[SetDescriptor | None]
     unsupported_reason: NotRequired[str | None]

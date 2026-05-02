@@ -357,6 +357,9 @@ def test_oz_pausable_pattern(tmp_path):
     leaves = _all_leaves(trees["transfer()"])
     assert len(leaves) == 1
     assert leaves[0]["authority_role"] == "pause"
+    # Pause classifier cross-references writer-with-auth + reader-
+    # with-revert; HIGH confidence by construction.
+    assert leaves[0]["confidence"] == "high"
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +391,9 @@ def test_oz_reentrancy_guard_pattern(tmp_path):
     leaves = _all_leaves(trees["withdraw()"])
     assert len(leaves) == 1
     assert leaves[0]["authority_role"] == "reentrancy"
+    # ReentrancyAnalyzer's pre/post-placeholder write pattern is a
+    # tight structural match; HIGH confidence.
+    assert leaves[0]["confidence"] == "high"
 
 
 # ---------------------------------------------------------------------------

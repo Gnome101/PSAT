@@ -201,3 +201,93 @@ def test_open_registration_stays_business(tmp_path):
     leaves = _all_leaves(trees["someAction()"])
     assert len(leaves) == 1
     assert leaves[0]["authority_role"] == "business"
+
+
+# ---------------------------------------------------------------------------
+# Confidence: writer-gate-promoted 1-key leaves classify as MEDIUM
+# (the auth signal depends on writer-side analysis, not direct shape).
+# ---------------------------------------------------------------------------
+
+
+def test_confidence_medium_for_writer_gate_promoted_1key(tmp_path):
+    """1-key caller-keyed bool map promoted via rule b.i (writer is
+    authority-gated): the leaf becomes caller_authority but
+    confidence is MEDIUM — promotion depends on the writer's own
+    classification."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            mapping(address => bool) public _blacklist;
+            function setBlacklist(address user, bool val) external {
+                require(msg.sender == ownerVar);
+                _blacklist[user] = val;
+            }
+            function someAction() external view {
+                require(!_blacklist[msg.sender]);
+            }
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    apply_writer_gate_pass(contract, trees)
+    leaf = _all_leaves(trees["someAction()"])[0]
+    assert leaf["authority_role"] == "caller_authority"
+    assert leaf["confidence"] == "medium"
+
+
+def test_confidence_high_for_self_administered_wards(tmp_path):
+    """Maker-wards-style self-administered ACL: writer reads the
+    same map M as its own gate. Tight structural match per codex
+    review — HIGH confidence."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(address => uint256) public wards;
+            function rely(address addr) external {
+                require(wards[msg.sender] == 1);
+                wards[addr] = 1;
+            }
+            function someAction() external view {
+                require(wards[msg.sender] == 1);
+            }
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    apply_writer_gate_pass(contract, trees)
+    leaf = _all_leaves(trees["someAction()"])[0]
+    assert leaf["authority_role"] == "caller_authority"
+    assert leaf["confidence"] == "high"
+
+
+def test_confidence_low_when_business_after_writer_gate(tmp_path):
+    """Open registration (rule c) keeps the leaf as business.
+    Confidence stays LOW."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(address => bool) public _registered;
+            function register(address addr) external {
+                _registered[addr] = true;
+            }
+            function someAction() external view {
+                require(_registered[msg.sender]);
+            }
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    apply_writer_gate_pass(contract, trees)
+    leaf = _all_leaves(trees["someAction()"])[0]
+    assert leaf["authority_role"] == "business"
+    assert leaf["confidence"] == "low"

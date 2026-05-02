@@ -558,3 +558,115 @@ def test_unguarded_function_returns_none(tmp_path):
     fn = _function(sl, "f")
     tree = build_predicate_tree(fn)
     assert tree is None
+
+
+# ---------------------------------------------------------------------------
+# Confidence levels (HIGH / MEDIUM / LOW)
+# ---------------------------------------------------------------------------
+
+
+def test_confidence_high_for_caller_equals_state_var(tmp_path):
+    """Rule A (msg.sender == state_var address) is shape-tight:
+    the operands are caller + state_variable directly. HIGH."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            function f() external view {
+                require(msg.sender == ownerVar);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["authority_role"] == "caller_authority"
+    assert leaves[0]["confidence"] == "high"
+
+
+def test_confidence_high_for_multi_key_caller_membership(tmp_path):
+    """Multi-key (>=2) membership with caller key direct-promotes to
+    caller_authority. Shape-tight by structure → HIGH."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(bytes32 => mapping(address => bool)) private _roles;
+            bytes32 constant MINTER = keccak256("MINTER");
+            function f() external {
+                require(_roles[MINTER][msg.sender]);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["authority_role"] == "caller_authority"
+    assert leaves[0]["confidence"] == "high"
+
+
+def test_confidence_low_for_business_residual(tmp_path):
+    """Bare-bool flag check that doesn't match any authority shape
+    classifies as business → LOW."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            bool public flag;
+            function f() external {
+                require(flag);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["authority_role"] == "business"
+    assert leaves[0]["confidence"] == "low"
+
+
+def test_confidence_low_for_unsupported(tmp_path):
+    """An opaque condition we can't classify ends up unsupported,
+    which is LOW."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            function externalCheck() external pure returns (bool) { return true; }
+            function f() external {
+                bool a = (block.timestamp + block.number) % 2 == 0;
+                require(a);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["confidence"] == "low"
+
+
+def test_confidence_high_for_time_gate(tmp_path):
+    """``require(block.timestamp >= deadline)`` is a time gate.
+    The classifier reads block_context with no caller, so the
+    authority_role is ``time`` → HIGH."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public deadline;
+            function f() external view {
+                require(block.timestamp >= deadline);
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    leaves = _all_leaves(build_predicate_tree(fn))
+    assert leaves[0]["authority_role"] == "time"
+    assert leaves[0]["confidence"] == "high"

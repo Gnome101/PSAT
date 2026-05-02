@@ -307,6 +307,13 @@ def apply_reentrancy_pause_pass(
             continue
         _walk_and_classify(tree, reentrancy_vars, pause_vars)
 
+    # Re-stamp confidence so leaves promoted to reentrancy/pause
+    # don't keep their previous business/low confidence value.
+    from .predicates import apply_confidence_to_tree
+
+    for tree in predicate_trees.values():
+        apply_confidence_to_tree(tree)
+
 
 def _walk_and_classify(tree: PredicateTree, reentrancy_vars: set[str], pause_vars: set[str]) -> None:
     if tree.get("op") == "LEAF":
