@@ -9,10 +9,11 @@ cd "$(dirname "$0")"
 
 export PYTHONUNBUFFERED=1
 
-# Match start_workers.sh: parallel fan-outs occasionally need a second
-# session inside the same job, so bump base+overflow from 2+3 to 4+6.
-export PSAT_DB_POOL_SIZE="${PSAT_DB_POOL_SIZE:-4}"
-export PSAT_DB_MAX_OVERFLOW="${PSAT_DB_MAX_OVERFLOW:-6}"
+# Match start_workers.sh: bumped to 6+10 to cover in-process job concurrency
+# (PSAT_<STAGE>_JOB_CONCURRENCY > 1, opt-in per stage). Parallel fan-outs +
+# heartbeats already needed a second session per job; K=2 stacks two of those.
+export PSAT_DB_POOL_SIZE="${PSAT_DB_POOL_SIZE:-6}"
+export PSAT_DB_MAX_OVERFLOW="${PSAT_DB_MAX_OVERFLOW:-10}"
 
 PIDS=()
 

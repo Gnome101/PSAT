@@ -8,6 +8,7 @@ import signal
 import time
 import traceback
 import uuid
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -43,6 +44,32 @@ STALE_JOB_TIMEOUT = int(os.getenv("PSAT_STALE_JOB_TIMEOUT", "600"))  # seconds
 RECLAIM_INTERVAL_S = float(os.getenv("PSAT_RECLAIM_INTERVAL_S", "30"))
 
 
+def _resolve_job_concurrency(stage_value: str) -> int:
+    """Resolve K (max concurrent jobs per worker process) for *stage_value*.
+
+    Precedence: per-stage env (``PSAT_<STAGE>_JOB_CONCURRENCY``) → global
+    ``PSAT_JOB_CONCURRENCY`` → 1. K=1 takes a fast path that's behaviourally
+    identical to the pre-concurrency loop; K>1 opts into the futures-based
+    dispatcher. Subclasses that override ``_claim_job`` (coverage,
+    selection — readiness-gated) stay K=1 implicitly: the per-stage env is
+    just never set for them in production.
+    """
+
+    def _read(name: str) -> int | None:
+        raw = os.getenv(name)
+        if not raw:
+            return None
+        try:
+            return max(1, int(raw))
+        except ValueError:
+            return None
+
+    per_stage = _read(f"PSAT_{stage_value.upper()}_JOB_CONCURRENCY")
+    if per_stage is not None:
+        return per_stage
+    return _read("PSAT_JOB_CONCURRENCY") or 1
+
+
 class JobHandledDirectly(Exception):
     """Raised by process() when it has already completed/failed the job itself."""
 
@@ -64,15 +91,29 @@ class BaseWorker:
         signal.signal(signal.SIGTERM, self._handle_sigterm)
         signal.signal(signal.SIGINT, self._handle_sigterm)
 
+        # In-process job concurrency: K=1 keeps the legacy single-job loop
+        # byte-identical; K>1 spins up a per-worker thread pool so RPC waits
+        # in one job overlap with another job's CPU work. Resolved once at
+        # boot so per-stage env tuning (e.g. PSAT_RESOLUTION_JOB_CONCURRENCY=2)
+        # is visible in the boot banner below.
+        stage_attr = getattr(self, "stage", None)
+        stage_str = stage_attr.value if stage_attr is not None else "?"
+        self._job_concurrency = _resolve_job_concurrency(stage_str)
+        self._job_pool: ThreadPoolExecutor | None = None
+        self._inflight: set[Future[None]] = set()
+        if self._job_concurrency > 1:
+            self._job_pool = ThreadPoolExecutor(
+                max_workers=self._job_concurrency,
+                thread_name_prefix=f"{self.__class__.__name__}-job",
+            )
+
         # One-line boot banner per worker process so a fly-log scrape can
         # reconstruct the fleet shape that hit OOM. Captures stage + RSS at
         # boot + the cgroup memory limit + sibling python proc count.
         # `stage` is a class attribute set by subclasses; default to "?"
         # so bare BaseWorker() in unit tests doesn't trip AttributeError.
-        stage_attr = getattr(self, "stage", None)
-        stage_str = stage_attr.value if stage_attr is not None else "?"
         logger.info(
-            "[BOOT] worker=%s pid=%d stage=%s rss_mb=%s cgroup_used_mb=%s/%s python_siblings=%d",
+            "[BOOT] worker=%s pid=%d stage=%s rss_mb=%s cgroup_used_mb=%s/%s python_siblings=%d job_concurrency=%d",
             self.worker_id,
             os.getpid(),
             stage_str,
@@ -80,6 +121,7 @@ class BaseWorker:
             mb(cgroup_memory_current_bytes()),
             mb(cgroup_memory_max_bytes()),
             count_sibling_python_procs(),
+            self._job_concurrency,
         )
 
     def _handle_sigterm(self, signum: int, frame: object) -> None:
@@ -128,8 +170,162 @@ class BaseWorker:
         if stale:
             session.commit()
 
+    def _execute_job(self, session: Session, job: Job) -> None:
+        """Run a single claimed job to completion: process → record timing → advance/complete/fail.
+
+        Owns the full lifecycle of one (session, job) pair. Caller is
+        responsible for closing *session* afterwards. Both the legacy
+        single-job loop and the K>1 dispatcher route through here so the
+        success/JobHandledDirectly/exception branches stay in one place.
+        """
+        logger.info("Worker %s claimed job %s", self.worker_id, job.id)
+        t0 = time.monotonic()
+        rss_before = current_rss_bytes()
+        started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        try:
+            self.process(session, job)
+            elapsed = time.monotonic() - t0
+            ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            rss_after = current_rss_bytes()
+            rss_delta_mb = (rss_after - rss_before) / (1024 * 1024)
+            logger.info(
+                "[JOB] worker=%s job=%s stage=%s elapsed_s=%.1f rss_mb=%s delta_mb=%+.0f cgroup_used_mb=%s",
+                self.worker_id,
+                job.id,
+                self.stage.value,
+                elapsed,
+                mb(rss_after),
+                rss_delta_mb,
+                mb(cgroup_memory_current_bytes()),
+            )
+            # Record timing before advancing — otherwise the next-stage worker can race read-modify-write on the
+            # shared stage_timings artifact.
+            self._record_stage_timing(
+                session,
+                job,
+                started_at=started_at_iso,
+                ended_at=ended_at_iso,
+                elapsed_s=elapsed,
+                status="success",
+            )
+            if self.next_stage == JobStage.done:
+                from db.queue import complete_job
+
+                complete_job(session, job.id)
+            else:
+                advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
+            logger.info(
+                "Worker %s completed job %s in %.1fs",
+                self.worker_id,
+                job.id,
+                elapsed,
+            )
+        except JobHandledDirectly:
+            elapsed = time.monotonic() - t0
+            ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            # Fresh session — process() may have left the original in an inconsistent state.
+            try:
+                fresh_for_timing = SessionLocal()
+                self._record_stage_timing(
+                    fresh_for_timing,
+                    job,
+                    started_at=started_at_iso,
+                    ended_at=ended_at_iso,
+                    elapsed_s=elapsed,
+                    status="handled_directly",
+                )
+                fresh_for_timing.close()
+            except Exception:
+                logger.exception("Worker %s: failed to record handled_directly timing", self.worker_id)
+            logger.info("Worker %s: job %s handled directly by process()", self.worker_id, job.id)
+        except Exception:
+            elapsed = time.monotonic() - t0
+            ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            error = traceback.format_exc()
+            logger.error(
+                "\n=================== WORKER FAILURE ===================\n"
+                "Worker:   %s\n"
+                "Job:      %s\n"
+                "Address:  %s\n"
+                "Name:     %s\n"
+                "Stage:    %s\n"
+                "-------------------------------------------------------\n"
+                "%s"
+                "=======================================================",
+                self.worker_id,
+                job.id,
+                getattr(job, "address", "?"),
+                getattr(job, "name", "?"),
+                self.stage.value,
+                error,
+            )
+            try:
+                session.rollback()
+                fail_job(session, job.id, error)
+                self._record_stage_timing(
+                    session,
+                    job,
+                    started_at=started_at_iso,
+                    ended_at=ended_at_iso,
+                    elapsed_s=elapsed,
+                    status="failed",
+                )
+            except Exception:
+                logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
+                try:
+                    fresh = SessionLocal()
+                    fail_job(fresh, job.id, error[-4000:])
+                    self._record_stage_timing(
+                        fresh,
+                        job,
+                        started_at=started_at_iso,
+                        ended_at=ended_at_iso,
+                        elapsed_s=elapsed,
+                        status="failed",
+                    )
+                    fresh.close()
+                except Exception:
+                    logger.exception("Could not mark job %s as failed even with fresh session", job.id)
+
+    def _run_one_job(self, job_id) -> None:
+        """K>1 dispatcher entry point: open a per-job session, re-fetch the job
+        ORM object inside that session, run it through ``_execute_job``, close.
+
+        The claim happened on a different (claim-loop) session that's already
+        been closed; using ``session.get`` here re-binds the row to *this*
+        thread's session so all heartbeats and DB writes belong to one
+        identity map. Errors inside the job are absorbed by ``_execute_job``;
+        anything that escapes is logged and dropped to keep the dispatcher
+        loop alive.
+        """
+        session = SessionLocal()
+        try:
+            job = session.get(Job, job_id)
+            if job is None:
+                logger.warning("Worker %s: claimed job %s vanished before processing", self.worker_id, job_id)
+                return
+            self._execute_job(session, job)
+        except Exception:
+            logger.exception("Worker %s: unexpected error in dispatched job %s", self.worker_id, job_id)
+        finally:
+            session.close()
+
     def run_loop(self) -> None:
-        logger.info("Worker %s starting (stage=%s)", self.worker_id, self.stage.value)
+        logger.info(
+            "Worker %s starting (stage=%s, job_concurrency=%d)",
+            self.worker_id,
+            self.stage.value,
+            self._job_concurrency,
+        )
+        if self._job_concurrency > 1:
+            self._run_loop_concurrent()
+        else:
+            self._run_loop_single()
+        logger.info("Worker %s shut down", self.worker_id)
+
+    def _run_loop_single(self) -> None:
+        """Legacy K=1 loop: one in-flight job per worker process. Path is
+        byte-identical to the pre-concurrency implementation."""
         recovery_counter = 0
         while self._running:
             session = SessionLocal()
@@ -146,120 +342,94 @@ class BaseWorker:
                     time.sleep(self.poll_interval)
                     continue
 
-                logger.info("Worker %s claimed job %s", self.worker_id, job.id)
-                t0 = time.monotonic()
-                rss_before = current_rss_bytes()
-                started_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                try:
-                    self.process(session, job)
-                    elapsed = time.monotonic() - t0
-                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                    rss_after = current_rss_bytes()
-                    rss_delta_mb = (rss_after - rss_before) / (1024 * 1024)
-                    logger.info(
-                        "[JOB] worker=%s job=%s stage=%s elapsed_s=%.1f rss_mb=%s delta_mb=%+.0f cgroup_used_mb=%s",
-                        self.worker_id,
-                        job.id,
-                        self.stage.value,
-                        elapsed,
-                        mb(rss_after),
-                        rss_delta_mb,
-                        mb(cgroup_memory_current_bytes()),
-                    )
-                    # Record timing before advancing — otherwise the next-stage worker can race read-modify-write on the
-                    # shared stage_timings artifact.
-                    self._record_stage_timing(
-                        session,
-                        job,
-                        started_at=started_at_iso,
-                        ended_at=ended_at_iso,
-                        elapsed_s=elapsed,
-                        status="success",
-                    )
-                    if self.next_stage == JobStage.done:
-                        from db.queue import complete_job
-
-                        complete_job(session, job.id)
-                    else:
-                        advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
-                    logger.info(
-                        "Worker %s completed job %s in %.1fs",
-                        self.worker_id,
-                        job.id,
-                        elapsed,
-                    )
-                except JobHandledDirectly:
-                    elapsed = time.monotonic() - t0
-                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                    # Fresh session — process() may have left the original in an inconsistent state.
-                    try:
-                        fresh_for_timing = SessionLocal()
-                        self._record_stage_timing(
-                            fresh_for_timing,
-                            job,
-                            started_at=started_at_iso,
-                            ended_at=ended_at_iso,
-                            elapsed_s=elapsed,
-                            status="handled_directly",
-                        )
-                        fresh_for_timing.close()
-                    except Exception:
-                        logger.exception("Worker %s: failed to record handled_directly timing", self.worker_id)
-                    logger.info("Worker %s: job %s handled directly by process()", self.worker_id, job.id)
-                except Exception:
-                    elapsed = time.monotonic() - t0
-                    ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-                    error = traceback.format_exc()
-                    logger.error(
-                        "\n=================== WORKER FAILURE ===================\n"
-                        "Worker:   %s\n"
-                        "Job:      %s\n"
-                        "Address:  %s\n"
-                        "Name:     %s\n"
-                        "Stage:    %s\n"
-                        "-------------------------------------------------------\n"
-                        "%s"
-                        "=======================================================",
-                        self.worker_id,
-                        job.id,
-                        getattr(job, "address", "?"),
-                        getattr(job, "name", "?"),
-                        self.stage.value,
-                        error,
-                    )
-                    try:
-                        session.rollback()
-                        fail_job(session, job.id, error)
-                        self._record_stage_timing(
-                            session,
-                            job,
-                            started_at=started_at_iso,
-                            ended_at=ended_at_iso,
-                            elapsed_s=elapsed,
-                            status="failed",
-                        )
-                    except Exception:
-                        logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
-                        try:
-                            fresh = SessionLocal()
-                            fail_job(fresh, job.id, error[-4000:])
-                            self._record_stage_timing(
-                                fresh,
-                                job,
-                                started_at=started_at_iso,
-                                ended_at=ended_at_iso,
-                                elapsed_s=elapsed,
-                                status="failed",
-                            )
-                            fresh.close()
-                        except Exception:
-                            logger.exception("Could not mark job %s as failed even with fresh session", job.id)
+                self._execute_job(session, job)
             except Exception:
                 logger.exception("Worker %s encountered error in main loop", self.worker_id)
             finally:
                 session.close()
 
-        logger.info("Worker %s shut down", self.worker_id)
+    def _run_loop_concurrent(self) -> None:
+        """K>1 loop: claim jobs on a short-lived claim session and dispatch
+        each into a per-worker ``ThreadPoolExecutor``. The pool is bounded
+        at ``self._job_concurrency``; when full, the loop waits on
+        ``FIRST_COMPLETED`` for back-pressure instead of polling.
+
+        SIGTERM (``self._running == False``) stops new claims and waits up
+        to ``STALE_JOB_TIMEOUT`` for in-flight jobs to drain before
+        returning. Survivors are logged; the cross-worker stale-job sweep
+        recovers them on a sibling worker.
+        """
+        assert self._job_pool is not None
+        recovery_counter = 0
+        while self._running:
+            # Drain finished futures so the slot count is accurate.
+            self._reap_finished_futures()
+
+            if len(self._inflight) >= self._job_concurrency:
+                # Pool is full: block until any future finishes (with a
+                # ceiling so we still notice SIGTERM in time).
+                wait(self._inflight, timeout=self.poll_interval, return_when=FIRST_COMPLETED)
+                continue
+
+            claim_session = SessionLocal()
+            job_to_dispatch: Job | None = None
+            job_id_for_dispatch = None
+            try:
+                recovery_counter += 1
+                if recovery_counter >= 30:
+                    recovery_counter = 0
+                    self._recover_stale_jobs(claim_session)
+
+                job_to_dispatch = self._claim_job(claim_session)
+                if job_to_dispatch is not None:
+                    # Capture the id before the session closes — the ORM
+                    # object will be expired/detached on the dispatcher
+                    # thread and we rebuild it via session.get there.
+                    job_id_for_dispatch = job_to_dispatch.id
+            except Exception:
+                logger.exception("Worker %s encountered error in claim loop", self.worker_id)
+            finally:
+                claim_session.close()
+
+            if job_id_for_dispatch is None:
+                # Nothing to claim — sleep just enough to avoid hammering
+                # Postgres while still letting in-flight futures progress.
+                if self._inflight:
+                    wait(self._inflight, timeout=self.poll_interval, return_when=FIRST_COMPLETED)
+                else:
+                    time.sleep(self.poll_interval)
+                continue
+
+            future = self._job_pool.submit(self._run_one_job, job_id_for_dispatch)
+            self._inflight.add(future)
+
+        # Drain on shutdown so in-flight jobs land cleanly. Anything still
+        # running past the timeout is logged; the cross-worker sweep
+        # (``reclaim_stuck_jobs``) recovers them after STALE_JOB_TIMEOUT.
+        if self._inflight:
+            logger.info(
+                "Worker %s draining %d in-flight job(s) (timeout=%ds)",
+                self.worker_id,
+                len(self._inflight),
+                STALE_JOB_TIMEOUT,
+            )
+            done, not_done = wait(self._inflight, timeout=STALE_JOB_TIMEOUT)
+            if not_done:
+                logger.warning(
+                    "Worker %s: %d job(s) still running at shutdown; "
+                    "abandoning so cross-worker stale sweep can recover",
+                    self.worker_id,
+                    len(not_done),
+                )
+            self._inflight.clear()
+        if self._job_pool is not None:
+            self._job_pool.shutdown(wait=False)
+
+    def _reap_finished_futures(self) -> None:
+        """Drop completed futures from ``self._inflight`` to free dispatch slots."""
+        finished = {f for f in self._inflight if f.done()}
+        if finished:
+            self._inflight -= finished
 
     def update_detail(self, session: Session, job: Job, detail: str) -> None:
         """Update the job's progress detail message."""
