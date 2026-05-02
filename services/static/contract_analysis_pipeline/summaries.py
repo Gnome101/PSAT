@@ -22,7 +22,6 @@ from schemas.contract_analysis import (
 
 from .constants import (
     ACCESS_CONTROL_INHERITANCE,
-    ACCESS_GUARD_KEYWORDS,
     ADMIN_VAR_KEYWORDS,
     FACTORY_NAME_KEYWORDS,
     PAUSE_MODIFIER_KEYWORDS,
@@ -43,38 +42,25 @@ from .shared import (
     _entry_points,
     _function_effects,
     _looks_like_role_identifier_name,
-    _node_contains_require_or_assert,
     _role_identifier_tokens,
     _source_evidence,
     _source_fragment,
 )
 
 
-def _looks_like_access_guard(name: str) -> bool:
-    lowered = name.lower()
-    return any(keyword in lowered for keyword in ACCESS_GUARD_KEYWORDS)
-
-
 def _looks_like_pause_guard(name: str) -> bool:
+    """Modifier-name heuristic kept for _detect_pausability — the
+    pausability summary still uses modifier names as one signal
+    alongside structural pause-state-var detection. The full v1
+    name-heuristic chain (_looks_like_access_guard, _normalize_guard_-
+    label, _state_variable_looks_like_auth, _high_level_call_guards,
+    _internal_auth_calls, _infer_function_guards, _access_control_-
+    inferred_guards, _is_access_control_guard_label,
+    _controller_refs_from_inferred_guards) was deleted in the
+    schema-v2 cutover; v2's apply_reentrancy_pause_pass +
+    apply_writer_gate_pass classify guards structurally now."""
     lowered = name.lower()
     return any(keyword in lowered for keyword in PAUSE_MODIFIER_KEYWORDS)
-
-
-def _normalize_guard_label(name: str) -> str:
-    lowered = name.lower()
-    if "owner" in lowered:
-        return "owner"
-    if "role" in lowered:
-        return "role"
-    if "timelock" in lowered:
-        return "timelock"
-    if "admin" in lowered:
-        return "admin"
-    if "guardian" in lowered:
-        return "guardian"
-    if "pauser" in lowered:
-        return "pauser"
-    return name
 
 
 def _role_constants_from_function(function, project_dir: Path) -> list[str]:
@@ -92,71 +78,6 @@ def _role_constants_from_function(function, project_dir: Path) -> list[str]:
                 roles.add(name)
 
     return sorted(roles)
-
-
-def _state_variable_looks_like_auth(name: str) -> bool:
-    lowered = name.lower()
-    return (
-        any(keyword in lowered for keyword in ADMIN_VAR_KEYWORDS)
-        or lowered in {"wards", "admins", "roles", "authority", "authorities"}
-        or "auth" in lowered
-        or "role" in lowered
-        or "ward" in lowered
-    )
-
-
-def _high_level_call_guards(function) -> list[str]:
-    guards = []
-    for node in getattr(function, "nodes", []):
-        for _, call in getattr(node, "high_level_calls", []) or []:
-            function_name = getattr(call, "function_name", None) or getattr(call, "function", None)
-            named_function = getattr(function_name, "name", None) if function_name is not None else None
-            if named_function is not None:
-                function_name = named_function
-            if str(function_name) != "canCall":
-                continue
-            destination = getattr(call, "destination", None)
-            destination_name = getattr(destination, "name", None) or str(destination)
-            guards.append(f"{destination_name}.canCall")
-    return guards
-
-
-def _internal_auth_calls(function) -> list[str]:
-    """Schema-v2 cutover: name-heuristic detection deleted. v2's
-    RevertDetector cross-fn recursion finds auth helpers structurally
-    via call_chain walking; this function returns empty so the v1
-    pathway stops contributing data."""
-    return []
-
-
-def _infer_function_guards(function, project_dir: Path) -> list[str]:
-    """Schema-v2 cutover: modifier-name + state-var-name heuristics
-    deleted. v2's predicate_trees + apply_writer_gate_pass +
-    apply_reentrancy_pause_pass classify guards structurally
-    independent of names."""
-    return []
-
-
-def _is_access_control_guard_label(label: str) -> bool:
-    """Schema-v2 cutover: deprecated. Returns False so any caller
-    that filters by 'is this an access-control label' gets an
-    empty filter."""
-    return False
-
-
-def _access_control_inferred_guards(function, project_dir: Path) -> list[str]:
-    """Schema-v2 cutover: deprecated. v2's PredicateTree per function
-    is the structural authority — name-heuristic inferred guards no
-    longer contribute."""
-    return []
-
-
-def _controller_refs_from_inferred_guards(guards: list[str]) -> list[str]:
-    """Schema-v2 cutover: deprecated. Returns empty since
-    _access_control_inferred_guards / _infer_function_guards now
-    return empty; this is the no-op that absorbs any incidental
-    callers without breaking call sites."""
-    return []
 
 
 def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]:
@@ -884,39 +805,33 @@ def _detect_access_control(
     for function in functions:
         function_signature = getattr(function, "full_name", getattr(function, "name", ""))
         graph_entry = privileged_functions_by_signature.get(function_signature)
-        inferred_guards = _access_control_inferred_guards(function, project_dir)
-        inferred_controller_refs = _controller_refs_from_inferred_guards(inferred_guards)
-        graph_guard_controller_refs = _controller_refs_from_inferred_guards(
-            graph_entry["guards"] if graph_entry else []
-        )
         effects = graph_entry["effects"] if graph_entry else _function_effects(function)
         effect_targets = _effect_targets(function, graph_entry, effects)
         target_controller_refs = _controller_refs_from_effect_targets(effect_targets)
         effect_labels = _effect_labels(function, effects, effect_targets, graph_entry)
         action_summary = _action_summary(effect_labels, effect_targets)
         v2_guarded = function_signature in v2_trees
-        if (
-            not _has_graph_permission_evidence(graph_entry)
-            and not inferred_guards
-            and not v2_guarded
-        ):
+        # Schema-v2 cutover: a function is in privileged_functions iff
+        # permission_graph caught it (effects-based) OR v2 caught it
+        # (predicate_trees has a tree). The v1 inferred_guards /
+        # _access_control_inferred_guards / _controller_refs_from_-
+        # inferred_guards / _infer_function_guards / _internal_auth_calls
+        # name-heuristic chain is gone.
+        if not _has_graph_permission_evidence(graph_entry) and not v2_guarded:
             continue
 
-        guards = _dedupe_strings((graph_entry["guards"] if graph_entry else []) + inferred_guards)
-        # Schema-v2 cutover: caller_sinks is deleted. external_call_guards
-        # / sinks fields no longer populated — the v2 path catches the
-        # equivalent shapes via external_bool / delegated_authority leaves
-        # which capability_resolver's adapters resolve.
+        # caller_sinks deleted at the same time — external_call_guards /
+        # sinks fields no longer populated. v2 catches equivalent shapes
+        # via external_bool / delegated_authority leaves which
+        # capability_resolver's adapters resolve.
         entry: dict = {
             "contract": _declaring_contract_name(function, contract.name),
             "function": function_signature,
             "visibility": getattr(function, "visibility", "unknown"),
-            "guards": guards,
+            "guards": list(graph_entry["guards"]) if graph_entry else [],
             "guard_kinds": graph_entry["guard_kinds"] if graph_entry else [],
             "controller_refs": _dedupe_strings(
                 (graph_entry["controller_refs"] if graph_entry else [])
-                + graph_guard_controller_refs
-                + inferred_controller_refs
                 + target_controller_refs
             ),
             "sink_ids": graph_entry["sink_ids"] if graph_entry else [],
@@ -1030,16 +945,18 @@ def _detect_pausability(contract, project_dir: Path) -> PausabilityAnalysis:
     unpause_functions = []
     authorized_roles = []
 
+    # Schema-v2 cutover: _infer_function_guards (modifier-name +
+    # state-var-name heuristics) is gone, so authorized_roles no
+    # longer accumulates from the v1 path. v2's PauseAnalyzer
+    # surfaces the structural pause-writers + their authority via
+    # apply_reentrancy_pause_pass.
     for function in _entry_points(contract):
         name = getattr(function, "name", "")
         lowered = name.lower()
-        inferred_guards = _infer_function_guards(function, project_dir)
         if lowered == "pause" or lowered.endswith("_pause"):
             pause_functions.append(getattr(function, "full_name", name))
-            authorized_roles.extend(inferred_guards)
         if lowered == "unpause" or lowered.endswith("_unpause"):
             unpause_functions.append(getattr(function, "full_name", name))
-            authorized_roles.extend(inferred_guards)
 
     gating_modifiers = [modifier.name for modifier in modifiers if _looks_like_pause_guard(modifier.name)]
     pause_variables = [
@@ -1080,7 +997,6 @@ def _detect_timelock(contract, project_dir: Path, role_definitions: list[RoleDef
         lowered = getattr(function, "name", "").lower()
         if any(keyword in lowered for keyword in ("schedule", "queue", "execute", "cancel")):
             queue_execute_functions.append(getattr(function, "full_name", function.name))
-            authorized_roles.extend(_infer_function_guards(function, project_dir))
             evidence.append(_source_evidence(function, project_dir))
 
     role_names = {role["role"] for role in role_definitions}
