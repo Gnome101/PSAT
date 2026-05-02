@@ -77,8 +77,12 @@ class _NullAdapter:
 
 
 class EvaluationContext:
-    """Resolver-side context. Holds the contract address, current
-    block, and an adapter (or registry of adapters; week 5).
+    """Resolver-side context for the simple (week-4) evaluator path.
+
+    The full week-5 ``EvaluationContext`` lives in
+    ``services.resolution.adapters`` and carries chain/RPC/repos.
+    Use ``evaluate_tree_with_registry`` to dispatch via that fuller
+    context.
     """
 
     def __init__(
@@ -91,6 +95,29 @@ class EvaluationContext:
         self.contract_address = contract_address
         self.adapter: SetAdapter = adapter or _NullAdapter()
         self.block = block
+
+
+def evaluate_tree_with_registry(
+    tree: PredicateTree | None,
+    registry: Any,  # adapters.AdapterRegistry — typed loosely to avoid circular import
+    ctx: Any,  # adapters.EvaluationContext
+) -> CapabilityExpr:
+    """Like ``evaluate_tree`` but routes membership leaves through the
+    week-5 AdapterRegistry. The registry's ``enumerate(descriptor,
+    ctx)`` returns a CapabilityExpr that may be a populated
+    finite_set, threshold_group, external_check_only, or
+    unsupported(no_adapter)."""
+
+    class _RegistryBackedAdapter:
+        def enumerate(self, descriptor, contract_address):  # noqa: ARG002
+            return registry.enumerate(descriptor, ctx)
+
+    legacy_ctx = EvaluationContext(
+        contract_address=getattr(ctx, "contract_address", None),
+        adapter=_RegistryBackedAdapter(),
+        block=getattr(ctx, "block", None),
+    )
+    return evaluate_tree(tree, legacy_ctx)
 
 
 def evaluate_tree(
