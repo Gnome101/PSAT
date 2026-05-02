@@ -168,10 +168,18 @@ def test_membership_maps_to_mapping_membership():
     )
     p = out["functions"][0]["predicates"][0]
     assert p["kind"] == "mapping_membership"
-    # The non-caller key is the role constant — its label is the
-    # constant_value hex string.
-    assert p["controller_kind"] == "constant"
-    assert p["controller_label"] == "0x" + "01" * 32
+    # v1's mapping_membership emit uses the mapping NAME as
+    # controller_source, NOT the inner role-key constant —
+    # downstream effective_permissions's controller_lookup is
+    # keyed on the mapping name. The shim matches that contract
+    # via set_descriptor.storage_var (here: '_roles'). Earlier
+    # versions picked the non-caller key (the role constant) which
+    # caused effective_permissions to resolve different controllers
+    # under the v2 path; pinned by test_effective_permissions_v1_v2_-
+    # equivalence.
+    assert p["controller_kind"] == "mapping_membership"
+    assert p["controller_label"] == "_roles"
+    assert p["controller_source"] == "_roles"
 
 
 def test_caller_only_1key_membership_falls_back_to_storage_var():

@@ -222,11 +222,81 @@ contract C {
 }
 """
 
+# OZ Pausable — admin-gated pause/unpause writers + transfer gated
+# by pause leaf. Tests that the shim's pause-drop behavior matches
+# v1's "transfer is privileged but unresolved (no controllers)"
+# emit, AND that pause()/unpause() controllers (via ownerVar) match.
+_OZ_PAUSABLE = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    bool public _paused;
+    uint256 public x;
+    modifier whenNotPaused() { require(!_paused); _; }
+    function pause() external { require(msg.sender == ownerVar); _paused = true; }
+    function unpause() external { require(msg.sender == ownerVar); _paused = false; }
+    function transfer() external whenNotPaused { x = x + 1; }
+}
+"""
+
+# OZ 5.x Ownable cross-fn — v1 emits setX with status=unresolved
+# (no predicates; name-heuristic doesn't recognize the cross-fn
+# _checkOwner pattern). v2 shim catches via caller_equals_controller
+# with controller_source='_owner'. This is the "v2 catches what v1
+# missed" / new_coverage direction — verified to NOT trigger a
+# regression in the comparator (v1 has setX privileged but empty
+# controllers -> not in v1_priv; v2 has setX with controllers ->
+# in v2_priv -> v1_only=empty, v2_only={setX}, acceptable).
+_OZ_OWNABLE_5X = """
+pragma solidity ^0.8.19;
+contract C {
+    address private _owner;
+    uint256 public x;
+    error OwnableUnauthorizedAccount(address account);
+    function _msgSender() internal view returns (address) { return msg.sender; }
+    function owner() public view returns (address) { return _owner; }
+    function _checkOwner() internal view {
+        if (owner() != _msgSender()) revert OwnableUnauthorizedAccount(_msgSender());
+    }
+    modifier onlyOwner() { _checkOwner(); _; }
+    function setX(uint256 v) external onlyOwner { x = v; }
+}
+"""
+
+# F1 bitwise role flag — value-predicate membership where the
+# storage_var is the underlying mapping. Admin-gated setRole writer
+# promotes to caller_authority via writer-gate b.i. The shim's
+# storage_var fallback should kick in: keys=[msg.sender] only,
+# so controller_op is None, fallback to set_descriptor.storage_var
+# = 'roles'. This pins the storage_var fallback works for non-bool
+# value-predicate maps (Maker wards is uint256==1; this one is
+# bitwise mask).
+_BITWISE_ROLE_FLAG = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    mapping(address => uint256) public roles;
+    uint256 constant FLAG_MINT = 1;
+    uint256 public x;
+    function setRole(address u, uint256 mask) external {
+        require(msg.sender == ownerVar);
+        roles[u] = mask;
+    }
+    function mint(uint256 v) external {
+        require((roles[msg.sender] & FLAG_MINT) != 0);
+        x = x + v;
+    }
+}
+"""
+
 
 _FIXTURES = [
     ("maker_wards", _MAKER_WARDS),
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_ac_inline", _OZ_AC_INLINE),
+    ("oz_pausable", _OZ_PAUSABLE),
+    ("oz_ownable_5x", _OZ_OWNABLE_5X),
+    ("bitwise_role_flag", _BITWISE_ROLE_FLAG),
 ]
 
 
@@ -249,25 +319,29 @@ def test_effective_permissions_equivalent(tmp_path: Path, fixture_name: str, sou
     # principals — without it both v1 and v2 produce empty controllers
     # and the comparator can't distinguish a real bug from "neither
     # side has signal".
+    # State-var entries cover every fixture's controller_source. Each
+    # entry's 'source' key is what _controller_lookup uses to resolve
+    # a predicate's controller_source -> resolved principal. Listing
+    # superset-of-needed values is fine — fixtures that don't reference
+    # a given source just don't trip its lookup.
+    def _sv_entry(name: str) -> dict:
+        return {
+            "source": name,
+            "kind": "state_variable",
+            "label": name,
+            "value": _OWNER_ADDRESS,
+            "resolved_type": "eoa",
+            "details": {"address": _OWNER_ADDRESS},
+        }
+
     target_snapshot = {
         "contract_name": "C",
         "controller_values": {
-            "state_variable:ownerVar": {
-                "source": "ownerVar",
-                "kind": "state_variable",
-                "label": "ownerVar",
-                "value": _OWNER_ADDRESS,
-                "resolved_type": "eoa",
-                "details": {"address": _OWNER_ADDRESS},
-            },
-            "state_variable:wards": {
-                "source": "wards",
-                "kind": "state_variable",
-                "label": "wards",
-                "value": _OWNER_ADDRESS,
-                "resolved_type": "eoa",
-                "details": {"address": _OWNER_ADDRESS},
-            },
+            "state_variable:ownerVar": _sv_entry("ownerVar"),
+            "state_variable:wards": _sv_entry("wards"),
+            "state_variable:_owner": _sv_entry("_owner"),
+            "state_variable:roles": _sv_entry("roles"),
+            "state_variable:_roles": _sv_entry("_roles"),
             "constant:0x" + "01" * 32: {
                 "source": "0x" + "01" * 32,
                 "kind": "constant",

@@ -165,6 +165,28 @@ def _leaf_to_v1_predicate(leaf: dict[str, Any]) -> dict[str, Any] | None:
         # mapping_membership as semantically equivalent for cutover
         # purposes.
         descriptor = leaf.get("set_descriptor") or {}
+        # v1's mapping_membership emit ALWAYS uses the mapping name as
+        # controller_source (verified empirically against semantic_-
+        # guards.py emit on oz_ac_inline + maker_wards: v1 emits
+        # controller_source='_roles' / 'wards' regardless of whether
+        # the descriptor has a non-caller role key like MINTER). The
+        # role/key discriminator info is intentionally dropped — v1
+        # doesn't track it either, and downstream effective_-
+        # permissions's controller_lookup is keyed on the mapping
+        # name. Match v1 by using set_descriptor.storage_var
+        # unconditionally when present.
+        storage_var = descriptor.get("storage_var")
+        if isinstance(storage_var, str) and storage_var:
+            return {
+                "kind": "mapping_membership",
+                "controller_kind": "mapping_membership",
+                "controller_label": storage_var,
+                "controller_source": storage_var,
+                "read_spec": None,
+            }
+        # No storage_var on the descriptor — fall back to the non-
+        # caller key operand. Rare for canonical predicate-builder
+        # output but the v2 schema doesn't strictly require it.
         keys = descriptor.get("key_sources") or operands
         controller_op = next(
             (
@@ -174,28 +196,11 @@ def _leaf_to_v1_predicate(leaf: dict[str, Any]) -> dict[str, Any] | None:
             ),
             None,
         )
-        controller_source = _operand_source_id(controller_op)
-        controller_kind = _operand_to_controller_kind(controller_op)
-        controller_label = _operand_label(controller_op)
-        # Fallback for 1-key caller-only mappings (Maker wards, OZ
-        # Pausable's _paused, blacklists keyed only on msg.sender):
-        # all keys were caller-related so controller_op is None. v1's
-        # native emit uses the mapping's OWN NAME as controller_source
-        # so downstream effective_permissions can resolve via
-        # controller_lookup. The set_descriptor's ``storage_var`` field
-        # carries that name structurally — fall back to it to match
-        # v1's contract for downstream consumers.
-        if controller_source is None:
-            storage_var = descriptor.get("storage_var")
-            if isinstance(storage_var, str) and storage_var:
-                controller_source = storage_var
-                controller_kind = "mapping_membership"
-                controller_label = storage_var
         return {
             "kind": "mapping_membership",
-            "controller_kind": controller_kind,
-            "controller_label": controller_label,
-            "controller_source": controller_source,
+            "controller_kind": _operand_to_controller_kind(controller_op),
+            "controller_label": _operand_label(controller_op),
+            "controller_source": _operand_source_id(controller_op),
             "read_spec": None,
         }
 
