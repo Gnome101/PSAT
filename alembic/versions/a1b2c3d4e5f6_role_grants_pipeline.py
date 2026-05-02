@@ -38,8 +38,12 @@ depends_on: Union[str, Sequence[str], None] = None
 # Per-chain confirmation depth. Conservative defaults that keep
 # reorg-induced false positives below 1 / 1e6 on each chain. Operators
 # can tune by updating the row directly.
+#
+# Names match the convention used by ``MonitoredContract.chain`` /
+# ``WatchedProxy.chain`` so cross-table joins on chain string don't
+# need a translation layer.
 _DEFAULT_FINALITY = (
-    (1, "mainnet", 12),
+    (1, "ethereum", 12),
     (10, "optimism", 24),
     (137, "polygon", 128),
     (8453, "base", 24),

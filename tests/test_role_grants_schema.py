@@ -197,7 +197,7 @@ def test_chain_finality_config_seeded():
 
     engine = create_engine(_DB_URL)
     expected = {
-        1: ("mainnet", 12),
+        1: ("ethereum", 12),
         10: ("optimism", 24),
         137: ("polygon", 128),
         8453: ("base", 24),
