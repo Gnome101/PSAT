@@ -3704,6 +3704,56 @@ def get_contract_capabilities(
     }
 
 
+@app.get(
+    "/api/contract/{address}/v1_v2_diff",
+    dependencies=[Depends(require_admin_key)],
+)
+def get_contract_v1_v2_diff(address: str) -> dict[str, Any]:
+    """Per-contract cutover-gate report. Loads BOTH the v1
+    ``contract_analysis`` and v2 ``predicate_trees`` artifacts for
+    the most recent completed analysis of ``address``, runs the
+    diff harness, and returns a structured JSON report.
+
+    Response shape:
+
+        {
+          "address": "0x...",
+          "job_id": "<uuid>",
+          "severity": "regression" | "new_coverage" | "role_drift" | "clean",
+          "contract_name": "...",
+          "agreed": [...],
+          "v1_only": [...],
+          "v2_only": [...],
+          "role_disagreements": { fn: {v1_guard_kinds, v2_authority_roles} },
+          "safe_to_cut_over": bool
+        }
+
+    Admin-gated because the diff exposes internal classifier
+    detail not meant for external consumers. This is the human
+    audit surface for #18.
+    """
+    from services.static.contract_analysis_pipeline.cutover_check import (
+        cutover_check_for_address,
+        is_safe_to_cut_over,
+    )
+
+    addr = _normalize_address_or_400(address)
+    with SessionLocal() as session:
+        report = cutover_check_for_address(session, address=addr)
+    if report is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Cannot run cutover check for this address — either no "
+                "completed analysis exists, the v1 contract_analysis "
+                "artifact is missing, or the v2 predicate_trees artifact "
+                "is missing (legacy pre-v2 contract). Re-analyze before "
+                "evaluating."
+            ),
+        )
+    return {**report, "safe_to_cut_over": is_safe_to_cut_over(report)}
+
+
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str):
     if full_path == "api" or full_path.startswith("api/"):
