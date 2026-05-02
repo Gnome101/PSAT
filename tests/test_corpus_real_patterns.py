@@ -186,18 +186,13 @@ def test_oz_access_control_grantrole_via_onlyrole(tmp_path):
     canonical EtherFiTimelock pattern and the original motivation
     for the rewrite.
 
-    With my modifier walking + cross-function revert detection
-    (which I've verified works for the simpler onlyOwner case),
-    this should also classify correctly. Note: real OZ uses a
-    multi-hop helper chain (onlyRole → _checkRole(role) →
-    _checkRole(role, account) → revert if !hasRole). For the
-    library to handle this requires walking InternalCall callees
-    inside the modifier — which RevertDetector currently does NOT
-    do.
-
-    This test pins the gap: the leaf currently isn't admitted, so
-    we mark it xfail-strict until cross-function revert detection
-    lands.
+    LANDED via cross-function revert detection: RevertDetector
+    now recurses into InternalCall callees (bounded depth) and
+    the predicate builder uses gate.containing_function to walk
+    the condition's defining IR through the helper's scope. The
+    membership leaf inside _checkRole has 2 keys (role param +
+    msg.sender) → caller_authority via Rule B's multi-key
+    direct-promote.
     """
     sl = _compile(
         tmp_path,
@@ -225,18 +220,14 @@ def test_oz_access_control_grantrole_via_onlyrole(tmp_path):
     contract = sl.contracts[0]
     trees = _build_pipeline(contract)
     tree = trees["grantRole(bytes32,address)"]
-    # Currently: cross-function revert detection isn't implemented,
-    # so the modifier's _checkRole call doesn't surface a gate.
-    # Document the expectation — this test will flip when cross-fn
-    # revert detection lands.
-    if tree is not None:
-        leaves = _all_leaves(tree)
-        # If admitted, it should be caller_authority membership.
-        if leaves:
-            assert leaves[0]["authority_role"] in (
-                "caller_authority",
-                "delegated_authority",
-            )
+    assert tree is not None, "cross-fn revert detection should find _checkRole gate"
+    leaves = _all_leaves(tree)
+    assert len(leaves) >= 1
+    # Resolves to caller_authority membership (2-key mapping with
+    # caller as one key — Rule B direct-promote via the
+    # cross-function recursion).
+    assert leaves[0]["authority_role"] == "caller_authority"
+    assert leaves[0]["kind"] == "membership"
 
 
 # ---------------------------------------------------------------------------

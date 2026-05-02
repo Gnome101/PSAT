@@ -106,7 +106,14 @@ def _build_subtree_from_gate(
     """Like ``_build_leaf_from_gate``, but returns a PredicateTree
     so binary ``&&`` / ``||`` at the gate's condition can split into
     AND/OR tree nodes instead of collapsing into a single
-    ``unsupported`` leaf."""
+    ``unsupported`` leaf.
+
+    When the gate's ``containing_function`` is a helper called from
+    the function/modifier (cross-fn revert), use the helper as the
+    operating context for defining-IR lookup and provenance — the
+    condition's SSA values live in the helper's scope, not the
+    top-level function's.
+    """
     if gate.kind == "opaque":
         leaf = _unsupported_leaf(
             reason=gate.unsupported_reason or "opaque_control_flow",
@@ -118,7 +125,16 @@ def _build_subtree_from_gate(
     if cond is None:
         return make_leaf_node(_unsupported_leaf(reason="missing_condition", expression=gate.expression_text))
 
-    return _build_subtree_from_value(cond, prov, gate, function)
+    # If gate is in a cross-fn helper, run provenance + IR walks
+    # against the helper so we can resolve the condition's defining
+    # IR + operand sources.
+    operating_fn = gate.containing_function or function
+    if operating_fn is not function:
+        helper_engine = ProvenanceEngine(operating_fn)
+        helper_engine.run()
+        prov = helper_engine.provenance
+
+    return _build_subtree_from_value(cond, prov, gate, operating_fn)
 
 
 def _build_subtree_from_value(

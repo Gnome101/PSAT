@@ -41,11 +41,20 @@ from typing import Any, Literal
 
 try:
     from slither.core.cfg.node import NodeType  # type: ignore[import]
-    from slither.slithir.operations import Condition  # type: ignore[import]
+    from slither.core.declarations.modifier import Modifier  # type: ignore[import]
+    from slither.slithir.operations import (  # type: ignore[import]
+        Condition,
+        InternalCall,
+        LibraryCall,
+    )
 
     SLITHER_AVAILABLE = True
 except Exception:  # pragma: no cover
     SLITHER_AVAILABLE = False
+    Modifier = type(None)  # placeholder
+
+
+DEFAULT_INTERNAL_CALL_DEPTH = 4
 
 
 RevertKind = Literal[
@@ -78,6 +87,12 @@ class RevertGate:
     # Slither node where the gate lives — used by the predicate builder
     # for parameter-binding / modifier-frame lookups.
     node: Any = None
+    # Slither function/modifier whose body contains the gate node.
+    # When the gate is inside a cross-function helper (e.g.,
+    # ``_checkRole`` called from a modifier), this is the helper —
+    # the predicate builder uses it to walk the condition's defining
+    # IR through the right scope.
+    containing_function: Any = None
     # Diagnostic text for predicate.expression / leaf.basis.
     expression_text: str = ""
     basis: list[str] = field(default_factory=list)
@@ -138,30 +153,28 @@ class RevertDetector:
         gates = detector.run()  # list[RevertGate]
     """
 
-    def __init__(self, function: Any) -> None:
+    def __init__(
+        self,
+        function: Any,
+        *,
+        internal_call_depth: int = DEFAULT_INTERNAL_CALL_DEPTH,
+    ) -> None:
         if not SLITHER_AVAILABLE:
             raise RuntimeError("RevertDetector requires slither")
         self.function = function
+        self.internal_call_depth = internal_call_depth
         self._gates: list[RevertGate] = []
+        self._call_stack: list[str] = []
 
     def run(self) -> list[RevertGate]:
         # Walk the function's own body.
         for node in self.function.nodes:
-            self._scan_node(node)
-        # Walk each modifier's body. Slither doesn't inline modifiers
-        # (it emits an ``InternalCall: MODIFIER_CALL`` IR in the
-        # function body but keeps the modifier as a separate Function-
-        # like object). Each modifier body's reverts gate the function
-        # too, so we collect them here.
+            self._scan_node(node, container=self.function)
+        # Walk each modifier's body.
         for modifier in getattr(self.function, "modifiers", []) or []:
             for node in getattr(modifier, "nodes", []) or []:
-                self._scan_node(node)
-        # Case 8: opaque-Yul fallback. We only emit ``opaque`` when an
-        # InlineAssemblyOperation IR contains a textual ``revert`` we
-        # couldn't structurally extract — i.e., Yul control flow we
-        # couldn't model. Pure-compute assembly (memory ops, hashing,
-        # etc.) doesn't trigger the marker; those functions simply
-        # have no revert paths and aren't privileged.
+                self._scan_node(node, container=modifier)
+        # Case 8: opaque-Yul fallback.
         if self._has_unresolved_revert_in_assembly():
             self._gates.append(
                 RevertGate(
@@ -176,15 +189,44 @@ class RevertDetector:
     # Per-node classification
     # ------------------------------------------------------------------
 
-    def _scan_node(self, node: Any) -> None:
+    def _scan_node(self, node: Any, container: Any = None) -> None:
         # Case 1-2: require / assert directly in this node.
         for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
             if _ir_is_require(ir):
-                self._gates.append(self._gate_from_solidity_call(ir, node, "require"))
+                self._gates.append(self._gate_from_solidity_call(ir, node, "require", container))
                 return
             if _ir_is_assert(ir):
-                self._gates.append(self._gate_from_solidity_call(ir, node, "assert"))
+                self._gates.append(self._gate_from_solidity_call(ir, node, "assert", container))
                 return
+
+        # Cross-function revert detection: recurse into InternalCall /
+        # LibraryCall callees. The OZ AccessControl ``onlyRole`` modifier
+        # body is just ``_checkRole(role); _;`` — the actual revert
+        # lives inside ``_checkRole``. RevertDetector follows the call
+        # to find gates the modifier doesn't directly contain.
+        for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
+            if isinstance(ir, (InternalCall, LibraryCall)):
+                callee = getattr(ir, "function", None)
+                if callee is None:
+                    continue
+                # Skip modifier-call IRs — modifiers are walked
+                # separately via run() iterating function.modifiers.
+                # If we recursed here we'd find the modifier's
+                # reverts twice (once via the dedicated walk, once
+                # via this recursion).
+                if isinstance(callee, Modifier):
+                    continue
+                callee_id = getattr(callee, "full_name", None) or getattr(callee, "name", None)
+                if not callee_id or callee_id in self._call_stack:
+                    continue
+                if len(self._call_stack) >= self.internal_call_depth:
+                    continue
+                self._call_stack.append(callee_id)
+                try:
+                    for sub_node in getattr(callee, "nodes", []) or []:
+                        self._scan_node(sub_node, container=callee)
+                finally:
+                    self._call_stack.pop()
 
         # Cases 3-4: if (C) revert ErrorName / SolidityCall(revert) in
         # the THIS node OR a one-hop successor (slither splits these).
@@ -210,6 +252,7 @@ class RevertDetector:
                             condition_value=getattr(condition_ir, "value", None),
                             polarity=polarity,
                             node=node,
+                            containing_function=container,
                             expression_text=str(node.expression) if node.expression else "",
                             basis=[f"if-revert via successor {son.type}"],
                         )
@@ -224,6 +267,7 @@ class RevertDetector:
                     condition_value=getattr(condition_ir, "value", None),
                     polarity="allowed_when_true",
                     node=node,
+                    containing_function=container,
                     expression_text=str(node.expression) if node.expression else "<asm>",
                     basis=["inline assembly conditional revert"],
                     unsupported_reason=None,  # captured but limited
@@ -234,7 +278,7 @@ class RevertDetector:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _gate_from_solidity_call(self, ir: Any, node: Any, kind: RevertKind) -> RevertGate:
+    def _gate_from_solidity_call(self, ir: Any, node: Any, kind: RevertKind, container: Any = None) -> RevertGate:
         # require/assert take the condition as the first argument.
         args = getattr(ir, "arguments", None) or getattr(ir, "read", None) or []
         cond = args[0] if args else None
@@ -243,6 +287,7 @@ class RevertDetector:
             condition_value=cond,
             polarity="allowed_when_true",
             node=node,
+            containing_function=container,
             expression_text=str(node.expression) if node.expression else "",
             basis=[f"{kind}({cond})" if cond is not None else kind],
         )
