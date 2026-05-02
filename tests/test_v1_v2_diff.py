@@ -114,6 +114,49 @@ def test_role_drift_when_classification_differs():
     assert v2_roles == ["pause"]
 
 
+def test_role_drift_on_actual_v1_guard_kinds():
+    """v1 emits 'caller_equals_storage' / 'caller_in_mapping' /
+    'role_membership_check' / 'caller_via_helper_function' as its
+    actual guard_kinds at runtime — NOT the higher-level labels
+    'access_control' / 'ownership' / 'roles' that earlier versions
+    of _KIND_COMPAT keyed on. This regression test ensures the
+    diff harness can still flag classification disagreements when
+    given the canonical v1 strings; before the mapping fix every
+    one of these would default to 'unrecognized' and silently pass
+    role_drift detection.
+    """
+    # caller_equals_storage (Ownable msg.sender == owner) vs v2
+    # claiming pause — clearly a disagreement.
+    v1 = _v1("C", ("f()", ["caller_equals_storage"]))
+    v2 = _v2("C", ("f()", ["pause"]))
+    rep = diff_artifacts(v1, v2)
+    assert classify_diff_severity(rep) == "role_drift"
+    # caller_in_mapping (AC inline) vs v2 claiming time — disagree.
+    v1 = _v1("C", ("g()", ["caller_in_mapping"]))
+    v2 = _v2("C", ("g()", ["time"]))
+    rep = diff_artifacts(v1, v2)
+    assert classify_diff_severity(rep) == "role_drift"
+    # caller_in_mapping vs v2 caller_authority — compatible (both
+    # mean role-style admission). Stays clean.
+    v1 = _v1("C", ("h()", ["caller_in_mapping"]))
+    v2 = _v2("C", ("h()", ["caller_authority"]))
+    rep = diff_artifacts(v1, v2)
+    assert classify_diff_severity(rep) == "clean"
+    # role_membership_check + delegated_authority — v2 says external
+    # auth but v1 didn't see external (only role check). Disagree.
+    v1 = _v1("C", ("i()", ["role_membership_check"]))
+    v2 = _v2("C", ("i()", ["delegated_authority"]))
+    rep = diff_artifacts(v1, v2)
+    assert classify_diff_severity(rep) == "role_drift"
+    # caller_via_helper_function maps to BOTH caller_authority and
+    # delegated_authority because helpers can do either. v2 picking
+    # delegated_authority is compatible.
+    v1 = _v1("C", ("j()", ["caller_via_helper_function"]))
+    v2 = _v2("C", ("j()", ["delegated_authority"]))
+    rep = diff_artifacts(v1, v2)
+    assert classify_diff_severity(rep) == "clean"
+
+
 def test_unknown_v1_kind_does_not_trip_role_drift():
     """If v1 emitted a guard_kind we don't have a mapping for, we
     treat it as 'unrecognized' rather than flagging role_drift —

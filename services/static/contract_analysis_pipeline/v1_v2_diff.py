@@ -157,7 +157,32 @@ def _walk_roles(node: dict[str, Any], out: set[str]) -> None:
 # authority_roles that are compatible. The mapping is intentionally
 # permissive — v1 conflates many shapes under a single label, so we
 # accept any of the typed roles that v1 might cover under that label.
+#
+# Keys are the ACTUAL guard kinds v1's graph.py/build_permission_graph
+# appends to ``privileged_functions[].guard_kinds`` (verified empirically
+# against oz_ownable / oz_ac_inline / oz_pausable fixtures). Earlier
+# versions of this map used aspirational labels like "access_control" /
+# "ownership" / "roles" that v1 NEVER emits — every lookup returned the
+# default empty set, then the not-expected branch returned True
+# unconditionally, meaning role_drift was never flagged at the cutover
+# gate. Without this fix the cutover_dry_run couldn't surface real
+# v1↔v2 classification disagreements.
 _KIND_COMPAT = {
+    # graph.py guard kinds (the canonical v1 emits)
+    "caller_equals_storage": {"caller_authority"},
+    "caller_in_mapping": {"caller_authority"},
+    "role_membership_check": {"caller_authority"},
+    "caller_via_helper_function": {"caller_authority", "delegated_authority"},
+    "external_authority_check": {"caller_authority", "delegated_authority"},
+    "inline_assembly_check": {"caller_authority"},
+    # caller_sinks.py kinds (when piped through to graph entries —
+    # rare but possible on synthetic/legacy pipelines)
+    "caller_equals": {"caller_authority"},
+    "caller_internal_call": {"caller_authority", "delegated_authority"},
+    "caller_signature": {"caller_authority"},
+    "caller_merkle": {"caller_authority"},
+    # Legacy labels — kept defensively in case any v1 emit path uses
+    # these older strings (they appear in older snapshots in the wild).
     "access_control": {"caller_authority", "delegated_authority"},
     "ownership": {"caller_authority"},
     "roles": {"caller_authority"},
