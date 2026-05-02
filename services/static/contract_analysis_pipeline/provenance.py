@@ -218,6 +218,16 @@ class ProvenanceEngine:
         # because the call_stack at the deeper level differs and would
         # invalidate the keys.
         self._sub_engine_memo: dict[tuple[str, frozenset], frozenset] = {}
+        # Per-engine cache for leaf-value source classification —
+        # SolidityVariable / Constant / StateVariable are PURE functions
+        # of the value object, not of engine state. The worklist iterates
+        # to fixed point so the same operand is re-resolved many times
+        # within ONE run() — caching by id collapses each unique value
+        # to a single classification call. Bounded lifetime (= engine
+        # instance), so no cross-Slither-instance id-reuse risk.
+        # Variable subtypes (Local/Temporary/Reference/Variable) are NOT
+        # cached because their provenance changes as dataflow converges.
+        self._leaf_value_source_cache: dict[int, SourceSet] = {}
 
     # ------------------------------------------------------------------
     # Public entry
@@ -702,11 +712,19 @@ class ProvenanceEngine:
     def _sources_for_value(self, value: Any) -> SourceSet:
         if value is None:
             return EMPTY
+        # Per-engine leaf cache: bounded lifetime, no cross-instance
+        # id-reuse risk. Lookup by id is O(1) and short-circuits the
+        # isinstance chain below for the dominant repeated cases.
+        cached = self._leaf_value_source_cache.get(id(value))
+        if cached is not None:
+            return cached
         # SolidityVariable: msg.sender / tx.origin / block.* / now etc.
         if isinstance(value, SolidityVariable):
-            return self._classify_solidity_variable(value)
+            result = self._classify_solidity_variable(value)
+            self._leaf_value_source_cache[id(value)] = result
+            return result
         if isinstance(value, Constant):
-            return frozenset(
+            result: SourceSet = frozenset(
                 {
                     Source(
                         kind="constant",
@@ -714,8 +732,10 @@ class ProvenanceEngine:
                     )
                 }
             )
+            self._leaf_value_source_cache[id(value)] = result
+            return result
         if isinstance(value, StateVariable):
-            return frozenset(
+            result = frozenset(
                 {
                     Source(
                         kind="state_variable",
@@ -723,6 +743,8 @@ class ProvenanceEngine:
                     )
                 }
             )
+            self._leaf_value_source_cache[id(value)] = result
+            return result
         # ReferenceVariable (e.g., result of Index/Member) — propagate
         # whatever provenance has been computed for the reference.
         # Slither's SSA suffixes parameter names with ``_N``; if the
