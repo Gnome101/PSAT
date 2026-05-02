@@ -8,6 +8,7 @@ visits target URLs, and captures all contract interactions.
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Callable
 from urllib.parse import urlparse
@@ -19,6 +20,11 @@ from services.crawlers.dapp.interaction_log import InteractionLog
 from services.crawlers.dapp.wallet import HoneypotWallet
 
 logger = logging.getLogger(__name__)
+
+# Concurrency cap for the per-URL crawl fan-out. Each URL holds a Page
+# in the shared BrowserContext for the full wait window, so this caps
+# memory + CPU. Default 3 keeps the shared-cpu-2x fleet happy.
+_DAPP_PARALLEL = max(1, int(os.environ.get("PSAT_DAPP_PARALLEL", "3")))
 
 
 class DAppCrawler:
@@ -790,6 +796,11 @@ class DAppCrawler:
         """
         Visit URLs, connect wallet, then deeply explore each site for
         contract interactions.
+
+        URLs run concurrently up to ``PSAT_DAPP_PARALLEL`` (default 3) — each
+        gets its own Page in the shared BrowserContext. The interaction_log
+        is mutated cooperatively from a single asyncio thread so per-URL
+        capture order is preserved within a URL but interleaves across URLs.
         """
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=self.headless)
@@ -802,34 +813,38 @@ class DAppCrawler:
                 ),
             )
 
-            for url in urls:
+            sem = asyncio.Semaphore(_DAPP_PARALLEL)
+
+            async def _visit(url: str) -> None:
                 site_label = urlparse(url).netloc or url
-                page = await context.new_page()
-                await self._setup_page(page)
+                async with sem:
+                    page = await context.new_page()
+                    await self._setup_page(page)
+                    logger.info("Visiting %s", url)
+                    try:
+                        if progress:
+                            progress(f"Opening {site_label}")
+                        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                        await page.wait_for_timeout(3000)
 
-                logger.info("Visiting %s", url)
-                try:
-                    if progress:
-                        progress(f"Opening {site_label}")
-                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                    await page.wait_for_timeout(3000)
+                        if progress:
+                            progress(f"Connecting wallet on {site_label}")
+                        await self._try_connect_wallet(page)
+                        await page.wait_for_timeout(2000)
 
-                    if progress:
-                        progress(f"Connecting wallet on {site_label}")
-                    await self._try_connect_wallet(page)
-                    await page.wait_for_timeout(2000)
+                        if progress:
+                            progress(f"Exploring {site_label} for contract interactions")
+                        await self._explore_page(page, context, depth=0, max_depth=1)
 
-                    if progress:
-                        progress(f"Exploring {site_label} for contract interactions")
-                    await self._explore_page(page, context, depth=0, max_depth=1)
+                        if progress:
+                            progress(f"Watching {site_label} for {wait_seconds}s")
+                        await page.wait_for_timeout(wait_seconds * 1000)
+                    except Exception as e:
+                        logger.warning("Error visiting %s: %s", url, e)
+                    finally:
+                        await page.close()
 
-                    if progress:
-                        progress(f"Watching {site_label} for {wait_seconds}s")
-                    await page.wait_for_timeout(wait_seconds * 1000)
-                except Exception as e:
-                    logger.warning("Error visiting %s: %s", url, e)
-                finally:
-                    await page.close()
+            await asyncio.gather(*[_visit(url) for url in urls], return_exceptions=False)
 
             await browser.close()
 

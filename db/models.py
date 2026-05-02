@@ -838,6 +838,27 @@ class EtherscanCache(Base):
     __table_args__ = (Index("ix_etherscan_cache_cached_at", "cached_at"),)
 
 
+class BytecodeCache(Base):
+    """Persistent eth_getCode bytecode cache. Read/written by ``utils/rpc.py`` via
+    raw SQL; this model exists so ``alembic check`` doesn't flag the table as
+    drift. Bytecode at a deployed address is effectively immutable per
+    ``(chain_id, address)`` for the lifetime of the contract — no TTL.
+    ``selfdestructed_at`` is reserved for future GC of pre-Cancun SELFDESTRUCT
+    survivors; today's writers leave it NULL.
+    """
+
+    __tablename__ = "bytecode_cache"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    bytecode: Mapped[str] = mapped_column(Text, nullable=False)
+    code_keccak: Mapped[str] = mapped_column(String(66), nullable=False)
+    cached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("NOW()"), nullable=False)
+    selfdestructed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_bytecode_cache_cached_at", "cached_at"),)
+
+
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://psat:psat@localhost:5433/psat")

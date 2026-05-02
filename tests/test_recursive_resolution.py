@@ -551,3 +551,188 @@ def test_resolve_control_graph_skips_self_referential_role_principal_edges(monke
     )
 
     assert all(edge["from_id"] != edge["to_id"] for edge in graph["edges"])
+
+
+# ---------------------------------------------------------------------------
+# Level-parallel BFS parity: parallel + sequential produce identical graphs.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_parity_helper(monkeypatch, fanout: str):
+    """Build a fixture with 2 same-depth nested contracts so the BFS level
+    has more than one item to materialize concurrently."""
+    monkeypatch.setenv("PSAT_RPC_FANOUT", fanout)
+    root_address = "0x1111111111111111111111111111111111111111"
+    auth_a = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    auth_b = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    leaf_a = "0xcccccccccccccccccccccccccccccccccccccccc"
+    leaf_b = "0xdddddddddddddddddddddddddddddddddddddddd"
+
+    root_bundle = _bundle(
+        root_address,
+        "Root",
+        snapshot={
+            "schema_version": "0.1",
+            "contract_address": root_address,
+            "contract_name": "Root",
+            "block_number": 1,
+            "controller_values": {
+                "external_contract:authA": {
+                    "source": "authA",
+                    "value": auth_a,
+                    "block_number": 1,
+                    "observed_via": "eth_call",
+                    "resolved_type": "contract",
+                    "details": {"address": auth_a},
+                },
+                "external_contract:authB": {
+                    "source": "authB",
+                    "value": auth_b,
+                    "block_number": 1,
+                    "observed_via": "eth_call",
+                    "resolved_type": "contract",
+                    "details": {"address": auth_b},
+                },
+            },
+        },
+    )
+
+    def _make_auth_bundle(addr, leaf_addr, leaf_role):
+        return _bundle(
+            addr,
+            f"Auth_{addr[-2:]}",
+            snapshot={
+                "schema_version": "0.1",
+                "contract_address": addr,
+                "contract_name": f"Auth_{addr[-2:]}",
+                "block_number": 2,
+                "controller_values": {
+                    "state_variable:owner": {
+                        "source": "owner",
+                        "value": leaf_addr,
+                        "block_number": 2,
+                        "observed_via": "eth_call",
+                        "resolved_type": leaf_role,
+                        "details": {"address": leaf_addr},
+                    }
+                },
+            },
+        )
+
+    bundles_by_addr = {
+        auth_a: _make_auth_bundle(auth_a, leaf_a, "eoa"),
+        auth_b: _make_auth_bundle(auth_b, leaf_b, "eoa"),
+    }
+
+    def fake_materialize(address, rpc_url, *, workspace_prefix):
+        return bundles_by_addr[address]
+
+    def fake_classify(rpc_url, address, block_tag="latest"):
+        return "eoa", {"address": address}
+
+    monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
+    monkeypatch.setattr("services.resolution.recursive.classify_resolved_address", fake_classify)
+    monkeypatch.setattr(
+        "services.resolution.recursive.classify_resolved_address_with_status",
+        lambda rpc_url, address, block_tag="latest": (*fake_classify(rpc_url, address, block_tag), True),
+    )
+
+    graph, nested = resolve_control_graph(
+        root_artifacts=cast(LoadedArtifacts, root_bundle),
+        rpc_url="http://rpc.example",
+        max_depth=2,
+    )
+    return graph, nested
+
+
+def test_resolve_control_graph_level_parallel_parity(monkeypatch):
+    """Level-parallel BFS must produce the same nodes + edges as sequential."""
+    seq_graph, seq_nested = _resolve_parity_helper(monkeypatch, "1")
+    par_graph, par_nested = _resolve_parity_helper(monkeypatch, "8")
+
+    # Nodes/edges are sorted by ``resolve_control_graph`` before return —
+    # equality is meaningful even though materialization order differed.
+    assert seq_graph["nodes"] == par_graph["nodes"]
+    assert seq_graph["edges"] == par_graph["edges"]
+    assert sorted(seq_nested.keys()) == sorted(par_nested.keys())
+
+
+def test_resolve_control_graph_parallel_handles_partial_materialize_failure(monkeypatch):
+    """One nested materialize failure becomes an unanalyzed node; the other
+    sibling at the same depth still wires up cleanly."""
+    monkeypatch.setenv("PSAT_RPC_FANOUT", "8")
+    root_address = "0x1111111111111111111111111111111111111111"
+    good_addr = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    bad_addr = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+    root_bundle = _bundle(
+        root_address,
+        "Root",
+        snapshot={
+            "schema_version": "0.1",
+            "contract_address": root_address,
+            "contract_name": "Root",
+            "block_number": 1,
+            "controller_values": {
+                "external_contract:good": {
+                    "source": "good",
+                    "value": good_addr,
+                    "block_number": 1,
+                    "observed_via": "eth_call",
+                    "resolved_type": "contract",
+                    "details": {"address": good_addr},
+                },
+                "external_contract:bad": {
+                    "source": "bad",
+                    "value": bad_addr,
+                    "block_number": 1,
+                    "observed_via": "eth_call",
+                    "resolved_type": "contract",
+                    "details": {"address": bad_addr},
+                },
+            },
+        },
+    )
+    good_bundle = _bundle(
+        good_addr,
+        "Good",
+        snapshot={
+            "schema_version": "0.1",
+            "contract_address": good_addr,
+            "contract_name": "Good",
+            "block_number": 2,
+            "controller_values": {},
+        },
+    )
+
+    def fake_materialize(address, rpc_url, *, workspace_prefix):
+        if address == bad_addr:
+            raise RuntimeError("simulated materialize failure")
+        return good_bundle
+
+    monkeypatch.setattr("services.resolution.recursive._materialize_contract_artifacts", fake_materialize)
+    monkeypatch.setattr(
+        "services.resolution.recursive.classify_resolved_address",
+        lambda rpc_url, address, block_tag="latest": ("contract", {"address": address}),
+    )
+    monkeypatch.setattr(
+        "services.resolution.recursive.classify_resolved_address_with_status",
+        lambda rpc_url, address, block_tag="latest": ("contract", {"address": address}, True),
+    )
+
+    graph, nested = resolve_control_graph(
+        root_artifacts=cast(LoadedArtifacts, root_bundle),
+        rpc_url="http://rpc.example",
+        max_depth=2,
+    )
+
+    by_addr = {(node.get("details") or {}).get("address"): node for node in graph["nodes"]}
+    assert good_addr in by_addr
+    assert bad_addr in by_addr
+    # Failed sibling is recorded as unanalyzed with the materialize_error
+    # surfaced on details — same surface as the prior sequential code path.
+    assert by_addr[bad_addr]["analyzed"] is False
+    assert "materialize_error" in by_addr[bad_addr]["details"]
+    assert by_addr[good_addr]["analyzed"] is True
+    assert good_addr in nested
+    assert bad_addr not in nested

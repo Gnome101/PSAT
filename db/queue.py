@@ -112,6 +112,83 @@ def create_job(
     return job
 
 
+def bulk_upsert_discovered_contracts(
+    session: Session,
+    *,
+    protocol_id: int | None,
+    entries: list[dict[str, Any]],
+) -> list[Contract]:
+    """Bulk variant of :func:`upsert_discovered_contract` with identical first-writer-wins semantics.
+
+    Each *entries* item is a dict with keys: ``address`` (required),
+    ``chain``, ``new_sources`` (list[str]), ``contract_name``, ``confidence``,
+    ``chains``, ``discovery_url``. The single-row helper does one SELECT per
+    address, which dominates wall time when discovery surfaces 100-300
+    contracts at once. This collapses every SELECT into one ``IN (...)`` and
+    keeps the merge logic identical so semantics don't drift.
+
+    Commit is the caller's responsibility — typical use is one bulk call
+    per discovery source followed by a single commit.
+    """
+    if not entries:
+        return []
+
+    # Normalize once so the lookup map and the merge loop see identical keys.
+    norm_entries: list[tuple[str, str | None, dict[str, Any]]] = []
+    for entry in entries:
+        address = str(entry["address"]).lower()
+        chain = entry.get("chain")
+        norm_entries.append((address, chain, entry))
+
+    # One round-trip for every existing row across the requested (address, chain) tuples.
+    # We can't use a single tuple-IN against a composite key efficiently in SQLAlchemy
+    # core without raw SQL, so query by address set and filter chain in Python — the
+    # set is small (typically 100-300 addresses) and the chain comparison is O(1).
+    addresses = list({a for a, _c, _e in norm_entries})
+    existing_rows = session.execute(select(Contract).where(Contract.address.in_(addresses))).scalars().all()
+    existing_by_key: dict[tuple[str, str | None], Contract] = {(row.address, row.chain): row for row in existing_rows}
+
+    out: list[Contract] = []
+    for address, chain, entry in norm_entries:
+        clean_sources = [s for s in (entry.get("new_sources") or []) if s]
+        existing = existing_by_key.get((address, chain))
+        if existing is None:
+            row = Contract(
+                address=address,
+                chain=chain,
+                protocol_id=protocol_id,
+                contract_name=entry.get("contract_name"),
+                confidence=entry.get("confidence"),
+                discovery_sources=list(clean_sources) or None,
+                chains=entry.get("chains"),
+                discovery_url=entry.get("discovery_url"),
+            )
+            session.add(row)
+            existing_by_key[(address, chain)] = row
+            out.append(row)
+            continue
+
+        merged = list(existing.discovery_sources or [])
+        for src in clean_sources:
+            if src not in merged:
+                merged.append(src)
+        if merged:
+            existing.discovery_sources = merged
+        if existing.protocol_id is None and protocol_id is not None:
+            existing.protocol_id = protocol_id
+        if not existing.contract_name and entry.get("contract_name"):
+            existing.contract_name = entry["contract_name"]
+        if existing.confidence is None and entry.get("confidence") is not None:
+            existing.confidence = entry["confidence"]
+        if not existing.chains and entry.get("chains"):
+            existing.chains = entry["chains"]
+        if not existing.discovery_url and entry.get("discovery_url"):
+            existing.discovery_url = entry["discovery_url"]
+        out.append(existing)
+
+    return out
+
+
 def upsert_discovered_contract(
     session: Session,
     *,
@@ -577,20 +654,48 @@ def store_source_files(session: Session, job_id: Any, files: dict[str, str]) -> 
         session.commit()
         return
 
-    uploaded_keys: list[str] = []
-    try:
-        entries: list[tuple[str, str]] = []
-        for path, content in files.items():
-            key = source_file_key(job_id, path)
-            client.put(
-                key,
-                content.encode("utf-8"),
-                "text/plain; charset=utf-8",
-                metadata={"path": path, "job_id": str(job_id)},
-            )
-            uploaded_keys.append(key)
-            entries.append((path, key))
+    # Fan out the per-file uploads — Etherscan-verified contracts often have
+    # 30-100 source files and the prior sequential loop was paying one S3/MinIO
+    # RTT per file on the static-stage critical path. Threading-only: each
+    # ``client.put`` is an independent HTTP request to object storage with no
+    # shared session state.
+    from utils.concurrency import parallel_map
 
+    items = list(files.items())
+
+    def _upload(item: tuple[str, str]) -> tuple[str, str]:
+        path, content = item
+        key = source_file_key(job_id, path)
+        client.put(
+            key,
+            content.encode("utf-8"),
+            "text/plain; charset=utf-8",
+            metadata={"path": path, "job_id": str(job_id)},
+        )
+        return path, key
+
+    upload_results = parallel_map(_upload, items)
+    entries: list[tuple[str, str]] = []
+    uploaded_keys: list[str] = []
+    failure: BaseException | None = None
+    for _item, outcome in upload_results:
+        if isinstance(outcome, BaseException):
+            if failure is None:
+                failure = outcome
+            continue
+        path, key = outcome  # type: ignore[misc]
+        entries.append((path, key))
+        uploaded_keys.append(key)
+
+    if failure is not None:
+        for key in uploaded_keys:
+            try:
+                client.delete(key)
+            except StorageError:
+                logger.warning("Failed to clean up orphan source file object %s", key)
+        raise failure
+
+    try:
         # All uploads succeeded — swap DB rows atomically.
         session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
         for path, key in entries:
@@ -612,18 +717,45 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
     rows = session.execute(stmt).scalars().all()
     out: dict[str, str] = {}
     client = get_storage_client()
+
+    storage_rows: list[tuple[str, str]] = []
     for row in rows:
         if row.storage_key:
             if client is None:
                 raise RuntimeError(
                     f"SourceFile {row.path} on job {row.job_id} has storage_key but storage is not configured"
                 )
-            try:
-                out[row.path] = client.get(row.storage_key).decode("utf-8")
-            except StorageKeyMissing:
-                continue
+            storage_rows.append((row.path, row.storage_key))
         elif row.content is not None:
             out[row.path] = row.content
+
+    if not storage_rows:
+        return out
+
+    # Fan out the storage GETs the same way ``store_source_files`` fans out
+    # the PUTs — these blocked the static + resolution + policy stages on
+    # 30-100 sequential MinIO/S3 RTTs each.
+    from utils.concurrency import parallel_map
+
+    # Capture into a non-None local so the closure's type narrows past pyright
+    # (the loop above already raised when client was None for any storage_row).
+    storage_client = client
+    assert storage_client is not None
+
+    def _fetch(item: tuple[str, str]) -> tuple[str, str | None]:
+        path, key = item
+        try:
+            return path, storage_client.get(key).decode("utf-8")
+        except StorageKeyMissing:
+            return path, None
+
+    fetch_results = parallel_map(_fetch, storage_rows)
+    for _item, outcome in fetch_results:
+        if isinstance(outcome, BaseException):
+            raise outcome
+        path, content = outcome  # type: ignore[misc]
+        if content is not None:
+            out[path] = content
     return out
 
 

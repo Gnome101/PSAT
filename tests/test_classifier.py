@@ -468,3 +468,137 @@ def test_classify_single_with_bytecode_param(monkeypatch):
     result = cls.classify_single(ADDR(0xF), RPC, bytecode=bytecode)
     assert result["type"] == "proxy"
     assert result["implementation"] == "0x" + impl_hex
+
+
+# ---------------------------------------------------------------------------
+# Slot-batching parity: ``classify_single`` issues one batched
+# eth_getStorageAt instead of five sequential calls.
+# ---------------------------------------------------------------------------
+
+
+def test_classify_single_uses_batched_storage_reads(monkeypatch):
+    """The five proxy-detection slot reads are issued via one ``rpc_batch_request_with_status``
+    call; sequential ``eth_getStorageAt`` is reserved for the per-slot fallback path."""
+    addr = ADDR(0xA)
+    impl = ADDR(0xB)
+
+    batch_calls: list[list] = []
+
+    def fake_batch(rpc_url, calls):
+        batch_calls.append(list(calls))
+        # Slot order is impl, beacon, admin, uups, oz — return impl on slot 0,
+        # zero on the rest.
+        return [
+            (_slot_for(impl), False),
+            ("0x" + "0" * 64, False),
+            ("0x" + "0" * 64, False),
+            ("0x" + "0" * 64, False),
+            ("0x" + "0" * 64, False),
+        ]
+
+    monkeypatch.setattr(cls, "rpc_batch_request_with_status", fake_batch)
+    monkeypatch.setattr(cls, "get_code", lambda _rpc, _addr: BIG_BYTECODE)
+    monkeypatch.setattr(
+        cls,
+        "rpc_call",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("storage reads must come from the batch")),
+    )
+
+    result = cls.classify_single(addr, RPC)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "eip1967"
+    assert result["implementation"] == impl
+    assert len(batch_calls) == 1
+    assert len(batch_calls[0]) == 5
+    assert all(c[0] == "eth_getStorageAt" for c in batch_calls[0])
+
+
+def test_classify_single_falls_back_when_batch_returns_errors(monkeypatch):
+    """Whole-batch failure falls through to per-slot ``eth_getStorageAt`` so
+    the classifier still recognises proxies on RPCs that reject batches."""
+    addr = ADDR(0xA)
+    impl = ADDR(0xB)
+
+    def fake_batch_errored(_rpc, calls):
+        return [(None, True) for _ in calls]
+
+    storage = {(addr, cls.EIP1967_IMPL_SLOT): _slot_for(impl)}
+
+    monkeypatch.setattr(cls, "rpc_batch_request_with_status", fake_batch_errored)
+    monkeypatch.setattr(cls, "get_code", lambda _rpc, _addr: BIG_BYTECODE)
+    monkeypatch.setattr(
+        cls,
+        "rpc_call",
+        lambda _rpc, method, params, retries=1: (
+            storage.get((params[0], params[1]), ZERO_SLOT)
+            if method == "eth_getStorageAt"
+            else (_ for _ in ()).throw(RuntimeError("unexpected"))
+        ),
+    )
+
+    result = cls.classify_single(addr, RPC)
+    assert result["type"] == "proxy"
+    assert result["proxy_type"] == "eip1967"
+    assert result["implementation"] == impl
+
+
+# ---------------------------------------------------------------------------
+# classify_contracts parity: parallel + sequential produce identical output
+# (modulo dict iteration order).
+# ---------------------------------------------------------------------------
+
+
+def _classify_contracts_parity_helper(monkeypatch, fanout: str):
+    """Drive ``classify_contracts`` with a fixture that hits every Phase 1
+    detection branch. Returns the canonicalised classifications dict."""
+    monkeypatch.setenv("PSAT_RPC_FANOUT", fanout)
+
+    target = ADDR(1)
+    deps = [ADDR(2), ADDR(3), ADDR(4), ADDR(5), ADDR(6)]
+
+    impl_for: dict[str, str] = {target: ADDR(0xA), deps[0]: ADDR(0xB)}
+
+    def fake_classify_single(addr, _rpc, bytecode=None, code_cache=None):
+        info: dict = {"address": addr, "type": "regular"}
+        if addr in impl_for:
+            info["type"] = "proxy"
+            info["proxy_type"] = "eip1967"
+            info["implementation"] = impl_for[addr]
+        return info
+
+    monkeypatch.setattr(cls, "classify_single", fake_classify_single)
+
+    out = cls.classify_contracts(target, deps, RPC)
+    # Canonicalise: sort the classifications dict by address so iteration
+    # order doesn't matter when comparing sequential vs parallel runs.
+    return {
+        addr: {k: info[k] for k in sorted(info.keys())} for addr, info in sorted(out["classifications"].items())
+    }, sorted(out["discovered_addresses"])
+
+
+def test_classify_contracts_parity_parallel_vs_sequential(monkeypatch):
+    """``PSAT_RPC_FANOUT=1`` and ``=8`` must produce identical classifications."""
+    seq_classifications, seq_discovered = _classify_contracts_parity_helper(monkeypatch, "1")
+    par_classifications, par_discovered = _classify_contracts_parity_helper(monkeypatch, "8")
+    assert seq_classifications == par_classifications
+    assert seq_discovered == par_discovered
+
+
+def test_classify_contracts_parallel_handles_per_address_runtimeerror(monkeypatch):
+    """A RuntimeError on one address falls back to ``regular`` without
+    poisoning the parallel batch — same surface as the serial loop."""
+    monkeypatch.setenv("PSAT_RPC_FANOUT", "8")
+    target = ADDR(1)
+    deps = [ADDR(2), ADDR(3), ADDR(4)]
+
+    def fake_classify_single(addr, _rpc, bytecode=None, code_cache=None):
+        if addr == ADDR(3):
+            raise RuntimeError("RPC borked")
+        return {"address": addr, "type": "regular"}
+
+    monkeypatch.setattr(cls, "classify_single", fake_classify_single)
+
+    out = cls.classify_contracts(target, deps, RPC)
+    assert out["classifications"][ADDR(3)]["type"] == "regular"
+    assert out["classifications"][ADDR(2)]["type"] == "regular"
+    assert out["classifications"][ADDR(4)]["type"] == "regular"

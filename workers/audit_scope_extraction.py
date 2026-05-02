@@ -46,9 +46,11 @@ logger = logging.getLogger("workers.audit_scope_extraction")
 # --- Tunables (env-overridable) ------------------------------------------
 
 # LLM calls dominate latency; keep batches small so individual workers
-# don't sit on many rows when the pool is slow.
+# don't sit on many rows when the pool is slow. Concurrency default
+# matches audit_text_extraction so the LLM/network-bound row worker
+# pool stays uniform across the audit row stages.
 _BATCH_SIZE = int(os.getenv("PSAT_AUDIT_SCOPE_BATCH_SIZE", "4"))
-_MAX_CONCURRENT = int(os.getenv("PSAT_AUDIT_SCOPE_CONCURRENCY", "4"))
+_MAX_CONCURRENT = int(os.getenv("PSAT_AUDIT_SCOPE_CONCURRENCY", "8"))
 _IDLE_POLL_INTERVAL = float(os.getenv("PSAT_AUDIT_SCOPE_POLL_INTERVAL", "15.0"))
 
 # Generous — an LLM call can take 60s+ on a slow day, and the worker

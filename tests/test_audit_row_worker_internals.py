@@ -385,3 +385,45 @@ def test_recovery_cutoff_is_configured_seconds_in_past():
     worker._recover_stale_rows(session)
     after = datetime.now(timezone.utc) - timedelta(seconds=299)
     assert before <= captured["cutoff"] <= after
+
+
+# ---------------------------------------------------------------------------
+# Step 4: max_concurrent=8 tunable. Both AuditTextExtractionWorker and
+# AuditScopeExtractionWorker default to 8 LLM/network-bound threads.
+# ---------------------------------------------------------------------------
+
+
+def test_audit_text_and_scope_default_to_max_concurrent_8(monkeypatch):
+    """Both audit row workers default to max_concurrent=8 — bumped in Step 4
+    so a single worker can saturate LLM/network bandwidth without oversizing
+    the fleet."""
+    # Clear the env so we read the in-code defaults, not whatever the dev box has.
+    monkeypatch.delenv("PSAT_AUDIT_TEXT_CONCURRENCY", raising=False)
+    monkeypatch.delenv("PSAT_AUDIT_SCOPE_CONCURRENCY", raising=False)
+    import importlib
+
+    import workers.audit_scope_extraction as scope_mod
+    import workers.audit_text_extraction as text_mod
+
+    importlib.reload(text_mod)
+    importlib.reload(scope_mod)
+
+    assert text_mod.AuditTextExtractionWorker.max_concurrent == 8
+    assert scope_mod.AuditScopeExtractionWorker.max_concurrent == 8
+
+
+def test_audit_concurrency_overridable_via_env(monkeypatch):
+    """The ``PSAT_AUDIT_*_CONCURRENCY`` env vars override the in-code defaults
+    so an operator can dial down a saturated pool without code changes."""
+    monkeypatch.setenv("PSAT_AUDIT_TEXT_CONCURRENCY", "3")
+    monkeypatch.setenv("PSAT_AUDIT_SCOPE_CONCURRENCY", "5")
+    import importlib
+
+    import workers.audit_scope_extraction as scope_mod
+    import workers.audit_text_extraction as text_mod
+
+    importlib.reload(text_mod)
+    importlib.reload(scope_mod)
+
+    assert text_mod.AuditTextExtractionWorker.max_concurrent == 3
+    assert scope_mod.AuditScopeExtractionWorker.max_concurrent == 5

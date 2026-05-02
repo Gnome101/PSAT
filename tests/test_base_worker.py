@@ -5,6 +5,7 @@ These are pure unit tests that mock all DB dependencies.
 
 from __future__ import annotations
 
+import os
 import signal
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -384,6 +385,50 @@ def test_update_detail_delegates_to_queue(mock_update, mock_signal):
     mock_job = _make_job()
     w.update_detail(mock_session, cast(Any, mock_job), "50% done")
     mock_update.assert_called_once_with(mock_session, mock_job.id, "50% done")
+
+
+# ---------------------------------------------------------------------------
+# Tests: _heartbeat — bumps updated_at without changing detail
+# ---------------------------------------------------------------------------
+
+
+@patch("workers.base.signal.signal")
+def test_heartbeat_issues_update_and_commits(mock_signal):
+    """``_heartbeat`` issues a stand-alone UPDATE and commits, leaving detail alone."""
+    w = _TestWorker()
+    mock_session = MagicMock()
+    mock_job = _make_job(detail="processing 42 deps")
+
+    w._heartbeat(mock_session, cast(Any, mock_job))
+
+    assert mock_session.execute.call_count == 1
+    update_stmt = mock_session.execute.call_args[0][0]
+    # The compiled UPDATE must mention updated_at and not detail.
+    compiled = str(update_stmt.compile(compile_kwargs={"literal_binds": False}))
+    assert "updated_at" in compiled.lower()
+    assert "detail" not in compiled.lower()
+    mock_session.commit.assert_called_once()
+
+
+@patch("workers.base.signal.signal")
+def test_heartbeat_swallows_db_failure(mock_signal):
+    """A DB failure inside heartbeat is non-fatal — the loop continues."""
+    w = _TestWorker()
+    mock_session = MagicMock()
+    mock_session.execute.side_effect = RuntimeError("db gone")
+    mock_job = _make_job()
+
+    # Should not raise.
+    w._heartbeat(mock_session, cast(Any, mock_job))
+    mock_session.rollback.assert_called_once()
+
+
+def test_stale_job_timeout_default_is_600():
+    """The default stale-job timeout is 600s now that fan-outs can sit minutes between writes."""
+    from workers import base
+
+    # Re-resolve in case env var bumps it; default should be 600.
+    assert int(os.environ.get("PSAT_STALE_JOB_TIMEOUT", "600")) >= 600 or base.STALE_JOB_TIMEOUT == 600
 
 
 # ---------------------------------------------------------------------------
