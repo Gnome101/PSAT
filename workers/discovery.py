@@ -10,6 +10,7 @@ set and creates the top-N analysis child jobs once the siblings settle.
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,6 +33,7 @@ from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import merge_inventory, search_protocol_inventory
 from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
+from utils import etherscan
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.discovery")
@@ -344,7 +346,19 @@ class DiscoveryWorker(BaseWorker):
             )
 
         self.update_detail(session, job, f"Fetching verified source for {address}")
-        result = fetch(address)
+        # Both calls hit Etherscan. parallel_get routes each thunk through
+        # _wait_rate_limit, so the 5/sec global limit is preserved while the
+        # serial RTT between them goes away.
+        fan_out = etherscan.parallel_get(
+            {
+                "fetch": lambda a=address: fetch(a),
+                "creators": lambda a=address: _batch_get_creators([a]),
+            }
+        )
+        result_or_exc = fan_out["fetch"]
+        if isinstance(result_or_exc, BaseException):
+            raise result_or_exc
+        result = cast(dict, result_or_exc)
 
         contract_name = result.get("ContractName", "Contract")
 
@@ -359,11 +373,11 @@ class DiscoveryWorker(BaseWorker):
 
         # Look up deployer wallet via Etherscan
         deployer = None
-        try:
-            creators = _batch_get_creators([address])
-            deployer = creators.get(address.lower())
-        except Exception:
-            logger.debug("Could not fetch deployer for %s", address)
+        creators_or_exc = fan_out.get("creators")
+        if isinstance(creators_or_exc, dict):
+            deployer = creators_or_exc.get(address.lower())
+        elif isinstance(creators_or_exc, BaseException):
+            logger.debug("Could not fetch deployer for %s: %s", address, creators_or_exc)
 
         # Write to contracts table — upsert to handle pre-existing discovered rows
         request = job.request if isinstance(job.request, dict) else {}
