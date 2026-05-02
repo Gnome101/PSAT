@@ -45,7 +45,14 @@ from typing import Any, Literal
 
 try:
     from slither.core.cfg.node import NodeType  # type: ignore[import]
-    from slither.slithir.operations import Assignment, Binary, SolidityCall, Unary  # type: ignore[import]
+    from slither.slithir.operations import (  # type: ignore[import]
+        Assignment,
+        Binary,
+        InternalCall,
+        LibraryCall,
+        SolidityCall,
+        Unary,
+    )
 
     SLITHER_AVAILABLE = True
 except Exception:  # pragma: no cover
@@ -122,27 +129,83 @@ class ReentrancyAnalyzer:
         return None
 
     def _state_var_writes(self, nodes: list[Any]) -> set[str]:
+        return self._collect_state_var_writes(nodes, set())
+
+    def _collect_state_var_writes(self, nodes: list[Any], visited: set[int]) -> set[str]:
+        """Walk ``nodes`` recursively through InternalCall helpers to
+        find every state-variable write. OZ 5.0+ ReentrancyGuard
+        splits the pre-write/post-write logic into _nonReentrantBefore
+        / _nonReentrantAfter helpers, so the modifier's own nodes
+        only contain InternalCall IRs — recursing finds the actual
+        Assignment in the helper body. Cycle-safe via ``visited``."""
         names: set[str] = set()
         for n in nodes:
             for ir in getattr(n, "irs_ssa", None) or getattr(n, "irs", []) or []:
                 if isinstance(ir, Assignment):
-                    lv = ir.lvalue
-                    base_name = _base_state_var_name(lv)
+                    base_name = _base_state_var_name(ir.lvalue)
                     if base_name is not None:
                         names.add(base_name)
+                if isinstance(ir, (InternalCall, LibraryCall)):
+                    callee = getattr(ir, "function", None)
+                    cid = id(callee) if callee is not None else 0
+                    if callee is None or cid in visited:
+                        continue
+                    callee_nodes = list(getattr(callee, "nodes", []) or [])
+                    if callee_nodes:
+                        names |= self._collect_state_var_writes(
+                            callee_nodes, visited | {cid}
+                        )
         return names
 
     def _has_revert_reading_var(self, nodes: list[Any], var_name: str) -> bool:
+        """A helper-aware search: returns True if some descendant (node
+        or recursively-walked InternalCall callee) contains BOTH a
+        require/revert AND a Binary reading ``var_name``. They don't
+        need to be in the same node — OZ 5.0+ ReentrancyGuard puts
+        the comparison in an IF node and the revert in the IF's body
+        node. Same-node co-location was the previous overly-tight
+        match; loosening to per-callee scope catches the cross-fn
+        if-revert structure without false positives (the helper's
+        scope already bounds what counts as 'this revert reads this
+        var')."""
+        return self._search_revert_reading_var(nodes, var_name, set())
+
+    def _search_revert_reading_var(
+        self, nodes: list[Any], var_name: str, visited: set[int]
+    ) -> bool:
+        # First pass: same-scope check (var-read + require/revert in
+        # the current ``nodes`` list). Co-location not required —
+        # they just have to coexist in this helper's body.
+        has_revert = False
+        has_var_read = False
         for n in nodes:
             irs = list(getattr(n, "irs_ssa", None) or getattr(n, "irs", []) or [])
-            if not any(_ir_is_require_or_revert(ir) for ir in irs):
-                continue
             for ir in irs:
+                if _ir_is_require_or_revert(ir):
+                    has_revert = True
                 if isinstance(ir, Binary):
                     for operand in (ir.variable_left, ir.variable_right):
-                        name = _base_state_var_name(operand)
-                        if name == var_name:
-                            return True
+                        if _base_state_var_name(operand) == var_name:
+                            has_var_read = True
+            if has_revert and has_var_read:
+                return True
+        if has_revert and has_var_read:
+            return True
+        # Recurse into helpers — the var-read AND revert may both live
+        # one level deeper.
+        for n in nodes:
+            irs = list(getattr(n, "irs_ssa", None) or getattr(n, "irs", []) or [])
+            for ir in irs:
+                if isinstance(ir, (InternalCall, LibraryCall)):
+                    callee = getattr(ir, "function", None)
+                    cid = id(callee) if callee is not None else 0
+                    if callee is None or cid in visited:
+                        continue
+                    callee_nodes = list(getattr(callee, "nodes", []) or [])
+                    if callee_nodes and self._search_revert_reading_var(
+                        callee_nodes, var_name, visited | {cid}
+                    ):
+                        return True
         return False
 
 

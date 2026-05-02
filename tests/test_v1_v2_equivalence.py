@@ -498,6 +498,24 @@ contract C {
 }
 """
 
+_OZ_REENTRANCY_5X = """
+pragma solidity ^0.8.19;
+contract C {
+    uint256 private constant NOT_ENTERED = 1;
+    uint256 private constant ENTERED = 2;
+    uint256 private _status;
+    uint256 public x;
+    error ReentrancyGuardReentrantCall();
+    function _nonReentrantBefore() private {
+        if (_status == ENTERED) revert ReentrancyGuardReentrantCall();
+        _status = ENTERED;
+    }
+    function _nonReentrantAfter() private { _status = NOT_ENTERED; }
+    modifier nonReentrant() { _nonReentrantBefore(); _; _nonReentrantAfter(); }
+    function withdraw() external nonReentrant { x = x + 1; }
+}
+"""
+
 _FIXTURES = [
     ("oz_ownable", _OZ_OWNABLE),
     ("oz_access_control_inline", _OZ_AC_INLINE),
@@ -516,6 +534,7 @@ _FIXTURES = [
     ("oz_ownable_5x", _OZ_OWNABLE_5X),
     ("oz_ac_5x_overloaded", _OZ_AC_5X_OVERLOADED),
     ("oz_pausable_5x", _OZ_PAUSABLE_5X),
+    ("oz_reentrancy_5x", _OZ_REENTRANCY_5X),
 ]
 
 
