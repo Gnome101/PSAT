@@ -289,6 +289,77 @@ contract C {
 }
 """
 
+# Real OZ 5.0+ AccessControl 4-hop overloaded helper chain — onlyRole
+# (role) -> _checkRole(role) -> _checkRole(role, _msgSender()) ->
+# hasRole(role, account) -> state read. v1's name-heuristic gets
+# confused by the 4-hop depth and emits grantRole with
+# controller_source=None (unresolved); v2 catches via cross-fn
+# revert detection + sub-engine memo + storage_var fallback ->
+# controller_source='_roles'. v1 produces empty controllers in EP,
+# v2 produces resolved controllers - new_coverage direction.
+_OZ_AC_5X_OVERLOADED = """
+pragma solidity ^0.8.19;
+contract C {
+    mapping(bytes32 => mapping(address => bool)) private _roles;
+    uint256 public x;
+    error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+    function _msgSender() internal view returns (address) { return msg.sender; }
+    function hasRole(bytes32 role, address account) public view returns (bool) {
+        return _roles[role][account];
+    }
+    function _checkRole(bytes32 role, address account) internal view {
+        if (!hasRole(role, account)) revert AccessControlUnauthorizedAccount(account, role);
+    }
+    function _checkRole(bytes32 role) internal view { _checkRole(role, _msgSender()); }
+    modifier onlyRole(bytes32 role) { _checkRole(role); _; }
+    function grantRole(bytes32 role, address account) public onlyRole(role) {
+        _roles[role][account] = true;
+    }
+}
+"""
+
+# F2 m-of-n threshold (chained writer-gate fixed-point promotion).
+# addOwner -> isOwner promotes -> approve -> execute's threshold
+# comparison promotes. v1 sees addOwner + approve as privileged
+# (caller_equals_storage + caller_in_mapping); v2 also catches
+# execute via comparison/gte but the shim drops it (only
+# membership/equality/signature_auth/external_bool map cleanly to
+# v1 predicate kinds). Net: target_analysis.access_control only
+# has addOwner + approve so execute isn't in either EP output.
+# Equivalence holds at the EP boundary.
+_M_OF_N = """
+pragma solidity ^0.8.19;
+contract C {
+    address public ownerVar;
+    mapping(address => bool) public isOwner;
+    mapping(bytes32 => uint256) public approvals;
+    uint256 constant THRESHOLD = 2;
+    function addOwner(address u) external { require(msg.sender == ownerVar); isOwner[u] = true; }
+    function approve(bytes32 h) external { require(isOwner[msg.sender]); approvals[h] += 1; }
+    function execute(bytes32 h) external view { require(approvals[h] >= THRESHOLD); }
+}
+"""
+
+# ECDSA signature_auth - canonical recover-then-equality pattern.
+# v1's name-heuristic doesn't recognize signature gates (no
+# msg.sender literal) so it emits 0 functions. v2 catches via
+# signature_auth leaf -> shim emits policy_check predicate.
+# effective_permissions with policy_check produces empty
+# controllers (no controller_source), so both EP outputs treat
+# f as non-privileged. Equivalence trivially holds.
+_ECDSA_SIG = """
+pragma solidity ^0.8.19;
+contract C {
+    address public signerAddr;
+    uint256 public x;
+    function f(bytes32 h, uint8 v, bytes32 r, bytes32 s) external {
+        address recovered = ecrecover(h, v, r, s);
+        require(recovered == signerAddr);
+        x = 1;
+    }
+}
+"""
+
 # OZ AC multi-role — three functions each gated by a different
 # role constant. v1 and v2 should agree per-function: each gets
 # a single mapping_membership predicate with controller_source=
@@ -412,6 +483,9 @@ _FIXTURES = [
     ("hashed_key_membership", _HASHED_KEY),
     ("oz_ac_cross_fn", _OZ_AC_CROSS_FN),
     ("oz_ac_multi_role", _OZ_AC_MULTI_ROLE),
+    ("oz_ac_5x_overloaded", _OZ_AC_5X_OVERLOADED),
+    ("m_of_n_threshold", _M_OF_N),
+    ("ecdsa_signature_auth", _ECDSA_SIG),
 ]
 
 
