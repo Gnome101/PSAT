@@ -3650,7 +3650,11 @@ class _ProbeMembershipRequest(BaseModel):
     "/api/contract/{address}/probe/membership",
     dependencies=[Depends(require_admin_key)],
 )
-def probe_contract_membership(address: str, req: _ProbeMembershipRequest) -> dict[str, Any]:
+def probe_contract_membership(
+    address: str,
+    req: _ProbeMembershipRequest,
+    x_psat_admin_key: str | None = Header(default=None),
+) -> dict[str, Any]:
     """v2 schema probe: 'is ``member`` allowed by leaf
     ``predicate_index`` of ``function_signature`` on ``address``?'
 
@@ -3660,6 +3664,7 @@ def probe_contract_membership(address: str, req: _ProbeMembershipRequest) -> dic
     received from the v2 capability rendering.
     """
     addr = _normalize_address_or_400(address)
+    _probe_rate_check(x_psat_admin_key, addr)
 
     # Lazy-import the resolver bits so the probe route doesn't
     # impose its dependency surface on the rest of the API.
@@ -3761,6 +3766,51 @@ def probe_contract_membership(address: str, req: _ProbeMembershipRequest) -> dic
         )
 
 
+# In-process probe rate limiter. v4 plan §15 spec is "10/min/
+# key/contract" — sliding-window per (admin_key, address).
+# PSAT_PROBE_RATE_LIMIT and PSAT_PROBE_RATE_WINDOW_S override.
+# Each worker has its own state so a multi-worker deployment
+# allows up to N×limit requests in aggregate; that's an
+# acceptable first cut. Long-term: shared store (Redis) for
+# fleet-wide accounting.
+_PROBE_RATE_LIMIT = int(os.environ.get("PSAT_PROBE_RATE_LIMIT", "10"))
+_PROBE_RATE_WINDOW_S = float(os.environ.get("PSAT_PROBE_RATE_WINDOW_S", "60"))
+
+
+def _probe_rate_check(admin_key: str | None, address: str) -> None:
+    """Raise HTTPException(429) when the (admin_key, address)
+    sliding window has hit its limit. No-op when the limit is 0
+    (env override for testing / disabled-by-default flag use)."""
+    if _PROBE_RATE_LIMIT <= 0:
+        return
+    import collections as _collections
+    import time as _time
+
+    # Lazy module-level state — keyed on (key, addr); deque holds
+    # request timestamps within the window.
+    state = _probe_rate_state.setdefault(
+        (admin_key or "<no-key>", address.lower()), _collections.deque()
+    )
+    now = _time.time()
+    while state and state[0] + _PROBE_RATE_WINDOW_S < now:
+        state.popleft()
+    if len(state) >= _PROBE_RATE_LIMIT:
+        retry_after = max(0, int(state[0] + _PROBE_RATE_WINDOW_S - now)) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Probe rate limit exceeded for this admin key + contract "
+                f"({_PROBE_RATE_LIMIT} requests / "
+                f"{int(_PROBE_RATE_WINDOW_S)}s). Retry in ~{retry_after}s."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+    state.append(now)
+
+
+_probe_rate_state: dict[tuple[str, str], Any] = {}
+
+
 # In-process TTL cache for /api/contract/{addr}/capabilities. Per
 # the v4 plan §15 ("Response cache 60 blocks") — at 12s/block on
 # mainnet that's ~12 minutes; we accept seconds for chain-agnostic
@@ -3823,7 +3873,9 @@ class _ProbeSignatureRequest(BaseModel):
     dependencies=[Depends(require_admin_key)],
 )
 def probe_contract_signature(
-    address: str, req: _ProbeSignatureRequest
+    address: str,
+    req: _ProbeSignatureRequest,
+    x_psat_admin_key: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Counterpart to /probe/membership for signature_auth leaves.
     Caller already did ECDSA recovery (or EIP-1271 verification);
@@ -3842,6 +3894,7 @@ def probe_contract_signature(
     from services.resolution.repos import PostgresAragonACLRepo, PostgresRoleGrantsRepo
 
     addr = _normalize_address_or_400(address)
+    _probe_rate_check(x_psat_admin_key, addr)
     with SessionLocal() as session:
         job = session.execute(
             select(Job)

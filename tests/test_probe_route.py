@@ -570,6 +570,162 @@ def test_probe_signature_unguarded_function_returns_yes(api_client, db_session):
 
 
 @requires_postgres
+def test_probe_rate_limit_blocks_after_limit(api_client, db_session, monkeypatch):
+    """v4 plan §15: 10/min/key/contract. Pinned with a tight
+    limit so the test runs fast — same algorithm at any size."""
+    import api as api_module
+
+    _no_auth(api_module)
+    address = "0x" + uuid.uuid4().hex[:8] + "ee" * 16
+    _seed_completed_job_with_artifact(
+        db_session,
+        address=address,
+        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+    )
+
+    # Tighten the limit to 3 so the test isn't slow. Also clear
+    # any per-key state from previous tests.
+    monkeypatch.setattr(api_module, "_PROBE_RATE_LIMIT", 3)
+    api_module._probe_rate_state.clear()
+
+    payload = {
+        "function_signature": "open()",
+        "predicate_index": 0,
+        "member": "0x" + "11" * 20,
+    }
+    headers = {"X-PSAT-Admin-Key": "test-key"}
+
+    # First 3 requests succeed (function unguarded -> result yes).
+    for _ in range(3):
+        resp = api_client.post(
+            f"/api/contract/{address}/probe/membership",
+            json=payload,
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    # 4th request rate-limited.
+    resp = api_client.post(
+        f"/api/contract/{address}/probe/membership",
+        json=payload,
+        headers=headers,
+    )
+    assert resp.status_code == 429, resp.text
+    assert "rate limit exceeded" in resp.json()["detail"].lower()
+    assert "Retry-After" in resp.headers
+
+
+@requires_postgres
+def test_probe_rate_limit_keyed_per_address(api_client, db_session, monkeypatch):
+    """The rate limit is per (admin_key, address) — exhausting
+    the budget for one contract doesn't block others."""
+    import api as api_module
+
+    _no_auth(api_module)
+    addr_a = "0x" + uuid.uuid4().hex[:8] + "ea" * 16
+    addr_b = "0x" + uuid.uuid4().hex[:8] + "eb" * 16
+    for addr in (addr_a, addr_b):
+        _seed_completed_job_with_artifact(
+            db_session,
+            address=addr,
+            predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+        )
+
+    monkeypatch.setattr(api_module, "_PROBE_RATE_LIMIT", 2)
+    api_module._probe_rate_state.clear()
+
+    payload = {
+        "function_signature": "open()",
+        "predicate_index": 0,
+        "member": "0x" + "11" * 20,
+    }
+    headers = {"X-PSAT-Admin-Key": "test-key"}
+
+    # Exhaust addr_a (limit=2).
+    for _ in range(2):
+        api_client.post(f"/api/contract/{addr_a}/probe/membership", json=payload, headers=headers)
+    a_third = api_client.post(f"/api/contract/{addr_a}/probe/membership", json=payload, headers=headers)
+    assert a_third.status_code == 429
+
+    # addr_b's budget is independent.
+    b_first = api_client.post(f"/api/contract/{addr_b}/probe/membership", json=payload, headers=headers)
+    assert b_first.status_code == 200
+
+
+@requires_postgres
+def test_probe_rate_limit_disabled_when_zero(api_client, db_session, monkeypatch):
+    """``PSAT_PROBE_RATE_LIMIT=0`` (env-tuned to 0) disables
+    rate limiting entirely — useful for local dev / the existing
+    tests that don't care about throttling."""
+    import api as api_module
+
+    _no_auth(api_module)
+    address = "0x" + uuid.uuid4().hex[:8] + "ec" * 16
+    _seed_completed_job_with_artifact(
+        db_session,
+        address=address,
+        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+    )
+
+    monkeypatch.setattr(api_module, "_PROBE_RATE_LIMIT", 0)
+    api_module._probe_rate_state.clear()
+
+    payload = {
+        "function_signature": "open()",
+        "predicate_index": 0,
+        "member": "0x" + "11" * 20,
+    }
+    # 50 requests in a tight loop — none rate-limited.
+    for _ in range(50):
+        resp = api_client.post(
+            f"/api/contract/{address}/probe/membership",
+            json=payload,
+            headers={"X-PSAT-Admin-Key": "test-key"},
+        )
+        assert resp.status_code == 200
+
+
+@requires_postgres
+def test_probe_rate_limit_applies_to_signature_route_too(
+    api_client, db_session, monkeypatch
+):
+    """Both probe routes share the rate limiter."""
+    import api as api_module
+
+    _no_auth(api_module)
+    address = "0x" + uuid.uuid4().hex[:8] + "ed" * 16
+    _seed_completed_job_with_artifact(
+        db_session,
+        address=address,
+        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+    )
+
+    monkeypatch.setattr(api_module, "_PROBE_RATE_LIMIT", 2)
+    api_module._probe_rate_state.clear()
+
+    headers = {"X-PSAT-Admin-Key": "test-key"}
+    sig_payload = {
+        "function_signature": "execute()",
+        "predicate_index": 0,
+        "recovered_signer": "0x" + "11" * 20,
+    }
+    membership_payload = {
+        "function_signature": "open()",
+        "predicate_index": 0,
+        "member": "0x" + "11" * 20,
+    }
+
+    # Mix membership + signature; both count toward the same
+    # (key, address) budget.
+    api_client.post(f"/api/contract/{address}/probe/membership", json=membership_payload, headers=headers)
+    api_client.post(f"/api/contract/{address}/probe/signature", json=sig_payload, headers=headers)
+    third = api_client.post(
+        f"/api/contract/{address}/probe/signature", json=sig_payload, headers=headers
+    )
+    assert third.status_code == 429
+
+
+@requires_postgres
 def test_probe_membership_picks_most_recent_completed_job(api_client, db_session):
     """Two completed jobs for the same address — the route uses
     the most recent one (by updated_at). Pinned so an old
