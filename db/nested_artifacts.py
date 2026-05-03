@@ -1,10 +1,16 @@
 """DB-bridge contract for per-sub-contract artifact bundles.
 
 The resolution stage emits one ``LoadedArtifacts`` bundle per nested
-sub-contract discovered during recursive control-graph resolution.
-Each bundle is persisted as a set of ``artifacts`` rows keyed
-``recursive.<address>.<kind>`` so the policy stage can look them up
-later without another on-chain roundtrip.
+sub-contract discovered during recursive control-graph resolution. The
+runtime-state slices (``snapshot``, ``effective_permissions``) are
+persisted as ``artifacts`` rows keyed ``recursive.<address>.<kind>`` so
+the policy stage can look them up without another on-chain roundtrip.
+
+The static slices (``analysis``, ``tracking_plan``) used to live here
+too but they're a pure function of bytecode and now live in the
+cross-job ``contract_materializations`` table. Policy hydrates them
+per-address from there so a re-run of an already-analysed protocol
+skips the storage write entirely.
 
 Separator is ``.`` (not ``:``) because ``db.storage._safe_name`` only
 allows ``[A-Za-z0-9._-]`` in artifact names destined for S3-compatible
@@ -26,7 +32,7 @@ from db.queue import store_artifact
 
 logger = logging.getLogger(__name__)
 
-ARTIFACT_KINDS: tuple[str, ...] = ("analysis", "tracking_plan", "snapshot", "effective_permissions")
+ARTIFACT_KINDS: tuple[str, ...] = ("snapshot", "effective_permissions")
 KEY_PREFIX = "recursive"
 
 

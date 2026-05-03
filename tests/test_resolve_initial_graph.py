@@ -49,9 +49,7 @@ ROLE_PRINCIPAL_EOA = "0x" + "ef" * 20
 
 @pytest.fixture(autouse=True)
 def _isolated_caches():
-    recursive.clear_artifact_cache()
     yield
-    recursive.clear_artifact_cache()
 
 
 def _root_artifacts(*, with_role_principals: bool) -> LoadedArtifacts:

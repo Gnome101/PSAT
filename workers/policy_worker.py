@@ -308,7 +308,20 @@ def _root_artifacts(
 
 
 def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifacts]:
-    """Hydrate ``recursive.*`` artifacts written by the resolution stage."""
+    """Hydrate ``recursive.*`` artifacts written by the resolution stage.
+
+    Resolution writes only the runtime-state slices (snapshot,
+    effective_permissions) to ``recursive.*`` rows. The static slices
+    (analysis, tracking_plan) live in ``contract_materializations``
+    (content-addressed by ``(chain, bytecode_keccak)``); we hydrate them
+    here per-address so the rest of policy still sees a full
+    ``LoadedArtifacts`` bundle. A bundle missing analysis/snapshot is
+    dropped — ``_resolve_authority`` and the post-policy
+    ``resolve_control_graph`` refresh both require both fields.
+    """
+    import copy
+
+    from db import contract_materializations as cm
     from db.models import Artifact
 
     prefix = f"{KEY_PREFIX}."
@@ -329,6 +342,24 @@ def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifact
         if payload is None:
             continue
         bundles.setdefault(address, {})[kind] = payload
+
+    # Hydrate analysis + tracking_plan from contract_materializations.
+    # Address-keyed lookup matches the chain default the resolution
+    # writer uses; on a row miss we drop the bundle below since the
+    # downstream consumers can't operate without analysis.
+    chain = os.getenv("PSAT_DEFAULT_CHAIN", "ethereum")
+    for address, bundle in bundles.items():
+        try:
+            mrow = cm.find_by_address(session, chain=chain, address=address)
+        except Exception:
+            mrow = None
+        if mrow is None:
+            continue
+        if mrow.analysis:
+            bundle["analysis"] = copy.deepcopy(mrow.analysis)
+        if mrow.tracking_plan:
+            bundle["tracking_plan"] = copy.deepcopy(mrow.tracking_plan)
+
     # Only keep bundles that have the minimum fields resolve_control_graph needs.
     return {
         addr: cast(LoadedArtifacts, bundle)

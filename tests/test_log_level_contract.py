@@ -49,7 +49,7 @@ ALLOW_LIST: dict[str, dict[int, str]] = {
         # doesn't change the job's stage output. record_degraded would
         # mislead callers of /api/jobs/{id}/errors into thinking the
         # reanalysis was degraded.
-        686: "Notifier side-effect; reanalysis already completed before this fired.",
+        717: "Notifier side-effect; reanalysis already completed before this fired.",
     },
     "workers/resolution_worker.py": {
         # Per-impl coverage-refresh failure inside `_backfill_historical_impls`

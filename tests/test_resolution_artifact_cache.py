@@ -1,29 +1,27 @@
-"""Regression tests for the process-wide static-artifact cache in
-``services/resolution/recursive.py``.
+"""Regression tests for cross-cascade materialization dedup via
+``contract_materializations`` in ``services/resolution/recursive.py``.
 
 Within a single cascade the BFS already dedupes by address (``processed``
-set). This cache exists for *cross-cascade* reuse: when a sibling job
-walks the same OZ library / common implementation, we skip the
-scaffold + ``collect_contract_analysis`` + ``build_control_tracking_plan``
+set). The persistent cache exists for *cross-cascade* reuse: when a
+sibling job walks the same OZ library / common implementation, we skip
+the scaffold + ``collect_contract_analysis`` + ``build_control_tracking_plan``
 trio.
 
 What we pin here:
-1. Static artifacts (analysis + plan) are cached by effective_address
-   and reused on the second call → only one scaffold run.
+1. Static artifacts (analysis + plan) are looked up by
+   ``(chain, bytecode_keccak)`` and reused on the second call → only one
+   scaffold run.
 2. Snapshot + permissions are rebuilt fresh on every call (they depend
    on RPC state via build_control_snapshot) → never served stale.
-3. Cache returns deepcopies — mutating the returned dict must NOT
-   poison the next call.
-4. TTL expiry: an entry past PSAT_RESOLUTION_ARTIFACT_CACHE_TTL_S is
-   re-fetched.
-5. skip_slither=False bypasses the cache (Slither CLI writes
-   side-effect artifacts the cached path doesn't).
+3. Returns deepcopies — mutating the returned dict must NOT poison the
+   next call.
+4. Concurrent requests serialize on a Postgres advisory lock so the
+   loser of the race reads the winner's result instead of rebuilding.
 """
 
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -32,19 +30,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.resolution import recursive
-from services.resolution.recursive import (
-    _get_cached_static_artifacts,
-    _materialize_contract_artifacts,
-    _store_cached_static_artifacts,
-    clear_artifact_cache,
-)
-
-
-@pytest.fixture(autouse=True)
-def _isolated_cache():
-    clear_artifact_cache()
-    yield
-    clear_artifact_cache()
+from services.resolution.recursive import _materialize_contract_artifacts
 
 
 @pytest.fixture(autouse=True)
@@ -203,41 +189,6 @@ def test_cached_artifacts_are_deep_copied(monkeypatch):
     assert second["tracking_plan"]["controllers"] == []
 
 
-def test_in_memory_cache_ttl_expiry_falls_through_to_persistent(monkeypatch):
-    """In-memory TTL expiry must NOT trigger a fresh build — the persistent
-    contract_materializations row is content-addressed and durable, so the
-    expired in-memory entry falls through to a DB read, not a rebuild.
-
-    Pre-cross-process-cache, the in-memory cache was the only layer and
-    TTL expiry forced a re-scaffold. With the persistent layer integrated,
-    the in-memory TTL is just a memory-pressure release valve; the same
-    bytecode keccak still resolves to the same persisted analysis, so the
-    expensive scaffold + Slither work runs exactly once per bytecode for
-    the lifetime of the row."""
-    scaffold_calls: list[Any] = []
-    collect_calls: list[Any] = []
-    snapshot_calls: list[Any] = []
-    _patch_pipeline(
-        monkeypatch,
-        scaffold_calls=scaffold_calls,
-        collect_calls=collect_calls,
-        snapshot_calls=snapshot_calls,
-    )
-
-    real_monotonic = time.monotonic
-    fake_now = [real_monotonic()]
-    monkeypatch.setattr(recursive._time, "monotonic", lambda: fake_now[0])
-
-    _materialize_contract_artifacts("0xABC", "http://rpc", workspace_prefix="test")
-    fake_now[0] += recursive._ARTIFACT_CACHE_TTL_S + 1  # jump past in-memory TTL
-    _materialize_contract_artifacts("0xABC", "http://rpc", workspace_prefix="test")
-
-    assert len(scaffold_calls) == 1, (
-        "expired in-memory entry must fall through to the persistent row, not rebuild"
-    )
-    assert len(snapshot_calls) == 2, "snapshot still runs every call (state-dependent)"
-
-
 def test_cache_keyed_by_effective_address_not_input(monkeypatch):
     """When two different proxies point to the same impl, the cache key
     is the impl address — both proxies share the cached static artifacts.
@@ -265,103 +216,8 @@ def test_cache_keyed_by_effective_address_not_input(monkeypatch):
     assert len(scaffold_calls) == 1, "same impl must be scaffolded once even for different proxies"
 
 
-def test_cache_helpers_round_trip():
-    """Direct unit test for _get/_store helpers — guards the eviction
-    + deepcopy contract independently of the BFS integration."""
-    analysis = {"k": [1, 2, 3]}
-    plan = {"controllers": []}
-    _store_cached_static_artifacts("0xABC", "Test", analysis, plan)
-    cached = _get_cached_static_artifacts("0xabc")  # case-insensitive
-    assert cached is not None
-    name, a, p = cached
-    assert name == "Test"
-    a["k"].append(99)  # mutate returned copy
-    second = _get_cached_static_artifacts("0xabc")
-    assert second is not None
-    assert second[1]["k"] == [1, 2, 3], "store must deepcopy on read"
-
-
 # ---------------------------------------------------------------------------
-# Phase B Step 2: bytecode keccak secondary index for cross-cascade reuse
-# ---------------------------------------------------------------------------
-
-
-def test_keccak_secondary_index_hits_for_different_address_same_bytecode():
-    """The whole point of step 2: two contracts deployed at DIFFERENT
-    addresses but with the SAME impl bytecode (every OZ ERC1967Proxy
-    instance, every standard Gnosis Safe singleton) share the cached
-    static analysis since contract_analysis is purely a function of
-    source code, not address."""
-    keccak = "0x" + "11" * 32
-    _store_cached_static_artifacts(
-        "0x" + "AA" * 20,
-        "SharedImpl",
-        {"functions": [{"sig": "f()"}]},
-        {"controllers": []},
-        bytecode_keccak=keccak,
-    )
-    # Different address, SAME keccak → cache hit.
-    cached = _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak=keccak)
-    assert cached is not None
-    name, analysis, plan = cached
-    assert name == "SharedImpl"
-    assert analysis["functions"][0]["sig"] == "f()"
-
-
-def test_keccak_secondary_index_misses_when_keccak_differs():
-    """Different bytecode → not the same impl → must NOT hit the cache.
-    Catches a refactor that conflates the two indices."""
-    _store_cached_static_artifacts(
-        "0x" + "AA" * 20,
-        "ImplA",
-        {"v": 1},
-        {"v": 1},
-        bytecode_keccak="0x" + "11" * 32,
-    )
-    cached = _get_cached_static_artifacts("0x" + "CC" * 20, bytecode_keccak="0x" + "22" * 32)
-    assert cached is None
-
-
-def test_address_index_preferred_over_keccak_index():
-    """When both indices could match (same address, but the keccak
-    points to a DIFFERENT cached entry from another store), the
-    address-keyed entry wins. Address is the more-specific match."""
-    addr = "0x" + "AA" * 20
-    # First store: address AA, keccak ZZ → both indices point to "v1"
-    _store_cached_static_artifacts(addr, "v1-name", {"v": 1}, {}, bytecode_keccak="0x" + "ZZ".replace("Z", "z") * 32)
-    # Second store: a totally different address, keccak XX → installed in keccak index too
-    _store_cached_static_artifacts("0x" + "DD" * 20, "v2-name", {"v": 2}, {}, bytecode_keccak="0x" + "XX".lower() * 32)
-    # Lookup by addr AA + keccak XX should still get the v1 (address wins).
-    cached = _get_cached_static_artifacts(addr, bytecode_keccak="0x" + "XX".lower() * 32)
-    assert cached is not None
-    name, _a, _p = cached
-    assert name == "v1-name", "address-key match must take precedence over keccak fallback"
-
-
-def test_keccak_index_respects_ttl(monkeypatch):
-    """TTL applies to keccak-keyed lookups too — eventually re-fetch."""
-    real_monotonic = time.monotonic
-    fake_now = [real_monotonic()]
-    monkeypatch.setattr(recursive._time, "monotonic", lambda: fake_now[0])
-
-    keccak = "0x" + "ee" * 32
-    _store_cached_static_artifacts("0x" + "AA" * 20, "ImplE", {"v": 1}, {}, bytecode_keccak=keccak)
-    fake_now[0] += recursive._ARTIFACT_CACHE_TTL_S + 1
-    # Keccak hit on a DIFFERENT address, after TTL → must miss.
-    assert _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak=keccak) is None
-
-
-def test_clear_cache_clears_both_indices():
-    """clear_artifact_cache must wipe the keccak index too — otherwise
-    test isolation breaks (a stale keccak entry survives the helper)."""
-    _store_cached_static_artifacts("0x" + "AA" * 20, "Test", {}, {}, bytecode_keccak="0x" + "ff" * 32)
-    recursive.clear_artifact_cache()
-    assert _get_cached_static_artifacts("0x" + "AA" * 20) is None
-    assert _get_cached_static_artifacts("0x" + "BB" * 20, bytecode_keccak="0x" + "ff" * 32) is None
-
-
-# ---------------------------------------------------------------------------
-# Codex iter-4 P1: bytecode-keccak hit must retarget plan to the new address
+# bytecode-keccak hit must retarget plan to the new address
 # ---------------------------------------------------------------------------
 
 
@@ -409,35 +265,25 @@ def test_bytecode_keccak_hit_retargets_plan_to_new_address(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Cross-process / cross-job materialization dedup — POC
+# Cross-process / cross-job materialization dedup
 # ---------------------------------------------------------------------------
 #
-# Three caches exist around materialization today; none dedupe across
-# worker processes:
-#   * etherscan_cache (Postgres) — Etherscan getsourcecode payload only.
-#   * _ARTIFACT_CACHE (in-memory, recursive.py:42) — process-local + TTL.
-#   * nested_artifacts (Postgres, db/nested_artifacts.py) — keyed by
-#     (parent_job_id, address); not reusable across jobs.
-#
-# Two impl jobs in the same protocol therefore each pay full forge+Slither
-# cost on every shared sub-contract (the LP+EtherFi PR-62 incident).
-#
-# Fix: a content-addressed contract_materializations table keyed by
-# (chain, bytecode_keccak), with request-coalescing via
+# ``contract_materializations`` is the persistent layer that dedupes
+# scaffold + Slither work across worker processes and across jobs. Keyed
+# by (chain, bytecode_keccak), with request-coalescing via
 # pg_advisory_xact_lock so concurrent jobs requesting the same address
 # only run the expensive build once.
 #
-# These tests describe the desired post-fix behaviour. They lean on the
-# autouse ``_isolated_contract_materializations`` fixture to point
-# ``db.contract_materializations.SessionLocal`` at the test DB and to
-# wipe the canonical stub keccak row before/after every test.
+# Tests below lean on the autouse ``_isolated_contract_materializations``
+# fixture to point ``db.contract_materializations.SessionLocal`` at the
+# test DB and to wipe the canonical stub keccak row before/after every test.
 
 
 def test_two_processes_materializing_same_bytecode_compile_once(monkeypatch):
     """Worker process A materializes contract X. Process B then
     materializes a *different* address with the *same* bytecode_keccak.
-    With the persistent cross-process cache, the second call must skip
-    the expensive scaffold + Slither work entirely.
+    The persistent cross-process cache means the second call skips the
+    expensive scaffold + Slither work entirely.
     """
     scaffold_calls: list[Any] = []
     collect_calls: list[Any] = []
@@ -452,10 +298,6 @@ def test_two_processes_materializing_same_bytecode_compile_once(monkeypatch):
     _materialize_contract_artifacts("0xABC", "http://rpc", workspace_prefix="proc-A")
     assert len(scaffold_calls) == 1
     assert len(collect_calls) == 1
-
-    # Cross the "process boundary": clear the in-memory cache so the
-    # only shared state left is what was persisted to Postgres.
-    clear_artifact_cache()
 
     _materialize_contract_artifacts("0xDEF", "http://rpc", workspace_prefix="proc-B")
 
