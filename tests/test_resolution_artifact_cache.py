@@ -47,6 +47,51 @@ def _isolated_cache():
     clear_artifact_cache()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_contract_materializations(monkeypatch):
+    """Point ``db.contract_materializations`` at the test DB and wipe the
+    canonical stub keccak row around every test.
+
+    Without this, the new cross-process cache layer integrated into
+    ``_materialize_contract_artifacts`` writes to whatever ``DATABASE_URL``
+    points to (typically the dev DB on a contributor laptop) and a single
+    leftover row keyed on the stub keccak ``0xab*32`` makes every later
+    test's stubbed pipeline never execute. Routing the layer through the
+    test DB AND clearing the table around each test keeps the
+    scaffold/collect counters deterministic.
+    """
+    import os
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session, sessionmaker
+
+    test_url = os.environ.get("TEST_DATABASE_URL")
+    if not test_url:
+        # No test DB configured — let the cross-process layer fall through
+        # to the dev DB. The keccak-collision risk is real but only matters
+        # when the contributor runs this file by itself; CI always sets
+        # TEST_DATABASE_URL.
+        yield
+        return
+
+    test_engine = create_engine(test_url)
+    test_factory = sessionmaker(bind=test_engine, class_=Session, expire_on_commit=False)
+    monkeypatch.setattr("db.contract_materializations.SessionLocal", test_factory)
+
+    from db.models import ContractMaterialization
+
+    with test_factory() as cleanup_session:
+        cleanup_session.query(ContractMaterialization).delete()
+        cleanup_session.commit()
+    try:
+        yield
+    finally:
+        with test_factory() as cleanup_session:
+            cleanup_session.query(ContractMaterialization).delete()
+            cleanup_session.commit()
+        test_engine.dispose()
+
+
 def _patch_pipeline(monkeypatch, *, scaffold_calls, collect_calls, snapshot_calls):
     """Wire up the dependency chain with counters so we can assert which
     layers got skipped on cache hit."""
@@ -158,9 +203,17 @@ def test_cached_artifacts_are_deep_copied(monkeypatch):
     assert second["tracking_plan"]["controllers"] == []
 
 
-def test_cache_ttl_expiry(monkeypatch):
-    """An entry older than the TTL must be re-fetched. We bypass real
-    time by patching the monotonic clock used by the cache."""
+def test_in_memory_cache_ttl_expiry_falls_through_to_persistent(monkeypatch):
+    """In-memory TTL expiry must NOT trigger a fresh build — the persistent
+    contract_materializations row is content-addressed and durable, so the
+    expired in-memory entry falls through to a DB read, not a rebuild.
+
+    Pre-cross-process-cache, the in-memory cache was the only layer and
+    TTL expiry forced a re-scaffold. With the persistent layer integrated,
+    the in-memory TTL is just a memory-pressure release valve; the same
+    bytecode keccak still resolves to the same persisted analysis, so the
+    expensive scaffold + Slither work runs exactly once per bytecode for
+    the lifetime of the row."""
     scaffold_calls: list[Any] = []
     collect_calls: list[Any] = []
     snapshot_calls: list[Any] = []
@@ -176,10 +229,13 @@ def test_cache_ttl_expiry(monkeypatch):
     monkeypatch.setattr(recursive._time, "monotonic", lambda: fake_now[0])
 
     _materialize_contract_artifacts("0xABC", "http://rpc", workspace_prefix="test")
-    fake_now[0] += recursive._ARTIFACT_CACHE_TTL_S + 1  # jump past TTL
+    fake_now[0] += recursive._ARTIFACT_CACHE_TTL_S + 1  # jump past in-memory TTL
     _materialize_contract_artifacts("0xABC", "http://rpc", workspace_prefix="test")
 
-    assert len(scaffold_calls) == 2, "expired entry should be rebuilt"
+    assert len(scaffold_calls) == 1, (
+        "expired in-memory entry must fall through to the persistent row, not rebuild"
+    )
+    assert len(snapshot_calls) == 2, "snapshot still runs every call (state-dependent)"
 
 
 def test_cache_keyed_by_effective_address_not_input(monkeypatch):
@@ -371,13 +427,13 @@ def test_bytecode_keccak_hit_retargets_plan_to_new_address(monkeypatch):
 # pg_advisory_xact_lock so concurrent jobs requesting the same address
 # only run the expensive build once.
 #
-# These tests describe the desired post-fix behaviour. They FAIL today
-# (no cross-process layer) and PASS once the table + materialize_contract
-# helper land. They use the project-standard ``db_session`` fixture from
-# tests/conftest.py.
+# These tests describe the desired post-fix behaviour. They lean on the
+# autouse ``_isolated_contract_materializations`` fixture to point
+# ``db.contract_materializations.SessionLocal`` at the test DB and to
+# wipe the canonical stub keccak row before/after every test.
 
 
-def test_two_processes_materializing_same_bytecode_compile_once(db_session, monkeypatch):
+def test_two_processes_materializing_same_bytecode_compile_once(monkeypatch):
     """Worker process A materializes contract X. Process B then
     materializes a *different* address with the *same* bytecode_keccak.
     With the persistent cross-process cache, the second call must skip
@@ -407,7 +463,7 @@ def test_two_processes_materializing_same_bytecode_compile_once(db_session, monk
     assert len(collect_calls) == 1, "second process must not re-run Slither on the same bytecode"
 
 
-def test_two_concurrent_requests_dedup_via_advisory_lock(db_session, monkeypatch):
+def test_two_concurrent_requests_dedup_via_advisory_lock(monkeypatch):
     """Two materialization requests fired concurrently for the same
     (chain, bytecode_keccak) must produce exactly one build — the loser
     of the advisory-lock race waits for the winner and reads the result.
@@ -441,7 +497,7 @@ def test_two_concurrent_requests_dedup_via_advisory_lock(db_session, monkeypatch
     assert len(collect_calls) == 1
 
 
-def test_materialization_persists_a_row_keyed_by_chain_and_keccak(db_session, monkeypatch):
+def test_materialization_persists_a_row_keyed_by_chain_and_keccak(monkeypatch):
     """A row per (chain, bytecode_keccak) — operators answer "have we
     ever materialized this?" without resolving artifacts; next-day
     re-runs become pure DB lookups."""
@@ -460,7 +516,10 @@ def test_materialization_persists_a_row_keyed_by_chain_and_keccak(db_session, mo
     addr = "0x" + "33" * 20
     _materialize_contract_artifacts(addr, "http://rpc", workspace_prefix="row-test")
 
-    row = cm.find_by_keccak(db_session, chain="ethereum", bytecode_keccak="0x" + "ab" * 32)
+    # Open a fresh session against the test DB — the autouse fixture
+    # already routed ``cm.SessionLocal`` here, so reuse it for the read.
+    with cm.SessionLocal() as session:
+        row = cm.find_by_keccak(session, chain="ethereum", bytecode_keccak="0x" + "ab" * 32)
     assert row is not None
     assert row.status == "ready"
     assert row.bytecode_keccak == "0x" + "ab" * 32

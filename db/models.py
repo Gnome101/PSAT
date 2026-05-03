@@ -886,6 +886,45 @@ class EtherscanCache(Base):
     __table_args__ = (Index("ix_etherscan_cache_cached_at", "cached_at"),)
 
 
+class ContractMaterialization(Base):
+    """Cross-job, cross-process materialization cache.
+
+    A row per ``(chain, bytecode_keccak)`` recording the static analysis
+    + tracking_plan bundle so two impl jobs in the same protocol — or a
+    same-protocol re-run on the next day — skip the expensive forge build
+    + Slither pass. Read/written via ``db.contract_materializations`` with
+    request-coalescing through ``pg_advisory_xact_lock``.
+
+    ``status='pending'`` means a builder holds the advisory lock for this
+    row; ``'ready'`` means the bundle is usable; ``'failed'`` is kept for
+    ops triage but never returned to readers.
+    """
+
+    __tablename__ = "contract_materializations"
+
+    chain: Mapped[str] = mapped_column(String(100), primary_key=True)
+    bytecode_keccak: Mapped[str] = mapped_column(String(66), primary_key=True)
+    address: Mapped[str] = mapped_column(String(42), nullable=False)
+    contract_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    analysis: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    tracking_plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    analysis_blob_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tracking_plan_blob_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    materialized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("NOW()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("NOW()"), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("chain", "address", name="uq_contract_materializations_chain_address"),
+        Index("ix_contract_materializations_status", "status"),
+    )
+
+
 class BytecodeCache(Base):
     """Persistent eth_getCode bytecode cache. Read/written by ``utils/rpc.py`` via
     raw SQL; this model exists so ``alembic check`` doesn't flag the table as

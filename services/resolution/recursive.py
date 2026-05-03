@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time as _time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -193,6 +193,109 @@ def _build_effective_permissions(
         return None
 
 
+def _build_static_artifacts(
+    effective_address: str,
+    workspace_prefix: str,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Run the expensive forge+Slither pipeline for *effective_address* and return
+    ``(contract_name, analysis, tracking_plan)``.
+
+    Pulled out of ``_materialize_contract_artifacts`` so the cross-process
+    cache can call this exact closure when it needs to populate the
+    persistent row. The tempdir is cleaned up at function exit.
+    """
+    result = fetch(effective_address)
+    contract_name = str(result.get("ContractName", "Contract"))
+    project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
+
+    with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
+        project_dir = Path(tmp) / project_name
+        scaffold(effective_address, result, project_dir)
+        analysis = cast(dict, collect_contract_analysis(project_dir))
+
+    plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
+    return contract_name, analysis, plan
+
+
+def _materialize_with_cross_process_cache(
+    *,
+    effective_address: str,
+    bytecode_keccak: str | None,
+    workspace_prefix: str,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Consult the persistent contract_materializations table; build on miss.
+
+    Falls back to a direct ``_build_static_artifacts`` call when:
+      * ``bytecode_keccak`` is None (we have nothing to key on);
+      * the DB layer raises (e.g., the table doesn't exist in a
+        fixture-isolated test, or the DB is unreachable).
+
+    The graceful-fallback path matches the legacy behaviour byte-for-byte
+    so the builder remains the source of truth and the cache is purely
+    additive.
+    """
+    if not bytecode_keccak:
+        return _build_static_artifacts(effective_address, workspace_prefix)
+
+    try:
+        from db import contract_materializations as cm
+    except Exception as exc:
+        logger.debug("contract_materializations unavailable, falling back to direct build: %s", exc)
+        return _build_static_artifacts(effective_address, workspace_prefix)
+
+    if not cm.is_enabled():
+        # Operator-controlled kill switch (PSAT_CONTRACT_MATERIALIZATIONS=0)
+        # for prod incidents. Bypasses the persistent layer entirely so a
+        # broken table or hot-spot lock contention can't fail-stop the
+        # pipeline.
+        return _build_static_artifacts(effective_address, workspace_prefix)
+
+    chain = os.getenv("PSAT_DEFAULT_CHAIN", "ethereum")
+
+    def _builder() -> Mapping[str, Any]:
+        name, analysis, plan = _build_static_artifacts(effective_address, workspace_prefix)
+        return {"contract_name": name, "analysis": analysis, "tracking_plan": plan}
+
+    try:
+        row = cm.materialize_or_wait(
+            chain=chain,
+            address=effective_address,
+            bytecode_keccak=bytecode_keccak,
+            builder=_builder,
+        )
+    except Exception as exc:
+        # ``materialize_or_wait`` re-raises the builder's exception. If
+        # the failure was *inside* the builder, propagating preserves the
+        # existing behaviour of letting the resolution stage handle its
+        # own retry/terminal classification. If the failure was in the
+        # DB layer (lock acquisition, schema absent), fall back so we
+        # don't fail-stop the whole pipeline on a cache outage.
+        if _looks_like_builder_exception(exc):
+            raise
+        logger.warning("contract_materializations.materialize_or_wait failed, falling back: %s", exc)
+        return _build_static_artifacts(effective_address, workspace_prefix)
+
+    analysis = copy.deepcopy(row.analysis or {})
+    plan = copy.deepcopy(row.tracking_plan or {})
+    contract_name = row.contract_name or "Contract"
+    return contract_name, analysis, plan
+
+
+def _looks_like_builder_exception(exc: BaseException) -> bool:
+    """Heuristic: did *exc* originate inside the materialization builder
+    rather than the DB cache layer?
+
+    Builder exceptions are anything raised by ``fetch`` / ``scaffold`` /
+    ``collect_contract_analysis`` — broadly Etherscan / Slither errors.
+    DB-layer errors are SQLAlchemy / psycopg2 exceptions. We can't
+    cleanly distinguish without a type sniff; treat anything from the
+    sqlalchemy module as a DB-layer error and let other exceptions
+    propagate.
+    """
+    mod = type(exc).__module__ or ""
+    return not (mod.startswith("sqlalchemy") or mod.startswith("psycopg2"))
+
+
 def _materialize_contract_artifacts(
     address: str,
     rpc_url: str,
@@ -234,16 +337,27 @@ def _materialize_contract_artifacts(
             analysis["subject"]["address"] = effective_address
         plan["contract_address"] = effective_address
     else:
-        result = fetch(effective_address)
-        contract_name = str(result.get("ContractName", "Contract"))
-        project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
-
-        with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
-            project_dir = Path(tmp) / project_name
-            scaffold(effective_address, result, project_dir)
-            analysis = cast(dict, collect_contract_analysis(project_dir))
-
-        plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
+        # Cross-process cache: consult contract_materializations before
+        # paying the forge+Slither cost. Two impl jobs in the same
+        # protocol — or a re-run of a previously-analysed protocol on a
+        # different day — should hit this layer and skip the build.
+        # The advisory-lock-coalescing inside ``materialize_or_wait``
+        # ensures concurrent same-bytecode requests across processes
+        # only run the builder once; the loser blocks on the lock and
+        # reads the result.
+        contract_name, analysis, plan = _materialize_with_cross_process_cache(
+            effective_address=effective_address,
+            bytecode_keccak=bytecode_keccak,
+            workspace_prefix=workspace_prefix,
+        )
+        # Address-mismatch retarget: if the persistent cache row was
+        # populated for a different address that shares this bytecode,
+        # the cached plan["contract_address"] points at the OTHER address.
+        # Stamp it for THIS call so build_control_snapshot reads from the
+        # right contract.
+        if isinstance(analysis.get("subject"), dict):
+            analysis["subject"]["address"] = effective_address
+        plan["contract_address"] = effective_address
         _store_cached_static_artifacts(
             effective_address, contract_name, analysis, plan, rpc_url=rpc_url, bytecode_keccak=bytecode_keccak
         )
