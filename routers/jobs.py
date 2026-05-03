@@ -246,7 +246,15 @@ def retry_job(job_id: str) -> dict[str, Any]:
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=404, detail="Job not found") from exc
     with deps.SessionLocal() as session:
-        job = session.get(Job, parsed)
+        # ``with_for_update`` serializes concurrent admin retries against the
+        # same row: without it, two operators hitting this endpoint at once
+        # both observe ``failed_terminal``, both flip to ``queued``, and the
+        # artifact-append below would see them race on ``store_artifact``'s
+        # upsert (last writer clobbers the first writer's manual_retry entry).
+        # The lock is held until the outer ``session.commit()`` below.
+        job = session.execute(
+            select(Job).where(Job.id == parsed).with_for_update()
+        ).scalar_one_or_none()
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
         if job.status != JobStatus.failed_terminal:
@@ -264,15 +272,19 @@ def retry_job(job_id: str) -> dict[str, Any]:
         # terminal failure. The audit log preserves it via the manual_retry
         # entry below + the prior failure entries already in stage_errors.
         job.error = None
-        session.commit()
-        session.refresh(job)
-
+        # Read + append + upsert the audit-log artifact in the same
+        # transaction as the status flip. The FOR UPDATE row lock above
+        # covers everything until the final commit, so a concurrent admin
+        # retry blocks here and observes ``queued`` (→ 409) instead of
+        # racing on the upsert.
+        #
         # Append the manual retry entry so /api/jobs/{id}/errors shows
         # operator intervention as part of the per-job history. Severity
         # ``degraded`` (not ``error``) so consumers don't treat it as a
         # failed attempt — it's a recovery signal.
         existing = deps.get_artifact(session, job.id, "stage_errors")
         prior: list[StageError] = []
+        corrupt_prior: dict[str, Any] | None = None
         if isinstance(existing, dict):
             try:
                 prior = list(StageErrors.model_validate(existing).errors)
@@ -283,7 +295,27 @@ def retry_job(job_id: str) -> dict[str, Any]:
                     exc,
                     extra={"exc_type": type(exc).__name__},
                 )
+                # Preserve the raw bytes via a degraded breadcrumb so the
+                # audit log isn't lossy when an operator retries a job whose
+                # prior body fell out of schema (legacy/partial-write/etc.).
                 prior = []
+                corrupt_prior = existing
+        if corrupt_prior is not None:
+            prior.append(
+                StageError(
+                    stage=job.stage.value,
+                    severity="degraded",
+                    exc_type="schema.CorruptPriorArtifact",
+                    message="Prior stage_errors body did not validate; raw payload preserved in context.",
+                    phase="corrupt_prior",
+                    trace_id=job.trace_id,
+                    job_id=str(job.id),
+                    worker_id="api",
+                    failed_at=datetime.now(timezone.utc),
+                    retry_count=0,
+                    context={"raw": corrupt_prior},
+                )
+            )
         prior.append(
             StageError(
                 stage=job.stage.value,
