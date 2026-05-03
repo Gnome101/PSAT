@@ -1,6 +1,6 @@
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -8,6 +8,7 @@ from schemas.resolved_control_graph import ResolvedGraphEdge
 from services.resolution.recursive import (
     LoadedArtifacts,
     _add_edge,
+    _build_effective_permissions,
     _materialize_contract_artifacts,
     resolve_control_graph,
 )
@@ -736,3 +737,98 @@ def test_resolve_control_graph_parallel_handles_partial_materialize_failure(monk
     assert by_addr[good_addr]["analyzed"] is True
     assert good_addr in nested
     assert bad_addr not in nested
+
+
+def test_build_effective_permissions_returns_payload_for_representative_inputs():
+    """PoC for the 'Recursive artifact missing kind=effective_permissions'
+    warning.
+
+    The warning fires when ``recursive._build_effective_permissions`` returns
+    None — which only happens when the inner ``build_effective_permissions``
+    raises. The wrapper swallows the exception, so by the time
+    ``store_bundle`` sees None, the operator can't tell whether (a) there's
+    an actual bug in the producer, or (b) something legitimate went sideways.
+
+    This test passes representative analysis + snapshot shapes (mirroring
+    what ``collect_contract_analysis`` and ``build_control_snapshot`` produce
+    on real contracts) through the wrapper. If the wrapper returns None on
+    these realistic inputs, there's a genuine producer bug. If it returns a
+    well-formed payload, the system is healthy and the production warnings
+    came from a transient/already-fixed scenario.
+
+    Variants exercise the most common privileged-function shapes:
+      - no privileged functions (a well-formed but trivial contract)
+      - one function with controller_refs (Ownable pattern)
+      - role-gated function (RolesAuthority pattern)
+    """
+    address = "0x1111111111111111111111111111111111111111"
+    snapshot = {
+        "schema_version": "0.1",
+        "contract_address": address,
+        "contract_name": "Target",
+        "block_number": 1,
+        "controller_values": {
+            "state_variable:owner": {
+                "source": "owner",
+                "value": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "block_number": 1,
+                "observed_via": "eth_call",
+                "resolved_type": "contract",
+                "details": {"address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+            },
+        },
+    }
+
+    variants: list[tuple[str, dict[str, Any]]] = [
+        (
+            "empty privileged_functions",
+            {
+                "subject": {"address": address, "name": "Trivial"},
+                "access_control": {"privileged_functions": []},
+            },
+        ),
+        (
+            "ownable pattern",
+            {
+                "subject": {"address": address, "name": "Ownable"},
+                "access_control": {
+                    "privileged_functions": [
+                        {
+                            "function": "setHook(address)",
+                            "controller_refs": ["owner"],
+                            "effect_targets": ["hook"],
+                            "effect_labels": ["hook_update"],
+                            "action_summary": "Updates hook configuration.",
+                        }
+                    ]
+                },
+            },
+        ),
+        (
+            "role-gated pattern",
+            {
+                "subject": {"address": address, "name": "RoleGated"},
+                "access_control": {
+                    "privileged_functions": [
+                        {
+                            "function": "manage(bytes,uint256)",
+                            "controller_refs": ["authority"],
+                            "effect_targets": ["target.functionCallWithValue"],
+                            "effect_labels": ["arbitrary_external_call"],
+                            "action_summary": "Executes arbitrary external calldata.",
+                        }
+                    ]
+                },
+            },
+        ),
+    ]
+
+    for label, analysis in variants:
+        result = _build_effective_permissions(analysis, cast(Any, snapshot))
+        assert result is not None, (
+            f"producer returned None for representative input ({label}); "
+            "this is the path that triggers 'Recursive artifact missing "
+            "kind=effective_permissions' downstream"
+        )
+        assert result.get("contract_address") == address
+        assert "functions" in result
