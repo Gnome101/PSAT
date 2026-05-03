@@ -6,6 +6,7 @@ import contextvars
 import logging
 import os
 import signal
+import threading
 import time
 import traceback
 import uuid
@@ -25,6 +26,7 @@ from db.queue import (
     get_artifact,
     heartbeat_job,
     reclaim_stuck_jobs,
+    release_job_lease,
     requeue_job,
     store_artifact,
     update_job_detail,
@@ -100,6 +102,19 @@ class BaseWorker:
         self._running = True
         # -inf = "never swept; sweep now"; throttles _claim_job to RECLAIM_INTERVAL_S between sweeps.
         self._last_reclaim_at: float = float("-inf")
+        # Currently-claimed job_id → claim-time lease_id. Populated by
+        # ``_execute_job`` for the duration of a single job, drained on
+        # success/failure. ``_handle_sigterm`` reads a snapshot of this
+        # map and explicitly releases each lease via ``release_job_lease``
+        # so a Fly machine drain doesn't strand the row in ``processing``
+        # for the full 15-minute lease TTL — observed on PR-63 as a 16+
+        # minute static-stage wedge after a worker SIGTERM mid-forge-build.
+        self._inflight_jobs: dict[uuid.UUID, uuid.UUID] = {}
+        self._inflight_lock = threading.Lock()
+        # Set when graceful shutdown has spawned its release thread; idempotent
+        # guard against duplicate handler invocations (Fly sends SIGTERM twice
+        # before SIGKILL).
+        self._shutdown_release_started = False
         signal.signal(signal.SIGTERM, self._handle_sigterm)
         signal.signal(signal.SIGINT, self._handle_sigterm)
 
@@ -139,6 +154,69 @@ class BaseWorker:
     def _handle_sigterm(self, signum: int, frame: object) -> None:
         logger.info("Worker %s received signal %s, shutting down gracefully", self.worker_id, signum)
         self._running = False
+        # Release the currently-claimed job's lease on a daemon thread so a
+        # sibling worker can immediately reclaim. The main thread is likely
+        # blocked in ``subprocess.run`` (forge build, slither) — it cannot
+        # release for itself before Fly escalates to SIGKILL. The daemon
+        # thread opens its own ``SessionLocal()`` so it doesn't share the
+        # main thread's session state, and finishes well within Fly's
+        # ``kill_timeout``.
+        if self._shutdown_release_started:
+            return
+        self._shutdown_release_started = True
+        threading.Thread(
+            target=self._release_inflight_leases,
+            name=f"{self.worker_id}-shutdown-release",
+            daemon=True,
+        ).start()
+
+    def _release_inflight_leases(self) -> None:
+        """Release every lease in ``self._inflight_jobs``.
+
+        Runs on a daemon thread spawned by ``_handle_sigterm``. Uses
+        ``release_job_lease`` (SQL-level conditional UPDATE on
+        ``lease_id``) so the call is a no-op if the main thread raced to
+        ``complete_job`` first or ``reclaim_stuck_jobs`` already swept.
+        Errors are logged and swallowed — the worker is shutting down
+        either way; failing here would just crash the daemon thread.
+        """
+        with self._inflight_lock:
+            snapshot = dict(self._inflight_jobs)
+        if not snapshot:
+            return
+        logger.info(
+            "Worker %s releasing %d in-flight job lease(s) before shutdown",
+            self.worker_id,
+            len(snapshot),
+        )
+        session = SessionLocal()
+        try:
+            for job_id, lease_id in snapshot.items():
+                try:
+                    released = release_job_lease(
+                        session,
+                        job_id,
+                        lease_id=lease_id,
+                        reason=f"graceful shutdown of {self.worker_id}",
+                    )
+                except Exception:
+                    logger.exception(
+                        "Worker %s: failed to release lease for job %s",
+                        self.worker_id,
+                        job_id,
+                    )
+                    continue
+                if released:
+                    logger.info("Worker %s released lease for job %s", self.worker_id, job_id)
+                else:
+                    logger.info(
+                        "Worker %s: lease for job %s already gone (sibling reclaimed or main "
+                        "thread completed it first)",
+                        self.worker_id,
+                        job_id,
+                    )
+        finally:
+            session.close()
 
     def process(self, session: Session, job: Job) -> None:
         """Subclasses implement this to run their pipeline stage."""
@@ -217,6 +295,15 @@ class BaseWorker:
             # write threads it through. ``getattr`` keeps test stubs that
             # build a bare SimpleNamespace job from tripping AttributeError.
             claim_lease_id = getattr(job, "lease_id", None)
+            # Register this (job_id, lease_id) for graceful-shutdown release.
+            # ``_handle_sigterm`` reads this map on its daemon thread; the
+            # ``finally`` below removes the entry whether the job completes,
+            # advances, or errors so a stale id never lingers.
+            inflight_registered = False
+            if claim_lease_id is not None:
+                with self._inflight_lock:
+                    self._inflight_jobs[job.id] = claim_lease_id
+                inflight_registered = True
             try:
                 logger.info("Worker %s claimed job %s", self.worker_id, job.id)
                 t0 = time.monotonic()
@@ -485,6 +572,9 @@ class BaseWorker:
                             )
             finally:
                 degraded_errors_var.reset(accumulator_token)
+                if inflight_registered:
+                    with self._inflight_lock:
+                        self._inflight_jobs.pop(job.id, None)
 
     def _run_one_job(self, job_id) -> None:
         """K>1 dispatcher entry point: open a per-job session, re-fetch the job
