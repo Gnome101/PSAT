@@ -252,7 +252,7 @@ def test_retry_endpoint_concurrent_operators_serialize_via_row_lock(clean_jobs, 
         from db.models import Artifact
 
         art = verify.query(Artifact).filter(Artifact.job_id == job_id, Artifact.name == "stage_errors").one_or_none()
-        assert art is not None
+        assert art is not None and isinstance(art.data, dict)
         manual_retries = [e for e in art.data["errors"] if e.get("phase") == "manual_retry"]
 
     # Exactly one writer ever ran the artifact append, so exactly one entry.

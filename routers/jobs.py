@@ -252,9 +252,7 @@ def retry_job(job_id: str) -> dict[str, Any]:
         # artifact-append below would see them race on ``store_artifact``'s
         # upsert (last writer clobbers the first writer's manual_retry entry).
         # The lock is held until the outer ``session.commit()`` below.
-        job = session.execute(
-            select(Job).where(Job.id == parsed).with_for_update()
-        ).scalar_one_or_none()
+        job = session.execute(select(Job).where(Job.id == parsed).with_for_update()).scalar_one_or_none()
         if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
         if job.status != JobStatus.failed_terminal:
