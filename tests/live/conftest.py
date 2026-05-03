@@ -385,11 +385,18 @@ class LiveClient:
         timeout: float = DEFAULT_SINGLE_TIMEOUT,
         interval: float = DEFAULT_POLL_INTERVAL,
     ) -> dict[str, Any]:
-        """Poll ``/api/jobs/{id}`` until status is terminal or timeout fires."""
+        """Poll ``/api/jobs/{id}`` until status is terminal or timeout fires.
+
+        ``failed_terminal`` is a distinct ``JobStatus`` enum value introduced
+        for deterministic-from-the-start failures (and retry-exhausted
+        transient failures); it is just as terminal as ``completed`` /
+        ``failed``. Treating it as non-terminal keeps the loop alive
+        forever and times out on rows that already settled.
+        """
         deadline = time.time() + timeout
         while time.time() < deadline:
             status = self.job(job_id)
-            if status["status"] in ("completed", "failed"):
+            if status["status"] in ("completed", "failed", "failed_terminal"):
                 return status
             time.sleep(interval)
         raise TimeoutError(f"Job {job_id} did not reach a terminal status within {timeout}s")
@@ -404,7 +411,7 @@ class LiveClient:
         deadline = time.time() + timeout
         while time.time() < deadline:
             children = self.children_of(parent_job_id)
-            if children and all(c["status"] in ("completed", "failed") for c in children):
+            if children and all(c["status"] in ("completed", "failed", "failed_terminal") for c in children):
                 return children
             time.sleep(interval)
         return self.children_of(parent_job_id)

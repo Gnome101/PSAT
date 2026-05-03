@@ -38,7 +38,7 @@ def test_stages_advance_in_order(live_client: LiveClient):
         stage = snap.get("stage")
         if stage and (not seen_stages or seen_stages[-1] != stage):
             seen_stages.append(stage)
-        if snap["status"] in ("completed", "failed"):
+        if snap["status"] in ("completed", "failed", "failed_terminal"):
             break
         time.sleep(1)
     else:
