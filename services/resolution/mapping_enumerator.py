@@ -19,10 +19,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 
 # Pagination bounds (default 60s / 50 pages); without these caps a 2017-deployed contract can wedge a worker for ~80
-# min.
+# min. Read once at import — bounds aren't expected to change at runtime.
 _TIMEOUT_S = float(os.getenv("PSAT_MAPPING_ENUMERATION_TIMEOUT_S", "60"))
 _MAX_PAGES = int(os.getenv("PSAT_MAPPING_ENUMERATION_MAX_PAGES", "50"))
-_CACHE_TTL_S = float(os.getenv("PSAT_MAPPING_ENUMERATION_CACHE_TTL_S", "1800"))
+
+
+def _cache_ttl_s() -> float:
+    """Read at call time so tests can flip TTL via monkeypatch.setenv
+    without re-importing the module. Default matches the original
+    in-process cache (30 min)."""
+    return float(os.getenv("PSAT_MAPPING_ENUMERATION_CACHE_TTL_S", "1800"))
 
 
 class EnumeratedPrincipal(TypedDict):
@@ -303,18 +309,34 @@ async def enumerate_mapping_allowlist(
 def enumerate_mapping_allowlist_sync(
     contract_address: str,
     writer_specs: list[WriterEventSpec],
+    *,
+    chain: str | None = None,
     **kwargs: Any,
 ) -> EnumerationResult:
-    """Sync wrapper with TTL cache (default 30 min); ``incomplete_*``/``error`` results are cached too."""
+    """Sync wrapper with two-tier TTL cache.
+
+    L1 is the in-process module dict — fast, but only covers same-process
+    repeats. L2 is ``db.mapping_enumeration_cache`` — Postgres-backed and
+    cross-process, so the resolution stage and the policy stage of the
+    same job (which run in different worker processes since 9ce6fa3) hit
+    each other's results instead of re-paying the 60s hypersync scan.
+
+    On miss we run the underlying enumeration, then write back to L2
+    first so other processes see it, then to L1. ``incomplete_*`` and
+    ``error`` results are cached at both tiers — re-running them inside
+    the TTL would just hit the same bound; the caller sees the
+    ``status`` field and decides whether to act on partial data.
+    """
     cache_key = contract_address.lower()
     now = time.monotonic()
+
     with _CACHE_LOCK:
         cached = _CACHE.get(cache_key)
         if cached is not None:
             result, inserted_at = cached
-            if now - inserted_at < _CACHE_TTL_S:
+            if now - inserted_at < _cache_ttl_s():
                 logger.info(
-                    "mapping_enumerator: CACHE HIT address=%s status=%s principals=%d",
+                    "mapping_enumerator: L1 CACHE HIT address=%s status=%s principals=%d",
                     contract_address,
                     result["status"],
                     len(result["principals"]),
@@ -322,8 +344,69 @@ def enumerate_mapping_allowlist_sync(
                 return result
             del _CACHE[cache_key]
 
+    specs_as_dicts = [dict(s) for s in writer_specs]
+
+    if _db_cache_enabled():
+        try:
+            from db import mapping_enumeration_cache as _db_cache
+
+            specs_hash = _db_cache.specs_fingerprint(specs_as_dicts)
+            db_hit = _db_cache.find_fresh(
+                chain=chain,
+                address=contract_address,
+                specs_hash=specs_hash,
+                ttl_s=_cache_ttl_s(),
+            )
+        except Exception as exc:
+            logger.warning(
+                "mapping_enumerator: L2 read failed for %s, falling through to scan: %s",
+                contract_address,
+                exc,
+            )
+            db_hit = None
+            specs_hash = None
+        else:
+            if db_hit is not None:
+                logger.info(
+                    "mapping_enumerator: L2 CACHE HIT address=%s status=%s principals=%d",
+                    contract_address,
+                    db_hit["status"],
+                    len(db_hit["principals"]),
+                )
+                result = EnumerationResult(**db_hit)  # type: ignore[typeddict-item]
+                with _CACHE_LOCK:
+                    _CACHE[cache_key] = (result, now)
+                return result
+    else:
+        specs_hash = None
+
     result = asyncio.run(enumerate_mapping_allowlist(contract_address, writer_specs, **kwargs))
+
+    if specs_hash is not None:
+        try:
+            from db import mapping_enumeration_cache as _db_cache
+
+            _db_cache.upsert(
+                chain=chain,
+                address=contract_address,
+                specs_hash=specs_hash,
+                result=dict(result),
+            )
+        except Exception as exc:
+            logger.warning(
+                "mapping_enumerator: L2 write failed for %s: %s",
+                contract_address,
+                exc,
+            )
 
     with _CACHE_LOCK:
         _CACHE[cache_key] = (result, now)
     return result
+
+
+def _db_cache_enabled() -> bool:
+    """Imported lazily so test code that hasn't pulled in the DB module
+    can still drive the in-process path. The env var defaults ON; tests
+    that want the in-process behaviour set ``PSAT_MAPPING_ENUMERATION_DB_CACHE=0``.
+    """
+    return os.getenv("PSAT_MAPPING_ENUMERATION_DB_CACHE", "1").lower() in ("1", "true", "yes")

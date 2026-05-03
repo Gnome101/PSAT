@@ -17,6 +17,7 @@ they can't drift into each other.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 import signal
@@ -30,6 +31,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import Select, Update
 
 from db.models import AuditReport, SessionLocal
+from utils.logging import configure_logging
 
 logger = logging.getLogger("workers.audit_row_worker")
 
@@ -61,6 +63,9 @@ class AuditRowWorker:
     # -- Init / signals ---------------------------------------------------
 
     def __init__(self) -> None:
+        # Idempotent — installs the JSON formatter so log lines from the
+        # audit row state machine match the BaseWorker fleet's shape.
+        configure_logging()
         self.worker_id = f"{self.worker_name}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         self._running = True
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -220,7 +225,14 @@ class AuditRowWorker:
                     len(claimed),
                 )
 
-                futures = {executor.submit(self._process_row, row): row.id for row in claimed}
+                # Per-submission ``copy_context`` so contextvars (e.g.
+                # the worker_id bound by ``configure_logging`` callers)
+                # survive the thread fan-out. ``Context.run`` cannot be
+                # entered concurrently, so each future needs its own copy.
+                futures = {}
+                for row in claimed:
+                    ctx = contextvars.copy_context()
+                    futures[executor.submit(ctx.run, self._process_row, row)] = row.id
                 for future in as_completed(futures):
                     try:
                         audit_id, result = future.result()

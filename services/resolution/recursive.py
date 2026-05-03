@@ -7,10 +7,8 @@ import logging
 import os
 import re
 import tempfile
-import threading
-import time as _time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
@@ -22,6 +20,7 @@ from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEd
 from services.discovery.fetch import fetch, scaffold
 from services.policy.effective_permissions import build_effective_permissions
 from services.static import collect_contract_analysis
+from utils.logging import record_degraded
 
 from .tracking import (
     build_control_snapshot,
@@ -34,88 +33,6 @@ logger = logging.getLogger(__name__)
 
 ANALYZABLE_TYPES = {"contract", "timelock", "proxy_admin"}
 DEFAULT_RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
-
-# Process-wide cache for the static parts of _materialize_contract_artifacts (analysis + plan + contract_name).
-# Address index keyed by (rpc_url, address) for chain isolation; keccak fallback enables cross-chain reuse on byte-exact
-# bytecode matches.
-_ARTIFACT_CACHE: dict[tuple[str, str], tuple[str, dict[str, Any], dict[str, Any], float]] = {}
-_ARTIFACT_CACHE_BY_KECCAK: dict[str, tuple[str, dict[str, Any], dict[str, Any], float]] = {}
-_ARTIFACT_CACHE_LOCK = threading.Lock()
-_ARTIFACT_CACHE_MAX = 1024
-_ARTIFACT_CACHE_TTL_S = float(os.getenv("PSAT_RESOLUTION_ARTIFACT_CACHE_TTL_S", "1800"))
-
-
-def clear_artifact_cache() -> None:
-    """Clear the process-wide static-artifact cache. For tests + manual reset."""
-    from utils.memory import reset_cache_pressure_state
-
-    with _ARTIFACT_CACHE_LOCK:
-        _ARTIFACT_CACHE.clear()
-        _ARTIFACT_CACHE_BY_KECCAK.clear()
-    reset_cache_pressure_state("artifact_addr")
-    reset_cache_pressure_state("artifact_keccak")
-
-
-def _log_artifact_pressure() -> None:
-    """Log when either artifact cache crosses 50/75/95% (caller holds the lock)."""
-    from utils.memory import cache_pressure_message
-
-    msg = cache_pressure_message("artifact_addr", len(_ARTIFACT_CACHE), _ARTIFACT_CACHE_MAX)
-    if msg:
-        logger.info("[CACHE_PRESSURE] %s", msg)
-    msg = cache_pressure_message("artifact_keccak", len(_ARTIFACT_CACHE_BY_KECCAK), _ARTIFACT_CACHE_MAX)
-    if msg:
-        logger.info("[CACHE_PRESSURE] %s", msg)
-
-
-def _get_cached_static_artifacts(
-    effective_address: str, rpc_url: str = "", bytecode_keccak: str | None = None
-) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
-    """Cached ``(contract_name, analysis, plan)`` deepcopies; chain-isolated by addr, keccak for cross-chain reuse."""
-    addr_key = (rpc_url, effective_address.lower())
-    now = _time.monotonic()
-    with _ARTIFACT_CACHE_LOCK:
-        entry = _ARTIFACT_CACHE.get(addr_key)
-        if entry is None and bytecode_keccak:
-            entry = _ARTIFACT_CACHE_BY_KECCAK.get(bytecode_keccak)
-    if entry is None:
-        return None
-    contract_name, analysis, plan, inserted_at = entry
-    if now - inserted_at > _ARTIFACT_CACHE_TTL_S:
-        with _ARTIFACT_CACHE_LOCK:
-            _ARTIFACT_CACHE.pop(addr_key, None)
-            if bytecode_keccak:
-                _ARTIFACT_CACHE_BY_KECCAK.pop(bytecode_keccak, None)
-        return None
-    return contract_name, copy.deepcopy(analysis), copy.deepcopy(plan)
-
-
-def _store_cached_static_artifacts(
-    effective_address: str,
-    contract_name: str,
-    analysis: dict[str, Any],
-    plan: dict[str, Any],
-    rpc_url: str = "",
-    bytecode_keccak: str | None = None,
-) -> None:
-    addr_key = (rpc_url, effective_address.lower())
-    with _ARTIFACT_CACHE_LOCK:
-        if len(_ARTIFACT_CACHE) >= _ARTIFACT_CACHE_MAX:
-            oldest_key = min(_ARTIFACT_CACHE, key=lambda k: _ARTIFACT_CACHE[k][3])
-            _ARTIFACT_CACHE.pop(oldest_key, None)
-        payload = (
-            contract_name,
-            copy.deepcopy(analysis),
-            copy.deepcopy(plan),
-            _time.monotonic(),
-        )
-        _ARTIFACT_CACHE[addr_key] = payload
-        if bytecode_keccak:
-            if len(_ARTIFACT_CACHE_BY_KECCAK) >= _ARTIFACT_CACHE_MAX:
-                oldest = min(_ARTIFACT_CACHE_BY_KECCAK, key=lambda k: _ARTIFACT_CACHE_BY_KECCAK[k][3])
-                _ARTIFACT_CACHE_BY_KECCAK.pop(oldest, None)
-            _ARTIFACT_CACHE_BY_KECCAK[bytecode_keccak] = payload
-        _log_artifact_pressure()
 
 
 class LoadedArtifacts(TypedDict):
@@ -192,6 +109,116 @@ def _build_effective_permissions(
         return None
 
 
+def _build_static_artifacts(
+    effective_address: str,
+    workspace_prefix: str,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Run the expensive forge+Slither pipeline for *effective_address* and return
+    ``(contract_name, analysis, tracking_plan)``.
+
+    Pulled out of ``_materialize_contract_artifacts`` so the cross-process
+    cache can call this exact closure when it needs to populate the
+    persistent row. The tempdir is cleaned up at function exit.
+    """
+    result = fetch(effective_address)
+    contract_name = str(result.get("ContractName", "Contract"))
+    project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
+
+    with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
+        project_dir = Path(tmp) / project_name
+        scaffold(effective_address, result, project_dir)
+        analysis = cast(dict, collect_contract_analysis(project_dir))
+
+    plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
+    return contract_name, analysis, plan
+
+
+def _materialize_with_cross_process_cache(
+    *,
+    effective_address: str,
+    bytecode_keccak: str | None,
+    workspace_prefix: str,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """Consult the persistent contract_materializations table; build on miss.
+
+    Falls back to a direct ``_build_static_artifacts`` call when:
+      * ``bytecode_keccak`` is None (we have nothing to key on);
+      * the DB layer raises (e.g., the table doesn't exist in a
+        fixture-isolated test, or the DB is unreachable).
+
+    The graceful-fallback path matches the legacy behaviour byte-for-byte
+    so the builder remains the source of truth and the cache is purely
+    additive.
+    """
+    if not bytecode_keccak:
+        return _build_static_artifacts(effective_address, workspace_prefix)
+
+    try:
+        from db import contract_materializations as cm
+    except Exception as exc:
+        logger.debug("contract_materializations unavailable, falling back to direct build: %s", exc)
+        return _build_static_artifacts(effective_address, workspace_prefix)
+
+    if not cm.is_enabled():
+        # Operator-controlled kill switch (PSAT_CONTRACT_MATERIALIZATIONS=0)
+        # for prod incidents. Bypasses the persistent layer entirely so a
+        # broken table or hot-spot lock contention can't fail-stop the
+        # pipeline.
+        return _build_static_artifacts(effective_address, workspace_prefix)
+
+    chain = os.getenv("PSAT_DEFAULT_CHAIN", "ethereum")
+
+    def _builder() -> Mapping[str, Any]:
+        name, analysis, plan = _build_static_artifacts(effective_address, workspace_prefix)
+        return {"contract_name": name, "analysis": analysis, "tracking_plan": plan}
+
+    try:
+        row = cm.materialize_or_wait(
+            chain=chain,
+            address=effective_address,
+            bytecode_keccak=bytecode_keccak,
+            builder=_builder,
+        )
+    except Exception as exc:
+        # ``materialize_or_wait`` re-raises the builder's exception. If
+        # the failure was *inside* the builder, propagating preserves the
+        # existing behaviour of letting the resolution stage handle its
+        # own retry/terminal classification. If the failure was in the
+        # DB layer (lock acquisition, schema absent), fall back so we
+        # don't fail-stop the whole pipeline on a cache outage.
+        if _looks_like_builder_exception(exc):
+            raise
+        logger.warning("contract_materializations.materialize_or_wait failed, falling back: %s", exc)
+        return _build_static_artifacts(effective_address, workspace_prefix)
+
+    # ``hydrate_*`` transparently reads from blob storage when the row's
+    # ``*_blob_key`` is set (the new path) or falls back to inline JSONB
+    # (legacy rows pre-backfill, or rows written when storage was
+    # unconfigured). The blob path's ``json.loads`` already returns a
+    # fresh dict per call, but the inline path returns the SQLAlchemy
+    # JSONB-cached dict, so the deepcopy is still required to avoid
+    # downstream mutations leaking back into the ORM identity map.
+    analysis = copy.deepcopy(cm.hydrate_analysis(row) or {})
+    plan = copy.deepcopy(cm.hydrate_tracking_plan(row) or {})
+    contract_name = row.contract_name or "Contract"
+    return contract_name, analysis, plan
+
+
+def _looks_like_builder_exception(exc: BaseException) -> bool:
+    """Heuristic: did *exc* originate inside the materialization builder
+    rather than the DB cache layer?
+
+    Builder exceptions are anything raised by ``fetch`` / ``scaffold`` /
+    ``collect_contract_analysis`` — broadly Etherscan / Slither errors.
+    DB-layer errors are SQLAlchemy / psycopg2 exceptions. We can't
+    cleanly distinguish without a type sniff; treat anything from the
+    sqlalchemy module as a DB-layer error and let other exceptions
+    propagate.
+    """
+    mod = type(exc).__module__ or ""
+    return not (mod.startswith("sqlalchemy") or mod.startswith("psycopg2"))
+
+
 def _materialize_contract_artifacts(
     address: str,
     rpc_url: str,
@@ -214,8 +241,10 @@ def _materialize_contract_artifacts(
     except Exception as exc:
         logger.debug("Recursive resolve: proxy check failed for %s: %s", address, exc)
 
-    # Cross-cascade reuse of static artifacts; indexed by address AND bytecode keccak so identical-bytecode contracts
-    # share one cache slot.
+    # Resolve bytecode_keccak so the persistent contract_materializations
+    # row is keyed on byte-exact code match: identical-bytecode contracts
+    # at different addresses (every OZ ERC1967Proxy, Gnosis Safe singleton,
+    # …) share one row.
     bytecode_keccak: str | None = None
     try:
         from utils.rpc import get_code_with_keccak
@@ -223,29 +252,26 @@ def _materialize_contract_artifacts(
         _code, bytecode_keccak = get_code_with_keccak(rpc_url, effective_address)
     except Exception as exc:
         logger.debug("Recursive resolve: get_code_with_keccak failed for %s: %s", effective_address, exc)
-    cached = _get_cached_static_artifacts(effective_address, rpc_url=rpc_url, bytecode_keccak=bytecode_keccak)
-    if cached is not None:
-        contract_name, analysis, plan = cached
-        # Retarget address fields on a keccak hit so build_control_snapshot reads from THIS contract.
-        analysis = copy.deepcopy(analysis)
-        plan = copy.deepcopy(plan)
-        if isinstance(analysis.get("subject"), dict):
-            analysis["subject"]["address"] = effective_address
-        plan["contract_address"] = effective_address
-    else:
-        result = fetch(effective_address)
-        contract_name = str(result.get("ContractName", "Contract"))
-        project_name = _workspace_name(contract_name, effective_address, workspace_prefix)
 
-        with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
-            project_dir = Path(tmp) / project_name
-            scaffold(effective_address, result, project_dir)
-            analysis = cast(dict, collect_contract_analysis(project_dir))
-
-        plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
-        _store_cached_static_artifacts(
-            effective_address, contract_name, analysis, plan, rpc_url=rpc_url, bytecode_keccak=bytecode_keccak
-        )
+    # Cross-process cache: consult contract_materializations before paying
+    # the forge+Slither cost. Two impl jobs in the same protocol — or a
+    # re-run of a previously-analysed protocol on a different day — hit
+    # this layer and skip the build. The advisory-lock-coalescing inside
+    # ``materialize_or_wait`` ensures concurrent same-bytecode requests
+    # across processes only run the builder once; the loser blocks on the
+    # lock and reads the result.
+    contract_name, analysis, plan = _materialize_with_cross_process_cache(
+        effective_address=effective_address,
+        bytecode_keccak=bytecode_keccak,
+        workspace_prefix=workspace_prefix,
+    )
+    # Address-mismatch retarget: when the persistent row was populated for
+    # a different address that shares this bytecode, the cached
+    # plan["contract_address"] points at the OTHER address. Stamp it for
+    # THIS call so build_control_snapshot reads from the right contract.
+    if isinstance(analysis.get("subject"), dict):
+        analysis["subject"]["address"] = effective_address
+    plan["contract_address"] = effective_address
     if snapshot_address != effective_address:
         plan = {**plan, "contract_address": snapshot_address}
 
@@ -600,15 +626,16 @@ def resolve_control_graph(
         if not level_pending:
             continue
 
-        # Parallel materialization. ``_materialize_contract_artifacts`` hits
-        # the locked ``_ARTIFACT_CACHE`` and runs Slither + ``forge build`` in
-        # a fresh tempdir per call. The fan-out is **CPU-bound** (Slither's
-        # IR build + solc + foundry compile are not GIL-friendly), so the cap
-        # has to track host vCPU count rather than the I/O-bound RPC fan-out
-        # ceiling — running ``max_workers=8`` on a shared-cpu-2x VM thrashes
-        # the load average to >5 and wedges sibling workers (observed on
-        # psat-pr-60 at 2026-05-02). Default 2 matches the smallest worker
-        # VM size; bumpable via env for performance-2x / shared-cpu-4x.
+        # Parallel materialization. ``_materialize_contract_artifacts``
+        # consults ``contract_materializations`` (cheap on a hit) and runs
+        # Slither + ``forge build`` in a fresh tempdir on a miss. The miss
+        # path is **CPU-bound** (Slither's IR build + solc + foundry compile
+        # are not GIL-friendly), so the cap has to track host vCPU count
+        # rather than the I/O-bound RPC fan-out ceiling — running
+        # ``max_workers=8`` on a shared-cpu-2x VM thrashes the load average
+        # to >5 and wedges sibling workers (observed on psat-pr-60 at
+        # 2026-05-02). Default 2 matches the smallest worker VM size;
+        # bumpable via env for performance-2x / shared-cpu-4x.
         materialize_fanout = max(1, int(os.getenv("PSAT_RESOLUTION_MATERIALIZE_FANOUT", "2")))
         materialized = parallel_map(
             _materialize_for_pending,
@@ -630,6 +657,11 @@ def resolve_control_graph(
             if mat_exc is not None or artifacts is None:
                 err_text = str(mat_exc) if mat_exc is not None else "no artifacts produced"
                 contract_name = _contract_name_for_address(address)
+                record_degraded(
+                    phase="recursive_materialize",
+                    exc=mat_exc if mat_exc is not None else RuntimeError(err_text),
+                    context={"address": address, "depth": depth},
+                )
                 logger.warning(
                     "Recursive resolve: failed to materialize nested contract %s at depth %s: %s",
                     address,
@@ -704,6 +736,11 @@ def resolve_control_graph(
                     except Exception as exc:
                         # Bounds are inside enumerate_mapping_allowlist; raises here are
                         # unexpected (auth, hypersync load, etc).
+                        record_degraded(
+                            phase="mapping_enumerator",
+                            exc=exc,
+                            context={"address": address},
+                        )
                         logger.warning(
                             "mapping_enumerator UNEXPECTED FAILURE for %s: %s — treating as truncated",
                             address,

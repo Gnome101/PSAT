@@ -24,7 +24,8 @@ from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
-from workers.base import DEBUG_TIMING, BaseWorker
+from utils.logging import record_degraded
+from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.resolution_worker")
 
@@ -89,8 +90,10 @@ class ResolutionWorker(BaseWorker):
         self.update_detail(session, job, "Reading current controller state")
         t0 = time.monotonic()
         snapshot = build_control_snapshot(cast(ControlTrackingPlan, tracking_plan), rpc_url)
-        if DEBUG_TIMING:
-            logger.info("[TIMING] control snapshot: %.1fs", time.monotonic() - t0)
+        logger.info(
+            "resolution phase complete: control snapshot",
+            extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "control_snapshot"},
+        )
         # Keep as artifact — policy stage reads it as JSON
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
 
@@ -141,8 +144,10 @@ class ResolutionWorker(BaseWorker):
             heartbeat=lambda: self._heartbeat(session, job),
         )
 
-        if DEBUG_TIMING:
-            logger.info("[TIMING] recursive graph: %.1fs", time.monotonic() - t0)
+        logger.info(
+            "resolution phase complete: recursive graph",
+            extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "recursive_graph"},
+        )
 
         if resolved_graph:
             # Persist each nested contract's artifacts so the policy stage can
@@ -236,6 +241,17 @@ class ResolutionWorker(BaseWorker):
         eth_wei_raw = results.get("eth_wei")
         tokens_raw = results.get("tokens")
         if isinstance(eth_wei_raw, BaseException) or isinstance(tokens_raw, BaseException):
+            primary_exc = eth_wei_raw if isinstance(eth_wei_raw, BaseException) else tokens_raw
+            assert isinstance(primary_exc, BaseException)
+            record_degraded(
+                phase="balance_fetch",
+                exc=primary_exc,
+                context={
+                    "address": target_address,
+                    "eth_failed": isinstance(eth_wei_raw, BaseException),
+                    "tokens_failed": isinstance(tokens_raw, BaseException),
+                },
+            )
             logger.warning(
                 "Job %s: balance fetch failed: eth=%r tokens=%r",
                 job.id,
@@ -255,6 +271,11 @@ class ResolutionWorker(BaseWorker):
             eth_price: float | None
             eth_usd: float | None = None
             if isinstance(eth_price_raw, BaseException):
+                record_degraded(
+                    phase="eth_price_fetch",
+                    exc=eth_price_raw,
+                    context={"address": target_address},
+                )
                 logger.warning("Job %s: ETH price fetch failed: %s", job.id, eth_price_raw)
                 eth_price = None
             else:

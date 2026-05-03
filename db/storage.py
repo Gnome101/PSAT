@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import functools
 import hashlib
 import json
@@ -174,8 +175,15 @@ class StorageClient:
                 logger.warning("get_many: transport error fetching %s: %s", k, exc)
                 return k, None
 
+        # Per-key context copy keeps trace_id/job_id bindings from the
+        # caller (e.g. the API handler or worker) visible to each
+        # concurrent boto call's log lines.
+        def _fetch_with_ctx(k: str) -> tuple[str, bytes | None]:
+            ctx = contextvars.copy_context()
+            return ctx.run(_fetch, k)
+
         with ThreadPoolExecutor(max_workers=16) as ex:
-            return dict(ex.map(_fetch, unique))
+            return dict(ex.map(_fetch_with_ctx, unique))
 
     def presign(self, key: str, expires_in: int = DEFAULT_PRESIGN_TTL) -> str:
         from botocore.exceptions import BotoCoreError, ClientError

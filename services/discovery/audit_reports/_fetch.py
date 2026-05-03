@@ -12,6 +12,8 @@ from typing import Any
 
 import requests as _requests
 
+from utils.logging import record_degraded
+
 from ..audit_reports_llm import extract_report_details
 from ..inventory_domain import TAG_RE, _debug_log
 from ._github import (
@@ -87,6 +89,11 @@ def _fetch_html_page(url: str, debug: bool = False) -> str | None:
         return text
 
     except _requests.RequestException as exc:
+        record_degraded(
+            phase="audit_report_html_fetch",
+            exc=exc,
+            context={"url": url},
+        )
         _debug_log(debug, f"Fetch {url} failed: {exc!r}")
         return None
 

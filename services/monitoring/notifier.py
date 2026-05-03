@@ -96,8 +96,13 @@ def notify_upgrades(session: Session, events: list[ProxyUpgradeEvent]) -> None:
             try:
                 _send_discord(sub.discord_webhook_url, embed)  # type: ignore[arg-type]  # filtered by isnot(None)
                 sent += 1
-            except Exception:
-                logger.exception("Discord notification failed for subscription %s", sub.id)
+            except Exception as exc:
+                logger.warning(
+                    "Discord notification failed for subscription %s: %s",
+                    sub.id,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
 
     if sent:
         logger.info("Sent %d Discord notification(s) for %d event(s)", sent, len(events))
@@ -326,10 +331,12 @@ def notify_protocol_events(session: Session, events: list[MonitoredEvent]) -> No
                 try:
                     _send_discord(sub.discord_webhook_url, embed)  # type: ignore[arg-type]
                     sent += 1
-                except Exception:
-                    logger.exception(
-                        "Discord notification failed for protocol subscription %s",
+                except Exception as exc:
+                    logger.warning(
+                        "Discord notification failed for protocol subscription %s: %s",
                         sub.id,
+                        exc,
+                        extra={"exc_type": type(exc).__name__},
                     )
 
     if sent:
@@ -442,10 +449,12 @@ def notify_reanalysis_complete(session: Session, job: "Job") -> None:
         try:
             _send_discord(sub.discord_webhook_url, embed)  # type: ignore[arg-type]
             sent += 1
-        except Exception:
-            logger.exception(
-                "Reanalysis completion notification failed for subscription %s",
+        except Exception as exc:
+            logger.warning(
+                "Reanalysis completion notification failed for subscription %s: %s",
                 sub.id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
             )
 
     if sent:

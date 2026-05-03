@@ -82,7 +82,6 @@ services:
       ARTIFACT_STORAGE_BUCKET: psat-artifacts
       ARTIFACT_STORAGE_ACCESS_KEY: psat-minio
       ARTIFACT_STORAGE_SECRET_KEY: psat-minio-secret
-      PSAT_DEBUG_TIMING: "1"
     command: ["bash", "start_workers.sh"]
     depends_on:
       postgres:

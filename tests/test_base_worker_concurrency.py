@@ -61,6 +61,7 @@ def _make_job(**overrides):
         updated_at=datetime.now(timezone.utc),
         worker_id="some-worker",
         detail=None,
+        retry_count=0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -448,7 +449,7 @@ def test_sigterm_abandons_jobs_past_drain_timeout(mock_claim, mock_session_cls, 
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
 @patch("workers.base.advance_job")
-@patch("workers.base.fail_job")
+@patch("workers.base.fail_job_terminal")
 def test_concurrent_job_exception_doesnt_kill_dispatcher(
     mock_fail, mock_advance, mock_claim, mock_session_cls, mock_signal, monkeypatch
 ):
@@ -595,7 +596,7 @@ def test_k1_path_matches_legacy_advance_args(mock_advance, mock_claim, mock_sess
     w.run_loop()
 
     # Same args shape as the legacy test.
-    mock_advance.assert_called_once_with(session, job.id, JobStage.static, "Completed discovery")
+    mock_advance.assert_called_once_with(session, job.id, JobStage.static, "Completed discovery", lease_id=None)
 
 
 # ---------------------------------------------------------------------------

@@ -614,7 +614,7 @@ def backfill_historical_impl_contracts(
     from sqlalchemy import select
 
     from db.models import Contract
-    from utils.etherscan import get_contract_info
+    from utils.etherscan import get_contract_info, parallel_get
 
     logger = logging.getLogger("services.discovery.upgrade_history")
 
@@ -632,6 +632,22 @@ def backfill_historical_impl_contracts(
         .scalars()
         .all()
     }
+
+    # Batch Etherscan name lookups for new addresses; sequential calls block
+    # for N round-trips when re-analyzing a protocol with many historical impls.
+    new_addrs = [addr for addr in impl_addrs if addr not in existing_rows]
+    name_results: dict[str, str | None] = {}
+    if new_addrs:
+        calls = {addr: (lambda a=addr: get_contract_info(a)) for addr in new_addrs}
+        fetched = parallel_get(calls)
+        for addr in new_addrs:
+            value = fetched.get(addr)
+            if isinstance(value, tuple) and len(value) == 2:
+                name_results[addr] = value[0]
+            else:
+                if isinstance(value, BaseException):
+                    logger.warning("Etherscan name fetch failed for historical impl %s: %s", addr, value)
+                name_results[addr] = None
 
     created = 0
     adopted = 0
@@ -659,11 +675,7 @@ def backfill_historical_impl_contracts(
                 )
             continue
 
-        try:
-            name, _ = get_contract_info(addr)
-        except Exception:
-            logger.exception("Etherscan name fetch failed for historical impl %s", addr)
-            name = None
+        name = name_results.get(addr)
 
         new_row = Contract(
             protocol_id=protocol_id,

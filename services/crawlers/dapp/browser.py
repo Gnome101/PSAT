@@ -310,7 +310,9 @@ class DAppCrawler:
                 return sig
 
         except Exception as e:
-            logger.error("Signing failed: %s", e)
+            # Returns a dummy signature; no exception propagates. WARNING per the
+            # level contract for swallowed-and-fallback paths.
+            logger.warning("Signing failed: %s", e, extra={"exc_type": type(e).__name__})
 
         return "0x" + "00" * 65
 

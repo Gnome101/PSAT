@@ -310,8 +310,15 @@ def fetch_db_source_files(session: Any, contract_id: int) -> VerifiedSource | No
         return None
     try:
         files = get_source_files(session, contract.job_id)
-    except Exception:
-        logger.exception("DB source file fetch failed for contract %s", contract_id)
+    except Exception as exc:
+        # Caller falls back to fetch_etherscan_source_files; the empty return is a
+        # clean miss, not a degraded outcome — level audit only, no record_degraded.
+        logger.warning(
+            "DB source file fetch failed for contract %s: %s",
+            contract_id,
+            exc,
+            extra={"exc_type": type(exc).__name__},
+        )
         return None
     if not files:
         return None

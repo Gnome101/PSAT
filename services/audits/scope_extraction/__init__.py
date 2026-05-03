@@ -103,7 +103,12 @@ def process_audit_scope(
     except StorageUnavailable as exc:
         return ScopeExtractionOutcome(status="failed", error=f"storage get failed: {exc}")
     except Exception as exc:
-        logger.exception("scope: unexpected storage error for audit %s", audit_report_id)
+        logger.warning(
+            "scope: unexpected storage error for audit %s: %s",
+            audit_report_id,
+            exc,
+            extra={"exc_type": type(exc).__name__},
+        )
         return ScopeExtractionOutcome(status="failed", error=f"storage: {exc!r}")
 
     try:
