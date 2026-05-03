@@ -19,8 +19,10 @@ from db.models import Job, JobStage, JobStatus, SessionLocal
 from db.queue import (
     advance_job,
     claim_job,
-    fail_job,
+    fail_job_terminal,
+    get_artifact,
     reclaim_stuck_jobs,
+    requeue_job,
     store_artifact,
     update_job_detail,
 )
@@ -33,6 +35,7 @@ from utils.memory import (
     current_rss_bytes,
     mb,
 )
+from workers.retry_policy import classify, compute_next_attempt, max_retries
 
 logger = logging.getLogger(__name__)
 
@@ -290,13 +293,31 @@ class BaseWorker:
                     elapsed = time.monotonic() - t0
                     ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
                     error = traceback.format_exc()
-                    logger.error(
+                    # Decide retry vs terminal up front. ``prior_retry_count``
+                    # is the count of attempts that had ALREADY failed before
+                    # the current one — i.e. what we tag the just-failed
+                    # attempt with in the StageErrors history. ``new_retry_count``
+                    # is what the row's ``retry_count`` becomes after this
+                    # attempt is recorded.
+                    kind = classify(exc)
+                    prior_retry_count = getattr(job, "retry_count", 0) or 0
+                    new_retry_count = prior_retry_count + 1
+                    will_retry = kind == "transient" and new_retry_count < max_retries()
+                    next_attempt_at = compute_next_attempt(prior_retry_count) if will_retry else None
+                    outcome = "requeued" if will_retry else "failed_terminal"
+                    exc_type_str = f"{type(exc).__module__}.{type(exc).__name__}"
+                    # Banner: WARNING for retry (the job will run again, so
+                    # it's not a failure); ERROR for terminal so ops alerts
+                    # still fire on real failures.
+                    log_fn = logger.warning if will_retry else logger.error
+                    log_fn(
                         "\n=================== WORKER FAILURE ===================\n"
                         "Worker:   %s\n"
                         "Job:      %s\n"
                         "Address:  %s\n"
                         "Name:     %s\n"
                         "Stage:    %s\n"
+                        "Outcome:  %s (retry_count=%d)\n"
                         "-------------------------------------------------------\n"
                         "%s"
                         "=======================================================",
@@ -305,18 +326,31 @@ class BaseWorker:
                         getattr(job, "address", "?"),
                         getattr(job, "name", "?"),
                         self.stage.value,
+                        outcome,
+                        new_retry_count if will_retry else prior_retry_count,
                         error,
-                        extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "failed"},
+                        extra={
+                            "duration_ms": int(elapsed * 1000),
+                            "phase": "job",
+                            "outcome": outcome,
+                            "exc_type": exc_type_str,
+                            "retry_count": new_retry_count if will_retry else prior_retry_count,
+                            "next_attempt_at": next_attempt_at.isoformat() if next_attempt_at else None,
+                            "failure_kind": kind,
+                        },
                     )
                     # Append the job-failing exception alongside any degraded
-                    # entries the run produced before the crash. Persist via
-                    # a fresh session so the failed primary transaction can't
-                    # take the artifact down with it.
+                    # entries the run produced before the crash, tagged with
+                    # the just-failed attempt's ``retry_count`` so the
+                    # accumulator history reads chronologically (0, 1, 2, …).
+                    # Persist via a fresh session inside ``_persist_stage_errors``
+                    # so a poisoned primary transaction can't take the
+                    # artifact down with it.
                     degraded_accumulator.append(
                         StageError(
                             stage=self.stage.value,
                             severity="error",
-                            exc_type=f"{type(exc).__module__}.{type(exc).__name__}",
+                            exc_type=exc_type_str,
                             message=str(exc),
                             traceback=error,
                             phase=None,
@@ -324,12 +358,29 @@ class BaseWorker:
                             job_id=str(job.id),
                             worker_id=self.worker_id,
                             failed_at=datetime.now(timezone.utc),
+                            retry_count=prior_retry_count,
                         )
                     )
                     self._persist_stage_errors(job, degraded_accumulator)
+                    # On retries-exhaustion (kind=transient but no more
+                    # retries left), the row records the full attempt count;
+                    # on deterministic terminal (kind=terminal), retry_count
+                    # stays at its current value because no retry slot was
+                    # consumed by this attempt — we never even scheduled one.
+                    terminal_retry_count = new_retry_count if kind == "transient" else None
                     try:
                         session.rollback()
-                        fail_job(session, job.id, error)
+                        if will_retry:
+                            assert next_attempt_at is not None  # type-narrow for pyright
+                            requeue_job(
+                                session,
+                                job.id,
+                                error,
+                                retry_count=new_retry_count,
+                                next_attempt_at=next_attempt_at,
+                            )
+                        else:
+                            fail_job_terminal(session, job.id, error, kind=kind, retry_count=terminal_retry_count)
                         self._record_stage_timing(
                             session,
                             job,
@@ -339,10 +390,21 @@ class BaseWorker:
                             status="failed",
                         )
                     except Exception:
-                        logger.exception("Failed to mark job %s as failed, retrying with fresh session", job.id)
+                        logger.exception("Failed to update job %s after exception, retrying with fresh session", job.id)
                         try:
                             fresh = SessionLocal()
-                            fail_job(fresh, job.id, error[-4000:])
+                            truncated = error[-4000:]
+                            if will_retry:
+                                assert next_attempt_at is not None
+                                requeue_job(
+                                    fresh,
+                                    job.id,
+                                    truncated,
+                                    retry_count=new_retry_count,
+                                    next_attempt_at=next_attempt_at,
+                                )
+                            else:
+                                fail_job_terminal(fresh, job.id, truncated, kind=kind, retry_count=terminal_retry_count)
                             self._record_stage_timing(
                                 fresh,
                                 job,
@@ -353,7 +415,9 @@ class BaseWorker:
                             )
                             fresh.close()
                         except Exception:
-                            logger.exception("Could not mark job %s as failed even with fresh session", job.id)
+                            logger.exception(
+                                "Could not update job %s for retry/terminal even with fresh session", job.id
+                            )
             finally:
                 degraded_errors_var.reset(accumulator_token)
 
@@ -534,23 +598,40 @@ class BaseWorker:
                 logger.debug("heartbeat rollback failed", exc_info=True)
 
     def _persist_stage_errors(self, job: Job, errors: list[StageError]) -> None:
-        """Write the ``stage_errors`` artifact via a fresh session.
+        """Write the ``stage_errors`` artifact via a fresh session, merging
+        with any pre-existing artifact so retries accumulate per-attempt.
 
         Used on both the success and failure paths so the artifact survives a
         broken primary transaction. ``store_artifact`` does its own commit, so
         the only state to clean up is the fresh session itself. Best-effort —
         we never want a stage_errors write failure to mask the underlying job
         failure or block the success advance.
+
+        Accumulation matters for retries: a job that fails transiently three
+        times before succeeding ends up with three error entries plus any
+        degraded entries from each attempt. Without the merge step every
+        retry would overwrite the prior attempt's history.
         """
         if not errors:
             return
         fresh = SessionLocal()
         try:
+            existing = get_artifact(fresh, job.id, "stage_errors")
+            merged: list[StageError] = []
+            if isinstance(existing, dict):
+                try:
+                    merged = list(StageErrors.model_validate(existing).errors)
+                except Exception:
+                    # Corrupt body shouldn't block the new write — best-effort
+                    # replace it. The operator can correlate the lost entries
+                    # via the trace_id in logs if it ever matters.
+                    merged = []
+            merged.extend(errors)
             store_artifact(
                 fresh,
                 job.id,
                 "stage_errors",
-                data=StageErrors(errors=errors).model_dump(mode="json"),
+                data=StageErrors(errors=merged).model_dump(mode="json"),
             )
         except Exception:
             logger.exception(

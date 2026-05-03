@@ -514,7 +514,14 @@ def requeue_job(
     session.commit()
 
 
-def fail_job_terminal(session: Session, job_id: Any, error: str, *, kind: str) -> None:
+def fail_job_terminal(
+    session: Session,
+    job_id: Any,
+    error: str,
+    *,
+    kind: str,
+    retry_count: int | None = None,
+) -> None:
     """Mark a job as terminally failed (no further automatic retries).
 
     Distinct from :func:`fail_job` so observers can tell "retries exhausted
@@ -525,6 +532,11 @@ def fail_job_terminal(session: Session, job_id: Any, error: str, *, kind: str) -
     exhausted; ``"terminal"`` if classified as deterministic from the
     start). Persisted to ``last_failure_kind`` so an operator can answer
     "was this a flaky upstream or a bug?" without resolving the artifact.
+
+    *retry_count* defaults to None — leaves the column unchanged, which is
+    the right behaviour for deterministic terminal failures (we never
+    retried, so the count shouldn't move). The retries-exhausted path
+    passes ``new_retry_count`` so the row records the total attempt count.
     """
     job = session.get(Job, job_id)
     if job is None:
@@ -535,6 +547,8 @@ def fail_job_terminal(session: Session, job_id: Any, error: str, *, kind: str) -
     job.last_failure_kind = kind
     job.next_attempt_at = None
     job.worker_id = None
+    if retry_count is not None:
+        job.retry_count = retry_count
     session.commit()
 
 

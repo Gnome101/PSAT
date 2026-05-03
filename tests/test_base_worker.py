@@ -62,6 +62,7 @@ def _make_job(**overrides):
         updated_at=datetime.now(timezone.utc),
         worker_id="some-worker",
         detail=None,
+        retry_count=0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -221,10 +222,11 @@ def test_run_loop_job_handled_directly_skips_advance(mock_advance, mock_claim, m
 @patch("workers.base.signal.signal")
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
-@patch("workers.base.fail_job")
-def test_run_loop_process_exception_calls_fail_job(mock_fail, mock_claim, mock_session_cls, mock_signal):
-    """When process() raises an unexpected exception, fail_job is called."""
+@patch("workers.base.fail_job_terminal")
+def test_run_loop_process_exception_calls_fail_job_terminal(mock_fail, mock_claim, mock_session_cls, mock_signal):
+    """A terminal-classified exception (RuntimeError → terminal) routes through ``fail_job_terminal``."""
     job = _make_job()
+    job.retry_count = 0
     mock_session = MagicMock()
     mock_session_cls.return_value = mock_session
 
@@ -249,6 +251,8 @@ def test_run_loop_process_exception_calls_fail_job(mock_fail, mock_claim, mock_s
     assert args[0] is mock_session  # session
     assert args[1] == job.id  # job_id
     assert "boom" in args[2]  # error traceback contains "boom"
+    # ``kind`` keyword is the classifier verdict — RuntimeError is terminal.
+    assert mock_fail.call_args.kwargs.get("kind") == "terminal"
     # rollback fires at least once from the exception handler; the empty-
     # sweep branch of ``reclaim_stuck_jobs`` may also call it.
     mock_session.rollback.assert_called()
@@ -439,10 +443,11 @@ def test_stale_job_timeout_default_is_600():
 @patch("workers.base.signal.signal")
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
-@patch("workers.base.fail_job")
+@patch("workers.base.fail_job_terminal")
 def test_run_loop_fail_job_exception_retries_with_fresh_session(mock_fail, mock_claim, mock_session_cls, mock_signal):
-    """When fail_job raises, the loop retries with a fresh session."""
+    """When ``fail_job_terminal`` raises, the loop retries with a fresh session."""
     job = _make_job()
+    job.retry_count = 0
     mock_session = MagicMock()
     fresh_session = MagicMock()
 
@@ -469,7 +474,7 @@ def test_run_loop_fail_job_exception_retries_with_fresh_session(mock_fail, mock_
 
     mock_claim.side_effect = _claim_side_effect
 
-    # First fail_job raises, second (fresh session) succeeds
+    # First fail_job_terminal raises, second (fresh session) succeeds
     mock_fail.side_effect = [Exception("db gone"), None]
 
     w = _TestWorker()
@@ -488,10 +493,11 @@ def test_run_loop_fail_job_exception_retries_with_fresh_session(mock_fail, mock_
 @patch("workers.base.signal.signal")
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
-@patch("workers.base.fail_job")
+@patch("workers.base.fail_job_terminal")
 def test_run_loop_both_fail_job_attempts_fail_gracefully(mock_fail, mock_claim, mock_session_cls, mock_signal):
-    """When both fail_job attempts raise, the loop continues without crashing."""
+    """When both ``fail_job_terminal`` attempts raise, the loop continues without crashing."""
     job = _make_job()
+    job.retry_count = 0
     mock_session = MagicMock()
     fresh_session = MagicMock()
 
@@ -518,7 +524,7 @@ def test_run_loop_both_fail_job_attempts_fail_gracefully(mock_fail, mock_claim, 
 
     mock_claim.side_effect = _claim_side_effect
 
-    # Both fail_job calls raise
+    # Both fail_job_terminal calls raise
     mock_fail.side_effect = [Exception("db gone"), Exception("still gone")]
 
     w = _TestWorker()
