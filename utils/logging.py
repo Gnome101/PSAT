@@ -5,19 +5,41 @@ Binding it onto a :mod:`contextvars` ``ContextVar`` lets every ``logger.X``
 call inside that request/job ride the same id without having to thread it
 through function signatures.
 
-Level contract (downstream agents enforce per call site, not done here):
+Level contract:
 
-    ``ERROR``    Job-failing. The pipeline cannot continue for *this* job
-                 and a stage_errors artifact must be produced.
-    ``WARNING``  Degraded but continuing. The job advances, but a partial
-                 outcome was reached (e.g. a single source failed in a
-                 fan-out, missing optional data, fallback path taken).
-                 Sites that emit WARNING under degradation will be
-                 required to also write a ``stage_errors`` artifact.
+    ``ERROR``    Job-failing. The exception will propagate out of
+                 ``process()``; ``BaseWorker._execute_job`` catches it,
+                 logs the failure with full traceback, and writes a
+                 ``severity="error"`` ``StageError`` into the per-job
+                 accumulator before calling ``fail_job``. Don't emit
+                 ``logger.error`` from inside an ``except`` block that
+                 returns or continues — it's not actually job-failing,
+                 so demote to WARNING.
+    ``WARNING``  Degraded but continuing. The job advances with a partial
+                 outcome (a single source failed in a fan-out, optional
+                 data was missing, a fallback path was taken). Every
+                 WARNING site inside a swallowed ``except`` block in a
+                 pipeline worker MUST also call :func:`record_degraded`
+                 in the same handler so the swallow shows up in the
+                 ``stage_errors`` artifact (queryable via
+                 ``GET /api/jobs/{id}/errors``). Enforced by
+                 ``tests/test_log_level_contract.py`` against the four
+                 main pipeline workers; intentional exemptions live in
+                 that test's allow-list.
     ``INFO``     Lifecycle: process boot, job claim, stage advance, job
-                 completion. One per real event, not per loop iteration.
-    ``DEBUG``    Per-RPC noise: individual ``eth_getCode`` / Etherscan
-                 batch tracebacks, per-future thread-pool timings, etc.
+                 completion, child-job spawn. One per real event, not
+                 per loop iteration.
+    ``DEBUG``    Per-RPC / per-iteration noise: individual ``eth_getCode``
+                 / Etherscan batch tracebacks, per-future thread-pool
+                 timings, per-page PDF parse failures, etc.
+
+Notes on ``logger.exception``: it's just ``logger.error`` with
+``exc_info=True``. Reserve it for genuine job-failing handlers that
+re-raise — using it inside a swallowed ``except`` mis-levels the site
+AND attaches a full traceback to a non-failure log line. The right
+substitute is ``logger.warning("...", extra={"exc_type": type(exc).__name__})``
+which keeps the exception type as a structured JSON field without
+pretending the job failed.
 
 Threading note: ``contextvars`` are per-thread by default. When fanning
 out via :class:`concurrent.futures.ThreadPoolExecutor`, wrap every
