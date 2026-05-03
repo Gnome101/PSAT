@@ -352,3 +352,83 @@ def test_concurrent_claims_cannot_both_acquire_lease(session):
 
     other = claim_job(session, JobStage.discovery, "worker-B")
     assert other is None
+
+
+# ---------------------------------------------------------------------------
+# Contract row job_id race
+#
+# PoC for the static_worker terminal failure "Contract row not found for this
+# job". Two jobs targeting the same (address, chain) — e.g. WETH discovered
+# concurrently across protocols — collide on uq_contract_address_chain. The
+# discovery writer at workers/discovery.py:402 unconditionally rebinds
+# existing.job_id = job.id, orphaning whichever job ran first. A subsequent
+# static_worker query keyed on Contract.job_id == job.id then turns up empty.
+# ---------------------------------------------------------------------------
+
+
+@requires_postgres
+def test_contract_row_survives_concurrent_discovery_for_each_job(session):
+    """PoC for the static_worker terminal failure 'Contract row not found
+    for this job'. After two discovery writes for the same (address, chain),
+    BOTH jobs' static_worker lookups must succeed — neither job's row may
+    be orphaned. Today the second write at workers/discovery.py:402 does
+    ``existing.job_id = job.id`` which clobbers the first job's binding.
+
+    Goes green when discovery stops mutating job_id on the shared row
+    (e.g. moves to a per-job pivot table or snapshots job_id elsewhere)."""
+    from sqlalchemy import select
+
+    from db.models import Contract
+    from db.queue import create_job
+
+    address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"  # WETH
+    chain = "ethereum"
+
+    # Idempotent clean: session fixture only clears Job/Artifact/SourceFile;
+    # Contract writes below are durable across runs and would collide on
+    # uq_contract_address_chain.
+    session.query(Contract).filter(Contract.address == address, Contract.chain == chain).delete()
+    session.commit()
+
+    try:
+        job_a = create_job(session, {"address": address, "chain": chain, "name": "protocol-a"})
+        job_b = create_job(session, {"address": address, "chain": chain, "name": "protocol-b"})
+
+        # Job A's discovery writer — fresh insert with its job_id.
+        contract = Contract(
+            job_id=job_a.id,
+            address=address,
+            chain=chain,
+            contract_name="WETH9",
+            source_verified=True,
+        )
+        session.add(contract)
+        session.commit()
+
+        # Job B's discovery writer — exact mirror of workers/discovery.py:394-441.
+        # The existing-row branch unconditionally rebinds job_id.
+        existing = session.execute(
+            select(Contract).where(Contract.address == address, Contract.chain == chain)
+        ).scalar_one()
+        existing.job_id = job_b.id
+        existing.contract_name = "WETH9"
+        session.commit()
+
+        # Static worker query at workers/static_worker.py:677-681: must succeed
+        # for BOTH jobs — each job needs to see ITS contract row.
+        static_for_a = session.execute(
+            select(Contract).where(Contract.job_id == job_a.id).limit(1)
+        ).scalar_one_or_none()
+        static_for_b = session.execute(
+            select(Contract).where(Contract.job_id == job_b.id).limit(1)
+        ).scalar_one_or_none()
+
+        assert static_for_b is not None, "Job B should see its row (last writer)"
+        assert static_for_a is not None, (
+            "Job A should also see a Contract row — today it's orphaned by "
+            "Job B's discovery writer rebinding existing.job_id, producing "
+            "'Contract row not found for this job' in the static stage"
+        )
+    finally:
+        session.query(Contract).filter(Contract.address == address, Contract.chain == chain).delete()
+        session.commit()
