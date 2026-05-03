@@ -455,10 +455,13 @@ def test_partial_existing_jobs_creates_only_missing(monkeypatch):
     worker = StaticWorker()
     session = MagicMock()
 
-    # First call is Contract table lookup, then impl job check, then facet job check
+    # Lookup sequence: Contract table by job_id (miss), Contract table by
+    # (address, chain) fallback (still miss — get_contract_for_job's two
+    # phases), impl job check, facet job check.
     existing_job = SimpleNamespace(id="existing-job-id")
     session.execute.return_value.scalar_one_or_none.side_effect = [
-        None,  # Contract table lookup (no row)
+        None,  # Contract row lookup by job_id (no row)
+        None,  # Contract row address-fallback (no row)
         existing_job,  # impl already exists
         None,  # facet 1 does not exist
     ]

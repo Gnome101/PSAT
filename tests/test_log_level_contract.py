@@ -49,7 +49,7 @@ ALLOW_LIST: dict[str, dict[int, str]] = {
         # doesn't change the job's stage output. record_degraded would
         # mislead callers of /api/jobs/{id}/errors into thinking the
         # reanalysis was degraded.
-        717: "Notifier side-effect; reanalysis already completed before this fired.",
+        716: "Notifier side-effect; reanalysis already completed before this fired.",
     },
     "workers/resolution_worker.py": {
         # Per-impl coverage-refresh failure inside `_backfill_historical_impls`
@@ -57,7 +57,7 @@ ALLOW_LIST: dict[str, dict[int, str]] = {
         # at line 496 which records `resolution_upgrade_history` once. A
         # per-impl record here would emit one degraded entry per backfilled
         # impl on a flaky storage call.
-        646: "Per-impl swallow inside upgrade-history backfill; outer handler already records degraded.",
+        644: "Per-impl swallow inside upgrade-history backfill; outer handler already records degraded.",
     },
 }
 

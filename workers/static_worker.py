@@ -17,7 +17,14 @@ from typing import cast
 from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition
-from db.queue import _MUTABLE_CONTRACT_FIELDS, create_job, get_artifact, get_source_files, store_artifact
+from db.queue import (
+    _MUTABLE_CONTRACT_FIELDS,
+    create_job,
+    get_artifact,
+    get_contract_for_job,
+    get_source_files,
+    store_artifact,
+)
 from schemas.contract_analysis import ContractAnalysis
 from services.discovery import (
     build_dependency_visualization,
@@ -667,16 +674,14 @@ class StaticWorker(BaseWorker):
     next_stage = JobStage.resolution
 
     def process(self, session, job):
-        from sqlalchemy import select as sa_select
-
         sources = get_source_files(session, job.id)
         if not sources:
             raise RuntimeError("No source files found in DB for this job")
 
-        # Read from contracts table instead of artifacts
-        contract_row = session.execute(
-            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        # Read from contracts table instead of artifacts. Address-fallback
+        # covers the concurrent-discovery case where a sibling job's
+        # discovery rebound this row's job_id (workers/discovery.py:402).
+        contract_row = get_contract_for_job(session, job)
         if not contract_row:
             raise RuntimeError("Contract row not found for this job")
 
@@ -880,11 +885,7 @@ class StaticWorker(BaseWorker):
         facets = classification.get("facets")
 
         # Update contracts table with proxy info
-        from sqlalchemy import select as sa_select
-
-        contract_row = session.execute(
-            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        contract_row = get_contract_for_job(session, job)
         if contract_row:
             contract_row.is_proxy = True
             contract_row.proxy_type = proxy_type
@@ -1306,11 +1307,7 @@ class StaticWorker(BaseWorker):
             store_artifact(session, job.id, "enrichment_cache", data=enrichment_data)
 
             # Write to contract_dependencies table
-            from sqlalchemy import select as sa_select
-
-            contract_row = session.execute(
-                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
+            contract_row = get_contract_for_job(session, job)
             if contract_row:
                 from db.models import ContractDependency
 
@@ -1439,9 +1436,7 @@ class StaticWorker(BaseWorker):
         """Extract structured data from contract_analysis JSON into relational tables."""
         from sqlalchemy import select as sa_select
 
-        contract_row = session.execute(
-            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        contract_row = get_contract_for_job(session, job)
         if not contract_row:
             return
 

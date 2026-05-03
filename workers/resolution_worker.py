@@ -22,7 +22,7 @@ from db.models import (
     UpgradeEvent,
 )
 from db.nested_artifacts import store_bundle as store_nested_artifacts
-from db.queue import create_job, get_artifact, store_artifact
+from db.queue import create_job, get_artifact, get_contract_for_job, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
@@ -100,7 +100,7 @@ class ResolutionWorker(BaseWorker):
         store_artifact(session, job.id, "control_snapshot", data=snapshot)
 
         # Write to controller_values table
-        contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+        contract_row = get_contract_for_job(session, job)
         if contract_row:
             session.query(ControllerValue).filter(ControllerValue.contract_id == contract_row.id).delete()
             for cid, cv in snapshot.get("controller_values", {}).items():
@@ -415,9 +415,7 @@ class ResolutionWorker(BaseWorker):
 
         self.update_detail(session, job, "Writing upgrade events")
         try:
-            contract_row = session.execute(
-                select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
+            contract_row = get_contract_for_job(session, job)
             if contract_row is None:
                 return
 

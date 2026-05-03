@@ -1263,6 +1263,30 @@ def find_existing_job_for_address(session: Session, address: str, chain: str | N
     return None
 
 
+def get_contract_for_job(session: Session, job: Job) -> Contract | None:
+    """Return the Contract row a worker should treat as belonging to ``job``.
+
+    Tries ``Contract.job_id == job.id`` first; falls back to ``(address, chain)``
+    when concurrent discovery for the same address rebound the row to a sibling
+    job's id (workers/discovery.py:402) or ``copy_static_cache`` reassigned it
+    to a later target (db/queue.py:1324). Without this fallback the static
+    stage raises ``RuntimeError("Contract row not found for this job")`` and
+    the resolution / policy / coverage stages silently skip per-contract
+    writes.
+    """
+    contract = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+    if contract is not None:
+        return contract
+    if not job.address:
+        return None
+    request = job.request if isinstance(job.request, dict) else {}
+    chain = request.get("chain")
+    stmt = select(Contract).where(func.lower(Contract.address) == job.address.lower())
+    if chain is not None:
+        stmt = stmt.where(Contract.chain == chain)
+    return session.execute(stmt.limit(1)).scalar_one_or_none()
+
+
 def is_known_proxy(session: Session, address: str, chain: str | None = None) -> bool:
     """Return True if *address* (on *chain*) has been classified as a proxy in any prior analysis."""
     stmt = select(Contract).where(

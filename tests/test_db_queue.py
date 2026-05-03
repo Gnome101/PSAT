@@ -368,18 +368,26 @@ def test_concurrent_claims_cannot_both_acquire_lease(session):
 
 @requires_postgres
 def test_contract_row_survives_concurrent_discovery_for_each_job(session):
-    """PoC for the static_worker terminal failure 'Contract row not found
-    for this job'. After two discovery writes for the same (address, chain),
-    BOTH jobs' static_worker lookups must succeed — neither job's row may
-    be orphaned. Today the second write at workers/discovery.py:402 does
-    ``existing.job_id = job.id`` which clobbers the first job's binding.
+    """Regression for the static_worker terminal failure 'Contract row not
+    found for this job'.
 
-    Goes green when discovery stops mutating job_id on the shared row
-    (e.g. moves to a per-job pivot table or snapshots job_id elsewhere)."""
+    Trigger: two jobs hit the same ``(address, chain)`` (e.g. WETH discovered
+    concurrently across protocols). The discovery writer at
+    workers/discovery.py:402 rebinds the shared row's ``job_id`` to whichever
+    job committed last, so the *other* job's static worker — which keys on
+    ``Contract.job_id == job.id`` — finds nothing and crashes.
+
+    The fix is `db.queue.get_contract_for_job`: the static worker (and the
+    silent-skip workers in resolution / policy / coverage) now fall back to
+    ``(address, chain)`` lookup when the job_id query misses. The literal
+    ``Contract.job_id == job_a.id`` still returns nothing post-rebind — that
+    column legitimately has only one slot — but neither job's pipeline stage
+    crashes anymore.
+    """
     from sqlalchemy import select
 
     from db.models import Contract
-    from db.queue import create_job
+    from db.queue import create_job, get_contract_for_job
 
     address = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"  # WETH
     chain = "ethereum"
@@ -406,7 +414,8 @@ def test_contract_row_survives_concurrent_discovery_for_each_job(session):
         session.commit()
 
         # Job B's discovery writer — exact mirror of workers/discovery.py:394-441.
-        # The existing-row branch unconditionally rebinds job_id.
+        # The existing-row branch unconditionally rebinds job_id; we keep
+        # mimicking the buggy path because the fix is on the *reader* side.
         existing = session.execute(
             select(Contract).where(Contract.address == address, Contract.chain == chain)
         ).scalar_one()
@@ -414,18 +423,15 @@ def test_contract_row_survives_concurrent_discovery_for_each_job(session):
         existing.contract_name = "WETH9"
         session.commit()
 
-        # Static worker query at workers/static_worker.py:677-681: must succeed
-        # for BOTH jobs — each job needs to see ITS contract row.
-        static_for_a = session.execute(
-            select(Contract).where(Contract.job_id == job_a.id).limit(1)
-        ).scalar_one_or_none()
-        static_for_b = session.execute(
-            select(Contract).where(Contract.job_id == job_b.id).limit(1)
-        ).scalar_one_or_none()
+        # Both static workers must resolve their Contract row via the
+        # canonical helper. Job B's lookup hits via job_id (last writer);
+        # Job A's lookup falls back to (address, chain).
+        static_for_a = get_contract_for_job(session, job_a)
+        static_for_b = get_contract_for_job(session, job_b)
 
         assert static_for_b is not None, "Job B should see its row (last writer)"
         assert static_for_a is not None, (
-            "Job A should also see a Contract row — today it's orphaned by "
+            "Job A should also see a Contract row — used to be orphaned by "
             "Job B's discovery writer rebinding existing.job_id, producing "
             "'Contract row not found for this job' in the static stage"
         )
