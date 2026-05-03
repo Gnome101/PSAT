@@ -219,22 +219,26 @@ def test_add_then_remove_leaves_empty():
 
 
 def test_conflicting_directions_for_same_event_topic_are_rejected():
-    topic = _event_topic0("WhitelistSet(address,bool)")
+    """Conflict on a topic that the enumerator can't disambiguate (no bool
+    arg, so neither an explicit ``direction_arg_position`` nor signature
+    parsing recovers a runtime direction) must still be pruned wholesale —
+    no hypersync round-trip, no principals."""
+    topic = _event_topic0("WhitelistSet(address,uint256)")
     alice = _addr("a11ce")
     client, calls = _fake_client([([_log(topic, data=_address_data(alice), block=10)], None)])
     add_spec = {
         "mapping_name": "whitelist",
-        "event_signature": "WhitelistSet(address,bool)",
+        "event_signature": "WhitelistSet(address,uint256)",
         "event_name": "WhitelistSet",
         "key_position": 0,
         "indexed_positions": [],
         "direction": "add",
-        "writer_function": "setWhitelisted(address,bool)",
+        "writer_function": "setWhitelisted(address,uint256)",
     }
     remove_spec = {
         **add_spec,
         "direction": "remove",
-        "writer_function": "unsetWhitelisted(address,bool)",
+        "writer_function": "unsetWhitelisted(address,uint256)",
     }
     out = _run(
         enumerate_mapping_allowlist(

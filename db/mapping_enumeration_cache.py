@@ -65,6 +65,9 @@ def specs_fingerprint(writer_specs: list[dict[str, Any]]) -> str:
                 "direction": s["direction"],
                 "key_position": s["key_position"],
                 "indexed_positions": sorted(s.get("indexed_positions") or []),
+                # Direction-bool position changes the enumerator's
+                # interpretation of every log; must invalidate the cache.
+                "direction_arg_position": s.get("direction_arg_position"),
             }
             for s in writer_specs
         ],

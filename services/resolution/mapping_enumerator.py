@@ -110,6 +110,77 @@ def _decode_address_arg_from_data(data: str, position: int) -> str:
     return _normalize_hex("0x" + slot[-40:])
 
 
+def _decode_bool_arg_from_data(data: str, position: int) -> bool | None:
+    """Decode a 32-byte bool slot from event ``data`` at ``position``.
+
+    Returns ``None`` when the slot is out of bounds or unparseable; the
+    enumerator treats that as "can't determine direction for this log" and
+    skips it rather than guessing.
+    """
+    hex_body = data[2:] if data.startswith("0x") else data
+    start = 64 * position
+    end = start + 64
+    if end > len(hex_body):
+        return None
+    slot = hex_body[start:end]
+    try:
+        return int(slot, 16) != 0
+    except ValueError:
+        return None
+
+
+def _decode_bool_topic(topic: str) -> bool | None:
+    t = _normalize_hex(topic)
+    if len(t) != 66:
+        return None
+    try:
+        return int(t, 16) != 0
+    except ValueError:
+        return None
+
+
+def _bool_arg_position_from_signature(event_signature: str) -> int | None:
+    """Fallback disambiguator: read the bool position straight off the event
+    signature.
+
+    Used when conflicting-direction specs share a topic but the static
+    analyzer didn't populate ``direction_arg_position`` (legacy specs from
+    pre-fix runs, manual specs in tests, etc.). Only returns a position when
+    *exactly one* arg is ``bool`` — two bools is genuinely ambiguous and
+    should fall through to the prune branch.
+    """
+    if "(" not in event_signature or not event_signature.endswith(")"):
+        return None
+    args_str = event_signature[event_signature.index("(") + 1 : -1]
+    if not args_str:
+        return None
+    args = [a.strip() for a in args_str.split(",") if a.strip()]
+    bool_positions = [i for i, t in enumerate(args) if t == "bool"]
+    if len(bool_positions) == 1:
+        return bool_positions[0]
+    return None
+
+
+def _extract_bool_arg(
+    log: Any,
+    bool_position: int,
+    *,
+    indexed_positions: list[int] | None = None,
+) -> bool | None:
+    indexed_positions = sorted(set(indexed_positions or []))
+    if bool_position in indexed_positions:
+        topics = _topics_from_log(log)
+        topic_index = 1 + indexed_positions.index(bool_position)
+        if topic_index < len(topics):
+            return _decode_bool_topic(topics[topic_index])
+        return None
+    non_indexed = [p for p in range(bool_position + 1) if p not in indexed_positions]
+    if not non_indexed:
+        return None
+    data_rank = len(non_indexed) - 1
+    return _decode_bool_arg_from_data(getattr(log, "data", "0x") or "0x", data_rank)
+
+
 def _extract_key_address(
     log: Any,
     key_position: int,
@@ -158,17 +229,31 @@ async def enumerate_mapping_allowlist(
     for spec in writer_specs:
         topic0 = _event_topic0(spec["event_signature"])
         topic0_to_specs.setdefault(topic0, []).append(spec)
+    # Per-topic bool disambiguator used at log-decode time. Populated when
+    # specs sharing a topic disagree on direction but a single bool arg in
+    # the event payload encodes the runtime direction (true=add, false=remove).
+    topic_disambiguator: dict[str, int] = {}
     for topic0, specs in list(topic0_to_specs.items()):
         directions = {spec["direction"] for spec in specs}
         if len(directions) <= 1:
             continue
-        logger.warning(
-            "mapping_enumerator: skipping ambiguous writer event topic0=%s directions=%s specs=%s",
-            topic0,
-            sorted(directions),
-            [(spec["event_signature"], spec["mapping_name"], spec["direction"]) for spec in specs],
-        )
-        del topic0_to_specs[topic0]
+        explicit_positions = {spec.get("direction_arg_position") for spec in specs}
+        explicit_positions.discard(None)
+        bool_position: int | None = None
+        if len(explicit_positions) == 1:
+            bool_position = next(iter(explicit_positions))
+        else:
+            bool_position = _bool_arg_position_from_signature(specs[0]["event_signature"])
+        if bool_position is None:
+            logger.warning(
+                "mapping_enumerator: skipping ambiguous writer event topic0=%s directions=%s specs=%s",
+                topic0,
+                sorted(directions),
+                [(spec["event_signature"], spec["mapping_name"], spec["direction"]) for spec in specs],
+            )
+            del topic0_to_specs[topic0]
+        else:
+            topic_disambiguator[topic0] = bool_position
     if not topic0_to_specs:
         return EnumerationResult(
             principals=[], status="complete", pages_fetched=0, last_block_scanned=from_block, error=None
@@ -259,7 +344,25 @@ async def enumerate_mapping_allowlist(
             matching_specs = topic0_to_specs.get(topic0)
             if not matching_specs:
                 continue
-            for spec in matching_specs:
+            if topic0 in topic_disambiguator:
+                # Disambiguated topic: read direction from the log's bool arg
+                # and apply via a single canonical spec (the conflicting specs
+                # share mapping_name / key_position / indexed_positions per the
+                # static analyzer's grouping; pick the first to extract keys).
+                bool_position = topic_disambiguator[topic0]
+                spec = matching_specs[0]
+                bool_value = _extract_bool_arg(
+                    raw_log,
+                    bool_position,
+                    indexed_positions=list(spec.get("indexed_positions") or []),
+                )
+                if bool_value is None:
+                    continue
+                directions_for_log: list[tuple[WriterEventSpec, str]] = [(spec, "add" if bool_value else "remove")]
+            else:
+                directions_for_log = [(spec, spec["direction"]) for spec in matching_specs]
+
+            for spec, effective_direction in directions_for_log:
                 key_address = _extract_key_address(
                     raw_log,
                     spec["key_position"],
@@ -272,11 +375,11 @@ async def enumerate_mapping_allowlist(
                     (spec["mapping_name"], key_address),
                     {"present": False, "history": [], "last_block": 0},
                 )
-                if spec["direction"] == "add":
+                if effective_direction == "add":
                     entry["present"] = True
                 else:
                     entry["present"] = False
-                entry["history"].append(spec["direction"])
+                entry["history"].append(effective_direction)
                 entry["last_block"] = max(entry["last_block"], block)
 
         next_from = getattr(result, "next_block", None)

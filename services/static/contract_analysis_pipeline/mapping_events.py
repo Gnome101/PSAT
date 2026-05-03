@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, TypedDict
 
+from typing_extensions import NotRequired
+
 from .shared import _contract_functions
 
 
@@ -15,6 +17,13 @@ class WriterEventSpec(TypedDict):
     indexed_positions: list[int]
     direction: Literal["add", "remove"]
     writer_function: str
+    # Zero-based event-arg index of a bool that signals direction at runtime.
+    # Set when two writer functions share an event signature (one writes
+    # true/add, the other false/remove); the enumerator reads this bool from
+    # each log payload to pick the right direction instead of pruning the
+    # topic wholesale. Also derivable post-hoc from a single-bool signature
+    # when conflicting specs share a topic without this field set.
+    direction_arg_position: NotRequired[int]
 
 
 class _EventMetadata(TypedDict):
