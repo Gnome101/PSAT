@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,7 +11,8 @@ from pydantic import BaseModel
 from sqlalchemy import not_ as sa_not_
 from sqlalchemy import select, text
 
-from db.models import Artifact, Contract, Job, JobStage, Protocol
+from db.models import Artifact, Contract, Job, JobStage, JobStatus, Protocol
+from db.queue import store_artifact
 from schemas.api_requests import AnalyzeRequest
 from schemas.stage_errors import StageError, StageErrors
 
@@ -219,6 +221,92 @@ def get_job_errors(job_id: str) -> JobErrorsResponse:
             stage=job.stage.value,
             errors=errors,
         )
+
+
+@router.post("/api/jobs/{job_id}/retry", dependencies=[Depends(deps.require_admin_key)])
+def retry_job(job_id: str) -> dict[str, Any]:
+    """Operator-initiated retry of a ``failed_terminal`` job.
+
+    Resets ``status`` to ``queued``, ``retry_count`` to 0, ``next_attempt_at``
+    to NULL, and ``last_failure_kind`` to NULL so the row looks like a fresh
+    submission to the worker fleet. Appends a ``severity="degraded"``
+    ``StageError`` to the per-job ``stage_errors`` artifact tagging the manual
+    retry — without it the audit log would silently show the job recovering
+    on its own.
+
+    409 (not 400) for non-``failed_terminal`` jobs because the request itself
+    is well-formed; the conflict is with the job's current state. Done jobs,
+    queued jobs, and processing jobs are all rejected so an operator can't
+    accidentally clobber an in-flight run.
+    """
+    import uuid as _uuid
+
+    try:
+        parsed = _uuid.UUID(job_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+    with deps.SessionLocal() as session:
+        job = session.get(Job, parsed)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.status != JobStatus.failed_terminal:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Job status is {job.status.value}; only failed_terminal jobs can be retried",
+            )
+        job.status = JobStatus.queued
+        job.retry_count = 0
+        job.next_attempt_at = None
+        job.last_failure_kind = None
+        job.detail = "Manual retry requested by operator"
+        job.worker_id = None
+        # Drop the prior ``error`` text — it referred to the now-superseded
+        # terminal failure. The audit log preserves it via the manual_retry
+        # entry below + the prior failure entries already in stage_errors.
+        job.error = None
+        session.commit()
+        session.refresh(job)
+
+        # Append the manual retry entry so /api/jobs/{id}/errors shows
+        # operator intervention as part of the per-job history. Severity
+        # ``degraded`` (not ``error``) so consumers don't treat it as a
+        # failed attempt — it's a recovery signal.
+        existing = deps.get_artifact(session, job.id, "stage_errors")
+        prior: list[StageError] = []
+        if isinstance(existing, dict):
+            try:
+                prior = list(StageErrors.model_validate(existing).errors)
+            except Exception as exc:
+                logger.warning(
+                    "stage_errors artifact for job %s did not validate during manual retry: %s",
+                    job.id,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
+                prior = []
+        prior.append(
+            StageError(
+                stage=job.stage.value,
+                severity="degraded",
+                exc_type="manual.OperatorRetry",
+                message="Operator-initiated retry of failed_terminal job",
+                phase="manual_retry",
+                trace_id=job.trace_id,
+                job_id=str(job.id),
+                worker_id="api",
+                failed_at=datetime.now(timezone.utc),
+                retry_count=0,
+                context={"reason": "operator-initiated retry of failed_terminal job"},
+            )
+        )
+        store_artifact(
+            session,
+            job.id,
+            "stage_errors",
+            data=StageErrors(errors=prior).model_dump(mode="json"),
+        )
+        session.refresh(job)
+        return job.to_dict()
 
 
 @router.get("/api/jobs/{job_id}/stage_timings", dependencies=[Depends(deps.require_admin_key)])
