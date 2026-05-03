@@ -53,8 +53,11 @@ Phase:    {phase}
 """.strip()
 
 
+# WARNING (not ERROR): callers swallow the underlying exception and continue with a
+# stub artifact, so the job-level outcome is degraded — not failed. Pair every call
+# site with ``record_degraded`` so the swallow shows up in the stage_errors artifact.
 def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, error: str) -> None:
-    logger.error(
+    logger.warning(
         _ERROR_TEMPLATE.format(
             job_id=job_id,
             address=address,
@@ -1405,6 +1408,11 @@ class StaticWorker(BaseWorker):
         try:
             analysis_data = collect_contract_analysis(project_dir)
         except Exception as exc:
+            record_degraded(
+                phase="contract_analysis",
+                exc=exc,
+                context={"address": address, "contract_name": contract_name},
+            )
             _log_phase_error(str(job.id), address, contract_name, "contract_analysis", str(exc))
             store_artifact(session, job.id, "analysis_error", data={"error": str(exc)})
             return None

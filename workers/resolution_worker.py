@@ -26,6 +26,7 @@ from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
+from utils.logging import record_degraded
 from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.resolution_worker")
@@ -245,6 +246,17 @@ class ResolutionWorker(BaseWorker):
         eth_wei_raw = results.get("eth_wei")
         tokens_raw = results.get("tokens")
         if isinstance(eth_wei_raw, BaseException) or isinstance(tokens_raw, BaseException):
+            primary_exc = eth_wei_raw if isinstance(eth_wei_raw, BaseException) else tokens_raw
+            assert isinstance(primary_exc, BaseException)
+            record_degraded(
+                phase="balance_fetch",
+                exc=primary_exc,
+                context={
+                    "address": target_address,
+                    "eth_failed": isinstance(eth_wei_raw, BaseException),
+                    "tokens_failed": isinstance(tokens_raw, BaseException),
+                },
+            )
             logger.warning(
                 "Job %s: balance fetch failed: eth=%r tokens=%r",
                 job.id,
@@ -264,6 +276,11 @@ class ResolutionWorker(BaseWorker):
             eth_price: float | None
             eth_usd: float | None = None
             if isinstance(eth_price_raw, BaseException):
+                record_degraded(
+                    phase="eth_price_fetch",
+                    exc=eth_price_raw,
+                    context={"address": target_address},
+                )
                 logger.warning("Job %s: ETH price fetch failed: %s", job.id, eth_price_raw)
                 eth_price = None
             else:
@@ -471,6 +488,11 @@ class ResolutionWorker(BaseWorker):
                 job.address or "0x0",
             )
         except Exception as exc:
+            record_degraded(
+                phase="resolution_upgrade_history",
+                exc=exc,
+                context={"address": job.address or "0x0"},
+            )
             logger.warning(
                 "Resolution stage upgrade history failed for job %s address=%s: %s",
                 job.id,
@@ -618,12 +640,14 @@ class ResolutionWorker(BaseWorker):
                         contract_id,
                         verify_source_equivalence=True,
                     )
-                except Exception:
+                except Exception as exc:
                     # One flaky match shouldn't poison the rest; admin
                     # refresh_coverage can fill in what we missed.
-                    logger.exception(
-                        "Coverage refresh failed for backfilled impl contract_id=%s",
+                    logger.warning(
+                        "Coverage refresh failed for backfilled impl contract_id=%s: %s",
                         contract_id,
+                        exc,
+                        extra={"exc_type": type(exc).__name__},
                     )
             session.commit()
             if refreshed:

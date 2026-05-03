@@ -648,10 +648,30 @@ class PolicyWorker(BaseWorker):
                                 )
                             )
                             session.commit()
-                    except Exception:
-                        logger.exception("Initial TVL snapshot failed for protocol %s", job.protocol_id)
-            except Exception:
-                logger.exception("Auto-enrollment failed for protocol %s", job.protocol_id)
+                    except Exception as exc:
+                        record_degraded(
+                            phase="initial_tvl_snapshot",
+                            exc=exc,
+                            context={"protocol_id": job.protocol_id},
+                        )
+                        logger.warning(
+                            "Initial TVL snapshot failed for protocol %s: %s",
+                            job.protocol_id,
+                            exc,
+                            extra={"exc_type": type(exc).__name__},
+                        )
+            except Exception as exc:
+                record_degraded(
+                    phase="auto_enrollment",
+                    exc=exc,
+                    context={"protocol_id": job.protocol_id},
+                )
+                logger.warning(
+                    "Auto-enrollment failed for protocol %s: %s",
+                    job.protocol_id,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
 
         # Send completion webhook for re-analysis jobs
         request = job.request if isinstance(job.request, dict) else {}
@@ -660,10 +680,14 @@ class PolicyWorker(BaseWorker):
                 from services.monitoring.notifier import notify_reanalysis_complete
 
                 notify_reanalysis_complete(session, job)
-            except Exception:
-                logger.exception(
-                    "Reanalysis completion notification failed for job %s",
+            except Exception as exc:
+                # Notifier failure is a side effect — the reanalysis itself completed.
+                # No record_degraded: this doesn't change the job's stage output.
+                logger.warning(
+                    "Reanalysis completion notification failed for job %s: %s",
                     job.id,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
                 )
 
     def _apply_effect_label_updates(self, payload: dict, enriched: dict[str, list[str]]) -> None:

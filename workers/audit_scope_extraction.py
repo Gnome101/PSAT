@@ -275,9 +275,14 @@ class AuditScopeExtractionWorker(AuditRowWorker):
                 self._maybe_backfill_date(audit, outcome.extracted_date)
                 self._refresh_coverage(session, audit_id)
             session.commit()
-        except Exception:
+        except Exception as exc:
             session.rollback()
-            logger.exception("Failed to persist scope outcome for audit %s", audit_id)
+            logger.warning(
+                "Failed to persist scope outcome for audit %s: %s",
+                audit_id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
         finally:
             session.close()
 
@@ -322,10 +327,12 @@ class AuditScopeExtractionWorker(AuditRowWorker):
                 audit_id,
                 inserted,
             )
-        except Exception:
-            logger.exception(
-                "Failed to refresh coverage for audit %s — scope persist still proceeds",
+        except Exception as exc:
+            logger.warning(
+                "Failed to refresh coverage for audit %s — scope persist still proceeds: %s",
                 audit_id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
             )
 
     @staticmethod
