@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select, text
@@ -37,38 +39,69 @@ logger = logging.getLogger(__name__)
 
 # How long a job can sit in ``status='processing'`` before we assume the
 # worker holding it crashed and return the row to the queue. ``updated_at``
-# is our implicit heartbeat — every status/detail write stamps NOW(), so a
-# stale row reliably means nobody is touching it.
+# is the legacy implicit heartbeat (every status/detail write stamped
+# NOW()); the lease-based path replaces it with an explicit
+# ``lease_expires_at`` column that the heartbeat extends.
 DEFAULT_JOB_STALE_TIMEOUT = int(os.getenv("PSAT_JOB_STALE_TIMEOUT", "900"))
+
+# Per-claim lease lifetime. A claimed job's ``lease_expires_at`` is set to
+# NOW() + this on the initial claim and bumped past NOW()+this on every
+# heartbeat. The reclaim sweep wakes any row whose lease has expired —
+# either a crashed worker or a worker that's gone too long without a
+# heartbeat (e.g. a single nested forge build over the heartbeat cadence).
+DEFAULT_JOB_LEASE_TTL_S = int(os.getenv("PSAT_JOB_LEASE_TTL_S", str(DEFAULT_JOB_STALE_TIMEOUT)))
+
+
+class LeaseLost(RuntimeError):
+    """Raised when a mutating queue write detects the caller no longer
+    holds the row's lease.
+
+    A worker should treat this as fatal for the current attempt: another
+    worker has been handed the job, and any further writes from this
+    thread would corrupt that worker's view. The handler in
+    ``BaseWorker._execute_job`` logs it and bails without further
+    advance/requeue/fail_terminal calls.
+    """
 
 
 def reclaim_stuck_jobs(session: Session, stale_timeout_seconds: int = DEFAULT_JOB_STALE_TIMEOUT) -> list[str]:
-    """Sweep jobs stuck in ``processing`` past the threshold back to ``queued``.
+    """Sweep jobs whose lease has expired back to ``queued``.
 
-    Uses ``updated_at`` as a heartbeat: any status or detail write bumps it,
-    so a row that hasn't moved in ``stale_timeout_seconds`` seconds indicates
-    the claiming worker crashed before it could advance, fail, or update
-    progress. Flips status back to ``queued`` and clears ``worker_id`` so a
-    live worker can claim it on the next poll.
+    Lease-based: a row is eligible when ``lease_expires_at < NOW()``.
+    ``_heartbeat`` extends ``lease_expires_at`` past now+ttl, so a worker
+    that's actively heartbeating from inside its long task keeps its lease
+    alive and is never reclaimed. A crashed worker — or one stuck so long
+    that even the heartbeat callback never fired — has an expired lease
+    and the row goes back to the queue.
 
-    Runs one ``UPDATE ... RETURNING id`` so the sweep is atomic and we can
-    log which rows were rescued. ``SKIP LOCKED`` keeps us from blocking on a
-    row whose FOR UPDATE is currently held by another process (including the
-    happy-path claim happening concurrently).
+    Pre-migration rows (``lease_expires_at IS NULL``) fall through to the
+    legacy ``updated_at < NOW() - timeout`` predicate so an in-progress
+    deploy doesn't strand jobs. The OR is index-friendly: the partial
+    ``ix_jobs_lease_expires_at`` covers the new path, and ``ix_jobs_stage_status``
+    covers the legacy path.
 
-    Returns the list of rescued job IDs so callers can log them — operators
-    can then correlate these IDs against a worker's last known heartbeat to
-    identify which instance crashed.
+    The reset clears ``lease_id`` and ``lease_expires_at`` alongside
+    ``status`` and ``worker_id`` so the next ``claim_job`` mints a fresh
+    lease.
+
+    ``failed_terminal`` rows are intentionally excluded by the
+    ``status = 'processing'`` predicate — operators promote them back to
+    ``queued`` via ``POST /api/jobs/{id}/retry``, never via the sweep.
     """
     result = session.execute(
         text(
             """
             UPDATE jobs
-            SET status = 'queued', worker_id = NULL
+            SET status = 'queued', worker_id = NULL,
+                lease_id = NULL, lease_expires_at = NULL
             WHERE id IN (
                 SELECT id FROM jobs
                 WHERE status = 'processing'
-                  AND updated_at < NOW() - (:timeout * INTERVAL '1 second')
+                  AND (
+                    lease_expires_at < NOW()
+                    OR (lease_expires_at IS NULL
+                        AND updated_at < NOW() - (:timeout * INTERVAL '1 second'))
+                  )
                 FOR UPDATE SKIP LOCKED
             )
             RETURNING id
@@ -81,7 +114,7 @@ def reclaim_stuck_jobs(session: Session, stale_timeout_seconds: int = DEFAULT_JO
         session.commit()
         for job_id in rescued:
             logger.warning(
-                "reclaim_stuck_jobs: reset job %s (stuck in processing for > %ss)",
+                "reclaim_stuck_jobs: reset job %s (lease expired or stuck > %ss)",
                 job_id,
                 stale_timeout_seconds,
             )
@@ -95,7 +128,16 @@ def create_job(
     request_dict: dict[str, Any],
     initial_stage: JobStage = JobStage.discovery,
 ) -> Job:
-    """Insert a new job at the given stage with status=queued."""
+    """Insert a new job at the given stage with status=queued.
+
+    ``trace_id`` is read from the ambient contextvar (set by the API
+    ingress middleware on HTTP-triggered creates, or by the parent
+    worker on child-job spawns). When neither is bound, a fresh id is
+    minted so every job in the system is correlatable end-to-end.
+    """
+    from utils.logging import trace_id_var
+
+    trace_id = trace_id_var.get() or uuid.uuid4().hex[:16]
     job = Job(
         address=request_dict.get("address"),
         company=request_dict.get("company"),
@@ -105,6 +147,7 @@ def create_job(
         detail="Queued for analysis",
         request=request_dict,
         protocol_id=request_dict.get("protocol_id"),
+        trace_id=trace_id,
     )
     session.add(job)
     session.commit()
@@ -386,11 +429,35 @@ def get_or_create_protocol(
     return row
 
 
-def claim_job(session: Session, target_stage: JobStage, worker_id: str) -> Job | None:
-    """Claim the next available job for the given stage using SKIP LOCKED."""
+def claim_job(
+    session: Session,
+    target_stage: JobStage,
+    worker_id: str,
+    *,
+    lease_ttl_seconds: int = DEFAULT_JOB_LEASE_TTL_S,
+) -> Job | None:
+    """Claim the next available job for the given stage using SKIP LOCKED.
+
+    Atomically flips ``status`` to ``processing`` and stamps a fresh
+    ``lease_id`` (uuid4) + ``lease_expires_at = NOW() + lease_ttl_seconds``
+    so the caller's mutating writes can prove they still hold the lease.
+    Returning the row's ``lease_id`` is what gives ``BaseWorker._execute_job``
+    the token it needs to pass back to ``advance_job`` / ``complete_job``
+    / ``requeue_job`` / ``fail_job_terminal`` — those reject writes whose
+    ``lease_id`` doesn't match.
+
+    Honours ``Job.next_attempt_at``: a queued job set by ``requeue_job`` to
+    retry in the future is skipped until the DB clock catches up. We compare
+    against ``NOW()`` (Postgres-side) rather than Python's clock so workers
+    spread across processes/timezones agree on eligibility.
+    """
     stmt = (
         select(Job)
-        .where(Job.stage == target_stage, Job.status == JobStatus.queued)
+        .where(
+            Job.stage == target_stage,
+            Job.status == JobStatus.queued,
+            (Job.next_attempt_at.is_(None) | (Job.next_attempt_at <= func.now())),
+        )
         .order_by(Job.created_at)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -400,9 +467,70 @@ def claim_job(session: Session, target_stage: JobStage, worker_id: str) -> Job |
         return None
     job.status = JobStatus.processing
     job.worker_id = worker_id
+    job.lease_id = uuid.uuid4()
+    # Server-side NOW() so workers spread across hosts agree on the
+    # expiry instant. ``func.now() + INTERVAL`` would require a literal
+    # interval; we synthesize it via ``text``.
+    session.execute(
+        sa_update(Job)
+        .where(Job.id == job.id)
+        .values(lease_expires_at=text(f"NOW() + INTERVAL '{int(lease_ttl_seconds)} seconds'"))
+    )
     session.commit()
     session.refresh(job)
     return job
+
+
+def _check_lease_or_raise(job: Job, lease_id: uuid.UUID | None) -> None:
+    """Verify the caller still holds the row's lease; raise ``LeaseLost`` if not.
+
+    ``lease_id=None`` means the caller doesn't care (legacy/admin path);
+    skip the check. The pre-claim ``lease_id`` column may itself be NULL
+    on rows that pre-date the lease columns — in that case treat the
+    write as authoritative (no live competing claimant).
+    """
+    if lease_id is None:
+        return
+    if job.lease_id is None:
+        return
+    if job.lease_id != lease_id:
+        raise LeaseLost(
+            f"Job {job.id}: lease {lease_id} no longer holds the row "
+            f"(current holder: {job.lease_id}, worker_id={job.worker_id})"
+        )
+
+
+def heartbeat_job(
+    session: Session,
+    job_id: Any,
+    *,
+    lease_id: uuid.UUID,
+    lease_ttl_seconds: int = DEFAULT_JOB_LEASE_TTL_S,
+) -> None:
+    """Extend the row's lease past now+ttl. Raises ``LeaseLost`` if the
+    caller's lease has rolled to a sibling.
+
+    Conditional UPDATE in one round trip — no SELECT-then-UPDATE race
+    window. ``RETURNING id`` lets us tell "row matched and updated" from
+    "row exists but lease_id differs" without a second query.
+    """
+    result = session.execute(
+        text(
+            """
+            UPDATE jobs
+            SET lease_expires_at = NOW() + (:ttl * INTERVAL '1 second'),
+                updated_at = NOW()
+            WHERE id = :job_id
+              AND lease_id = :lease_id
+            RETURNING id
+            """
+        ),
+        {"ttl": int(lease_ttl_seconds), "job_id": job_id, "lease_id": lease_id},
+    )
+    rows = result.fetchall()
+    session.commit()
+    if not rows:
+        raise LeaseLost(f"Job {job_id}: heartbeat rejected — lease {lease_id} no longer holds the row")
 
 
 def update_job_detail(session: Session, job_id: Any, detail: str) -> None:
@@ -413,32 +541,63 @@ def update_job_detail(session: Session, job_id: Any, detail: str) -> None:
         session.commit()
 
 
-def advance_job(session: Session, job_id: Any, next_stage: JobStage, detail: str = "") -> None:
-    """Move a job to the next stage and reset status to queued."""
+def advance_job(
+    session: Session,
+    job_id: Any,
+    next_stage: JobStage,
+    detail: str = "",
+    *,
+    lease_id: uuid.UUID | None = None,
+) -> None:
+    """Move a job to the next stage and reset status to queued.
+
+    *lease_id*: when provided, refuses to write if the caller no longer
+    holds the row's lease (raises ``LeaseLost``). ``BaseWorker``
+    threads its claim-time lease through here so a worker that's been
+    silently reclaimed can't advance a job a sibling is now processing.
+    """
     job = session.get(Job, job_id)
     if job is None:
         return
+    _check_lease_or_raise(job, lease_id)
     job.stage = next_stage
     job.status = JobStatus.queued
     job.detail = detail or f"Advanced to {next_stage.value}"
     job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
     session.commit()
 
 
-def complete_job(session: Session, job_id: Any, detail: str = "Analysis complete") -> None:
-    """Mark a job as completed with stage=done."""
+def complete_job(
+    session: Session,
+    job_id: Any,
+    detail: str = "Analysis complete",
+    *,
+    lease_id: uuid.UUID | None = None,
+) -> None:
+    """Mark a job as completed with stage=done. See :func:`advance_job` for *lease_id*."""
     job = session.get(Job, job_id)
     if job is None:
         return
+    _check_lease_or_raise(job, lease_id)
     job.stage = JobStage.done
     job.status = JobStatus.completed
     job.detail = detail
     job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
     session.commit()
 
 
 def fail_job(session: Session, job_id: Any, error: str) -> None:
-    """Mark a job as failed with the error traceback."""
+    """Mark a job as failed with the error traceback.
+
+    Retained for callers outside ``BaseWorker`` that have not been migrated
+    to the transient/terminal split. Inside the worker the failure path
+    routes through :func:`requeue_job` (transient) or
+    :func:`fail_job_terminal` (terminal) so retries and DLQ semantics apply.
+    """
     job = session.get(Job, job_id)
     if job is None:
         return
@@ -446,6 +605,143 @@ def fail_job(session: Session, job_id: Any, error: str) -> None:
     job.error = error
     job.detail = "Failed"
     job.worker_id = None
+    session.commit()
+
+
+def requeue_job(
+    session: Session,
+    job_id: Any,
+    error: str,
+    *,
+    retry_count: int,
+    next_attempt_at: datetime,
+    lease_id: uuid.UUID | None = None,
+) -> None:
+    """Re-queue a job after a transient failure with a backoff timestamp.
+
+    Mirrors :func:`fail_job`'s transactional discipline: one commit, no
+    silent swallows. The row goes back to ``status='queued'`` so any
+    eligible worker can claim it once ``NOW() >= next_attempt_at``;
+    ``worker_id`` is cleared so the previous claimer's id doesn't linger
+    on what's now an unclaimed row.
+
+    The accumulated ``stage_errors`` artifact is the per-job audit log of
+    every attempt — this function does not touch it. The caller (typically
+    ``BaseWorker``) appends the just-failed attempt before calling here.
+    """
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    _check_lease_or_raise(job, lease_id)
+    job.status = JobStatus.queued
+    job.error = error
+    job.retry_count = retry_count
+    job.next_attempt_at = next_attempt_at
+    job.last_failure_kind = "transient"
+    job.detail = f"Retry scheduled for {next_attempt_at.isoformat()}"
+    job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
+    session.commit()
+
+
+def release_job_lease(
+    session: Session,
+    job_id: Any,
+    *,
+    lease_id: uuid.UUID,
+    reason: str = "graceful shutdown",
+) -> bool:
+    """Release the lease on a ``processing`` job so a sibling worker can
+    claim it immediately, without bumping ``retry_count`` or marking the
+    row as failed.
+
+    Use case: a worker receives SIGTERM mid-job (Fly machine drain,
+    auto-stop, OOM) and exits before the in-flight stage can complete.
+    The work didn't fail — the worker just had to stop. Without this
+    helper the row sits in ``processing`` until ``lease_expires_at``
+    fires (default 15min via ``DEFAULT_JOB_LEASE_TTL_S``), wedging any
+    downstream pipeline waiting on its output. Calling this on shutdown
+    collapses that 15min wait to ~0.
+
+    Race-safe: the SQL filter on ``lease_id`` makes the UPDATE a no-op
+    if the row is no longer leased to this caller. Two relevant races:
+      1. The main thread completed the job between SIGTERM landing and
+         the daemon-thread release: ``complete_job`` already cleared
+         ``lease_id``, so this UPDATE matches 0 rows and we report
+         "already handled" rather than overwriting completed status.
+      2. ``reclaim_stuck_jobs`` swept the row first: same outcome.
+
+    The conditional UPDATE replaces the in-memory ``_check_lease_or_raise``
+    pattern used elsewhere because we explicitly want a no-throw,
+    "best-effort idempotent release" semantic, not a raise-on-mismatch.
+
+    Returns ``True`` if this call performed the release, ``False`` if
+    the row was already released or no longer matched our lease.
+    """
+    result = session.execute(
+        text(
+            """
+            UPDATE jobs
+            SET status = 'queued',
+                worker_id = NULL,
+                lease_id = NULL,
+                lease_expires_at = NULL,
+                detail = :detail
+            WHERE id = :job_id
+              AND status = 'processing'
+              AND lease_id = :lease_id
+            """
+        ),
+        {"job_id": job_id, "lease_id": lease_id, "detail": f"Released lease: {reason}"},
+    )
+    session.commit()
+    # ``CursorResult.rowcount`` is the standard accessor for affected-row
+    # count; the typeshed stubs route through generic ``Result[Any]`` so
+    # pyright doesn't see the attribute. Guard with ``getattr`` to keep
+    # the strict-typecheck CI green without a noqa.
+    return int(getattr(result, "rowcount", 0)) > 0
+
+
+def fail_job_terminal(
+    session: Session,
+    job_id: Any,
+    error: str,
+    *,
+    kind: str,
+    retry_count: int | None = None,
+    lease_id: uuid.UUID | None = None,
+) -> None:
+    """Mark a job as terminally failed (no further automatic retries).
+
+    Distinct from :func:`fail_job` so observers can tell "retries exhausted
+    or deterministically broken" apart from "just hit the legacy code
+    path". The stale-job sweep does not resurrect ``failed_terminal`` rows.
+
+    *kind* is the classifier verdict (``"transient"`` if retries were
+    exhausted; ``"terminal"`` if classified as deterministic from the
+    start). Persisted to ``last_failure_kind`` so an operator can answer
+    "was this a flaky upstream or a bug?" without resolving the artifact.
+
+    *retry_count* defaults to None — leaves the column unchanged, which is
+    the right behaviour for deterministic terminal failures (we never
+    retried, so the count shouldn't move). The retries-exhausted path
+    passes ``new_retry_count`` so the row records the total attempt count.
+    """
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    _check_lease_or_raise(job, lease_id)
+    job.status = JobStatus.failed_terminal
+    job.error = error
+    job.detail = "Failed (terminal)"
+    job.last_failure_kind = kind
+    job.next_attempt_at = None
+    job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
+    if retry_count is not None:
+        job.retry_count = retry_count
     session.commit()
 
 

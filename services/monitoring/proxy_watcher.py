@@ -115,8 +115,14 @@ def scan_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
 
         try:
             logs = rpc_request(rpc_url, "eth_getLogs", [filter_params])
-        except Exception:
-            logger.exception("eth_getLogs failed for blocks %d-%d", cursor, to_block)
+        except Exception as exc:
+            logger.warning(
+                "eth_getLogs failed for blocks %d-%d: %s",
+                cursor,
+                to_block,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
             break
 
         if not isinstance(logs, list):
@@ -355,8 +361,8 @@ def poll_for_upgrades(session: Session, rpc_url: str) -> list[ProxyUpgradeEvent]
     # -- Phase 2: send batch ---------------------------------------------------
     try:
         results = rpc_batch_request(rpc_url, batch_calls)
-    except Exception:
-        logger.exception("Batch RPC request failed during poll")
+    except Exception as exc:
+        logger.warning("Batch RPC request failed during poll: %s", exc, extra={"exc_type": type(exc).__name__})
         return []
 
     # -- Phase 3: process results ----------------------------------------------
@@ -435,8 +441,8 @@ def run_scan_loop(rpc_url: str, interval: float = DEFAULT_SCAN_INTERVAL) -> None
                 if new_events:
                     logger.info("Detected %d new upgrade event(s)", len(new_events))
                     notify_upgrades(session, new_events)
-        except Exception:
-            logger.exception("Scan cycle failed")
+        except Exception as exc:
+            logger.warning("Scan cycle failed: %s", exc, extra={"exc_type": type(exc).__name__})
         time.sleep(interval)
 
 
@@ -453,6 +459,6 @@ def run_poll_loop(rpc_url: str, interval: float = DEFAULT_POLL_INTERVAL) -> None
                 if new_events:
                     logger.info("Poll detected %d new upgrade(s)", len(new_events))
                     notify_upgrades(session, new_events)
-        except Exception:
-            logger.exception("Poll cycle failed")
+        except Exception as exc:
+            logger.warning("Poll cycle failed: %s", exc, extra={"exc_type": type(exc).__name__})
         time.sleep(interval)

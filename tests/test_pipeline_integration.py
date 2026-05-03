@@ -1260,14 +1260,20 @@ def test_artifact_endpoint_strips_json_extension(mock_session_cls, mock_get_arti
 
 
 # ===================================================================
-# 20. Static worker: dependency_errors artifact stored on phase failures
+# 20. Static worker: dependency phase failures route through record_degraded
 # ===================================================================
 
 
-def test_dep_phase_stores_dependency_errors_on_failure(monkeypatch, tmp_path):
-    """When dependency discovery phases fail, the errors should be stored
-    in a 'dependency_errors' artifact so downstream consumers know what
-    failed."""
+def test_dep_phase_records_degraded_on_failure(monkeypatch, tmp_path):
+    """When dependency discovery sub-phases fail, the worker calls
+    ``record_degraded(...)`` for each one. ``BaseWorker._execute_job``
+    drains the per-job accumulator into the ``stage_errors`` artifact;
+    this test pins the accumulator-write step in isolation.
+
+    Replaces the old ``dependency_errors`` artifact assertion: that
+    artifact is gone, and the same information now lives in the unified
+    ``stage_errors`` schema written by ``BaseWorker``.
+    """
     from workers.static_worker import StaticWorker
 
     worker = StaticWorker()
@@ -1290,15 +1296,31 @@ def test_dep_phase_stores_dependency_errors_on_failure(monkeypatch, tmp_path):
         ).throw(RuntimeError("dynamic dep error")),
     )
 
-    project_dir = tmp_path / "p"
-    project_dir.mkdir()
-    worker._run_dependency_phase(MagicMock(), _job(), project_dir, "Test", TARGET)
+    from utils.logging import bind_trace_context, degraded_errors_var
 
-    assert "dependency_errors" in store
-    assert "static" in store["dependency_errors"]
-    assert "dynamic" in store["dependency_errors"]
-    assert "static dep error" in store["dependency_errors"]["static"]
-    assert "dynamic dep error" in store["dependency_errors"]["dynamic"]
+    accumulator: list = []
+    token = degraded_errors_var.set(accumulator)
+    try:
+        with bind_trace_context(
+            stage="static",
+            job_id="job-1",
+            worker_id="test-worker",
+        ):
+            project_dir = tmp_path / "p"
+            project_dir.mkdir()
+            worker._run_dependency_phase(MagicMock(), _job(), project_dir, "Test", TARGET)
+    finally:
+        degraded_errors_var.reset(token)
+
+    # Old artifact name is gone — the dependency_errors slot must NOT be written anywhere.
+    assert "dependency_errors" not in store
+    # Both static + dynamic sub-phase failures are now degraded entries on the accumulator.
+    phases = {entry.phase: entry for entry in accumulator}
+    assert "dependency_static" in phases
+    assert "dependency_dynamic" in phases
+    assert phases["dependency_static"].severity == "degraded"
+    assert "static dep error" in phases["dependency_static"].message
+    assert "dynamic dep error" in phases["dependency_dynamic"].message
 
 
 # ===================================================================

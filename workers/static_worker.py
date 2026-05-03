@@ -32,8 +32,9 @@ from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
 from services.static import collect_contract_analysis
 from services.static.contract_analysis_pipeline import build_semantic_guards
+from utils.logging import record_degraded
 from utils.rpc import normalize_hex  # used for address comparison
-from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
+from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
 
@@ -52,8 +53,11 @@ Phase:    {phase}
 """.strip()
 
 
+# WARNING (not ERROR): callers swallow the underlying exception and continue with a
+# stub artifact, so the job-level outcome is degraded — not failed. Pair every call
+# site with ``record_degraded`` so the swallow shows up in the stage_errors artifact.
 def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, error: str) -> None:
-    logger.error(
+    logger.warning(
         _ERROR_TEMPLATE.format(
             job_id=job_id,
             address=address,
@@ -786,8 +790,10 @@ class StaticWorker(BaseWorker):
                 # of the cascade pipeline).
                 t0 = time.monotonic()
                 analysis_data = self._run_analysis_phase(session, job, project_dir, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
+                logger.info(
+                    "static phase complete: contract analysis",
+                    extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "contract_analysis"},
+                )
 
                 if analysis_data is None:
                     raise RuntimeError(f"Contract analysis failed for {contract_name} ({address}).")
@@ -795,8 +801,10 @@ class StaticWorker(BaseWorker):
                 # Phase 2: Control tracking plan
                 t0 = time.monotonic()
                 self._run_tracking_plan_phase(session, job, analysis_data, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
+                logger.info(
+                    "static phase complete: tracking plan",
+                    extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "tracking_plan"},
+                )
 
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
@@ -835,6 +843,11 @@ class StaticWorker(BaseWorker):
         try:
             classification = classify_single(address, rpc_url)
         except Exception as exc:
+            record_degraded(
+                phase="proxy_classification",
+                exc=exc,
+                context={"address": address},
+            )
             logger.warning("Job %s: proxy classification failed: %s", job.id, exc)
             store_artifact(
                 session,
@@ -1034,7 +1047,6 @@ class StaticWorker(BaseWorker):
         dynamic_rpc = request.get("dynamic_rpc") or deps_rpc
         dynamic_tx_limit = request.get("dynamic_tx_limit", 10)
         dynamic_tx_hashes = request.get("dynamic_tx_hashes")
-        dependency_errors: dict[str, str] = {}
 
         logger.info(
             "Static stage dependency discovery started for job %s address=%s contract=%s",
@@ -1100,8 +1112,10 @@ class StaticWorker(BaseWorker):
         sub_phases = [("static", run_static), ("dynamic", run_dynamic), ("upgrade_history", run_upgrade_history)]
         results = parallel_map(lambda task: task[1](), sub_phases, max_workers=3, heartbeat=_hb)
         elapsed_parallel = time.monotonic() - t0
-        if DEBUG_TIMING:
-            logger.info("[TIMING] dependency parallel section: %.1fs", elapsed_parallel)
+        logger.info(
+            "static phase complete: dependency parallel section",
+            extra={"duration_ms": int(elapsed_parallel * 1000), "phase": "dependency_parallel"},
+        )
 
         outcomes: dict[str, object | BaseException] = {
             name: outcome for (name, _fn), (_task, outcome) in zip(sub_phases, results)
@@ -1111,7 +1125,11 @@ class StaticWorker(BaseWorker):
         deps_output: dict | None = None
         static_outcome = outcomes["static"]
         if isinstance(static_outcome, BaseException):
-            dependency_errors["static"] = str(static_outcome)
+            record_degraded(
+                phase="dependency_static",
+                exc=static_outcome,
+                context={"address": address},
+            )
             logger.warning(
                 "Static stage static dependency discovery failed for job %s address=%s: %s",
                 job.id,
@@ -1138,9 +1156,17 @@ class StaticWorker(BaseWorker):
                 dyn_output = prev_dyn
                 store_artifact(session, job.id, "dynamic_dependencies", data=prev_dyn)
             else:
-                dependency_errors["dynamic"] = "No representative transactions found"
+                record_degraded(
+                    phase="dependency_dynamic",
+                    exc=dyn_outcome,
+                    context={"address": address, "reason": "no_representative_transactions"},
+                )
         elif isinstance(dyn_outcome, BaseException):
-            dependency_errors["dynamic"] = str(dyn_outcome)
+            record_degraded(
+                phase="dependency_dynamic",
+                exc=dyn_outcome,
+                context={"address": address},
+            )
             logger.warning(
                 "Static stage dynamic dependency discovery failed for job %s address=%s: %s",
                 job.id,
@@ -1164,6 +1190,11 @@ class StaticWorker(BaseWorker):
         uh_outcome_raw = outcomes["upgrade_history"]
         uh_pre: dict | None
         if isinstance(uh_outcome_raw, BaseException):
+            record_degraded(
+                phase="dependency_upgrade_history",
+                exc=uh_outcome_raw,
+                context={"address": address, "subphase": "parallel"},
+            )
             logger.warning(
                 "Static stage upgrade history failed for job %s address=%s: %s",
                 job.id,
@@ -1215,8 +1246,15 @@ class StaticWorker(BaseWorker):
                 )
                 # Store classifications artifact for future cache hits
                 store_artifact(session, job.id, "classifications", data=cls_output)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
+                logger.info(
+                    "static phase complete: classification (%d deps)",
+                    len(unique_deps),
+                    extra={
+                        "duration_ms": int((time.monotonic() - t0) * 1000),
+                        "phase": "classification",
+                        "dep_count": len(unique_deps),
+                    },
+                )
                 logger.info(
                     "Static stage dependency classification complete for job %s address=%s discovered=%d",
                     job.id,
@@ -1224,7 +1262,11 @@ class StaticWorker(BaseWorker):
                     len(cls_output.get("discovered_addresses", [])),
                 )
             except Exception as exc:
-                dependency_errors["classification"] = str(exc)
+                record_degraded(
+                    phase="dependency_classification",
+                    exc=exc,
+                    context={"address": address},
+                )
                 logger.warning(
                     "Static stage dependency classification failed for job %s address=%s: %s",
                     job.id,
@@ -1252,8 +1294,10 @@ class StaticWorker(BaseWorker):
 
             t0 = time.monotonic()
             enrich_dependency_metadata(unified, info_cache=info_cache)
-            if DEBUG_TIMING:
-                logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
+            logger.info(
+                "static phase complete: dependency enrichment",
+                extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "enrichment"},
+            )
 
             # Store updated enrichment cache (includes any newly fetched entries)
             enrichment_data = {
@@ -1338,6 +1382,11 @@ class StaticWorker(BaseWorker):
                         uh.get("total_upgrades", 0),
                     )
             except Exception as exc:
+                record_degraded(
+                    phase="dependency_upgrade_history",
+                    exc=exc,
+                    context={"address": address, "subphase": "finalize"},
+                )
                 logger.warning(
                     "Static stage upgrade history failed for job %s address=%s: %s",
                     job.id,
@@ -1351,9 +1400,6 @@ class StaticWorker(BaseWorker):
                 address,
             )
 
-        if dependency_errors:
-            store_artifact(session, job.id, "dependency_errors", data=dependency_errors)
-
     def _run_analysis_phase(
         self, session, job, project_dir: Path, contract_name: str, address: str
     ) -> ContractAnalysis | None:
@@ -1362,6 +1408,11 @@ class StaticWorker(BaseWorker):
         try:
             analysis_data = collect_contract_analysis(project_dir)
         except Exception as exc:
+            record_degraded(
+                phase="contract_analysis",
+                exc=exc,
+                context={"address": address, "contract_name": contract_name},
+            )
             _log_phase_error(str(job.id), address, contract_name, "contract_analysis", str(exc))
             store_artifact(session, job.id, "analysis_error", data={"error": str(exc)})
             return None
@@ -1468,6 +1519,11 @@ class StaticWorker(BaseWorker):
                 contract_name,
             )
         except Exception as exc:
+            record_degraded(
+                phase="tracking_plan",
+                exc=exc,
+                context={"address": address, "contract_name": contract_name},
+            )
             _log_phase_error(str(job.id), address, contract_name, "tracking_plan", str(exc))
             store_artifact(session, job.id, "tracking_plan_error", data={"error": str(exc)})
 

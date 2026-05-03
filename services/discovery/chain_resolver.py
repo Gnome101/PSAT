@@ -22,6 +22,7 @@ Strategy
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import urllib.error
@@ -132,7 +133,12 @@ def _batch_get_code(rpc_url: str, addresses: list[str]) -> dict[str, str]:
         if not isinstance(body, list):
             limiter = RateLimiter(_RPC_RATE_LIMIT)
             with ThreadPoolExecutor(max_workers=_FALLBACK_WORKERS) as executor:
-                futures = [executor.submit(_individual_get_code, rpc_url, addr, limiter) for addr in batch]
+                # Per-submission context copy so trace_id/job_id contextvars
+                # bound by the calling worker survive into the fallback fan-out.
+                futures = []
+                for addr in batch:
+                    ctx = contextvars.copy_context()
+                    futures.append(executor.submit(ctx.run, _individual_get_code, rpc_url, addr, limiter))
                 for future in futures:
                     addr, code = future.result()
                     results[addr] = code
@@ -180,10 +186,14 @@ def _probe_chains(
 ) -> None:
     """Probe multiple chains in parallel using Alchemy batch endpoints."""
     with ThreadPoolExecutor(max_workers=min(len(chains), 10)) as executor:
-        future_to_chain = {
-            executor.submit(_probe_chain_batch, addresses, chain_name, api_key, debug): chain_name
-            for chain_name in chains
-        }
+        # Per-chain context copy preserves the caller's trace context inside
+        # each per-chain batch RPC call.
+        future_to_chain = {}
+        for chain_name in chains:
+            ctx = contextvars.copy_context()
+            future_to_chain[executor.submit(ctx.run, _probe_chain_batch, addresses, chain_name, api_key, debug)] = (
+                chain_name
+            )
         for future in as_completed(future_to_chain):
             chain_name = future_to_chain[future]
             try:

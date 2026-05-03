@@ -224,10 +224,10 @@ def test_record_timing_runs_before_advance_in_run_loop(monkeypatch):
             self_._running = False
         return j
 
-    def _fake_advance(_session, _job_id, _next_stage, _detail):
+    def _fake_advance(_session, _job_id, _next_stage, _detail, **_kw):
         call_order.append("advance_job")
 
-    def _fake_complete(_session, _job_id):
+    def _fake_complete(_session, _job_id, **_kw):
         call_order.append("complete_job")
 
     monkeypatch.setattr(base.BaseWorker, "_claim_job", _fake_claim)
