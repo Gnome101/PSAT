@@ -191,8 +191,15 @@ def _materialize_with_cross_process_cache(
         logger.warning("contract_materializations.materialize_or_wait failed, falling back: %s", exc)
         return _build_static_artifacts(effective_address, workspace_prefix)
 
-    analysis = copy.deepcopy(row.analysis or {})
-    plan = copy.deepcopy(row.tracking_plan or {})
+    # ``hydrate_*`` transparently reads from blob storage when the row's
+    # ``*_blob_key`` is set (the new path) or falls back to inline JSONB
+    # (legacy rows pre-backfill, or rows written when storage was
+    # unconfigured). The blob path's ``json.loads`` already returns a
+    # fresh dict per call, but the inline path returns the SQLAlchemy
+    # JSONB-cached dict, so the deepcopy is still required to avoid
+    # downstream mutations leaking back into the ORM identity map.
+    analysis = copy.deepcopy(cm.hydrate_analysis(row) or {})
+    plan = copy.deepcopy(cm.hydrate_tracking_plan(row) or {})
     contract_name = row.contract_name or "Contract"
     return contract_name, analysis, plan
 
