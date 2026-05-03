@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select, text
@@ -51,6 +52,10 @@ def reclaim_stuck_jobs(session: Session, stale_timeout_seconds: int = DEFAULT_JO
     the claiming worker crashed before it could advance, fail, or update
     progress. Flips status back to ``queued`` and clears ``worker_id`` so a
     live worker can claim it on the next poll.
+
+    ``failed_terminal`` rows are intentionally excluded by the
+    ``status = 'processing'`` predicate — operators promote them back to
+    ``queued`` via ``POST /api/jobs/{id}/retry``, never via the sweep.
 
     Runs one ``UPDATE ... RETURNING id`` so the sweep is atomic and we can
     log which rows were rescued. ``SKIP LOCKED`` keeps us from blocking on a
@@ -398,10 +403,20 @@ def get_or_create_protocol(
 
 
 def claim_job(session: Session, target_stage: JobStage, worker_id: str) -> Job | None:
-    """Claim the next available job for the given stage using SKIP LOCKED."""
+    """Claim the next available job for the given stage using SKIP LOCKED.
+
+    Honours ``Job.next_attempt_at``: a queued job set by ``requeue_job`` to
+    retry in the future is skipped until the DB clock catches up. We compare
+    against ``NOW()`` (Postgres-side) rather than Python's clock so workers
+    spread across processes/timezones agree on eligibility.
+    """
     stmt = (
         select(Job)
-        .where(Job.stage == target_stage, Job.status == JobStatus.queued)
+        .where(
+            Job.stage == target_stage,
+            Job.status == JobStatus.queued,
+            (Job.next_attempt_at.is_(None) | (Job.next_attempt_at <= func.now())),
+        )
         .order_by(Job.created_at)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -449,13 +464,76 @@ def complete_job(session: Session, job_id: Any, detail: str = "Analysis complete
 
 
 def fail_job(session: Session, job_id: Any, error: str) -> None:
-    """Mark a job as failed with the error traceback."""
+    """Mark a job as failed with the error traceback.
+
+    Retained for callers outside ``BaseWorker`` that have not been migrated
+    to the transient/terminal split. Inside the worker the failure path
+    routes through :func:`requeue_job` (transient) or
+    :func:`fail_job_terminal` (terminal) so retries and DLQ semantics apply.
+    """
     job = session.get(Job, job_id)
     if job is None:
         return
     job.status = JobStatus.failed
     job.error = error
     job.detail = "Failed"
+    job.worker_id = None
+    session.commit()
+
+
+def requeue_job(
+    session: Session,
+    job_id: Any,
+    error: str,
+    *,
+    retry_count: int,
+    next_attempt_at: datetime,
+) -> None:
+    """Re-queue a job after a transient failure with a backoff timestamp.
+
+    Mirrors :func:`fail_job`'s transactional discipline: one commit, no
+    silent swallows. The row goes back to ``status='queued'`` so any
+    eligible worker can claim it once ``NOW() >= next_attempt_at``;
+    ``worker_id`` is cleared so the previous claimer's id doesn't linger
+    on what's now an unclaimed row.
+
+    The accumulated ``stage_errors`` artifact is the per-job audit log of
+    every attempt — this function does not touch it. The caller (typically
+    ``BaseWorker``) appends the just-failed attempt before calling here.
+    """
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    job.status = JobStatus.queued
+    job.error = error
+    job.retry_count = retry_count
+    job.next_attempt_at = next_attempt_at
+    job.last_failure_kind = "transient"
+    job.detail = f"Retry scheduled for {next_attempt_at.isoformat()}"
+    job.worker_id = None
+    session.commit()
+
+
+def fail_job_terminal(session: Session, job_id: Any, error: str, *, kind: str) -> None:
+    """Mark a job as terminally failed (no further automatic retries).
+
+    Distinct from :func:`fail_job` so observers can tell "retries exhausted
+    or deterministically broken" apart from "just hit the legacy code
+    path". The stale-job sweep does not resurrect ``failed_terminal`` rows.
+
+    *kind* is the classifier verdict (``"transient"`` if retries were
+    exhausted; ``"terminal"`` if classified as deterministic from the
+    start). Persisted to ``last_failure_kind`` so an operator can answer
+    "was this a flaky upstream or a bug?" without resolving the artifact.
+    """
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    job.status = JobStatus.failed_terminal
+    job.error = error
+    job.detail = "Failed (terminal)"
+    job.last_failure_kind = kind
+    job.next_attempt_at = None
     job.worker_id = None
     session.commit()
 
