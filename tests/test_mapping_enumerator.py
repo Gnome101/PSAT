@@ -629,3 +629,69 @@ def test_clear_enumeration_cache_drops_entries():
     assert mapping_enumerator._CACHE  # populated
     clear_enumeration_cache()
     assert not mapping_enumerator._CACHE
+
+
+def test_dual_direction_bool_event_resolves_via_log_payload():
+    """PoC for the 'mapping_enumerator: skipping ambiguous writer event' warning.
+
+    A common pattern: ``addToWhitelist`` writes ``isWhitelisted[user] = true``
+    and ``removeFromWhitelist`` writes ``isWhitelisted[user] = false``, both
+    emitting a single ``WhitelistUpdated(address indexed user, bool status)``.
+
+    Static analysis emits two specs sharing the same topic0 with opposite
+    directions. The enumerator's safety check (mapping_enumerator.py:161-171)
+    drops the topic wholesale even though the bool argument in the log data
+    disambiguates. The right end state for the sequence below — remove at
+    block 10, add at block 20 — is ``{alice}``.
+
+    Fails today: the topic is pruned before any hypersync round-trip, so
+    ``out`` is ``[]``. Goes green when the enumerator learns to read the
+    bool from the log data and pick direction at runtime.
+    """
+    topic = _event_topic0("WhitelistUpdated(address,bool)")
+    alice = _addr("a11ce")
+    bool_true = "0x" + "00" * 31 + "01"
+    bool_false = "0x" + "00" * 31 + "00"
+
+    client, _ = _fake_client(
+        [
+            (
+                [
+                    _log(topic, indexed_args=[alice], data=bool_false, block=10),
+                    _log(topic, indexed_args=[alice], data=bool_true, block=20),
+                ],
+                None,
+            )
+        ]
+    )
+
+    add_spec = {
+        "mapping_name": "isWhitelisted",
+        "event_signature": "WhitelistUpdated(address,bool)",
+        "event_name": "WhitelistUpdated",
+        "key_position": 0,
+        "indexed_positions": [0],
+        "direction": "add",
+        "writer_function": "addToWhitelist(address)",
+    }
+    remove_spec = {
+        **add_spec,
+        "direction": "remove",
+        "writer_function": "removeFromWhitelist(address)",
+    }
+
+    out = _run(
+        enumerate_mapping_allowlist(
+            "0xCC00000000000000000000000000000000000001",
+            [add_spec, remove_spec],
+            client=client,
+            hypersync_module=_FakeHypersyncModule(),
+        )
+    )
+
+    addresses = [p["address"] for p in out]
+    assert alice in addresses, (
+        "expected alice present (last write was bool=true at block 20) — "
+        "today the topic is pruned because two specs share it with opposite "
+        "directions, even though the bool in the log data disambiguates"
+    )
