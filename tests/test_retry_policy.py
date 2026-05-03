@@ -24,7 +24,6 @@ from workers.retry_policy import (
     retry_base_s,
 )
 
-
 # ---------------------------------------------------------------------------
 # classify() — type tuples
 # ---------------------------------------------------------------------------
@@ -72,8 +71,11 @@ def test_classify_psycopg2_operational_is_transient():
 
 
 def _http_error(status: int | None) -> requests.exceptions.HTTPError:
+    # ``classify`` uses ``getattr(response, "status_code", None)`` so a
+    # SimpleNamespace stand-in is enough — avoids constructing a real
+    # ``Response`` object just to set one attribute.
     response = SimpleNamespace(status_code=status) if status is not None else None
-    return requests.exceptions.HTTPError(f"{status}", response=response)
+    return requests.exceptions.HTTPError(f"{status}", response=response)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("status", [408, 425, 429, 500, 502, 503, 504, 522, 524])

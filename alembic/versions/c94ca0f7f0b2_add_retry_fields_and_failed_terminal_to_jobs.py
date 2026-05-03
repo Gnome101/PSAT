@@ -70,10 +70,7 @@ def downgrade() -> None:
     # ``jobs.status`` column over, drop the renamed type.
     op.execute("ALTER TYPE jobstatus RENAME TO jobstatus_old")
     op.execute("CREATE TYPE jobstatus AS ENUM ('queued', 'processing', 'completed', 'failed')")
-    op.execute(
-        "ALTER TABLE jobs ALTER COLUMN status TYPE jobstatus "
-        "USING status::text::jobstatus"
-    )
+    op.execute("ALTER TABLE jobs ALTER COLUMN status TYPE jobstatus USING status::text::jobstatus")
     op.execute("DROP TYPE jobstatus_old")
     op.drop_column("jobs", "last_failure_kind")
     op.drop_column("jobs", "next_attempt_at")

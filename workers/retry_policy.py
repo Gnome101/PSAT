@@ -134,7 +134,7 @@ def compute_next_attempt(retry_count: int, *, now: datetime | None = None) -> da
     """
     base = retry_base_s()
     safe_count = max(0, retry_count)
-    delay = min(base * (2 ** safe_count), float(_RETRY_CAP_S))
+    delay = min(base * (2**safe_count), float(_RETRY_CAP_S))
     jitter = secrets.SystemRandom().uniform(0.75, 1.25)
     delay = min(delay * jitter, float(_RETRY_CAP_S))
     moment = now or datetime.now(timezone.utc)
