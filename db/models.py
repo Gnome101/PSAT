@@ -39,7 +39,14 @@ class JobStatus(str, enum.Enum):
     queued = "queued"
     processing = "processing"
     completed = "completed"
+    # Transient/retryable failure. ``BaseWorker`` requeues the row with a
+    # backoff-set ``next_attempt_at`` after the first transient exception;
+    # only after retries are exhausted does the row move to ``failed_terminal``.
     failed = "failed"
+    # Terminal failure: deterministic-from-the-start (e.g. ValueError on bad
+    # input, missing Etherscan source) or transient retries exhausted. The
+    # stale-job sweep never resurrects ``failed_terminal`` rows.
+    failed_terminal = "failed_terminal"
 
 
 class JobStage(str, enum.Enum):
@@ -77,6 +84,19 @@ class Job(Base):
     )
     # Mirrored from contract_flags by store_artifact; lets /api/jobs skip the artifact resolve.
     is_proxy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Number of attempts completed for this job. 0 means "first attempt has
+    # not yet failed"; bumped by ``requeue_job`` on every transient failure
+    # before ``BaseWorker`` re-queues. Persisted across crashes so the
+    # worker pool agrees on attempt count.
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # When NOT NULL, ``claim_job`` skips this row until wall-clock ≥ this
+    # value. Set by ``requeue_job`` after a transient failure to the result
+    # of ``compute_next_attempt`` so workers honour exponential backoff.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ``"transient"`` / ``"terminal"`` for the most recent failure; NULL for
+    # never-failed rows. Cheap operational index for "which jobs flap" /
+    # "which jobs were terminally bad" without resolving the artifact.
+    last_failure_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -106,6 +126,9 @@ class Job(Base):
             "worker_id": self.worker_id,
             "trace_id": self.trace_id,
             "is_proxy": self.is_proxy,
+            "retry_count": self.retry_count,
+            "next_attempt_at": self.next_attempt_at.isoformat() if self.next_attempt_at else None,
+            "last_failure_kind": self.last_failure_kind,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
