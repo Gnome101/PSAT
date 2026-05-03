@@ -350,3 +350,117 @@ def test_bytecode_keccak_hit_retargets_plan_to_new_address(monkeypatch):
     # build_control_snapshot would read controller state from the
     # cache-populating contract instead of addr_b.
     assert snapshot_calls[1]["contract_address"] == addr_b.lower()
+
+
+# ---------------------------------------------------------------------------
+# Cross-process / cross-job materialization dedup — POC
+# ---------------------------------------------------------------------------
+#
+# Three caches exist around materialization today; none dedupe across
+# worker processes:
+#   * etherscan_cache (Postgres) — Etherscan getsourcecode payload only.
+#   * _ARTIFACT_CACHE (in-memory, recursive.py:42) — process-local + TTL.
+#   * nested_artifacts (Postgres, db/nested_artifacts.py) — keyed by
+#     (parent_job_id, address); not reusable across jobs.
+#
+# Two impl jobs in the same protocol therefore each pay full forge+Slither
+# cost on every shared sub-contract (the LP+EtherFi PR-62 incident).
+#
+# Fix: a content-addressed contract_materializations table keyed by
+# (chain, bytecode_keccak), with request-coalescing via
+# pg_advisory_xact_lock so concurrent jobs requesting the same address
+# only run the expensive build once.
+#
+# These tests describe the desired post-fix behaviour. They FAIL today
+# (no cross-process layer) and PASS once the table + materialize_contract
+# helper land. They use the project-standard ``db_session`` fixture from
+# tests/conftest.py.
+
+
+def test_two_processes_materializing_same_bytecode_compile_once(db_session, monkeypatch):
+    """Worker process A materializes contract X. Process B then
+    materializes a *different* address with the *same* bytecode_keccak.
+    With the persistent cross-process cache, the second call must skip
+    the expensive scaffold + Slither work entirely.
+    """
+    scaffold_calls: list[Any] = []
+    collect_calls: list[Any] = []
+    snapshot_calls: list[Any] = []
+    _patch_pipeline(
+        monkeypatch,
+        scaffold_calls=scaffold_calls,
+        collect_calls=collect_calls,
+        snapshot_calls=snapshot_calls,
+    )
+
+    _materialize_contract_artifacts("0xABC", "http://rpc", workspace_prefix="proc-A")
+    assert len(scaffold_calls) == 1
+    assert len(collect_calls) == 1
+
+    # Cross the "process boundary": clear the in-memory cache so the
+    # only shared state left is what was persisted to Postgres.
+    clear_artifact_cache()
+
+    _materialize_contract_artifacts("0xDEF", "http://rpc", workspace_prefix="proc-B")
+
+    assert len(scaffold_calls) == 1, "second process must not re-scaffold the same bytecode"
+    assert len(collect_calls) == 1, "second process must not re-run Slither on the same bytecode"
+
+
+def test_two_concurrent_requests_dedup_via_advisory_lock(db_session, monkeypatch):
+    """Two materialization requests fired concurrently for the same
+    (chain, bytecode_keccak) must produce exactly one build — the loser
+    of the advisory-lock race waits for the winner and reads the result.
+    """
+    import threading
+
+    scaffold_calls: list[Any] = []
+    collect_calls: list[Any] = []
+    snapshot_calls: list[Any] = []
+    _patch_pipeline(
+        monkeypatch,
+        scaffold_calls=scaffold_calls,
+        collect_calls=collect_calls,
+        snapshot_calls=snapshot_calls,
+    )
+
+    barrier = threading.Barrier(2)
+
+    def _materialize_with_barrier(addr: str) -> None:
+        barrier.wait()
+        _materialize_contract_artifacts(addr, "http://rpc", workspace_prefix=f"thr-{addr[-4:]}")
+
+    t1 = threading.Thread(target=_materialize_with_barrier, args=("0x" + "11" * 20,))
+    t2 = threading.Thread(target=_materialize_with_barrier, args=("0x" + "22" * 20,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert len(scaffold_calls) == 1, "concurrent requests for same bytecode must coalesce"
+    assert len(collect_calls) == 1
+
+
+def test_materialization_persists_a_row_keyed_by_chain_and_keccak(db_session, monkeypatch):
+    """A row per (chain, bytecode_keccak) — operators answer "have we
+    ever materialized this?" without resolving artifacts; next-day
+    re-runs become pure DB lookups."""
+    from db import contract_materializations as cm  # type: ignore[attr-defined]  # provided by the fix
+
+    scaffold_calls: list[Any] = []
+    collect_calls: list[Any] = []
+    snapshot_calls: list[Any] = []
+    _patch_pipeline(
+        monkeypatch,
+        scaffold_calls=scaffold_calls,
+        collect_calls=collect_calls,
+        snapshot_calls=snapshot_calls,
+    )
+
+    addr = "0x" + "33" * 20
+    _materialize_contract_artifacts(addr, "http://rpc", workspace_prefix="row-test")
+
+    row = cm.find_by_keccak(db_session, chain="ethereum", bytecode_keccak="0x" + "ab" * 32)
+    assert row is not None
+    assert row.status == "ready"
+    assert row.bytecode_keccak == "0x" + "ab" * 32
