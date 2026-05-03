@@ -187,9 +187,7 @@ def test_run_loop_claims_processes_and_advances(mock_advance, mock_claim, mock_s
     w.run_loop()
 
     w.process.assert_called_once_with(mock_session, job)
-    mock_advance.assert_called_once_with(
-        mock_session, job.id, JobStage.static, "Completed discovery", lease_id=None
-    )
+    mock_advance.assert_called_once_with(mock_session, job.id, JobStage.static, "Completed discovery", lease_id=None)
 
 
 @patch("workers.base.signal.signal")

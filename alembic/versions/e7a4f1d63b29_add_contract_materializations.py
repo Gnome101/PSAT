@@ -33,6 +33,7 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -49,8 +50,8 @@ def upgrade() -> None:
         sa.Column("bytecode_keccak", sa.String(length=66), nullable=False),
         sa.Column("address", sa.String(length=42), nullable=False),
         sa.Column("contract_name", sa.String(length=255), nullable=True),
-        sa.Column("analysis", sa.dialects.postgresql.JSONB(), nullable=True),
-        sa.Column("tracking_plan", sa.dialects.postgresql.JSONB(), nullable=True),
+        sa.Column("analysis", postgresql.JSONB(), nullable=True),
+        sa.Column("tracking_plan", postgresql.JSONB(), nullable=True),
         sa.Column("analysis_blob_key", sa.Text(), nullable=True),
         sa.Column("tracking_plan_blob_key", sa.Text(), nullable=True),
         sa.Column("status", sa.String(length=20), nullable=False, server_default="pending"),

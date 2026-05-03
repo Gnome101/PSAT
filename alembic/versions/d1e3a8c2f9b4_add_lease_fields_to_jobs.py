@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -47,7 +48,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column(
         "jobs",
-        sa.Column("lease_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("lease_id", postgresql.UUID(as_uuid=True), nullable=True),
     )
     op.add_column(
         "jobs",

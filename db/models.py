@@ -915,9 +915,7 @@ class ContractMaterialization(Base):
     materialized_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("NOW()"), nullable=False
     )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text("NOW()"), nullable=False
-    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("NOW()"), nullable=False)
 
     __table_args__ = (
         UniqueConstraint("chain", "address", name="uq_contract_materializations_chain_address"),
