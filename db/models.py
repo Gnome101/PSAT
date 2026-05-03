@@ -923,6 +923,43 @@ class ContractMaterialization(Base):
     )
 
 
+class MappingEnumerationCache(Base):
+    """Cross-process cache for mapping_enumerator hypersync scans.
+
+    A row per ``(chain, address, specs_hash)`` holding the EnumerationResult
+    from ``services.resolution.mapping_enumerator``. The single-job pipeline
+    walks the recursive resolution graph in *both* the resolution and policy
+    stages (``services/resolution/recursive.py``); without a cross-process
+    cache each stage re-runs the same hypersync pagination — for a 2017
+    contract that's two consecutive 60s timeouts per address. The
+    pre-existing in-process module dict only covered same-process repeats,
+    which collapsed when 9ce6fa3 split workers into separate OS processes.
+
+    ``specs_hash`` participates in the key so a writer-event-spec change
+    produces a fresh row instead of silently returning a stale enumeration.
+    Truncated and errored results are cached too — re-running them within
+    the TTL would just hit the same bound — and the caller sees the
+    ``status`` field to decide whether to act on partial data.
+    """
+
+    __tablename__ = "mapping_enumeration_cache"
+
+    chain: Mapped[str] = mapped_column(String(100), primary_key=True)
+    address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    specs_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    principals: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    pages_fetched: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_block_scanned: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    materialized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("NOW()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("NOW()"), nullable=False)
+
+    __table_args__ = (Index("ix_mapping_enumeration_cache_materialized_at", "materialized_at"),)
+
+
 class BytecodeCache(Base):
     """Persistent eth_getCode bytecode cache. Read/written by ``utils/rpc.py`` via
     raw SQL; this model exists so ``alembic check`` doesn't flag the table as
