@@ -39,8 +39,8 @@ def health():
             # SET LOCAL statement_timeout is Postgres-specific syntax.
             session.execute(text("SET LOCAL statement_timeout = 2000"))
             session.execute(select(1))
-    except Exception:
-        logger.exception("Health check: db unreachable")
+    except Exception as exc:
+        logger.warning("Health check: db unreachable: %s", exc, extra={"exc_type": type(exc).__name__})
         body["db"] = "unavailable"
         failures.append("db")
 
@@ -61,8 +61,8 @@ def health():
         try:
             storage_client.health_check()
             body["storage"] = "ok"
-        except deps.StorageUnavailable:
-            logger.exception("Health check: storage unreachable")
+        except deps.StorageUnavailable as exc:
+            logger.warning("Health check: storage unreachable: %s", exc, extra={"exc_type": type(exc).__name__})
             body["storage"] = "unavailable"
             failures.append("storage")
 

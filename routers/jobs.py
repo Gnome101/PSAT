@@ -201,11 +201,16 @@ def get_job_errors(job_id: str) -> JobErrorsResponse:
         if isinstance(raw, dict):
             try:
                 errors = StageErrors.model_validate(raw).errors
-            except Exception:
+            except Exception as exc:
                 # Legacy/corrupt payloads shouldn't 500 the endpoint —
                 # return them empty and let the operator inspect the
                 # underlying artifact directly.
-                logger.exception("stage_errors artifact for job %s did not validate", job.id)
+                logger.warning(
+                    "stage_errors artifact for job %s did not validate: %s",
+                    job.id,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
                 errors = []
         return JobErrorsResponse(
             job_id=str(job.id),

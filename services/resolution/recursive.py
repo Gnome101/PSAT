@@ -22,6 +22,7 @@ from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEd
 from services.discovery.fetch import fetch, scaffold
 from services.policy.effective_permissions import build_effective_permissions
 from services.static import collect_contract_analysis
+from utils.logging import record_degraded
 
 from .tracking import (
     build_control_snapshot,
@@ -630,6 +631,11 @@ def resolve_control_graph(
             if mat_exc is not None or artifacts is None:
                 err_text = str(mat_exc) if mat_exc is not None else "no artifacts produced"
                 contract_name = _contract_name_for_address(address)
+                record_degraded(
+                    phase="recursive_materialize",
+                    exc=mat_exc if mat_exc is not None else RuntimeError(err_text),
+                    context={"address": address, "depth": depth},
+                )
                 logger.warning(
                     "Recursive resolve: failed to materialize nested contract %s at depth %s: %s",
                     address,
@@ -704,6 +710,11 @@ def resolve_control_graph(
                     except Exception as exc:
                         # Bounds are inside enumerate_mapping_allowlist; raises here are
                         # unexpected (auth, hypersync load, etc).
+                        record_degraded(
+                            phase="mapping_enumerator",
+                            exc=exc,
+                            context={"address": address},
+                        )
                         logger.warning(
                             "mapping_enumerator UNEXPECTED FAILURE for %s: %s — treating as truncated",
                             address,

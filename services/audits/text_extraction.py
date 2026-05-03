@@ -312,7 +312,9 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         try:
             text = page.extract_text() or ""
         except Exception as exc:
-            logger.warning("pypdf page %d extract_text raised: %s", idx, exc)
+            # Per-page noise: a malformed page yields an empty page, not a job
+            # failure. DEBUG keeps the breadcrumb without flooding the log.
+            logger.debug("pypdf page %d extract_text raised: %s", idx, exc)
             text = ""
         link_uris = _extract_link_annotation_uris(page)
         body = text
@@ -392,7 +394,12 @@ def process_audit_report(
     except Exception as exc:
         # pypdf can raise unbounded types on malformed input; don't let one
         # broken PDF kill the worker loop.
-        logger.exception("unexpected download error for %s", url)
+        logger.warning(
+            "unexpected download error for %s: %s",
+            url,
+            exc,
+            extra={"exc_type": type(exc).__name__},
+        )
         return ExtractionOutcome(status="failed", error=f"download: {exc!r}")
 
     if is_text_url:
@@ -406,7 +413,12 @@ def process_audit_report(
         except PdfParseError as exc:
             return ExtractionOutcome(status="failed", error=f"parse: {exc}")
         except Exception as exc:
-            logger.exception("unexpected parse error for %s", url)
+            logger.warning(
+                "unexpected parse error for %s: %s",
+                url,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
             return ExtractionOutcome(status="failed", error=f"parse: {exc!r}")
 
     if len(text) < _MIN_USEFUL_TEXT_LENGTH:
@@ -423,7 +435,12 @@ def process_audit_report(
     except StorageWriteError as exc:
         return ExtractionOutcome(status="failed", error=f"store: {exc}")
     except Exception as exc:
-        logger.exception("unexpected store error for audit %s", audit_report_id)
+        logger.warning(
+            "unexpected store error for audit %s: %s",
+            audit_report_id,
+            exc,
+            extra={"exc_type": type(exc).__name__},
+        )
         return ExtractionOutcome(status="failed", error=f"store: {exc!r}")
 
     return ExtractionOutcome(

@@ -163,8 +163,14 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
 
         try:
             logs = rpc_request(rpc_url, "eth_getLogs", [filter_params])
-        except Exception:
-            logger.exception("eth_getLogs failed for blocks %d-%d", cursor, to_block)
+        except Exception as exc:
+            logger.warning(
+                "eth_getLogs failed for blocks %d-%d: %s",
+                cursor,
+                to_block,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
             break
 
         if not isinstance(logs, list):
@@ -241,8 +247,13 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
                     updated["reanalysis_job_id"] = str(reanalysis_job.id)
                     monitored_event.data = updated
                     flag_modified(monitored_event, "data")
-            except Exception:
-                logger.exception("Failed to queue re-analysis for %s", mc.address)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to queue re-analysis for %s: %s",
+                    mc.address,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
 
         last_successful_block = to_block
         cursor = to_block + 1
@@ -442,10 +453,12 @@ def _refresh_coverage_after_upgrade(session: Session, protocol_id: int | None) -
         # sites (coverage_worker, audit_scope_extraction, resolution_worker)
         # that also opt in to verification.
         upsert_coverage_for_protocol(session, protocol_id, verify_source_equivalence=True)
-    except Exception:
-        logger.exception(
-            "Failed to refresh audit coverage for protocol %s after upgrade",
+    except Exception as exc:
+        logger.warning(
+            "Failed to refresh audit coverage for protocol %s after upgrade: %s",
             protocol_id,
+            exc,
+            extra={"exc_type": type(exc).__name__},
         )
 
 
@@ -548,8 +561,8 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
 
     try:
         results = rpc_batch_request(rpc_url, batch_calls)
-    except Exception:
-        logger.exception("Batch RPC failed during poll")
+    except Exception as exc:
+        logger.warning("Batch RPC failed during poll: %s", exc, extra={"exc_type": type(exc).__name__})
         return []
 
     new_events: list[MonitoredEvent] = []
@@ -686,8 +699,13 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
                     updated = dict(event.data or {})
                     updated["reanalysis_job_id"] = str(reanalysis_job.id)
                     event.data = updated
-            except Exception:
-                logger.exception("Failed to queue re-analysis for %s", mc.address)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to queue re-analysis for %s: %s",
+                    mc.address,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
 
     session.commit()
     return new_events
@@ -711,10 +729,10 @@ def run_scan_loop(rpc_url: str, interval: float = DEFAULT_SCAN_INTERVAL) -> None
                         from services.monitoring.notifier import notify_protocol_events
 
                         notify_protocol_events(session, new_events)
-                    except Exception:
-                        logger.exception("Protocol notification failed")
-        except Exception:
-            logger.exception("Scan cycle failed")
+                    except Exception as exc:
+                        logger.warning("Protocol notification failed: %s", exc, extra={"exc_type": type(exc).__name__})
+        except Exception as exc:
+            logger.warning("Scan cycle failed: %s", exc, extra={"exc_type": type(exc).__name__})
         time.sleep(interval)
 
 
@@ -731,8 +749,8 @@ def run_poll_loop(rpc_url: str, interval: float = DEFAULT_POLL_INTERVAL) -> None
                         from services.monitoring.notifier import notify_protocol_events
 
                         notify_protocol_events(session, new_events)
-                    except Exception:
-                        logger.exception("Protocol notification failed")
-        except Exception:
-            logger.exception("Poll cycle failed")
+                    except Exception as exc:
+                        logger.warning("Protocol notification failed: %s", exc, extra={"exc_type": type(exc).__name__})
+        except Exception as exc:
+            logger.warning("Poll cycle failed: %s", exc, extra={"exc_type": type(exc).__name__})
         time.sleep(interval)
