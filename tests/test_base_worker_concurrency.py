@@ -596,7 +596,9 @@ def test_k1_path_matches_legacy_advance_args(mock_advance, mock_claim, mock_sess
     w.run_loop()
 
     # Same args shape as the legacy test.
-    mock_advance.assert_called_once_with(session, job.id, JobStage.static, "Completed discovery")
+    mock_advance.assert_called_once_with(
+        session, job.id, JobStage.static, "Completed discovery", lease_id=None
+    )
 
 
 # ---------------------------------------------------------------------------

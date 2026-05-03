@@ -17,10 +17,13 @@ from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage, JobStatus, SessionLocal
 from db.queue import (
+    DEFAULT_JOB_LEASE_TTL_S,
+    LeaseLost,
     advance_job,
     claim_job,
     fail_job_terminal,
     get_artifact,
+    heartbeat_job,
     reclaim_stuck_jobs,
     requeue_job,
     store_artifact,
@@ -210,6 +213,10 @@ class BaseWorker:
             # context is a copy from the dispatcher).
             degraded_accumulator: list[StageError] = []
             accumulator_token = degraded_errors_var.set(degraded_accumulator)
+            # Snapshot the lease at claim time so every mutating queue
+            # write threads it through. ``getattr`` keeps test stubs that
+            # build a bare SimpleNamespace job from tripping AttributeError.
+            claim_lease_id = getattr(job, "lease_id", None)
             try:
                 logger.info("Worker %s claimed job %s", self.worker_id, job.id)
                 t0 = time.monotonic()
@@ -254,9 +261,15 @@ class BaseWorker:
                     if self.next_stage == JobStage.done:
                         from db.queue import complete_job
 
-                        complete_job(session, job.id)
+                        complete_job(session, job.id, lease_id=claim_lease_id)
                     else:
-                        advance_job(session, job.id, self.next_stage, f"Completed {self.stage.value}")
+                        advance_job(
+                            session,
+                            job.id,
+                            self.next_stage,
+                            f"Completed {self.stage.value}",
+                            lease_id=claim_lease_id,
+                        )
                     logger.info(
                         "Worker %s completed job %s in %.1fs",
                         self.worker_id,
@@ -289,6 +302,21 @@ class BaseWorker:
                         job.id,
                         extra={"duration_ms": int(elapsed * 1000), "phase": "job", "outcome": "handled_directly"},
                     )
+                except LeaseLost as lease_exc:
+                    # The row's lease has rolled to a sibling worker (e.g.
+                    # the long-task heartbeat tripped the sweep, then a
+                    # sibling claim_job acquired the row). Bailing here
+                    # rather than continuing through the requeue/terminal
+                    # path is the whole point: any further write would
+                    # corrupt the sibling's view of the job.
+                    logger.warning(
+                        "Worker %s: lease lost for job %s — abandoning attempt: %s",
+                        self.worker_id,
+                        job.id,
+                        lease_exc,
+                        extra={"phase": "job", "outcome": "lease_lost"},
+                    )
+                    return
                 except Exception as exc:
                     elapsed = time.monotonic() - t0
                     ended_at_iso = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -378,9 +406,17 @@ class BaseWorker:
                                 error,
                                 retry_count=new_retry_count,
                                 next_attempt_at=next_attempt_at,
+                                lease_id=claim_lease_id,
                             )
                         else:
-                            fail_job_terminal(session, job.id, error, kind=kind, retry_count=terminal_retry_count)
+                            fail_job_terminal(
+                                session,
+                                job.id,
+                                error,
+                                kind=kind,
+                                retry_count=terminal_retry_count,
+                                lease_id=claim_lease_id,
+                            )
                         self._record_stage_timing(
                             session,
                             job,
@@ -389,6 +425,18 @@ class BaseWorker:
                             elapsed_s=elapsed,
                             status="failed",
                         )
+                    except LeaseLost as lease_exc:
+                        # Same bail as the success path: a sibling owns
+                        # the row now; persisting our failure would
+                        # corrupt their state.
+                        logger.warning(
+                            "Worker %s: lease lost during failure path for job %s: %s",
+                            self.worker_id,
+                            job.id,
+                            lease_exc,
+                            extra={"phase": "job", "outcome": "lease_lost"},
+                        )
+                        return
                     except Exception:
                         logger.exception("Failed to update job %s after exception, retrying with fresh session", job.id)
                         try:
@@ -402,9 +450,17 @@ class BaseWorker:
                                     truncated,
                                     retry_count=new_retry_count,
                                     next_attempt_at=next_attempt_at,
+                                    lease_id=claim_lease_id,
                                 )
                             else:
-                                fail_job_terminal(fresh, job.id, truncated, kind=kind, retry_count=terminal_retry_count)
+                                fail_job_terminal(
+                                    fresh,
+                                    job.id,
+                                    truncated,
+                                    kind=kind,
+                                    retry_count=terminal_retry_count,
+                                    lease_id=claim_lease_id,
+                                )
                             self._record_stage_timing(
                                 fresh,
                                 job,
@@ -414,6 +470,15 @@ class BaseWorker:
                                 status="failed",
                             )
                             fresh.close()
+                        except LeaseLost as lease_exc:
+                            logger.warning(
+                                "Worker %s: lease lost in fresh-session failure path for job %s: %s",
+                                self.worker_id,
+                                job.id,
+                                lease_exc,
+                                extra={"phase": "job", "outcome": "lease_lost"},
+                            )
+                            return
                         except Exception:
                             logger.exception(
                                 "Could not update job %s for retry/terminal even with fresh session", job.id
@@ -576,22 +641,42 @@ class BaseWorker:
         update_job_detail(session, job.id, detail)
 
     def _heartbeat(self, session: Session, job: Job) -> None:
-        """Bump ``Job.updated_at`` without changing any other state.
+        """Extend the row's lease past now+ttl.
 
         Used inside long parallel sections so the stale-job sweep doesn't
-        requeue live work. Issues a stand-alone UPDATE rather than touching
-        ``job.detail`` so concurrent ``update_detail`` writes from the same
-        worker don't fight over the message.
+        requeue live work. The conditional UPDATE inside ``heartbeat_job``
+        only matches when ``lease_id`` still equals the row's claim-time
+        lease — a reclaimed worker's heartbeat is a no-op and ``LeaseLost``
+        is raised so the caller can bail.
+
+        ``LeaseLost`` is intentionally NOT swallowed here: the catch site
+        in ``_execute_job`` needs to see it so the worker stops doing
+        further work on a job a sibling now owns. Other exceptions
+        (transient DB blips) are swallowed since the next heartbeat or the
+        sweep will recover.
         """
-        from sqlalchemy import update as sa_update
+        lease_id = getattr(job, "lease_id", None)
+        if lease_id is None:
+            # Pre-migration row, or a job claimed by an out-of-process
+            # legacy claim path; fall back to bumping updated_at so the
+            # legacy sweep predicate still keeps the row alive.
+            from sqlalchemy import update as sa_update
+
+            try:
+                session.execute(sa_update(Job).where(Job.id == job.id).values(updated_at=datetime.now(timezone.utc)))
+                session.commit()
+            except Exception:
+                try:
+                    session.rollback()
+                except Exception:
+                    logger.debug("heartbeat rollback failed", exc_info=True)
+            return
 
         try:
-            session.execute(sa_update(Job).where(Job.id == job.id).values(updated_at=datetime.now(timezone.utc)))
-            session.commit()
+            heartbeat_job(session, job.id, lease_id=lease_id, lease_ttl_seconds=DEFAULT_JOB_LEASE_TTL_S)
+        except LeaseLost:
+            raise
         except Exception:
-            # Best-effort: a heartbeat failure is never fatal — worst case we
-            # eat a redundant requeue on the next sweep, which the idempotent
-            # claim path tolerates.
             try:
                 session.rollback()
             except Exception:

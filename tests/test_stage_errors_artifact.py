@@ -115,7 +115,7 @@ def test_successful_process_with_degraded_records_writes_artifact(db_session, te
     completes: list = []
     monkey_advance = base.advance_job
     monkey_complete = None
-    base.advance_job = lambda _s, jid, ns, _d: advances.append((jid, ns))  # type: ignore[assignment]
+    base.advance_job = lambda _s, jid, ns, _d, **_kw: advances.append((jid, ns))  # type: ignore[assignment]
     import db.queue as db_queue
 
     monkey_complete = db_queue.complete_job

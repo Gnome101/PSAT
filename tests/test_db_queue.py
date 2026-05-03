@@ -59,17 +59,19 @@ def session():
 
 
 def _backdate_job(s, job_id, seconds_ago: int) -> None:
-    """Force ``updated_at`` into the past — bypassing the onupdate trigger.
+    """Force ``updated_at`` *and* ``lease_expires_at`` into the past.
 
     Without this helper the ``updated_at`` column auto-stamps NOW() on every
-    write, which would defeat any stuck-job assertion.
+    write and ``claim_job`` sets ``lease_expires_at`` to NOW()+ttl, both of
+    which would defeat any stuck-job assertion. Backdating both pins the row
+    as "stale by both predicates".
     """
     from sqlalchemy import update as sa_update
 
     from db.models import Job
 
     past = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
-    s.execute(sa_update(Job).where(Job.id == job_id).values(updated_at=past))
+    s.execute(sa_update(Job).where(Job.id == job_id).values(updated_at=past, lease_expires_at=past))
     s.commit()
 
 

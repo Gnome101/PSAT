@@ -97,6 +97,14 @@ class Job(Base):
     # never-failed rows. Cheap operational index for "which jobs flap" /
     # "which jobs were terminally bad" without resolving the artifact.
     last_failure_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Per-claim lease. ``claim_job`` mints a fresh ``lease_id`` (uuid4) and
+    # stamps ``lease_expires_at`` to NOW() + ttl. ``_heartbeat`` extends
+    # ``lease_expires_at``; the stale sweep keys on it instead of
+    # ``updated_at``. Every mutating queue write (advance/complete/requeue/
+    # fail_terminal) filters on ``lease_id`` so a worker whose lease has
+    # rolled to a sibling can't silently corrupt the row.
+    lease_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -110,6 +118,14 @@ class Job(Base):
     __table_args__ = (
         Index("ix_jobs_stage_status", "stage", "status"),
         Index("ix_jobs_trace_id", "trace_id"),
+        # Partial index — powers the lease-expiry sweep. Most rows aren't
+        # ``processing`` so a partial keeps the index small and the sweep
+        # query a single index scan.
+        Index(
+            "ix_jobs_lease_expires_at",
+            "lease_expires_at",
+            postgresql_where=text("status = 'processing'"),
+        ),
     )
 
     def to_dict(self) -> dict:
