@@ -261,3 +261,73 @@ def test_transient_then_success(clean_jobs, test_session_local, monkeypatch):
     assert all(e["severity"] == "error" for e in errors)
     # advance_job was called once after the third attempt's success.
     assert len(advances) == 1
+
+
+# ---------------------------------------------------------------------------
+# Corrupt prior artifact body is preserved as a degraded breadcrumb
+# ---------------------------------------------------------------------------
+#
+# When ``BaseWorker._persist_stage_errors`` finds an existing ``stage_errors``
+# body that fails ``StageErrors.model_validate`` (legacy schema, partial
+# write, manual tampering), it must not silently drop the prior payload —
+# operators reading /api/jobs/{id}/errors after a manual triage need to be
+# able to see what was there.
+#
+# The contract: prepend a ``severity="degraded"``, ``phase="corrupt_prior"``
+# entry whose ``context.raw`` carries the original payload, then continue
+# with the new entries the current attempt produced.
+
+
+@requires_postgres
+def test_persist_stage_errors_preserves_corrupt_prior_as_breadcrumb(clean_jobs, test_session_local):
+    """A corrupt prior body becomes a ``corrupt_prior`` breadcrumb entry
+    rather than being silently dropped."""
+    from db.queue import store_artifact
+    from schemas.stage_errors import StageError
+
+    db_session = clean_jobs
+    job_row = create_job(db_session, {"address": "0xabc", "name": "corrupt-prior"})
+
+    # Pre-seed a body that fails ``StageErrors.model_validate``. Pydantic
+    # accepts unknown fields by default, so "shape mismatch" alone isn't
+    # enough — we need ``errors`` to be present-but-malformed (here: a list
+    # whose entries lack required fields like ``stage``/``severity``/...).
+    corrupt_body = {
+        "schema_version": "v0-legacy",
+        "errors": [
+            {"when": "2026-01-01T00:00:00Z", "what": "pre-migration entry the operator may still need"},
+        ],
+    }
+    store_artifact(db_session, job_row.id, "stage_errors", data=corrupt_body)
+    db_session.commit()
+
+    # Run a worker attempt that triggers _persist_stage_errors via the
+    # normal failure path. Use a terminal exception so the path executes once.
+    worker = _ConfigurableWorker(side_effect=lambda _n: ValueError("bad input"))
+    worker._execute_job(db_session, job_row)
+
+    db_session.expire_all()
+    payload = _read_stage_errors(db_session, job_row.id)
+    assert payload is not None
+    assert "errors" in payload
+
+    entries = payload["errors"]
+    # Two entries: the corrupt-prior breadcrumb (first), and the just-failed
+    # attempt's error entry.
+    assert len(entries) == 2, f"expected breadcrumb + new error, got {entries}"
+
+    breadcrumb = entries[0]
+    assert breadcrumb["phase"] == "corrupt_prior"
+    assert breadcrumb["severity"] == "degraded"
+    assert breadcrumb["exc_type"] == "schema.CorruptPriorArtifact"
+    # Raw prior payload is preserved verbatim under context.raw so an
+    # operator can still read it via /api/jobs/{id}/errors.
+    assert breadcrumb["context"]["raw"] == corrupt_body
+
+    new_error = entries[1]
+    assert new_error["severity"] == "error"
+    assert "ValueError" in new_error["exc_type"]
+
+    # Round-trip: the artifact still validates as StageErrors.
+    StageError.model_validate(breadcrumb)
+    StageError.model_validate(new_error)

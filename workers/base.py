@@ -618,14 +618,33 @@ class BaseWorker:
         try:
             existing = get_artifact(fresh, job.id, "stage_errors")
             merged: list[StageError] = []
+            corrupt_prior: dict | list | str | None = None
             if isinstance(existing, dict):
                 try:
                     merged = list(StageErrors.model_validate(existing).errors)
                 except Exception:
-                    # Corrupt body shouldn't block the new write — best-effort
-                    # replace it. The operator can correlate the lost entries
-                    # via the trace_id in logs if it ever matters.
+                    # Corrupt body shouldn't block the new write, but it
+                    # also shouldn't be silently dropped: pin the raw payload
+                    # onto a degraded breadcrumb so an operator forensically
+                    # reading the audit log via /api/jobs/{id}/errors can
+                    # still see what was there before this attempt.
                     merged = []
+                    corrupt_prior = existing
+            if corrupt_prior is not None:
+                merged.append(
+                    StageError(
+                        stage=self.stage.value,
+                        severity="degraded",
+                        exc_type="schema.CorruptPriorArtifact",
+                        message="Prior stage_errors body did not validate; raw payload preserved in context.",
+                        phase="corrupt_prior",
+                        trace_id=getattr(job, "trace_id", None),
+                        job_id=str(job.id),
+                        worker_id=self.worker_id,
+                        failed_at=datetime.now(timezone.utc),
+                        context={"raw": corrupt_prior},
+                    )
+                )
             merged.extend(errors)
             store_artifact(
                 fresh,
