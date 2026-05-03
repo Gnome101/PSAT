@@ -112,6 +112,11 @@ class StorageClient:
                 connect_timeout=2,
                 read_timeout=5,
                 retries={"max_attempts": 1},
+                # boto3 default is 10 — too small for our get_many fan-out
+                # (16 threads) plus concurrent put/get from the worker job
+                # pool. Under load urllib3 was discarding and reopening
+                # connections on every spillover, churning the Tigris pool.
+                max_pool_connections=64,
             ),
         )
 
