@@ -386,6 +386,112 @@ def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifact
     }
 
 
+def _enrich_principals_from_v2_capabilities(session: Session, *, contract_row: Contract | None) -> None:
+    """Add ``FunctionPrincipal`` rows from the v2 capability resolver.
+
+    Calls ``resolve_contract_capabilities`` for the subject contract,
+    walks every resolved function's ``CapabilityExpr`` (including AND/OR
+    children), and for each ``finite_set`` member that isn't already
+    pinned to the matching ``EffectiveFunction`` row, inserts a new
+    ``FunctionPrincipal`` row tagged ``origin='v2_capability'``.
+
+    De-dupes on ``(function_id, address.lower())`` against the rows
+    already written in the v1 loop, so addresses the heuristic already
+    surfaced aren't duplicated. Skips functions that have no resolved
+    finite_set members (the resolver returns ``conditional_universal``
+    for purely-business gates and ``unsupported`` when classification
+    is opaque — neither populates principals).
+    """
+    if contract_row is None:
+        return
+    address = (contract_row.address or "").lower()
+    if not address:
+        return
+    try:
+        from services.resolution.capability_resolver import resolve_contract_capabilities
+    except Exception:
+        return
+
+    try:
+        capabilities = resolve_contract_capabilities(session, address=address)
+    except Exception as exc:
+        logger.warning(
+            "v2 capability enrichment skipped for %s: %s",
+            address,
+            exc,
+            extra={"exc_type": type(exc).__name__},
+        )
+        return
+    if not capabilities:
+        return
+
+    # Index v1-written FunctionPrincipal rows once per (selector, address)
+    # so we don't duplicate. EffectiveFunction.selector is the canonical
+    # join key matching the artifact's per-function entries.
+    ef_rows = (
+        session.execute(select(EffectiveFunction).where(EffectiveFunction.contract_id == contract_row.id))
+        .scalars()
+        .all()
+    )
+    by_signature = {ef.abi_signature: ef for ef in ef_rows if ef.abi_signature}
+    existing_addrs: dict[int, set[str]] = {}
+    for ef in ef_rows:
+        existing_addrs[ef.id] = {
+            (fp.address or "").lower()
+            for fp in session.query(FunctionPrincipal).filter(FunctionPrincipal.function_id == ef.id).all()
+        }
+
+    added = 0
+    for fn_signature, cap in capabilities.items():
+        ef = by_signature.get(fn_signature)
+        if ef is None:
+            continue
+        for member in _collect_finite_members(cap):
+            member_lc = member.lower()
+            if member_lc in existing_addrs.get(ef.id, set()):
+                continue
+            session.add(
+                FunctionPrincipal(
+                    function_id=ef.id,
+                    address=member_lc,
+                    resolved_type=None,
+                    origin="v2_capability",
+                    principal_type="controller",
+                    details={"source": "v2_predicate_capability_resolver"},
+                )
+            )
+            existing_addrs.setdefault(ef.id, set()).add(member_lc)
+            added += 1
+    if added:
+        session.commit()
+        logger.info(
+            "v2 enrichment added %d FunctionPrincipal rows for contract %s",
+            added,
+            address,
+        )
+
+
+def _collect_finite_members(cap: dict) -> list[str]:
+    """Recurse through a serialized ``CapabilityExpr`` dict and yield
+    every concrete address mentioned in any ``finite_set`` member list,
+    including those inside AND/OR ``children`` and ``signer`` wraps.
+    Skips ``threshold_group`` signers (those need a separate writer
+    once the FE distinguishes m-of-n from a flat finite set)."""
+    out: list[str] = []
+    if not isinstance(cap, dict):
+        return out
+    if cap.get("kind") == "finite_set":
+        for m in cap.get("members") or []:
+            if isinstance(m, str) and m.startswith("0x") and len(m) == 42:
+                out.append(m)
+    for child in cap.get("children") or []:
+        out.extend(_collect_finite_members(child))
+    signer = cap.get("signer")
+    if isinstance(signer, dict):
+        out.extend(_collect_finite_members(signer))
+    return out
+
+
 class PolicyWorker(BaseWorker):
     stage = JobStage.policy
     next_stage = JobStage.coverage
@@ -551,6 +657,14 @@ class PolicyWorker(BaseWorker):
                     control_graph_nodes=graph_nodes if isinstance(graph_nodes, list) else None,
                 )
             session.commit()
+            # v2 enrichment: walk resolved capabilities and add
+            # FunctionPrincipal rows for functions whose v2 path resolved
+            # concrete addresses the v1 heuristic missed (inherited Ownable
+            # _owner, cross-contract roleRegistry.hasRole grantees, etc.).
+            # Additive only — existing v1 rows are kept; we de-dupe on
+            # (function_id, address, principal_type) so the same address
+            # isn't doubled when both paths resolve it.
+            _enrich_principals_from_v2_capabilities(session, contract_row=contract_row)
 
         store_artifact(session, job.id, "effective_permissions", data=ep_data)
 

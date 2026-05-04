@@ -49,7 +49,13 @@ ALLOW_LIST: dict[str, dict[int, str]] = {
         # doesn't change the job's stage output. record_degraded would
         # mislead callers of /api/jobs/{id}/errors into thinking the
         # reanalysis was degraded.
-        735: "Notifier side-effect; reanalysis already completed before this fired.",
+        849: "Notifier side-effect; reanalysis already completed before this fired.",
+        # v2 capability enrichment is purely additive on top of the v1
+        # FunctionPrincipal writes. A resolver failure leaves the v1 rows
+        # intact — the policy stage's contract is unchanged. Surfacing
+        # this as degraded would falsely flag jobs whose v1 path is
+        # complete and correct.
+        418: "v2-only enrichment failure; v1 FunctionPrincipal rows already written.",
     },
     "workers/static_worker.py": {
         # v2 predicate_trees artifact store failure during the static
