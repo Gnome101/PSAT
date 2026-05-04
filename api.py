@@ -19,6 +19,7 @@ from sqlalchemy import select
 
 from routers import (
     address_labels,
+    agent,
     analyses,
     audits,
     company,
@@ -49,7 +50,7 @@ async def lifespan(app: FastAPI):
             conn.execute(select(1))
         logger.info("Database connection verified")
     except Exception:
-        logger.warning("Database not reachable at startup — endpoints will fail until DB is available")
+        logger.warning("Database not reachable at startup - endpoints will fail until DB is available")
     yield
 
 
@@ -57,7 +58,7 @@ _raw_origins = os.environ.get("PSAT_SITE_ORIGIN", "")
 ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 if not ALLOWED_ORIGINS:
     logger.warning(
-        "PSAT_SITE_ORIGIN is not set — CORS will deny all cross-origin requests. "
+        "PSAT_SITE_ORIGIN is not set - CORS will deny all cross-origin requests. "
         "Set PSAT_SITE_ORIGIN to a comma-separated list of allowed origins."
     )
 
@@ -109,6 +110,7 @@ app.include_router(watched_proxies.router)
 app.include_router(protocols.router)
 app.include_router(monitored.router)
 app.include_router(address_labels.router)
-# SPA catch-all MUST be last — its /{full_path:path} would otherwise
+app.include_router(agent.router)
+# SPA catch-all MUST be last - its /{full_path:path} would otherwise
 # swallow any /api/* route registered after it.
 app.include_router(spa.router)

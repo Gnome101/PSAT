@@ -206,6 +206,7 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
         "controller_values": {},
         "ef_rows": {},
         "upgrade_events_count": {},
+        "upgrade_events_last": {},
         "balances": {},
         "cgn": {},
         "cge": {},
@@ -228,6 +229,16 @@ def _prefetch_child_tables(session: Session, contract_ids: set[int]) -> dict[str
         .group_by(UpgradeEvent.contract_id)
     ).all():
         out["upgrade_events_count"][cid] = count
+    for cid, last_block, last_ts in session.execute(
+        select(
+            UpgradeEvent.contract_id,
+            func.max(UpgradeEvent.block_number),
+            func.max(UpgradeEvent.timestamp),
+        )
+        .where(UpgradeEvent.contract_id.in_(id_list))
+        .group_by(UpgradeEvent.contract_id)
+    ).all():
+        out["upgrade_events_last"][cid] = {"block": last_block, "timestamp": last_ts}
     for b in session.execute(select(ContractBalance).where(ContractBalance.contract_id.in_(id_list))).scalars():
         out["balances"].setdefault(b.contract_id, []).append(b)
     for n in session.execute(select(ControlGraphNode).where(ControlGraphNode.contract_id.in_(id_list))).scalars():
@@ -249,6 +260,7 @@ def build_governance_view(
     controller_values_by_cid: dict[int, list[ControllerValue]] = children["controller_values"]
     ef_rows_by_cid: dict[int, list[EffectiveFunction]] = children["ef_rows"]
     upgrade_events_count_by_cid: dict[int, int] = children["upgrade_events_count"]
+    last_upgrade_by_cid: dict[int, dict[str, Any]] = children["upgrade_events_last"]
     balances_by_cid: dict[int, list[Any]] = children["balances"]
     cgn_by_cid: dict[int, list[ControlGraphNode]] = children["cgn"]
     cge_by_cid: dict[int, list[ControlGraphEdge]] = children["cge"]
@@ -287,7 +299,11 @@ def build_governance_view(
                 if "owner" in cv.controller_id.lower() and cv.value and cv.value.startswith("0x"):
                     owner = cv.value.lower()
 
-        upgrade_count = (upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None) or None
+        upgrade_count = upgrade_events_count_by_cid.get(contract_row.id) if contract_row else None
+        last_upgrade_entry = (last_upgrade_by_cid.get(contract_row.id) if contract_row else None) or {}
+        last_upgrade_block = last_upgrade_entry.get("block")
+        last_ts = last_upgrade_entry.get("timestamp")
+        last_upgrade_timestamp = last_ts.isoformat() if last_ts is not None else None
 
         ef_contract_id = (impl_contract.id if impl_contract else None) or (contract_row.id if contract_row else None)
 
@@ -386,7 +402,10 @@ def build_governance_view(
             "control_model": control_model,
             "risk_level": summary_row.risk_level if summary_row else None,
             "source_verified": summary_row.source_verified if summary_row else None,
+            "chain": contract_row.chain if contract_row else None,
             "upgrade_count": upgrade_count,
+            "last_upgrade_block": last_upgrade_block,
+            "last_upgrade_timestamp": last_upgrade_timestamp,
             "role": role,
             "standards": standards,
             "value_effects": value_effects,

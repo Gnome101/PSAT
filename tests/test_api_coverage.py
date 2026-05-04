@@ -455,6 +455,75 @@ def test_artifact_not_found(mock_session_cls, mock_get_artifact):
 
 @patch("routers.deps.get_artifact")
 @patch("routers.deps.SessionLocal")
+def test_artifact_storage_error_returns_404_not_500(mock_session_cls, mock_get_artifact):
+    """Storage backend failures degrade to 404 instead of leaking a 500.
+
+    The artifact rows can outlive the underlying storage object (e.g. MinIO
+    volume wiped, Tigris credential rotation, transient network blip). The
+    route should answer cleanly so callers' .catch() paths fire — not raise
+    an opaque server error.
+    """
+    client = _make_client()
+    fake_job = _fake_job(name="test_job")
+
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+    mock_exec = MagicMock()
+    mock_exec.scalar_one_or_none.return_value = fake_job
+    mock_session.execute.return_value = mock_exec
+
+    mock_get_artifact.side_effect = RuntimeError("storage_key set but storage not configured")
+
+    response = client.get("/api/analyses/test_job/artifact/dependencies")
+    assert response.status_code == 404
+
+
+@patch("services.discovery.upgrade_history.synthesize_from_events")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
+def test_artifact_upgrade_history_falls_back_to_synthesis(
+    mock_session_cls,
+    mock_get_artifact,
+    mock_synth,
+):
+    """When storage can't serve upgrade_history, rebuild it from
+    UpgradeEvent rows. The relational table is the source of truth for
+    the count/last_block badges shown in the company overview, so the
+    detail view should stay consistent when storage is unhappy."""
+    client = _make_client()
+    fake_job = _fake_job(name="test_job")
+    fake_contract = MagicMock()
+    fake_contract.id = 42
+
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    # First execute resolves the job, second resolves the Contract row.
+    job_exec = MagicMock()
+    job_exec.scalar_one_or_none.return_value = fake_job
+    contract_exec = MagicMock()
+    contract_exec.scalar_one_or_none.return_value = fake_contract
+    mock_session.execute.side_effect = [job_exec, contract_exec]
+
+    mock_get_artifact.side_effect = RuntimeError("object 404")
+    mock_synth.return_value = {
+        "schema_version": "0.1",
+        "target_address": "0xaaa",
+        "proxies": {"0xaaa": {"upgrade_count": 3}},
+        "total_upgrades": 3,
+        "synthesized": True,
+    }
+
+    response = client.get("/api/analyses/test_job/artifact/upgrade_history")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["synthesized"] is True
+    assert body["total_upgrades"] == 3
+    mock_synth.assert_called_once()
+
+
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_artifact_txt_extension_stripping(mock_session_cls, mock_get_artifact):
     """The .txt extension is stripped for lookup."""
     client = _make_client()
@@ -1929,7 +1998,12 @@ def test_analyses_entry_without_analysis_still_appears(mock_session_cls):
 
 @patch("routers.deps.SessionLocal")
 def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls):
-    """When proxy's contract_analysis is None but impl's exists, proxy entry uses impl's."""
+    """When proxy's Contract row has no name, the proxy entry inherits the
+    impl's Contract.contract_name. Earlier code reached for the impl's
+    contract_analysis artifact body to read subject.name, but the listing
+    no longer fetches artifact bodies — names come from the prefetched
+    Contract rows directly. This regression test now seeds both
+    Contract rows and asserts the impl-name is what surfaces."""
     client = _make_client()
 
     proxy_job_id = uuid.uuid4()
@@ -1959,22 +2033,20 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
         address="0xaaaa",
         chain=None,
         rank_score=None,
-        contract_name=None,
+        contract_name=None,  # missing — should inherit from impl
         is_proxy=True,
         proxy_type="ERC1967",
         implementation="0xbbbb",
     )
-
-    artifacts = [
-        SimpleNamespace(
-            job_id=impl_job.id,
-            name="contract_analysis",
-            storage_key=None,
-            data={"subject": {"name": "ImplName"}, "summary": {"control_model": "ownable"}},
-            text_data=None,
-            content_type=None,
-        ),
-    ]
+    impl_contract = SimpleNamespace(
+        address="0xbbbb",
+        chain=None,
+        rank_score=None,
+        contract_name="ImplName",
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
+    )
 
     call_count = {"n": 0}
 
@@ -1982,11 +2054,16 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
         call_count["n"] += 1
         result = MagicMock()
         if call_count["n"] == 1:
+            # Job listing
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            result.scalars.return_value = iter([proxy_contract])
+            # Contracts prefetch — returns both rows now (was just proxy
+            # before, since the old code didn't need impl's Contract row).
+            result.scalars.return_value = iter([proxy_contract, impl_contract])
         elif call_count["n"] == 3:
-            result.scalars.return_value = iter(artifacts)
+            # Artifact name listing — empty is fine, the test only cares
+            # about the contract_name fallback chain.
+            result.all.return_value = []
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None

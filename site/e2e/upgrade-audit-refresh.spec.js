@@ -2,12 +2,12 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * Regression tests for Bug S2 (audit-to-impl mapping) and Bug S3
+ * Regression tests for Bug S2 (bytecode-verified audit-to-impl mapping) and Bug S3
  * (page refresh on /address/<addr>/upgrades loses audit data).
  *
  * The test simulates a direct URL hit — equivalent to a browser refresh —
  * at /address/<proxy>/upgrades. The UI must fetch the audit timeline
- * and render both the "N audits in history" chip and the per-era audit cards.
+ * and render both the "N bytecode matches in history" chip and the per-era audit cards.
  *
  * NOTE: Playwright matches routes in reverse registration order. The
  * broad catch-all must be registered BEFORE the specific routes.
@@ -67,22 +67,22 @@ const DETAIL_PAYLOAD = {
 const AUDIT_TIMELINE = {
   current_status: "audited",
   coverage: [
-    // impl_era match — backend stores cov.impl_address = current impl
-    // (V2) because the Contract row for V1 doesn't exist. The frontend
-    // must fall through to temporal logic and place this on V1.
+    // Bytecode-verified source proof for the historical V1 impl.
     {
       audit_id: 101,
       auditor: "Solidified",
       date: "2023-11-15", // inside V1's era (Nov 2023 – Feb 2024)
       title: "V1 Audit",
-      match_type: "impl_era",
+      match_type: "reviewed_commit",
       match_confidence: "high",
+      equivalence_status: "proven",
+      proof_kind: "clean",
+      bytecode_drift: false,
       covered_from_block: null,
       covered_to_block: null,
-      impl_address: IMPL_V2,
+      impl_address: IMPL_V1,
     },
-    // reviewed_commit match — source-equivalence proof; binds strictly
-    // to the impl address it was proven against (V2).
+    // Bytecode-verified source proof for the current V2 impl.
     {
       audit_id: 102,
       auditor: "Trail of Bits",
@@ -90,6 +90,9 @@ const AUDIT_TIMELINE = {
       title: "V2 Audit",
       match_type: "reviewed_commit",
       match_confidence: "high",
+      equivalence_status: "proven",
+      proof_kind: "clean",
+      bytecode_drift: false,
       covered_from_block: null,
       covered_to_block: null,
       impl_address: IMPL_V2,
@@ -131,23 +134,21 @@ test.describe("Bug S3: /address/.../upgrades refresh", () => {
     await page.goto(`/address/${TARGET_ADDR}/upgrades`);
 
     // Wait for the upgrades tab panel to render
-    await page.waitForSelector(".timeline", { timeout: 10000 });
+    await page.waitForSelector(".upgr2-timeline", { timeout: 10000 });
 
     // The upgrades tab must be the active one — the refresh shouldn't
     // leave us on the summary tab.
     const upgradesTab = page.locator(".tab.active", { hasText: "Upgrades" });
     await expect(upgradesTab).toBeVisible();
 
-    // "audits in history" chip should appear at top of upgrades tab
-    const historyChip = page.locator(".chip", { hasText: /audit[s]? in history/ });
+    // "bytecode matches in history" chip should appear at top of upgrades tab.
+    const historyChip = page.locator(".chip", { hasText: /bytecode match(?:es)? in history/ });
     await expect(historyChip).toBeVisible({ timeout: 5000 });
 
     // Per-era chips:
-    //   V1 (past)    — Solidified only (impl_era, date in V1 era)
+    //   V1 (past)    — Solidified only (reviewed_commit binds by address)
     //   V2 (current) — Trail of Bits only (reviewed_commit binds by address)
-    // Solidified's 2023-11-15 date is >14 days outside V2's era even with
-    // grace, so matchesEra correctly keeps it off the current impl.
-    const auditorCards = page.locator(".timeline .upgrade-audit-card");
+    const auditorCards = page.locator(".upgr2-timeline .upgr2-audit-chip");
     await expect(auditorCards).toHaveCount(2, { timeout: 5000 });
     await expect(auditorCards.filter({ hasText: "Solidified" })).toHaveCount(1);
     await expect(auditorCards.filter({ hasText: "Trail of Bits" })).toHaveCount(1);
@@ -158,14 +159,14 @@ test.describe("Bug S3: /address/.../upgrades refresh", () => {
 
     // First visit — chips render.
     await page.goto(`/address/${TARGET_ADDR}/upgrades`);
-    await page.waitForSelector(".timeline .upgrade-audit-card", { timeout: 10000 });
-    const before = page.locator(".timeline .upgrade-audit-card");
+    await page.waitForSelector(".upgr2-timeline .upgr2-audit-chip", { timeout: 10000 });
+    const before = page.locator(".upgr2-timeline .upgr2-audit-chip");
     await expect(before).toHaveCount(2, { timeout: 5000 });
 
     // Browser refresh — chips must come back on the same URL.
     await page.reload();
-    await page.waitForSelector(".timeline .upgrade-audit-card", { timeout: 10000 });
-    const after = page.locator(".timeline .upgrade-audit-card");
+    await page.waitForSelector(".upgr2-timeline .upgr2-audit-chip", { timeout: 10000 });
+    const after = page.locator(".upgr2-timeline .upgr2-audit-chip");
     await expect(after).toHaveCount(2, { timeout: 5000 });
 
     // Upgrades tab is still the active tab — the tab shouldn't silently
@@ -233,46 +234,41 @@ test.describe("Bug S3: /address/.../upgrades refresh", () => {
     );
 
     await page.goto(`/address/${TARGET_ADDR}/upgrades`);
-    await page.waitForSelector(".timeline", { timeout: 10000 });
-    await page.waitForSelector(".timeline .upgrade-audit-card", { timeout: 10000 });
+    await page.waitForSelector(".upgr2-timeline", { timeout: 10000 });
+    await page.waitForSelector(".upgr2-timeline .upgr2-audit-chip", { timeout: 10000 });
 
     // If we loaded the impl detail (impl_history has no proxies), the
     // timeline would be empty and this count would be 0. Proxy detail
     // yields V1 Solidified + V2 Trail of Bits → 2 chips.
-    const auditorCards = page.locator(".timeline .upgrade-audit-card");
+    const auditorCards = page.locator(".upgr2-timeline .upgr2-audit-chip");
     await expect(auditorCards).toHaveCount(2, { timeout: 5000 });
     await expect(auditorCards.filter({ hasText: "Solidified" })).toHaveCount(1);
     await expect(auditorCards.filter({ hasText: "Trail of Bits" })).toHaveCount(1);
   });
 });
 
-test.describe("Bug S2: audit-to-impl mapping (reviewed_commit vs impl_era)", () => {
-  test("reviewed_commit binds only to impl address; impl_era falls through to temporal match", async ({ page }) => {
-    // Solidified (impl_era, 2023-11-15) must attach to V1 via its date —
-    // before the fix, matchesEra returned early on cov.impl_address === V2
-    // and V1 showed "no audit coverage".
-    //
-    // Trail of Bits (reviewed_commit) must bind only to V2; the source-
-    // equivalence proof is keyed to the impl's source hash and must not
-    // show on V1 even though V1's date range contains the audit date.
+test.describe("Bug S2: bytecode-verified audit-to-impl mapping", () => {
+  test("reviewed_commit proofs bind only to their verified impl address", async ({ page }) => {
+    // Source-equivalence proofs are keyed to the impl's source hash and
+    // must not drift onto another era just because the audit date fits.
     await mockApis(page);
 
     await page.goto(`/address/${TARGET_ADDR}/upgrades`);
 
-    await page.waitForSelector(".timeline", { timeout: 10000 });
-    await page.waitForSelector(".timeline .upgrade-audit-card", { timeout: 10000 });
+    await page.waitForSelector(".upgr2-timeline", { timeout: 10000 });
+    await page.waitForSelector(".upgr2-timeline .upgr2-audit-chip", { timeout: 10000 });
 
-    // V1 (past) era must now show the Solidified chip (this is the
-    // regression the fix addresses) and must NOT show Trail of Bits
-    // (reviewed_commit is strictly address-bound).
-    const v1Entry = page.locator(".timeline-entry.past").first();
-    await expect(v1Entry.locator(".upgrade-audit-card", { hasText: "Solidified" })).toHaveCount(1, { timeout: 5000 });
-    await expect(v1Entry.locator(".upgrade-audit-card", { hasText: "Trail of Bits" })).toHaveCount(0);
-    await expect(v1Entry.locator(".chip", { hasText: "no audit coverage" })).toHaveCount(0);
+    // V1 (past) era must show the Solidified bytecode proof and must NOT
+    // show Trail of Bits, because reviewed_commit is strictly address-bound.
+    // Past impls render as `.upgr2-impl` without the `--current` modifier.
+    const v1Entry = page.locator(".upgr2-impl:not(.upgr2-impl--current)").first();
+    await expect(v1Entry.locator(".upgr2-audit-chip", { hasText: "Solidified" })).toHaveCount(1, { timeout: 5000 });
+    await expect(v1Entry.locator(".upgr2-audit-chip", { hasText: "Trail of Bits" })).toHaveCount(0);
+    await expect(v1Entry.locator(".upgr2-chip--warn")).toHaveCount(0);
 
     // V2 (current) era must show Trail of Bits (reviewed_commit against
     // this impl).
-    const v2Entry = page.locator(".timeline-entry.current");
-    await expect(v2Entry.locator(".upgrade-audit-card", { hasText: "Trail of Bits" })).toHaveCount(1, { timeout: 5000 });
+    const v2Entry = page.locator(".upgr2-impl.upgr2-impl--current");
+    await expect(v2Entry.locator(".upgr2-audit-chip", { hasText: "Trail of Bits" })).toHaveCount(1, { timeout: 5000 });
   });
 });

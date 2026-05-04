@@ -6,6 +6,8 @@ request payloads, not the artifact-output JSON shape.
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -82,6 +84,22 @@ class ProtocolSubscribeRequest(BaseModel):
         return v
 
 
+class UpsertMonitoredContractRequest(BaseModel):
+    address: str = Field(min_length=42, max_length=42)
+    chain: str = "ethereum"
+    contract_type: str = "regular"
+    monitoring_config: dict | None = None
+    needs_polling: bool = False
+    is_active: bool = True
+
+    @field_validator("address")
+    @classmethod
+    def validate_address(cls, value: str) -> str:
+        if not re.fullmatch(r"0x[a-fA-F0-9]{40}", value):
+            raise ValueError("address must be a 20-byte hex address")
+        return value.lower()
+
+
 class AddAuditRequest(BaseModel):
     url: str = Field(min_length=1)
     pdf_url: str | None = None
@@ -110,5 +128,6 @@ __all__ = [
     "ProtocolSubscribeRequest",
     "SubscribeRequest",
     "UpdateMonitoredContractRequest",
+    "UpsertMonitoredContractRequest",
     "WatchProxyRequest",
 ]

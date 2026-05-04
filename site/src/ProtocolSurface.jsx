@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ELK from "elkjs/lib/elk.bundled.js";
 import {
   ReactFlow,
@@ -14,11 +15,18 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import hourglassIcon from "./assets/hourglass-empty.svg";
-import questionMarkIcon from "./assets/question-mark.svg";
-import vaultIcon from "./assets/vault.svg";
+import { GuardGlyph } from "./ui/GuardGlyph.jsx";
+import { GuardButton } from "./ui/GuardButton.jsx";
+import { UpgradesPanel } from "./surface/inspector/UpgradesPanel.jsx";
+import { AgentPanel } from "./surface/inspector/AgentPanel.jsx";
+import ProtocolRadar from "./ProtocolRadar.jsx";
+import DependencyGraphTab from "./DependencyGraphTab.jsx";
+import { computeProtocolScore } from "./protocolScore.js";
 
+import { bytecodeVerifiedAudits, isBytecodeVerifiedAudit } from "./auditCoverage.js";
+import { blockExplorerAddressUrl } from "./blockExplorer.js";
 import { getCoverage, getTimeline } from "./api/audits.js";
+import { api } from "./api/client.js";
 import { listAddressLabels } from "./api/addressLabels.js";
 import AddressLabelInline from "./AddressLabelInline.jsx";
 import {
@@ -73,92 +81,75 @@ const TYPE_META = {
   many: { label: "MULTI", accent: "#8a80a0" },
 };
 
-function GuardGlyph({ kind, accent, title }) {
-  const common = {
-    width: 16,
-    height: 16,
-    viewBox: "0 0 16 16",
-    fill: "none",
-    xmlns: "http://www.w3.org/2000/svg",
-    "aria-hidden": "true",
-  };
+const MONITOR_FLAGS = [
+  { key: "watch_upgrades", label: "Upgrades" },
+  { key: "watch_ownership", label: "Ownership" },
+  { key: "watch_pause", label: "Pause" },
+  { key: "watch_roles", label: "Roles" },
+  // Read both `watch_safe_signers` (auto-enrolled rows + new editor
+  // saves) and `watch_signers` (legacy alias) so the chip lights up
+  // either way. ``aliases`` is consumed by ``monitoringChips``.
+  { key: "watch_safe_signers", aliases: ["watch_signers"], label: "Safe activity" },
+  { key: "watch_timelock", label: "Timelock" },
+  { key: "watch_state", label: "State" },
+];
 
-  if (kind === "unknown") {
-    return (
-      <span
-        className="ps-guard-svg-mask"
-        style={{ "--guard-icon-accent": accent, maskImage: `url(${questionMarkIcon})` }}
-        title={title}
-      />
-    );
-  }
-
-  if (kind === "safe") {
-    return (
-      <span
-        className="ps-guard-svg-mask"
-        style={{ "--guard-icon-accent": accent, maskImage: `url(${vaultIcon})` }}
-        title={title}
-      />
-    );
-  }
-
-  if (kind === "timelock") {
-    return (
-      <span
-        className="ps-guard-svg-mask"
-        style={{ "--guard-icon-accent": accent, maskImage: `url(${hourglassIcon})` }}
-        title={title}
-      />
-    );
-  }
-
-  if (kind === "eoa") {
-    return (
-      <svg {...common}>
-        <circle cx="8" cy="5.3" r="2.2" stroke={accent} strokeWidth="1.4" fill={`${accent}18`} />
-        <path d="M4.2 12.4C4.8 10.5 6.2 9.5 8 9.5C9.8 9.5 11.2 10.5 11.8 12.4" stroke={accent} strokeWidth="1.4" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "contract" || kind === "proxy_admin") {
-    return (
-      <svg {...common}>
-        <rect x="2.6" y="3" width="10.8" height="10" rx="1.8" stroke={accent} strokeWidth="1.4" fill={`${accent}16`} />
-        <path d="M5.3 5.4H10.7M5.3 8H10.7M5.3 10.6H8.8" stroke={accent} strokeWidth="1.4" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "open") {
-    return (
-      <svg {...common}>
-        <rect x="3.2" y="7.2" width="9.6" height="5.8" rx="1.6" stroke={accent} strokeWidth="1.4" fill={`${accent}16`} />
-        <path d="M5.4 7.2V5.8C5.4 4.2 6.7 3 8.2 3C9.2 3 10 3.5 10.5 4.2" stroke={accent} strokeWidth="1.4" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  if (kind === "many") {
-    return (
-      <svg {...common}>
-        <circle cx="5.7" cy="6.2" r="2" stroke={accent} strokeWidth="1.3" fill={`${accent}18`} />
-        <circle cx="10.5" cy="5.6" r="1.8" stroke={accent} strokeWidth="1.3" fill={`${accent}10`} />
-        <path d="M3.7 12.2C4.2 10.8 5.2 10.1 6.5 10.1C7.8 10.1 8.8 10.8 9.3 12.2" stroke={accent} strokeWidth="1.3" strokeLinecap="round" />
-        <path d="M9.4 11.4C9.8 10.5 10.5 10 11.4 10" stroke={accent} strokeWidth="1.3" strokeLinecap="round" />
-      </svg>
-    );
-  }
-
-  return (
-    <span
-      className="ps-guard-svg-mask"
-      style={{ "--guard-icon-accent": accent, maskImage: `url(${questionMarkIcon})` }}
-      title={title}
-    />
-  );
-}
+const MONITOR_ALERT_GROUPS = [
+  {
+    key: "upgrades",
+    label: "Upgrades",
+    flags: ["watch_upgrades"],
+    eventTypes: ["upgraded", "admin_changed", "beacon_upgraded"],
+  },
+  {
+    key: "ownership",
+    label: "Ownership",
+    flags: ["watch_ownership"],
+    eventTypes: ["ownership_transferred"],
+  },
+  {
+    key: "pause",
+    label: "Pause",
+    flags: ["watch_pause"],
+    eventTypes: ["paused", "unpaused"],
+  },
+  {
+    key: "roles",
+    label: "Roles",
+    flags: ["watch_roles"],
+    eventTypes: ["role_granted", "role_revoked"],
+  },
+  {
+    key: "signers",
+    label: "Safe activity",
+    // Backend's _should_watch maps both signer changes AND Safe-tx
+    // executions onto `watch_safe_signers` — the historical UI-only
+    // alias `watch_signers` stays for backward compat with old alerts.
+    flags: ["watch_safe_signers", "watch_signers"],
+    eventTypes: [
+      "signer_added",
+      "signer_removed",
+      "threshold_changed",
+      "safe_tx_executed",
+      "safe_tx_failed",
+      "safe_module_executed",
+      "safe_module_failed",
+    ],
+  },
+  {
+    key: "timelock",
+    label: "Timelock",
+    flags: ["watch_timelock"],
+    eventTypes: ["timelock_scheduled", "timelock_executed", "delay_changed"],
+  },
+  {
+    key: "state",
+    label: "State polling",
+    flags: ["watch_state"],
+    eventTypes: ["state_changed_poll"],
+    needsPolling: true,
+  },
+];
 
 function shortAddr(address) {
   if (!address || address.length < 12) return address || "";
@@ -171,6 +162,13 @@ function formatDelay(seconds) {
   if (value >= 86400) return `${Math.round(value / 86400)}d`;
   if (value >= 3600) return `${Math.round(value / 3600)}h`;
   return `${Math.round(value / 60)}m`;
+}
+
+function maskWebhook(url) {
+  if (!url) return "";
+  const value = String(url);
+  if (value.length <= 24) return value;
+  return `${value.slice(0, 18)}...${value.slice(-8)}`;
 }
 
 function functionName(signature) {
@@ -415,7 +413,14 @@ function guardSummary(fn, companyData) {
   } else if (principal.resolvedType === "timelock" && delay) {
     sublabel = delay;
   } else if (principal.resolvedType === "contract") {
-    sublabel = principal.label || "contract";
+    // Prefer the contract's own name from the protocol inventory over the
+    // generic word "contract" — fetchNextKeyIndex resolving to "AuctionManager"
+    // tells the user something; "contract" doesn't.
+    const targetAddr = principal.address?.toLowerCase();
+    const named = (companyData?.contracts || []).find(
+      (c) => c.address?.toLowerCase() === targetAddr,
+    );
+    sublabel = principal.label || named?.name || "contract";
   }
 
   return {
@@ -481,56 +486,37 @@ function buildMachines(companyData, functionData) {
     });
 }
 
-function GuardButton({ fnView, onSelect, onNavigate }) {
-  const kind = fnView.guard.kind;
-  const principals = fnView.guard.principals || [];
-  const isNavigable = onNavigate && principals.length > 0
-    && kind !== "unknown" && kind !== "open";
-
-  const handleClick = (e) => {
-    if (isNavigable) {
-      e.stopPropagation();
-      // Sort by address for consistent ordering
-      const sorted = [...principals].sort((a, b) => a.address.localeCompare(b.address));
-      const first = sorted[0];
-      onNavigate({
-        type: first.resolvedType || kind,
-        address: first.address,
-        label: first.label,
-        details: first.details,
-        _allPrincipals: sorted.length > 1 ? sorted : null,
-        _sourceFunction: fnView.name,
-        _sourceContract: fnView.contractAddress,
-      });
-    } else {
-      onSelect(fnView);
-    }
-  };
-
-  return (
-    <button
-      type="button"
-      className={`ps-guard-button${kind === "unknown" ? " ps-guard-icon-only" : ""}${isNavigable ? " ps-guard-navigable" : ""}`}
-      style={{ "--guard-accent": fnView.guard.accent }}
-      onClick={handleClick}
-      title={isNavigable ? `Go to ${fnView.guard.label}` : kind === "unknown" ? "Unresolved guard" : `Inspect guard details for ${fnView.name}`}
-    >
-      <span className="ps-guard-icon">
-        <GuardGlyph kind={kind} accent={fnView.guard.accent} title={fnView.guard.label} />
-      </span>
-      {kind !== "unknown" && (
-        <span className="ps-guard-copy">
-          <span className="ps-guard-label">{fnView.guard.label}</span>
-          <span className="ps-guard-meta">{fnView.guard.sublabel}</span>
-        </span>
-      )}
-    </button>
-  );
+function machineFunctions(machine) {
+  if (!machine?.lanes) return [];
+  return [
+    ...(machine.lanes.top || []),
+    ...(machine.lanes.ops || []),
+    ...(machine.lanes.left || []),
+    ...(machine.lanes.right || []),
+  ];
 }
 
-function FunctionPort({ fnView, onSelect, onNavigate, orientation }) {
+function tabForLane(lane) {
+  if (lane === "left") return "inflows";
+  if (lane === "right") return "outflows";
+  return "control";
+}
+
+function findFunctionView(machine, target = {}) {
+  const signature = String(target.functionSignature || target.fn || "").toLowerCase();
+  const selector = String(target.selector || "").toLowerCase();
+  if (!signature && !selector) return null;
+  return machineFunctions(machine).find((fnView) => {
+    const fnSig = String(fnView.signature || "").toLowerCase();
+    const fnKey = String(fnView.key || "").toLowerCase();
+    if (selector && fnKey.endsWith(`:${selector}`)) return true;
+    return signature && fnSig === signature;
+  }) || null;
+}
+
+function FunctionPort({ fnView, onSelect, onNavigate, orientation, highlighted }) {
   return (
-    <div className={`ps-port ps-port-${orientation}`} style={{ "--port-accent": fnView.tone }}>
+    <div className={`ps-port ps-port-${orientation}${highlighted ? " ps-port-score-highlight" : ""}`} style={{ "--port-accent": fnView.tone }}>
       <div className="ps-port-copy" onClick={() => onSelect(fnView)} style={{ cursor: "pointer" }}>
         <div className="ps-port-name">{fnView.name}</div>
         {fnView.action && <div className="ps-port-action">{fnView.action}</div>}
@@ -565,8 +551,12 @@ function categorizeOps(items) {
   return groups.filter((g) => g.items.length > 0);
 }
 
-function OpsCategory({ category, onSelect, onNavigate }) {
+function OpsCategory({ category, onSelect, onNavigate, highlightedFunctionKey }) {
   const [expanded, setExpanded] = useState(false);
+  const containsHighlight = category.items.some((fnView) => fnView.key === highlightedFunctionKey);
+  useEffect(() => {
+    if (containsHighlight) setExpanded(true);
+  }, [containsHighlight]);
   return (
     <div className="ps-ops-category">
       <button
@@ -581,7 +571,14 @@ function OpsCategory({ category, onSelect, onNavigate }) {
       {expanded && (
         <div className="ps-ops-category-body">
           {category.items.map((fnView) => (
-            <FunctionPort key={fnView.key} fnView={fnView} orientation="ops" onSelect={onSelect} onNavigate={onNavigate} />
+            <FunctionPort
+              key={fnView.key}
+              fnView={fnView}
+              orientation="ops"
+              onSelect={onSelect}
+              onNavigate={onNavigate}
+              highlighted={fnView.key === highlightedFunctionKey}
+            />
           ))}
         </div>
       )}
@@ -589,7 +586,7 @@ function OpsCategory({ category, onSelect, onNavigate }) {
   );
 }
 
-function OpsLane({ items, onSelect, onNavigate }) {
+function OpsLane({ items, onSelect, onNavigate, highlightedFunctionKey }) {
   const categories = useMemo(() => categorizeOps(items), [items]);
   return (
     <section className="ps-lane ps-lane-ops">
@@ -600,7 +597,13 @@ function OpsLane({ items, onSelect, onNavigate }) {
       <div className="ps-lane-body ps-ops-groups">
         {categories.length ? (
           categories.map((cat) => (
-            <OpsCategory key={cat.key} category={cat} onSelect={onSelect} onNavigate={onNavigate} />
+            <OpsCategory
+              key={cat.key}
+              category={cat}
+              onSelect={onSelect}
+              onNavigate={onNavigate}
+              highlightedFunctionKey={highlightedFunctionKey}
+            />
           ))
         ) : (
           <div className="ps-lane-empty">No mapped functions</div>
@@ -610,7 +613,7 @@ function OpsLane({ items, onSelect, onNavigate }) {
   );
 }
 
-function LaneColumn({ title, laneKey, items, onSelect, onNavigate }) {
+function LaneColumn({ title, laneKey, items, onSelect, onNavigate, highlightedFunctionKey }) {
   return (
     <section className={`ps-lane ps-lane-${laneKey}`}>
       <div className="ps-lane-header">
@@ -622,7 +625,14 @@ function LaneColumn({ title, laneKey, items, onSelect, onNavigate }) {
       <div className="ps-lane-body">
         {items.length ? (
           items.map((fnView) => (
-            <FunctionPort key={fnView.key} fnView={fnView} orientation={laneKey} onSelect={onSelect} onNavigate={onNavigate} />
+            <FunctionPort
+              key={fnView.key}
+              fnView={fnView}
+              orientation={laneKey}
+              onSelect={onSelect}
+              onNavigate={onNavigate}
+              highlighted={fnView.key === highlightedFunctionKey}
+            />
           ))
         ) : (
           <div className="ps-lane-empty">No mapped functions</div>
@@ -687,12 +697,27 @@ const MACHINE_TABS = [
   { key: "inflows", label: "Inflows" },
   { key: "outflows", label: "Outflows" },
   { key: "balances", label: "Balances" },
-  { key: "audits", label: "Audits" },
 ];
 
-function ContractMachine({ machine, onSelectGuard, onNavigate, companyName }) {
+function ContractMachine({
+  machine,
+  onSelectGuard,
+  onNavigate,
+  companyName,
+  highlightedFunctionKey,
+  highlightedContract = false,
+  onOpenDependencyGraph,
+}) {
   const [activeTab, setActiveTab] = useState("control");
   const usdLabel = formatUsd(machine.total_usd);
+  const highlightedFunction = useMemo(
+    () => machineFunctions(machine).find((fnView) => fnView.key === highlightedFunctionKey) || null,
+    [machine, highlightedFunctionKey],
+  );
+
+  useEffect(() => {
+    if (highlightedFunction) setActiveTab(tabForLane(highlightedFunction.lane));
+  }, [highlightedFunction]);
 
   const tabCounts = {
     control: machine.lanes.top.length + machine.lanes.ops.length,
@@ -702,17 +727,43 @@ function ContractMachine({ machine, onSelectGuard, onNavigate, companyName }) {
   };
 
   return (
-    <article className="ps-machine" style={machine.total_usd ? { borderLeft: "2px solid #f59e0b33" } : undefined}>
+    <article
+      className={`ps-machine${highlightedContract ? " ps-machine-score-highlight" : ""}`}
+      style={machine.total_usd ? { borderLeft: "2px solid #f59e0b33" } : undefined}
+    >
       <header className="ps-machine-header">
-        <div className="ps-machine-name">{machine.name || shortAddr(machine.address)}</div>
-        <div className="ps-machine-address">{shortAddr(machine.address)}</div>
+        <div className="ps-machine-header-row">
+          <div className="ps-machine-title-wrap">
+            <div className="ps-machine-name">{machine.name || shortAddr(machine.address)}</div>
+            <div className="ps-machine-address">{shortAddr(machine.address)}</div>
+          </div>
+        </div>
         <div className="ps-machine-badges">
           <span className="ps-badge" style={{ "--badge-accent": (ROLE_META[machine.role] || ROLE_META.utility).color }}>{(ROLE_META[machine.role] || ROLE_META.utility).label.replace(/s$/, "")}</span>
+          {/* Deposit-destination call-out for value_handler contracts that
+              actually hold funds. The role badge above is jargon — this one
+              answers the user-facing question "where does my money go?"
+              directly. Gated on total_usd>0 so we don't mislabel zero-TVL
+              receivers (e.g. a router that pulls then forwards). */}
+          {machine.role === "value_handler" && Number(machine.total_usd) > 0 ? (
+            <span className="ps-badge" style={{ "--badge-accent": "#22c55e" }}>Deposit destination</span>
+          ) : null}
           {machine.is_proxy ? <span className="ps-badge" style={{ "--badge-accent": "#9a8a6e" }}>{machine.proxy_type || "proxy"}</span> : null}
           {machine.upgrade_count != null ? <span className="ps-badge" style={{ "--badge-accent": "#8b92a8" }}>{machine.upgrade_count} upgrades</span> : null}
           <span className="ps-badge" style={{ "--badge-accent": "#6b7590" }}>{machine.totalFunctions} functions</span>
           {usdLabel && <span className="ps-badge" style={{ "--badge-accent": "#f59e0b" }}>{usdLabel}</span>}
         </div>
+        {onOpenDependencyGraph && (
+          <div className="ps-machine-actions">
+            <button
+              type="button"
+              className="ps-machine-header-action"
+              onClick={() => onOpenDependencyGraph(machine)}
+            >
+              Dependency graph
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="ps-machine-tabs">
@@ -730,23 +781,270 @@ function ContractMachine({ machine, onSelectGuard, onNavigate, companyName }) {
 
       {activeTab === "control" && (
         <>
-          <LaneColumn title={LANE_META.top.label} laneKey="top" items={machine.lanes.top} onSelect={onSelectGuard} onNavigate={onNavigate} />
-          {machine.lanes.ops.length > 0 && <OpsLane items={machine.lanes.ops} onSelect={onSelectGuard} onNavigate={onNavigate} />}
+          <LaneColumn
+            title={LANE_META.top.label}
+            laneKey="top"
+            items={machine.lanes.top}
+            onSelect={onSelectGuard}
+            onNavigate={onNavigate}
+            highlightedFunctionKey={highlightedFunctionKey}
+          />
+          {machine.lanes.ops.length > 0 && (
+            <OpsLane
+              items={machine.lanes.ops}
+              onSelect={onSelectGuard}
+              onNavigate={onNavigate}
+              highlightedFunctionKey={highlightedFunctionKey}
+            />
+          )}
         </>
       )}
       {activeTab === "inflows" && (
-        <LaneColumn title={LANE_META.left.label} laneKey="left" items={machine.lanes.left} onSelect={onSelectGuard} onNavigate={onNavigate} />
+        <LaneColumn
+          title={LANE_META.left.label}
+          laneKey="left"
+          items={machine.lanes.left}
+          onSelect={onSelectGuard}
+          onNavigate={onNavigate}
+          highlightedFunctionKey={highlightedFunctionKey}
+        />
       )}
       {activeTab === "outflows" && (
-        <LaneColumn title={LANE_META.right.label} laneKey="right" items={machine.lanes.right} onSelect={onSelectGuard} onNavigate={onNavigate} />
+        <LaneColumn
+          title={LANE_META.right.label}
+          laneKey="right"
+          items={machine.lanes.right}
+          onSelect={onSelectGuard}
+          onNavigate={onNavigate}
+          highlightedFunctionKey={highlightedFunctionKey}
+        />
       )}
       {activeTab === "balances" && (
         <BalanceTable machine={machine} />
       )}
-      {activeTab === "audits" && (
-        <AuditsPanel machine={machine} companyName={companyName} />
-      )}
     </article>
+  );
+}
+
+function isHexAddress(value) {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(value || ""));
+}
+
+function buildFallbackDependencyGraph(machine) {
+  if (!machine?.address) return null;
+  const nodes = new Map();
+  const edges = [];
+  const targetId = `contract:${machine.address.toLowerCase()}`;
+
+  function addNode(address, values = {}) {
+    if (!isHexAddress(address)) return null;
+    const id = `contract:${address.toLowerCase()}`;
+    if (!nodes.has(id)) {
+      nodes.set(id, {
+        id,
+        address,
+        label: values.label || shortAddr(address),
+        type: values.type || "regular",
+        source: values.source || [],
+        proxy_type: values.proxy_type || null,
+        is_target: Boolean(values.is_target),
+        is_proxy_context: Boolean(values.is_proxy_context),
+      });
+    } else {
+      nodes.set(id, { ...nodes.get(id), ...values });
+    }
+    return id;
+  }
+
+  addNode(machine.address, {
+    label: machine.name || shortAddr(machine.address),
+    type: machine.is_proxy ? "proxy" : "regular",
+    proxy_type: machine.proxy_type,
+    is_target: true,
+    source: ["selected"],
+  });
+
+  if (isHexAddress(machine.implementation)) {
+    const implId = addNode(machine.implementation, {
+      label: `${machine.name || "Implementation"} impl`,
+      type: "implementation",
+      source: ["proxy"],
+    });
+    edges.push({
+      from: targetId,
+      to: implId,
+      op: "DELEGATES_TO",
+      function_name: machine.proxy_type || "implementation",
+    });
+  }
+
+  if (isHexAddress(machine.owner)) {
+    const ownerId = addNode(machine.owner, {
+      label: "owner",
+      type: "regular",
+      source: ["owner"],
+    });
+    edges.push({
+      from: targetId,
+      to: ownerId,
+      op: "STATIC_REF",
+      function_name: "owner",
+    });
+  }
+
+  for (const [controllerId, value] of Object.entries(machine.controllers || {})) {
+    if (!isHexAddress(value)) continue;
+    const controllerNodeId = addNode(value, {
+      label: controllerId.replace(/^[^:]+:/, ""),
+      type: "regular",
+      source: ["controller"],
+    });
+    edges.push({
+      from: targetId,
+      to: controllerNodeId,
+      op: "STATIC_REF",
+      function_name: controllerId.split(":").pop() || "controller",
+    });
+  }
+
+  const uniqueEdges = [];
+  const seenEdges = new Set();
+  for (const edge of edges) {
+    if (!edge.from || !edge.to || edge.from === edge.to) continue;
+    const key = `${edge.from}|${edge.to}|${edge.function_name}`;
+    if (seenEdges.has(key)) continue;
+    seenEdges.add(key);
+    uniqueEdges.push(edge);
+  }
+
+  if (nodes.size <= 1 && uniqueEdges.length === 0) return null;
+  return { nodes: [...nodes.values()], edges: uniqueEdges };
+}
+
+function DependencyGraphModal({ machine, onClose }) {
+  const [graphData, setGraphData] = useState(null);
+  const [graphNote, setGraphNote] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!machine) return undefined;
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      setGraphData(null);
+      setGraphNote(null);
+      const ids = [machine.job_id, machine.impl_job_id, machine.address]
+        .filter(Boolean)
+        .filter((id, index, arr) => arr.indexOf(id) === index);
+      let sawArtifact = false;
+      let lastError = null;
+
+      for (const id of ids) {
+        const encoded = encodeURIComponent(id);
+        try {
+          const detail = await api(`/api/analyses/${encoded}`);
+          if (cancelled) return;
+          if (detail?.dependency_graph_viz?.nodes?.length) {
+            setGraphData(detail.dependency_graph_viz);
+            setGraphNote(null);
+            setLoading(false);
+            return;
+          }
+          if ((detail?.available_artifacts || []).includes("dependency_graph_viz")) {
+            sawArtifact = true;
+          }
+        } catch (err) {
+          lastError = err;
+        }
+
+        if (!sawArtifact) continue;
+
+        try {
+          const artifact = await api(`/api/analyses/${encoded}/artifact/dependency_graph_viz.json`);
+          if (cancelled) return;
+          if (artifact?.nodes?.length) {
+            setGraphData(artifact);
+            setGraphNote(null);
+            setLoading(false);
+            return;
+          }
+        } catch (err) {
+          lastError = err;
+        }
+      }
+
+      if (cancelled) return;
+      const fallback = buildFallbackDependencyGraph(machine);
+      if (fallback?.nodes?.length) {
+        setGraphData(fallback);
+        setGraphNote("Fallback graph generated from selected contract metadata because no stored dependency artifact loaded.");
+        setLoading(false);
+        return;
+      }
+
+      if (!cancelled) {
+        setError(
+          sawArtifact
+            ? `Dependency graph artifact is listed, but it could not be loaded${lastError?.message ? `: ${lastError.message}` : "."}`
+            : "No dependency graph artifact is available for this contract.",
+        );
+        setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [machine]);
+
+  if (!machine) return null;
+
+  return (
+    <div className="ps-modal-backdrop" onMouseDown={onClose}>
+      <div
+        className="ps-dependency-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Dependency graph"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="ps-dependency-modal-header">
+          <div>
+            <div className="ps-dependency-modal-eyebrow">Dependency Graph</div>
+            <h2>{machine.name || shortAddr(machine.address)}</h2>
+            <a
+              className="ps-dependency-modal-sub ps-scanner-link"
+              href={blockExplorerAddressUrl(machine.address, machine.chain)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {machine.address}
+            </a>
+          </div>
+          <button type="button" className="ps-modal-close" onClick={onClose} aria-label="Close dependency graph">
+            x
+          </button>
+        </header>
+        <div className="ps-dependency-modal-body">
+          {loading && <div className="ps-modal-empty">Loading dependency graph...</div>}
+          {!loading && error && <div className="ps-modal-empty ps-modal-empty-error">{error}</div>}
+          {!loading && graphData && (
+            <>
+              {graphNote && <div className="ps-dependency-note">{graphNote}</div>}
+              <DependencyGraphTab data={graphData} runName={null} chain={machine.chain} />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1103,8 +1401,85 @@ function InspectorCard({ selected, onNavigate }) {
   );
 }
 
+// Pretty event-type label for the activity section. Falls back to the
+// raw underscore-separated form if we get an event_type the watcher
+// emits but the UI hasn't taught itself about yet.
+const EVENT_LABELS = {
+  signer_added: "Signer added",
+  signer_removed: "Signer removed",
+  threshold_changed: "Threshold changed",
+  safe_tx_executed: "Tx executed",
+  safe_tx_failed: "Tx failed",
+  safe_module_executed: "Module call",
+  safe_module_failed: "Module call failed",
+  timelock_scheduled: "Queued",
+  timelock_executed: "Executed",
+  delay_changed: "Delay changed",
+  ownership_transferred: "Owner transferred",
+  paused: "Paused",
+  unpaused: "Unpaused",
+  role_granted: "Role granted",
+  role_revoked: "Role revoked",
+};
+const EVENT_ACCENTS = {
+  signer_added: "#3b82f6",
+  signer_removed: "#3b82f6",
+  threshold_changed: "#f59e0b",
+  safe_tx_executed: "#22c55e",
+  safe_tx_failed: "#ef4444",
+  safe_module_executed: "#22c55e",
+  safe_module_failed: "#ef4444",
+  timelock_scheduled: "#3b82f6",
+  timelock_executed: "#f59e0b",
+  delay_changed: "#f59e0b",
+  ownership_transferred: "#ef4444",
+  paused: "#ef4444",
+  unpaused: "#ef4444",
+  role_granted: "#f59e0b",
+  role_revoked: "#f59e0b",
+};
+
+function formatEventAgo(detectedAt) {
+  if (!detectedAt) return null;
+  const d = new Date(detectedAt);
+  if (Number.isNaN(d.getTime())) return null;
+  const seconds = Math.max(0, (Date.now() - d.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  if (seconds < 30 * 86400) return `${Math.floor(seconds / 86400)}d ago`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 function PrincipalDetail({ principal, machines, onNavigate, onFocusContract, addressLabels, refreshAddressLabels }) {
   const [focusIdx, setFocusIdx] = useState(0);
+  // Recent on-chain activity for safes/timelocks. Sourced from
+  // /api/monitored-events keyed by address — the unified watcher writes
+  // a MonitoredEvent row for every CallScheduled/CallExecuted, signer
+  // change, and Safe-tx execution it sees. Lazy-loaded only when a
+  // safe or timelock is selected so we don't hit the endpoint for
+  // every principal click on contracts/EOAs/etc.
+  const [activity, setActivity] = useState(null);
+  const [activityError, setActivityError] = useState(null);
+  const principalAddress = principal?.address?.toLowerCase();
+  const principalType = principal?.type;
+  const wantsActivity = principalType === "safe" || principalType === "timelock";
+
+  useEffect(() => {
+    if (!wantsActivity || !principalAddress) {
+      setActivity(null);
+      setActivityError(null);
+      return;
+    }
+    let cancelled = false;
+    setActivity(null);
+    setActivityError(null);
+    api(`/api/monitored-events?address=${encodeURIComponent(principalAddress)}&limit=15`)
+      .then((rows) => { if (!cancelled) setActivity(Array.isArray(rows) ? rows : []); })
+      .catch((e) => { if (!cancelled) setActivityError(e.message || String(e)); });
+    return () => { cancelled = true; };
+  }, [wantsActivity, principalAddress]);
+
   if (!principal) return null;
   const type = TYPE_META[principal.type] || TYPE_META.unknown;
   const controlled = (principal.controls || []);
@@ -1211,6 +1586,44 @@ function PrincipalDetail({ principal, machines, onNavigate, onFocusContract, add
           ))}
         </section>
       )}
+
+      {/* Recent on-chain activity. Pulls the last 15 MonitoredEvent rows
+       * for this address — the unified watcher writes one per
+       * CallScheduled/CallExecuted, signer change, and Safe tx
+       * execution it sees. Empty state explains what the user would
+       * see once we get historical backfill working (#4c). */}
+      {wantsActivity ? (
+        <section className="ps-principal-section">
+          <div className="ps-principal-section-hdr">Recent activity</div>
+          {activityError ? (
+            <div className="ps-inspector-empty">Activity lookup failed: {activityError}</div>
+          ) : activity == null ? (
+            <div className="ps-inspector-empty">Loading activity…</div>
+          ) : activity.length === 0 ? (
+            <div className="ps-inspector-empty">
+              No on-chain activity recorded yet. The watcher captures events going forward from enrollment;
+              historical events before then aren't backfilled yet.
+            </div>
+          ) : (
+            <div className="ps-activity-list">
+              {activity.map((evt) => {
+                const label = EVENT_LABELS[evt.event_type] || evt.event_type.replace(/_/g, " ");
+                const accent = EVENT_ACCENTS[evt.event_type] || "#94a3b8";
+                const ago = formatEventAgo(evt.detected_at);
+                const txShort = evt.tx_hash ? `${evt.tx_hash.slice(0, 10)}…${evt.tx_hash.slice(-4)}` : null;
+                return (
+                  <div key={evt.id} className="ps-activity-row">
+                    <span className="ps-badge" style={{ "--badge-accent": accent }}>{label}</span>
+                    {ago ? <span className="ps-activity-ago">{ago}</span> : null}
+                    {evt.block_number ? <span className="ps-activity-block">block {evt.block_number.toLocaleString()}</span> : null}
+                    {txShort ? <span className="ps-activity-tx mono">{txShort}</span> : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ) : null}
     </article>
   );
 }
@@ -1859,26 +2272,1216 @@ function SurfaceCanvas({ machines, fundFlows, principals, selectedAddress, focus
   );
 }
 
-function SidebarTabs({ mode, onSetMode, auditCount }) {
+// Detail tab's empty state — when nothing is selected, show the same
+// composite-score block + radar that the company hero uses, so the
+// sidebar isn't a blank "click something" prompt. Falls back to a quiet
+// stub if companyData hasn't loaded yet.
+function DetailEmptyState({ companyName, companyData, coverageData, onExampleClick }) {
+  if (!companyData) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">Loading protocol overview…</div>
+      </section>
+    );
+  }
+  const { axes, composite, grade } = computeProtocolScore(
+    companyData,
+    coverageData,
+  );
+  return (
+    <section className="ps-detail-empty">
+      <div className="ps-detail-empty-hdr">{companyName}</div>
+      <div className={`company-hero-score grade-${grade}`}>
+        <span className="company-hero-score-value">{composite}</span>
+        <span className="company-hero-score-unit">/ 100</span>
+      </div>
+      <div className="company-hero-score-label">Grade {grade.toUpperCase()}</div>
+      <div className={`company-hero-grade-bar grade-${grade}`}>
+        <div
+          className="company-hero-grade-bar-fill"
+          style={{ width: `${Math.max(4, composite)}%` }}
+        />
+      </div>
+      <div className="ps-detail-empty-radar">
+        <ProtocolRadar
+          axes={axes}
+          size={240}
+          labelRadius={0.40}
+          labelInsetX={64}
+          labelInsetY={12}
+          onExampleClick={onExampleClick}
+        />
+      </div>
+      <div className="ps-detail-empty-hint">
+        Click a contract or principal on the canvas for its detail.
+      </div>
+    </section>
+  );
+}
+
+function SidebarTabs({ mode, onSetMode, auditCount, showDetail = true }) {
   return (
     <div className="ps-sidebar-tabs">
+      {/* showDetail is on by default in both embedded and fullscreen
+          modes — clicking a contract anywhere is expected to surface the
+          function-lane view. Kept as an opt-out prop so a future caller
+          that needs a chrome-only sidebar can still suppress the tab. */}
+      {showDetail && (
+        <button
+          className={`ps-sidebar-tab ${mode === "detail" ? "active" : ""}`}
+          onClick={() => onSetMode("detail")}
+        >
+          Detail
+        </button>
+      )}
       <button
-        className={`ps-sidebar-tab ${mode === "detail" ? "active" : ""}`}
-        onClick={() => onSetMode("detail")}
+        className={`ps-sidebar-tab ${mode === "agent" ? "active" : ""}`}
+        onClick={() => onSetMode("agent")}
       >
-        Detail
+        Agent
       </button>
       <button
         className={`ps-sidebar-tab ${mode === "audits" ? "active" : ""}`}
         onClick={() => onSetMode("audits")}
       >
-        Audits{auditCount != null ? ` (${auditCount})` : ""}
+        Audits{auditCount != null ? `(${auditCount})` : ""}
+      </button>
+      <button
+        className={`ps-sidebar-tab ${mode === "monitoring" ? "active" : ""}`}
+        onClick={() => onSetMode("monitoring")}
+      >
+        Monitor
+      </button>
+      <button
+        className={`ps-sidebar-tab ${mode === "upgrades" ? "active" : ""}`}
+        onClick={() => onSetMode("upgrades")}
+      >
+        Upgrades
       </button>
     </div>
   );
 }
 
-function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, error, machines }) {
+// Sidebar Upgrades tab. Two states:
+//   - No machine selected: list proxies in this protocol with upgrade counts.
+//     Click a row → focus that proxy on canvas (parent handles selection).
+//   - Machine selected (proxy): lazy-fetch the analysis blob for that contract
+//     (the per-contract upgrade_history isn't included in /api/company/{name},
+//     so we go via /api/analyses/{job_id}) and render the existing
+//     UpgradesPanel — same layout as the standalone /address/<addr>/upgrades
+//     page so the per-impl audit cards (UpgradeAuditCard) appear identically.
+function UpgradesSidebarPanel({ machine, companyName, machines, onSelect, cache, onCache }) {
+  const [history, setHistory] = useState(null);
+  const [deps, setDeps] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!machine || !machine.is_proxy || !machine.job_id) {
+      setHistory(null);
+      setDeps({});
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    const cached = cache && cache[machine.job_id];
+    if (cached) {
+      setHistory(cached.history || null);
+      setDeps(cached.deps || {});
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setHistory(null);
+    setDeps({});
+    // Two lean artifact fetches in parallel instead of the multi-MB
+    // /api/analyses/{job_id} blob — that endpoint merges every artifact
+    // (contract_analysis, control_snapshot, effective_permissions, …) and
+    // the Upgrades tab only needs upgrade_history + dependencies. Each
+    // promise's failure is isolated: if `dependencies` errors out, the
+    // timeline still renders with raw addresses instead of resolved
+    // contract names.
+    const jid = encodeURIComponent(machine.job_id);
+    Promise.all([
+      api(`/api/analyses/${jid}/artifact/upgrade_history`).catch(() => null),
+      api(`/api/analyses/${jid}/artifact/dependencies`).catch(() => null),
+    ])
+      .then(([uhBody, depsBody]) => {
+        if (cancelled) return;
+        const h = (uhBody && typeof uhBody === "object") ? uhBody : null;
+        const d = (depsBody && typeof depsBody === "object")
+          // dependencies artifact body is shaped { dependencies: {...} }
+          // when stored via the analysis pipeline; some legacy paths
+          // store the inner map directly. Accept either.
+          ? (depsBody.dependencies || depsBody)
+          : {};
+        setHistory(h);
+        setDeps(d);
+        if (onCache) onCache(machine.job_id, h, d);
+      })
+      .catch((e) => { if (!cancelled) setError(e.message || String(e)); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // cache/onCache deliberately omitted: we read on mount/selection change
+    // only so a cache update from this very fetch doesn't retrigger the
+    // effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [machine?.job_id, machine?.is_proxy]);
+
+  if (!machine) {
+    const proxies = (machines || []).filter((m) => m.is_proxy);
+    if (proxies.length === 0) {
+      return (
+        <section className="ps-principal-section">
+          <div className="ps-inspector-empty">No proxies in this protocol.</div>
+        </section>
+      );
+    }
+    // Resolve a count for the badge: prefer the server's value, else the
+    // total_upgrades on a previously-fetched analysis blob (lazy-cached as
+    // the user clicks into proxies). When neither is known, omit the chip
+    // rather than rendering a misleading "0".
+    function countFor(m) {
+      if (typeof m.upgrade_count === "number" && m.upgrade_count > 0) return m.upgrade_count;
+      const cached = cache && cache[m.job_id];
+      const totalUpgrades = cached?.history?.total_upgrades;
+      return typeof totalUpgrades === "number" ? totalUpgrades : null;
+    }
+    // Last-upgrade resolution: the server returns ISO timestamp; fall back
+    // to the cached artifact's last_upgrade_block when timestamp is missing
+    // (older proxies may have block numbers but no chain timestamp).
+    function lastUpgradeFor(m) {
+      if (m.last_upgrade_timestamp) {
+        const d = new Date(m.last_upgrade_timestamp);
+        if (!Number.isNaN(d.getTime())) {
+          return { sortKey: d.getTime(), label: d.toLocaleDateString("en-US", { year: "numeric", month: "short" }) };
+        }
+      }
+      if (typeof m.last_upgrade_block === "number" && m.last_upgrade_block > 0) {
+        return { sortKey: m.last_upgrade_block, label: `block ${m.last_upgrade_block.toLocaleString()}` };
+      }
+      // Fall back to anything we cached during a per-proxy load.
+      const cached = cache && cache[m.job_id];
+      const targetAddr = (cached?.history?.target_address || m.address || "").toLowerCase();
+      const proxy = cached?.history?.proxies?.[targetAddr];
+      const block = proxy?.last_upgrade_block;
+      if (typeof block === "number" && block > 0) {
+        return { sortKey: block, label: `block ${block.toLocaleString()}` };
+      }
+      return null;
+    }
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-upgrades-global-hint">Click a proxy to see its timeline + audit matches.</div>
+        <div className="ps-upgrades-global">
+          {proxies
+            .slice()
+            .sort((a, b) => {
+              // Most-recently-upgraded first; proxies with no recency data
+              // sink to the bottom and tiebreak alphabetically.
+              const la = lastUpgradeFor(a);
+              const lb = lastUpgradeFor(b);
+              if (la && lb) return lb.sortKey - la.sortKey;
+              if (la) return -1;
+              if (lb) return 1;
+              return String(a.name || "").localeCompare(String(b.name || ""));
+            })
+            .map((m) => {
+              const count = countFor(m);
+              const last = lastUpgradeFor(m);
+              return (
+                <button
+                  key={m.address}
+                  type="button"
+                  className="ps-upgrades-row"
+                  onClick={() => onSelect && onSelect(m)}
+                >
+                  <div className="ps-upgrades-row-name">
+                    <span>{m.name || shortAddr(m.address)}</span>
+                    <span className="ps-upgrades-row-arrow">→</span>
+                  </div>
+                  <div className="ps-upgrades-row-meta">
+                    {count != null ? (
+                      <span className="ps-badge" style={{ "--badge-accent": "#8b92a8" }}>
+                        {count} upgrade{count === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
+                    {m.proxy_type ? (
+                      <span className="ps-badge" style={{ "--badge-accent": "#9a8a6e" }}>{m.proxy_type}</span>
+                    ) : null}
+                    {last ? (
+                      <span className="ps-badge" style={{ "--badge-accent": "var(--tone-ownership)" }}>
+                        last {last.label}
+                      </span>
+                    ) : null}
+                  </div>
+                </button>
+              );
+            })}
+        </div>
+      </section>
+    );
+  }
+
+  if (!machine.is_proxy) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">{machine.name || "This contract"} is not a proxy. No upgrade history.</div>
+      </section>
+    );
+  }
+
+  if (error) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">Failed to load upgrade history: {error}</div>
+      </section>
+    );
+  }
+
+  return (
+    <div className="ps-upgrades-sidebar-body">
+      <UpgradesPanel
+        upgradeHistory={history}
+        contractId={machine.contract_id}
+        companyName={companyName}
+        contractAddress={machine.address}
+        contractName={machine.name}
+        dependencies={deps}
+        loading={loading}
+      />
+    </div>
+  );
+}
+
+function monitoringChips(config) {
+  const active = MONITOR_FLAGS.filter((flag) => {
+    if (config?.[flag.key]) return true;
+    return (flag.aliases || []).some((alias) => config?.[alias]);
+  });
+  if (!active.length) return <span className="ps-monitor-muted">none</span>;
+  return active.map((flag) => (
+    <span key={flag.key} className="ps-monitor-chip">{flag.label}</span>
+  ));
+}
+
+function groupKeysFromConfig(config = {}) {
+  return MONITOR_ALERT_GROUPS
+    .filter((group) => group.flags.some((flag) => config?.[flag]))
+    .map((group) => group.key);
+}
+
+function configFromGroupKeys(groupKeys) {
+  const selected = new Set(groupKeys);
+  const config = {};
+  for (const group of MONITOR_ALERT_GROUPS) {
+    for (const flag of group.flags) {
+      config[flag] = selected.has(group.key);
+    }
+  }
+  return config;
+}
+
+function eventTypesFromGroupKeys(groupKeys) {
+  const selected = new Set(groupKeys);
+  const out = [];
+  for (const group of MONITOR_ALERT_GROUPS) {
+    if (!selected.has(group.key)) continue;
+    for (const eventType of group.eventTypes) {
+      if (!out.includes(eventType)) out.push(eventType);
+    }
+  }
+  return out;
+}
+
+function needsPollingFromGroupKeys(groupKeys) {
+  const selected = new Set(groupKeys);
+  return MONITOR_ALERT_GROUPS.some((group) => group.needsPolling && selected.has(group.key));
+}
+
+function subscriptionEventTypeSet(subscription) {
+  const raw = subscription?.event_filter?.event_types;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  return new Set(raw.map((eventType) => String(eventType).toLowerCase()));
+}
+
+function matchingWebhookCountForConfig(config, subscriptions = []) {
+  if (!subscriptions.length) return 0;
+  const eventTypes = eventTypesFromGroupKeys(groupKeysFromConfig(config))
+    .map((eventType) => eventType.toLowerCase());
+  return subscriptions.filter((subscription) => {
+    const allowed = subscriptionEventTypeSet(subscription);
+    if (!allowed) return true;
+    return eventTypes.some((eventType) => allowed.has(eventType));
+  }).length;
+}
+
+function contractTypeForMachine(machine) {
+  if (machine?.is_proxy) return "proxy";
+  if (machine?.is_pausable || machine?.capabilities?.includes("pause")) return "pausable";
+  if (machine?.role === "governance") return "governance";
+  return "regular";
+}
+
+function SurfaceMonitoringPanel({ companyData, machines, selectedMachine }) {
+  const protocolId = companyData?.protocol_id;
+  const [contracts, setContracts] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [busyId, setBusyId] = useState(null);
+  const [savingAlert, setSavingAlert] = useState(false);
+  const [editorSessions, setEditorSessions] = useState([]);
+  const [activeEditorKey, setActiveEditorKey] = useState(null);
+  const [monitorQuery, setMonitorQuery] = useState("");
+  const [monitorAlertFilters, setMonitorAlertFilters] = useState([]);
+  const [monitorStatusFilter, setMonitorStatusFilter] = useState("active");
+  const [monitorWebhookFilter, setMonitorWebhookFilter] = useState("any");
+
+  const machineByAddress = useMemo(() => {
+    const map = new Map();
+    for (const machine of machines || []) {
+      const address = machine.address?.toLowerCase();
+      if (address) map.set(address, machine);
+      const implementation = machine.implementation?.toLowerCase();
+      if (implementation && !map.has(implementation)) {
+        map.set(implementation, { ...machine, name: `${machine.name || shortAddr(machine.address)} impl`, address: machine.implementation });
+      }
+    }
+    return map;
+  }, [machines]);
+
+  const contractByAddress = useMemo(() => {
+    const map = new Map();
+    for (const contract of contracts) {
+      const address = contract.address?.toLowerCase();
+      if (address) map.set(address, contract);
+    }
+    return map;
+  }, [contracts]);
+
+  const refresh = useCallback(async ({ quiet = false } = {}) => {
+    if (!protocolId) return;
+    if (!quiet) setLoading(true);
+    setError(null);
+    try {
+      const [monitoring, subs] = await Promise.all([
+        api(`/api/protocols/${protocolId}/monitoring`),
+        api(`/api/protocols/${protocolId}/subscriptions`),
+      ]);
+      setContracts(Array.isArray(monitoring) ? monitoring : []);
+      setSubscriptions(Array.isArray(subs) ? subs : []);
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      if (!quiet) setLoading(false);
+    }
+  }, [protocolId]);
+
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(() => refresh({ quiet: true }), 15000);
+    return () => clearInterval(timer);
+  }, [refresh]);
+
+  if (!protocolId) {
+    return (
+      <section className="ps-principal-section">
+        <div className="ps-inspector-empty">No protocol monitoring id is available.</div>
+      </section>
+    );
+  }
+
+  const monitoredAlerts = [...contracts]
+    .sort((a, b) => {
+      const aMachine = machineByAddress.get(a.address?.toLowerCase());
+      const bMachine = machineByAddress.get(b.address?.toLowerCase());
+      return String(aMachine?.name || a.address).localeCompare(String(bMachine?.name || b.address));
+    });
+  const activeAlerts = monitoredAlerts.filter((contract) => contract.is_active);
+  const inactiveAlerts = monitoredAlerts.filter((contract) => !contract.is_active);
+  const filteredMonitorAlerts = monitoredAlerts.filter((contract) => {
+    const machine = machineByAddress.get(contract.address?.toLowerCase());
+    const query = monitorQuery.trim().toLowerCase();
+    const haystack = [
+      machine?.name,
+      contract.address,
+      contract.chain,
+      contract.contract_type,
+    ].filter(Boolean).join(" ").toLowerCase();
+    const statusMatches = (
+      monitorStatusFilter === "all" ||
+      (monitorStatusFilter === "active" && contract.is_active) ||
+      (monitorStatusFilter === "inactive" && !contract.is_active)
+    );
+    const groups = groupKeysFromConfig(contract.monitoring_config);
+    const webhookCount = matchingWebhookCountForConfig(contract.monitoring_config || {}, subscriptions);
+    const alertsMatch = (
+      monitorAlertFilters.length === 0 ||
+      monitorAlertFilters.every((key) => groups.includes(key))
+    );
+    const webhookMatches = (
+      monitorWebhookFilter === "any" ||
+      (monitorWebhookFilter === "with" && webhookCount > 0) ||
+      (monitorWebhookFilter === "without" && webhookCount === 0)
+    );
+    return statusMatches && alertsMatch && webhookMatches && (!query || haystack.includes(query));
+  });
+  const focusedAlert = selectedMachine?.address
+    ? activeAlerts.find((contract) => contract.address?.toLowerCase() === selectedMachine.address.toLowerCase()) || null
+    : null;
+  const activeEditor = (
+    editorSessions.find((session) => session.key === activeEditorKey && !session.minimized) ||
+    editorSessions.find((session) => !session.minimized) ||
+    null
+  );
+  const minimizedEditors = editorSessions.filter((session) => session.minimized);
+
+  function openAlertEditor(machine = null, existingContract = null) {
+    const target = machine || (existingContract?.address ? machineByAddress.get(existingContract.address.toLowerCase()) : null) || null;
+    const matchedContract = target?.address ? contractByAddress.get(target.address.toLowerCase()) : null;
+    const address = target?.address || existingContract?.address;
+    const key = address?.toLowerCase();
+    if (!key) return;
+    const nextSession = {
+      key,
+      machine: target,
+      contract: existingContract || (matchedContract?.is_active ? matchedContract : null),
+      minimized: false,
+    };
+    setEditorSessions((prev) => [
+      ...prev
+        .filter((session) => session.key !== key)
+        .map((session) => ({ ...session, minimized: true })),
+      nextSession,
+    ]);
+    setActiveEditorKey(key);
+  }
+
+  function minimizeAlertEditor(key) {
+    setEditorSessions((prev) => prev.map((session) => (
+      session.key === key ? { ...session, minimized: true } : session
+    )));
+    setActiveEditorKey((current) => (current === key ? null : current));
+  }
+
+  function restoreAlertEditor(key) {
+    setEditorSessions((prev) => prev.map((session) => (
+      { ...session, minimized: session.key !== key }
+    )));
+    setActiveEditorKey(key);
+  }
+
+  function closeAlertEditor(key) {
+    setEditorSessions((prev) => prev.filter((session) => session.key !== key));
+    setActiveEditorKey((current) => (current === key ? null : current));
+  }
+
+  function toggleMonitorAlertFilter(key) {
+    setMonitorAlertFilters((prev) => (
+      prev.includes(key)
+        ? prev.filter((value) => value !== key)
+        : [...prev, key]
+    ));
+  }
+
+  function cycleMonitorWebhookFilter() {
+    setMonitorWebhookFilter((prev) => {
+      if (prev === "any") return "with";
+      if (prev === "with") return "without";
+      return "any";
+    });
+  }
+
+  async function patchContract(contract, patch) {
+    setBusyId(contract.id);
+    setError(null);
+    try {
+      await api(`/api/monitored-contracts/${contract.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      await refresh({ quiet: true });
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveAlert(draft) {
+    if (!draft.address) return;
+    const machine = machineByAddress.get(draft.address.toLowerCase());
+    const existingContract = contractByAddress.get(draft.address.toLowerCase());
+    const groupKeys = draft.groupKeys?.length ? draft.groupKeys : ["upgrades"];
+    setSavingAlert(true);
+    setError(null);
+    try {
+      await api(`/api/protocols/${protocolId}/monitoring`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address: draft.address,
+          chain: machine?.chain || existingContract?.chain || draft.chain || "ethereum",
+          contract_type: existingContract?.contract_type || contractTypeForMachine(machine),
+          monitoring_config: configFromGroupKeys(groupKeys),
+          needs_polling: needsPollingFromGroupKeys(groupKeys),
+          is_active: true,
+        }),
+      });
+
+      if (draft.webhookMode === "new" && draft.webhookUrl?.trim()) {
+        const eventTypes = eventTypesFromGroupKeys(groupKeys);
+        await api(`/api/protocols/${protocolId}/subscribe`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            discord_webhook_url: draft.webhookUrl.trim(),
+            label: draft.webhookLabel?.trim() || null,
+            event_filter: eventTypes.length ? { event_types: eventTypes } : null,
+          }),
+        });
+      }
+
+      closeAlertEditor(draft.key || draft.address.toLowerCase());
+      await refresh({ quiet: true });
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setSavingAlert(false);
+    }
+  }
+
+  return (
+    <section className="ps-monitor-panel">
+      <div className="ps-monitor-header">
+        <div>
+          <div className="ps-monitor-title">{selectedMachine ? "Contract alerts" : "Monitor alerts"}</div>
+          <div className="ps-monitor-subtitle">
+            {selectedMachine
+              ? `${selectedMachine.name || shortAddr(selectedMachine.address)} · ${focusedAlert ? "alert active" : "no alert"}`
+              : `${filteredMonitorAlerts.length}/${monitoredAlerts.length} shown · ${activeAlerts.length} active · ${inactiveAlerts.length} inactive`}
+          </div>
+        </div>
+      </div>
+
+      {error && <div className="ps-monitor-error">{error}</div>}
+      {loading && <div className="ps-inspector-empty">Loading alerts...</div>}
+
+      {selectedMachine ? (
+        <FocusedContractAlerts
+          machine={selectedMachine}
+          alert={focusedAlert}
+          subscriptions={subscriptions}
+          busyId={busyId}
+          onAdd={() => openAlertEditor(selectedMachine)}
+          onEdit={(contract) => openAlertEditor(selectedMachine, contract)}
+          onTurnOff={(contract) => patchContract(contract, { is_active: false })}
+        />
+      ) : (
+        <>
+          <MonitorAlertFilters
+            query={monitorQuery}
+            status={monitorStatusFilter}
+            webhookStatus={monitorWebhookFilter}
+            selectedGroups={monitorAlertFilters}
+            onQueryChange={setMonitorQuery}
+            onStatusChange={setMonitorStatusFilter}
+            onCycleWebhookStatus={cycleMonitorWebhookFilter}
+            onToggleGroup={toggleMonitorAlertFilter}
+            onClearGroups={() => setMonitorAlertFilters([])}
+          />
+          <AlertsTable
+            alerts={filteredMonitorAlerts}
+            machineByAddress={machineByAddress}
+            subscriptions={subscriptions}
+            busyId={busyId}
+            emptyLabel="No monitored alerts match these filters."
+            onEdit={(contract) => openAlertEditor(null, contract)}
+            onSetActive={(contract, isActive) => patchContract(contract, { is_active: isActive })}
+          />
+        </>
+      )}
+
+      {editorSessions.length ? createPortal(
+        <aside className={`ps-monitor-side-menu${activeEditor ? " ps-monitor-side-menu-edit" : " ps-monitor-side-menu-minimized"}`}>
+          {activeEditor ? (
+            <MonitorAlertEditor
+              key={activeEditor.key}
+              sessionKey={activeEditor.key}
+              subscriptions={subscriptions}
+              initialMachine={activeEditor.machine}
+              initialContract={activeEditor.contract}
+              saving={savingAlert}
+              onMinimize={() => minimizeAlertEditor(activeEditor.key)}
+              onClose={() => closeAlertEditor(activeEditor.key)}
+              onSave={saveAlert}
+            />
+          ) : null}
+          {minimizedEditors.length ? (
+            <MinimizedAlertEditors
+              sessions={minimizedEditors}
+              onRestore={restoreAlertEditor}
+              onClose={closeAlertEditor}
+              inline={Boolean(activeEditor)}
+            />
+          ) : null}
+        </aside>,
+        document.body,
+      ) : null}
+    </section>
+  );
+}
+
+function FocusedContractAlerts({
+  machine,
+  alert,
+  subscriptions,
+  busyId,
+  onAdd,
+  onEdit,
+  onTurnOff,
+}) {
+  const webhookCount = alert ? matchingWebhookCountForConfig(alert.monitoring_config || {}, subscriptions) : 0;
+  return (
+    <div className="ps-monitor-focus-card">
+      <div className="ps-monitor-focus-top">
+        <div className="ps-monitor-alert-main">
+          <div className="ps-monitor-alert-name">{machine?.name || shortAddr(machine?.address)}</div>
+          <div className="ps-monitor-alert-meta">
+            <span>{shortAddr(machine?.address)}</span>
+            <span>{alert ? (alert.needs_polling ? "polling" : "events") : "not monitored"}</span>
+            <span>{webhookCount ? `${webhookCount} webhook${webhookCount === 1 ? "" : "s"}` : "no webhook"}</span>
+          </div>
+        </div>
+        <div className="ps-monitor-alert-actions">
+          {alert ? (
+            <button type="button" className="ps-monitor-btn ps-monitor-btn-primary" onClick={() => onEdit(alert)}>
+              Edit alert
+            </button>
+          ) : (
+            <button type="button" className="ps-monitor-btn ps-monitor-btn-primary" onClick={onAdd}>
+              Add alert
+            </button>
+          )}
+          {alert ? (
+            <button
+              type="button"
+              className="ps-monitor-btn"
+              disabled={busyId === alert.id}
+              onClick={() => onTurnOff(alert)}
+            >
+              Turn off
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {alert ? (
+        <div className="ps-monitor-contract-watch">
+          {monitoringChips(alert.monitoring_config || {})}
+          <MonitorWebhookIndicator count={webhookCount} />
+        </div>
+      ) : (
+        <div className="ps-inspector-empty">No active alert for this contract.</div>
+      )}
+    </div>
+  );
+}
+
+function MonitorEventIcon({ kind }) {
+  const common = {
+    width: 13,
+    height: 13,
+    viewBox: "0 0 16 16",
+    fill: "none",
+    "aria-hidden": "true",
+  };
+
+  if (kind === "upgrades") {
+    return (
+      <svg {...common}>
+        <path d="M8 12.5V3.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+        <path d="M4.8 6.7L8 3.5L11.2 6.7" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M4 12.5H12" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "ownership") {
+    return (
+      <svg {...common}>
+        <circle cx="8" cy="5" r="2.1" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M3.8 12.5C4.5 10.5 5.9 9.5 8 9.5C10.1 9.5 11.5 10.5 12.2 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "pause") {
+    return (
+      <svg {...common}>
+        <rect x="4.4" y="3.5" width="2.2" height="9" rx="0.8" fill="currentColor" />
+        <rect x="9.4" y="3.5" width="2.2" height="9" rx="0.8" fill="currentColor" />
+      </svg>
+    );
+  }
+
+  if (kind === "roles") {
+    return (
+      <svg {...common}>
+        <circle cx="6" cy="5.8" r="1.8" stroke="currentColor" strokeWidth="1.4" />
+        <circle cx="10.8" cy="5.2" r="1.5" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M3.2 12.2C3.7 10.6 4.8 9.7 6.3 9.7C7.8 9.7 8.9 10.6 9.4 12.2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        <path d="M9.7 10.8C10.2 10.1 10.9 9.8 11.7 9.8C12.5 9.8 13.1 10.2 13.5 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "signers") {
+    return (
+      <svg {...common}>
+        <path d="M4 11.7L5.2 8.8L10.9 3.1C11.4 2.6 12.2 2.6 12.7 3.1C13.2 3.6 13.2 4.4 12.7 4.9L7 10.6L4 11.7Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
+        <path d="M9.9 4.1L11.7 5.9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        <path d="M3.5 13H12.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === "timelock") {
+    return <GuardGlyph kind="timelock" accent="currentColor" title="Timelock" />;
+  }
+
+  return (
+    <svg {...common}>
+      <circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 5.2V8L10.1 10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function MonitorEventIcons({ config }) {
+  const groups = MONITOR_ALERT_GROUPS.filter((group) => groupKeysFromConfig(config).includes(group.key));
+  if (!groups.length) return <span className="ps-monitor-muted">none</span>;
+  return (
+    <div className="ps-monitor-event-icons" aria-label="Alert types">
+      {groups.map((group) => (
+        <span
+          key={group.key}
+          className={`ps-monitor-event-icon ps-monitor-event-icon-${group.key}`}
+          data-label={group.label}
+          aria-label={group.label}
+        >
+          <MonitorEventIcon kind={group.key} />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function WebhookGlyph() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M5.2 10.8C3.8 10.8 2.7 9.7 2.7 8.3C2.7 6.9 3.8 5.8 5.2 5.8H6.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M9.6 5.2H10.8C12.2 5.2 13.3 6.3 13.3 7.7C13.3 9.1 12.2 10.2 10.8 10.2H9.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M6.1 8H9.9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function MonitorWebhookIndicator({ count }) {
+  const active = count > 0;
+  return (
+    <span
+      className={`ps-monitor-webhook-indicator${active ? " active" : ""}`}
+      data-label={active ? `${count} matching webhook${count === 1 ? "" : "s"}` : "No matching webhook"}
+      aria-label={active ? `${count} matching webhook${count === 1 ? "" : "s"}` : "No matching webhook"}
+    >
+      <WebhookGlyph />
+    </span>
+  );
+}
+
+function MonitorAlertFilters({
+  query,
+  status,
+  webhookStatus,
+  selectedGroups,
+  onQueryChange,
+  onStatusChange,
+  onCycleWebhookStatus,
+  onToggleGroup,
+  onClearGroups,
+}) {
+  const webhookLabel = webhookStatus === "with"
+    ? "Only alerts with matching webhooks"
+    : webhookStatus === "without"
+      ? "Only alerts without matching webhooks"
+      : "Webhook filter off";
+  return (
+    <div className="ps-monitor-filterbar">
+      <input
+        className="ps-monitor-filter-input"
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        placeholder="Filter name or address"
+        aria-label="Filter monitor alerts by name or address"
+      />
+      <div className="ps-monitor-status-filter" aria-label="Filter monitor alerts by status">
+        {["all", "active", "inactive"].map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={`ps-monitor-status-chip${status === value ? " active" : ""}`}
+            onClick={() => onStatusChange(value)}
+          >
+            {value}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`ps-monitor-webhook-cycle ps-monitor-webhook-cycle-${webhookStatus}`}
+          data-label={webhookLabel}
+          aria-label={webhookLabel}
+          onClick={onCycleWebhookStatus}
+        >
+          <WebhookGlyph />
+          {webhookStatus === "without" ? <span className="ps-monitor-webhook-x">×</span> : null}
+        </button>
+      </div>
+      <div className="ps-monitor-type-filter-row" aria-label="Filter monitor alerts by alert type">
+        {MONITOR_ALERT_GROUPS.map((group) => {
+          const selected = selectedGroups.includes(group.key);
+          return (
+            <button
+              key={group.key}
+              type="button"
+              className={`ps-monitor-type-filter${selected ? " active" : ""}`}
+              onClick={() => onToggleGroup(group.key)}
+              data-label={group.label}
+              aria-label={`Filter by ${group.label}`}
+            >
+              <MonitorEventIcon kind={group.key} />
+            </button>
+          );
+        })}
+        {selectedGroups.length ? (
+          <button type="button" className="ps-monitor-clear-filter" onClick={onClearGroups}>
+            Clear
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function AlertsTable({
+  alerts,
+  machineByAddress,
+  subscriptions,
+  busyId,
+  emptyLabel = "No active alerts.",
+  onEdit,
+  onSetActive,
+}) {
+  if (!alerts.length) {
+    return <div className="ps-inspector-empty">{emptyLabel}</div>;
+  }
+
+  return (
+    <div className="ps-monitor-alert-table">
+      {alerts.map((contract) => {
+        const machine = machineByAddress.get(contract.address?.toLowerCase());
+        const webhookCount = matchingWebhookCountForConfig(contract.monitoring_config || {}, subscriptions);
+        return (
+          <div
+            key={contract.id}
+            className={`ps-monitor-table-row${contract.is_active ? "" : " inactive"}`}
+            role="button"
+            tabIndex={0}
+            title={contract.address}
+            onClick={() => onEdit(contract)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onEdit(contract);
+              }
+            }}
+          >
+            <div className="ps-monitor-table-main">
+              <div className="ps-monitor-table-name">{machine?.name || shortAddr(contract.address)}</div>
+              <div className="ps-monitor-table-addr">{contract.address}</div>
+            </div>
+            <MonitorEventIcons config={contract.monitoring_config || {}} />
+            <MonitorWebhookIndicator count={webhookCount} />
+            <button
+              type="button"
+              className={`ps-monitor-link ps-monitor-status-toggle${contract.is_active ? " active" : ""}`}
+              disabled={busyId === contract.id}
+              title={contract.is_active ? "Monitoring is on. Click to turn off." : "Monitoring is off. Click to turn on."}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSetActive(contract, !contract.is_active);
+              }}
+            >
+              {contract.is_active ? "On" : "Off"}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MinimizedAlertEditors({ sessions, onRestore, onClose, inline = false }) {
+  return (
+    <div className={`ps-monitor-minimized-stack${inline ? " ps-monitor-minimized-stack-inline" : ""}`}>
+      {sessions.map((session) => {
+        const address = session.machine?.address || session.contract?.address;
+        const label = session.machine?.name || shortAddr(address);
+        return (
+          <div key={session.key} className="ps-monitor-minimized-item">
+            <button
+              type="button"
+              className="ps-monitor-minimized-restore"
+              onClick={() => onRestore(session.key)}
+              title={`Restore ${label}`}
+            >
+              <span>Alert</span>
+              <strong>{label}</strong>
+            </button>
+            <button
+              type="button"
+              className="ps-monitor-minimized-close"
+              onClick={() => onClose(session.key)}
+              aria-label={`Close minimized alert for ${label}`}
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MonitorAlertEditor({
+  sessionKey,
+  subscriptions,
+  initialMachine,
+  initialContract,
+  saving,
+  onMinimize,
+  onClose,
+  onSave,
+}) {
+  const address = initialMachine?.address || initialContract?.address || "";
+  const initialGroups = initialContract
+    ? groupKeysFromConfig(initialContract.monitoring_config)
+    : ["upgrades", "ownership", "pause"];
+  const [groupKeys, setGroupKeys] = useState(initialGroups.length ? initialGroups : ["upgrades"]);
+  const [webhookMode, setWebhookMode] = useState(subscriptions.length ? "existing" : "new");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookLabel, setWebhookLabel] = useState("");
+
+  function toggleGroup(key) {
+    setGroupKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next.size ? [...next] : [key];
+    });
+  }
+
+  const selectedContract = initialContract || null;
+  const selectedMachine = initialMachine || null;
+  const contractLabel = selectedMachine?.name || shortAddr(address);
+
+  return (
+    <div className="ps-monitor-editor" role="dialog" aria-modal="false">
+      <form
+        className="ps-monitor-editor-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave({
+            key: sessionKey,
+            address,
+            chain: selectedMachine?.chain || selectedContract?.chain || "ethereum",
+            groupKeys,
+            webhookMode,
+            webhookUrl,
+            webhookLabel,
+          });
+        }}
+      >
+        <div className="ps-monitor-modal-header">
+          <div>
+            <div className="ps-monitor-title">{initialContract ? "Edit alert" : "Add alert"}</div>
+            <div className="ps-monitor-subtitle">{contractLabel}</div>
+          </div>
+          <div className="ps-monitor-modal-header-actions">
+            <button type="button" className="ps-monitor-icon-btn" onClick={onMinimize} aria-label="Minimize alert editor">-</button>
+            <button type="button" className="ps-modal-close" onClick={onClose}>×</button>
+          </div>
+        </div>
+
+        <div className="ps-monitor-target-card">
+          <span>{contractLabel}</span>
+          <strong title={address}>{shortAddr(address)}</strong>
+        </div>
+
+        <div className="ps-monitor-field">
+          <span>Watch</span>
+          <div className="ps-monitor-alert-grid">
+            {MONITOR_ALERT_GROUPS.map((group) => {
+              const selected = groupKeys.includes(group.key);
+              return (
+                <button
+                  key={group.key}
+                  type="button"
+                  className={`ps-monitor-alert-choice${selected ? " active" : ""}`}
+                  onClick={() => toggleGroup(group.key)}
+                >
+                  {group.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="ps-monitor-field">
+          <span>Webhook</span>
+          <div className="ps-monitor-webhook-choice">
+            {subscriptions.length ? (
+              <button
+                type="button"
+                className={`ps-monitor-alert-choice${webhookMode === "existing" ? " active" : ""}`}
+                onClick={() => setWebhookMode("existing")}
+              >
+                Existing ({subscriptions.length})
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={`ps-monitor-alert-choice${webhookMode === "new" ? " active" : ""}`}
+              onClick={() => setWebhookMode("new")}
+            >
+              New webhook
+            </button>
+          </div>
+          {webhookMode === "new" ? (
+            <>
+              <input
+                className="ps-monitor-input"
+                value={webhookUrl}
+                onChange={(event) => setWebhookUrl(event.target.value)}
+                placeholder="Discord webhook URL"
+              />
+              <input
+                className="ps-monitor-input"
+                value={webhookLabel}
+                onChange={(event) => setWebhookLabel(event.target.value)}
+                placeholder="Label"
+              />
+            </>
+          ) : (
+            <div className="ps-monitor-selected-webhooks">
+              {subscriptions.map((sub) => (
+                <span key={sub.id} className="ps-monitor-chip">
+                  {sub.label || maskWebhook(sub.discord_webhook_url)}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="ps-monitor-modal-actions">
+          <button type="button" className="ps-monitor-btn" onClick={onClose}>Cancel</button>
+          <button
+            type="submit"
+            className="ps-monitor-btn ps-monitor-btn-primary"
+            disabled={saving || !address}
+          >
+            {saving ? "Saving" : "Save alert"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function SelectedContractAuditCoverage({ machine, coverageData, onPickAudit }) {
+  if (!machine || !coverageData) return null;
+  const addresses = [machine.address, machine.implementation]
+    .filter(Boolean)
+    .map((address) => address.toLowerCase());
+  const row = (coverageData.coverage || []).find((entry) =>
+    addresses.includes(String(entry.address || "").toLowerCase())
+  );
+  const verifiedAudits = bytecodeVerifiedAudits(row?.audits);
+
+  if (!row || verifiedAudits.length === 0) {
+    return (
+      <section className="ps-audits-contract-card">
+        <div className="ps-audits-contract-top">
+          <span>{machine.name || row?.contract_name || shortAddr(machine.address)}</span>
+        </div>
+        <div className="ps-audits-contract-addr">{row?.address || machine.address}</div>
+        <div className="ps-audits-contract-note">No bytecode match</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="ps-audits-contract-card">
+      <div className="ps-audits-contract-top">
+        <span>{machine.name || row.contract_name || shortAddr(machine.address)}</span>
+        <span className="ps-monitor-muted">
+          {verifiedAudits.length} bytecode match{verifiedAudits.length === 1 ? "" : "es"}
+        </span>
+      </div>
+      <div className="ps-audits-contract-addr">{row.address}</div>
+      <div className="ps-audits-contract-list">
+        {verifiedAudits.map((audit) => {
+          const matchMeta = MATCH_TYPE_META[audit.match_type] || MATCH_TYPE_META.direct;
+          return (
+            <button
+              key={audit.audit_id}
+              type="button"
+              className="ps-audits-contract-row"
+              onClick={() => onPickAudit?.(audit.audit_id)}
+            >
+              <div className="ps-audits-contract-row-main">
+                <span>{audit.auditor || "Unknown"}</span>
+                <span>{formatAuditDate(audit.date)}</span>
+              </div>
+              {audit.title && <div className="ps-audits-contract-row-title">{audit.title}</div>}
+              <div className="ps-audits-contract-badges">
+                <MetaBadge meta={matchMeta} />
+                {audit.match_confidence && (
+                  <span className="ps-badge" style={{ "--badge-accent": "#6b7590", fontSize: 10 }}>
+                    {audit.match_confidence}
+                  </span>
+                )}
+                {audit.equivalence_status && EQUIVALENCE_META[audit.equivalence_status] && (
+                  <MetaBadge
+                    meta={EQUIVALENCE_META[audit.equivalence_status]}
+                    title={audit.equivalence_reason || ""}
+                  />
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, error, machines, selectedMachine }) {
   const [readingAudit, setReadingAudit] = useState(null);
   if (loading) return <section className="ps-principal-section"><div className="ps-inspector-empty">Loading audits…</div></section>;
   if (error) return <section className="ps-principal-section"><div className="ps-inspector-empty">Failed: {error}</div></section>;
@@ -1893,6 +3496,7 @@ function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, er
     const addr = (entry.address || "").toLowerCase();
     if (!addr) continue;
     for (const a of entry.audits || []) {
+      if (!isBytecodeVerifiedAudit(a)) continue;
       const id = a.audit_id;
       if (!byAudit.has(id)) {
         byAudit.set(id, { audit: a, addresses: new Set(), shaByAddr: new Map() });
@@ -1931,10 +3535,12 @@ function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, er
   return (
     <>
       <section className="ps-audits-panel">
-        <div className="ps-audits-panel-hdr">All audits ({entries.length})</div>
-        <div className="ps-audits-panel-hint">
-          Click an audit to highlight its covered contracts on the canvas.
-        </div>
+        <SelectedContractAuditCoverage
+          machine={selectedMachine}
+          coverageData={coverageData}
+          onPickAudit={onPickAudit}
+        />
+        <div className="ps-audits-panel-hdr">Verified audits ({entries.length})</div>
 
         {activeEntry && (
           <div className="ps-audits-active-card">
@@ -1963,6 +3569,9 @@ function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, er
         )}
 
         <div className="ps-audits-list">
+          {entries.length === 0 ? (
+            <div className="ps-inspector-empty">None</div>
+          ) : null}
           {entries.map(({ audit, addresses }) => {
             const isActive = activeAuditId === audit.audit_id;
             return (
@@ -1980,8 +3589,7 @@ function AuditsListPanel({ coverageData, activeAuditId, onPickAudit, loading, er
                   </div>
                   {audit.title && <div className="ps-audits-row-title">{audit.title}</div>}
                   <div className="ps-audits-row-meta">
-                    covers {addresses.size} contract{addresses.size === 1 ? "" : "s"}
-                    {audit.match_type ? ` · ${audit.match_type}` : ""}
+                    matches {addresses.size} contract{addresses.size === 1 ? "" : "s"}
                   </div>
                 </button>
                 <button
@@ -2390,11 +3998,17 @@ function AuditCommitChips({ detail, maxShown = 4 }) {
   );
 }
 
-function DraggableSidebar({ children }) {
+function DraggableSidebar({ children, flyout = null }) {
   const [width, setWidth] = useState(380);
+  const [collapsed, setCollapsed] = useState(false);
+  const [flyoutCollapsed, setFlyoutCollapsed] = useState(false);
   const dragging = useRef(false);
+  const sidebarWidth = collapsed ? 44 : width;
+  const showFlyout = !collapsed && flyout && !flyoutCollapsed;
+  const showFlyoutRail = !collapsed && flyout && flyoutCollapsed;
 
   const onMouseDown = useCallback((e) => {
+    if (collapsed) return;
     e.preventDefault();
     dragging.current = true;
     const startX = e.clientX;
@@ -2411,13 +4025,71 @@ function DraggableSidebar({ children }) {
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-  }, [width]);
+  }, [collapsed, width]);
 
   return (
-    <div className="ps-sidebar" style={{ width, minWidth: width, maxWidth: width }}>
-      <div className="ps-sidebar-handle" onMouseDown={onMouseDown} />
-      <div className="ps-sidebar-content">{children}</div>
-    </div>
+    <>
+      {showFlyout ? (
+        <div className="ps-sidebar-flyout" style={{ right: sidebarWidth }}>
+          <button
+            type="button"
+            className="ps-sidebar-flyout-toggle"
+            onClick={() => setFlyoutCollapsed(true)}
+            title="Minimize panel"
+            aria-label="Minimize panel"
+          >
+            &lt;
+          </button>
+          {flyout}
+        </div>
+      ) : null}
+      {showFlyoutRail ? (
+        <button
+          type="button"
+          className="ps-sidebar-flyout-rail"
+          style={{ right: sidebarWidth }}
+          onClick={() => setFlyoutCollapsed(false)}
+          title="Expand panel"
+          aria-label="Expand panel"
+        >
+          &gt;
+        </button>
+      ) : null}
+      <div
+        className={`ps-sidebar${collapsed ? " ps-sidebar-collapsed" : ""}`}
+        style={{
+          width: sidebarWidth,
+          minWidth: sidebarWidth,
+          maxWidth: sidebarWidth,
+          "--ps-sidebar-width": `${sidebarWidth}px`,
+        }}
+      >
+        <div className="ps-sidebar-handle" onMouseDown={onMouseDown}>
+          <button
+            type="button"
+            className="ps-sidebar-toggle ps-sidebar-toggle-collapse"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => setCollapsed(true)}
+            title="Minimize side panel"
+            aria-label="Minimize side panel"
+          >
+            &gt;
+          </button>
+        </div>
+        <div className="ps-sidebar-content">{children}</div>
+        <div className="ps-sidebar-rail">
+          <button
+            type="button"
+            className="ps-sidebar-rail-button"
+            onClick={() => setCollapsed(false)}
+            title="Expand side panel"
+            aria-label="Expand side panel"
+          >
+            &lt;
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -2548,6 +4220,7 @@ function SearchNavigator({ machines, principals, onFocus, mode, setMode }) {
   const [sortKey, setSortKey] = useState("value");
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
+  const [hasInteracted, setHasInteracted] = useState(false);
 
   const results = useMemo(
     () => buildSearchResults(machines, principals, mode, sortKey, query),
@@ -2557,17 +4230,25 @@ function SearchNavigator({ machines, principals, onFocus, mode, setMode }) {
   // Reset index when results change
   useEffect(() => { setIndex(0); }, [results.length, mode, sortKey, query]);
 
-  // Notify parent when focused result changes
+  // Notify parent when the user drives the navigator. The initial preview
+  // should not become a selected/focused contract by itself.
   useEffect(() => {
+    if (!hasInteracted) return;
     if (results.length > 0 && results[index]) {
       onFocus(results[index]);
     } else {
       onFocus(null);
     }
-  }, [index, results]);
+  }, [hasInteracted, index, results]);
 
-  const prev = () => setIndex((i) => (i > 0 ? i - 1 : results.length - 1));
-  const next = () => setIndex((i) => (i < results.length - 1 ? i + 1 : 0));
+  const prev = () => {
+    setHasInteracted(true);
+    setIndex((i) => (i > 0 ? i - 1 : results.length - 1));
+  };
+  const next = () => {
+    setHasInteracted(true);
+    setIndex((i) => (i < results.length - 1 ? i + 1 : 0));
+  };
 
   const current = results[index];
 
@@ -2580,13 +4261,19 @@ function SearchNavigator({ machines, principals, onFocus, mode, setMode }) {
         <input
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setHasInteracted(true);
+            setQuery(e.target.value);
+          }}
           placeholder="Search... (e.g. 'min value 3M')"
           className="ps-search-input"
         />
         <select
           value={sortKey}
-          onChange={(e) => setSortKey(e.target.value)}
+          onChange={(e) => {
+            setHasInteracted(true);
+            setSortKey(e.target.value);
+          }}
           className="ps-search-sort"
         >
           {SORT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
@@ -2623,7 +4310,7 @@ function SearchNavigator({ machines, principals, onFocus, mode, setMode }) {
   );
 }
 
-export default function ProtocolSurface({ companyName, initialData = null }) {
+export default function ProtocolSurface({ companyName, initialData = null, embedded = false }) {
   // initialData lets a parent (CompanyOverview) hand us the
   // /api/company/{name} payload it already fetched, so we don't fire a
   // second 1-3 MB request on mount. We still pull functions out of it
@@ -2639,6 +4326,14 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
   const [selectedGuard, setSelectedGuard] = useState(null);
   const [selectedMachine, setSelectedMachine] = useState(null);
   const [selectedPrincipal, setSelectedPrincipal] = useState(null);
+  const [radarExampleSelection, setRadarExampleSelection] = useState(null);
+  const [suppressSearchFocus, setSuppressSearchFocus] = useState(() => (
+    !embedded && Boolean(
+      new URLSearchParams(window.location.search).get("score")
+        || new URLSearchParams(window.location.search).get("scoreAxis")
+        || sessionStorage.getItem("psat:surfaceRadarExample"),
+    )
+  ));
   // Search mode lives on the parent so the mode-pill bar can render at
   // top-left while the rest of SearchNavigator stays in the centre overlay.
   const [searchMode, setSearchMode] = useState("all");
@@ -2653,24 +4348,44 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
     focusKeyRef.current += 1;
     setFocusAddress({ address: addr, key: focusKeyRef.current });
     setFocusedAddress(addr || null);
+    if (embedded) return;
     // Sync focus address to URL
     const url = new URL(window.location.href);
     if (addr) {
       url.searchParams.set("focus", addr);
+      url.searchParams.delete("fn");
+      url.searchParams.delete("score");
     } else {
       url.searchParams.delete("focus");
+      url.searchParams.delete("fn");
+      url.searchParams.delete("score");
     }
     window.history.replaceState({}, "", url.toString());
-  }, []);
+  }, [embedded]);
   // Multi-principal tour state: { principals: [...], index: 0, sourceContract: "0x...", sourceFunction: "fn" }
   const [principalTour, setPrincipalTour] = useState(null);
   const [error, setError] = useState(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(true);
+  const [dependencyGraphMachine, setDependencyGraphMachine] = useState(null);
 
-  // Right sidebar mode: "detail" (machine/principal inspector) vs "audits"
-  // (flat audit list). "audits" mode keeps the list visible while the user
-  // clicks different audits and watches the canvas highlight update.
-  const [sidebarMode, setSidebarMode] = useState("detail");
+  // Right sidebar mode: "detail" (default), "agent", "audits",
+  // "monitoring", or "upgrades".
+  // Default to Agent in both embedded and fullscreen views — the chat
+  // interface is the most useful entry point on first load. A canvas
+  // click switches to Detail in both modes (handlers below).
+  const [sidebarMode, setSidebarMode] = useState("agent");
+  // Per-proxy upgrade history cache, keyed by job_id. Server's
+  // /api/company/{name} returns upgrade_count=null for protocols whose
+  // chain monitor hasn't ingested events yet (the static-analysis blob in
+  // /api/analyses/{job_id} has the real numbers). We populate this lazily
+  // each time the user opens a proxy in the Upgrades tab so subsequent
+  // visits skip the round-trip and the global proxy list can show real
+  // counts for already-opened proxies.
+  const [upgradeHistoryCache, setUpgradeHistoryCache] = useState({});
+  const cacheUpgradeHistory = useCallback((jobId, history, deps) => {
+    if (!jobId) return;
+    setUpgradeHistoryCache((prev) => ({ ...prev, [jobId]: { history, deps } }));
+  }, []);
 
   // Coverage payload — one call, cached locally. Used to build the audits
   // list + the audit_id → address-set map for highlight propagation.
@@ -2708,20 +4423,37 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
     return () => { cancelled = true; };
   }, [companyName]);
 
-  // Highlighted addresses for the active audit — lowercased Set so the
-  // canvas comparison is O(1). null if no audit selected.
+  // Agent-emitted highlights: addresses the LLM mentioned in its last
+  // answer, intersected server-side with the protocol's in-scope contracts.
+  // Plain state so AgentPanel can replace it via setHighlightedAddresses.
+  const [agentHighlights, setAgentHighlights] = useState(null);
+
+  // Highlighted addresses on the canvas: union of agent highlights (Agent
+  // tab) with the audit-coverage set (Audits tab). Either source can drive
+  // the green ring. Lowercased Set so the canvas comparison is O(1); null
+  // when neither source is active so the canvas falls back to selection-
+  // dimming.
   const highlightedAddresses = useMemo(() => {
-    if (activeAuditId == null || !coverageData) return null;
-    const out = new Set();
-    for (const entry of coverageData.coverage || []) {
-      const addr = (entry.address || "").toLowerCase();
-      if (!addr) continue;
-      if ((entry.audits || []).some((a) => a.audit_id === activeAuditId)) {
-        out.add(addr);
+    const fromAudit = (() => {
+      if (activeAuditId == null || !coverageData) return null;
+      const out = new Set();
+      for (const entry of coverageData.coverage || []) {
+        const addr = (entry.address || "").toLowerCase();
+        if (!addr) continue;
+        if ((entry.audits || []).some((a) => a.audit_id === activeAuditId && isBytecodeVerifiedAudit(a))) {
+          out.add(addr);
+        }
       }
-    }
-    return out;
-  }, [activeAuditId, coverageData]);
+      return out;
+    })();
+    if (!fromAudit && !agentHighlights) return null;
+    const merged = new Set();
+    if (fromAudit) for (const a of fromAudit) merged.add(a);
+    if (agentHighlights) for (const a of agentHighlights) merged.add(a);
+    return merged.size ? merged : null;
+  }, [activeAuditId, coverageData, agentHighlights]);
+
+  const setHighlightedAddresses = setAgentHighlights;
   const [enabledRoles, setEnabledRoles] = useState(() => {
     const initial = new Set();
     for (const [role, meta] of Object.entries(ROLE_META)) {
@@ -2739,6 +4471,7 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
       setCompanyData(initialData);
       setError(null);
       setSelectedGuard(null);
+      setRadarExampleSelection(null);
       return undefined;
     }
     let cancelled = false;
@@ -2747,6 +4480,7 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
       try {
         setError(null);
         setSelectedGuard(null);
+        setRadarExampleSelection(null);
         const companyResponse = await fetch(`/api/company/${encodeURIComponent(companyName)}`);
         if (!companyResponse.ok) throw new Error("Failed to load company overview");
         const companyPayload = await companyResponse.json();
@@ -2784,14 +4518,22 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
   // Restore focus from URL on initial data load
   const restoredFocus = useRef(false);
   useEffect(() => {
-    if (restoredFocus.current || !machines.length) return;
+    if (embedded || restoredFocus.current || !machines.length) return;
     const params = new URLSearchParams(window.location.search);
     const urlFocus = params.get("focus");
+    if (params.get("score")) return;
     if (urlFocus) {
       restoredFocus.current = true;
+      const machine = machines.find((m) => m.address?.toLowerCase() === urlFocus.toLowerCase());
+      if (machine) {
+        setSelectedMachine(machine);
+        setSelectedPrincipal(null);
+        setSelectedGuard(null);
+        setRadarExampleSelection(null);
+      }
       triggerFocus(urlFocus);
     }
-  }, [machines, triggerFocus]);
+  }, [embedded, machines, triggerFocus]);
 
   const handleToggleRole = useCallback((role) => {
     setEnabledRoles((prev) => {
@@ -2806,7 +4548,80 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
     setSelectedMachine(machine);
     setSelectedPrincipal(null);
     setSelectedGuard(null);
+    setRadarExampleSelection(null);
+    triggerFocus(machine?.address || null);
+    // Clear any agent-emitted green-ring overlay when selection moves —
+    // otherwise pane clicks (which call this with null) leave the
+    // previous agent-highlighted address visually "focused".
+    if (!machine) setAgentHighlights(null);
+  }, [triggerFocus]);
+
+  const handleSelectGuard = useCallback((fnView) => {
+    setSelectedGuard(fnView);
+    setRadarExampleSelection(null);
   }, []);
+
+  const handleRadarExampleClick = useCallback((example) => {
+    const targetAddress = example?.contractAddress?.toLowerCase();
+    if (!targetAddress) return;
+    const machine = allMachines.find((m) => m.address?.toLowerCase() === targetAddress);
+    if (!machine) return;
+    const fnView = findFunctionView(machine, example);
+    setEnabledRoles((prev) => {
+      const role = machine.role || "utility";
+      if (prev.has(role)) return prev;
+      const next = new Set(prev);
+      next.add(role);
+      return next;
+    });
+    setSidebarMode("detail");
+    setSelectedMachine(machine);
+    setSelectedPrincipal(null);
+    setSelectedGuard(fnView || null);
+    setRadarExampleSelection({
+      contractAddress: machine.address,
+      functionKey: fnView?.key || null,
+    });
+    setSuppressSearchFocus(false);
+    triggerFocus(machine.address);
+    const url = new URL(window.location.href);
+    url.searchParams.set("focus", machine.address);
+    url.searchParams.set("score", "1");
+    if (fnView?.signature) url.searchParams.set("fn", fnView.signature);
+    else url.searchParams.delete("fn");
+    window.history.replaceState({}, "", url.toString());
+  }, [allMachines, triggerFocus]);
+
+  const restoredExampleSelection = useRef(false);
+  useEffect(() => {
+    if (embedded || restoredExampleSelection.current || !allMachines.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const focus = params.get("focus");
+    const fn = params.get("fn");
+    let target = null;
+    if (focus && params.get("score")) {
+      target = { contractAddress: focus, functionSignature: fn || "", selector: fn || "" };
+    } else if (window.location.pathname.endsWith("/surface")) {
+      try {
+        const pending = JSON.parse(sessionStorage.getItem("psat:surfaceRadarExample") || "null");
+        if (pending?.companyName === companyName && pending?.contractAddress) {
+          target = pending;
+          sessionStorage.removeItem("psat:surfaceRadarExample");
+        }
+      } catch {
+        sessionStorage.removeItem("psat:surfaceRadarExample");
+      }
+    }
+    if (!target) return;
+    const machine = allMachines.find((m) => m.address?.toLowerCase() === target.contractAddress.toLowerCase());
+    if (!machine) return;
+    restoredExampleSelection.current = true;
+    handleRadarExampleClick({
+      contractAddress: machine.address,
+      functionSignature: target.functionSignature || "",
+      selector: target.selector || "",
+    });
+  }, [allMachines, companyName, embedded, handleRadarExampleClick]);
 
   // Clicking a Safe/Timelock/EOA node on the canvas selects the principal
   // (opens the detail panel with signers / delay / controlled contracts)
@@ -2817,6 +4632,7 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
     setSelectedPrincipal(principal);
     setSelectedMachine(null);
     setSelectedGuard(null);
+    setRadarExampleSelection(null);
     setPrincipalTour(null);
     if (principal.address) triggerFocus(principal.address);
   }, [triggerFocus]);
@@ -2845,6 +4661,7 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
     setSelectedPrincipal(principal);
     setSelectedMachine(null);
     setSelectedGuard(null);
+    setRadarExampleSelection(null);
     triggerFocus(target.address);
   }, [machines, visiblePrincipals, triggerFocus]);
 
@@ -2871,12 +4688,20 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
       setPrincipalTour(null);
     }
 
+    // Surface the navigation result in the Detail panel. Without this,
+    // clicking a guard chip from the Agent tab silently mutates state
+    // the user can't see — looks like "nothing happened" until they
+    // manually click Detail. The chip click is an explicit drill-in
+    // request, so swapping to Detail is the right behavior.
+    setSidebarMode("detail");
+
     if (target.type === "contract") {
       const machine = machines.find((m) => m.address?.toLowerCase() === target.address?.toLowerCase());
       if (machine) {
         setSelectedMachine(machine);
         setSelectedPrincipal(null);
         setSelectedGuard(null);
+        setRadarExampleSelection(null);
         triggerFocus(machine.address);
       }
     } else {
@@ -2889,10 +4714,10 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
     setBreadcrumbs((prev) => prev.slice(0, index));
     if (item.type === "contract") {
       const machine = machines.find((m) => m.address?.toLowerCase() === item.address?.toLowerCase());
-      if (machine) { setSelectedMachine(machine); setSelectedPrincipal(null); setSelectedGuard(null); }
+      if (machine) { setSelectedMachine(machine); setSelectedPrincipal(null); setSelectedGuard(null); setRadarExampleSelection(null); }
     } else {
       const principal = visiblePrincipals.find((p) => p.address?.toLowerCase() === item.address?.toLowerCase());
-      if (principal) { setSelectedPrincipal(principal); setSelectedMachine(null); setSelectedGuard(null); }
+      if (principal) { setSelectedPrincipal(principal); setSelectedMachine(null); setSelectedGuard(null); setRadarExampleSelection(null); }
     }
   }, [machines, visiblePrincipals]);
 
@@ -2910,6 +4735,22 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
 
   if (error) return <p className="empty">Failed: {error}</p>;
   if (!companyData) return <p className="empty">Loading surface...</p>;
+
+  const radarExampleFlyout = sidebarMode === "detail" && radarExampleSelection && selectedMachine && !selectedPrincipal ? (
+    <div className="ps-sidebar-flyout-content">
+      <ContractMachine
+        key={`${selectedMachine.address}:radar`}
+        machine={selectedMachine}
+        onSelectGuard={handleSelectGuard}
+        onNavigate={handleNavigate}
+        companyName={companyName}
+        highlightedFunctionKey={radarExampleSelection.functionKey}
+        highlightedContract={!radarExampleSelection.functionKey}
+        onOpenDependencyGraph={setDependencyGraphMachine}
+      />
+      <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />
+    </div>
+  ) : null;
 
   return (
     <div className="ps-surface ps-surface-fullscreen">
@@ -3016,8 +4857,10 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
         mode={searchMode}
         setMode={setSearchMode}
         onFocus={(item) => {
+          if (suppressSearchFocus || radarExampleSelection) return;
           if (!item) {
             setSelectedMachine(null); setSelectedPrincipal(null);
+            setRadarExampleSelection(null);
             setFocusedAddress(null);
             const url = new URL(window.location.href);
             url.searchParams.delete("focus");
@@ -3029,12 +4872,14 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
             setSelectedPrincipal(item.principal);
             setSelectedMachine(item.machine);
             setSelectedGuard(null);
+            setRadarExampleSelection(null);
             // Focus on the principal node or its first controlled contract
             triggerFocus(item.address || item.machine?.address);
           } else if (item.machine) {
             setSelectedMachine(item.machine);
             setSelectedPrincipal(null);
             setSelectedGuard(null);
+            setRadarExampleSelection(null);
             triggerFocus(item.machine.address);
           }
         }}
@@ -3047,12 +4892,23 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
             machines={machines}
             fundFlows={companyData?.fund_flows}
             principals={visiblePrincipals}
-            selectedAddress={selectedMachine?.address}
+            selectedAddress={selectedMachine?.address || selectedPrincipal?.address}
             focusAddress={focusAddress}
             focusedAddress={focusedAddress}
             highlightedAddresses={highlightedAddresses}
-            onSelectMachine={handleSelectMachine}
-            onSelectPrincipal={handleSelectPrincipal}
+            onSelectMachine={(m) => {
+              // Auto-switch to Detail when the user clicks a contract
+              // ON THE CANVAS so the function lanes are immediately
+              // visible. Agent-link clicks go through
+              // handleSelectMachine directly (not this wrapper), so
+              // they don't trigger this and the user stays in the chat.
+              if (m && sidebarMode !== "detail") setSidebarMode("detail");
+              handleSelectMachine(m);
+            }}
+            onSelectPrincipal={(p) => {
+              if (p && sidebarMode !== "detail") setSidebarMode("detail");
+              handleSelectPrincipal(p);
+            }}
             principalTour={principalTour}
             onTourGo={(nextIndex) => {
               const p = principalTour.principals[nextIndex];
@@ -3072,17 +4928,19 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
                   setSelectedMachine(machine);
                   setSelectedPrincipal(null);
                   setSelectedGuard(null);
+                  setRadarExampleSelection(null);
                   triggerFocus(machine.address);
                 }
               }
             }}
           />
         </ReactFlowProvider>
-        <DraggableSidebar>
+        <DraggableSidebar flyout={radarExampleFlyout}>
           <SidebarTabs
             mode={sidebarMode}
             onSetMode={setSidebarMode}
             auditCount={coverageData?.audit_count}
+            showDetail
           />
           {sidebarMode === "audits" && (
             <AuditsListPanel
@@ -3092,10 +4950,40 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
               loading={coverageLoading}
               error={coverageError}
               machines={machines}
+              selectedMachine={selectedMachine}
+            />
+          )}
+          {sidebarMode === "monitoring" && (
+            <SurfaceMonitoringPanel
+              companyData={companyData}
+              machines={allMachines}
+              selectedMachine={
+                selectedMachine ||
+                allMachines.find((m) => m.address?.toLowerCase() === focusedAddress?.toLowerCase()) ||
+                null
+              }
+            />
+          )}
+          {sidebarMode === "upgrades" && (
+            <UpgradesSidebarPanel
+              machine={selectedMachine}
+              companyName={companyName}
+              machines={machines}
+              onSelect={handleSelectMachine}
+              cache={upgradeHistoryCache}
+              onCache={cacheUpgradeHistory}
             />
           )}
           {sidebarMode === "detail" && (
             <Breadcrumbs items={breadcrumbs} onNavigate={handleBreadcrumbNav} />
+          )}
+          {sidebarMode === "detail" && !selectedPrincipal && (!selectedMachine || radarExampleSelection) && (
+            <DetailEmptyState
+              companyName={companyName}
+              companyData={companyData}
+              coverageData={coverageData}
+              onExampleClick={handleRadarExampleClick}
+            />
           )}
           {sidebarMode === "detail" && selectedPrincipal && (
             <PrincipalDetail
@@ -3108,18 +4996,75 @@ export default function ProtocolSurface({ companyName, initialData = null }) {
               refreshAddressLabels={refreshAddressLabels}
             />
           )}
-          {sidebarMode === "detail" && selectedMachine && !selectedPrincipal && (
+          {sidebarMode === "detail" && selectedMachine && !selectedPrincipal && !radarExampleSelection && (
             <ContractMachine
               key={selectedMachine.address}
               machine={selectedMachine}
-              onSelectGuard={setSelectedGuard}
+              onSelectGuard={handleSelectGuard}
               onNavigate={handleNavigate}
               companyName={companyName}
+              highlightedFunctionKey={radarExampleSelection?.functionKey}
+              onOpenDependencyGraph={setDependencyGraphMachine}
             />
           )}
-          {sidebarMode === "detail" && !selectedPrincipal && <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />}
+          {sidebarMode === "detail" && !selectedPrincipal && !radarExampleSelection && (
+            <InspectorCard selected={selectedGuard} onNavigate={handleNavigate} />
+          )}
+          {sidebarMode === "agent" && (
+            <AgentPanel
+              companyName={companyName}
+              selectedMachine={selectedMachine}
+              onHighlight={setHighlightedAddresses}
+              onFocusAddress={(addr) => {
+                // Route through the same selection handlers a canvas
+                // click uses so we get the connected-edges-stay-bright
+                // dim behavior for free.
+                const lc = addr.toLowerCase();
+                const machine = machines.find(
+                  (m) => (m.address || "").toLowerCase() === lc,
+                );
+                if (machine) {
+                  handleSelectMachine(machine);
+                  return;
+                }
+                const principal = visiblePrincipals.find(
+                  (p) => (p.address || "").toLowerCase() === lc,
+                );
+                if (principal) {
+                  handleSelectPrincipal(principal);
+                  return;
+                }
+                // Out-of-scope address (typical: an EOA that's a Safe
+                // owner / role holder but not itself a canvas node).
+                // Fetch its "touch radius" — every contract it has
+                // function-level authority over — and write that set
+                // into highlightedAddresses. The canvas's existing
+                // audit-overlay dim path then dims everything else.
+                triggerFocus(addr);
+                api(
+                  `/api/agent/address-touches?company=${encodeURIComponent(companyName)}&address=${encodeURIComponent(addr)}`,
+                )
+                  .then((data) => {
+                    const set = new Set([lc]);
+                    for (const t of data?.touches || []) {
+                      if (t.address) set.add(t.address.toLowerCase());
+                    }
+                    setHighlightedAddresses(set);
+                  })
+                  .catch(() => {
+                    // Network/auth error — at least light up the focus
+                    // target so the click isn't a no-op.
+                    setHighlightedAddresses(new Set([lc]));
+                  });
+              }}
+            />
+          )}
         </DraggableSidebar>
       </div>
+      <DependencyGraphModal
+        machine={dependencyGraphMachine}
+        onClose={() => setDependencyGraphMachine(null)}
+      />
     </div>
   );
 }

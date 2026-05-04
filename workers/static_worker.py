@@ -363,10 +363,18 @@ def _finalize_upgrade_history(
     uh_pre: dict | None,
     prev_uh: dict | None,
     unified: dict,
+    contract_row: Contract | None = None,
 ) -> dict | None:
-    """Apply known-name backfill, merge with prior cached upgrade history, and persist.
+    """Apply known-name backfill, merge with prior cached upgrade history,
+    persist, and project to relational rows.
 
-    ``uh_pre`` is the freshly-computed upgrade history from the parallel section.
+    ``uh_pre`` is the freshly-computed upgrade history from the parallel
+    section. After persistence, the upgrade events are projected into
+    ``UpgradeEvent`` rows (for company-overview aggregates) and historical
+    impl addresses are backfilled into ``Contract`` rows (so the
+    audit-coverage matcher can link audits whose scope names a past impl).
+    The projection step is best-effort — the artifact is already stored
+    when it runs, so a failure leaves the data recoverable via re-running.
     """
     if uh_pre is None:
         return None
@@ -381,10 +389,58 @@ def _finalize_upgrade_history(
     else:
         uh = uh_pre
 
-    if uh.get("proxies"):
-        store_artifact(session, job.id, "upgrade_history", data=uh)
-        return uh
-    return None
+    if not uh.get("proxies"):
+        return None
+
+    store_artifact(session, job.id, "upgrade_history", data=uh)
+
+    # Project the artifact's "upgraded" events into UpgradeEvent rows and
+    # backfill historical impl Contract rows. Both operate on the in-memory
+    # dict — no re-read of storage. Errors here are non-fatal: the artifact
+    # is already stored, so a failure leaves the data still recoverable
+    # via re-running this stage.
+    if contract_row is not None:
+        try:
+            from services.discovery.upgrade_history import (
+                backfill_historical_impl_contracts,
+                project_to_events,
+            )
+
+            stats = project_to_events(
+                session,
+                subject_contract_id=contract_row.id,
+                subject_chain=contract_row.chain,
+                artifact_data=uh,
+            )
+            session.commit()
+            logger.info(
+                "Static stage upgrade events projected for job %s (proxies %d/%d, events %d, skipped %d)",
+                job.id,
+                stats["proxies_projected"],
+                stats["proxies_seen"],
+                stats["events_written"],
+                stats["proxies_skipped_no_contract"],
+            )
+            if contract_row.protocol_id is not None and stats["impl_addrs"]:
+                backfill_historical_impl_contracts(
+                    session,
+                    protocol_id=contract_row.protocol_id,
+                    chain=contract_row.chain,
+                    impl_addrs=stats["impl_addrs"],
+                )
+        except Exception as exc:
+            record_degraded(
+                phase="static_upgrade_history_projection",
+                exc=exc,
+                context={"job_id": job.id, "address": job.address or "0x0"},
+            )
+            logger.warning(
+                "Upgrade event projection failed for job %s: %s",
+                job.id,
+                exc,
+            )
+
+    return uh
 
 
 # ---------------------------------------------------------------------------
@@ -1373,7 +1429,15 @@ class StaticWorker(BaseWorker):
             # deps so we can drop redundant Etherscan name lookups, then merge
             # with any prior cached upgrade history and persist.
             try:
-                uh = _finalize_upgrade_history(session, job, address, uh_pre, prev_uh, unified)
+                uh = _finalize_upgrade_history(
+                    session,
+                    job,
+                    address,
+                    uh_pre,
+                    prev_uh,
+                    unified,
+                    contract_row=contract_row,
+                )
                 if uh:
                     logger.info(
                         "Static stage upgrade history complete for job %s address=%s upgrades=%d",

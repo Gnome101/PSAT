@@ -121,8 +121,16 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
     new_events: list[MonitoredEvent] = []
     topics = [list(ALL_EVENT_TOPICS.keys())]
 
-    # Dedup set: (monitored_contract_id, tx_hash, block_number, event_type)
-    existing_events: set[tuple] = set()
+    # Two-tier dedupe:
+    #   ``db_events`` is loaded from already-persisted MonitoredEvent rows
+    #   keyed by the 4-tuple the table can express today (no log_index
+    #   column). It guards against duplicating rows we've already stored.
+    #   ``in_scan_events`` is the 5-tuple key used within a single scan
+    #   pass; the extra log_index lets batch timelock ops (scheduleBatch /
+    #   executeBatch emit one CallScheduled / CallExecuted per call,
+    #   sharing tx + block + event_type) all land as distinct rows.
+    db_events: set[tuple] = set()
+    in_scan_events: set[tuple] = set()
     max_scanned = max(c.last_scanned_block for c in contracts)
     if from_block < max_scanned:
         existing_rows = session.execute(
@@ -137,7 +145,7 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
             )
         ).all()
         for row in existing_rows:
-            existing_events.add((str(row[0]), row[1], row[2], row[3]))
+            db_events.add((str(row[0]), row[1], row[2], row[3]))
 
     last_successful_block = from_block
     cursor = from_block + 1
@@ -192,16 +200,29 @@ def scan_for_events(session: Session, rpc_url: str) -> list[MonitoredEvent]:
             if mc.monitoring_config and not _should_watch(mc, event_type):
                 continue
 
-            # Dedup check
-            dedup_key = (
+            # First gate: have we already stored ANY row for this
+            # (mc, tx, block, type) combo in a previous scan? If so,
+            # skip — re-scanning shouldn't duplicate. Note this means
+            # historically-collapsed batch rows stay collapsed; the
+            # log_index dimension only helps NEW scans onward.
+            db_key = (
                 str(mc.id),
                 parsed.get("tx_hash", ""),
                 parsed["block_number"],
                 event_type,
             )
-            if dedup_key in existing_events:
+            if db_key in db_events:
                 continue
-            existing_events.add(dedup_key)
+
+            # Second gate: in-scan dedup keyed on log_index so batch
+            # timelock ops (``scheduleBatch`` / ``executeBatch`` emit
+            # one CallScheduled / CallExecuted per call with identical
+            # tx+block+type but distinct logIndex) all land as separate
+            # rows in the SAME scan.
+            in_scan_key = (*db_key, parsed.get("log_index", 0))
+            if in_scan_key in in_scan_events:
+                continue
+            in_scan_events.add(in_scan_key)
 
             # Build event data (everything except standard fields)
             event_data = {
@@ -292,11 +313,35 @@ def _should_watch(mc: MonitoredContract, event_type: str) -> bool:
         "timelock_scheduled": "watch_timelock",
         "timelock_executed": "watch_timelock",
         "delay_changed": "watch_timelock",
+        # Safe execution events ride along with the existing safe-signers
+        # config flag — same monitoring intent ("watch this safe's
+        # activity"), and adding a separate flag would force every
+        # MonitoredContract row to be migrated.
+        "safe_tx_executed": "watch_safe_signers",
+        "safe_tx_failed": "watch_safe_signers",
+        # Module-triggered Safe executions (ExecutionFromModule*) — same
+        # monitoring intent. Ride the same flag.
+        "safe_module_executed": "watch_safe_signers",
+        "safe_module_failed": "watch_safe_signers",
     }
 
     config_key = type_to_config.get(event_type)
     if config_key is None:
         return True  # Unknown event type — allow
+
+    # Legacy alias support: `watch_signers` predates the rename to
+    # `watch_safe_signers` (which now also gates safe_tx_* /
+    # safe_module_* execution events). Accept either flag for the
+    # safe-signers config key so historic MonitoredContract rows
+    # written before the rename keep working without a migration.
+    if config_key == "watch_safe_signers":
+        if config.get("watch_safe_signers") or config.get("watch_signers"):
+            return True
+        # Both keys absent — fall through to the default-on behaviour
+        # below (return True when neither key is set).
+        if "watch_safe_signers" in config or "watch_signers" in config:
+            return False
+        return True
     return config.get(config_key, True)
 
 

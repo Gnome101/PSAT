@@ -11,10 +11,10 @@ export const AUDIT_STATUS_META = {
 };
 
 export const MATCH_TYPE_META = {
-  reviewed_commit: { label: "SHA verified", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
-  reviewed_address: { label: "📍 address pinned", color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
-  direct: { label: "name match", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
-  impl_era: { label: "impl-era", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  reviewed_commit: { label: "bytecode verified", color: "#166534", bg: "#dcfce7", border: "#bbf7d0" },
+  reviewed_address: { label: "address pinned", color: "#1e40af", bg: "#dbeafe", border: "#bfdbfe" },
+  direct: { label: "name heuristic", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
+  impl_era: { label: "upgrade-window heuristic", color: "#475569", bg: "#f1f5f9", border: "#e2e8f0" },
 };
 
 export const EQUIVALENCE_META = {

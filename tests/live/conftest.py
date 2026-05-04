@@ -257,11 +257,19 @@ class LiveClient:
         timeout: float = DEFAULT_COMPANY_TIMEOUT,
         interval: float = DEFAULT_POLL_INTERVAL * 2,
     ) -> dict[str, Any]:
-        """Poll the audit row until scope extraction reaches success/failed."""
+        """Poll the audit row until scope extraction reaches success/failed.
+
+        Also bails out early if text extraction failed: the scope worker only
+        claims rows where ``text_extraction_status == 'success'``
+        (workers/audit_scope_extraction.py), so a transient PDF-download
+        failure would otherwise stall the poll for the full timeout.
+        """
         deadline = time.time() + timeout
         while time.time() < deadline:
             row = self.get_audit(audit_id)
             if row.get("scope_extraction_status") in ("success", "failed"):
+                return row
+            if row.get("text_extraction_status") == "failed":
                 return row
             time.sleep(interval)
         raise TimeoutError(f"Audit {audit_id} did not finish scope extraction within {timeout}s")
