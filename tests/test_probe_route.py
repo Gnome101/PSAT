@@ -51,7 +51,11 @@ requires_postgres = pytest.mark.skipif(
 
 
 def _no_auth(api_module):
-    api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
+    # Auth dependency lives in routers.deps after the api.py routers refactor;
+    # api.require_admin_key no longer exists. Patch via the canonical symbol.
+    from routers.deps import require_admin_key
+
+    api_module.app.dependency_overrides[require_admin_key] = lambda: None
 
 
 def _seed_completed_job_with_artifact(
@@ -585,8 +589,10 @@ def test_probe_rate_limit_blocks_after_limit(api_client, db_session, monkeypatch
 
     # Tighten the limit to 3 so the test isn't slow. Also clear
     # any per-key state from previous tests.
-    monkeypatch.setattr(api_module, "_PROBE_RATE_LIMIT", 3)
-    api_module._probe_rate_state.clear()
+    from routers import v2 as v2_module
+
+    monkeypatch.setattr(v2_module, "_PROBE_RATE_LIMIT", 3)
+    v2_module._probe_rate_state.clear()
 
     payload = {
         "function_signature": "open()",
@@ -631,8 +637,10 @@ def test_probe_rate_limit_keyed_per_address(api_client, db_session, monkeypatch)
             predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
         )
 
-    monkeypatch.setattr(api_module, "_PROBE_RATE_LIMIT", 2)
-    api_module._probe_rate_state.clear()
+    from routers import v2 as v2_module
+
+    monkeypatch.setattr(v2_module, "_PROBE_RATE_LIMIT", 2)
+    v2_module._probe_rate_state.clear()
 
     payload = {
         "function_signature": "open()",
@@ -667,8 +675,10 @@ def test_probe_rate_limit_disabled_when_zero(api_client, db_session, monkeypatch
         predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
     )
 
-    monkeypatch.setattr(api_module, "_PROBE_RATE_LIMIT", 0)
-    api_module._probe_rate_state.clear()
+    from routers import v2 as v2_module
+
+    monkeypatch.setattr(v2_module, "_PROBE_RATE_LIMIT", 0)
+    v2_module._probe_rate_state.clear()
 
     payload = {
         "function_signature": "open()",
@@ -700,8 +710,10 @@ def test_probe_rate_limit_applies_to_signature_route_too(
         predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
     )
 
-    monkeypatch.setattr(api_module, "_PROBE_RATE_LIMIT", 2)
-    api_module._probe_rate_state.clear()
+    from routers import v2 as v2_module
+
+    monkeypatch.setattr(v2_module, "_PROBE_RATE_LIMIT", 2)
+    v2_module._probe_rate_state.clear()
 
     headers = {"X-PSAT-Admin-Key": "test-key"}
     sig_payload = {

@@ -181,7 +181,9 @@ def test_capabilities_response_includes_data_freshness(api_client, db_session, m
     import api as api_module
     from db.models import Contract, Protocol, RoleGrantsCursor
 
-    api_module._capabilities_cache.clear()
+    from routers import v2 as v2_module
+
+    v2_module._capabilities_cache.clear()
     monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)  # disable cache for the test
 
     address = "0x" + uuid.uuid4().hex[:8] + "df" * 16
@@ -225,7 +227,9 @@ def test_capabilities_response_freshness_null_when_no_cursor(api_client, db_sess
     the indexer)."""
     import api as api_module
 
-    api_module._capabilities_cache.clear()
+    from routers import v2 as v2_module
+
+    v2_module._capabilities_cache.clear()
     monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)
 
     address = "0x" + uuid.uuid4().hex[:8] + "fa" * 16
@@ -254,7 +258,9 @@ def test_capabilities_response_is_cached(api_client, db_session, monkeypatch):
 
     # Empty the cache so the test starts clean (other tests may
     # have warmed it).
-    api_module._capabilities_cache.clear()
+    from routers import v2 as v2_module
+
+    v2_module._capabilities_cache.clear()
     monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 60.0)
 
     calls = {"n": 0}
@@ -265,12 +271,6 @@ def test_capabilities_response_is_cached(api_client, db_session, monkeypatch):
         return original(*args, **kwargs)
 
     monkeypatch.setattr(resolver_mod, "resolve_contract_capabilities", _counting)
-    # The api route imports at handler time, so patch its reference too.
-    monkeypatch.setattr(
-        "api.SessionLocal",
-        api_module.SessionLocal,  # no-op; ensures import path stable
-        raising=False,
-    )
 
     r1 = api_client.get(f"/api/contract/{address}/capabilities")
     r2 = api_client.get(f"/api/contract/{address}/capabilities")
@@ -295,7 +295,9 @@ def test_capabilities_cache_ttl_disabled_when_zero(api_client, db_session, monke
         db_session, address=address, predicate_trees=_equality_leaf_artifact()
     )
 
-    api_module._capabilities_cache.clear()
+    from routers import v2 as v2_module
+
+    v2_module._capabilities_cache.clear()
     monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)
 
     calls = {"n": 0}
@@ -325,7 +327,9 @@ def test_capabilities_cache_keyed_on_block_and_chain(api_client, db_session, mon
         db_session, address=address, predicate_trees=_equality_leaf_artifact()
     )
 
-    api_module._capabilities_cache.clear()
+    from routers import v2 as v2_module
+
+    v2_module._capabilities_cache.clear()
     monkeypatch.setattr(api_module, "_CAPABILITIES_CACHE_TTL_S", 60.0)
 
     calls = {"n": 0}
@@ -354,7 +358,9 @@ def test_capabilities_route_is_not_admin_gated(api_client, db_session):
 
     # No dependency override — let the real require_admin_key run
     # if it's wired (it shouldn't be, on this route).
-    api_module.app.dependency_overrides.pop(api_module.require_admin_key, None)
+    from routers.deps import require_admin_key
+
+    api_module.app.dependency_overrides.pop(require_admin_key, None)
 
     address = "0x" + uuid.uuid4().hex[:8] + "f6" * 16
     _seed_completed_job_with_artifact(
