@@ -541,5 +541,5 @@ def run_tool(name: str, session, ctx, arguments: dict[str, Any]) -> dict[str, An
         logger.warning("tool %s rejected args %r: %s", name, arguments, exc)
         return {"error": f"tool {name} called with invalid arguments: {exc}"}
     except Exception as exc:
-        logger.exception("tool %s raised", name)
+        logger.warning("tool %s raised: %s", name, exc, extra={"exc_type": type(exc).__name__})
         return {"error": f"tool {name} failed: {exc}"}

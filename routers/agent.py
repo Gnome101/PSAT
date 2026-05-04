@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -14,6 +15,8 @@ from db.models import Contract, EffectiveFunction, FunctionPrincipal, Protocol
 from services.chat.agent import AgentContext, run_agent_stream
 
 from . import deps
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -48,6 +51,7 @@ def agent_chat(req: AgentChatRequest):
                 payload = json.dumps(evt.get("data") or {}, default=str)
                 yield f"event: {name}\ndata: {payload}\n\n"
         except Exception as exc:
+            logger.warning("agent stream failed: %s", exc, extra={"exc_type": type(exc).__name__})
             err = json.dumps({"message": str(exc)})
             yield f"event: error\ndata: {err}\n\n"
 

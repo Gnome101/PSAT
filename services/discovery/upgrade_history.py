@@ -14,7 +14,11 @@ and returns results in <1s regardless of chain history length.
 
 from __future__ import annotations
 
+import logging
+
 from services.discovery.static_dependencies import normalize_address
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # EIP-1967 event topic0 hashes (keccak256 of signature)
@@ -609,14 +613,10 @@ def backfill_historical_impl_contracts(
     so re-analyzing a protocol re-hits only new impls. Per-address errors
     are swallowed so one flaky lookup doesn't wreck the whole backfill.
     """
-    import logging
-
     from sqlalchemy import select
 
     from db.models import Contract
     from utils.etherscan import get_contract_info, parallel_get
-
-    logger = logging.getLogger("services.discovery.upgrade_history")
 
     if not impl_addrs:
         return
@@ -720,10 +720,14 @@ def backfill_historical_impl_contracts(
                     contract_id,
                     verify_source_equivalence=True,
                 )
-            except Exception:
-                logger.exception(
-                    "Coverage refresh failed for backfilled impl contract_id=%s",
+            except Exception as exc:
+                # One flaky match shouldn't poison the rest; admin
+                # refresh_coverage can fill in what we missed.
+                logger.warning(
+                    "Coverage refresh failed for backfilled impl contract_id=%s: %s",
                     contract_id,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
                 )
         session.commit()
         if refreshed:

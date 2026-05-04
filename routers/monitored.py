@@ -68,7 +68,7 @@ def upsert_protocol_monitoring(protocol_id: int, request: UpsertMonitoredContrac
 
         existing = session.execute(
             select(MonitoredContract).where(
-                MonitoredContract.address == request.address,
+                func.lower(MonitoredContract.address) == request.address.lower(),
                 MonitoredContract.chain == request.chain,
             )
         ).scalar_one_or_none()

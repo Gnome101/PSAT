@@ -119,7 +119,7 @@ def run_agent_stream(message: str, history: list[dict], ctx: AgentContext) -> It
             try:
                 stream = openrouter.tool_chat(messages, tools=TOOL_DEFINITIONS, model=AGENT_MODEL)
             except Exception as exc:
-                logger.exception("tool_chat init failed")
+                logger.warning("tool_chat init failed: %s", exc, extra={"exc_type": type(exc).__name__})
                 yield {"event": "error", "data": {"message": f"LLM call failed: {exc}"}}
                 return
 
@@ -144,7 +144,7 @@ def run_agent_stream(message: str, history: list[dict], ctx: AgentContext) -> It
                     elif kind == "finish":
                         pass
             except Exception as exc:
-                logger.exception("stream parse failed")
+                logger.warning("stream parse failed: %s", exc, extra={"exc_type": type(exc).__name__})
                 yield {"event": "error", "data": {"message": f"stream failed: {exc}"}}
                 return
 
