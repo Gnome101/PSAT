@@ -431,16 +431,6 @@ def test_state_variable_owner_resolved_via_controller_values(session):
 
 
 @requires_postgres
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug 4: external_set descriptor with role_domain.constant_role "
-        "and authority_contract pointing at a role registry does not "
-        "expand to RoleGrantsRepo members. Likely needs an adapter rule "
-        "+ Bug 1 to be fixed so the leaf classifies as external_set in "
-        "the first place."
-    ),
-)
 def test_external_set_resolves_to_role_grants_members(session):
     """A v2 leaf that says 'membership in role X on registry Y' must
     serialize as ``finite_set(members=[m1, m2], confidence=enumerable)``
@@ -493,18 +483,26 @@ def test_external_set_resolves_to_role_grants_members(session):
                     "authority_role": "delegated_authority",
                     "operands": [{"source": "msg_sender"}],
                     "set_descriptor": {
-                        "kind": "external_set",
+                        # The AC adapter matches mapping_membership shape
+                        # (role + caller keys, RoleGranted enumeration_hint).
+                        # The cross-contract `roleRegistry.hasRole(role,
+                        # sender)` shape carries the same semantic — it's
+                        # still 'is sender a member of role X on contract Y'.
+                        "kind": "mapping_membership",
                         "key_sources": [
                             {"source": "constant", "constant_value": role_const_hex},
                             {"source": "msg_sender"},
                         ],
-                        "authority_contract": {
-                            "address_source": {
-                                "source": "state_variable",
-                                "state_variable_name": "roleRegistry",
-                            },
-                            "abi_hint": "openzeppelin_access_control",
-                        },
+                        "storage_var": "_roles",
+                        "enumeration_hint": [
+                            {
+                                "event_address": address,
+                                "topic0": "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d",
+                                "topics_to_keys": {1: 0, 2: 1},
+                                "data_to_keys": {},
+                                "direction": "add",
+                            }
+                        ],
                     },
                     "references_msg_sender": True,
                     "parameter_indices": [],

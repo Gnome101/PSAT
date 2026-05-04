@@ -203,6 +203,18 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
         return CapabilityExpr.unsupported(f"equality_op_{operator}_unsupported")
 
     if kind == "external_bool":
+        # When the leaf carries a set_descriptor (the cross-contract
+        # role-registry shape — ``roleRegistry.hasRole(role, sender)``),
+        # route through the adapter registry exactly like a membership
+        # leaf so AccessControlAdapter can expand to actual role
+        # holders. Without a descriptor we fall back to the
+        # external_check_only placeholder.
+        descriptor = leaf.get("set_descriptor")
+        if descriptor is not None:
+            cap = ctx.adapter.enumerate(descriptor, ctx.contract_address)
+            if operator == "falsy":
+                cap = negate(cap)
+            return cap
         return _resolve_external_bool(leaf)
 
     if kind == "signature_auth":
