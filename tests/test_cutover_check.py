@@ -203,6 +203,7 @@ def test_regression_severity_blocks_cutover(db_session):
     db_session.commit()
 
     out = cutover_check_for_address(db_session, address=address)
+    assert out is not None
     assert out["severity"] == "regression"
     assert out["v1_only"] == ["g()"]
     assert is_safe_to_cut_over(out) is False
@@ -233,6 +234,7 @@ def test_new_coverage_is_safe_to_cut(db_session):
     db_session.commit()
 
     out = cutover_check_for_address(db_session, address=address)
+    assert out is not None
     assert out["severity"] == "new_coverage"
     assert out["v2_only"] == ["g()"]
     assert is_safe_to_cut_over(out) is True
@@ -264,6 +266,7 @@ def test_role_drift_requires_review(db_session):
     db_session.commit()
 
     out = cutover_check_for_address(db_session, address=address)
+    assert out is not None
     assert out["severity"] == "role_drift"
     assert "f()" in out["role_disagreements"]
     assert is_safe_to_cut_over(out) is False

@@ -182,6 +182,7 @@ def test_ac_enumerate_parametric_role_falls_back_to_default_admin():
     assert cap.kind == "finite_set"
     assert cap.confidence == "partial"
     assert cap.membership_quality == "lower_bound"
+    assert cap.members is not None
     assert ADDR_A.lower() in cap.members
 
 
@@ -222,6 +223,7 @@ def test_ac_enumerate_recursive_role_admin_expansion():
     )
     cap = AccessControlAdapter().enumerate(descriptor, ctx)
     assert cap.kind == "finite_set"
+    assert cap.members is not None
     # All three roles' members included via the walked admin chain.
     member_set = set(cap.members)
     assert ADDR_A.lower() in member_set
@@ -273,6 +275,7 @@ def test_safe_enumerate_returns_threshold_group():
     )
     cap = SafeAdapter().enumerate(descriptor, ctx)
     assert cap.kind == "threshold_group"
+    assert cap.threshold is not None
     m, signers = cap.threshold
     assert m == 2
     assert sorted(signers) == [ADDR_B.lower(), ADDR_C.lower()]
@@ -353,8 +356,9 @@ def test_evaluator_with_registry_resolves_membership_via_adapter():
         contract_address=ADDR_C,
         role_grants=repo,
     )
-    cap = evaluate_tree_with_registry(tree, registry, ctx)
+    cap = evaluate_tree_with_registry(tree, registry, ctx)  # type: ignore[arg-type]
     assert cap.kind == "finite_set"
+    assert cap.members is not None
     assert sorted(cap.members) == [ADDR_A.lower(), ADDR_B.lower()]
 
 
@@ -385,6 +389,6 @@ def test_evaluator_with_registry_no_match_returns_unsupported():
     registry = AdapterRegistry()
     registry.register(AccessControlAdapter)
     registry.register(SafeAdapter)
-    cap = evaluate_tree_with_registry(tree, registry, EvaluationContext())
+    cap = evaluate_tree_with_registry(tree, registry, EvaluationContext())  # type: ignore[arg-type]
     assert cap.kind == "unsupported"
     assert cap.unsupported_reason == "no_adapter"

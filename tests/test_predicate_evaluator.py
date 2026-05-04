@@ -202,6 +202,7 @@ def test_negated_membership_partial_yields_unsupported(tmp_path):
     cap = evaluate_tree(trees["someAction()"])
     # Pre-adapter: negate(lower_bound finite_set) → unsupported.
     assert cap.kind == "unsupported"
+    assert cap.unsupported_reason is not None
     assert "negate_partial_set" in cap.unsupported_reason
 
 
@@ -307,6 +308,6 @@ def test_evaluator_dispatches_on_unsupported_first():
             "basis": [],
         },
     }
-    cap = evaluate_tree(tree)
+    cap = evaluate_tree(tree)  # type: ignore[arg-type]
     assert cap.kind == "unsupported"
     assert cap.unsupported_reason == "test_unsupported"

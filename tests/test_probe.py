@@ -15,21 +15,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from services.resolution.adapters import EvaluationContext  # noqa: E402
+from services.resolution.adapters import AdapterRegistry, EvaluationContext  # noqa: E402
 from services.resolution.capabilities import CapabilityExpr, ExternalCheck  # noqa: E402
 from services.resolution.probe import probe_membership  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Stub registry — returns whatever CapabilityExpr the test set up.
+# Subclasses AdapterRegistry so the production probe_membership /
+# probe_signature signatures (which type-narrow to AdapterRegistry) accept it
+# without needing a Protocol carve-out.
 # ---------------------------------------------------------------------------
 
 
-class _StubRegistry:
+class _StubRegistry(AdapterRegistry):
     def __init__(self, cap: CapabilityExpr | None = None):
+        super().__init__()
         self.cap = cap or CapabilityExpr.unsupported("no_cap_set")
         self.calls: list[tuple[dict, EvaluationContext]] = []
 
-    def enumerate(self, descriptor, ctx):
+    def enumerate(self, descriptor, ctx):  # type: ignore[override]
         self.calls.append((descriptor, ctx))
         return self.cap
 

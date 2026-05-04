@@ -585,6 +585,7 @@ def test_oz_ac_with_populated_repo_resolves_members(tmp_path):
     )
     cap = evaluate_tree_with_registry(trees["f(bytes32)"], _registry(), ctx)
     assert cap.kind == "finite_set"
+    assert cap.members is not None
     members = set(cap.members)
     assert ADDR_OWNER.lower() in members
     assert ADDR_USER.lower() in members

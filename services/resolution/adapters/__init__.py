@@ -156,6 +156,7 @@ class SetAdapter(Protocol):
         """Return 0-100. 0 means definitely not this adapter; 100
         means definitely yes. Ties at the registry level are broken
         by registration order. Score 0 from all → unsupported."""
+        ...
 
     @classmethod
     def supports_external_check_only(cls) -> bool:
@@ -163,11 +164,13 @@ class SetAdapter(Protocol):
         live backend (used by the predicate evaluator to decide
         whether to emit external_check_only vs lower_bound finite_set
         when enumerate returns partial)."""
+        ...
 
     def enumerate(self, descriptor: SetDescriptor, ctx: EvaluationContext) -> CapabilityExpr:
         """Populate the capability — finite_set for enumerable, or
         partial / external_check_only when the adapter can't fully
         list members."""
+        ...
 
 
 # ---------------------------------------------------------------------------

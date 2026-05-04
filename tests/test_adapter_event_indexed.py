@@ -74,6 +74,7 @@ def test_event_indexed_enumerate_with_repo():
     )
     cap = EventIndexedAdapter().enumerate(descriptor, ctx)
     assert cap.kind == "finite_set"
+    assert cap.members is not None
     assert sorted(cap.members) == sorted([ADDR_B.lower(), ADDR_C.lower()])
 
 
@@ -118,6 +119,7 @@ def test_event_indexed_no_backend_yields_check_only():
     ctx = EvaluationContext(contract_address=ADDR_A)
     cap = EventIndexedAdapter().enumerate(descriptor, ctx)
     assert cap.kind == "external_check_only"
+    assert cap.check is not None
     assert cap.check.extra["topic0"] == "0xaa"
 
 

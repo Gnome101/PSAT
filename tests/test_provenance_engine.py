@@ -128,6 +128,7 @@ def test_parameter_seeded(tmp_path):
     eng.run()
     # Every parameter should have a `parameter` source with the right index.
     for idx, param in enumerate(fn.parameters):
+        assert param.name is not None
         sources = eng.provenance.get(param.name)
         param_src = _find_source_with_kind(sources, "parameter")
         assert param_src is not None, f"parameter {param.name} not seeded"

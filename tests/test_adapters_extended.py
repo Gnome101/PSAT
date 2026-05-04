@@ -122,6 +122,7 @@ def test_aragon_enumerate_no_backend_yields_check_only():
     ctx = EvaluationContext(contract_address=ADDR_A)
     cap = AragonACLAdapter().enumerate(descriptor, ctx)
     assert cap.kind == "external_check_only"
+    assert cap.check is not None
     assert cap.check.target_call_selector == ARAGON_CAN_PERFORM_SELECTOR
 
 
@@ -165,6 +166,7 @@ def test_dsauth_enumerate_no_backend_yields_check_only():
     ctx = EvaluationContext(contract_address=ADDR_A)
     cap = DSAuthAdapter().enumerate(descriptor, ctx)
     assert cap.kind == "external_check_only"
+    assert cap.check is not None
     assert cap.check.target_call_selector == DS_AUTH_CAN_CALL_SELECTOR
 
 
@@ -191,6 +193,7 @@ def test_eip1271_enumerate_always_check_only():
     ctx = EvaluationContext(contract_address=ADDR_A)
     cap = EIP1271Adapter().enumerate(descriptor, ctx)
     assert cap.kind == "external_check_only"
+    assert cap.check is not None
     assert cap.check.target_call_selector == "0x1626ba7e"
 
 

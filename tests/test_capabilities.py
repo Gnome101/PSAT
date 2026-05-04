@@ -124,6 +124,7 @@ def test_intersect_blacklists_unions_them():
     b = CapabilityExpr.cofinite_blacklist([ADDR_B])
     out = intersect(a, b)
     assert out.kind == "cofinite_blacklist"
+    assert out.blacklist is not None
     assert set(out.blacklist) == {ADDR_A.lower(), ADDR_B.lower()}
 
 
@@ -152,6 +153,7 @@ def test_intersect_unsupported_absorbs():
     u = CapabilityExpr.unsupported("opaque_control_flow")
     out = intersect(fin, u)
     assert out.kind == "unsupported"
+    assert out.unsupported_reason is not None
     assert "opaque_control_flow" in out.unsupported_reason
     out2 = intersect(u, fin)
     assert out2.kind == "unsupported"
@@ -256,6 +258,7 @@ def test_negate_finite_lower_bound_unsupported():
     fin = CapabilityExpr.finite_set([ADDR_A], quality="lower_bound")
     out = negate(fin)
     assert out.kind == "unsupported"
+    assert out.unsupported_reason is not None
     assert "negate_partial_set" in out.unsupported_reason
 
 
@@ -278,6 +281,7 @@ def test_negate_threshold_unsupported():
     tg = CapabilityExpr.threshold_group(2, [ADDR_A, ADDR_B])
     out = negate(tg)
     assert out.kind == "unsupported"
+    assert out.unsupported_reason is not None
     assert "threshold_group" in out.unsupported_reason
 
 
@@ -285,6 +289,7 @@ def test_negate_unsupported_chains():
     u = CapabilityExpr.unsupported("test")
     out = negate(u)
     assert out.kind == "unsupported"
+    assert out.unsupported_reason is not None
     assert "test" in out.unsupported_reason
 
 

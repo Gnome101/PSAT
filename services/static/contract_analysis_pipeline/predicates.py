@@ -520,9 +520,15 @@ def _build_internal_call_or_and_subtree(ir: Any, prov: ProvenanceMap, gate: Reve
         op_name = _binary_op(getattr(inner, "type", None))
         if op_name not in ("and", "or"):
             return None
+        # Slither types these as Optional but a well-formed Binary IR has both
+        # operands present; if one is missing the helper isn't recognizable.
+        left = inner.variable_left  # type: ignore[union-attr]
+        right = inner.variable_right  # type: ignore[union-attr]
+        if left is None or right is None:
+            return None
         children = [
-            _build_subtree_from_value(inner.variable_left, sub_prov, gate, callee),
-            _build_subtree_from_value(inner.variable_right, sub_prov, gate, callee),
+            _build_subtree_from_value(left, sub_prov, gate, callee),
+            _build_subtree_from_value(right, sub_prov, gate, callee),
         ]
     elif isinstance(inner, (InternalCall, LibraryCall)):
         # Path 3: helper returns ``return combinator(a, b)`` where
