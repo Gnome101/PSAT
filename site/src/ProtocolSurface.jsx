@@ -371,18 +371,6 @@ function collectPrincipals(fn, companyData) {
   return { direct, indirect };
 }
 
-// OpenZeppelin AccessControl role-management selectors. The static analyzer
-// can't bind these to a concrete role-admin holder set because the role
-// argument is a runtime parameter (see `services/static/contract_analysis_pipeline/summaries.py`
-// — `_build_method_to_role_map` only records bindings for concrete role
-// constants), so direct-caller resolution comes back empty. Surface a hint
-// in the UI so the user knows it's role-gated, not unguarded.
-const ACCESS_CONTROL_HINTS = {
-  "0x2f2ff15d": { label: "RoleAdmin", sublabel: "guards: getRoleAdmin(role)" },
-  "0xd547741f": { label: "RoleAdmin", sublabel: "guards: getRoleAdmin(role)" },
-  "0x36568abe": { label: "Self", sublabel: "renounces own role" },
-};
-
 function guardSummary(fn, companyData) {
   const { direct, indirect } = collectPrincipals(fn, companyData);
   // `principals` stays as the direct list for backward compatibility — every
@@ -391,14 +379,6 @@ function guardSummary(fn, companyData) {
   const principals = direct;
 
   if (!direct.length) {
-    const acHint = ACCESS_CONTROL_HINTS[String(fn.selector || "").toLowerCase()];
-    if (acHint && !fn.authority_public) {
-      // The label text + sublabel already differentiate role-admin vs
-      // self-renounce; sharing the "many" accent is fine here since
-      // neither resolves to a concrete principal we'd colour by type.
-      const accent = TYPE_META.many.accent;
-      return { kind: "access_control_hint", label: acHint.label, sublabel: acHint.sublabel, accent, principals, indirect };
-    }
     const meta = TYPE_META[fn.authority_public ? "open" : "unknown"];
     return {
       kind: fn.authority_public ? "open" : "unknown",
