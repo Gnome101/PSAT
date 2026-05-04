@@ -355,15 +355,6 @@ def test_try_catch_with_require_in_catch_also_emits_gate(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug 1: try/catch around a single external authority call is "
-        "misclassified as opaque(opaque_try_catch). Fix should emit "
-        "kind='try_catch_revert' so the predicate builder can attach "
-        "the call's selector to the leaf."
-    ),
-)
 def test_try_catch_around_external_authority_call_is_not_opaque(tmp_path):
     """``try authority.canCall(...) returns (bool ok) { require(ok); }
     catch { revert; }`` is the OZ AccessManaged / EtherFi RoleRegistry

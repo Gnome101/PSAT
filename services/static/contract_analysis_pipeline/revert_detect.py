@@ -44,6 +44,7 @@ try:
     from slither.core.declarations.modifier import Modifier  # type: ignore[import]
     from slither.slithir.operations import (  # type: ignore[import]
         Condition,
+        HighLevelCall,
         InternalCall,
         LibraryCall,
     )
@@ -234,16 +235,33 @@ class RevertDetector:
                 return
 
         # Case 6: try/catch with revert in the catch block. The
-        # function reverts iff the try-body call reverts, which is
-        # an opaque condition on the called contract's behavior.
-        # We can't classify the gate structurally without recursing
-        # into the called function, so emit an opaque gate that
-        # downstream sees as ``unsupported``. Without this the
-        # catch-revert is silently dropped and the function looks
-        # unguarded — strictly worse than reporting "we know there's
-        # a gate but can't characterize it."
+        # function reverts iff the try-body call reverts. When the
+        # try-body has a SINGLE HighLevelCall (the typical OZ
+        # AccessManaged / EtherFi RoleRegistry "try authority.canCall(...)
+        # catch revert" shape), we record it as ``try_catch_revert``
+        # with the call IR preserved so the predicate builder can lift
+        # the call's selector + target into an external_check_only leaf.
+        # When the try-body has zero or multiple HighLevelCalls, we fall
+        # back to the original opaque marker — the call's identity is
+        # ambiguous and downstream cannot characterize the gate further.
         if getattr(node, "type", None) == getattr(NodeType, "TRY", -999):
             if self._try_catch_has_revert(node):
+                primary_call = self._try_node_primary_call(node)
+                if primary_call is not None:
+                    self._gates.append(
+                        RevertGate(
+                            kind="try_catch_revert",
+                            condition_value=primary_call,
+                            polarity="allowed_when_true",
+                            node=node,
+                            containing_function=container,
+                            call_chain=list(self._call_chain_irs),
+                            expression_text=_expression_text(node) or "<try/catch>",
+                            basis=["try/catch with revert in catch (recognized call shape)"],
+                            unsupported_reason=None,
+                        )
+                    )
+                    return
                 self._gates.append(
                     RevertGate(
                         kind="opaque",
@@ -383,6 +401,28 @@ class RevertDetector:
         # less common false branch (typical pattern is `if (bad)
         # revert`, so true is the bad branch).
         return "allowed_when_false"
+
+    def _try_node_primary_call(self, try_node: Any) -> Any | None:
+        """Return the HighLevelCall IR whose return value drives the TRY's
+        body, or None when the call's return is unused (the
+        ``try h.helper() {} catch { revert }`` shape — opaque, no signal).
+
+        The OZ AccessManaged / RoleRegistry pattern
+        (``try authority.canCall(...) returns (bool ok) { require(ok); } catch { revert; }``)
+        is structurally a single HighLevelCall whose lvalue is consumed
+        downstream — the success arm references the returned value. We
+        proxy "return is consumed" with "lvalue is not None"; an external
+        call returning ``void`` cannot be reasoned about by the predicate
+        builder anyway. When there are multiple calls or none return a
+        value, we leave the gate opaque."""
+        calls = [
+            ir
+            for ir in (getattr(try_node, "irs_ssa", None) or getattr(try_node, "irs", []) or [])
+            if isinstance(ir, HighLevelCall) and getattr(ir, "lvalue", None) is not None
+        ]
+        if len(calls) == 1:
+            return calls[0]
+        return None
 
     def _try_catch_has_revert(self, try_node: Any) -> bool:
         """Walk descendants reachable from a TRY node through CATCH
