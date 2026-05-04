@@ -291,3 +291,73 @@ def test_confidence_low_when_business_after_writer_gate(tmp_path):
     leaf = _all_leaves(trees["someAction()"])[0]
     assert leaf["authority_role"] == "business"
     assert leaf["confidence"] == "low"
+
+
+# ---------------------------------------------------------------------------
+# Regression pin: inherited OZ Ownable through ``_checkOwner`` helper.
+# The predicate builder must walk ``owner() == _msgSender()`` through the
+# inherited helper and bind the operand to the underlying ``_owner`` storage
+# var — otherwise the leaf classifies as ``business`` (or empty) and the
+# downstream resolver has nothing to enumerate. Confirmed working on the
+# EtherFi LiquidityPool artifact (``operands: [_owner, msg_sender]``,
+# ``authority_role: caller_authority``), pinned here so a regression in
+# the cross-fn provenance walk surfaces immediately.
+# ---------------------------------------------------------------------------
+
+
+def test_owner_eq_msgsender_through_helper_call(tmp_path):
+    """OZ-shaped Ownable: ``onlyOwner`` modifier calls ``_checkOwner()``,
+    which calls a view function ``owner()`` whose body is
+    ``return _owner;``. The condition is ``owner() == _msgSender()``.
+    The predicate builder should classify this leaf as
+    ``caller_authority`` because ``owner()`` resolves to ``_owner``."""
+    # Inheritance pattern matters: same-contract _checkOwner is already handled
+    # by the existing cross-fn helper traversal. EtherFi inherits from
+    # OwnableUpgradeable so the modifier + _checkOwner + owner() live in a
+    # different contract from transferOwnership.
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        abstract contract Context {
+            function _msgSender() internal view virtual returns (address) { return msg.sender; }
+        }
+        abstract contract Ownable is Context {
+            address private _owner;
+            function owner() public view virtual returns (address) { return _owner; }
+            function _checkOwner() internal view virtual {
+                require(owner() == _msgSender(), "not owner");
+            }
+            modifier onlyOwner() { _checkOwner(); _; }
+            function _transferOwnership(address newOwner) internal virtual { _owner = newOwner; }
+        }
+        contract C is Ownable {
+            constructor() { _transferOwnership(msg.sender); }
+            function transferOwnership(address newOwner) public onlyOwner {
+                _transferOwnership(newOwner);
+            }
+        }
+    """,
+    )
+    # Use the most-derived contract (the inheriting one), not the abstract base.
+    contract = next(c for c in sl.contracts if c.name == "C")
+    trees = _build_trees(contract)
+    apply_writer_gate_pass(contract, trees)
+    leaves = _all_leaves(trees["transferOwnership(address)"])
+    assert leaves, "expected at least one leaf for transferOwnership"
+    # The owner-check leaf should classify as caller_authority — not business
+    # (the empty fallback) and not unsupported.
+    auth_leaves = [leaf for leaf in leaves if leaf["authority_role"] == "caller_authority"]
+    assert auth_leaves, (
+        f"expected a caller_authority leaf for transferOwnership; got "
+        f"{[(leaf.get('authority_role'), leaf.get('kind')) for leaf in leaves]}"
+    )
+    # And the descriptor or operand should reference the underlying storage var.
+    leaf = auth_leaves[0]
+    operands_have_owner = any(
+        op.get("source") == "state_variable" and op.get("state_variable_name") == "_owner"
+        for op in leaf.get("operands", [])
+    )
+    assert operands_have_owner, (
+        f"expected an operand pointing at state_variable '_owner'; got operands={leaf.get('operands')}"
+    )

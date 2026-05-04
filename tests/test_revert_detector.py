@@ -341,3 +341,67 @@ def test_try_catch_with_require_in_catch_also_emits_gate(tmp_path):
     fn = _function(sl, "caller")
     gates = RevertDetector(fn).run()
     assert any(g.kind == "opaque" and g.unsupported_reason == "opaque_try_catch" for g in gates)
+
+
+# ---------------------------------------------------------------------------
+# Bug 1: try/catch wrapping a single external authority-check call should not
+# collapse to opaque(opaque_try_catch). Recognising the shape (one
+# HighLevelCall whose return drives the body's require/revert) lets the
+# downstream pipeline preserve the call selector + target contract, which the
+# capability resolver then uses to expand into actual member addresses.
+# Currently the analyzer paints any try-with-revert-in-catch as opaque, which
+# cascades through `intersect()` as `unsupported`, and EtherFi's
+# UUPSUpgradeable.upgradeTo ends up unresolvable on the surface page.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Bug 1: try/catch around a single external authority call is "
+        "misclassified as opaque(opaque_try_catch). Fix should emit "
+        "kind='try_catch_revert' so the predicate builder can attach "
+        "the call's selector to the leaf."
+    ),
+)
+def test_try_catch_around_external_authority_call_is_not_opaque(tmp_path):
+    """``try authority.canCall(...) returns (bool ok) { require(ok); }
+    catch { revert; }`` is the OZ AccessManaged / EtherFi RoleRegistry
+    upgrade pattern. The body has a single HighLevelCall whose return
+    value gates a require — the gate is not opaque, it's an external
+    authority check on ``authority.canCall``. Downstream should be able
+    to identify the target call and resolve it to the role's holders."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IAuthority {
+            function canCall(address caller, address target, bytes4 sig) external view returns (bool);
+        }
+        contract C {
+            IAuthority public authority;
+            constructor(address a) { authority = IAuthority(a); }
+            function upgradeTo(address) external {
+                try authority.canCall(msg.sender, address(this), msg.sig) returns (bool ok) {
+                    require(ok, "not authorized");
+                } catch {
+                    revert("auth call failed");
+                }
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "upgradeTo")
+    gates = RevertDetector(fn).run()
+    # We expect at least one gate that is NOT the catch-all opaque marker.
+    assert gates, "expected at least one revert gate"
+    opaque_only = all(g.kind == "opaque" and g.unsupported_reason == "opaque_try_catch" for g in gates)
+    assert not opaque_only, (
+        "try/catch wrapping a single authority-check call collapsed to opaque(opaque_try_catch); "
+        "expected kind='try_catch_revert' (or similar non-opaque kind) so the call selector + "
+        "target are recoverable downstream"
+    )
+    # And specifically: at least one gate carries the recognised try-catch shape.
+    assert any(g.kind == "try_catch_revert" for g in gates), (
+        f"no gate with kind='try_catch_revert' found; got kinds={_gate_kinds(gates)}"
+    )

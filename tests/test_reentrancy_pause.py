@@ -268,3 +268,64 @@ def test_apply_pass_classifies_pause_leaf(tmp_path):
     assert len(leaves) == 1
     leaf = leaves[0]
     assert leaf["authority_role"] == "pause", leaf
+
+
+# ---------------------------------------------------------------------------
+# Bug 3: PauseAnalyzer overwrites the leaf's authority_role with "pause" even
+# when a sibling external-role check exists in the same require chain. On
+# EtherFi LiquidityPool, ``pauseContract`` does
+#     require(roleRegistry.hasRole(PAUSER_ROLE, msg.sender))
+#     require(!_paused)
+# The pass clobbers the role-check leaf with ``authority_role="pause"`` and
+# drops the role binding entirely. The fix: pause becomes a sibling
+# ``condition`` on the existing authority leaf (same shape ``time_gate``
+# already uses), preserving the caller_authority classification.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Bug 3: PauseAnalyzer overwrites a sibling external-role "
+        "authority leaf with authority_role='pause' instead of "
+        "attaching pause as a condition. Fix should preserve the "
+        "role check and add the pause condition alongside."
+    ),
+)
+def test_pause_does_not_clobber_sibling_role_check(tmp_path):
+    """The function carries TWO require statements: one external-role
+    check, one pause check. The resulting tree must keep the role-check
+    leaf (authority_role='caller_authority' / 'delegated_authority',
+    not 'pause') and surface the pause as a condition."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IRoleRegistry {
+            function hasRole(bytes32 role, address account) external view returns (bool);
+        }
+        contract C {
+            IRoleRegistry public roleRegistry;
+            bool public _paused;
+            bytes32 public constant PAUSER_ROLE = keccak256("PAUSER");
+            constructor(address rr) { roleRegistry = IRoleRegistry(rr); }
+            function pauseContract() external {
+                require(roleRegistry.hasRole(PAUSER_ROLE, msg.sender), "no pauser");
+                require(!_paused, "paused");
+                _paused = true;
+            }
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    apply_reentrancy_pause_pass(contract, trees)
+    leaves = _all_leaves(trees["pauseContract()"])
+    assert leaves, "expected at least one leaf for pauseContract"
+    # At least one leaf retains the role-check authority (not overwritten to
+    # 'pause'). 'business' is also a regression — the role check should
+    # surface as some flavor of caller/delegated authority.
+    auth_leaves = [leaf for leaf in leaves if leaf["authority_role"] in ("caller_authority", "delegated_authority")]
+    assert auth_leaves, (
+        f"role-check leaf was clobbered or dropped — got authority_roles={[leaf['authority_role'] for leaf in leaves]}"
+    )
