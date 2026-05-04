@@ -37,7 +37,9 @@ requires_postgres = pytest.mark.skipif(
 
 
 def _no_auth(api_module):
-    api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
+    from routers.deps import require_admin_key
+
+    api_module.app.dependency_overrides[require_admin_key] = lambda: None
 
 
 def _v1(name, *fns_with_kinds):

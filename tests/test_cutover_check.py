@@ -270,7 +270,10 @@ def test_role_drift_requires_review(db_session):
 
 
 def _no_auth(api_module):
-    api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
+    # Auth dependency moved to routers.deps after main's routers refactor.
+    from routers.deps import require_admin_key
+
+    api_module.app.dependency_overrides[require_admin_key] = lambda: None
 
 
 @requires_postgres

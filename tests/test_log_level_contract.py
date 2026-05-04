@@ -49,7 +49,14 @@ ALLOW_LIST: dict[str, dict[int, str]] = {
         # doesn't change the job's stage output. record_degraded would
         # mislead callers of /api/jobs/{id}/errors into thinking the
         # reanalysis was degraded.
-        717: "Notifier side-effect; reanalysis already completed before this fired.",
+        735: "Notifier side-effect; reanalysis already completed before this fired.",
+    },
+    "workers/static_worker.py": {
+        # v2 predicate_trees artifact store failure during the static
+        # stage. The v1 path is independent and already wrote its own
+        # artifacts; surfacing this as degraded would mislead operators
+        # into thinking the v1 contract analysis was incomplete.
+        1512: "v2-only artifact store failure; v1 contract_analysis path unaffected.",
     },
 }
 

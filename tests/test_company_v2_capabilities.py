@@ -200,7 +200,9 @@ def test_company_v2_capabilities_route_not_admin_gated(api_client, db_session):
     credentials."""
     import api as api_module
 
-    api_module.app.dependency_overrides.pop(api_module.require_admin_key, None)
+    from routers.deps import require_admin_key
+
+    api_module.app.dependency_overrides.pop(require_admin_key, None)
 
     name = f"company_unauth_{uuid.uuid4().hex[:6]}"
     addr = "0x" + uuid.uuid4().hex[:8] + "55" * 16
