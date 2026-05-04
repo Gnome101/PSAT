@@ -109,9 +109,18 @@ class StorageClient:
             config=Config(
                 signature_version="s3v4",
                 s3={"addressing_style": "path"},
-                connect_timeout=2,
+                # Tigris TLS handshake p99 to fly.storage.tigris.dev exceeds
+                # 2s under concurrent load (observed: terminal
+                # StorageUnavailable on KING Distributor impl in psat-pr-65,
+                # ssl.do_handshake timing out). 10s covers tail latency.
+                connect_timeout=10,
                 read_timeout=5,
-                retries={"max_attempts": 1},
+                # max_attempts=1 disabled botocore's built-in retry, so a
+                # single transient handshake/read timeout terminally killed
+                # the worker job (no next_attempt_at). Standard mode retries
+                # ReadTimeoutError / ConnectTimeoutError with exponential
+                # backoff before we surface StorageUnavailable.
+                retries={"max_attempts": 3, "mode": "standard"},
                 # boto3 default is 10 — too small for our get_many fan-out
                 # (16 threads) plus concurrent put/get from the worker job
                 # pool. Under load urllib3 was discarding and reopening
