@@ -271,27 +271,21 @@ def test_apply_pass_classifies_pause_leaf(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Bug 3: PauseAnalyzer overwrites the leaf's authority_role with "pause" even
-# when a sibling external-role check exists in the same require chain. On
-# EtherFi LiquidityPool, ``pauseContract`` does
-#     require(roleRegistry.hasRole(PAUSER_ROLE, msg.sender))
-#     require(!_paused)
-# The pass clobbers the role-check leaf with ``authority_role="pause"`` and
-# drops the role binding entirely. The fix: pause becomes a sibling
-# ``condition`` on the existing authority leaf (same shape ``time_gate``
-# already uses), preserving the caller_authority classification.
+# Regression pin: a function with BOTH an external-role check and a pause
+# check in the same require chain must keep the role-check leaf's authority
+# (delegated_authority for hasRole(role, sender)) and produce a SEPARATE
+# pause leaf. PauseAnalyzer only mutates leaves whose authority_role is
+# 'business' or unset, so the role leaf survives. Confirmed on EtherFi
+# LiquidityPool's pauseContract; pinned here in case the analyzer's guard
+# clause ever loosens.
+#
+# The corresponding EtherFi-visible regression (target_address / selector
+# null on the resolved external_check_only capability) lives downstream in
+# the resolver and is covered by the role-grants test in
+# test_capability_resolver.py.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug 3: PauseAnalyzer overwrites a sibling external-role "
-        "authority leaf with authority_role='pause' instead of "
-        "attaching pause as a condition. Fix should preserve the "
-        "role check and add the pause condition alongside."
-    ),
-)
 def test_pause_does_not_clobber_sibling_role_check(tmp_path):
     """The function carries TWO require statements: one external-role
     check, one pause check. The resulting tree must keep the role-check
@@ -317,7 +311,9 @@ def test_pause_does_not_clobber_sibling_role_check(tmp_path):
         }
     """,
     )
-    contract = sl.contracts[0]
+    # Use the most-derived contract (the inheriting one), not the interface
+    # which Slither also returns.
+    contract = next(c for c in sl.contracts if c.name == "C")
     trees = _build_trees(contract)
     apply_reentrancy_pause_pass(contract, trees)
     leaves = _all_leaves(trees["pauseContract()"])
