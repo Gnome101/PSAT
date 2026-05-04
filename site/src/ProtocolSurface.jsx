@@ -4020,7 +4020,12 @@ function AuditCommitChips({ detail, maxShown = 4 }) {
 
 function DraggableSidebar({ children, flyout = null }) {
   const [width, setWidth] = useState(380);
-  const [collapsed, setCollapsed] = useState(false);
+  // On phones, start the sidebar collapsed — it's a bottom sheet there
+  // and would otherwise cover most of the screen on first load.
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(max-width: 720px)").matches;
+  });
   const [flyoutCollapsed, setFlyoutCollapsed] = useState(false);
   const dragging = useRef(false);
   const sidebarWidth = collapsed ? 44 : width;
@@ -4084,7 +4089,18 @@ function DraggableSidebar({ children, flyout = null }) {
           "--ps-sidebar-width": `${sidebarWidth}px`,
         }}
       >
-        <div className="ps-sidebar-handle" onMouseDown={onMouseDown}>
+        <div
+          className="ps-sidebar-handle"
+          onMouseDown={onMouseDown}
+          onClick={(e) => {
+            // On mobile (where the sidebar is a bottom sheet) tap the
+            // handle to toggle. Desktop keeps drag-to-resize behavior.
+            if (typeof window !== "undefined" && window.matchMedia("(max-width: 720px)").matches) {
+              e.stopPropagation();
+              setCollapsed((c) => !c);
+            }
+          }}
+        >
           <button
             type="button"
             className="ps-sidebar-toggle ps-sidebar-toggle-collapse"
@@ -4095,6 +4111,9 @@ function DraggableSidebar({ children, flyout = null }) {
           >
             &gt;
           </button>
+          <span className="ps-sidebar-mobile-label" aria-hidden="true">
+            {collapsed ? "▴  View details" : "▾  Close"}
+          </span>
         </div>
         <div className="ps-sidebar-content">{children}</div>
         <div className="ps-sidebar-rail">
