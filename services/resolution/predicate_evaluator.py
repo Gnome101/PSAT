@@ -89,10 +89,15 @@ class EvaluationContext:
         contract_address: str | None = None,
         adapter: SetAdapter | None = None,
         block: int | None = None,
+        state_var_values: dict[str, str] | None = None,
     ) -> None:
         self.contract_address = contract_address
         self.adapter: SetAdapter = adapter or _NullAdapter()
         self.block = block
+        # Persisted state-variable values keyed by storage-var name.
+        # Used by ``_resolve_equality_principal`` to enumerate Ownable
+        # _owner / authority / etc. into concrete addresses.
+        self.state_var_values = state_var_values or {}
 
 
 def evaluate_tree_with_registry(
@@ -114,6 +119,7 @@ def evaluate_tree_with_registry(
         contract_address=getattr(ctx, "contract_address", None),
         adapter=_RegistryBackedAdapter(),
         block=getattr(ctx, "block", None),
+        state_var_values=getattr(ctx, "state_var_values", None),
     )
     return evaluate_tree(tree, legacy_ctx)
 
@@ -192,7 +198,7 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
 
     if kind == "equality":
         if operator in ("eq", "ne"):
-            base = _resolve_equality_principal(leaf)
+            base = _resolve_equality_principal(leaf, ctx)
             return base if operator == "eq" else negate(base)
         return CapabilityExpr.unsupported(f"equality_op_{operator}_unsupported")
 
@@ -216,13 +222,18 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
 # ---------------------------------------------------------------------------
 
 
-def _resolve_equality_principal(leaf: LeafPredicate) -> CapabilityExpr:
+def _resolve_equality_principal(
+    leaf: LeafPredicate,
+    ctx: EvaluationContext | None = None,
+) -> CapabilityExpr:
     """``msg.sender == X`` — resolve X to a CapabilityExpr.
 
     Per v6 round-5 #2: when X is a function parameter, the result is
     conditional_universal(self_service) — anyone may call but only
-    for their own data. State-var operands defer to the adapter
-    layer in week 5; for now we emit a finite_set placeholder."""
+    for their own data. State-var operands consult
+    ``ctx.state_var_values`` (populated from ``controller_values``);
+    when the value isn't there we emit the lower_bound placeholder so
+    the FE can still render 'guarded by X' even without enumeration."""
     operands = leaf.get("operands") or []
     other = [op for op in operands if op["source"] not in ("msg_sender", "tx_origin", "signature_recovery")]
     if len(other) != 1:
@@ -237,7 +248,18 @@ def _resolve_equality_principal(leaf: LeafPredicate) -> CapabilityExpr:
         return CapabilityExpr.unsupported(f"equality_constant_non_address_{val}")
 
     if src == "state_variable":
-        # Adapter would resolve via on-chain read; placeholder for week 5.
+        sv_name = op.get("state_variable_name")
+        if ctx is not None and sv_name and sv_name in ctx.state_var_values:
+            value = ctx.state_var_values[sv_name]
+            if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
+                return CapabilityExpr.finite_set(
+                    [value],
+                    quality="exact",
+                    confidence="enumerable",
+                )
+        # Fallback: we know there's a guarding state-var but haven't
+        # enumerated it yet (no ControllerValue row, or non-address
+        # value). UI surfaces this as 'guarded but unresolved'.
         return CapabilityExpr.finite_set(
             [],
             quality="lower_bound",

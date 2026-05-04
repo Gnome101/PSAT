@@ -135,6 +135,13 @@ class EvaluationContext:
     safe_repo: SafeRepo | None = None
     bytecode: BytecodeRepo | None = None
     recursive_resolver: Any = None
+    # Persisted state-variable values keyed by storage-var name (e.g.
+    # ``"_owner" → "0xabc..."``). Populated by the resolver from the
+    # ``controller_values`` table so the predicate evaluator can
+    # enumerate ``state_variable`` operands into concrete addresses
+    # without hitting the chain. ``None`` falls back to the
+    # lower_bound/partial placeholder behavior.
+    state_var_values: dict[str, str] | None = None
     # Free-form metadata bag for adapter-specific state; avoid using
     # for general-purpose data.
     meta: dict[str, Any] = field(default_factory=dict)

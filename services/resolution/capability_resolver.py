@@ -46,7 +46,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStatus
+from db.models import Contract, ControllerValue, Job, JobStatus
 from db.queue import get_artifact
 
 from .adapters import AdapterRegistry, EvaluationContext
@@ -102,11 +102,13 @@ def resolve_contract_capabilities(
 
     role_grants_repo = PostgresRoleGrantsRepo(session)
     aragon_repo = PostgresAragonACLRepo(session)
+    state_var_values = _load_state_var_values(session, addr)
     ctx = EvaluationContext(
         chain_id=chain_id,
         contract_address=addr,
         block=block,
         role_grants=role_grants_repo,
+        state_var_values=state_var_values,
         meta={"aragon_acl_repo": aragon_repo},
     )
 
@@ -114,6 +116,36 @@ def resolve_contract_capabilities(
     for fn_signature, tree in (artifact["trees"] or {}).items():
         cap = evaluate_tree_with_registry(tree, registry, ctx)
         out[fn_signature] = capability_to_dict(cap)
+    return out
+
+
+def _load_state_var_values(session: Session, address: str) -> dict[str, str]:
+    """Read persisted ``controller_values`` rows for ``address`` and key
+    them by ``controller_id`` (which the static-analysis pipeline uses
+    as the state-variable name — e.g. ``"_owner"``,
+    ``"roleRegistry"``).
+
+    The predicate evaluator consumes this dict to enumerate
+    ``state_variable`` operands (Ownable's ``_owner``, custom
+    role-registry refs, etc.) into concrete addresses so the resolver
+    emits ``finite_set([value], quality=exact)`` instead of the
+    lower_bound/partial placeholder.
+
+    Returns an empty dict when the contract has no row or no
+    controller values yet — the evaluator falls back to the
+    placeholder shape, which is honest about not knowing."""
+    contract = session.execute(select(Contract).where(Contract.address == address).limit(1)).scalar_one_or_none()
+    if contract is None:
+        return {}
+    rows = session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract.id)).scalars()
+    out: dict[str, str] = {}
+    for row in rows:
+        if row.controller_id and row.value:
+            # Last-write-wins on duplicate controller_id — fine, the
+            # static pipeline writes a single row per (contract,
+            # controller_id) but a re-run of an upgraded impl can land
+            # multiple rows.
+            out[row.controller_id] = row.value
     return out
 
 

@@ -352,15 +352,6 @@ def test_capability_to_dict_handles_composite():
 
 
 @requires_postgres
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug 2: resolver doesn't enumerate state_variable operands "
-        "(e.g. OZ Ownable's _owner) into concrete addresses even when "
-        "controller_values has the value. Fix should join the resolver "
-        "against ControllerValue and emit finite_set with quality=exact."
-    ),
-)
 def test_state_variable_owner_resolved_via_controller_values(session):
     """An OZ-Ownable predicate tree with a stored ``ControllerValue`` row
     for ``_owner`` should resolve to ``finite_set([owner_addr],
