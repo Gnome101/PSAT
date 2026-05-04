@@ -45,7 +45,7 @@
 body {
   margin: 0;
   overflow-x: hidden;
-  background: var(--bg);
+  background: #03050a;
   color: var(--ink);
 }
 
@@ -4637,98 +4637,234 @@ button.ghost {
   }
 }
 
-/* ── Protocol list (home, scroll target) ──────────────────────────────────── */
+/* ── Protocol list (home, scroll target) — splash aesthetic ──────────────── */
 
 .home-protocol-section {
-  max-width: 1400px;
+  --bone: #f4ede1;
+  --bone-mute: rgba(244, 237, 225, 0.82);
+  --bone-faint: rgba(244, 237, 225, 0.52);
+  --void-deep: #03050a;
+  --void-warm: #1a2030;
+  --coral: #ff6b6b;
+  --coral-glow: rgba(255, 107, 107, 0.55);
+  --line-soft: rgba(244, 237, 225, 0.12);
+  --line-strong: rgba(244, 237, 225, 0.24);
+
+  position: relative;
+  isolation: isolate;
+  max-width: 1680px;
   margin: 0 auto;
-  padding: 24px 24px 64px;
+  padding: 96px 48px 140px;
   scroll-margin-top: 52px;
+  color: var(--bone);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* Full-bleed warm-void backdrop with a subtle top gradient that connects
+ * to the hero, plus a faint radial wash so the section isn't pure flat void.
+ * `isolation: isolate` on the section creates a stacking context so the
+ * negative z-index here stays behind content but ABOVE the body bg. */
+.home-protocol-section::before {
+  content: "";
+  position: absolute;
+  inset: 0 calc(50% - 50vw);
+  background: linear-gradient(
+    180deg,
+    var(--void-deep) 0,
+    #0b0f18 70px,
+    var(--void-warm) 180px,
+    #232a3c 360px
+  );
+  z-index: -1;
 }
 
 .home-protocol-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: 24px;
+  margin-bottom: 36px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line-strong);
   flex-wrap: wrap;
 }
 
+.home-protocol-section .eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-faint);
+}
+
 .home-protocol-header h2 {
-  font-family: "Space Grotesk", system-ui, sans-serif;
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.03em;
-  color: #e2e8f0;
-  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-variation-settings: "opsz" 144, "SOFT" 30, "WONK" 0;
+  font-size: clamp(40px, 5vw, 72px);
+  font-weight: 320;
+  line-height: 1;
+  letter-spacing: -0.028em;
+  color: var(--bone);
+  margin: 10px 0 0;
 }
 
 .home-protocol-search {
   min-width: 260px;
-  max-width: 340px;
+  max-width: 360px;
 }
 
 .home-protocol-search input {
-  padding: 10px 14px;
-  border-radius: 10px;
+  width: 100%;
+  padding: 11px 14px;
+  background: rgba(10, 13, 18, 0.55);
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  color: var(--bone);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 13px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.home-protocol-search input::placeholder {
+  color: var(--bone-faint);
+}
+.home-protocol-search input:focus {
+  outline: none;
+  border-color: var(--coral);
+  box-shadow: 0 0 0 1px var(--coral), 0 0 22px rgba(255, 107, 107, 0.22);
 }
 
 .home-protocol-list {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 8px;
+  gap: 0;
 }
 
 .home-protocol-row {
   display: grid;
-  grid-template-columns: 44px 1fr auto auto;
-  gap: 16px;
+  grid-template-columns: 56px 1fr auto auto;
+  gap: 24px;
   align-items: center;
-  padding: 14px 18px;
-  background: rgba(20, 26, 36, 0.6);
-  border: 1px solid rgba(148, 163, 184, 0.10);
-  border-radius: 14px;
+  padding: 28px 28px;
+  background: rgba(244, 237, 225, 0.015);
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
   cursor: pointer;
   text-align: left;
   font: inherit;
   color: inherit;
   box-shadow: none;
-  transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+  transition: background 140ms ease, border-color 140ms ease, padding 140ms ease;
+}
+
+.home-protocol-row:nth-child(even) {
+  background: rgba(244, 237, 225, 0.035);
+}
+
+.home-protocol-row:first-child {
+  border-top: 1px solid var(--line-soft);
 }
 
 .home-protocol-row:hover {
-  background: rgba(20, 26, 36, 0.95);
-  border-color: rgba(45, 212, 191, 0.35);
-  transform: translateY(-1px);
+  background: rgba(255, 107, 107, 0.06);
+  border-bottom-color: rgba(255, 107, 107, 0.55);
+  padding-left: 36px;
 }
 
 .home-protocol-row-name {
-  font-family: "Space Grotesk", system-ui, sans-serif;
-  font-size: 17px;
-  font-weight: 700;
-  color: #e2e8f0;
-  letter-spacing: -0.02em;
+  font-family: "Fraunces", Georgia, serif;
+  font-variation-settings: "opsz" 36, "SOFT" 60, "WONK" 0;
+  font-size: 28px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--bone);
+  letter-spacing: -0.012em;
   text-transform: capitalize;
 }
 
 .home-protocol-row-count {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  font-weight: 500;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: #94a3b8;
+  color: var(--bone-faint);
 }
 
 .home-protocol-row-arrow {
-  color: #64748b;
-  font-size: 18px;
+  color: var(--bone-faint);
+  font-size: 22px;
   line-height: 1;
+  transition: transform 140ms ease, color 140ms ease;
 }
 
 .home-protocol-row:hover .home-protocol-row-arrow {
-  color: var(--teal);
+  color: var(--coral);
+  transform: translateX(4px);
+}
+
+/* Standalone analyses table — match the same look */
+.home-protocol-section .panel {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 0;
+  padding: 22px;
+}
+.home-protocol-section .panel h3 {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-faint);
+  margin: 0 0 16px;
+}
+.home-protocol-section .runs-table-header {
+  display: flex;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-strong);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bone-faint);
+}
+.home-protocol-section .runs-table-row {
+  display: flex;
+  padding: 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--bone);
+  transition: background 140ms ease;
+}
+.home-protocol-section .runs-table-row:hover {
+  background: rgba(255, 107, 107, 0.04);
+}
+.home-protocol-section .runs-cell-name {
+  font-family: "Fraunces", Georgia, serif;
+  font-style: italic;
+  font-size: 15px;
+  color: var(--bone);
+}
+.home-protocol-section .runs-cell-addr {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--bone-faint);
+}
+
+.home-protocol-section .empty {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--bone-faint);
+  padding: 40px 0;
+  text-align: center;
 }
 
 /* ── Protocol logo (with initials fallback) ───────────────────────────────── */
@@ -6018,6 +6154,275 @@ button.ghost {
 @media (max-width: 960px) {
   .company-surface-band { padding: 12px 16px 4px; }
   .company-surface-embed { height: 520px; }
+}
+
+/* ── Company pages — phone (≤720px) ──────────────────────────────────────── */
+@media (max-width: 720px) {
+  .company-hero-band { padding: 24px 16px 20px; }
+  .company-hero-title { font-size: 30px; }
+  .company-hero-eyebrow { font-size: 10px; }
+  .company-hero-subtitle { font-size: 12px; }
+
+  .company-score-band { padding: 20px 16px; gap: 22px; }
+  .company-score-left { gap: 20px; }
+  .company-score-left .company-hero-score-value { font-size: 64px; }
+  .company-score-left .company-hero-score-unit { font-size: 16px; }
+  .company-hero-grade-bar { width: 100%; }
+
+  .company-score-left .company-hero-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .company-score-left .company-hero-stat-value { font-size: 22px; }
+
+  .company-score-right { width: 100%; }
+  .company-score-right svg { max-width: 100%; height: auto; }
+
+  .company-surface-band { padding: 10px 14px 4px; }
+  .company-surface-band-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .company-surface-band-title { font-size: 14px; line-height: 1.3; }
+  .company-surface-band-actions { flex-wrap: wrap; gap: 6px; }
+  .company-surface-action {
+    padding: 7px 10px;
+    font-size: 11px;
+    border-radius: 8px;
+  }
+  .company-surface-action svg { width: 14px; height: 14px; }
+  .company-surface-action-count { font-size: 10px; padding: 1px 5px; }
+
+  .company-surface-embed { height: 460px; }
+  .company-page-rest { padding: 10px 12px 28px; gap: 12px; }
+
+  .proto-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .proto-tabs::-webkit-scrollbar { display: none; }
+  .proto-tab {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    font-size: 10px;
+  }
+}
+
+/* ── Company pages — small phone (≤480px) ────────────────────────────────── */
+@media (max-width: 480px) {
+  .company-hero-band { padding: 20px 14px 16px; }
+  .company-hero-title { font-size: 26px; }
+
+  .company-score-band { padding: 16px 14px; gap: 18px; }
+  .company-score-left .company-hero-score-value { font-size: 54px; }
+
+  .company-surface-band-actions .company-surface-action {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
+  }
+
+  .company-surface-embed { height: 380px; }
+  .company-page-rest { padding: 8px 10px 20px; }
+}
+
+/* Mobile-only label inside the sidebar handle — hidden by default */
+.ps-sidebar-mobile-label { display: none; }
+
+/* ── ProtocolSurface page (/company/:name/surface) — phone ───────────────── */
+@media (max-width: 720px) {
+  .ps-sidebar-mobile-label { display: block; }
+
+  .page:has(.ps-surface) .proto-tabs {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .ps-surface { padding: 12px; }
+  .ps-layout { height: calc(100vh - 120px); }
+
+  /* The right-side flyout is too complex on phones — hide it. The main
+   * sidebar (bottom sheet on mobile) carries everything that matters. */
+  .ps-sidebar-flyout,
+  .ps-sidebar-flyout-rail,
+  .ps-sidebar-flyout-toggle {
+    display: none !important;
+  }
+
+  /* Sidebar becomes a bottom sheet that slides up from the bottom. The
+   * sidebar's inline `width` style still applies, so we override it. */
+  .ps-sidebar {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    width: 100vw !important;
+    min-width: 100vw !important;
+    max-width: 100vw !important;
+    height: 70vh !important;
+    max-height: 70vh !important;
+    border-left: none !important;
+    border-top: 1px solid rgba(226, 232, 240, 0.18);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+    flex-direction: column;
+    transition: height 220ms ease, transform 220ms ease;
+    z-index: 60;
+  }
+
+  /* Collapsed: just the drag handle peeking from the bottom. Tap to expand. */
+  .ps-sidebar.ps-sidebar-collapsed {
+    height: 48px !important;
+    max-height: 48px !important;
+  }
+
+  /* The handle column becomes a top row. Make it a wide drag/tap target. */
+  .ps-sidebar .ps-sidebar-handle {
+    flex-direction: row !important;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    height: 36px;
+    min-height: 36px;
+    cursor: pointer;
+    background: rgba(15, 19, 27, 0.85);
+    border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    position: relative;
+  }
+  /* Add a "grabber bar" above the handle */
+  .ps-sidebar .ps-sidebar-handle::before {
+    content: "";
+    position: absolute;
+    top: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 44px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(226, 232, 240, 0.45);
+  }
+  .ps-sidebar .ps-sidebar-handle .ps-sidebar-toggle-collapse {
+    /* hide the > button on mobile — tap the handle instead */
+    display: none;
+  }
+  .ps-sidebar.ps-sidebar-collapsed .ps-sidebar-handle::before {
+    background: rgba(226, 232, 240, 0.65);
+  }
+  /* Visible label on the handle so tap-to-open/close is obvious */
+  .ps-sidebar .ps-sidebar-mobile-label {
+    position: absolute;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(226, 232, 240, 0.85);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .ps-sidebar.ps-sidebar-collapsed .ps-sidebar-handle {
+    height: 48px;
+    min-height: 48px;
+    background: rgba(45, 212, 191, 0.10);
+    border-bottom: 1px solid rgba(45, 212, 191, 0.30);
+  }
+  .ps-sidebar.ps-sidebar-collapsed .ps-sidebar-mobile-label {
+    color: rgba(167, 243, 208, 0.95);
+    bottom: 12px;
+  }
+
+  /* Vertical rail with the expand button on desktop becomes a tap target
+   * on mobile that fills the collapsed bar. */
+  .ps-sidebar .ps-sidebar-rail {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 48px;
+    border-left: none;
+    cursor: pointer;
+  }
+  .ps-sidebar .ps-sidebar-rail-button {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: transparent;
+    color: transparent;
+  }
+  .ps-sidebar:not(.ps-sidebar-collapsed) .ps-sidebar-rail {
+    display: none;
+  }
+
+  /* Hide content when collapsed (avoid layout-shift jank during transition) */
+  .ps-sidebar.ps-sidebar-collapsed .ps-sidebar-content {
+    display: none;
+  }
+
+  .ps-sidebar .ps-sidebar-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    min-height: 0;
+  }
+
+  /* The bottom-left filter pill bar overlaps the sheet — pin it to top-right
+   * area and let it scroll horizontally if it overflows. */
+  .ps-surface-toolbar-overlay {
+    bottom: auto !important;
+    top: 12px !important;
+    left: auto !important;
+    right: 12px !important;
+    max-width: calc(100vw - 24px);
+    padding: 6px 8px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Search modes (top-left) need to fit too */
+  .ps-search-modes-overlay {
+    top: 12px !important;
+    left: 12px !important;
+    right: auto !important;
+    max-width: calc(100vw - 24px);
+    padding: 5px 7px;
+  }
+  .ps-search-modes-overlay .ps-search-modes {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Search overlay pinned just above the bottom sheet */
+  .ps-surface-search-overlay {
+    top: auto !important;
+    bottom: calc(48px + 12px) !important;
+    left: 12px !important;
+    right: 12px !important;
+    max-width: calc(100vw - 24px);
+  }
+
+  /* Embedded variant: make the bottom-sheet behavior work inside the
+   * `.company-surface-embed` container too (rather than fixed to viewport). */
+  .company-surface-embed .ps-sidebar {
+    position: absolute !important;
+  }
+  .company-surface-embed .ps-surface-toolbar-overlay,
+  .company-surface-embed .ps-search-modes-overlay,
+  .company-surface-embed .ps-surface-search-overlay {
+    /* Already constrained inside the embed since it has overflow:hidden */
+  }
+}
+
+/* Smaller phones — tighten the toolbar bar so it doesn't dominate */
+@media (max-width: 480px) {
+  .ps-surface-toolbar-overlay { padding: 4px 6px; }
+  .ps-search-modes-overlay { padding: 4px 6px; }
+  .ps-search-modes-overlay .ps-search-mode { padding: 2px 5px; font-size: 9.5px; }
 }
 
 
@@ -9099,11 +9504,62 @@ button.ps-audit-modal-aside-sha:hover {
   box-shadow: var(--shadow);
 }
 
+.product-hero-preview .fractal-stage {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  box-shadow: var(--shadow);
+}
+
+.fractal-stage {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 120% at 50% 50%, rgba(45, 212, 191, 0.06), transparent 60%),
+    #0a0e15;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  isolation: isolate;
+}
+
+.fractal-camera {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  animation: fractal-zoom 9s linear infinite;
+  will-change: transform;
+}
+
+.fractal-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.fractal-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background: radial-gradient(120% 120% at 50% 50%, transparent 55%, rgba(10, 14, 21, 0.85) 100%);
+}
+
+@keyframes fractal-zoom {
+  from { transform: scale(1) translate(0, 0); }
+  to   { transform: scale(var(--fractal-scale, 2.4)) translate(var(--fractal-tx, 0), var(--fractal-ty, 0)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fractal-camera { animation: none; transform: scale(1.15); }
+}
+
 @media (max-width: 1024px) {
   .product-hero-inner { grid-template-columns: 1fr; gap: 40px; }
   .product-hero-preview .hero-surface,
   .product-hero-preview .hero-flow,
   .product-hero-preview .hero-mesh { max-height: 400px; }
+  .product-hero-preview .fractal-stage { max-width: 420px; }
 }
 
 @media (max-width: 640px) {
@@ -9123,3 +9579,604 @@ button.ps-audit-modal-aside-sha:hover {
   .hero-mesh animateMotion,
   .hero-mesh animateTransform { display: none; }
 }
+
+/* ============================================================
+ * Splash hero — full-bleed fractal stage
+ * Fractal owns the canvas; content floats over it. No frames,
+ * no boxes, just depth and motion.
+ * ============================================================ */
+.ph {
+  --void: #060912;
+  --void-deep: #03050a;
+  --bone: #f4ede1;
+  --bone-mute: rgba(244, 237, 225, 0.78);
+  --bone-faint: rgba(244, 237, 225, 0.46);
+  --coral: #ff6b6b;
+  --coral-glow: rgba(255, 107, 107, 0.55);
+  --lime: #c5ff3d;
+  --lime-glow: rgba(197, 255, 61, 0.55);
+
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: 100%;
+  min-height: 100vh;
+  background: var(--void-deep);
+  color: var(--bone);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Fractal — full-bleed background */
+.ph .fractal-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  aspect-ratio: auto;
+  overflow: hidden;
+  isolation: isolate;
+}
+.ph .fractal-svg,
+.ph .df-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.ph .df-sway {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+/* ── Hanayama ASCII puzzle: 4 horizontal cylinders ────────────────────────── */
+.cyl-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+.cyl-perspective {
+  position: absolute;
+  inset: 0;
+  perspective: 1800px;
+  perspective-origin: 50% 38%;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+.cyl-wrap {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-style: preserve-3d;
+}
+.cyl-rotor {
+  position: relative;
+  transform-style: preserve-3d;
+  animation: cyl-spin 28s linear infinite;
+  will-change: transform;
+}
+.cyl-rotor.rev { animation-direction: reverse; }
+
+/* Build cylinder vertically, then rotateZ(90deg) lays it on its side.
+ * The animated rotateY then spins around what is now the horizontal axis. */
+@keyframes cyl-spin {
+  from { transform: rotateZ(90deg) rotateY(0deg); }
+  to   { transform: rotateZ(90deg) rotateY(360deg); }
+}
+
+.cyl-slice {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform-origin: center center;
+}
+.cyl-c {
+  display: inline-block;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 500;
+  font-feature-settings: "tnum" 1;
+  transition: color 0.25s ease, text-shadow 0.25s ease;
+}
+.cyl-c.scrambling {
+  color: rgba(244, 237, 225, 0.55);
+}
+.cyl-c.solved {
+  color: rgba(244, 237, 225, 0.9);
+}
+.cyl-c.solved.cyl-c-dim {
+  color: rgba(244, 237, 225, 0.30);
+  text-shadow: none;
+}
+.cyl-c.solved.cyl-c-norm {
+  color: rgba(244, 237, 225, 0.85);
+}
+.cyl-c.solved.cyl-c-green {
+  color: #6eed8a;
+  text-shadow: 0 0 6px rgba(110, 237, 138, 0.6), 0 0 14px rgba(110, 237, 138, 0.25);
+}
+.cyl-c.solved.cyl-c-red {
+  color: #ff5c5c;
+  text-shadow: 0 0 8px rgba(255, 92, 92, 0.7), 0 0 18px rgba(255, 92, 92, 0.3);
+}
+
+/* tumbler "click" — brief brightness pulse when a slice locks in */
+.cyl-slice.click-flash {
+  animation: cyl-slice-click 260ms ease-out;
+}
+@keyframes cyl-slice-click {
+  0%   { filter: brightness(2.6) drop-shadow(0 0 6px rgba(244, 237, 225, 0.8)); }
+  40%  { filter: brightness(1.8); }
+  100% { filter: brightness(1); }
+}
+
+/* ── continuous ASCII minesweeper (full bg, interactive on click) ─────────── */
+.ms-stage {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+.ms-grid {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: crosshair;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 38%, transparent 72%);
+          mask-image: linear-gradient(180deg, #000 0%, #000 38%, transparent 72%);
+}
+.ms-c {
+  display: inline-block;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 500;
+  font-feature-settings: "tnum" 1;
+  transition: color 0.32s ease, text-shadow 0.32s ease;
+  user-select: none;
+}
+.ms-c.covered { color: rgba(244, 237, 225, 0.30); }
+.ms-c.empty   { color: rgba(244, 237, 225, 0.12); }
+.ms-c.num     { font-weight: 600; }
+.ms-c.num.n1  { color: #5db3ff; text-shadow: 0 0 5px rgba(93, 179, 255, 0.4); }
+.ms-c.num.n2  { color: #7eed7e; text-shadow: 0 0 5px rgba(126, 237, 126, 0.4); }
+.ms-c.num.n3  { color: #ff7a7a; text-shadow: 0 0 5px rgba(255, 122, 122, 0.4); }
+.ms-c.num.n4  { color: #b794ff; text-shadow: 0 0 5px rgba(183, 148, 255, 0.4); }
+.ms-c.num.n5  { color: #ffaa55; text-shadow: 0 0 5px rgba(255, 170, 85, 0.4); }
+.ms-c.num.n6  { color: #ff6bb4; text-shadow: 0 0 5px rgba(255, 107, 180, 0.4); }
+.ms-c.num.n7  { color: #f4ede1; text-shadow: 0 0 5px rgba(244, 237, 225, 0.4); }
+.ms-c.num.n8  { color: #ff3030; text-shadow: 0 0 5px rgba(255, 48, 48, 0.5); }
+.ms-c.flag {
+  color: #ff5c5c;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 92, 92, 0.7), 0 0 14px rgba(255, 92, 92, 0.3);
+}
+.ms-c.mine-revealed {
+  color: #ff5c5c;
+  font-weight: 700;
+  text-shadow: 0 0 8px rgba(255, 92, 92, 0.7);
+}
+.ms-c.mine-explosion {
+  animation: ms-explode 700ms ease-out;
+}
+@keyframes ms-explode {
+  0%   { color: #fff; text-shadow: 0 0 24px #fff, 0 0 48px #ffae42; transform: scale(1.6); }
+  60%  { color: #ff5c5c; text-shadow: 0 0 16px #ff5c5c; transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+.ms-c:hover {
+  color: rgba(244, 237, 225, 0.9);
+  text-shadow: 0 0 6px rgba(244, 237, 225, 0.5);
+}
+.ms-c.click-pulse {
+  animation: ms-click-pulse 220ms ease-out;
+}
+@keyframes ms-click-pulse {
+  0%   { color: #ffffff; text-shadow: 0 0 12px rgba(255, 255, 255, 0.9), 0 0 24px rgba(255, 255, 255, 0.45); }
+  100% { /* falls through to base class color */ }
+}
+.ms-hint {
+  position: absolute;
+  bottom: 18px;
+  right: 22px;
+  z-index: 4;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(244, 237, 225, 0.55);
+  pointer-events: none;
+  transition: opacity 600ms ease;
+}
+.ms-hint.hidden { opacity: 0; }
+.ms-hint-key {
+  display: inline-block;
+  padding: 2px 6px;
+  border: 1px solid rgba(244, 237, 225, 0.25);
+  border-radius: 3px;
+  color: rgba(244, 237, 225, 0.85);
+  font-weight: 500;
+  margin: 0 2px;
+}
+
+/* horizontal cylinders → fade left and right edges so they dissolve at the
+ * sides instead of being cut off */
+.cyl-fade-left {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(3, 5, 10, 0.95) 0%, transparent 16%);
+}
+.cyl-fade-right {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(-90deg, rgba(3, 5, 10, 0.95) 0%, transparent 16%);
+}
+.cyl-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 100% at 50% 50%, rgba(3, 5, 10, 0) 55%, rgba(3, 5, 10, 0.7) 100%);
+}
+
+/* ── byte-stream visual (legacy, kept for reference) ───────────────────────── */
+.bs-stage {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+.bs-grid {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* white layer — bright on the left, fades out toward the right */
+.bs-grid-white {
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    #000 0%,
+    #000 22%,
+    rgba(0, 0, 0, 0) 65%
+  );
+          mask-image: linear-gradient(
+    90deg,
+    #000 0%,
+    #000 22%,
+    rgba(0, 0, 0, 0) 65%
+  );
+}
+/* color layer — invisible on the left, fades in past the middle */
+.bs-grid-color {
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0) 30%,
+    #000 70%,
+    #000 92%,
+    rgba(0, 0, 0, 0) 100%
+  );
+          mask-image: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0) 30%,
+    #000 70%,
+    #000 92%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+
+.bs-row {
+  position: relative;
+  white-space: nowrap;
+  height: 1.4em;
+  line-height: 1.4em;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  animation: bs-flow var(--dur, 22s) linear infinite;
+  will-change: transform;
+}
+.bs-row-inner {
+  display: inline-block;
+  white-space: nowrap;
+}
+@keyframes bs-flow {
+  from { transform: translateX(-50%); }
+  to   { transform: translateX(0%); }
+}
+
+/* token coloring */
+/* white layer — uniform bright entering color */
+.bs-tok-w {
+  color: rgba(248, 244, 235, 0.95);
+  text-shadow: 0 0 6px rgba(248, 244, 235, 0.18);
+}
+/* color layer — verdict colors */
+.bs-tok-n {
+  color: rgba(244, 237, 225, 0.30);
+}
+.bs-tok-a {
+  color: #6eed8a;
+  font-weight: 500;
+  text-shadow: 0 0 6px rgba(110, 237, 138, 0.55), 0 0 14px rgba(110, 237, 138, 0.22);
+}
+.bs-tok-m {
+  color: #ff5c5c;
+  font-weight: 600;
+  text-shadow: 0 0 8px rgba(255, 92, 92, 0.65), 0 0 18px rgba(255, 92, 92, 0.3);
+}
+
+.bs-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 100% at 50% 50%, rgba(3, 5, 10, 0) 55%, rgba(3, 5, 10, 0.75) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bs-row { animation: none; }
+}
+
+/* Legibility veil — soft radial darken behind text */
+.ph-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(55% 60% at 22% 78%, rgba(3, 5, 10, 0.92), transparent 75%),
+    linear-gradient(180deg, rgba(3, 5, 10, 0.4) 0%, transparent 28%, transparent 50%, rgba(3, 5, 10, 0.88) 100%);
+}
+
+/* Content layer — content floats on top */
+.ph-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 36px 56px 48px;
+  max-width: 920px;
+  width: 100%;
+  margin-top: auto;
+  margin-bottom: 14vh;
+}
+
+/* Top meta strip — sits at the very top */
+.ph-meta {
+  position: absolute;
+  top: 28px;
+  left: 56px;
+  right: 56px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--bone-mute);
+}
+.ph-meta-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--coral);
+  box-shadow: 0 0 12px var(--coral-glow), 0 0 24px var(--coral-glow);
+  animation: ph-pulse 2.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.ph-meta-rule {
+  flex: 1;
+  height: 1px;
+  background: rgba(244, 237, 225, 0.16);
+}
+.ph-meta-faint { color: var(--bone-faint); }
+@keyframes ph-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.78); }
+}
+
+.ph-title {
+  margin: 0;
+  font-family: "Fraunces", Georgia, serif;
+  font-variation-settings: "opsz" 144, "SOFT" 30, "WONK" 0;
+  font-size: clamp(60px, 9.5vw, 144px);
+  font-weight: 300;
+  line-height: 0.96;
+  letter-spacing: -0.028em;
+  color: var(--bone);
+  text-shadow: 0 4px 36px rgba(3, 5, 10, 0.92), 0 1px 4px rgba(3, 5, 10, 0.7);
+  text-wrap: balance;
+}
+.ph-title-em {
+  font-style: italic;
+  font-weight: 320;
+  font-variation-settings: "opsz" 144, "SOFT" 100, "WONK" 1;
+  color: var(--bone);
+  text-shadow: 0 0 24px rgba(244, 237, 225, 0.25), 0 4px 24px rgba(3, 5, 10, 0.92);
+}
+.ph-title-em-dim {
+  color: #ffe2d4;
+  text-shadow: 0 0 32px rgba(255, 107, 107, 0.42), 0 4px 24px rgba(3, 5, 10, 0.92);
+}
+
+.ph-sub {
+  margin: 0;
+  max-width: 56ch;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 14.5px;
+  font-weight: 300;
+  line-height: 1.7;
+  color: var(--bone-mute);
+  text-shadow: 0 1px 8px rgba(10, 13, 18, 0.85);
+}
+.ph-sub em {
+  font-style: italic;
+  color: var(--bone);
+  font-family: "Fraunces", Georgia, serif;
+  font-variation-settings: "opsz" 14, "SOFT" 100, "WONK" 0;
+  font-size: 1.05em;
+}
+
+/* Form — minimal floating chrome */
+.ph-form {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) 130px 88px auto;
+  gap: 12px;
+  padding: 16px;
+  margin-top: 12px;
+  background: rgba(10, 13, 18, 0.42);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(244, 237, 225, 0.16);
+  max-width: 760px;
+}
+.ph-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ph-field > span {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bone-faint);
+}
+.ph-field input {
+  width: 100%;
+  padding: 11px 12px;
+  background: rgba(10, 13, 18, 0.55);
+  border: 1px solid rgba(244, 237, 225, 0.18);
+  border-radius: 0;
+  color: var(--bone);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 400;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.ph-field input::placeholder { color: var(--bone-faint); }
+.ph-field input:focus {
+  outline: none;
+  border-color: var(--lime);
+  box-shadow: 0 0 0 1px var(--lime), 0 0 22px rgba(197, 255, 61, 0.28);
+}
+.ph-submit {
+  align-self: end;
+  padding: 12px 22px;
+  background: var(--lime);
+  color: var(--void);
+  border: 1px solid var(--lime);
+  border-radius: 0;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.12s, opacity 0.15s;
+  white-space: nowrap;
+}
+.ph-submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(197, 255, 61, 0.35), 0 0 0 1px rgba(197, 255, 61, 0.5);
+}
+.ph-submit:active:not(:disabled) { transform: translateY(0); }
+.ph-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+
+@media (max-width: 900px) {
+  .ph { min-height: 88vh; }
+  .ph-meta { left: 32px; right: 32px; }
+  .ph-content { padding: 28px 32px 36px; margin-bottom: 8vh; }
+  .ph-title { font-size: clamp(54px, 14vw, 110px); }
+  .ph-form { grid-template-columns: 1fr 1fr; }
+  .ph-field-main { grid-column: 1 / -1; }
+  .ph-submit { grid-column: 1 / -1; }
+}
+
+@media (max-width: 560px) {
+  .ph { min-height: 100vh; }
+  .ph-meta { top: 20px; left: 20px; right: 20px; gap: 8px; font-size: 9.5px; letter-spacing: 0.18em; }
+  .ph-meta-faint { display: none; }
+  .ph-content { padding: 20px 20px 28px; margin-bottom: 6vh; gap: 20px; }
+  .ph-title { font-size: clamp(42px, 13vw, 72px); line-height: 0.95; }
+  .ph-sub { font-size: 13px; line-height: 1.55; }
+  .ph-form { grid-template-columns: 1fr; padding: 12px; }
+  .ph-field input { font-size: 14px; padding: 12px; }
+  .ph-submit { padding: 14px; font-size: 12px; }
+}
+
+/* Mobile veil — stronger darkening behind text so the 0's don't bleed
+ * through the title and subtitle. Grid stays visible in the top portion,
+ * then dissolves into a solid dark backdrop where the text sits. */
+@media (max-width: 720px) {
+  .ph-veil {
+    background: linear-gradient(
+      180deg,
+      transparent 0%,
+      transparent 28%,
+      rgba(3, 5, 10, 0.85) 45%,
+      rgba(3, 5, 10, 0.96) 60%,
+      rgba(3, 5, 10, 0.98) 100%
+    );
+  }
+  .ms-grid {
+    -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 28%, transparent 55%);
+            mask-image: linear-gradient(180deg, #000 0%, #000 28%, transparent 55%);
+  }
+}
+
+/* Protocols section — mobile */
+@media (max-width: 900px) {
+  .home-protocol-section {
+    padding: 64px 24px 96px;
+    max-width: none;
+  }
+  .home-protocol-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    padding-bottom: 14px;
+  }
+  .home-protocol-header h2 {
+    font-size: clamp(34px, 8vw, 56px);
+    margin-top: 6px;
+  }
+  .home-protocol-search { max-width: none; min-width: 0; }
+  .home-protocol-row {
+    grid-template-columns: 44px 1fr auto;
+    padding: 20px 16px;
+    gap: 14px;
+  }
+  .home-protocol-row-name { font-size: 22px; }
+  .home-protocol-row-arrow { display: none; }
+}
+
+@media (max-width: 560px) {
+  .home-protocol-section { padding: 44px 18px 72px; }
+  .home-protocol-row { padding: 16px 12px; gap: 12px; }
+  .home-protocol-row-name { font-size: 19px; }
+  .home-protocol-row-count { font-size: 10px; letter-spacing: 0.14em; }
+  .home-protocol-section .runs-table-row { flex-direction: column; gap: 4px; align-items: flex-start; }
+  .home-protocol-section .runs-cell-name { flex: none !important; }
+  .home-protocol-section .runs-cell-addr { flex: none !important; font-size: 11px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ph .fractal-camera { animation: none; transform: scale(1.2); }
+  .ph-meta-dot { animation: none; }
+}
+
