@@ -386,7 +386,12 @@ def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifact
     }
 
 
-def _enrich_principals_from_v2_capabilities(session: Session, *, contract_row: Contract | None) -> None:
+def _enrich_principals_from_v2_capabilities(
+    session: Session,
+    *,
+    contract_row: Contract | None,
+    job_id: Any = None,
+) -> None:
     """Add ``FunctionPrincipal`` rows from the v2 capability resolver.
 
     Calls ``resolve_contract_capabilities`` for the subject contract,
@@ -413,7 +418,7 @@ def _enrich_principals_from_v2_capabilities(session: Session, *, contract_row: C
         return
 
     try:
-        capabilities = resolve_contract_capabilities(session, address=address)
+        capabilities = resolve_contract_capabilities(session, address=address, job_id=job_id)
     except Exception as exc:
         logger.warning(
             "v2 capability enrichment skipped for %s: %s",
@@ -661,10 +666,14 @@ class PolicyWorker(BaseWorker):
             # FunctionPrincipal rows for functions whose v2 path resolved
             # concrete addresses the v1 heuristic missed (inherited Ownable
             # _owner, cross-contract roleRegistry.hasRole grantees, etc.).
-            # Additive only — existing v1 rows are kept; we de-dupe on
-            # (function_id, address, principal_type) so the same address
-            # isn't doubled when both paths resolve it.
-            _enrich_principals_from_v2_capabilities(session, contract_row=contract_row)
+            # Pass job.id so the resolver targets the in-progress job's
+            # artifacts — the default Job.status==completed filter would
+            # skip this row and return None mid-policy.
+            _enrich_principals_from_v2_capabilities(
+                session,
+                contract_row=contract_row,
+                job_id=job.id,
+            )
 
         store_artifact(session, job.id, "effective_permissions", data=ep_data)
 

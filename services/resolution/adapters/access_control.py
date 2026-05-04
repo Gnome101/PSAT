@@ -225,20 +225,48 @@ class AccessControlAdapter:
     # ------------------------------------------------------------------
 
     def _role_key_constants(self, descriptor: dict) -> list[bytes]:
-        """Pull constant-value role keys from the descriptor's
+        """Pull statically-known role keys from the descriptor's
         key_sources. The role key is the non-caller key in a 2-key
-        AC mapping. Returns its constant value(s) if statically
-        known; empty list if parametric."""
+        AC mapping. Returns its byte values; empty list if parametric.
+
+        Three sources qualify:
+          * ``constant`` — the literal bytes32 value embedded in the
+            descriptor.
+          * ``external_call`` — the role was passed in as the result of
+            calling a role-constant getter (Solidity's auto-generated
+            getter for ``bytes32 public constant PROTOCOL_PAUSER =
+            keccak256("PROTOCOL_PAUSER")``). The callee name is the
+            role identifier; we hash it via the canonical OZ convention
+            (``keccak256(name)``). When the contract defines roles via
+            a different scheme the hash misses and we fall back to the
+            existing observed-history expansion.
+          * ``state_variable`` — same idea but the static analyzer
+            traced through a stored copy of the constant. Use the var
+            name as the seed string."""
         keys = descriptor.get("key_sources") or []
         roles: list[bytes] = []
         for k in keys:
-            if k.get("source") in ("msg_sender", "tx_origin", "signature_recovery"):
+            src = k.get("source")
+            if src in ("msg_sender", "tx_origin", "signature_recovery"):
                 continue
-            if k.get("source") == "constant":
+            if src == "constant":
                 val = k.get("constant_value")
                 role_bytes = _coerce_role_bytes(val)
                 if role_bytes is not None:
                     roles.append(role_bytes)
+                continue
+            # OZ convention: role constants are keccak256(NAME). Try the
+            # callee / state-variable name; the lookup either hits the
+            # right grant rows or returns no members and we fall back
+            # to lower_bound. No false positives because the role hash
+            # has to match exactly.
+            seed = None
+            if src == "external_call":
+                seed = k.get("callee")
+            elif src == "state_variable":
+                seed = k.get("state_variable_name")
+            if seed:
+                roles.append(_keccak_role(seed))
         return roles
 
 
@@ -252,6 +280,17 @@ _CONFIDENCE_ORDER = {"enumerable": 2, "partial": 1, "check_only": 0}
 
 def _confidence_lt(a: Confidence, b: Confidence) -> bool:
     return _CONFIDENCE_ORDER[a] < _CONFIDENCE_ORDER[b]
+
+
+def _keccak_role(name: str) -> bytes:
+    """Hash a role-constant name using the OZ convention
+    (``keccak256(name)``). Used to recover the bytes32 identifier when
+    the descriptor's key_source is the role-constant getter rather than
+    an inlined constant_value (e.g. ``PROTOCOL_PAUSER`` was looked up
+    via ``contract.PROTOCOL_PAUSER()`` in the source IR)."""
+    from eth_utils.crypto import keccak
+
+    return keccak(text=name)
 
 
 def _coerce_role_bytes(value: Any) -> bytes | None:

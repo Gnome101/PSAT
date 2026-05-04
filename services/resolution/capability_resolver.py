@@ -65,6 +65,7 @@ def resolve_contract_capabilities(
     address: str,
     chain_id: int = 1,
     block: int | None = None,
+    job_id: Any = None,
 ) -> dict[str, dict[str, Any]] | None:
     """Return ``{function_signature: capability_dict}`` for the most
     recent completed analysis of ``address``, or ``None`` if there's
@@ -73,17 +74,27 @@ def resolve_contract_capabilities(
     The caller MUST keep ``session`` open for the duration of the
     call — adapters consume the repos lazily inside
     ``evaluate_tree_with_registry``.
+
+    ``job_id`` lets in-pipeline callers (e.g. the policy worker's v2
+    enrichment pass) target the job they're currently processing. The
+    default ``Job.status == completed`` filter would otherwise skip
+    the in-progress job and return None or stale prior artifacts.
     """
     addr = address.lower()
-    job = session.execute(
-        select(Job)
-        .where(Job.address == addr)
-        .where(Job.status == JobStatus.completed)
-        .order_by(Job.updated_at.desc(), Job.created_at.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if job is None:
-        return None
+    if job_id is not None:
+        job = session.get(Job, job_id)
+        if job is None or (job.address or "").lower() != addr:
+            return None
+    else:
+        job = session.execute(
+            select(Job)
+            .where(Job.address == addr)
+            .where(Job.status == JobStatus.completed)
+            .order_by(Job.updated_at.desc(), Job.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if job is None:
+            return None
 
     artifact = get_artifact(session, job.id, "predicate_trees")
     if not isinstance(artifact, dict) or "trees" not in artifact:
@@ -121,32 +132,43 @@ def resolve_contract_capabilities(
 
 def _load_state_var_values(session: Session, address: str) -> dict[str, str]:
     """Read persisted ``controller_values`` rows for ``address`` and key
-    them by ``controller_id`` (which the static-analysis pipeline uses
-    as the state-variable name — e.g. ``"_owner"``,
-    ``"roleRegistry"``).
+    them by the bare state-variable name the predicate evaluator looks
+    up (e.g. ``"_owner"``, ``"roleRegistry"``).
 
-    The predicate evaluator consumes this dict to enumerate
-    ``state_variable`` operands (Ownable's ``_owner``, custom
-    role-registry refs, etc.) into concrete addresses so the resolver
-    emits ``finite_set([value], quality=exact)`` instead of the
-    lower_bound/partial placeholder.
+    The static pipeline writes ``controller_id`` with a
+    ``"<kind>:<name>"`` prefix (e.g. ``"state_variable:_owner"``,
+    ``"external_contract:roleRegistry"``). The predicate evaluator
+    queries ``ctx.state_var_values[<name>]`` without the prefix, so we
+    strip it on read and prefer ``state_variable:`` rows when both
+    a state-variable and an external-contract row exist for the same
+    name.
 
-    Returns an empty dict when the contract has no row or no
-    controller values yet — the evaluator falls back to the
-    placeholder shape, which is honest about not knowing."""
+    Returns an empty dict when the contract has no row — the evaluator
+    falls back to the lower_bound/partial placeholder."""
     contract = session.execute(select(Contract).where(Contract.address == address).limit(1)).scalar_one_or_none()
     if contract is None:
         return {}
     rows = session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract.id)).scalars()
-    out: dict[str, str] = {}
+    state_var: dict[str, str] = {}
+    other: dict[str, str] = {}
     for row in rows:
-        if row.controller_id and row.value:
-            # Last-write-wins on duplicate controller_id — fine, the
-            # static pipeline writes a single row per (contract,
-            # controller_id) but a re-run of an upgraded impl can land
-            # multiple rows.
-            out[row.controller_id] = row.value
-    return out
+        cid = row.controller_id or ""
+        value = row.value
+        if not cid or not value:
+            continue
+        if ":" in cid:
+            kind, _, name = cid.partition(":")
+        else:
+            kind, name = "", cid
+        if not name:
+            continue
+        if kind == "state_variable":
+            state_var[name] = value
+        else:
+            other.setdefault(name, value)
+    # state_variable rows win; external_contract / role_identifier rows
+    # fill in only when there's no direct state-variable value.
+    return {**other, **state_var}
 
 
 def capability_to_dict(cap: CapabilityExpr) -> dict[str, Any]:

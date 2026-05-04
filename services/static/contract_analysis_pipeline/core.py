@@ -101,17 +101,29 @@ def _augment_controller_tracking_from_predicate_trees(
         return
 
     existing_ids = {target.get("controller_id") for target in controller_tracking}
-    # Map state-var name → its declared type, so the resolution worker can pick
-    # the right read (slot/getter/etc.). Only address-typed vars resolve into
-    # ControllerValue rows the capability evaluator can consume; non-address
-    # vars are tracked anyway so they show up in the snapshot for diagnostics.
+    # Map state-var name → (var, public-getter name). Private storage with a
+    # public view function (the OZ Ownable convention — ``address private
+    # _owner; function owner() returns address``) needs read_spec to point
+    # at the GETTER; otherwise the resolution worker calls ``_owner()`` and
+    # eth_call reverts. We pick the getter via a small set of conventions
+    # the static pipeline can spot without RPC: a same-contract view
+    # function returning ``address`` whose body is ``return <name>;``.
     state_vars_by_name = {sv.name: sv for sv in getattr(subject_contract, "state_variables_ordered", [])}
+    getter_by_var = _build_getter_index(subject_contract)
     for name in sorted(referenced):
         controller_id = f"state_variable:{name}"
         if controller_id in existing_ids:
             continue
         sv = state_vars_by_name.get(name)
         type_str = str(getattr(sv, "type", "")) if sv is not None else ""
+        is_public = bool(getattr(sv, "visibility", None) == "public")
+        # Public state vars get an auto-generated getter named after the
+        # var (e.g. ``address public roleRegistry`` → ``roleRegistry()``).
+        # Private vars need an explicit getter; fall back to the var name
+        # if we can't identify one (the resolver will skip the row when
+        # eth_call reverts — leaves the lower_bound placeholder rather
+        # than ascribing a wrong value).
+        getter_name = name if is_public else getter_by_var.get(name, name)
         controller_tracking.append(
             {
                 "controller_id": controller_id,
@@ -119,6 +131,8 @@ def _augment_controller_tracking_from_predicate_trees(
                 "source": name,
                 "kind": "state_variable",
                 "read_spec": {
+                    "strategy": "getter_call",
+                    "target": getter_name,
                     "kind": "state_variable",
                     "state_variable_name": name,
                     "type": type_str,
@@ -131,6 +145,44 @@ def _augment_controller_tracking_from_predicate_trees(
             }
         )
         existing_ids.add(controller_id)
+
+
+def _build_getter_index(subject_contract) -> dict[str, str]:
+    """Map private state-var name → its public getter function name.
+
+    Walks the subject's view/pure functions whose body is
+    ``return <state_var>;``. OZ Ownable's ``owner()`` returning ``_owner``
+    is the canonical case. Returns ``{var_name: getter_name}``; vars
+    without a recognised getter are absent and the caller falls back to
+    the var name."""
+    out: dict[str, str] = {}
+    for fn in getattr(subject_contract, "functions", []) or []:
+        # Only public/external view-or-pure functions with no params.
+        visibility = getattr(fn, "visibility", None)
+        if visibility not in ("public", "external"):
+            continue
+        if getattr(fn, "view", False) is False and getattr(fn, "pure", False) is False:
+            continue
+        if getattr(fn, "parameters", None):
+            continue
+        return_vars = list(getattr(fn, "returns", []) or [])
+        if not return_vars:
+            continue
+        # Find a single ``return <state_var>;`` in the body.
+        for node in getattr(fn, "nodes", []) or []:
+            expr = getattr(node, "expression", None)
+            text = str(expr) if expr is not None else ""
+            if not text:
+                continue
+            # We're after a one-liner `return X;` where X names a state var.
+            # Slither renders this as the variable's identifier; storage
+            # reads in IR show up as ``SolidityVariable`` or
+            # ``StateVariable`` references. Take the simple-text route.
+            for sv in getattr(subject_contract, "state_variables_ordered", []) or []:
+                if sv.name and text.strip() == sv.name:
+                    out.setdefault(sv.name, fn.name)
+                    break
+    return out
 
 
 def _build_predicate_trees_for_project(project_dir: Path) -> dict:
