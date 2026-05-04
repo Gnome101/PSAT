@@ -51,14 +51,6 @@ ALLOW_LIST: dict[str, dict[int, str]] = {
         # reanalysis was degraded.
         717: "Notifier side-effect; reanalysis already completed before this fired.",
     },
-    "workers/resolution_worker.py": {
-        # Per-impl coverage-refresh failure inside `_backfill_historical_impls`
-        # — already wrapped by the outer `_run_upgrade_history` except handler
-        # at line 496 which records `resolution_upgrade_history` once. A
-        # per-impl record here would emit one degraded entry per backfilled
-        # impl on a flaky storage call.
-        646: "Per-impl swallow inside upgrade-history backfill; outer handler already records degraded.",
-    },
 }
 
 
