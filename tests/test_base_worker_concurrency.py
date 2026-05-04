@@ -432,12 +432,13 @@ def test_sigterm_abandons_jobs_past_drain_timeout(mock_claim, mock_session_cls, 
     t0 = time.monotonic()
     try:
         w.run_loop()
+        elapsed = time.monotonic() - t0
+        # Returned promptly (didn't wait the full 0.5s sleep)
+        assert elapsed < 0.4, f"run_loop should have abandoned promptly, took {elapsed:.2f}s"
     finally:
+        # Drain the abandoned worker thread before yielding to the next test.
         if w._job_pool:
-            w._job_pool.shutdown(wait=False)
-    elapsed = time.monotonic() - t0
-    # Returned promptly (didn't wait the full 0.5s sleep)
-    assert elapsed < 0.4, f"run_loop should have abandoned promptly, took {elapsed:.2f}s"
+            w._job_pool.shutdown(wait=True)
 
 
 # ---------------------------------------------------------------------------
