@@ -24,7 +24,7 @@ follow-ups (this commit lays the scaffold + the two most common kinds).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 try:
     from slither.core.declarations import SolidityVariable  # type: ignore[import]
@@ -1199,16 +1199,95 @@ def _build_external_bool_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) ->
     # traces to msg_sender or signature_recovery.
     target_sources = _sources_from_destination(ir, prov)
     has_state_target = any(s.kind == "state_variable" for s in target_sources)
+    target_state_var = next(
+        (s.state_variable_name for s in target_sources if s.kind == "state_variable"),
+        None,
+    )
     has_caller_arg = any(
         any(s.kind in ("msg_sender", "tx_origin", "signature_recovery") for s in _sources_for_value(a, prov))
         for a in getattr(ir, "arguments", ())
     )
     if has_state_target and has_caller_arg:
         leaf["authority_role"] = "delegated_authority"
+        # Cross-contract role-membership shape (e.g. ``roleRegistry.hasRole(role,
+        # sender)`` on EtherFi, or any external auth's hasRole-like check).
+        # Attach a mapping_membership descriptor so the AccessControlAdapter
+        # can expand the leaf into actual role grantees via the role_grants
+        # repo. Without this descriptor the leaf collapses to
+        # external_check_only with null target_address, which renders as an
+        # empty controllers list on the FE.
+        descriptor = _maybe_build_role_membership_descriptor(
+            callee_name=callee_name,
+            args_operands=args_operands,
+            target_state_var=target_state_var,
+        )
+        if descriptor is not None:
+            leaf["set_descriptor"] = cast(SetDescriptor, descriptor)
     else:
         leaf["authority_role"] = "business"
     leaf["expression"] = f"{callee_name}(...)"
     return leaf
+
+
+# RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)
+_ROLE_GRANTED_TOPIC0 = "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
+
+
+def _maybe_build_role_membership_descriptor(
+    *,
+    callee_name: str | None,
+    args_operands: list,
+    target_state_var: str | None,
+) -> dict | None:
+    """Recognise the ``hasRole(role, sender) → bool`` shape on a HighLevelCall
+    and emit a mapping_membership descriptor pointing at the target contract's
+    role_grants. The shape is name-driven on the callee (``hasRole`` per OZ
+    AccessControl + every clone) and structural on the args (2 operands, the
+    second tracing to msg_sender). Other call shapes (``canCall``,
+    ``isAuthorized``) need different adapters and are left for a follow-up.
+
+    Returns None when the callee isn't ``hasRole`` or the args don't carry a
+    role + caller pair — the leaf stays plain external_check_only and the FE
+    renders it as 'gated, target unresolved'."""
+    if callee_name != "hasRole":
+        return None
+    if len(args_operands) != 2:
+        return None
+    role_op, caller_op = args_operands[0], args_operands[1]
+    # Caller arg must be msg_sender / tx_origin / signature_recovery for the
+    # AccessControlAdapter's matches() to accept the descriptor (it requires
+    # one of the keys to source from msg_sender).
+    if caller_op.get("source") not in ("msg_sender", "tx_origin", "signature_recovery"):
+        return None
+    descriptor: dict = {
+        "kind": "mapping_membership",
+        "key_sources": [role_op, caller_op],
+        # An enumeration_hint with the OZ RoleGranted topic0 makes
+        # AccessControlAdapter.matches() return its highest score (95).
+        # event_address is left unset; the resolver fills it from the
+        # authority_contract address_source at run time.
+        "enumeration_hint": [
+            {
+                "topic0": _ROLE_GRANTED_TOPIC0,
+                "topics_to_keys": {1: 0, 2: 1},
+                "data_to_keys": {},
+                "direction": "add",
+            }
+        ],
+    }
+    if target_state_var is not None:
+        # Cross-contract registry — record the address source so the
+        # adapter can pull the registry's value from
+        # ctx.state_var_values[target_state_var] and use it as the
+        # contract_address for the role_grants lookup.
+        descriptor["authority_contract"] = {
+            "address_source": {
+                "source": "state_variable",
+                "state_variable_name": target_state_var,
+            },
+            "abi_hint": "openzeppelin_access_control",
+        }
+    return descriptor
 
 
 def _build_solidity_call_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) -> LeafPredicate:

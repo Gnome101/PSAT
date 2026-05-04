@@ -79,7 +79,14 @@ class AccessControlAdapter:
                 quality="lower_bound",
                 confidence="partial",
             )
-        if ctx.contract_address is None:
+        # Cross-contract role registry shape: descriptor.authority_contract.
+        # address_source points at the registry's storage var on the subject
+        # contract (e.g. EtherFi's ``roleRegistry``). Resolve through
+        # ctx.state_var_values; fall back to ctx.contract_address when the
+        # descriptor doesn't carry a separate authority contract (canonical
+        # OZ pattern where the subject IS the registry).
+        lookup_address = self._resolve_lookup_address(descriptor, ctx)
+        if lookup_address is None:
             return CapabilityExpr.finite_set([], quality="lower_bound", confidence="partial")
 
         # Build the role-domain for this descriptor. Per v3 round-3
@@ -105,7 +112,7 @@ class AccessControlAdapter:
             try:
                 result = ctx.role_grants.members_for_role(
                     chain_id=ctx.chain_id,
-                    contract_address=ctx.contract_address,
+                    contract_address=lookup_address,
                     role=role,
                     block=ctx.block,
                 )
@@ -131,6 +138,33 @@ class AccessControlAdapter:
             confidence=confidence,
             last_indexed_block=last_block,
         )
+
+    def _resolve_lookup_address(self, descriptor: dict, ctx: EvaluationContext) -> str | None:
+        """Pick the contract address used for the role_grants lookup.
+
+        Canonical OZ AccessControl: the subject contract IS the registry, so
+        the lookup uses ``ctx.contract_address``. Cross-contract registries
+        (EtherFi's RoleRegistry pattern) carry an
+        ``authority_contract.address_source`` pointing at a state variable
+        holding the registry address; we resolve that via
+        ``ctx.state_var_values`` (populated by the resolver from
+        ``controller_values``). Returns None when neither path produces a
+        usable address — caller emits the lower_bound placeholder."""
+        authority_contract = descriptor.get("authority_contract")
+        if isinstance(authority_contract, dict):
+            address_source = authority_contract.get("address_source") or {}
+            if address_source.get("source") == "state_variable":
+                sv_name = address_source.get("state_variable_name")
+                if sv_name and ctx.state_var_values:
+                    value = ctx.state_var_values.get(sv_name)
+                    if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
+                        return value.lower()
+            elif address_source.get("source") == "constant":
+                value = address_source.get("constant_value")
+                if isinstance(value, str) and value.startswith("0x") and len(value) == 42:
+                    return value.lower()
+        # Fall back to the subject contract for the canonical OZ shape.
+        return ctx.contract_address
 
     def _expand_role_domain(self, descriptor: dict, ctx: EvaluationContext) -> set[bytes]:
         """Expand the role domain per v3 round-3 #10 fix:
