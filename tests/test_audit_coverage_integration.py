@@ -91,13 +91,15 @@ def api_with_storage(monkeypatch, db_session, storage_bucket):
     from fastapi.testclient import TestClient
 
     import api as api_module
+    from routers import deps
+    from routers.deps import require_admin_key
 
-    monkeypatch.setattr(api_module, "SessionLocal", SessionFactory(db_session))
-    api_module.app.dependency_overrides[api_module.require_admin_key] = lambda: None
+    monkeypatch.setattr(deps, "SessionLocal", SessionFactory(db_session))
+    api_module.app.dependency_overrides[require_admin_key] = lambda: None
     try:
         yield TestClient(api_module.app)
     finally:
-        api_module.app.dependency_overrides.pop(api_module.require_admin_key, None)
+        api_module.app.dependency_overrides.pop(require_admin_key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -500,6 +502,16 @@ def test_audit_coverage_endpoint_uses_coverage_table(
             chain="ethereum",
         )
     )
+    # Inventory-only entry: discovered but never analyzed, no Etherscan
+    # name, no audits. Should NOT appear in the response.
+    db_session.add(
+        Contract(
+            protocol_id=proto["protocol_id"],
+            address="0x" + "e" * 40,
+            contract_name=None,
+            chain="ethereum",
+        )
+    )
     db_session.commit()
 
     _seed_scoped_audit(
@@ -534,9 +546,16 @@ def test_audit_coverage_endpoint_uses_coverage_table(
     assert vault["audit_count"] == 1
     assert vault["last_audit"]["match_type"] == "direct"
 
-    # Unrelated contract
+    # Unrelated contract — has a name but no audits, should still surface.
     assert by_name["NotAudited"]["audit_count"] == 0
     assert by_name["NotAudited"]["last_audit"] is None
+
+    # Inventory-only entry (no name, no audits) is filtered out — the
+    # company_overview endpoint excludes these contracts because they
+    # were never analyzed, and the audit_coverage view should match.
+    addresses = {row["address"] for row in body["coverage"]}
+    assert "0x" + "e" * 40 not in addresses
+    assert body["contract_count"] == len(body["coverage"])
 
     # Proxy row inherits its current implementation's coverage — the
     # company view is "is the code this address runs audited?", so a

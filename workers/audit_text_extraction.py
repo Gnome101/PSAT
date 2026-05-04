@@ -158,9 +158,14 @@ class AuditTextExtractionWorker(AuditRowWorker):
                 audit.text_sha256 = outcome.text_sha256
                 audit.text_extracted_at = now
             session.commit()
-        except Exception:
+        except Exception as exc:
             session.rollback()
-            logger.exception("Failed to persist outcome for audit %s", audit_id)
+            logger.warning(
+                "Failed to persist outcome for audit %s: %s",
+                audit_id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
         finally:
             session.close()
 

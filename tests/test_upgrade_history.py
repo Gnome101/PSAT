@@ -631,3 +631,55 @@ class TestBuildUpgradeHistory:
         assert len(h["implementations"]) == 2
         assert h["implementations"][0]["address"] == impl_v1
         assert h["implementations"][1]["address"] == impl_v2
+
+
+# ---------------------------------------------------------------------------
+# fetch_upgrade_events parity: parallel + sequential produce identical events.
+# ---------------------------------------------------------------------------
+
+
+def _fetch_events_parity_helper(monkeypatch, fanout: str, tmp_path):
+    monkeypatch.setenv("PSAT_RPC_FANOUT", fanout)
+    target = ADDR(0xA)
+    impl_v1, impl_v2 = ADDR(0xB), ADDR(0xC)
+
+    fetch_calls: list[tuple[str, str]] = []
+
+    def mock_fetch(addr, topic0, from_block=0):
+        fetch_calls.append((addr, topic0))
+        if addr != target or topic0 != uh.UPGRADED_TOPIC0:
+            return []
+        return [
+            {
+                "address": target,
+                "topics": [uh.UPGRADED_TOPIC0, _topic_for(impl_v1)],
+                "data": "0x",
+                "blockNumber": "0x10",
+                "transactionHash": "0xa1",
+                "logIndex": "0x0",
+                "timeStamp": "0x65a00000",
+            },
+            {
+                "address": target,
+                "topics": [uh.UPGRADED_TOPIC0, _topic_for(impl_v2)],
+                "data": "0x",
+                "blockNumber": "0x20",
+                "transactionHash": "0xa2",
+                "logIndex": "0x0",
+                "timeStamp": "0x65b00000",
+            },
+        ]
+
+    monkeypatch.setattr(uh, "_fetch_logs_etherscan", mock_fetch)
+    events = uh.fetch_upgrade_events([target])
+    return events, fetch_calls
+
+
+def test_fetch_upgrade_events_parity_parallel_vs_sequential(monkeypatch, tmp_path):
+    seq_events, seq_calls = _fetch_events_parity_helper(monkeypatch, "1", tmp_path)
+    par_events, par_calls = _fetch_events_parity_helper(monkeypatch, "8", tmp_path)
+    assert seq_events == par_events
+    # The (addr, topic) task list is enumerated identically in both modes;
+    # only the dispatch order across threads differs, which is invisible to
+    # the deterministic post-sort.
+    assert sorted(seq_calls) == sorted(par_calls)

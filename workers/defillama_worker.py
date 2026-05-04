@@ -20,12 +20,13 @@ from sqlalchemy.orm import Session
 
 from db.models import Job, JobStage
 from db.queue import (
+    bulk_upsert_discovered_contracts,
     complete_job,
     get_or_create_protocol,
     store_artifact,
-    upsert_discovered_contract,
 )
 from services.crawlers.defillama.scan import scan_protocol
+from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.defillama")
@@ -46,9 +47,20 @@ class DefiLlamaWorker(BaseWorker):
 
         no_clone = os.getenv("DEFILLAMA_NO_CLONE", "").lower() in ("1", "true", "yes")
 
-        # Derive / create Protocol row from company or slug
+        # Derive / create Protocol row from company or slug. Route the
+        # name through the resolver so the row is keyed on the same family
+        # slug the discovery worker used — without this the per-sibling
+        # DefiLlama scan would create a separate row keyed on the sibling's
+        # slug instead of attaching to the parent protocol.
         protocol_name = job.company or str(protocol)
-        protocol_row = get_or_create_protocol(session, protocol_name)
+        resolved = resolve_protocol(protocol_name)
+        canonical_slug = pick_family_slug(resolved)
+        protocol_row = get_or_create_protocol(
+            session,
+            protocol_name,
+            canonical_slug=canonical_slug,
+            aliases=resolved.get("all_names") or [],
+        )
         job.protocol_id = protocol_row.id
         if not job.company:
             job.company = protocol_row.name
@@ -105,16 +117,18 @@ class DefiLlamaWorker(BaseWorker):
 
         # Write ALL discovered addresses to contracts table
         protocol_id = protocol_row.id
+        bulk_entries: list[dict] = []
         for addr in addresses:
             normalized = addr.lower()
             chain = chain_by_address.get(normalized)
-            upsert_discovered_contract(
-                session,
-                address=normalized,
-                chain=chain,
-                protocol_id=protocol_id,
-                new_sources=["defillama"],
+            bulk_entries.append(
+                {
+                    "address": normalized,
+                    "chain": chain,
+                    "new_sources": ["defillama"],
+                }
             )
+        bulk_upsert_discovered_contracts(session, protocol_id=protocol_id, entries=bulk_entries)
         session.commit()
 
         store_artifact(

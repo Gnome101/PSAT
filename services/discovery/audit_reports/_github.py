@@ -16,6 +16,7 @@ import requests as _requests
 
 from utils import llm
 from utils.github_urls import github_blob_to_raw
+from utils.logging import record_degraded
 
 from ..inventory_domain import _debug_log
 from ._urls import (
@@ -819,5 +820,10 @@ def _fetch_github_raw(owner: str, repo: str, ref: str, path: str, debug: bool = 
         return text
 
     except _requests.RequestException as exc:
+        record_degraded(
+            phase="audit_report_github_raw",
+            exc=exc,
+            context={"owner": owner, "repo": repo, "ref": ref, "path": path},
+        )
         _debug_log(debug, f"GitHub raw fetch failed for {raw_url}: {exc!r}")
         return None

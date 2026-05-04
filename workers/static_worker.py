@@ -32,8 +32,9 @@ from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
 from services.static import collect_contract_analysis
 from services.static.contract_analysis_pipeline import build_semantic_guards
+from utils.logging import record_degraded
 from utils.rpc import normalize_hex  # used for address comparison
-from workers.base import DEBUG_TIMING, BaseWorker, JobHandledDirectly
+from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.static_worker")
 
@@ -52,8 +53,11 @@ Phase:    {phase}
 """.strip()
 
 
+# WARNING (not ERROR): callers swallow the underlying exception and continue with a
+# stub artifact, so the job-level outcome is degraded — not failed. Pair every call
+# site with ``record_degraded`` so the swallow shows up in the stage_errors artifact.
 def _log_phase_error(job_id: str, address: str, contract_name: str, phase: str, error: str) -> None:
-    logger.error(
+    logger.warning(
         _ERROR_TEMPLATE.format(
             job_id=job_id,
             address=address,
@@ -200,24 +204,8 @@ def _resolve_dynamic_deps(
     ``None``.  When previous deps exist and no new transactions are found,
     the previous output is returned as-is (not an error).
     """
-    # --- Load previous dynamic deps for append-only merge ---
-    # The artifact is either on this job already (copied by copy_static_cache
-    # as a seed artifact, or stored by a previous attempt of this job).
-    prev_dyn: dict | None = None
-    if not tx_hashes:
-        _raw_dyn = get_artifact(session, job.id, "dynamic_dependencies")
-        if isinstance(_raw_dyn, dict):
-            prev_dyn = _raw_dyn
-
-    # --- Compute start_block for incremental fetch ---
-    start_block: int | None = None
-    if prev_dyn:
-        prev_txs = prev_dyn.get("transactions_analyzed", [])
-        last_block = max((tx.get("block_number") or 0 for tx in prev_txs), default=0)
-        if last_block > 0:
-            start_block = last_block + 1
-
-    # --- Discover ---
+    prev_dyn = _load_prev_dynamic_deps(session, job, tx_hashes)
+    start_block = _start_block_from_prev_dyn(prev_dyn)
     try:
         dyn_output = find_dynamic_dependencies(
             address,
@@ -228,10 +216,6 @@ def _resolve_dynamic_deps(
             code_cache=code_cache,
             start_block=start_block,
         )
-        if prev_dyn and not tx_hashes:
-            dyn_output = _merge_dynamic_deps(prev_dyn, dyn_output)
-        store_artifact(session, job.id, "dynamic_dependencies", data=dyn_output)
-        return dyn_output, None
     except NoNewTransactionsError:
         if prev_dyn:
             store_artifact(session, job.id, "dynamic_dependencies", data=prev_dyn)
@@ -239,6 +223,28 @@ def _resolve_dynamic_deps(
         return None, "No representative transactions found"
     except Exception as exc:
         return None, str(exc)
+
+    if prev_dyn and not tx_hashes:
+        dyn_output = _merge_dynamic_deps(prev_dyn, dyn_output)
+    store_artifact(session, job.id, "dynamic_dependencies", data=dyn_output)
+    return dyn_output, None
+
+
+def _load_prev_dynamic_deps(session, job, tx_hashes: list[str] | None) -> dict | None:
+    """Read the persisted dynamic_dependencies artifact, if any. Tx-hash overrides skip the cache."""
+    if tx_hashes:
+        return None
+    raw = get_artifact(session, job.id, "dynamic_dependencies")
+    return raw if isinstance(raw, dict) else None
+
+
+def _start_block_from_prev_dyn(prev_dyn: dict | None) -> int | None:
+    """Compute the next-block start point for an incremental dynamic-deps fetch."""
+    if not prev_dyn:
+        return None
+    prev_txs = prev_dyn.get("transactions_analyzed", [])
+    last_block = max((tx.get("block_number") or 0 for tx in prev_txs), default=0)
+    return last_block + 1 if last_block > 0 else None
 
 
 # ---------------------------------------------------------------------------
@@ -313,43 +319,128 @@ def _merge_upgrade_history(prev: dict, new: dict) -> dict:
     }
 
 
-def _resolve_upgrade_history(
+def _from_block_for_upgrade_history(prev_uh: dict | None) -> int:
+    """Compute the next-block start point for an incremental upgrade-history fetch."""
+    if not prev_uh or not prev_uh.get("proxies"):
+        return 0
+    max_block = 0
+    for proxy_info in prev_uh["proxies"].values():
+        for event in proxy_info.get("events", []):
+            block = event.get("block_number", 0)
+            if block > max_block:
+                max_block = block
+    return max_block + 1 if max_block > 0 else 0
+
+
+def _apply_known_names_to_uh(uh: dict, unified: dict) -> None:
+    """Backfill ``contract_name`` on historical implementations using the unified deps' name lookup.
+
+    The parallel ``build_upgrade_history`` call ran with an empty deps dict, so
+    impl names that were already known via the static/dynamic deps are missing
+    here. Apply them in place to avoid per-impl Etherscan lookups downstream.
+    """
+    known_names: dict[str, str] = {}
+    for addr, info in unified.get("dependencies", {}).items():
+        if isinstance(info, dict) and info.get("contract_name"):
+            known_names[addr] = info["contract_name"]
+        impl = info.get("implementation") if isinstance(info, dict) else None
+        if isinstance(impl, dict) and impl.get("contract_name"):
+            known_names[impl["address"]] = impl["contract_name"]
+
+    for proxy_info in uh.get("proxies", {}).values():
+        for impl in proxy_info.get("implementations", []):
+            if impl.get("contract_name"):
+                continue
+            name = known_names.get(impl["address"])
+            if name:
+                impl["contract_name"] = name
+
+
+def _finalize_upgrade_history(
     session,
     job,
-    dependencies: dict,
+    address: str,
+    uh_pre: dict | None,
     prev_uh: dict | None,
+    unified: dict,
+    contract_row: Contract | None = None,
 ) -> dict | None:
-    """Load cached upgrade history, fetch incrementally, merge, and persist.
+    """Apply known-name backfill, merge with prior cached upgrade history,
+    persist, and project to relational rows.
 
-    Returns the (possibly merged) upgrade history dict, or None on failure.
+    ``uh_pre`` is the freshly-computed upgrade history from the parallel
+    section. After persistence, the upgrade events are projected into
+    ``UpgradeEvent`` rows (for company-overview aggregates) and historical
+    impl addresses are backfilled into ``Contract`` rows (so the
+    audit-coverage matcher can link audits whose scope names a past impl).
+    The projection step is best-effort — the artifact is already stored
+    when it runs, so a failure leaves the data recoverable via re-running.
     """
-    from services.discovery.upgrade_history import build_upgrade_history
+    if uh_pre is None:
+        return None
 
-    # Compute from_block for incremental fetch
-    from_block = 0
-    if prev_uh and isinstance(prev_uh, dict) and prev_uh.get("proxies"):
-        max_block = 0
-        for proxy_info in prev_uh["proxies"].values():
-            for event in proxy_info.get("events", []):
-                block = event.get("block_number", 0)
-                if block > max_block:
-                    max_block = block
-        if max_block > 0:
-            from_block = max_block + 1
+    _apply_known_names_to_uh(uh_pre, unified)
 
-    uh = build_upgrade_history(dependencies, from_block=from_block)
-
-    if prev_uh and isinstance(prev_uh, dict) and prev_uh.get("proxies"):
-        if uh.get("proxies"):
-            uh = _merge_upgrade_history(prev_uh, uh)
+    if prev_uh and prev_uh.get("proxies"):
+        if uh_pre.get("proxies"):
+            uh = _merge_upgrade_history(prev_uh, uh_pre)
         else:
-            # No new events — use previous as-is
             uh = prev_uh
+    else:
+        uh = uh_pre
 
-    if uh.get("proxies"):
-        store_artifact(session, job.id, "upgrade_history", data=uh)
+    if not uh.get("proxies"):
+        return None
 
-    return uh if uh.get("proxies") else None
+    store_artifact(session, job.id, "upgrade_history", data=uh)
+
+    # Project the artifact's "upgraded" events into UpgradeEvent rows and
+    # backfill historical impl Contract rows. Both operate on the in-memory
+    # dict — no re-read of storage. Errors here are non-fatal: the artifact
+    # is already stored, so a failure leaves the data still recoverable
+    # via re-running this stage.
+    if contract_row is not None:
+        try:
+            from services.discovery.upgrade_history import (
+                backfill_historical_impl_contracts,
+                project_to_events,
+            )
+
+            stats = project_to_events(
+                session,
+                subject_contract_id=contract_row.id,
+                subject_chain=contract_row.chain,
+                artifact_data=uh,
+            )
+            session.commit()
+            logger.info(
+                "Static stage upgrade events projected for job %s (proxies %d/%d, events %d, skipped %d)",
+                job.id,
+                stats["proxies_projected"],
+                stats["proxies_seen"],
+                stats["events_written"],
+                stats["proxies_skipped_no_contract"],
+            )
+            if contract_row.protocol_id is not None and stats["impl_addrs"]:
+                backfill_historical_impl_contracts(
+                    session,
+                    protocol_id=contract_row.protocol_id,
+                    chain=contract_row.chain,
+                    impl_addrs=stats["impl_addrs"],
+                )
+        except Exception as exc:
+            record_degraded(
+                phase="static_upgrade_history_projection",
+                exc=exc,
+                context={"job_id": job.id, "address": job.address or "0x0"},
+            )
+            logger.warning(
+                "Upgrade event projection failed for job %s: %s",
+                job.id,
+                exc,
+            )
+
+    return uh
 
 
 # ---------------------------------------------------------------------------
@@ -755,8 +846,10 @@ class StaticWorker(BaseWorker):
                 # of the cascade pipeline).
                 t0 = time.monotonic()
                 analysis_data = self._run_analysis_phase(session, job, project_dir, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] contract analysis: %.1fs", time.monotonic() - t0)
+                logger.info(
+                    "static phase complete: contract analysis",
+                    extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "contract_analysis"},
+                )
 
                 if analysis_data is None:
                     raise RuntimeError(f"Contract analysis failed for {contract_name} ({address}).")
@@ -764,8 +857,10 @@ class StaticWorker(BaseWorker):
                 # Phase 2: Control tracking plan
                 t0 = time.monotonic()
                 self._run_tracking_plan_phase(session, job, analysis_data, contract_name, address)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] tracking plan: %.1fs", time.monotonic() - t0)
+                logger.info(
+                    "static phase complete: tracking plan",
+                    extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "tracking_plan"},
+                )
 
             self.update_detail(session, job, "Static analysis complete")
             logger.info("Static analysis complete for job %s (%s)", job_id_str, contract_name)
@@ -804,6 +899,11 @@ class StaticWorker(BaseWorker):
         try:
             classification = classify_single(address, rpc_url)
         except Exception as exc:
+            record_degraded(
+                phase="proxy_classification",
+                exc=exc,
+                context={"address": address},
+            )
             logger.warning("Job %s: proxy classification failed: %s", job.id, exc)
             store_artifact(
                 session,
@@ -1003,10 +1103,6 @@ class StaticWorker(BaseWorker):
         dynamic_rpc = request.get("dynamic_rpc") or deps_rpc
         dynamic_tx_limit = request.get("dynamic_tx_limit", 10)
         dynamic_tx_hashes = request.get("dynamic_tx_hashes")
-        dependency_errors: dict[str, str] = {}
-        # Shared bytecode cache across all dependency stages to avoid duplicate
-        # eth_getCode RPC calls for the same addresses.
-        code_cache: dict[str, str] = {}
 
         logger.info(
             "Static stage dependency discovery started for job %s address=%s contract=%s",
@@ -1015,79 +1111,157 @@ class StaticWorker(BaseWorker):
             contract_name,
         )
 
-        deps_output = None
-
-        # Check for cached static dependencies (bytecode is immutable, so these
-        # never change and can be reused permanently).  The artifact is
-        # self-describing — if it exists on this job it's valid, whether it
-        # was copied from a prior completed job or stored on a previous
-        # attempt of this same job that failed later in the pipeline.
+        # ---- Sequential setup: read every cached artifact + compute incremental anchors. ----
         _raw_static_deps = get_artifact(session, job.id, "static_dependencies")
         cached_static_deps = _raw_static_deps if isinstance(_raw_static_deps, dict) else None
 
-        if cached_static_deps is not None:
-            deps_output = cached_static_deps
-            logger.info(
-                "Static stage static dependencies loaded from cache for job %s address=%s count=%d",
-                job.id,
+        tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
+        prev_dyn = _load_prev_dynamic_deps(session, job, tx_hashes)
+        dyn_start_block = _start_block_from_prev_dyn(prev_dyn)
+
+        prev_uh_raw = get_artifact(session, job.id, "upgrade_history")
+        prev_uh = prev_uh_raw if isinstance(prev_uh_raw, dict) else None
+        uh_from_block = _from_block_for_upgrade_history(prev_uh)
+
+        # ---- Parallel section: 3 RPC/Etherscan-bound sub-phases. ----
+        # Each sub-phase gets its own ``code_cache`` dict; the global locked
+        # ``_GETCODE_CACHE`` in utils.rpc dedups across them so the only cost
+        # is independent dict lookups per thread.
+        proxy_addr = request.get("proxy_address")
+
+        def run_static() -> dict:
+            if cached_static_deps is not None:
+                return cached_static_deps
+            return find_dependencies(address, deps_rpc, code_cache={})
+
+        def run_dynamic() -> dict:
+            return find_dynamic_dependencies(
                 address,
-                len(deps_output.get("dependencies", [])),
+                rpc_url=dynamic_rpc,
+                tx_limit=int(dynamic_tx_limit),
+                tx_hashes=tx_hashes,
+                proxy_address=proxy_addr,
+                code_cache={},
+                start_block=dyn_start_block,
             )
-        else:
-            try:
-                t0 = time.monotonic()
-                deps_output = find_dependencies(address, deps_rpc, code_cache=code_cache)
-                if DEBUG_TIMING:
-                    n = len(deps_output.get("dependencies", []))
-                    logger.info("[TIMING] static deps: %.1fs (%d deps)", time.monotonic() - t0, n)
-                logger.info(
-                    "Static stage static dependencies complete for job %s address=%s count=%d",
-                    job.id,
-                    address,
-                    len(deps_output.get("dependencies", [])),
-                )
-                # Persist for future cache hits
-                store_artifact(session, job.id, "static_dependencies", data=deps_output)
-            except Exception as exc:
-                dependency_errors["static"] = str(exc)
-                logger.warning(
-                    "Static stage static dependency discovery failed for job %s address=%s: %s",
-                    job.id,
-                    address,
-                    exc,
-                )
+
+        def run_upgrade_history() -> dict | None:
+            from services.discovery.upgrade_history import build_upgrade_history
+
+            # Always call ``build_upgrade_history``: when the target isn't a proxy
+            # it returns an empty proxies dict cheaply and the test harness still
+            # observes the call. Real Etherscan fetches only happen when
+            # ``proxy_meta`` is non-empty inside the helper.
+            minimal_deps = {
+                "address": address,
+                "target_classification": target_classification or {},
+                "dependencies": {},
+            }
+            return build_upgrade_history(minimal_deps, from_block=uh_from_block)
+
+        from utils.concurrency import parallel_map
+
+        def _hb() -> None:
+            self._heartbeat(session, job)
 
         t0 = time.monotonic()
-        tx_hashes = dynamic_tx_hashes if isinstance(dynamic_tx_hashes, list) else None
-        dyn_output, dyn_error = _resolve_dynamic_deps(
-            session,
-            job,
-            address,
-            dynamic_rpc,
-            int(dynamic_tx_limit),
-            tx_hashes,
-            request.get("proxy_address"),
-            code_cache,
+        sub_phases = [("static", run_static), ("dynamic", run_dynamic), ("upgrade_history", run_upgrade_history)]
+        results = parallel_map(lambda task: task[1](), sub_phases, max_workers=3, heartbeat=_hb)
+        elapsed_parallel = time.monotonic() - t0
+        logger.info(
+            "static phase complete: dependency parallel section",
+            extra={"duration_ms": int(elapsed_parallel * 1000), "phase": "dependency_parallel"},
         )
-        if DEBUG_TIMING and dyn_output:
-            logger.info(
-                "[TIMING] dynamic deps: %.1fs (%d deps)", time.monotonic() - t0, len(dyn_output.get("dependencies", []))
+
+        outcomes: dict[str, object | BaseException] = {
+            name: outcome for (name, _fn), (_task, outcome) in zip(sub_phases, results)
+        }
+
+        # ---- Static dependencies: persist + branch on success. ----
+        deps_output: dict | None = None
+        static_outcome = outcomes["static"]
+        if isinstance(static_outcome, BaseException):
+            record_degraded(
+                phase="dependency_static",
+                exc=static_outcome,
+                context={"address": address},
             )
-        if dyn_error:
-            dependency_errors["dynamic"] = dyn_error
+            logger.warning(
+                "Static stage static dependency discovery failed for job %s address=%s: %s",
+                job.id,
+                address,
+                static_outcome,
+            )
+        else:
+            deps_output = static_outcome  # type: ignore[assignment]
+            if cached_static_deps is None and isinstance(deps_output, dict):
+                store_artifact(session, job.id, "static_dependencies", data=deps_output)
+            logger.info(
+                "Static stage static dependencies %s for job %s address=%s count=%d",
+                "loaded from cache" if cached_static_deps is not None else "complete",
+                job.id,
+                address,
+                len(deps_output.get("dependencies", [])) if isinstance(deps_output, dict) else 0,
+            )
+
+        # ---- Dynamic dependencies: merge with prev, persist. ----
+        dyn_output: dict | None = None
+        dyn_outcome = outcomes["dynamic"]
+        if isinstance(dyn_outcome, NoNewTransactionsError):
+            if prev_dyn:
+                dyn_output = prev_dyn
+                store_artifact(session, job.id, "dynamic_dependencies", data=prev_dyn)
+            else:
+                record_degraded(
+                    phase="dependency_dynamic",
+                    exc=dyn_outcome,
+                    context={"address": address, "reason": "no_representative_transactions"},
+                )
+        elif isinstance(dyn_outcome, BaseException):
+            record_degraded(
+                phase="dependency_dynamic",
+                exc=dyn_outcome,
+                context={"address": address},
+            )
             logger.warning(
                 "Static stage dynamic dependency discovery failed for job %s address=%s: %s",
                 job.id,
                 address,
-                dyn_error,
+                dyn_outcome,
             )
-        elif dyn_output:
-            logger.info(
-                "Static stage dynamic dependencies complete for job %s address=%s count=%d",
+        else:
+            dyn_output = dyn_outcome  # type: ignore[assignment]
+            if prev_dyn and not tx_hashes and isinstance(dyn_output, dict):
+                dyn_output = _merge_dynamic_deps(prev_dyn, dyn_output)
+            if isinstance(dyn_output, dict):
+                store_artifact(session, job.id, "dynamic_dependencies", data=dyn_output)
+                logger.info(
+                    "Static stage dynamic dependencies complete for job %s address=%s count=%d",
+                    job.id,
+                    address,
+                    len(dyn_output.get("dependencies", [])),
+                )
+
+        # ---- Upgrade history: merge + persist (handled below alongside the cleaner pre-classify path). ----
+        uh_outcome_raw = outcomes["upgrade_history"]
+        uh_pre: dict | None
+        if isinstance(uh_outcome_raw, BaseException):
+            record_degraded(
+                phase="dependency_upgrade_history",
+                exc=uh_outcome_raw,
+                context={"address": address, "subphase": "parallel"},
+            )
+            logger.warning(
+                "Static stage upgrade history failed for job %s address=%s: %s",
                 job.id,
                 address,
-                len(dyn_output.get("dependencies", [])),
+                uh_outcome_raw,
             )
+            uh_pre = None
+        elif isinstance(uh_outcome_raw, dict):
+            uh_pre = uh_outcome_raw
+        else:
+            uh_pre = None
 
         resolved_rpc = None
         if isinstance(deps_output, dict):
@@ -1123,13 +1297,20 @@ class StaticWorker(BaseWorker):
                     unique_deps,
                     resolved_rpc,
                     dynamic_edges=(dyn_output or {}).get("dependency_graph"),
-                    code_cache=code_cache,
+                    code_cache=None,
                     pre_classified=pre_classified or None,
                 )
                 # Store classifications artifact for future cache hits
                 store_artifact(session, job.id, "classifications", data=cls_output)
-                if DEBUG_TIMING:
-                    logger.info("[TIMING] classification: %.1fs (%d deps)", time.monotonic() - t0, len(unique_deps))
+                logger.info(
+                    "static phase complete: classification (%d deps)",
+                    len(unique_deps),
+                    extra={
+                        "duration_ms": int((time.monotonic() - t0) * 1000),
+                        "phase": "classification",
+                        "dep_count": len(unique_deps),
+                    },
+                )
                 logger.info(
                     "Static stage dependency classification complete for job %s address=%s discovered=%d",
                     job.id,
@@ -1137,7 +1318,11 @@ class StaticWorker(BaseWorker):
                     len(cls_output.get("discovered_addresses", [])),
                 )
             except Exception as exc:
-                dependency_errors["classification"] = str(exc)
+                record_degraded(
+                    phase="dependency_classification",
+                    exc=exc,
+                    context={"address": address},
+                )
                 logger.warning(
                     "Static stage dependency classification failed for job %s address=%s: %s",
                     job.id,
@@ -1165,8 +1350,10 @@ class StaticWorker(BaseWorker):
 
             t0 = time.monotonic()
             enrich_dependency_metadata(unified, info_cache=info_cache)
-            if DEBUG_TIMING:
-                logger.info("[TIMING] enrichment: %.1fs", time.monotonic() - t0)
+            logger.info(
+                "static phase complete: dependency enrichment",
+                extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "enrichment"},
+            )
 
             # Store updated enrichment cache (includes any newly fetched entries)
             enrichment_data = {
@@ -1237,12 +1424,20 @@ class StaticWorker(BaseWorker):
                     address,
                 )
 
-            # Upgrade history for proxy contracts (incremental / append-only)
+            # Upgrade history was computed in the parallel section above using
+            # ``target_classification`` only. Apply known names from the unified
+            # deps so we can drop redundant Etherscan name lookups, then merge
+            # with any prior cached upgrade history and persist.
             try:
-                prev_uh = get_artifact(session, job.id, "upgrade_history")
-                if prev_uh is not None and not isinstance(prev_uh, dict):
-                    prev_uh = None
-                uh = _resolve_upgrade_history(session, job, unified, prev_uh)
+                uh = _finalize_upgrade_history(
+                    session,
+                    job,
+                    address,
+                    uh_pre,
+                    prev_uh,
+                    unified,
+                    contract_row=contract_row,
+                )
                 if uh:
                     logger.info(
                         "Static stage upgrade history complete for job %s address=%s upgrades=%d",
@@ -1251,6 +1446,11 @@ class StaticWorker(BaseWorker):
                         uh.get("total_upgrades", 0),
                     )
             except Exception as exc:
+                record_degraded(
+                    phase="dependency_upgrade_history",
+                    exc=exc,
+                    context={"address": address, "subphase": "finalize"},
+                )
                 logger.warning(
                     "Static stage upgrade history failed for job %s address=%s: %s",
                     job.id,
@@ -1264,9 +1464,6 @@ class StaticWorker(BaseWorker):
                 address,
             )
 
-        if dependency_errors:
-            store_artifact(session, job.id, "dependency_errors", data=dependency_errors)
-
     def _run_analysis_phase(
         self, session, job, project_dir: Path, contract_name: str, address: str
     ) -> ContractAnalysis | None:
@@ -1275,6 +1472,11 @@ class StaticWorker(BaseWorker):
         try:
             analysis_data = collect_contract_analysis(project_dir)
         except Exception as exc:
+            record_degraded(
+                phase="contract_analysis",
+                exc=exc,
+                context={"address": address, "contract_name": contract_name},
+            )
             _log_phase_error(str(job.id), address, contract_name, "contract_analysis", str(exc))
             store_artifact(session, job.id, "analysis_error", data={"error": str(exc)})
             return None
@@ -1404,6 +1606,11 @@ class StaticWorker(BaseWorker):
                 contract_name,
             )
         except Exception as exc:
+            record_degraded(
+                phase="tracking_plan",
+                exc=exc,
+                context={"address": address, "contract_name": contract_name},
+            )
             _log_phase_error(str(job.id), address, contract_name, "tracking_plan", str(exc))
             store_artifact(session, job.id, "tracking_plan_error", data={"error": str(exc)})
 

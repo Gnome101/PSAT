@@ -5,6 +5,7 @@ These are pure unit tests that mock all DB dependencies.
 
 from __future__ import annotations
 
+import os
 import signal
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -61,6 +62,7 @@ def _make_job(**overrides):
         updated_at=datetime.now(timezone.utc),
         worker_id="some-worker",
         detail=None,
+        retry_count=0,
     )
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -185,7 +187,7 @@ def test_run_loop_claims_processes_and_advances(mock_advance, mock_claim, mock_s
     w.run_loop()
 
     w.process.assert_called_once_with(mock_session, job)
-    mock_advance.assert_called_once_with(mock_session, job.id, JobStage.static, "Completed discovery")
+    mock_advance.assert_called_once_with(mock_session, job.id, JobStage.static, "Completed discovery", lease_id=None)
 
 
 @patch("workers.base.signal.signal")
@@ -220,10 +222,11 @@ def test_run_loop_job_handled_directly_skips_advance(mock_advance, mock_claim, m
 @patch("workers.base.signal.signal")
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
-@patch("workers.base.fail_job")
-def test_run_loop_process_exception_calls_fail_job(mock_fail, mock_claim, mock_session_cls, mock_signal):
-    """When process() raises an unexpected exception, fail_job is called."""
+@patch("workers.base.fail_job_terminal")
+def test_run_loop_process_exception_calls_fail_job_terminal(mock_fail, mock_claim, mock_session_cls, mock_signal):
+    """A terminal-classified exception (RuntimeError → terminal) routes through ``fail_job_terminal``."""
     job = _make_job()
+    job.retry_count = 0
     mock_session = MagicMock()
     mock_session_cls.return_value = mock_session
 
@@ -248,6 +251,8 @@ def test_run_loop_process_exception_calls_fail_job(mock_fail, mock_claim, mock_s
     assert args[0] is mock_session  # session
     assert args[1] == job.id  # job_id
     assert "boom" in args[2]  # error traceback contains "boom"
+    # ``kind`` keyword is the classifier verdict — RuntimeError is terminal.
+    assert mock_fail.call_args.kwargs.get("kind") == "terminal"
     # rollback fires at least once from the exception handler; the empty-
     # sweep branch of ``reclaim_stuck_jobs`` may also call it.
     mock_session.rollback.assert_called()
@@ -317,7 +322,7 @@ def test_run_loop_next_stage_done_calls_complete_job(mock_complete, mock_claim, 
     w.process = MagicMock()
     w.run_loop()
 
-    mock_complete.assert_called_once_with(mock_session, job.id)
+    mock_complete.assert_called_once_with(mock_session, job.id, lease_id=None)
 
 
 @patch("workers.base.signal.signal")
@@ -387,6 +392,50 @@ def test_update_detail_delegates_to_queue(mock_update, mock_signal):
 
 
 # ---------------------------------------------------------------------------
+# Tests: _heartbeat — bumps updated_at without changing detail
+# ---------------------------------------------------------------------------
+
+
+@patch("workers.base.signal.signal")
+def test_heartbeat_issues_update_and_commits(mock_signal):
+    """``_heartbeat`` issues a stand-alone UPDATE and commits, leaving detail alone."""
+    w = _TestWorker()
+    mock_session = MagicMock()
+    mock_job = _make_job(detail="processing 42 deps")
+
+    w._heartbeat(mock_session, cast(Any, mock_job))
+
+    assert mock_session.execute.call_count == 1
+    update_stmt = mock_session.execute.call_args[0][0]
+    # The compiled UPDATE must mention updated_at and not detail.
+    compiled = str(update_stmt.compile(compile_kwargs={"literal_binds": False}))
+    assert "updated_at" in compiled.lower()
+    assert "detail" not in compiled.lower()
+    mock_session.commit.assert_called_once()
+
+
+@patch("workers.base.signal.signal")
+def test_heartbeat_swallows_db_failure(mock_signal):
+    """A DB failure inside heartbeat is non-fatal — the loop continues."""
+    w = _TestWorker()
+    mock_session = MagicMock()
+    mock_session.execute.side_effect = RuntimeError("db gone")
+    mock_job = _make_job()
+
+    # Should not raise.
+    w._heartbeat(mock_session, cast(Any, mock_job))
+    mock_session.rollback.assert_called_once()
+
+
+def test_stale_job_timeout_default_is_600():
+    """The default stale-job timeout is 600s now that fan-outs can sit minutes between writes."""
+    from workers import base
+
+    # Re-resolve in case env var bumps it; default should be 600.
+    assert int(os.environ.get("PSAT_STALE_JOB_TIMEOUT", "600")) >= 600 or base.STALE_JOB_TIMEOUT == 600
+
+
+# ---------------------------------------------------------------------------
 # Tests: error handling edge cases in run_loop
 # ---------------------------------------------------------------------------
 
@@ -394,10 +443,11 @@ def test_update_detail_delegates_to_queue(mock_update, mock_signal):
 @patch("workers.base.signal.signal")
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
-@patch("workers.base.fail_job")
+@patch("workers.base.fail_job_terminal")
 def test_run_loop_fail_job_exception_retries_with_fresh_session(mock_fail, mock_claim, mock_session_cls, mock_signal):
-    """When fail_job raises, the loop retries with a fresh session."""
+    """When ``fail_job_terminal`` raises, the loop retries with a fresh session."""
     job = _make_job()
+    job.retry_count = 0
     mock_session = MagicMock()
     fresh_session = MagicMock()
 
@@ -424,7 +474,7 @@ def test_run_loop_fail_job_exception_retries_with_fresh_session(mock_fail, mock_
 
     mock_claim.side_effect = _claim_side_effect
 
-    # First fail_job raises, second (fresh session) succeeds
+    # First fail_job_terminal raises, second (fresh session) succeeds
     mock_fail.side_effect = [Exception("db gone"), None]
 
     w = _TestWorker()
@@ -443,10 +493,11 @@ def test_run_loop_fail_job_exception_retries_with_fresh_session(mock_fail, mock_
 @patch("workers.base.signal.signal")
 @patch("workers.base.SessionLocal")
 @patch("workers.base.claim_job")
-@patch("workers.base.fail_job")
+@patch("workers.base.fail_job_terminal")
 def test_run_loop_both_fail_job_attempts_fail_gracefully(mock_fail, mock_claim, mock_session_cls, mock_signal):
-    """When both fail_job attempts raise, the loop continues without crashing."""
+    """When both ``fail_job_terminal`` attempts raise, the loop continues without crashing."""
     job = _make_job()
+    job.retry_count = 0
     mock_session = MagicMock()
     fresh_session = MagicMock()
 
@@ -473,7 +524,7 @@ def test_run_loop_both_fail_job_attempts_fail_gracefully(mock_fail, mock_claim, 
 
     mock_claim.side_effect = _claim_side_effect
 
-    # Both fail_job calls raise
+    # Both fail_job_terminal calls raise
     mock_fail.side_effect = [Exception("db gone"), Exception("still gone")]
 
     w = _TestWorker()

@@ -344,8 +344,13 @@ def refresh_all_protocols(session: Session) -> int:
             snapshot = take_tvl_snapshot(session, protocol.id)
             if snapshot:
                 count += 1
-        except Exception:
-            logger.exception("TVL snapshot failed for protocol %s", protocol.name)
+        except Exception as exc:
+            logger.warning(
+                "TVL snapshot failed for protocol %s: %s",
+                protocol.name,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
     return count
 
 
@@ -363,6 +368,6 @@ def run_tvl_loop(interval: float = DEFAULT_TVL_INTERVAL) -> None:
                 count = refresh_all_protocols(session)
                 if count:
                     logger.info("TVL refresh complete: %d protocol(s) snapshotted", count)
-        except Exception:
-            logger.exception("TVL refresh cycle failed")
+        except Exception as exc:
+            logger.warning("TVL refresh cycle failed: %s", exc, extra={"exc_type": type(exc).__name__})
         time.sleep(interval)

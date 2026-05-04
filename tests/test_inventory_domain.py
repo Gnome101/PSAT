@@ -998,3 +998,59 @@ class TestDiscoverContractInventoryPages:
         # combined should have results (off-domain ones), recommended should be empty
         assert len(combined) > 0
         assert recommended == []
+
+
+# ---------------------------------------------------------------------------
+# Step 4: extract_inventory_entries_from_pages parallel fetch
+# ---------------------------------------------------------------------------
+
+
+class TestExtractInventoryEntriesFromPagesParallel:
+    """Page fetches run concurrently; entries are still emitted in URL input order."""
+
+    def test_fetches_all_urls_and_preserves_order(self, monkeypatch):
+        from services.discovery import inventory_extract
+
+        urls = [f"https://example.com/page{i}" for i in range(6)]
+        fetched: list[str] = []
+
+        def fake_fetch(url, debug=False):
+            fetched.append(url)
+            return f"<html>{url}</html>"
+
+        seen_text_order: list[str] = []
+
+        def fake_extract(url, page_text, requested_chain, debug=False):
+            seen_text_order.append(url)
+            return [{"address": f"0x{abs(hash(url)) & 0xFFFFFFFF:040x}", "url": url}]
+
+        monkeypatch.setattr(inventory_extract, "_fetch_page", fake_fetch)
+        monkeypatch.setattr(inventory_extract, "extract_inventory_entries_from_page_text", fake_extract)
+
+        out = inventory_extract.extract_inventory_entries_from_pages(urls, requested_chain=None)
+
+        assert sorted(fetched) == sorted(urls)
+        # extract is called in input URL order even though fetches finished out of order.
+        assert seen_text_order == urls
+        assert [entry["url"] for entry in out] == urls
+
+    def test_skips_failed_fetches_without_aborting(self, monkeypatch):
+        from services.discovery import inventory_extract
+
+        urls = ["https://good.example.com", "https://bad.example.com", "https://also-good.example.com"]
+
+        def fake_fetch(url, debug=False):
+            if "bad" in url:
+                raise RuntimeError("connection reset")
+            return f"<html>{url}</html>"
+
+        monkeypatch.setattr(inventory_extract, "_fetch_page", fake_fetch)
+        monkeypatch.setattr(
+            inventory_extract,
+            "extract_inventory_entries_from_page_text",
+            lambda url, page_text, requested_chain, debug=False: [{"url": url}],
+        )
+
+        out = inventory_extract.extract_inventory_entries_from_pages(urls, requested_chain=None)
+
+        assert [e["url"] for e in out] == ["https://good.example.com", "https://also-good.example.com"]

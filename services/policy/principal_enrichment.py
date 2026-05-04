@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
+import threading
 from collections import defaultdict
 from typing import Any
 
 from schemas.principal_labels import PrincipalLabels, PrincipalPermission, PrincipalProfile
 from services.resolution.tracking import classify_resolved_address_with_status
+from utils.concurrency import parallel_map
 
 
 def _slug(value: str) -> str:
@@ -296,20 +298,30 @@ def build_principal_labels(
     addresses = set(nodes_by_address)
     addresses.update(permissions_by_address)
 
-    principals: list[PrincipalProfile] = []
-    for address in sorted(addresses):
+    target_address = effective_permissions["contract_address"].lower()
+    contract_name = effective_permissions["contract_name"]
+    # The per-job classify_cache is shared read+write across worker threads.
+    # Fast path is the cache hit (artifact pre-populated by resolution stage),
+    # so the lock is uncontended in the common case.
+    classify_cache_lock = threading.Lock()
+
+    def _per_address(address: str) -> PrincipalProfile | None:
         if not address.startswith("0x") or len(address) != 42:
-            continue
-        if address == effective_permissions["contract_address"].lower():
-            continue
+            return None
+        if address == target_address:
+            return None
         node = nodes_by_address.get(address)
         resolved_type = str(node.get("resolved_type", "unknown")) if node else "unknown"
         details = dict(node.get("details", {})) if node else {}
 
         if resolved_type == "unknown" and rpc_url:
             cache_key = address.lower()
-            if classify_cache is not None and cache_key in classify_cache:
-                resolved_type, cached_details = classify_cache[cache_key]
+            cached: tuple[str, dict[str, object]] | None = None
+            if classify_cache is not None:
+                with classify_cache_lock:
+                    cached = classify_cache.get(cache_key)
+            if cached is not None:
+                resolved_type, cached_details = cached
                 details = dict(cached_details)
             else:
                 resolved_type, details, cacheable = classify_resolved_address_with_status(rpc_url, address)
@@ -317,16 +329,17 @@ def build_principal_labels(
                 # otherwise a transient blip during labeling would persist
                 # a wrong "contract" classification for the rest of the job.
                 if classify_cache is not None and cacheable:
-                    classify_cache[cache_key] = (resolved_type, dict(details))
+                    with classify_cache_lock:
+                        classify_cache[cache_key] = (resolved_type, dict(details))
 
         if resolved_type == "contract" and node:
             if str(details.get("controller_label", "")).strip() == "permissionController":
-                continue
+                return None
             outgoing_edges = outgoing_by_id.get(node.get("id", ""), [])
             if details.get("authority_kind") == "aragon_app_like" and not outgoing_edges:
-                continue
+                return None
             if any(edge.get("to_id") != node.get("id") for edge in outgoing_edges):
-                continue
+                return None
 
         labels, graph_context = _graph_labels_for_node(
             node or {"resolved_type": resolved_type}, incoming_by_id.get((node or {}).get("id", ""), []), nodes_by_id
@@ -345,33 +358,40 @@ def build_principal_labels(
             labels,
             graph_context,
             permissions,
-            effective_permissions["contract_name"],
+            contract_name,
             _node_display_name(node),
         )
 
-        principals.append(
-            {
-                "address": address,
-                "resolved_type": resolved_type,  # type: ignore[typeddict-item]
-                "display_name": display_name,
-                "labels": sorted(label for label in labels if label),
-                "confidence": confidence,  # type: ignore[typeddict-item]
-                "details": details,
-                "graph_context": graph_context,
-                "controller_context": sorted(
-                    {
-                        str(permission.get("controller", "")).strip()
-                        for permission in permissions
-                        if str(permission.get("controller", "")).strip()
-                    }
-                ),
-                "permissions": permissions,
-            }
-        )
+        return {
+            "address": address,
+            "resolved_type": resolved_type,  # type: ignore[typeddict-item]
+            "display_name": display_name,
+            "labels": sorted(label for label in labels if label),
+            "confidence": confidence,  # type: ignore[typeddict-item]
+            "details": details,
+            "graph_context": graph_context,
+            "controller_context": sorted(
+                {
+                    str(permission.get("controller", "")).strip()
+                    for permission in permissions
+                    if str(permission.get("controller", "")).strip()
+                }
+            ),
+            "permissions": permissions,
+        }
+
+    sorted_addresses = sorted(addresses)
+    results = parallel_map(_per_address, sorted_addresses, max_workers=8)
+    principals: list[PrincipalProfile] = []
+    for _addr, outcome in results:
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if outcome is not None:
+            principals.append(outcome)
 
     return {
         "schema_version": "0.1",
         "contract_address": effective_permissions["contract_address"],
-        "contract_name": effective_permissions["contract_name"],
+        "contract_name": contract_name,
         "principals": principals,
     }

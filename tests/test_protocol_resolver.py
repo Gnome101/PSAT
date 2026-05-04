@@ -104,6 +104,7 @@ class TestMakeResult:
             "name": "Aave V3",
             "chains": ["Ethereum", "Polygon"],
             "all_slugs": ["aave-v3", "aave-v2"],
+            "all_names": ["Aave V3", "Aave V2"],
         }
 
     def test_single_protocol_no_siblings(self):

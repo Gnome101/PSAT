@@ -142,21 +142,22 @@ def _bypass_admin_key():
     """Override the admin-key dependency for every test so existing API tests keep working."""
     try:
         import api as _api
+        from routers.deps import require_admin_key
     except Exception:
         yield
         return
-    _api.app.dependency_overrides[_api.require_admin_key] = lambda: None
+    _api.app.dependency_overrides[require_admin_key] = lambda: None
     try:
         yield
     finally:
-        _api.app.dependency_overrides.pop(_api.require_admin_key, None)
+        _api.app.dependency_overrides.pop(require_admin_key, None)
 
 
 class SessionFactory:
     """Stand-in for sessionmaker that yields a single shared Session.
 
-    Use to wire ``api.SessionLocal`` (or any code expecting a sessionmaker)
-    at the test DB without mutating ``DATABASE_URL`` globally.
+    Use to wire ``routers.deps.SessionLocal`` (or any code expecting a
+    sessionmaker) at the test DB without mutating ``DATABASE_URL`` globally.
     """
 
     def __init__(self, session):
@@ -174,7 +175,7 @@ class SessionFactory:
 
 @pytest.fixture()
 def api_client(monkeypatch, db_session):
-    """TestClient with ``api.SessionLocal`` pointed at the test DB session.
+    """TestClient with ``routers.deps.SessionLocal`` pointed at the test DB session.
 
     Avoids the prod-default engine (DATABASE_URL=postgresql://...:5433/psat)
     that the FastAPI app would otherwise use.
@@ -182,8 +183,9 @@ def api_client(monkeypatch, db_session):
     from fastapi.testclient import TestClient
 
     import api as api_module
+    from routers import deps
 
-    monkeypatch.setattr(api_module, "SessionLocal", SessionFactory(db_session))
+    monkeypatch.setattr(deps, "SessionLocal", SessionFactory(db_session))
     return TestClient(api_module.app)
 
 

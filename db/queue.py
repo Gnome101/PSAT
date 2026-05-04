@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select, text
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .models import (
@@ -36,38 +39,69 @@ logger = logging.getLogger(__name__)
 
 # How long a job can sit in ``status='processing'`` before we assume the
 # worker holding it crashed and return the row to the queue. ``updated_at``
-# is our implicit heartbeat — every status/detail write stamps NOW(), so a
-# stale row reliably means nobody is touching it.
+# is the legacy implicit heartbeat (every status/detail write stamped
+# NOW()); the lease-based path replaces it with an explicit
+# ``lease_expires_at`` column that the heartbeat extends.
 DEFAULT_JOB_STALE_TIMEOUT = int(os.getenv("PSAT_JOB_STALE_TIMEOUT", "900"))
+
+# Per-claim lease lifetime. A claimed job's ``lease_expires_at`` is set to
+# NOW() + this on the initial claim and bumped past NOW()+this on every
+# heartbeat. The reclaim sweep wakes any row whose lease has expired —
+# either a crashed worker or a worker that's gone too long without a
+# heartbeat (e.g. a single nested forge build over the heartbeat cadence).
+DEFAULT_JOB_LEASE_TTL_S = int(os.getenv("PSAT_JOB_LEASE_TTL_S", str(DEFAULT_JOB_STALE_TIMEOUT)))
+
+
+class LeaseLost(RuntimeError):
+    """Raised when a mutating queue write detects the caller no longer
+    holds the row's lease.
+
+    A worker should treat this as fatal for the current attempt: another
+    worker has been handed the job, and any further writes from this
+    thread would corrupt that worker's view. The handler in
+    ``BaseWorker._execute_job`` logs it and bails without further
+    advance/requeue/fail_terminal calls.
+    """
 
 
 def reclaim_stuck_jobs(session: Session, stale_timeout_seconds: int = DEFAULT_JOB_STALE_TIMEOUT) -> list[str]:
-    """Sweep jobs stuck in ``processing`` past the threshold back to ``queued``.
+    """Sweep jobs whose lease has expired back to ``queued``.
 
-    Uses ``updated_at`` as a heartbeat: any status or detail write bumps it,
-    so a row that hasn't moved in ``stale_timeout_seconds`` seconds indicates
-    the claiming worker crashed before it could advance, fail, or update
-    progress. Flips status back to ``queued`` and clears ``worker_id`` so a
-    live worker can claim it on the next poll.
+    Lease-based: a row is eligible when ``lease_expires_at < NOW()``.
+    ``_heartbeat`` extends ``lease_expires_at`` past now+ttl, so a worker
+    that's actively heartbeating from inside its long task keeps its lease
+    alive and is never reclaimed. A crashed worker — or one stuck so long
+    that even the heartbeat callback never fired — has an expired lease
+    and the row goes back to the queue.
 
-    Runs one ``UPDATE ... RETURNING id`` so the sweep is atomic and we can
-    log which rows were rescued. ``SKIP LOCKED`` keeps us from blocking on a
-    row whose FOR UPDATE is currently held by another process (including the
-    happy-path claim happening concurrently).
+    Pre-migration rows (``lease_expires_at IS NULL``) fall through to the
+    legacy ``updated_at < NOW() - timeout`` predicate so an in-progress
+    deploy doesn't strand jobs. The OR is index-friendly: the partial
+    ``ix_jobs_lease_expires_at`` covers the new path, and ``ix_jobs_stage_status``
+    covers the legacy path.
 
-    Returns the list of rescued job IDs so callers can log them — operators
-    can then correlate these IDs against a worker's last known heartbeat to
-    identify which instance crashed.
+    The reset clears ``lease_id`` and ``lease_expires_at`` alongside
+    ``status`` and ``worker_id`` so the next ``claim_job`` mints a fresh
+    lease.
+
+    ``failed_terminal`` rows are intentionally excluded by the
+    ``status = 'processing'`` predicate — operators promote them back to
+    ``queued`` via ``POST /api/jobs/{id}/retry``, never via the sweep.
     """
     result = session.execute(
         text(
             """
             UPDATE jobs
-            SET status = 'queued', worker_id = NULL
+            SET status = 'queued', worker_id = NULL,
+                lease_id = NULL, lease_expires_at = NULL
             WHERE id IN (
                 SELECT id FROM jobs
                 WHERE status = 'processing'
-                  AND updated_at < NOW() - (:timeout * INTERVAL '1 second')
+                  AND (
+                    lease_expires_at < NOW()
+                    OR (lease_expires_at IS NULL
+                        AND updated_at < NOW() - (:timeout * INTERVAL '1 second'))
+                  )
                 FOR UPDATE SKIP LOCKED
             )
             RETURNING id
@@ -80,7 +114,7 @@ def reclaim_stuck_jobs(session: Session, stale_timeout_seconds: int = DEFAULT_JO
         session.commit()
         for job_id in rescued:
             logger.warning(
-                "reclaim_stuck_jobs: reset job %s (stuck in processing for > %ss)",
+                "reclaim_stuck_jobs: reset job %s (lease expired or stuck > %ss)",
                 job_id,
                 stale_timeout_seconds,
             )
@@ -94,7 +128,16 @@ def create_job(
     request_dict: dict[str, Any],
     initial_stage: JobStage = JobStage.discovery,
 ) -> Job:
-    """Insert a new job at the given stage with status=queued."""
+    """Insert a new job at the given stage with status=queued.
+
+    ``trace_id`` is read from the ambient contextvar (set by the API
+    ingress middleware on HTTP-triggered creates, or by the parent
+    worker on child-job spawns). When neither is bound, a fresh id is
+    minted so every job in the system is correlatable end-to-end.
+    """
+    from utils.logging import trace_id_var
+
+    trace_id = trace_id_var.get() or uuid.uuid4().hex[:16]
     job = Job(
         address=request_dict.get("address"),
         company=request_dict.get("company"),
@@ -104,11 +147,89 @@ def create_job(
         detail="Queued for analysis",
         request=request_dict,
         protocol_id=request_dict.get("protocol_id"),
+        trace_id=trace_id,
     )
     session.add(job)
     session.commit()
     session.refresh(job)
     return job
+
+
+def bulk_upsert_discovered_contracts(
+    session: Session,
+    *,
+    protocol_id: int | None,
+    entries: list[dict[str, Any]],
+) -> list[Contract]:
+    """Bulk variant of :func:`upsert_discovered_contract` with identical first-writer-wins semantics.
+
+    Each *entries* item is a dict with keys: ``address`` (required),
+    ``chain``, ``new_sources`` (list[str]), ``contract_name``, ``confidence``,
+    ``chains``, ``discovery_url``. The single-row helper does one SELECT per
+    address, which dominates wall time when discovery surfaces 100-300
+    contracts at once. This collapses every SELECT into one ``IN (...)`` and
+    keeps the merge logic identical so semantics don't drift.
+
+    Commit is the caller's responsibility — typical use is one bulk call
+    per discovery source followed by a single commit.
+    """
+    if not entries:
+        return []
+
+    # Normalize once so the lookup map and the merge loop see identical keys.
+    norm_entries: list[tuple[str, str | None, dict[str, Any]]] = []
+    for entry in entries:
+        address = str(entry["address"]).lower()
+        chain = entry.get("chain")
+        norm_entries.append((address, chain, entry))
+
+    # One round-trip for every existing row across the requested (address, chain) tuples.
+    # We can't use a single tuple-IN against a composite key efficiently in SQLAlchemy
+    # core without raw SQL, so query by address set and filter chain in Python — the
+    # set is small (typically 100-300 addresses) and the chain comparison is O(1).
+    addresses = list({a for a, _c, _e in norm_entries})
+    existing_rows = session.execute(select(Contract).where(Contract.address.in_(addresses))).scalars().all()
+    existing_by_key: dict[tuple[str, str | None], Contract] = {(row.address, row.chain): row for row in existing_rows}
+
+    out: list[Contract] = []
+    for address, chain, entry in norm_entries:
+        clean_sources = [s for s in (entry.get("new_sources") or []) if s]
+        existing = existing_by_key.get((address, chain))
+        if existing is None:
+            row = Contract(
+                address=address,
+                chain=chain,
+                protocol_id=protocol_id,
+                contract_name=entry.get("contract_name"),
+                confidence=entry.get("confidence"),
+                discovery_sources=list(clean_sources) or None,
+                chains=entry.get("chains"),
+                discovery_url=entry.get("discovery_url"),
+            )
+            session.add(row)
+            existing_by_key[(address, chain)] = row
+            out.append(row)
+            continue
+
+        merged = list(existing.discovery_sources or [])
+        for src in clean_sources:
+            if src not in merged:
+                merged.append(src)
+        if merged:
+            existing.discovery_sources = merged
+        if existing.protocol_id is None and protocol_id is not None:
+            existing.protocol_id = protocol_id
+        if not existing.contract_name and entry.get("contract_name"):
+            existing.contract_name = entry["contract_name"]
+        if existing.confidence is None and entry.get("confidence") is not None:
+            existing.confidence = entry["confidence"]
+        if not existing.chains and entry.get("chains"):
+            existing.chains = entry["chains"]
+        if not existing.discovery_url and entry.get("discovery_url"):
+            existing.discovery_url = entry["discovery_url"]
+        out.append(existing)
+
+    return out
 
 
 def upsert_discovered_contract(
@@ -188,12 +309,114 @@ def upsert_discovered_contract(
     return existing
 
 
+_PROTOCOL_FK_TABLES = (
+    # (table, column) for every FK referencing protocols.id. Listed
+    # explicitly so the merge step touches every dependent table without
+    # depending on a model registry walk. Includes both CASCADE and SET NULL
+    # FKs — the orphan row is being deleted, not nulled, so the destination
+    # protocol takes ownership of all children.
+    ("jobs", "protocol_id"),
+    ("audit_reports", "protocol_id"),
+    ("audit_contract_coverage", "protocol_id"),
+    ("contracts", "protocol_id"),
+    ("monitored_contracts", "protocol_id"),
+    ("protocol_subscriptions", "protocol_id"),
+    ("dapp_interactions", "protocol_id"),
+    ("tvl_snapshots", "protocol_id"),
+)
+
+
+def _merge_protocol_into(session: Session, src: Protocol, dst: Protocol) -> None:
+    """Reassign every protocols.id FK from ``src`` to ``dst``, then delete src.
+
+    Used when ``get_or_create_protocol`` discovers that a pre-resolver row
+    (NULL canonical_slug) is a duplicate of a freshly-resolved family. None
+    of the dependent tables have a UNIQUE(protocol_id, …) constraint, so the
+    bulk UPDATE never conflicts.
+    """
+    if src.id == dst.id:
+        return
+    for table, col in _PROTOCOL_FK_TABLES:
+        session.execute(
+            text(f"UPDATE {table} SET {col} = :dst WHERE {col} = :src"),
+            {"src": src.id, "dst": dst.id},
+        )
+    session.delete(src)
+    session.flush()
+
+
 def get_or_create_protocol(
     session: Session,
     name: str,
     official_domain: str | None = None,
+    canonical_slug: str | None = None,
+    aliases: list[str] | None = None,
 ) -> Protocol:
-    """Look up Protocol by name, create if missing. Backfill official_domain if still null."""
+    """Look up Protocol by canonical slug (preferred) or name, create if missing.
+
+    The slug-keyed branch is the durable fix for duplicate rows: ``"ether fi"``
+    and ``"etherfi"`` both resolve to the same DefiLlama family slug, so
+    keying on slug collapses them. The name-keyed branch is the fallback
+    for protocols without a DefiLlama match (slug is None).
+
+    ``aliases`` is the list of every display-name spelling the resolver
+    knows for this family (typically ``resolved["all_names"]``). It is used
+    to find pre-resolver duplicate rows whose ``canonical_slug`` is still
+    NULL and merge them into the slug-keyed row. Without this, the prod
+    incident's two rows (``"ether fi"`` + ``"etherfi"``) would not collapse
+    on first post-migration touch — one would adopt the slug and the other
+    would orphan.
+
+    Concurrent slug inserts are serialized via ``uq_protocol_canonical_slug``;
+    the IntegrityError is caught inside a savepoint and we re-fetch the
+    winning row instead of bubbling the failure up to the worker.
+    """
+    if canonical_slug:
+        row = session.execute(select(Protocol).where(Protocol.canonical_slug == canonical_slug)).scalar_one_or_none()
+        if row is None:
+            # Look at every alias plus the requested name. Match is
+            # name + NULL slug — never poach a row that's already owned
+            # by a different family.
+            candidate_names = [name, *(aliases or [])]
+            orphans = list(
+                session.execute(
+                    select(Protocol).where(
+                        Protocol.canonical_slug.is_(None),
+                        Protocol.name.in_(candidate_names),
+                    )
+                ).scalars()
+            )
+            if orphans:
+                # Adopt the first orphan; merge any siblings into it so
+                # FK children consolidate onto one row.
+                row = orphans[0]
+                row.canonical_slug = canonical_slug
+                for extra in orphans[1:]:
+                    _merge_protocol_into(session, src=extra, dst=row)
+            else:
+                # Savepoint so a concurrent winner's IntegrityError on
+                # uq_protocol_canonical_slug doesn't poison the outer
+                # transaction. ``add`` goes inside the savepoint so the
+                # session expunges the rejected pending object on rollback —
+                # otherwise the next autoflush retries the doomed INSERT.
+                try:
+                    with session.begin_nested():
+                        row = Protocol(name=name, official_domain=official_domain, canonical_slug=canonical_slug)
+                        session.add(row)
+                        session.flush()
+                except IntegrityError:
+                    row = session.execute(
+                        select(Protocol).where(Protocol.canonical_slug == canonical_slug)
+                    ).scalar_one()
+                if official_domain and not row.official_domain:
+                    row.official_domain = official_domain
+                    session.flush()
+                return row
+        if official_domain and not row.official_domain:
+            row.official_domain = official_domain
+        session.flush()
+        return row
+
     row = session.execute(select(Protocol).where(Protocol.name == name)).scalar_one_or_none()
     if row is None:
         row = Protocol(name=name, official_domain=official_domain)
@@ -206,11 +429,35 @@ def get_or_create_protocol(
     return row
 
 
-def claim_job(session: Session, target_stage: JobStage, worker_id: str) -> Job | None:
-    """Claim the next available job for the given stage using SKIP LOCKED."""
+def claim_job(
+    session: Session,
+    target_stage: JobStage,
+    worker_id: str,
+    *,
+    lease_ttl_seconds: int = DEFAULT_JOB_LEASE_TTL_S,
+) -> Job | None:
+    """Claim the next available job for the given stage using SKIP LOCKED.
+
+    Atomically flips ``status`` to ``processing`` and stamps a fresh
+    ``lease_id`` (uuid4) + ``lease_expires_at = NOW() + lease_ttl_seconds``
+    so the caller's mutating writes can prove they still hold the lease.
+    Returning the row's ``lease_id`` is what gives ``BaseWorker._execute_job``
+    the token it needs to pass back to ``advance_job`` / ``complete_job``
+    / ``requeue_job`` / ``fail_job_terminal`` — those reject writes whose
+    ``lease_id`` doesn't match.
+
+    Honours ``Job.next_attempt_at``: a queued job set by ``requeue_job`` to
+    retry in the future is skipped until the DB clock catches up. We compare
+    against ``NOW()`` (Postgres-side) rather than Python's clock so workers
+    spread across processes/timezones agree on eligibility.
+    """
     stmt = (
         select(Job)
-        .where(Job.stage == target_stage, Job.status == JobStatus.queued)
+        .where(
+            Job.stage == target_stage,
+            Job.status == JobStatus.queued,
+            (Job.next_attempt_at.is_(None) | (Job.next_attempt_at <= func.now())),
+        )
         .order_by(Job.created_at)
         .limit(1)
         .with_for_update(skip_locked=True)
@@ -220,9 +467,70 @@ def claim_job(session: Session, target_stage: JobStage, worker_id: str) -> Job |
         return None
     job.status = JobStatus.processing
     job.worker_id = worker_id
+    job.lease_id = uuid.uuid4()
+    # Server-side NOW() so workers spread across hosts agree on the
+    # expiry instant. ``func.now() + INTERVAL`` would require a literal
+    # interval; we synthesize it via ``text``.
+    session.execute(
+        sa_update(Job)
+        .where(Job.id == job.id)
+        .values(lease_expires_at=text(f"NOW() + INTERVAL '{int(lease_ttl_seconds)} seconds'"))
+    )
     session.commit()
     session.refresh(job)
     return job
+
+
+def _check_lease_or_raise(job: Job, lease_id: uuid.UUID | None) -> None:
+    """Verify the caller still holds the row's lease; raise ``LeaseLost`` if not.
+
+    ``lease_id=None`` means the caller doesn't care (legacy/admin path);
+    skip the check. The pre-claim ``lease_id`` column may itself be NULL
+    on rows that pre-date the lease columns — in that case treat the
+    write as authoritative (no live competing claimant).
+    """
+    if lease_id is None:
+        return
+    if job.lease_id is None:
+        return
+    if job.lease_id != lease_id:
+        raise LeaseLost(
+            f"Job {job.id}: lease {lease_id} no longer holds the row "
+            f"(current holder: {job.lease_id}, worker_id={job.worker_id})"
+        )
+
+
+def heartbeat_job(
+    session: Session,
+    job_id: Any,
+    *,
+    lease_id: uuid.UUID,
+    lease_ttl_seconds: int = DEFAULT_JOB_LEASE_TTL_S,
+) -> None:
+    """Extend the row's lease past now+ttl. Raises ``LeaseLost`` if the
+    caller's lease has rolled to a sibling.
+
+    Conditional UPDATE in one round trip — no SELECT-then-UPDATE race
+    window. ``RETURNING id`` lets us tell "row matched and updated" from
+    "row exists but lease_id differs" without a second query.
+    """
+    result = session.execute(
+        text(
+            """
+            UPDATE jobs
+            SET lease_expires_at = NOW() + (:ttl * INTERVAL '1 second'),
+                updated_at = NOW()
+            WHERE id = :job_id
+              AND lease_id = :lease_id
+            RETURNING id
+            """
+        ),
+        {"ttl": int(lease_ttl_seconds), "job_id": job_id, "lease_id": lease_id},
+    )
+    rows = result.fetchall()
+    session.commit()
+    if not rows:
+        raise LeaseLost(f"Job {job_id}: heartbeat rejected — lease {lease_id} no longer holds the row")
 
 
 def update_job_detail(session: Session, job_id: Any, detail: str) -> None:
@@ -233,32 +541,63 @@ def update_job_detail(session: Session, job_id: Any, detail: str) -> None:
         session.commit()
 
 
-def advance_job(session: Session, job_id: Any, next_stage: JobStage, detail: str = "") -> None:
-    """Move a job to the next stage and reset status to queued."""
+def advance_job(
+    session: Session,
+    job_id: Any,
+    next_stage: JobStage,
+    detail: str = "",
+    *,
+    lease_id: uuid.UUID | None = None,
+) -> None:
+    """Move a job to the next stage and reset status to queued.
+
+    *lease_id*: when provided, refuses to write if the caller no longer
+    holds the row's lease (raises ``LeaseLost``). ``BaseWorker``
+    threads its claim-time lease through here so a worker that's been
+    silently reclaimed can't advance a job a sibling is now processing.
+    """
     job = session.get(Job, job_id)
     if job is None:
         return
+    _check_lease_or_raise(job, lease_id)
     job.stage = next_stage
     job.status = JobStatus.queued
     job.detail = detail or f"Advanced to {next_stage.value}"
     job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
     session.commit()
 
 
-def complete_job(session: Session, job_id: Any, detail: str = "Analysis complete") -> None:
-    """Mark a job as completed with stage=done."""
+def complete_job(
+    session: Session,
+    job_id: Any,
+    detail: str = "Analysis complete",
+    *,
+    lease_id: uuid.UUID | None = None,
+) -> None:
+    """Mark a job as completed with stage=done. See :func:`advance_job` for *lease_id*."""
     job = session.get(Job, job_id)
     if job is None:
         return
+    _check_lease_or_raise(job, lease_id)
     job.stage = JobStage.done
     job.status = JobStatus.completed
     job.detail = detail
     job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
     session.commit()
 
 
 def fail_job(session: Session, job_id: Any, error: str) -> None:
-    """Mark a job as failed with the error traceback."""
+    """Mark a job as failed with the error traceback.
+
+    Retained for callers outside ``BaseWorker`` that have not been migrated
+    to the transient/terminal split. Inside the worker the failure path
+    routes through :func:`requeue_job` (transient) or
+    :func:`fail_job_terminal` (terminal) so retries and DLQ semantics apply.
+    """
     job = session.get(Job, job_id)
     if job is None:
         return
@@ -266,6 +605,143 @@ def fail_job(session: Session, job_id: Any, error: str) -> None:
     job.error = error
     job.detail = "Failed"
     job.worker_id = None
+    session.commit()
+
+
+def requeue_job(
+    session: Session,
+    job_id: Any,
+    error: str,
+    *,
+    retry_count: int,
+    next_attempt_at: datetime,
+    lease_id: uuid.UUID | None = None,
+) -> None:
+    """Re-queue a job after a transient failure with a backoff timestamp.
+
+    Mirrors :func:`fail_job`'s transactional discipline: one commit, no
+    silent swallows. The row goes back to ``status='queued'`` so any
+    eligible worker can claim it once ``NOW() >= next_attempt_at``;
+    ``worker_id`` is cleared so the previous claimer's id doesn't linger
+    on what's now an unclaimed row.
+
+    The accumulated ``stage_errors`` artifact is the per-job audit log of
+    every attempt — this function does not touch it. The caller (typically
+    ``BaseWorker``) appends the just-failed attempt before calling here.
+    """
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    _check_lease_or_raise(job, lease_id)
+    job.status = JobStatus.queued
+    job.error = error
+    job.retry_count = retry_count
+    job.next_attempt_at = next_attempt_at
+    job.last_failure_kind = "transient"
+    job.detail = f"Retry scheduled for {next_attempt_at.isoformat()}"
+    job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
+    session.commit()
+
+
+def release_job_lease(
+    session: Session,
+    job_id: Any,
+    *,
+    lease_id: uuid.UUID,
+    reason: str = "graceful shutdown",
+) -> bool:
+    """Release the lease on a ``processing`` job so a sibling worker can
+    claim it immediately, without bumping ``retry_count`` or marking the
+    row as failed.
+
+    Use case: a worker receives SIGTERM mid-job (Fly machine drain,
+    auto-stop, OOM) and exits before the in-flight stage can complete.
+    The work didn't fail — the worker just had to stop. Without this
+    helper the row sits in ``processing`` until ``lease_expires_at``
+    fires (default 15min via ``DEFAULT_JOB_LEASE_TTL_S``), wedging any
+    downstream pipeline waiting on its output. Calling this on shutdown
+    collapses that 15min wait to ~0.
+
+    Race-safe: the SQL filter on ``lease_id`` makes the UPDATE a no-op
+    if the row is no longer leased to this caller. Two relevant races:
+      1. The main thread completed the job between SIGTERM landing and
+         the daemon-thread release: ``complete_job`` already cleared
+         ``lease_id``, so this UPDATE matches 0 rows and we report
+         "already handled" rather than overwriting completed status.
+      2. ``reclaim_stuck_jobs`` swept the row first: same outcome.
+
+    The conditional UPDATE replaces the in-memory ``_check_lease_or_raise``
+    pattern used elsewhere because we explicitly want a no-throw,
+    "best-effort idempotent release" semantic, not a raise-on-mismatch.
+
+    Returns ``True`` if this call performed the release, ``False`` if
+    the row was already released or no longer matched our lease.
+    """
+    result = session.execute(
+        text(
+            """
+            UPDATE jobs
+            SET status = 'queued',
+                worker_id = NULL,
+                lease_id = NULL,
+                lease_expires_at = NULL,
+                detail = :detail
+            WHERE id = :job_id
+              AND status = 'processing'
+              AND lease_id = :lease_id
+            """
+        ),
+        {"job_id": job_id, "lease_id": lease_id, "detail": f"Released lease: {reason}"},
+    )
+    session.commit()
+    # ``CursorResult.rowcount`` is the standard accessor for affected-row
+    # count; the typeshed stubs route through generic ``Result[Any]`` so
+    # pyright doesn't see the attribute. Guard with ``getattr`` to keep
+    # the strict-typecheck CI green without a noqa.
+    return int(getattr(result, "rowcount", 0)) > 0
+
+
+def fail_job_terminal(
+    session: Session,
+    job_id: Any,
+    error: str,
+    *,
+    kind: str,
+    retry_count: int | None = None,
+    lease_id: uuid.UUID | None = None,
+) -> None:
+    """Mark a job as terminally failed (no further automatic retries).
+
+    Distinct from :func:`fail_job` so observers can tell "retries exhausted
+    or deterministically broken" apart from "just hit the legacy code
+    path". The stale-job sweep does not resurrect ``failed_terminal`` rows.
+
+    *kind* is the classifier verdict (``"transient"`` if retries were
+    exhausted; ``"terminal"`` if classified as deterministic from the
+    start). Persisted to ``last_failure_kind`` so an operator can answer
+    "was this a flaky upstream or a bug?" without resolving the artifact.
+
+    *retry_count* defaults to None — leaves the column unchanged, which is
+    the right behaviour for deterministic terminal failures (we never
+    retried, so the count shouldn't move). The retries-exhausted path
+    passes ``new_retry_count`` so the row records the total attempt count.
+    """
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    _check_lease_or_raise(job, lease_id)
+    job.status = JobStatus.failed_terminal
+    job.error = error
+    job.detail = "Failed (terminal)"
+    job.last_failure_kind = kind
+    job.next_attempt_at = None
+    job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
+    if retry_count is not None:
+        job.retry_count = retry_count
     session.commit()
 
 
@@ -474,20 +950,48 @@ def store_source_files(session: Session, job_id: Any, files: dict[str, str]) -> 
         session.commit()
         return
 
-    uploaded_keys: list[str] = []
-    try:
-        entries: list[tuple[str, str]] = []
-        for path, content in files.items():
-            key = source_file_key(job_id, path)
-            client.put(
-                key,
-                content.encode("utf-8"),
-                "text/plain; charset=utf-8",
-                metadata={"path": path, "job_id": str(job_id)},
-            )
-            uploaded_keys.append(key)
-            entries.append((path, key))
+    # Fan out the per-file uploads — Etherscan-verified contracts often have
+    # 30-100 source files and the prior sequential loop was paying one S3/MinIO
+    # RTT per file on the static-stage critical path. Threading-only: each
+    # ``client.put`` is an independent HTTP request to object storage with no
+    # shared session state.
+    from utils.concurrency import parallel_map
 
+    items = list(files.items())
+
+    def _upload(item: tuple[str, str]) -> tuple[str, str]:
+        path, content = item
+        key = source_file_key(job_id, path)
+        client.put(
+            key,
+            content.encode("utf-8"),
+            "text/plain; charset=utf-8",
+            metadata={"path": path, "job_id": str(job_id)},
+        )
+        return path, key
+
+    upload_results = parallel_map(_upload, items)
+    entries: list[tuple[str, str]] = []
+    uploaded_keys: list[str] = []
+    failure: BaseException | None = None
+    for _item, outcome in upload_results:
+        if isinstance(outcome, BaseException):
+            if failure is None:
+                failure = outcome
+            continue
+        path, key = outcome  # type: ignore[misc]
+        entries.append((path, key))
+        uploaded_keys.append(key)
+
+    if failure is not None:
+        for key in uploaded_keys:
+            try:
+                client.delete(key)
+            except StorageError:
+                logger.warning("Failed to clean up orphan source file object %s", key)
+        raise failure
+
+    try:
         # All uploads succeeded — swap DB rows atomically.
         session.query(SourceFile).filter(SourceFile.job_id == job_id).delete()
         for path, key in entries:
@@ -509,18 +1013,45 @@ def get_source_files(session: Session, job_id: Any) -> dict[str, str]:
     rows = session.execute(stmt).scalars().all()
     out: dict[str, str] = {}
     client = get_storage_client()
+
+    storage_rows: list[tuple[str, str]] = []
     for row in rows:
         if row.storage_key:
             if client is None:
                 raise RuntimeError(
                     f"SourceFile {row.path} on job {row.job_id} has storage_key but storage is not configured"
                 )
-            try:
-                out[row.path] = client.get(row.storage_key).decode("utf-8")
-            except StorageKeyMissing:
-                continue
+            storage_rows.append((row.path, row.storage_key))
         elif row.content is not None:
             out[row.path] = row.content
+
+    if not storage_rows:
+        return out
+
+    # Fan out the storage GETs the same way ``store_source_files`` fans out
+    # the PUTs — these blocked the static + resolution + policy stages on
+    # 30-100 sequential MinIO/S3 RTTs each.
+    from utils.concurrency import parallel_map
+
+    # Capture into a non-None local so the closure's type narrows past pyright
+    # (the loop above already raised when client was None for any storage_row).
+    storage_client = client
+    assert storage_client is not None
+
+    def _fetch(item: tuple[str, str]) -> tuple[str, str | None]:
+        path, key = item
+        try:
+            return path, storage_client.get(key).decode("utf-8")
+        except StorageKeyMissing:
+            return path, None
+
+    fetch_results = parallel_map(_fetch, storage_rows)
+    for _item, outcome in fetch_results:
+        if isinstance(outcome, BaseException):
+            raise outcome
+        path, content = outcome  # type: ignore[misc]
+        if content is not None:
+            out[path] = content
     return out
 
 

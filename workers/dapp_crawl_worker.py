@@ -18,12 +18,13 @@ from sqlalchemy.orm import Session
 
 from db.models import DAppInteraction, Job, JobStage
 from db.queue import (
+    bulk_upsert_discovered_contracts,
     complete_job,
     get_or_create_protocol,
     store_artifact,
-    upsert_discovered_contract,
 )
 from services.crawlers.dapp.crawl import crawl_dapp
+from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.dapp_crawl")
@@ -58,7 +59,20 @@ class DAppCrawlWorker(BaseWorker):
             first_host = first_host[4:]
         protocol_name = job.company or first_host or f"dapp_{str(job.id)[:8]}"
         official_domain = first_host or None
-        protocol_row = get_or_create_protocol(session, protocol_name, official_domain=official_domain)
+        # Route through the resolver so dapp-crawl jobs that started from a
+        # hostname spelling ("ether.fi") collapse onto the same canonical
+        # row as discovery jobs that started from the github-org spelling
+        # ("etherfi"). Returns None for unknown hostnames; the fallback
+        # name-keyed lookup handles those.
+        resolved = resolve_protocol(protocol_name)
+        canonical_slug = pick_family_slug(resolved)
+        protocol_row = get_or_create_protocol(
+            session,
+            protocol_name,
+            official_domain=official_domain,
+            canonical_slug=canonical_slug,
+            aliases=resolved.get("all_names") or [],
+        )
         job.protocol_id = protocol_row.id
         if not job.company:
             job.company = protocol_row.name
@@ -125,19 +139,21 @@ class DAppCrawlWorker(BaseWorker):
             if addr:
                 detail_by_addr[addr] = detail
 
+        bulk_entries: list[dict] = []
         for addr in addresses:
             normalized = addr.lower()
             info = detail_by_addr.get(normalized, {})
             addr_chain = info.get("chain") or default_chain
             source_urls = info.get("source_urls", [])
-            upsert_discovered_contract(
-                session,
-                address=normalized,
-                chain=addr_chain,
-                protocol_id=protocol_id,
-                new_sources=["dapp_crawl"],
-                discovery_url=source_urls[0] if source_urls else None,
+            bulk_entries.append(
+                {
+                    "address": normalized,
+                    "chain": addr_chain,
+                    "new_sources": ["dapp_crawl"],
+                    "discovery_url": source_urls[0] if source_urls else None,
+                }
             )
+        bulk_upsert_discovered_contracts(session, protocol_id=protocol_id, entries=bulk_entries)
         session.commit()
 
         store_artifact(

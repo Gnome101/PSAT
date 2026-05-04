@@ -264,7 +264,7 @@ def api_client(db_session):
     resolve_patch = "services.monitoring.proxy_watcher.resolve_current_implementation"
     block_patch = "services.monitoring.proxy_watcher.get_latest_block"
     with (
-        patch("api.SessionLocal", fake_session_local),
+        patch("routers.deps.SessionLocal", fake_session_local),
         patch(classifier_patch, return_value={"type": "proxy", "proxy_type": "eip1967"}),
         patch(resolve_patch, return_value=ADDR(99).lower()),
         patch(block_patch, return_value=1000),

@@ -10,6 +10,7 @@ set and creates the top-N analysis child jobs once the siblings settle.
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 from db.models import Contract, Job, JobStage
 from db.queue import (
     advance_job,
+    bulk_upsert_discovered_contracts,
     copy_static_cache,
     create_job,
     find_completed_static_cache,
@@ -25,12 +27,14 @@ from db.queue import (
     get_or_create_protocol,
     store_artifact,
     store_source_files,
-    upsert_discovered_contract,
 )
 from services.discovery.audit_reports import merge_audit_reports, search_audit_reports
 from services.discovery.deployer import _batch_get_creators
 from services.discovery.fetch import fetch, is_vyper_result, parse_remappings, parse_sources
 from services.discovery.inventory import merge_inventory, search_protocol_inventory
+from services.discovery.protocol_resolver import pick_family_slug, resolve_protocol
+from utils import etherscan
+from utils.logging import record_degraded
 from workers.base import BaseWorker, JobHandledDirectly
 
 logger = logging.getLogger("workers.discovery")
@@ -122,8 +126,21 @@ class DiscoveryWorker(BaseWorker):
 
         store_artifact(session, job.id, "contract_inventory", data=inventory)
 
-        # Create or look up Protocol row
-        protocol_row = get_or_create_protocol(session, company, official_domain=inventory.get("official_domain"))
+        # Resolve to a DefiLlama family slug FIRST so the Protocol upsert is
+        # keyed on a stable canonical id. Without this, the same protocol
+        # discovered via different free-text spellings (e.g. "ether fi" vs
+        # "etherfi") splits into duplicate rows. The resolved struct is
+        # reused below for the parallel-discovery sibling spawns.
+        resolved = resolve_protocol(company)
+        canonical_slug = pick_family_slug(resolved)
+
+        protocol_row = get_or_create_protocol(
+            session,
+            company,
+            official_domain=inventory.get("official_domain"),
+            canonical_slug=canonical_slug,
+            aliases=resolved.get("all_names") or [],
+        )
         job.protocol_id = protocol_row.id
         session.commit()
 
@@ -148,6 +165,12 @@ class DiscoveryWorker(BaseWorker):
             if audit_count:
                 logger.info("Job %s: found %d audit report(s) for %s", job.id, audit_count, company)
         except Exception as exc:
+            record_degraded(
+                phase="audit_discovery",
+                exc=exc,
+                context={"company": company},
+                include_traceback=True,
+            )
             logger.warning("Job %s: audit report discovery failed: %s", job.id, exc)
 
         discovered = [e for e in inventory.get("contracts", []) if e.get("address")]
@@ -160,28 +183,31 @@ class DiscoveryWorker(BaseWorker):
         # The upsert unions ``discovery_sources`` so a contract that's
         # already in the table from a prior source gains this one as
         # corroboration rather than being dropped.
+        # Build the bulk payload in one pass. Inventory entries carry their
+        # own ``source`` list (e.g. ``["tavily_ai_inventory", "deployer_expansion"]``)
+        # when multiple inventory signals agreed; preserve that granularity
+        # so ranking sees the richer corroboration story.
+        bulk_entries: list[dict] = []
         for entry in discovered:
             entry_chains = entry.get("chains")
             entry_chain = entry_chains[0] if isinstance(entry_chains, list) and entry_chains else entry.get("chain")
-            # Inventory entries carry their own ``source`` list (e.g.
-            # ``["tavily_ai_inventory", "deployer_expansion"]``) when
-            # multiple inventory signals agreed. Preserve that granularity
-            # so ranking sees the richer corroboration story; fall back
-            # to the generic ``inventory`` tag when the entry didn't
-            # expose one (legacy cached entries).
             entry_sources = entry.get("source") or ["inventory"]
             if not isinstance(entry_sources, list):
                 entry_sources = [str(entry_sources)]
-            upsert_discovered_contract(
-                session,
-                address=str(entry["address"]),
-                chain=entry_chain,
-                protocol_id=protocol_row.id,
-                new_sources=entry_sources,
-                contract_name=entry.get("name"),
-                confidence=entry.get("confidence"),
-                chains=entry.get("chains"),
+            bulk_entries.append(
+                {
+                    "address": str(entry["address"]),
+                    "chain": entry_chain,
+                    "new_sources": entry_sources,
+                    "contract_name": entry.get("name"),
+                    "confidence": entry.get("confidence"),
+                    "chains": entry.get("chains"),
+                }
             )
+        # One SELECT for all existing rows + a single bulk add for new ones —
+        # collapses 100-300 sequential SELECTs that delayed the cascade kickoff
+        # into roughly one round-trip.
+        bulk_upsert_discovered_contracts(session, protocol_id=protocol_row.id, entries=bulk_entries)
         session.commit()
 
         store_artifact(
@@ -202,7 +228,7 @@ class DiscoveryWorker(BaseWorker):
 
         # Run unconditionally: DApp crawl + DefiLlama scans are independent
         # sources, and empty primary inventory is the case that most needs them.
-        self._spawn_parallel_discovery(session, job, company, request, root_job_id)
+        self._spawn_parallel_discovery(session, job, company, request, root_job_id, resolved=resolved)
 
         self.update_detail(
             session,
@@ -229,11 +255,10 @@ class DiscoveryWorker(BaseWorker):
         company: str,
         request: dict,
         root_job_id: str,
+        resolved: dict | None = None,
     ) -> None:
         """Spawn DApp crawl and DefiLlama scan jobs if we can resolve the protocol."""
-        from services.discovery.protocol_resolver import resolve_protocol
-
-        protocol = resolve_protocol(company)
+        protocol = resolved if resolved is not None else resolve_protocol(company)
         if not protocol.get("slug") and not protocol.get("url"):
             logger.info("Job %s: no DefiLlama match for '%s', skipping parallel discovery", job.id, company)
             return
@@ -331,7 +356,19 @@ class DiscoveryWorker(BaseWorker):
             )
 
         self.update_detail(session, job, f"Fetching verified source for {address}")
-        result = fetch(address)
+        # Both calls hit Etherscan. parallel_get routes each thunk through
+        # _wait_rate_limit, so the 5/sec global limit is preserved while the
+        # serial RTT between them goes away.
+        fan_out = etherscan.parallel_get(
+            {
+                "fetch": lambda a=address: fetch(a),
+                "creators": lambda a=address: _batch_get_creators([a]),
+            }
+        )
+        result_or_exc = fan_out["fetch"]
+        if isinstance(result_or_exc, BaseException):
+            raise result_or_exc
+        result = cast(dict, result_or_exc)
 
         contract_name = result.get("ContractName", "Contract")
 
@@ -346,11 +383,11 @@ class DiscoveryWorker(BaseWorker):
 
         # Look up deployer wallet via Etherscan
         deployer = None
-        try:
-            creators = _batch_get_creators([address])
-            deployer = creators.get(address.lower())
-        except Exception:
-            logger.debug("Could not fetch deployer for %s", address)
+        creators_or_exc = fan_out.get("creators")
+        if isinstance(creators_or_exc, dict):
+            deployer = creators_or_exc.get(address.lower())
+        elif isinstance(creators_or_exc, BaseException):
+            logger.debug("Could not fetch deployer for %s: %s", address, creators_or_exc)
 
         # Write to contracts table — upsert to handle pre-existing discovered rows
         request = job.request if isinstance(job.request, dict) else {}

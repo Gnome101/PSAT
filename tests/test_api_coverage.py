@@ -94,9 +94,9 @@ def _fake_job(
 
 class TestDisplayName:
     def _dn(self, entry):
-        import api
+        from services.governance.proxies import _display_name
 
-        return api._display_name(entry)
+        return _display_name(entry)
 
     def test_explicit_display_name_is_used(self):
         assert self._dn({"display_name": "MyVault"}) == "MyVault"
@@ -121,9 +121,9 @@ class TestDisplayName:
         assert result == "run1"
 
     def test_all_generic_proxy_names(self):
-        import api
+        from services.governance.proxies import GENERIC_PROXY_NAMES
 
-        for gname in api.GENERIC_PROXY_NAMES:
+        for gname in GENERIC_PROXY_NAMES:
             result = self._dn({"contract_name": gname, "run_name": "fallback"})
             assert result == "fallback", f"{gname} should be treated as generic"
 
@@ -152,9 +152,9 @@ class TestDisplayName:
 
 class TestMergeProxyImplEntries:
     def _merge(self, entries):
-        import api
+        from services.governance.proxies import _merge_proxy_impl_entries
 
-        return api._merge_proxy_impl_entries(entries)
+        return _merge_proxy_impl_entries(entries)
 
     def test_no_entries(self):
         assert self._merge([]) == []
@@ -243,7 +243,7 @@ class TestMergeProxyImplEntries:
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_pipeline_stats(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -266,7 +266,7 @@ def test_pipeline_stats(mock_session_cls):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_list_jobs_with_proxy_flag(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -290,7 +290,7 @@ def test_list_jobs_with_proxy_flag(mock_session_cls):
     assert regular_entry["is_proxy"] is False
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_list_jobs_empty(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -308,8 +308,8 @@ def test_list_jobs_empty(mock_session_cls):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
-@patch("api.create_job")
+@patch("routers.deps.SessionLocal")
+@patch("routers.deps.create_job")
 def test_analyze_dapp_urls(mock_create_job, mock_session_cls):
     client = _make_client()
     fake_job = _fake_job(status="queued", stage="dapp_crawl")
@@ -329,8 +329,8 @@ def test_analyze_dapp_urls(mock_create_job, mock_session_cls):
     assert kwargs.get("initial_stage") == JobStage.dapp_crawl
 
 
-@patch("api.SessionLocal")
-@patch("api.create_job")
+@patch("routers.deps.SessionLocal")
+@patch("routers.deps.create_job")
 def test_analyze_defillama_protocol(mock_create_job, mock_session_cls):
     client = _make_client()
     fake_job = _fake_job(status="queued", stage="defillama_scan")
@@ -367,8 +367,8 @@ def test_analyze_rejects_multiple_targets():
 # ============================================================================
 
 
-@patch("api.get_artifact")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_artifact_lookup_by_job_id(mock_session_cls, mock_get_artifact):
     """When name lookup fails, try by job ID."""
     client = _make_client()
@@ -398,8 +398,8 @@ def test_artifact_lookup_by_job_id(mock_session_cls, mock_get_artifact):
     assert response.json() == {"data": "value"}
 
 
-@patch("api.get_artifact")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_artifact_lookup_by_address(mock_session_cls, mock_get_artifact):
     """When name and ID lookups fail, try by address."""
     client = _make_client()
@@ -433,8 +433,8 @@ def test_artifact_lookup_by_address(mock_session_cls, mock_get_artifact):
     assert response.json()["found"] is True
 
 
-@patch("api.get_artifact")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_artifact_not_found(mock_session_cls, mock_get_artifact):
     """Returns 404 when artifact doesn't exist."""
     client = _make_client()
@@ -453,8 +453,77 @@ def test_artifact_not_found(mock_session_cls, mock_get_artifact):
     assert response.status_code == 404
 
 
-@patch("api.get_artifact")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
+def test_artifact_storage_error_returns_404_not_500(mock_session_cls, mock_get_artifact):
+    """Storage backend failures degrade to 404 instead of leaking a 500.
+
+    The artifact rows can outlive the underlying storage object (e.g. MinIO
+    volume wiped, Tigris credential rotation, transient network blip). The
+    route should answer cleanly so callers' .catch() paths fire — not raise
+    an opaque server error.
+    """
+    client = _make_client()
+    fake_job = _fake_job(name="test_job")
+
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+    mock_exec = MagicMock()
+    mock_exec.scalar_one_or_none.return_value = fake_job
+    mock_session.execute.return_value = mock_exec
+
+    mock_get_artifact.side_effect = RuntimeError("storage_key set but storage not configured")
+
+    response = client.get("/api/analyses/test_job/artifact/dependencies")
+    assert response.status_code == 404
+
+
+@patch("services.discovery.upgrade_history.synthesize_from_events")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
+def test_artifact_upgrade_history_falls_back_to_synthesis(
+    mock_session_cls,
+    mock_get_artifact,
+    mock_synth,
+):
+    """When storage can't serve upgrade_history, rebuild it from
+    UpgradeEvent rows. The relational table is the source of truth for
+    the count/last_block badges shown in the company overview, so the
+    detail view should stay consistent when storage is unhappy."""
+    client = _make_client()
+    fake_job = _fake_job(name="test_job")
+    fake_contract = MagicMock()
+    fake_contract.id = 42
+
+    mock_session = MagicMock()
+    _mock_session_ctx(mock_session_cls, mock_session)
+
+    # First execute resolves the job, second resolves the Contract row.
+    job_exec = MagicMock()
+    job_exec.scalar_one_or_none.return_value = fake_job
+    contract_exec = MagicMock()
+    contract_exec.scalar_one_or_none.return_value = fake_contract
+    mock_session.execute.side_effect = [job_exec, contract_exec]
+
+    mock_get_artifact.side_effect = RuntimeError("object 404")
+    mock_synth.return_value = {
+        "schema_version": "0.1",
+        "target_address": "0xaaa",
+        "proxies": {"0xaaa": {"upgrade_count": 3}},
+        "total_upgrades": 3,
+        "synthesized": True,
+    }
+
+    response = client.get("/api/analyses/test_job/artifact/upgrade_history")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["synthesized"] is True
+    assert body["total_upgrades"] == 3
+    mock_synth.assert_called_once()
+
+
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_artifact_txt_extension_stripping(mock_session_cls, mock_get_artifact):
     """The .txt extension is stripped for lookup."""
     client = _make_client()
@@ -474,8 +543,8 @@ def test_artifact_txt_extension_stripping(mock_session_cls, mock_get_artifact):
     assert "report text" in response.text
 
 
-@patch("api.get_artifact")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_artifact_json_extension_stripping(mock_session_cls, mock_get_artifact):
     """The .json extension is stripped, and first lookup with stripped name succeeds."""
     client = _make_client()
@@ -494,7 +563,7 @@ def test_artifact_json_extension_stripping(mock_session_cls, mock_get_artifact):
     assert response.json() == {"key": "val"}
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_artifact_job_not_found_returns_404(mock_session_cls):
     """Returns 404 when no job matches name/id/address."""
     client = _make_client()
@@ -516,8 +585,8 @@ def test_artifact_job_not_found_returns_404(mock_session_cls):
 # ============================================================================
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_relational_effective_permissions(mock_session_cls, mock_get_all_artifacts):
     """When contract_row exists with EffectiveFunctions, payload gets effective_permissions from relational tables."""
     client = _make_client()
@@ -608,8 +677,8 @@ def test_analysis_detail_relational_effective_permissions(mock_session_cls, mock
     assert fn["controllers"][0]["principals"][0]["address"] == "0xowner"
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_relational_control_snapshot(mock_session_cls, mock_get_all_artifacts):
     """When control_snapshot is NOT in artifacts, build it from ControllerValue table."""
     client = _make_client()
@@ -679,8 +748,8 @@ def test_analysis_detail_relational_control_snapshot(mock_session_cls, mock_get_
     assert cs["controller_values"]["owner"]["value"] == "0xdeadbeef"
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_relational_control_graph(mock_session_cls, mock_get_all_artifacts):
     """When resolved_control_graph is NOT in artifacts, build it from CGN/CGE tables."""
     client = _make_client()
@@ -763,8 +832,8 @@ def test_analysis_detail_relational_control_graph(mock_session_cls, mock_get_all
     assert rcg["edges"][0]["relation"] == "owner"
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_relational_principal_labels(mock_session_cls, mock_get_all_artifacts):
     """When PrincipalLabel rows exist, they populate principal_labels in payload."""
     client = _make_client()
@@ -829,8 +898,8 @@ def test_analysis_detail_relational_principal_labels(mock_session_cls, mock_get_
     assert body["principal_labels"]["principals"][0]["label"] == "Owner"
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_lookup_by_id(mock_session_cls, mock_get_all_artifacts):
     """Falls back to session.get(Job, run_name) when name lookup fails."""
     client = _make_client()
@@ -863,8 +932,8 @@ def test_analysis_detail_lookup_by_id(mock_session_cls, mock_get_all_artifacts):
     assert response.json()["job_id"] == job_id
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_lookup_by_address(mock_session_cls, mock_get_all_artifacts):
     """Falls back to address lookup when name and ID fail."""
     client = _make_client()
@@ -905,7 +974,7 @@ def test_analysis_detail_lookup_by_address(mock_session_cls, mock_get_all_artifa
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls):
     """rank_score + chain come from the ``contracts`` table (selection's single
     authoritative ranking pass), not from the legacy inventory artifact."""
@@ -985,7 +1054,7 @@ def test_analyses_list_rank_scores_from_contracts_table(mock_session_cls):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_company_overview_not_found(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -1086,7 +1155,7 @@ def test_company_overview_basic(db_session, api_client):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_list_subscriptions(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -1113,7 +1182,7 @@ def test_list_subscriptions(mock_session_cls):
     assert body[0]["label"] == "test sub"
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_list_subscriptions_proxy_not_found(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -1124,7 +1193,7 @@ def test_list_subscriptions_proxy_not_found(mock_session_cls):
     assert response.status_code == 404
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_add_subscription(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -1157,7 +1226,7 @@ def test_add_subscription(mock_session_cls):
     assert body["discord_webhook_url"] == "https://discord.com/api/webhooks/123/abc"
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_add_subscription_proxy_not_found(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -1171,7 +1240,7 @@ def test_add_subscription_proxy_not_found(mock_session_cls):
     assert response.status_code == 404
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_remove_subscription(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -1187,7 +1256,7 @@ def test_remove_subscription(mock_session_cls):
     mock_session.delete.assert_called_once_with(sub)
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_remove_subscription_not_found(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -1222,7 +1291,7 @@ def test_spa_fallback_non_api_serves_html():
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_company_from_parent_chain(mock_session_cls):
     """company_for_job() walks parent_job_id chain to find company."""
     client = _make_client()
@@ -1294,7 +1363,7 @@ def test_analyses_company_from_parent_chain(mock_session_cls):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls):
     """A completed proxy is suppressed until its impl child also completes.
 
@@ -1369,7 +1438,7 @@ def test_analyses_proxy_hidden_when_impl_not_completed(mock_session_cls):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_proxy_events_with_filter(mock_session_cls):
     client = _make_client()
     mock_session = MagicMock()
@@ -1417,9 +1486,9 @@ def test_analyze_address_not_starting_with_0x():
 # ============================================================================
 
 
-@patch("api.get_all_artifacts")
-@patch("api.get_artifact")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_proxy_inherits_impl_relational_tables(
     mock_session_cls, mock_get_artifact, mock_get_all_artifacts
 ):
@@ -1805,7 +1874,7 @@ def test_company_overview_with_proxy_and_effects(db_session, api_client):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_chain_populated_from_contracts_table(mock_session_cls):
     """Chain comes from the ``contracts`` table (same pass that sets
     rank_score) regardless of how the discovery worker wrote it —
@@ -1880,7 +1949,7 @@ def test_analyses_chain_populated_from_contracts_table(mock_session_cls):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_entry_without_analysis_still_appears(mock_session_cls):
     """A job without contract_analysis artifact still appears in results, but
     without contract_name or summary fields from the analysis."""
@@ -1927,9 +1996,14 @@ def test_analyses_entry_without_analysis_still_appears(mock_session_cls):
 # ============================================================================
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls):
-    """When proxy's contract_analysis is None but impl's exists, proxy entry uses impl's."""
+    """When proxy's Contract row has no name, the proxy entry inherits the
+    impl's Contract.contract_name. Earlier code reached for the impl's
+    contract_analysis artifact body to read subject.name, but the listing
+    no longer fetches artifact bodies — names come from the prefetched
+    Contract rows directly. This regression test now seeds both
+    Contract rows and asserts the impl-name is what surfaces."""
     client = _make_client()
 
     proxy_job_id = uuid.uuid4()
@@ -1959,22 +2033,20 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
         address="0xaaaa",
         chain=None,
         rank_score=None,
-        contract_name=None,
+        contract_name=None,  # missing — should inherit from impl
         is_proxy=True,
         proxy_type="ERC1967",
         implementation="0xbbbb",
     )
-
-    artifacts = [
-        SimpleNamespace(
-            job_id=impl_job.id,
-            name="contract_analysis",
-            storage_key=None,
-            data={"subject": {"name": "ImplName"}, "summary": {"control_model": "ownable"}},
-            text_data=None,
-            content_type=None,
-        ),
-    ]
+    impl_contract = SimpleNamespace(
+        address="0xbbbb",
+        chain=None,
+        rank_score=None,
+        contract_name="ImplName",
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
+    )
 
     call_count = {"n": 0}
 
@@ -1982,11 +2054,16 @@ def test_analyses_proxy_uses_impl_analysis_when_proxy_has_none(mock_session_cls)
         call_count["n"] += 1
         result = MagicMock()
         if call_count["n"] == 1:
+            # Job listing
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            result.scalars.return_value = iter([proxy_contract])
+            # Contracts prefetch — returns both rows now (was just proxy
+            # before, since the old code didn't need impl's Contract row).
+            result.scalars.return_value = iter([proxy_contract, impl_contract])
         elif call_count["n"] == 3:
-            result.scalars.return_value = iter(artifacts)
+            # Artifact name listing — empty is fine, the test only cares
+            # about the contract_name fallback chain.
+            result.all.return_value = []
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None

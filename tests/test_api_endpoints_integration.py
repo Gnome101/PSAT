@@ -102,8 +102,8 @@ def _make_client() -> TestClient:
 # ---------------------------------------------------------------------------
 
 
-@patch("api.SessionLocal")
-@patch("api.create_job")
+@patch("routers.deps.SessionLocal")
+@patch("routers.deps.create_job")
 def test_analyze_company_creates_job(mock_create_job, mock_session_cls):
     """Submitting {"company": "etherfi"} should create a job with company set,
     address null, stage=discovery, status=queued."""
@@ -148,8 +148,8 @@ def test_analyze_company_creates_job(mock_create_job, mock_session_cls):
 # ---------------------------------------------------------------------------
 
 
-@patch("api.SessionLocal")
-@patch("api.create_job")
+@patch("routers.deps.SessionLocal")
+@patch("routers.deps.create_job")
 def test_analyze_accepts_address_with_company_context(mock_create_job, mock_session_cls):
     """address + company together is valid (address is target, company is context)."""
     client = _make_client()
@@ -181,8 +181,8 @@ def test_analyze_rejects_neither_address_nor_company():
 # ---------------------------------------------------------------------------
 
 
-@patch("api.SessionLocal")
-@patch("api.create_job")
+@patch("routers.deps.SessionLocal")
+@patch("routers.deps.create_job")
 def test_analyze_address_creates_job(mock_create_job, mock_session_cls):
     """Submitting {"address": "0x1111..."} should create a job with address set
     and company null."""
@@ -227,7 +227,7 @@ def test_analyze_address_creates_job(mock_create_job, mock_session_cls):
 # ---------------------------------------------------------------------------
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_list_proxy_flagging(mock_session_cls):
     """A completed proxy job + its impl job should merge into one entry
     that carries the is_proxy, proxy_type, and implementation_address
@@ -268,8 +268,11 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
     impl_job.status = JobStatus.completed
     proxy_job.status = JobStatus.completed
 
-    # proxy_type and implementation now come from the Contract row, not
-    # the contract_flags artifact (which is no longer fetched here).
+    # proxy_type, implementation, AND contract_name now come from the
+    # Contract rows. The /api/analyses listing no longer fetches artifact
+    # bodies — that was the dominant cost in production. The merge layer
+    # prefers the impl's name over the proxy's (proxy shells usually
+    # carry generic names like "UUPSProxy"), so both rows must be mocked.
     proxy_contract_row = SimpleNamespace(
         address=proxy_addr,
         chain=None,
@@ -279,23 +282,20 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
         proxy_type="ERC1967",
         implementation=impl_addr,
     )
+    impl_contract_row = SimpleNamespace(
+        address=impl_addr,
+        chain=None,
+        rank_score=None,
+        contract_name="VaultImpl",
+        is_proxy=False,
+        proxy_type=None,
+        implementation=None,
+    )
 
     # /api/analyses query order:
-    #   1. select(Job)         → jobs list
-    #   2. select(Contract...) → contracts_by_address (returns .scalars())
-    #   3. select(Artifact)    → batched artifact rows (.scalars())
-    artifacts = [
-        _fake_artifact(
-            proxy_job.id,
-            "contract_analysis",
-            {"subject": {"name": "ProxyContract"}, "summary": {"control_model": "proxy"}},
-        ),
-        _fake_artifact(
-            impl_job.id,
-            "contract_analysis",
-            {"subject": {"name": "VaultImpl"}, "summary": {"control_model": "authority"}},
-        ),
-    ]
+    #   1. select(Job)             → jobs list
+    #   2. select(Contract...)     → contracts_by_address (returns .scalars())
+    #   3. select(Artifact.job_id, Artifact.name) → name-only artifact rows (.all())
 
     call_count = {"n": 0}
 
@@ -305,9 +305,11 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
         if call_count["n"] == 1:
             result.scalars.return_value.all.return_value = [proxy_job, impl_job]
         elif call_count["n"] == 2:
-            result.scalars.return_value = iter([proxy_contract_row])
+            result.scalars.return_value = iter([proxy_contract_row, impl_contract_row])
         elif call_count["n"] == 3:
-            result.scalars.return_value = iter(artifacts)
+            # Artifact-name listing — empty is fine; this test only cares
+            # about contract_name resolution from Contract rows.
+            result.all.return_value = []
         else:
             result.scalars.return_value.all.return_value = []
             result.scalar_one_or_none.return_value = None
@@ -331,7 +333,7 @@ def test_analyses_list_proxy_flagging(mock_session_cls):
     assert merged["display_name"] == "VaultImpl"
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_analyses_list_non_proxy_has_is_proxy_false(mock_session_cls):
     """A completed job without contract_flags or with is_proxy=False should
     appear with is_proxy=False."""
@@ -391,9 +393,9 @@ def test_analyses_list_non_proxy_has_is_proxy_false(mock_session_cls):
 # ---------------------------------------------------------------------------
 
 
-@patch("api.get_artifact")
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_falls_back_to_proxy_artifacts(mock_session_cls, mock_get_all_artifacts, mock_get_artifact):
     """When an impl job has proxy_address in its request but lacks
     dependency_graph_viz, the detail endpoint should fall back to the proxy
@@ -487,9 +489,9 @@ def test_analysis_detail_falls_back_to_proxy_artifacts(mock_session_cls, mock_ge
     assert body["dependencies"] == proxy_dependencies
 
 
-@patch("api.get_artifact")
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_no_fallback_when_impl_has_artifacts(
     mock_session_cls, mock_get_all_artifacts, mock_get_artifact
 ):
@@ -546,8 +548,8 @@ def test_analysis_detail_no_fallback_when_impl_has_artifacts(
         )
 
 
-@patch("api.get_all_artifacts")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_no_fallback_without_proxy_address(mock_session_cls, mock_get_all_artifacts):
     """When the job has no proxy_address in its request, no fallback should
     occur even if dependency_graph_viz is missing."""
@@ -605,9 +607,9 @@ def test_analysis_detail_no_fallback_without_proxy_address(mock_session_cls, moc
 # ---------------------------------------------------------------------------
 
 
-@patch("api.get_all_artifacts")
-@patch("api.get_artifact")
-@patch("api.SessionLocal")
+@patch("routers.deps.get_all_artifacts")
+@patch("routers.deps.get_artifact")
+@patch("routers.deps.SessionLocal")
 def test_analysis_detail_proxy_inherits_impl_artifacts(mock_session_cls, mock_get_artifact, mock_get_all_artifacts):
     """When loading a proxy job's detail, analysis artifacts (contract_analysis,
     effective_permissions, etc.) should be inherited from the impl child job.
@@ -769,7 +771,7 @@ def _fake_watched_proxy(**overrides):
 @patch("services.monitoring.proxy_watcher.resolve_current_implementation", return_value="0x" + "cc" * 20)
 @patch("services.discovery.classifier.classify_single", return_value={"type": "proxy", "proxy_type": "eip1967"})
 @patch("services.monitoring.proxy_watcher.get_latest_block", return_value=12345)
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_add_watched_proxy(mock_session_cls, mock_block, mock_classify, mock_resolve):
     """POST /api/watched-proxies creates a proxy watch and returns its details."""
     client = _make_client()
@@ -815,7 +817,7 @@ def test_add_watched_proxy_invalid_address():
     assert response.status_code == 400
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_add_watched_proxy_ssrf_blocked(mock_session_cls):
     """POST /api/watched-proxies rejects internal RPC URLs."""
     client = _make_client()
@@ -828,7 +830,7 @@ def test_add_watched_proxy_ssrf_blocked(mock_session_cls):
         assert "internal" in response.json()["detail"].lower()
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_list_watched_proxies(mock_session_cls):
     """GET /api/watched-proxies returns all watched proxies."""
     client = _make_client()
@@ -846,7 +848,7 @@ def test_list_watched_proxies(mock_session_cls):
     assert body[0]["proxy_type"] == "eip1967"
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_remove_watched_proxy(mock_session_cls):
     """DELETE /api/watched-proxies/{id} removes a proxy."""
     client = _make_client()
@@ -862,7 +864,7 @@ def test_remove_watched_proxy(mock_session_cls):
     mock_session.delete.assert_called_once_with(proxy)
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_remove_watched_proxy_not_found(mock_session_cls):
     """DELETE /api/watched-proxies/{id} returns 404 when proxy doesn't exist."""
     client = _make_client()
@@ -874,7 +876,7 @@ def test_remove_watched_proxy_not_found(mock_session_cls):
     assert response.status_code == 404
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_list_proxy_events(mock_session_cls):
     """GET /api/proxy-events returns upgrade events."""
     client = _make_client()
@@ -919,7 +921,7 @@ def _fake_audit_report(**overrides):
     return ar
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_company_audits_endpoint(mock_session_cls):
     """GET /api/company/{name}/audits returns audit reports for a protocol."""
     client = _make_client()
@@ -974,7 +976,7 @@ def test_company_audits_endpoint(mock_session_cls):
     assert tob["confidence"] == 0.85
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_company_audits_not_found(mock_session_cls):
     """GET /api/company/{name}/audits returns 404 for unknown company."""
     client = _make_client()
@@ -987,7 +989,7 @@ def test_company_audits_not_found(mock_session_cls):
     assert response.status_code == 404
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_company_audits_empty(mock_session_cls):
     """GET /api/company/{name}/audits returns empty list when no audits exist."""
     client = _make_client()
@@ -1023,7 +1025,7 @@ def test_company_audits_empty(mock_session_cls):
 # ---------------------------------------------------------------------------
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_cancel_queued_company_jobs_unknown_company_404(mock_session_cls):
     """404 when the company has never been registered as a Protocol."""
     client = _make_client()
@@ -1037,7 +1039,7 @@ def test_cancel_queued_company_jobs_unknown_company_404(mock_session_cls):
     assert mock_session.commit.call_count == 0
 
 
-@patch("api.SessionLocal")
+@patch("routers.deps.SessionLocal")
 def test_cancel_queued_company_jobs_returns_deleted_ids(mock_session_cls):
     """DELETE returns the list of cancelled job UUIDs + a count."""
     client = _make_client()

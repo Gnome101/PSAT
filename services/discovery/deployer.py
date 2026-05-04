@@ -26,6 +26,7 @@ deploy-as-a-service providers while keeping genuine protocol ops wallets.
 
 from __future__ import annotations
 
+import contextvars
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -112,7 +113,12 @@ def _batch_get_names(
     names: dict[str, str] = {}
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(_get_one_name, addr): addr for addr in addresses}
+        # Per-submission context copy so each rate-limited Etherscan call
+        # inherits the caller's trace_id / job_id contextvars.
+        futures: dict = {}
+        for addr in addresses:
+            ctx = contextvars.copy_context()
+            futures[executor.submit(ctx.run, _get_one_name, addr)] = addr
         for future in as_completed(futures):
             try:
                 addr, name = future.result()

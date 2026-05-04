@@ -1109,8 +1109,14 @@ def _apply_equivalence_http(
     ``'reviewed_commit'`` and ``match_confidence`` → ``'high'``. Other
     statuses leave the heuristic temporal match intact — a failed
     verification annotates but doesn't delete.
+
+    Per-match work fans out via ``parallel_map(max_workers=4)`` — the
+    GitHub authenticated rate limit is 5000/hr and the Etherscan cache
+    collapses repeats behind a lock, so 4 concurrent workers stay well
+    inside both budgets.
     """
     import os
+    import threading
 
     from services.audits.source_equivalence import (
         EtherscanFetch,
@@ -1118,12 +1124,15 @@ def _apply_equivalence_http(
         fetch_etherscan_source_files,
         verify_audit_covers_impl,
     )
+    from utils.concurrency import parallel_map
 
     gh_token = os.environ.get("GITHUB_TOKEN") or None
     # Per-address cache so two audit rows pointing at the same impl only
     # pay one Etherscan round-trip. Stores EtherscanFetch (the new envelope
-    # that carries status + detail, not just source).
+    # that carries status + detail, not just source). Lock guards the
+    # check-then-set pattern across worker threads.
     etherscan_cache: dict[str, Any] = {}
+    cache_lock = threading.Lock()
     now = datetime.now(timezone.utc)
 
     def _stamp(
@@ -1154,62 +1163,52 @@ def _apply_equivalence_http(
             matched_commit_sha=matched_commit_sha if proven else None,
         )
 
-    stamped: list[CoverageMatch] = []
-    for m in matches:
+    def _fetch_etherscan(addr_key: str, contract_address: str, contract_id: int) -> EtherscanFetch:
+        with cache_lock:
+            cached = etherscan_cache.get(addr_key)
+        if cached is not None:
+            return cached
+        try:
+            raw_fetch = fetch_etherscan_source_files(contract_address)
+            if isinstance(raw_fetch, EtherscanFetch):
+                fetch = raw_fetch
+            elif isinstance(raw_fetch, VerifiedSource):
+                # Backward compatibility for older tests/callers
+                # that still stub the pre-envelope return type.
+                fetch = EtherscanFetch(source=raw_fetch, status="ok", detail="")
+            else:
+                raise TypeError(
+                    f"fetch_etherscan_source_files returned {type(raw_fetch).__name__}, expected EtherscanFetch"
+                )
+        except Exception as exc:
+            logger.exception(
+                "source-equivalence Etherscan fetch crashed for contract %s",
+                contract_id,
+            )
+            # Synthesize a fetch_failed envelope so the branches below
+            # treat this uniformly with API-returned errors.
+            fetch = EtherscanFetch(source=None, status="fetch_failed", detail=f"crash: {exc}")
+        with cache_lock:
+            # First writer wins — avoid clobbering another thread's
+            # successful fetch with a later error.
+            return etherscan_cache.setdefault(addr_key, fetch)
+
+    def _process_match(m: CoverageMatch) -> CoverageMatch:
         key = (m.audit_report_id, m.contract_id)
         data = inputs.get(key)
         if data is None:
-            stamped.append(_stamp(m, status="not_attempted", reason="no preload inputs"))
-            continue
+            return _stamp(m, status="not_attempted", reason="no preload inputs")
         if not data.reviewed_commits:
-            stamped.append(_stamp(m, status="no_reviewed_commit", reason="audit has no reviewed_commits"))
-            continue
+            return _stamp(m, status="no_reviewed_commit", reason="audit has no reviewed_commits")
         if not data.source_repo and not data.referenced_repos:
-            stamped.append(
-                _stamp(
-                    m,
-                    status="no_source_repo",
-                    reason="audit has no source_repo or referenced_repos",
-                )
-            )
-            continue
+            return _stamp(m, status="no_source_repo", reason="audit has no source_repo or referenced_repos")
 
         # Resolve impl source: DB preload first, Etherscan (cached) next.
         impl_source = data.db_impl_source
         fetch_status = "ok"
         fetch_detail = ""
         if impl_source is None and data.contract_address:
-            addr_key = data.contract_address.lower()
-            if addr_key not in etherscan_cache:
-                try:
-                    raw_fetch = fetch_etherscan_source_files(data.contract_address)
-                    if isinstance(raw_fetch, EtherscanFetch):
-                        etherscan_cache[addr_key] = raw_fetch
-                    elif isinstance(raw_fetch, VerifiedSource):
-                        # Backward compatibility for older tests/callers
-                        # that still stub the pre-envelope return type.
-                        etherscan_cache[addr_key] = EtherscanFetch(
-                            source=raw_fetch,
-                            status="ok",
-                            detail="",
-                        )
-                    else:
-                        raise TypeError(
-                            f"fetch_etherscan_source_files returned {type(raw_fetch).__name__}, expected EtherscanFetch"
-                        )
-                except Exception as exc:
-                    logger.exception(
-                        "source-equivalence Etherscan fetch crashed for contract %s",
-                        m.contract_id,
-                    )
-                    # Synthesize a fetch_failed envelope so the branches below
-                    # treat this uniformly with API-returned errors.
-                    from services.audits.source_equivalence import EtherscanFetch
-
-                    etherscan_cache[addr_key] = EtherscanFetch(
-                        source=None, status="fetch_failed", detail=f"crash: {exc}"
-                    )
-            fetch = etherscan_cache[addr_key]
+            fetch = _fetch_etherscan(data.contract_address.lower(), data.contract_address, m.contract_id)
             impl_source = fetch.source
             fetch_status = fetch.status
             fetch_detail = fetch.detail
@@ -1217,16 +1216,8 @@ def _apply_equivalence_http(
         if impl_source is None:
             # Map Etherscan envelope into the row's equivalence status.
             if fetch_status == "unverified":
-                stamped.append(_stamp(m, status="etherscan_unverified", reason=fetch_detail or "no verified source"))
-            else:
-                stamped.append(
-                    _stamp(
-                        m,
-                        status="etherscan_fetch_failed",
-                        reason=fetch_detail or "etherscan fetch failed",
-                    )
-                )
-            continue
+                return _stamp(m, status="etherscan_unverified", reason=fetch_detail or "no verified source")
+            return _stamp(m, status="etherscan_fetch_failed", reason=fetch_detail or "etherscan fetch failed")
 
         # Verify scoped to THIS row's matched_name — critical: the reason
         # must describe the right contract. When the match came from an
@@ -1253,8 +1244,7 @@ def _apply_equivalence_http(
                 m.audit_report_id,
                 m.contract_id,
             )
-            stamped.append(_stamp(m, status="github_fetch_failed", reason=f"crash: {exc}"))
-            continue
+            return _stamp(m, status="github_fetch_failed", reason=f"crash: {exc}")
 
         proven = outcome.status == "proven"
         proof_kind: str | None = None
@@ -1282,16 +1272,22 @@ def _apply_equivalence_http(
                 (matched_commit_sha or "")[:12],
                 outcome.reason,
             )
-        stamped.append(
-            _stamp(
-                m,
-                status=outcome.status,
-                reason=outcome.reason,
-                proven=proven,
-                proof_kind=proof_kind,
-                matched_commit_sha=matched_commit_sha,
-            )
+        return _stamp(
+            m,
+            status=outcome.status,
+            reason=outcome.reason,
+            proven=proven,
+            proof_kind=proof_kind,
+            matched_commit_sha=matched_commit_sha,
         )
+
+    results = parallel_map(_process_match, matches, max_workers=4)
+    stamped: list[CoverageMatch] = []
+    for m, outcome in results:
+        if isinstance(outcome, BaseException):
+            stamped.append(_stamp(m, status="github_fetch_failed", reason=f"crash: {outcome}"))
+            continue
+        stamped.append(outcome)
     return stamped
 
 

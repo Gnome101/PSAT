@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import functools
 import hashlib
 import json
@@ -108,9 +109,23 @@ class StorageClient:
             config=Config(
                 signature_version="s3v4",
                 s3={"addressing_style": "path"},
-                connect_timeout=2,
+                # Tigris TLS handshake p99 to fly.storage.tigris.dev exceeds
+                # 2s under concurrent load (observed: terminal
+                # StorageUnavailable on KING Distributor impl in psat-pr-65,
+                # ssl.do_handshake timing out). 10s covers tail latency.
+                connect_timeout=10,
                 read_timeout=5,
-                retries={"max_attempts": 1},
+                # max_attempts=1 disabled botocore's built-in retry, so a
+                # single transient handshake/read timeout terminally killed
+                # the worker job (no next_attempt_at). Standard mode retries
+                # ReadTimeoutError / ConnectTimeoutError with exponential
+                # backoff before we surface StorageUnavailable.
+                retries={"max_attempts": 3, "mode": "standard"},
+                # boto3 default is 10 — too small for our get_many fan-out
+                # (16 threads) plus concurrent put/get from the worker job
+                # pool. Under load urllib3 was discarding and reopening
+                # connections on every spillover, churning the Tigris pool.
+                max_pool_connections=64,
             ),
         )
 
@@ -174,8 +189,15 @@ class StorageClient:
                 logger.warning("get_many: transport error fetching %s: %s", k, exc)
                 return k, None
 
+        # Per-key context copy keeps trace_id/job_id bindings from the
+        # caller (e.g. the API handler or worker) visible to each
+        # concurrent boto call's log lines.
+        def _fetch_with_ctx(k: str) -> tuple[str, bytes | None]:
+            ctx = contextvars.copy_context()
+            return ctx.run(_fetch, k)
+
         with ThreadPoolExecutor(max_workers=16) as ex:
-            return dict(ex.map(_fetch, unique))
+            return dict(ex.map(_fetch_with_ctx, unique))
 
     def presign(self, key: str, expires_in: int = DEFAULT_PRESIGN_TTL) -> str:
         from botocore.exceptions import BotoCoreError, ClientError

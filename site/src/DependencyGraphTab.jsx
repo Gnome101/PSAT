@@ -8,6 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { blockExplorerAddressUrl } from "./blockExplorer.js";
 import { shortenAddress, wrapText } from "./graph.js";
 import { buildDependencyGraph, layoutDependencyGraph, computeEdgeGeometry } from "./dependencyGraph.js";
 
@@ -63,7 +64,21 @@ function edgeSlotPercents(count) {
 
 // ── Detail panel for selected node ─────────────────────────────────────────
 
-function DependencyNodeDetails({ node }) {
+function ScannerAddressLink({ address, chain, short = false }) {
+  if (!address) return null;
+  return (
+    <a
+      className="scanner-link mono"
+      href={blockExplorerAddressUrl(address, chain)}
+      target="_blank"
+      rel="noreferrer"
+    >
+      {short ? shortenAddress(address) : address}
+    </a>
+  );
+}
+
+function DependencyNodeDetails({ node, chain }) {
   if (!node) {
     return (
       <div className="detail-panel">
@@ -78,7 +93,7 @@ function DependencyNodeDetails({ node }) {
       <div className="kv-grid">
         <div className="kv-row">
           <span className="key">Address</span>
-          <span className="mono">{node.address}</span>
+          <ScannerAddressLink address={node.address} chain={chain} />
         </div>
         <div className="kv-row">
           <span className="key">Type</span>
@@ -93,19 +108,19 @@ function DependencyNodeDetails({ node }) {
         {node.implementation && (
           <div className="kv-row">
             <span className="key">Implementation</span>
-            <span className="mono">{shortenAddress(node.implementation)}</span>
+            <ScannerAddressLink address={node.implementation} chain={chain} short />
           </div>
         )}
         {node.beacon && (
           <div className="kv-row">
             <span className="key">Beacon</span>
-            <span className="mono">{shortenAddress(node.beacon)}</span>
+            <ScannerAddressLink address={node.beacon} chain={chain} short />
           </div>
         )}
         {node.admin && (
           <div className="kv-row">
             <span className="key">Admin</span>
-            <span className="mono">{shortenAddress(node.admin)}</span>
+            <ScannerAddressLink address={node.admin} chain={chain} short />
           </div>
         )}
         {node.source?.length > 0 && (
@@ -121,7 +136,7 @@ function DependencyNodeDetails({ node }) {
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export default function DependencyGraphTab({ data: dataProp, runName }) {
+export default function DependencyGraphTab({ data: dataProp, runName, chain = "ethereum" }) {
   const [selectedNode, setSelectedNode] = useState(null);
   const [fetched, setFetched] = useState(null);
   const stageRef = useRef(null);
@@ -389,7 +404,7 @@ export default function DependencyGraphTab({ data: dataProp, runName }) {
             </svg>
           </div>
         </div>
-        <DependencyNodeDetails node={selectedNode} />
+        <DependencyNodeDetails node={selectedNode} chain={chain} />
       </div>
     </div>
   );

@@ -483,10 +483,20 @@ def extract_inventory_entries_from_pages(
     requested_chain: str | None,
     debug: bool = False,
 ) -> list[dict[str, Any]]:
-    """Fetch selected pages and aggregate extracted inventory entries."""
+    """Fetch selected pages and aggregate extracted inventory entries.
+
+    Page fetches happen concurrently — each URL is an independent HTTP call
+    to a different host so there's no shared rate limit to respect. Iteration
+    over results stays in input order so downstream entry ordering is stable.
+    """
+    from utils.concurrency import parallel_map
+
+    fetch_results = parallel_map(lambda u: _fetch_page(u, debug=debug), urls, max_workers=8)
     out: list[dict[str, Any]] = []
-    for url in urls:
-        page_text = _fetch_page(url, debug=debug)
+    for url, page_text in zip(urls, [r for _u, r in fetch_results]):
+        if isinstance(page_text, BaseException):
+            _debug_log(debug, f"Fetch {url} raised: {page_text!r}")
+            continue
         if not page_text:
             continue
         out.extend(extract_inventory_entries_from_page_text(url, page_text, requested_chain, debug=debug))

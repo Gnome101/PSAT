@@ -25,7 +25,13 @@ from services.resolution.mapping_enumerator import (
 
 
 @pytest.fixture(autouse=True)
-def _isolated_cache():
+def _isolated_cache(monkeypatch):
+    # Tests in this file exercise the in-process L1 cache only; the L2
+    # (Postgres-backed) cache lives in db.mapping_enumeration_cache and
+    # has its own test file. Disable L2 here so these tests don't depend
+    # on a live DB connection or the migrated mapping_enumeration_cache
+    # table being present.
+    monkeypatch.setenv("PSAT_MAPPING_ENUMERATION_DB_CACHE", "0")
     clear_enumeration_cache()
     yield
     clear_enumeration_cache()

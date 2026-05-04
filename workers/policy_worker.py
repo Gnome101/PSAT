@@ -9,7 +9,16 @@ from typing import Any, cast
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Contract, EffectiveFunction, FunctionPrincipal, Job, JobStage, JobStatus, PrincipalLabel
+from db.models import (
+    Contract,
+    EffectiveFunction,
+    FunctionPrincipal,
+    Job,
+    JobStage,
+    JobStatus,
+    PrincipalLabel,
+    SessionLocal,
+)
 from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, artifact_key, parse_key
 from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import get_artifact, store_artifact
@@ -18,6 +27,8 @@ from schemas.effective_permissions import PrincipalResolution
 from services.policy import build_effective_permissions, build_principal_labels
 from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
+from utils.concurrency import parallel_map
+from utils.logging import record_degraded
 from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.policy_worker")
@@ -315,7 +326,20 @@ def _root_artifacts(
 
 
 def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifacts]:
-    """Hydrate ``recursive.*`` artifacts written by the resolution stage."""
+    """Hydrate ``recursive.*`` artifacts written by the resolution stage.
+
+    Resolution writes only the runtime-state slices (snapshot,
+    effective_permissions) to ``recursive.*`` rows. The static slices
+    (analysis, tracking_plan) live in ``contract_materializations``
+    (content-addressed by ``(chain, bytecode_keccak)``); we hydrate them
+    here per-address so the rest of policy still sees a full
+    ``LoadedArtifacts`` bundle. A bundle missing analysis/snapshot is
+    dropped — ``_resolve_authority`` and the post-policy
+    ``resolve_control_graph`` refresh both require both fields.
+    """
+    import copy
+
+    from db import contract_materializations as cm
     from db.models import Artifact
 
     prefix = f"{KEY_PREFIX}."
@@ -336,6 +360,24 @@ def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifact
         if payload is None:
             continue
         bundles.setdefault(address, {})[kind] = payload
+
+    # Hydrate analysis + tracking_plan from contract_materializations.
+    # Address-keyed lookup matches the chain default the resolution
+    # writer uses; on a row miss we drop the bundle below since the
+    # downstream consumers can't operate without analysis.
+    chain = os.getenv("PSAT_DEFAULT_CHAIN", "ethereum")
+    for address, bundle in bundles.items():
+        try:
+            mrow = cm.find_by_address(session, chain=chain, address=address)
+        except Exception:
+            mrow = None
+        if mrow is None:
+            continue
+        if mrow.analysis:
+            bundle["analysis"] = copy.deepcopy(mrow.analysis)
+        if mrow.tracking_plan:
+            bundle["tracking_plan"] = copy.deepcopy(mrow.tracking_plan)
+
     # Only keep bundles that have the minimum fields resolve_control_graph needs.
     return {
         addr: cast(LoadedArtifacts, bundle)
@@ -655,10 +697,30 @@ class PolicyWorker(BaseWorker):
                                 )
                             )
                             session.commit()
-                    except Exception:
-                        logger.exception("Initial TVL snapshot failed for protocol %s", job.protocol_id)
-            except Exception:
-                logger.exception("Auto-enrollment failed for protocol %s", job.protocol_id)
+                    except Exception as exc:
+                        record_degraded(
+                            phase="initial_tvl_snapshot",
+                            exc=exc,
+                            context={"protocol_id": job.protocol_id},
+                        )
+                        logger.warning(
+                            "Initial TVL snapshot failed for protocol %s: %s",
+                            job.protocol_id,
+                            exc,
+                            extra={"exc_type": type(exc).__name__},
+                        )
+            except Exception as exc:
+                record_degraded(
+                    phase="auto_enrollment",
+                    exc=exc,
+                    context={"protocol_id": job.protocol_id},
+                )
+                logger.warning(
+                    "Auto-enrollment failed for protocol %s: %s",
+                    job.protocol_id,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
+                )
 
         # Send completion webhook for re-analysis jobs
         request = job.request if isinstance(job.request, dict) else {}
@@ -667,10 +729,14 @@ class PolicyWorker(BaseWorker):
                 from services.monitoring.notifier import notify_reanalysis_complete
 
                 notify_reanalysis_complete(session, job)
-            except Exception:
-                logger.exception(
-                    "Reanalysis completion notification failed for job %s",
+            except Exception as exc:
+                # Notifier failure is a side effect — the reanalysis itself completed.
+                # No record_degraded: this doesn't change the job's stage output.
+                logger.warning(
+                    "Reanalysis completion notification failed for job %s: %s",
                     job.id,
+                    exc,
+                    extra={"exc_type": type(exc).__name__},
                 )
 
     def _apply_effect_label_updates(self, payload: dict, enriched: dict[str, list[str]]) -> None:
@@ -700,29 +766,50 @@ class PolicyWorker(BaseWorker):
         company = job.company
 
         # Collect analyses of all completed sibling contracts
-        sibling_analyses: dict[str, dict] = {}
         completed_jobs = (
             session.execute(select(Job).where(Job.status == JobStatus.completed, Job.address.isnot(None)))
             .scalars()
             .all()
         )
 
+        # Filter siblings on the main thread, extracting only scalar values
+        # so the parallel fetch can use fresh sessions without touching ORM
+        # objects bound to this worker's session.
+        sibling_targets: list[tuple[Any, str]] = []
         for sj in completed_jobs:
             if sj.id == job.id or not sj.address:
                 continue
-            # Check if sibling: same company or same parent
             sj_req = sj.request if isinstance(sj.request, dict) else {}
             is_sibling = (
                 (company and sj.company == company)
                 or (parent_job_id and sj_req.get("parent_job_id") == parent_job_id)
                 or (parent_job_id and str(sj.id) == parent_job_id)
             )
-            if not is_sibling:
-                continue
+            if is_sibling:
+                sibling_targets.append((sj.id, sj.address.lower()))
 
-            sj_analysis = get_artifact(session, sj.id, "contract_analysis")
-            if isinstance(sj_analysis, dict):
-                sibling_analyses[sj.address.lower()] = sj_analysis
+        if not sibling_targets:
+            return {}
+
+        def _fetch_sibling_analysis(target: tuple[Any, str]) -> tuple[str, dict | None]:
+            sj_id, addr = target
+            with SessionLocal() as s:
+                payload = get_artifact(s, sj_id, "contract_analysis")
+            return addr, payload if isinstance(payload, dict) else None
+
+        sibling_analyses: dict[str, dict] = {}
+        for (_sj_id, addr), outcome in parallel_map(_fetch_sibling_analysis, sibling_targets, max_workers=8):
+            if isinstance(outcome, BaseException):
+                record_degraded(
+                    phase="cross_contract_enrichment",
+                    exc=outcome,
+                    context={"sibling_address": addr, "sibling_job_id": str(_sj_id)},
+                )
+                logger.warning("sibling artifact fetch failed for %s: %s", addr, outcome)
+                continue
+            _addr, payload = outcome
+            if payload is not None:
+                sibling_analyses[_addr] = payload
 
         if not sibling_analyses:
             return {}

@@ -40,7 +40,14 @@ class JobStatus(str, enum.Enum):
     queued = "queued"
     processing = "processing"
     completed = "completed"
+    # Transient/retryable failure. ``BaseWorker`` requeues the row with a
+    # backoff-set ``next_attempt_at`` after the first transient exception;
+    # only after retries are exhausted does the row move to ``failed_terminal``.
     failed = "failed"
+    # Terminal failure: deterministic-from-the-start (e.g. ValueError on bad
+    # input, missing Etherscan source) or transient retries exhausted. The
+    # stale-job sweep never resurrects ``failed_terminal`` rows.
+    failed_terminal = "failed_terminal"
 
 
 class JobStage(str, enum.Enum):
@@ -68,11 +75,37 @@ class Job(Base):
     request: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Correlation id shared with the originating HTTP request and any
+    # spawned child jobs. 16-char hex (uuid4().hex[:16]); nullable so
+    # pre-migration rows remain valid. Persisted so a fly-log scrape can
+    # join HTTP logs to worker logs without timestamp guesswork.
+    trace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     protocol_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("protocols.id", ondelete="SET NULL"), nullable=True
     )
     # Mirrored from contract_flags by store_artifact; lets /api/jobs skip the artifact resolve.
     is_proxy: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Number of attempts completed for this job. 0 means "first attempt has
+    # not yet failed"; bumped by ``requeue_job`` on every transient failure
+    # before ``BaseWorker`` re-queues. Persisted across crashes so the
+    # worker pool agrees on attempt count.
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # When NOT NULL, ``claim_job`` skips this row until wall-clock ≥ this
+    # value. Set by ``requeue_job`` after a transient failure to the result
+    # of ``compute_next_attempt`` so workers honour exponential backoff.
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # ``"transient"`` / ``"terminal"`` for the most recent failure; NULL for
+    # never-failed rows. Cheap operational index for "which jobs flap" /
+    # "which jobs were terminally bad" without resolving the artifact.
+    last_failure_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # Per-claim lease. ``claim_job`` mints a fresh ``lease_id`` (uuid4) and
+    # stamps ``lease_expires_at`` to NOW() + ttl. ``_heartbeat`` extends
+    # ``lease_expires_at``; the stale sweep keys on it instead of
+    # ``updated_at``. Every mutating queue write (advance/complete/requeue/
+    # fail_terminal) filters on ``lease_id`` so a worker whose lease has
+    # rolled to a sibling can't silently corrupt the row.
+    lease_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -83,7 +116,18 @@ class Job(Base):
         "SourceFile", back_populates="job", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("ix_jobs_stage_status", "stage", "status"),)
+    __table_args__ = (
+        Index("ix_jobs_stage_status", "stage", "status"),
+        Index("ix_jobs_trace_id", "trace_id"),
+        # Partial index — powers the lease-expiry sweep. Most rows aren't
+        # ``processing`` so a partial keeps the index small and the sweep
+        # query a single index scan.
+        Index(
+            "ix_jobs_lease_expires_at",
+            "lease_expires_at",
+            postgresql_where=text("status = 'processing'"),
+        ),
+    )
 
     def to_dict(self) -> dict:
         return {
@@ -97,7 +141,11 @@ class Job(Base):
             "request": self.request,
             "error": self.error,
             "worker_id": self.worker_id,
+            "trace_id": self.trace_id,
             "is_proxy": self.is_proxy,
+            "retry_count": self.retry_count,
+            "next_attempt_at": self.next_attempt_at.isoformat() if self.next_attempt_at else None,
+            "last_failure_kind": self.last_failure_kind,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
@@ -213,12 +261,20 @@ class Protocol(Base):
         "ProtocolSubscription", backref="protocol"
     )
     official_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Canonical external ID — DefiLlama family slug. NULL when the protocol
+    # has no DefiLlama match (long-tail / private). Worker code resolves
+    # free-text input to a slug, then keys ``get_or_create_protocol`` on it
+    # so different spellings ("ether fi" vs "etherfi") collapse to one row.
+    canonical_slug: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     audit_reports: Mapped[list["AuditReport"]] = relationship(
         "AuditReport", backref="protocol", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (UniqueConstraint("name", name="uq_protocol_name"),)
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_protocol_name"),
+        UniqueConstraint("canonical_slug", name="uq_protocol_canonical_slug"),
+    )
 
 
 class AuditReport(Base):
@@ -973,6 +1029,101 @@ class EtherscanCache(Base):
     ttl_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (Index("ix_etherscan_cache_cached_at", "cached_at"),)
+
+
+class ContractMaterialization(Base):
+    """Cross-job, cross-process materialization cache.
+
+    A row per ``(chain, bytecode_keccak)`` recording the static analysis
+    + tracking_plan bundle so two impl jobs in the same protocol — or a
+    same-protocol re-run on the next day — skip the expensive forge build
+    + Slither pass. Read/written via ``db.contract_materializations`` with
+    request-coalescing through ``pg_advisory_xact_lock``.
+
+    ``status='pending'`` means a builder holds the advisory lock for this
+    row; ``'ready'`` means the bundle is usable; ``'failed'`` is kept for
+    ops triage but never returned to readers.
+    """
+
+    __tablename__ = "contract_materializations"
+
+    chain: Mapped[str] = mapped_column(String(100), primary_key=True)
+    bytecode_keccak: Mapped[str] = mapped_column(String(66), primary_key=True)
+    address: Mapped[str] = mapped_column(String(42), nullable=False)
+    contract_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    analysis: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    tracking_plan: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    analysis_blob_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tracking_plan_blob_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    materialized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("NOW()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("NOW()"), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("chain", "address", name="uq_contract_materializations_chain_address"),
+        Index("ix_contract_materializations_status", "status"),
+    )
+
+
+class MappingEnumerationCache(Base):
+    """Cross-process cache for mapping_enumerator hypersync scans.
+
+    A row per ``(chain, address, specs_hash)`` holding the EnumerationResult
+    from ``services.resolution.mapping_enumerator``. The single-job pipeline
+    walks the recursive resolution graph in *both* the resolution and policy
+    stages (``services/resolution/recursive.py``); without a cross-process
+    cache each stage re-runs the same hypersync pagination — for a 2017
+    contract that's two consecutive 60s timeouts per address. The
+    pre-existing in-process module dict only covered same-process repeats,
+    which collapsed when 9ce6fa3 split workers into separate OS processes.
+
+    ``specs_hash`` participates in the key so a writer-event-spec change
+    produces a fresh row instead of silently returning a stale enumeration.
+    Truncated and errored results are cached too — re-running them within
+    the TTL would just hit the same bound — and the caller sees the
+    ``status`` field to decide whether to act on partial data.
+    """
+
+    __tablename__ = "mapping_enumeration_cache"
+
+    chain: Mapped[str] = mapped_column(String(100), primary_key=True)
+    address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    specs_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    principals: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    pages_fetched: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_block_scanned: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    materialized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("NOW()"), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("NOW()"), nullable=False)
+
+    __table_args__ = (Index("ix_mapping_enumeration_cache_materialized_at", "materialized_at"),)
+
+
+class BytecodeCache(Base):
+    """Persistent eth_getCode bytecode cache. Read/written by ``utils/rpc.py`` via
+    raw SQL; this model exists so ``alembic check`` doesn't flag the table as
+    drift. Bytecode at a deployed address is effectively immutable per
+    ``(chain_id, address)`` for the lifetime of the contract — no TTL.
+    ``selfdestructed_at`` is reserved for future GC of pre-Cancun SELFDESTRUCT
+    survivors; today's writers leave it NULL.
+    """
+
+    __tablename__ = "bytecode_cache"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    address: Mapped[str] = mapped_column(String(42), primary_key=True)
+    bytecode: Mapped[str] = mapped_column(Text, nullable=False)
+    code_keccak: Mapped[str] = mapped_column(String(66), nullable=False)
+    cached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text("NOW()"), nullable=False)
+    selfdestructed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (Index("ix_bytecode_cache_cached_at", "cached_at"),)
 
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")

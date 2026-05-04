@@ -1,10 +1,18 @@
 """Integration tests for the historical-impl backfill.
 
-Exercises ``ResolutionWorker._backfill_historical_impls`` and
-``_run_upgrade_history`` against a real test Postgres so the SQL
+Exercises the artifact → ``UpgradeEvent`` projection and the historical
+impl ``Contract`` backfill against a real test Postgres so the SQL
 uniqueness constraints, case handling, and idempotency all run.
 Etherscan is stubbed — every test monkeypatches
 ``utils.etherscan.get_contract_info`` so nothing leaves the machine.
+
+The actual functions under test live in
+``services.discovery.upgrade_history``:
+  - ``project_to_events`` — artifact dict → UpgradeEvent rows.
+  - ``backfill_historical_impl_contracts`` — ensures a Contract row
+    exists for every historical impl address.
+The ``_run_pipeline`` helper below wires them together the same way
+``static_worker._resolve_upgrade_history`` does in production.
 
 Also covers the two pollution-guard consumers:
   - ``POST /api/company/{name}/analyze-remaining`` must NOT enqueue
@@ -20,7 +28,6 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -38,11 +45,55 @@ pytestmark = [requires_postgres]
 
 @pytest.fixture()
 def worker():
-    """ResolutionWorker with signals patched out."""
-    from workers.resolution_worker import ResolutionWorker
+    """No-op fixture kept for source-compatibility with existing tests.
 
-    with patch("signal.signal"):
-        yield ResolutionWorker()
+    The artifact → events projection no longer lives on the worker; tests
+    call the service-level functions directly via ``_run_pipeline`` /
+    ``backfill_historical_impl_contracts``. Yielded value isn't used.
+    """
+    yield None
+
+
+def _backfill(session, *, protocol_id, chain, impl_addrs):
+    """Direct call into the backfill helper, kept short for test ergonomics."""
+    from services.discovery.upgrade_history import backfill_historical_impl_contracts
+
+    backfill_historical_impl_contracts(
+        session,
+        protocol_id=protocol_id,
+        chain=chain,
+        impl_addrs=impl_addrs,
+    )
+
+
+def _run_pipeline(session, *, contract, artifact_data, protocol_id=None):
+    """Project an artifact into UpgradeEvent rows + backfill impl Contracts.
+
+    Mirrors what ``static_worker._resolve_upgrade_history`` does in production
+    after ``store_artifact`` — the same two service-level calls in the same
+    order, exercising the same code paths the live pipeline exercises.
+    """
+    from services.discovery.upgrade_history import (
+        backfill_historical_impl_contracts,
+        project_to_events,
+    )
+
+    stats = project_to_events(
+        session,
+        subject_contract_id=contract.id,
+        subject_chain=contract.chain,
+        artifact_data=artifact_data,
+    )
+    session.commit()
+    pid = protocol_id if protocol_id is not None else contract.protocol_id
+    if pid is not None and stats["impl_addrs"]:
+        backfill_historical_impl_contracts(
+            session,
+            protocol_id=pid,
+            chain=contract.chain,
+            impl_addrs=stats["impl_addrs"],
+        )
+    return stats
 
 
 @pytest.fixture()
@@ -147,7 +198,7 @@ def test_backfill_creates_rows_with_upgrade_history_tag(db_session, seed_protoco
     stub_etherscan.names[_addr(0xA1)] = "PoolV1"
     stub_etherscan.names[_addr(0xB2)] = "PoolV2"
 
-    worker._backfill_historical_impls(
+    _backfill(
         db_session,
         protocol_id=protocol_id,
         chain="ethereum",
@@ -183,7 +234,7 @@ def test_backfill_adopts_orphan_row(db_session, seed_protocol, worker, stub_ethe
         is_proxy=False,
     )
 
-    worker._backfill_historical_impls(
+    _backfill(
         db_session,
         protocol_id=protocol_id,
         chain="ethereum",
@@ -226,7 +277,7 @@ def test_backfill_does_not_stomp_foreign_protocol_row(db_session, seed_protocol,
             discovery_sources=["inventory"],  # explicitly not upgrade_history
         )
 
-        worker._backfill_historical_impls(
+        _backfill(
             db_session,
             protocol_id=our_protocol_id,
             chain="ethereum",
@@ -253,10 +304,10 @@ def test_backfill_is_idempotent(db_session, seed_protocol, worker, stub_ethersca
     protocol_id, _ = seed_protocol
     addrs = {_addr(0xE5), _addr(0xF6)}
 
-    worker._backfill_historical_impls(db_session, protocol_id=protocol_id, chain="ethereum", impl_addrs=addrs)
+    _backfill(db_session, protocol_id=protocol_id, chain="ethereum", impl_addrs=addrs)
     count_after_first = db_session.query(Contract).filter_by(protocol_id=protocol_id).count()
 
-    worker._backfill_historical_impls(db_session, protocol_id=protocol_id, chain="ethereum", impl_addrs=addrs)
+    _backfill(db_session, protocol_id=protocol_id, chain="ethereum", impl_addrs=addrs)
     count_after_second = db_session.query(Contract).filter_by(protocol_id=protocol_id).count()
 
     assert count_after_first == count_after_second == 2
@@ -292,7 +343,7 @@ def test_backfill_treats_cross_chain_same_address_as_distinct(db_session, seed_p
         )
         stub_etherscan.names[addr] = "EthereumImpl"
 
-        worker._backfill_historical_impls(
+        _backfill(
             db_session,
             protocol_id=our_protocol_id,
             chain="ethereum",
@@ -329,7 +380,7 @@ def test_backfill_degrades_gracefully_on_etherscan_failure(db_session, seed_prot
     stub_etherscan.names[addr_ok] = "GoodImpl"
     stub_etherscan.names[addr_fail] = stub_etherscan.RAISE
 
-    worker._backfill_historical_impls(
+    _backfill(
         db_session,
         protocol_id=protocol_id,
         chain="ethereum",
@@ -409,12 +460,7 @@ def test_run_upgrade_history_writes_events_and_backfills_impls(
         }
     }
 
-    # Stub get_artifact so the worker's artifact read returns our fixture.
-    import workers.resolution_worker as rw_mod
-
-    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
-
-    worker._run_upgrade_history(db_session, job)
+    _run_pipeline(db_session, contract=proxy, artifact_data=artifact)
 
     events = db_session.query(UpgradeEvent).filter_by(contract_id=proxy.id).all()
     assert len(events) == 2
@@ -521,11 +567,7 @@ def test_run_upgrade_history_keys_events_to_proxy_not_subject(
         }
     }
 
-    import workers.resolution_worker as rw_mod
-
-    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
-
-    worker._run_upgrade_history(db_session, subject_job)
+    _run_pipeline(db_session, contract=subject, artifact_data=artifact)
 
     # The subject is not a proxy — it must end up with zero UpgradeEvent
     # rows. Before the fix, it would have 2 (one per proxy in the
@@ -588,53 +630,21 @@ def test_run_upgrade_history_skips_proxies_not_in_inventory(
             }
         }
     }
-    import workers.resolution_worker as rw_mod
 
-    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
-
-    worker._run_upgrade_history(db_session, subject_job)
+    _run_pipeline(db_session, contract=subject, artifact_data=artifact)
 
     # No events written anywhere — the proxy isn't resolvable and we
     # don't have a meaningful Contract.id to key them to.
     assert db_session.query(UpgradeEvent).filter_by(contract_id=subject.id).count() == 0
 
 
-def test_run_upgrade_history_skips_when_job_has_no_contract(db_session, seed_protocol, worker, monkeypatch):
-    """Defensive: a job without a Contract row (shouldn't happen post-
-    discovery, but we don't want to crash) → no-op with no writes.
-    """
-    from db.models import Contract, Job, JobStage, JobStatus
-
-    protocol_id, _ = seed_protocol
-    job = Job(
-        id=uuid.uuid4(),
-        address=_addr(0x99),
-        status=JobStatus.processing,
-        stage=JobStage.resolution,
-        protocol_id=protocol_id,
-    )
-    db_session.add(job)
-    db_session.commit()
-
-    import workers.resolution_worker as rw_mod
-
-    monkeypatch.setattr(
-        rw_mod,
-        "get_artifact",
-        lambda *_a, **_k: {
-            "proxies": {
-                "0x1": {"proxy_address": "0x1", "events": [{"event_type": "upgraded", "implementation": _addr(0x2)}]}
-            }
-        },
-    )
-
-    # Should not raise. No impl rows should be created (no Contract to
-    # hang UpgradeEvents off of → no implAddrs gathered).
-    worker._run_upgrade_history(db_session, job)
-
-    # The impl address did not become a contract because the outer check
-    # short-circuited on the missing Contract row.
-    assert db_session.query(Contract).filter_by(address=_addr(0x2)).count() == 0
+# The previous test in this slot — "skip when job has no Contract row" —
+# tested static_worker's pre-projection guard, which is structural rather
+# than a service-level concern. It's enforced by the
+# ``contract_row = session.execute(...); if contract_row is None: return``
+# block in ``static_worker._resolve_upgrade_history`` and is unreachable
+# from the service entry points exercised here, so we no longer assert it
+# at this layer. The static-worker integration tests cover that path.
 
 
 # ---------------------------------------------------------------------------
@@ -834,7 +844,7 @@ def test_backfill_triggers_coverage_refresh_for_created_rows(db_session, seed_pr
     # audit scope is looking for, so the match is possible once the row
     # exists.
     stub_etherscan.names[impl_addr] = "HistoricalImpl"
-    worker._backfill_historical_impls(
+    _backfill(
         db_session,
         protocol_id=protocol_id,
         chain="ethereum",
@@ -923,7 +933,7 @@ def test_backfill_coverage_refresh_covers_adopted_rows_too(db_session, seed_prot
     db_session.commit()
     assert inserted == 0
 
-    worker._backfill_historical_impls(
+    _backfill(
         db_session,
         protocol_id=protocol_id,
         chain="ethereum",
@@ -1007,20 +1017,16 @@ def test_run_upgrade_history_persists_event_timestamp(db_session, seed_protocol,
         }
     }
 
-    import workers.resolution_worker as rw_mod
-
-    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
-
-    worker._run_upgrade_history(db_session, proxy_job)
+    _run_pipeline(db_session, contract=proxy, artifact_data=artifact)
 
     events = db_session.query(UpgradeEvent).filter_by(contract_id=proxy.id).all()
     assert len(events) == 1
     evt = events[0]
-    # The primary assertion — before the fix this is None because
-    # _run_upgrade_history drops the timestamp on write.
+    # The primary assertion — before the fix this is None because the
+    # projection dropped the timestamp on write.
     assert evt.timestamp is not None, (
         "UpgradeEvent.timestamp was not persisted — the artifact carries "
-        "timestamp (unix seconds) but the worker writes only block_number + tx_hash"
+        "timestamp (unix seconds) but the projection writes only block_number + tx_hash"
     )
     assert evt.timestamp == expected_dt
 
@@ -1084,11 +1090,7 @@ def test_run_upgrade_history_handles_missing_timestamp(db_session, seed_protocol
         }
     }
 
-    import workers.resolution_worker as rw_mod
-
-    monkeypatch.setattr(rw_mod, "get_artifact", lambda _s, _j, _name: artifact)
-
-    worker._run_upgrade_history(db_session, proxy_job)
+    _run_pipeline(db_session, contract=proxy, artifact_data=artifact)
 
     events = db_session.query(UpgradeEvent).filter_by(contract_id=proxy.id).all()
     assert len(events) == 1
@@ -1225,7 +1227,7 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
         ),
     )
 
-    worker._backfill_historical_impls(
+    _backfill(
         db_session,
         protocol_id=protocol_id,
         chain="ethereum",
