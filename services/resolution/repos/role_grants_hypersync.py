@@ -35,7 +35,6 @@ from workers.role_grants_indexer import (
     event_direction,
 )
 
-
 # Per-chain HyperSync hostnames. Keep aligned with
 # ``chain_finality_config`` seed and the existing
 # ``services/policy/hypersync_backfill.py`` default.
@@ -103,19 +102,14 @@ class HyperSyncLogFetcher:
     ) -> list[FetchedLog]:
         hs = self._resolve_module()
         if not self.bearer_token:
-            raise RuntimeError(
-                "HyperSyncLogFetcher requires an API token. "
-                "Set ENVIO_API_TOKEN or pass bearer_token=."
-            )
+            raise RuntimeError("HyperSyncLogFetcher requires an API token. Set ENVIO_API_TOKEN or pass bearer_token=.")
         url = self.url_for_chain.get(chain_id)
         if url is None:
             raise RuntimeError(
                 f"HyperSync URL not configured for chain_id={chain_id}; "
                 "pass url_for_chain={...} to extend the default map."
             )
-        client = hs.HypersyncClient(
-            hs.ClientConfig(url=url, bearer_token=self.bearer_token)
-        )
+        client = hs.HypersyncClient(hs.ClientConfig(url=url, bearer_token=self.bearer_token))
 
         # HyperSync's to_block is exclusive; the indexer hands us
         # an inclusive bound, so add 1 to keep the boundary block.

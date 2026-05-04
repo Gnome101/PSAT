@@ -37,7 +37,6 @@ from services.static.contract_analysis_pipeline.predicate_artifacts import (  # 
     build_predicate_artifacts,
 )
 
-
 _MANIFESTS_DIR = Path(__file__).parent / "corpus_manifests"
 
 
@@ -74,10 +73,7 @@ def test_corpus_manifest(manifest_path: Path, tmp_path: Path):
     # Guarded functions must have a tree with at least one leaf
     # matching the expected fields.
     for fn, expectations in expected_functions.items():
-        assert fn in trees, (
-            f"manifest expected {fn} to be guarded; v2 trees dict has "
-            f"{sorted(trees.keys())}"
-        )
+        assert fn in trees, f"manifest expected {fn} to be guarded; v2 trees dict has {sorted(trees.keys())}"
         leaves = list(_walk_leaves(trees[fn]))
         assert leaves, f"v2 tree for {fn} has no leaves"
         match_index = _find_matching_leaf(leaves, expectations)
@@ -85,10 +81,7 @@ def test_corpus_manifest(manifest_path: Path, tmp_path: Path):
 
     # Unguarded functions must NOT appear (absent = public).
     for fn in unguarded:
-        assert fn not in trees, (
-            f"manifest expected {fn} to be unguarded but v2 produced a tree: "
-            f"{trees[fn]}"
-        )
+        assert fn not in trees, f"manifest expected {fn} to be unguarded but v2 produced a tree: {trees[fn]}"
 
 
 # ---------------------------------------------------------------------------
@@ -104,9 +97,7 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     if "contract_name" not in data:
         raise RuntimeError(f"{path}: missing required key 'contract_name'")
     if "source" not in data and "source_path" not in data:
-        raise RuntimeError(
-            f"{path}: must declare either 'source' (inline) or 'source_path:'"
-        )
+        raise RuntimeError(f"{path}: must declare either 'source' (inline) or 'source_path:'")
     return data
 
 
@@ -164,10 +155,7 @@ def _field_matches(leaf: dict[str, Any], field: str, expected: Any) -> bool:
 
 
 def _format_no_match(fn: str, leaves: list[dict[str, Any]], expectations: dict[str, Any]) -> str:
-    summaries = [
-        {field: leaf.get(field) for field in _MATCHED_FIELDS}
-        for leaf in leaves
-    ]
+    summaries = [{field: leaf.get(field) for field in _MATCHED_FIELDS} for leaf in leaves]
     return (
         f"no leaf for {fn} matched the manifest expectations.\n"
         f"  expected: {expectations}\n"

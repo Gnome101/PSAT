@@ -31,7 +31,6 @@ from workers.role_grants_indexer import (  # noqa: E402
     ROLE_REVOKED_TOPIC0,
 )
 
-
 # ---------------------------------------------------------------------------
 # Stub HyperSync module
 # ---------------------------------------------------------------------------
@@ -298,9 +297,7 @@ def test_decode_role_revoked_via_hypersync():
         ],
     )
     fetcher = HyperSyncLogFetcher(bearer_token="fake-token", hypersync_module=stub)
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=300
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=300)
     assert len(logs) == 1
     assert logs[0].direction == "revoke"
     assert logs[0].member == member
@@ -350,9 +347,7 @@ def test_pagination_follows_next_block():
     ]
     _make_fetcher_with_responses(stub, pages)
     fetcher = HyperSyncLogFetcher(bearer_token="fake-token", hypersync_module=stub)
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=200
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=200)
     assert [log.member for log in logs] == [a, b]
     queries = stub.last_client.queries_seen  # type: ignore[union-attr]
     assert len(queries) == 2
@@ -372,9 +367,7 @@ def test_topic_filter_includes_both_events():
         [_StubResponse(data=_StubData(logs=[]), next_block=None)],
     )
     fetcher = HyperSyncLogFetcher(bearer_token="fake-token", hypersync_module=stub)
-    fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=10
-    )
+    fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=10)
     q = stub.last_client.queries_seen[0]  # type: ignore[union-attr]
     log_selection = q.logs[0]
     assert log_selection.address == ["0x" + "ab" * 20]
@@ -429,17 +422,13 @@ def test_malformed_logs_skipped_via_hypersync():
         stub,
         [
             _StubResponse(
-                data=_StubData(
-                    logs=[bad_topics, unknown_topic0, short_block_hash, good]
-                ),
+                data=_StubData(logs=[bad_topics, unknown_topic0, short_block_hash, good]),
                 next_block=None,
             )
         ],
     )
     fetcher = HyperSyncLogFetcher(bearer_token="fake-token", hypersync_module=stub)
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=100
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=100)
     assert len(logs) == 1
     assert logs[0].block_number == 40
 
@@ -458,9 +447,7 @@ def test_chain_id_to_url_mapping():
 
     stub.HypersyncClient = make_client  # type: ignore[assignment]
     fetcher = HyperSyncLogFetcher(bearer_token="t", hypersync_module=stub)
-    fetcher.fetch_logs(
-        chain_id=137, contract_address="0x" + "ab" * 20, from_block=0, to_block=10
-    )
+    fetcher.fetch_logs(chain_id=137, contract_address="0x" + "ab" * 20, from_block=0, to_block=10)
     assert captured == ["https://polygon.hypersync.xyz"]
 
     # Unmapped chain id raises with a clear message.
@@ -482,17 +469,10 @@ def test_missing_token_raises():
     fetcher = HyperSyncLogFetcher(bearer_token=None, hypersync_module=stub)
     fetcher.bearer_token = None  # belt-and-suspenders for env-var fallback
     with pytest.raises(RuntimeError, match="API token"):
-        fetcher.fetch_logs(
-            chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=10
-        )
+        fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=10)
 
 
 def test_empty_range_returns_empty():
     stub = _StubHypersync()
     fetcher = HyperSyncLogFetcher(bearer_token="t", hypersync_module=stub)
-    assert (
-        fetcher.fetch_logs(
-            chain_id=1, contract_address="0x" + "ab" * 20, from_block=100, to_block=50
-        )
-        == []
-    )
+    assert fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=100, to_block=50) == []

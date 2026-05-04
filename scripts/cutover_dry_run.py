@@ -48,16 +48,13 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from db.models import Job, JobStatus, SessionLocal  # noqa: E402
-
 from services.static.contract_analysis_pipeline.cutover_check import (  # noqa: E402
     cutover_check_for_address,
     is_safe_to_cut_over,
 )
 
 
-def _iter_completed_jobs(
-    session: Session, *, address_prefix: str | None = None
-) -> list[Job]:
+def _iter_completed_jobs(session: Session, *, address_prefix: str | None = None) -> list[Job]:
     """Distinct addresses with at least one completed Job. Returns
     one Job per address (the most-recent one — same selection rule
     cutover_check_for_address itself uses)."""
@@ -161,10 +158,7 @@ def _format_text(report: dict[str, Any]) -> str:
         lines.append("")
         lines.append(f"Regressions ({len(report['regressions'])}):")
         for entry in report["regressions"]:
-            lines.append(
-                f"  {entry['address']}  {entry['contract_name'] or '<unnamed>'}  "
-                f"v1_only={entry['v1_only']}"
-            )
+            lines.append(f"  {entry['address']}  {entry['contract_name'] or '<unnamed>'}  v1_only={entry['v1_only']}")
     if report["role_drifts"]:
         lines.append("")
         lines.append(f"Role drifts ({len(report['role_drifts'])}):")

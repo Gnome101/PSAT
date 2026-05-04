@@ -15,8 +15,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.resolution.repos.aragon_acl_rpc import RpcAragonACLLogFetcher  # noqa: E402
@@ -80,9 +78,7 @@ def test_decode_set_permission_grant(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.aragon_acl_rpc.rpc_request", fake_rpc)
     fetcher = RpcAragonACLLogFetcher("http://node.invalid")
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=200
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=200)
     assert len(logs) == 1
     log = logs[0]
     assert log.allowed is True
@@ -114,9 +110,7 @@ def test_decode_set_permission_revoke(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.aragon_acl_rpc.rpc_request", fake_rpc)
     fetcher = RpcAragonACLLogFetcher("http://node.invalid")
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=300
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=300)
     assert len(logs) == 1
     assert logs[0].allowed is False
 
@@ -150,9 +144,7 @@ def test_malformed_logs_skipped(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.aragon_acl_rpc.rpc_request", fake_rpc)
     fetcher = RpcAragonACLLogFetcher("http://node.invalid")
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=200
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=200)
     assert len(logs) == 1
     assert logs[0].block_number == 50
 
@@ -167,9 +159,7 @@ def test_fetcher_chunks_large_range(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.aragon_acl_rpc.rpc_request", fake_rpc)
     fetcher = RpcAragonACLLogFetcher("http://node.invalid", max_block_range=500)
-    fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=1, to_block=1500
-    )
+    fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=1, to_block=1500)
     assert calls == [(1, 500), (501, 1000), (1001, 1500)]
 
 
@@ -182,8 +172,6 @@ def test_filter_uses_set_permission_topic0(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.aragon_acl_rpc.rpc_request", fake_rpc)
     fetcher = RpcAragonACLLogFetcher("http://node.invalid")
-    fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=10
-    )
+    fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=10)
     assert captured
     assert captured[0]["topics"] == ["0x" + SET_PERMISSION_TOPIC0.hex()]

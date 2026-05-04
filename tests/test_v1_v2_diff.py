@@ -27,11 +27,9 @@ from services.static.contract_analysis_pipeline.predicate_artifacts import (  # 
     build_predicate_artifacts,
 )
 from services.static.contract_analysis_pipeline.v1_v2_diff import (  # noqa: E402
-    DiffReport,
     classify_diff_severity,
     diff_artifacts,
 )
-
 
 # ---------------------------------------------------------------------------
 # Synthetic dict tests
@@ -42,10 +40,7 @@ def _v1(name: str, *fns_with_kinds: tuple[str, list[str]]) -> dict:
     return {
         "subject": {"name": name},
         "access_control": {
-            "privileged_functions": [
-                {"function": fn, "guard_kinds": list(kinds)}
-                for fn, kinds in fns_with_kinds
-            ]
+            "privileged_functions": [{"function": fn, "guard_kinds": list(kinds)} for fn, kinds in fns_with_kinds]
         },
     }
 

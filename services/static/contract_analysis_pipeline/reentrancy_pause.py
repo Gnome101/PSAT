@@ -60,7 +60,6 @@ except Exception:  # pragma: no cover
 
 from .predicate_types import LeafPredicate, PredicateTree
 
-
 GuardKind = Literal["reentrancy", "pause"]
 
 
@@ -152,9 +151,7 @@ class ReentrancyAnalyzer:
                         continue
                     callee_nodes = list(getattr(callee, "nodes", []) or [])
                     if callee_nodes:
-                        names |= self._collect_state_var_writes(
-                            callee_nodes, visited | {cid}
-                        )
+                        names |= self._collect_state_var_writes(callee_nodes, visited | {cid})
         return names
 
     def _has_revert_reading_var(self, nodes: list[Any], var_name: str) -> bool:
@@ -170,9 +167,7 @@ class ReentrancyAnalyzer:
         var')."""
         return self._search_revert_reading_var(nodes, var_name, set())
 
-    def _search_revert_reading_var(
-        self, nodes: list[Any], var_name: str, visited: set[int]
-    ) -> bool:
+    def _search_revert_reading_var(self, nodes: list[Any], var_name: str, visited: set[int]) -> bool:
         # First pass: same-scope check (var-read + require/revert in
         # the current ``nodes`` list). Co-location not required —
         # they just have to coexist in this helper's body.
@@ -202,9 +197,7 @@ class ReentrancyAnalyzer:
                     if callee is None or cid in visited:
                         continue
                     callee_nodes = list(getattr(callee, "nodes", []) or [])
-                    if callee_nodes and self._search_revert_reading_var(
-                        callee_nodes, var_name, visited | {cid}
-                    ):
+                    if callee_nodes and self._search_revert_reading_var(callee_nodes, var_name, visited | {cid}):
                         return True
         return False
 

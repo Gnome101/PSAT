@@ -37,9 +37,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 def _seed_completed_job(db_session, *, address: str):
@@ -63,10 +61,7 @@ def _v1_artifact(name: str, *fns_with_kinds: tuple[str, list[str]]) -> dict:
     return {
         "subject": {"name": name},
         "access_control": {
-            "privileged_functions": [
-                {"function": fn, "guard_kinds": list(kinds)}
-                for fn, kinds in fns_with_kinds
-            ]
+            "privileged_functions": [{"function": fn, "guard_kinds": list(kinds)} for fn, kinds in fns_with_kinds]
         },
     }
 
@@ -110,7 +105,6 @@ def test_returns_none_when_no_job(db_session):
 @requires_postgres
 def test_returns_none_when_v1_artifact_missing(db_session):
     from db.queue import store_artifact
-
     from services.static.contract_analysis_pipeline.cutover_check import (
         cutover_check_for_address,
     )
@@ -118,9 +112,7 @@ def test_returns_none_when_v1_artifact_missing(db_session):
     address = "0x" + uuid.uuid4().hex[:8] + "01" * 16
     job = _seed_completed_job(db_session, address=address)
     # Only v2 stored.
-    store_artifact(
-        db_session, job.id, "predicate_trees", data=_v2_artifact("C", ("f()", ["caller_authority"]))
-    )
+    store_artifact(db_session, job.id, "predicate_trees", data=_v2_artifact("C", ("f()", ["caller_authority"])))
     db_session.commit()
 
     out = cutover_check_for_address(db_session, address=address)
@@ -133,7 +125,6 @@ def test_returns_none_when_v2_artifact_missing(db_session):
     written. ``cutover_check_for_address`` returns None to signal
     'not eligible for cutover yet'."""
     from db.queue import store_artifact
-
     from services.static.contract_analysis_pipeline.cutover_check import (
         cutover_check_for_address,
     )
@@ -141,7 +132,9 @@ def test_returns_none_when_v2_artifact_missing(db_session):
     address = "0x" + uuid.uuid4().hex[:8] + "02" * 16
     job = _seed_completed_job(db_session, address=address)
     store_artifact(
-        db_session, job.id, "contract_analysis",
+        db_session,
+        job.id,
+        "contract_analysis",
         data=_v1_artifact("C", ("f()", ["access_control"])),
     )
     db_session.commit()
@@ -153,7 +146,6 @@ def test_returns_none_when_v2_artifact_missing(db_session):
 @requires_postgres
 def test_clean_severity_when_artifacts_match(db_session):
     from db.queue import store_artifact
-
     from services.static.contract_analysis_pipeline.cutover_check import (
         cutover_check_for_address,
         is_safe_to_cut_over,
@@ -162,11 +154,15 @@ def test_clean_severity_when_artifacts_match(db_session):
     address = "0x" + uuid.uuid4().hex[:8] + "03" * 16
     job = _seed_completed_job(db_session, address=address)
     store_artifact(
-        db_session, job.id, "contract_analysis",
+        db_session,
+        job.id,
+        "contract_analysis",
         data=_v1_artifact("C", ("f()", ["access_control"])),
     )
     store_artifact(
-        db_session, job.id, "predicate_trees",
+        db_session,
+        job.id,
+        "predicate_trees",
         data=_v2_artifact("C", ("f()", ["caller_authority"])),
     )
     db_session.commit()
@@ -184,7 +180,6 @@ def test_clean_severity_when_artifacts_match(db_session):
 @requires_postgres
 def test_regression_severity_blocks_cutover(db_session):
     from db.queue import store_artifact
-
     from services.static.contract_analysis_pipeline.cutover_check import (
         cutover_check_for_address,
         is_safe_to_cut_over,
@@ -194,11 +189,15 @@ def test_regression_severity_blocks_cutover(db_session):
     job = _seed_completed_job(db_session, address=address)
     # v1 sees 2 functions; v2 only sees 1 -> regression.
     store_artifact(
-        db_session, job.id, "contract_analysis",
+        db_session,
+        job.id,
+        "contract_analysis",
         data=_v1_artifact("C", ("f()", ["access_control"]), ("g()", ["pause"])),
     )
     store_artifact(
-        db_session, job.id, "predicate_trees",
+        db_session,
+        job.id,
+        "predicate_trees",
         data=_v2_artifact("C", ("f()", ["caller_authority"])),
     )
     db_session.commit()
@@ -212,7 +211,6 @@ def test_regression_severity_blocks_cutover(db_session):
 @requires_postgres
 def test_new_coverage_is_safe_to_cut(db_session):
     from db.queue import store_artifact
-
     from services.static.contract_analysis_pipeline.cutover_check import (
         cutover_check_for_address,
         is_safe_to_cut_over,
@@ -221,11 +219,15 @@ def test_new_coverage_is_safe_to_cut(db_session):
     address = "0x" + uuid.uuid4().hex[:8] + "05" * 16
     job = _seed_completed_job(db_session, address=address)
     store_artifact(
-        db_session, job.id, "contract_analysis",
+        db_session,
+        job.id,
+        "contract_analysis",
         data=_v1_artifact("C", ("f()", ["access_control"])),
     )
     store_artifact(
-        db_session, job.id, "predicate_trees",
+        db_session,
+        job.id,
+        "predicate_trees",
         data=_v2_artifact("C", ("f()", ["caller_authority"]), ("g()", ["caller_authority"])),
     )
     db_session.commit()
@@ -239,7 +241,6 @@ def test_new_coverage_is_safe_to_cut(db_session):
 @requires_postgres
 def test_role_drift_requires_review(db_session):
     from db.queue import store_artifact
-
     from services.static.contract_analysis_pipeline.cutover_check import (
         cutover_check_for_address,
         is_safe_to_cut_over,
@@ -249,11 +250,15 @@ def test_role_drift_requires_review(db_session):
     job = _seed_completed_job(db_session, address=address)
     # v1 says access_control, v2 says pause -> role_drift.
     store_artifact(
-        db_session, job.id, "contract_analysis",
+        db_session,
+        job.id,
+        "contract_analysis",
         data=_v1_artifact("C", ("f()", ["access_control"])),
     )
     store_artifact(
-        db_session, job.id, "predicate_trees",
+        db_session,
+        job.id,
+        "predicate_trees",
         data=_v2_artifact("C", ("f()", ["pause"])),
     )
     db_session.commit()
@@ -285,11 +290,15 @@ def test_route_returns_diff_payload(api_client, db_session):
     address = "0x" + uuid.uuid4().hex[:8] + "07" * 16
     job = _seed_completed_job(db_session, address=address)
     store_artifact(
-        db_session, job.id, "contract_analysis",
+        db_session,
+        job.id,
+        "contract_analysis",
         data=_v1_artifact("C", ("f()", ["access_control"])),
     )
     store_artifact(
-        db_session, job.id, "predicate_trees",
+        db_session,
+        job.id,
+        "predicate_trees",
         data=_v2_artifact("C", ("f()", ["caller_authority"])),
     )
     db_session.commit()

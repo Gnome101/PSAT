@@ -38,9 +38,7 @@ from db.queue import get_artifact
 from .v1_v2_diff import classify_diff_severity, diff_artifacts
 
 
-def cutover_check_for_address(
-    session: Session, *, address: str
-) -> dict[str, Any] | None:
+def cutover_check_for_address(session: Session, *, address: str) -> dict[str, Any] | None:
     """Run the v1 + v2 diff for the latest completed analysis of
     ``address``. Returns a JSON-ready dict::
 

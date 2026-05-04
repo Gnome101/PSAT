@@ -40,9 +40,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 def _seed_completed_job(db_session, *, address: str):
@@ -128,9 +126,7 @@ def test_endpoint_omits_v2_keys_when_artifact_missing(api_client, db_session):
 
 
 @requires_postgres
-def test_endpoint_includes_predicate_trees_even_when_resolver_fails(
-    api_client, db_session, monkeypatch
-):
+def test_endpoint_includes_predicate_trees_even_when_resolver_fails(api_client, db_session, monkeypatch):
     """A v2 resolution failure must not break the endpoint. The
     raw ``predicate_trees`` artifact stays inlined; only the
     resolved ``v2_capabilities`` is dropped."""
@@ -159,9 +155,7 @@ def test_endpoint_includes_predicate_trees_even_when_resolver_fails(
 
 
 @requires_postgres
-def test_endpoint_handles_unguarded_only_contract_with_empty_caps(
-    api_client, db_session
-):
+def test_endpoint_handles_unguarded_only_contract_with_empty_caps(api_client, db_session):
     """Contract with only public functions: predicate_trees has
     trees={}. v2_capabilities resolves to {} — both keys present
     but empty, signaling 'analyzed, every function public'."""

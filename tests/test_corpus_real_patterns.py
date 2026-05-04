@@ -64,7 +64,6 @@ from services.static.contract_analysis_pipeline.writer_gate import (  # noqa: E4
     apply_writer_gate_pass,
 )
 
-
 ADDR_OWNER = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ADDR_USER = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 ADDR_OTHER = "0xcccccccccccccccccccccccccccccccccccccccc"

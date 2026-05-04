@@ -49,13 +49,9 @@ logger = logging.getLogger(__name__)
 
 # RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)
 # keccak256 of the canonical signature.
-ROLE_GRANTED_TOPIC0 = bytes.fromhex(
-    "2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
-)
+ROLE_GRANTED_TOPIC0 = bytes.fromhex("2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d")
 # RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender)
-ROLE_REVOKED_TOPIC0 = bytes.fromhex(
-    "f6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b"
-)
+ROLE_REVOKED_TOPIC0 = bytes.fromhex("f6391f5c32d9c69d2a47ea670b442974b53935d1edc7fd64eb21e047a839171b")
 
 
 # ---------------------------------------------------------------------------
@@ -81,8 +77,8 @@ class FetchedLog:
 class LogFetcher(Protocol):
     """Abstracts the RPC's ``eth_getLogs`` call. Implementations:
 
-      * RPC-backed (production) — ``utils.eth_logs.RpcLogFetcher``
-      * In-memory (tests) — fixture lists.
+    * RPC-backed (production) — ``utils.eth_logs.RpcLogFetcher``
+    * In-memory (tests) — fixture lists.
     """
 
     def fetch_logs(
@@ -158,9 +154,7 @@ def index_role_grants_step(
     # Reorg detection: if the cursor recorded a hash, compare it
     # against the current chain at that height.
     if cursor_row is not None and cursor_row.last_indexed_block_hash and last_indexed_block > 0:
-        live_hash = block_hash_fetcher.block_hash(
-            chain_id=chain_id, block_number=last_indexed_block
-        )
+        live_hash = block_hash_fetcher.block_hash(chain_id=chain_id, block_number=last_indexed_block)
         if live_hash is not None and live_hash != cursor_row.last_indexed_block_hash:
             rewind_to = max(last_indexed_block - finality_depth, 0)
             session.execute(
@@ -202,9 +196,7 @@ def index_role_grants_step(
             to_block=chunk_end,
         )
         if logs:
-            inserted += _bulk_insert_logs(
-                session, chain_id=chain_id, contract_id=contract_id, logs=logs
-            )
+            inserted += _bulk_insert_logs(session, chain_id=chain_id, contract_id=contract_id, logs=logs)
         cursor = chunk_end + 1
 
     # The cursor's hash MUST be the hash AT new_cursor_block, not the
@@ -215,9 +207,7 @@ def index_role_grants_step(
     # compare against the live hash at new_cursor_block. (codex
     # review caught this.)
     new_cursor_block = target
-    new_cursor_hash = block_hash_fetcher.block_hash(
-        chain_id=chain_id, block_number=new_cursor_block
-    )
+    new_cursor_hash = block_hash_fetcher.block_hash(chain_id=chain_id, block_number=new_cursor_block)
     _upsert_cursor(session, chain_id, contract_id, new_cursor_block, new_cursor_hash)
     return IndexResult(
         inserted=inserted,
@@ -256,8 +246,10 @@ def _bulk_insert_logs(
     ]
     if not rows:
         return 0
-    stmt = pg_insert(RoleGrantsEvent).values(rows).on_conflict_do_nothing(
-        index_elements=["chain_id", "contract_id", "tx_hash", "log_index"]
+    stmt = (
+        pg_insert(RoleGrantsEvent)
+        .values(rows)
+        .on_conflict_do_nothing(index_elements=["chain_id", "contract_id", "tx_hash", "log_index"])
     )
     result = session.execute(stmt)
     return getattr(result, "rowcount", 0) or 0
@@ -326,11 +318,15 @@ def enroll_contract(session: Session, *, chain_id: int, contract_id: int) -> Non
     ``(chain_id, contract_id)`` with ``last_indexed_block=0``.
     The next scan pass will pick it up and backfill from genesis.
     Caller commits."""
-    stmt = pg_insert(RoleGrantsCursor).values(
-        chain_id=chain_id,
-        contract_id=contract_id,
-        last_indexed_block=0,
-    ).on_conflict_do_nothing(index_elements=["chain_id", "contract_id"])
+    stmt = (
+        pg_insert(RoleGrantsCursor)
+        .values(
+            chain_id=chain_id,
+            contract_id=contract_id,
+            last_indexed_block=0,
+        )
+        .on_conflict_do_nothing(index_elements=["chain_id", "contract_id"])
+    )
     session.execute(stmt)
 
 
@@ -437,7 +433,5 @@ def run_role_grants_indexer_loop(
 
 
 def _load_finality_config(session: Session) -> dict[int, int]:
-    rows = session.execute(
-        select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)
-    ).all()
+    rows = session.execute(select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)).all()
     return {cid: depth for cid, depth in rows}

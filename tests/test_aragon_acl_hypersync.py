@@ -17,7 +17,6 @@ from services.resolution.repos.aragon_acl_hypersync import (  # noqa: E402
 )
 from workers.aragon_acl_indexer import SET_PERMISSION_TOPIC0  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Stub HyperSync surface (same pattern as test_role_grants_hypersync).
 # ---------------------------------------------------------------------------
@@ -224,9 +223,7 @@ def test_decode_set_permission_grant_via_hypersync():
         ],
     )
     fetcher = HyperSyncAragonACLLogFetcher(bearer_token="t", hypersync_module=stub)
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=200
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=200)
     assert len(logs) == 1
     out = logs[0]
     assert out.allowed is True
@@ -263,9 +260,7 @@ def test_decode_set_permission_revoke_via_hypersync():
         ],
     )
     fetcher = HyperSyncAragonACLLogFetcher(bearer_token="t", hypersync_module=stub)
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=300
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=300)
     assert len(logs) == 1
     assert logs[0].allowed is False
 
@@ -313,9 +308,7 @@ def test_pagination_follows_next_block():
         ],
     )
     fetcher = HyperSyncAragonACLLogFetcher(bearer_token="t", hypersync_module=stub)
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=200
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=200)
     assert len(logs) == 2
     queries = stub.last_client.queries_seen  # type: ignore[union-attr]
     assert len(queries) == 2
@@ -330,9 +323,7 @@ def test_topic_filter_pins_set_permission_topic0():
         [_StubResponse(data=_StubData(logs=[]), next_block=None)],
     )
     fetcher = HyperSyncAragonACLLogFetcher(bearer_token="t", hypersync_module=stub)
-    fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=10
-    )
+    fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=10)
     q = stub.last_client.queries_seen[0]  # type: ignore[union-attr]
     log_selection = q.logs[0]
     assert log_selection.topics[0] == ["0x" + SET_PERMISSION_TOPIC0.hex()]
@@ -350,9 +341,7 @@ def test_chain_id_to_url_mapping():
 
     stub.HypersyncClient = make_client  # type: ignore[assignment]
     fetcher = HyperSyncAragonACLLogFetcher(bearer_token="t", hypersync_module=stub)
-    fetcher.fetch_logs(
-        chain_id=137, contract_address="0x" + "ee" * 20, from_block=0, to_block=10
-    )
+    fetcher.fetch_logs(chain_id=137, contract_address="0x" + "ee" * 20, from_block=0, to_block=10)
     assert captured == ["https://polygon.hypersync.xyz"]
 
     fetcher2 = HyperSyncAragonACLLogFetcher(bearer_token="t", hypersync_module=stub)
@@ -370,20 +359,13 @@ def test_missing_token_raises():
     fetcher = HyperSyncAragonACLLogFetcher(bearer_token=None, hypersync_module=stub)
     fetcher.bearer_token = None
     with pytest.raises(RuntimeError, match="API token"):
-        fetcher.fetch_logs(
-            chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=10
-        )
+        fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=10)
 
 
 def test_empty_range_returns_empty():
     stub = _StubHypersync()
     fetcher = HyperSyncAragonACLLogFetcher(bearer_token="t", hypersync_module=stub)
-    assert (
-        fetcher.fetch_logs(
-            chain_id=1, contract_address="0x" + "ee" * 20, from_block=100, to_block=50
-        )
-        == []
-    )
+    assert fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=100, to_block=50) == []
 
 
 def test_malformed_logs_skipped_via_hypersync():
@@ -442,8 +424,6 @@ def test_malformed_logs_skipped_via_hypersync():
         ],
     )
     fetcher = HyperSyncAragonACLLogFetcher(bearer_token="t", hypersync_module=stub)
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=100
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ee" * 20, from_block=0, to_block=100)
     assert len(logs) == 1
     assert logs[0].block_number == 40

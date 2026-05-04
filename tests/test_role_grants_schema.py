@@ -17,9 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_DB_URL: str = os.environ.get(
-    "TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")
-) or ""
+_DB_URL: str = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
 
 
 def _can_connect() -> bool:
@@ -37,9 +35,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 @requires_postgres
@@ -206,9 +202,7 @@ def test_chain_finality_config_seeded():
         534352: ("scroll", 24),
     }
     with engine.connect() as conn:
-        rows = conn.execute(
-            text("SELECT chain_id, name, confirmation_depth FROM chain_finality_config")
-        ).fetchall()
+        rows = conn.execute(text("SELECT chain_id, name, confirmation_depth FROM chain_finality_config")).fetchall()
     actual = {row[0]: (row[1], row[2]) for row in rows}
     for cid, (name, depth) in expected.items():
         assert cid in actual, f"chain_id {cid} ({name}) missing from chain_finality_config"

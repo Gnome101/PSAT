@@ -19,9 +19,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_DB_URL: str = (
-    os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
-)
+_DB_URL: str = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
 
 
 def _can_connect() -> bool:
@@ -39,9 +37,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 @dataclass
@@ -167,11 +163,13 @@ def test_fresh_index_inserts_grant_and_revoke(session_with_acl_contract):
     session, cid, addr = session_with_acl_contract
     role = b"\x11" * 32
     app = "0x" + "ee" * 20
-    fetcher = FakeLogFetcher([
-        _grant(100, 0, role, "0x" + "11" * 20, app),
-        _revoke(150, 0, role, "0x" + "11" * 20, app),
-        _grant(200, 0, role, "0x" + "22" * 20, app),
-    ])
+    fetcher = FakeLogFetcher(
+        [
+            _grant(100, 0, role, "0x" + "11" * 20, app),
+            _revoke(150, 0, role, "0x" + "11" * 20, app),
+            _grant(200, 0, role, "0x" + "22" * 20, app),
+        ]
+    )
     hashes = FakeBlockHashFetcher({988: b"\xee" * 32})
     result = index_aragon_acl_step(
         session,
@@ -212,11 +210,13 @@ def test_finality_depth_caps_scan(session_with_acl_contract):
     session, cid, addr = session_with_acl_contract
     role = b"\x22" * 32
     app = "0x" + "44" * 20
-    fetcher = FakeLogFetcher([
-        _grant(100, 0, role, "0x" + "33" * 20, app),
-        # Past head - finality_depth (1000-12=988); must not be ingested.
-        _grant(995, 0, role, "0x" + "55" * 20, app),
-    ])
+    fetcher = FakeLogFetcher(
+        [
+            _grant(100, 0, role, "0x" + "33" * 20, app),
+            # Past head - finality_depth (1000-12=988); must not be ingested.
+            _grant(995, 0, role, "0x" + "55" * 20, app),
+        ]
+    )
     hashes = FakeBlockHashFetcher()
     result = index_aragon_acl_step(
         session,
@@ -240,18 +240,19 @@ def test_reorg_rewind_deletes_window_and_re_indexes(session_with_acl_contract):
     """Same shape as the role_grants reorg test: reorg invalidates
     only events past ``last_indexed_block - finality_depth``."""
     from db.models import AragonAclEvent
-
     from workers.aragon_acl_indexer import index_aragon_acl_step
 
     session, cid, addr = session_with_acl_contract
     role = b"\x33" * 32
     app = "0x" + "66" * 20
 
-    fetcher = FakeLogFetcher([
-        _grant(100, 0, role, "0x" + "aa" * 20, app, hash_byte=0xAA),
-        _grant(150, 0, role, "0x" + "bb" * 20, app, hash_byte=0xAA),
-        _grant(285, 0, role, "0x" + "cc" * 20, app, hash_byte=0xAA),  # within rewind window
-    ])
+    fetcher = FakeLogFetcher(
+        [
+            _grant(100, 0, role, "0x" + "aa" * 20, app, hash_byte=0xAA),
+            _grant(150, 0, role, "0x" + "bb" * 20, app, hash_byte=0xAA),
+            _grant(285, 0, role, "0x" + "cc" * 20, app, hash_byte=0xAA),  # within rewind window
+        ]
+    )
     hashes = FakeBlockHashFetcher({288: b"\xa0" * 32})
     index_aragon_acl_step(
         session,
@@ -361,7 +362,6 @@ def test_cursor_records_hash_at_finalized_head(session_with_acl_contract):
     """Same regression pin as role_grants: cursor block_hash is
     the hash AT the cursor block, not the last event's block hash."""
     from db.models import AragonAclCursor
-
     from workers.aragon_acl_indexer import index_aragon_acl_step
 
     session, cid, addr = session_with_acl_contract
@@ -391,7 +391,6 @@ def test_cursor_records_hash_at_finalized_head(session_with_acl_contract):
 @requires_postgres
 def test_enroll_acl_contract_idempotent(session_with_acl_contract):
     from db.models import AragonAclCursor
-
     from workers.aragon_acl_indexer import enroll_acl_contract
 
     session, cid, _ = session_with_acl_contract

@@ -140,9 +140,7 @@ def capability_to_dict(cap: CapabilityExpr) -> dict[str, Any]:
     if cap.check is not None:
         out["check"] = asdict(cap.check)
     if cap.conditions:
-        out["conditions"] = [
-            asdict(c) if is_dataclass(c) else dict(c) for c in cap.conditions
-        ]
+        out["conditions"] = [asdict(c) if is_dataclass(c) else dict(c) for c in cap.conditions]
     if cap.unsupported_reason is not None:
         out["unsupported_reason"] = cap.unsupported_reason
     if cap.children:

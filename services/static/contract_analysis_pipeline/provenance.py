@@ -32,7 +32,6 @@ from typing import Any, Iterable
 # environments without solc.
 
 try:
-    from slither.core.cfg.node import NodeType  # type: ignore[import]
     from slither.core.declarations import SolidityVariable  # type: ignore[import]
     from slither.core.variables import Variable  # type: ignore[import]
     from slither.core.variables.local_variable import LocalVariable  # type: ignore[import]

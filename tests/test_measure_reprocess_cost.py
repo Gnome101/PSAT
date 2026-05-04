@@ -25,7 +25,6 @@ from scripts.measure_reprocess_cost import (  # noqa: E402
     _percentile,
 )
 
-
 # ---------------------------------------------------------------------------
 # _elapsed_seconds — payload decoding
 # ---------------------------------------------------------------------------

@@ -27,9 +27,7 @@ def _trees(*entries):
 def _and_tree(fn: str, *leaves):
     return {
         "schema_version": "v2",
-        "trees": {
-            fn: {"op": "AND", "children": [{"op": "LEAF", "leaf": leaf} for leaf in leaves]}
-        },
+        "trees": {fn: {"op": "AND", "children": [{"op": "LEAF", "leaf": leaf} for leaf in leaves]}},
     }
 
 

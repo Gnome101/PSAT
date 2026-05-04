@@ -107,8 +107,8 @@ def probe_signature(
     Returns ``{"result": "yes"|"no"|"unknown", ...}`` on the same
     contract as ``probe_membership``.
     """
-    from .predicate_evaluator import evaluate_tree_with_registry
     from ..static.contract_analysis_pipeline.predicate_types import make_leaf_node
+    from .predicate_evaluator import evaluate_tree_with_registry
 
     leaves = list(_walk_leaves(tree))
     if not 0 <= predicate_index < len(leaves):

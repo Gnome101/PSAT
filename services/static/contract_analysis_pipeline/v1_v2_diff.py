@@ -78,13 +78,13 @@ def diff_artifacts(v1_analysis: dict[str, Any], v2_artifact: dict[str, Any]) -> 
 def classify_diff_severity(report: DiffReport) -> str:
     """Cutover gate-keeper.
 
-      * ``regression`` — v1 flagged guard(s) v2 missed; cutover
-        must be blocked or the v2 pipeline must extend before flip.
-      * ``new_coverage`` — v2 catches gates v1 missed, no
-        regressions. Safe to cut over; v1 was the loose schema.
-      * ``role_drift`` — only role-classification differs on
-        agreed functions; review case-by-case.
-      * ``clean`` — exact agreement.
+    * ``regression`` — v1 flagged guard(s) v2 missed; cutover
+      must be blocked or the v2 pipeline must extend before flip.
+    * ``new_coverage`` — v2 catches gates v1 missed, no
+      regressions. Safe to cut over; v1 was the loose schema.
+    * ``role_drift`` — only role-classification differs on
+      agreed functions; review case-by-case.
+    * ``clean`` — exact agreement.
     """
     if report.v1_only:
         return "regression"

@@ -13,8 +13,8 @@ uses for other admin-gated endpoints).
 from __future__ import annotations
 
 import os
-import uuid
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,9 +40,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +117,10 @@ def test_probe_membership_returns_yes_for_known_member(api_client, db_session):
                     "operands": [{"source": "msg_sender"}],
                     "set_descriptor": {
                         "kind": "mapping_membership",
-                        "key_sources": [{"source": "constant", "constant_value": "0x" + "01" * 32}, {"source": "msg_sender"}],
+                        "key_sources": [
+                            {"source": "constant", "constant_value": "0x" + "01" * 32},
+                            {"source": "msg_sender"},
+                        ],
                         "storage_var": "_roles",
                     },
                     "references_msg_sender": True,
@@ -130,9 +131,7 @@ def test_probe_membership_returns_yes_for_known_member(api_client, db_session):
             }
         },
     }
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=artifact
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=artifact)
 
     resp = api_client.post(
         f"/api/contract/{address}/probe/membership",
@@ -162,9 +161,7 @@ def test_probe_membership_unguarded_function_returns_yes(api_client, db_session)
     _no_auth(api_module)
     address = "0x" + "cd" * 20
     artifact = {"schema_version": "v2", "contract_name": "T", "trees": {}}
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=artifact
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=artifact)
 
     resp = api_client.post(
         f"/api/contract/{address}/probe/membership",
@@ -206,9 +203,7 @@ def test_probe_membership_no_artifact_returns_404(api_client, db_session):
 
     _no_auth(api_module)
     address = "0x" + "f1" * 20
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=None
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=None)
 
     resp = api_client.post(
         f"/api/contract/{address}/probe/membership",
@@ -234,9 +229,7 @@ def test_probe_membership_v2_error_payload_returns_unknown(api_client, db_sessio
     _no_auth(api_module)
     address = "0x" + "f2" * 20
     artifact = {"schema_version": "v2", "error": "v2_emit_blew_up"}
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=artifact
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=artifact)
 
     resp = api_client.post(
         f"/api/contract/{address}/probe/membership",
@@ -280,9 +273,7 @@ def test_probe_membership_rejects_malformed_address_payload(api_client, db_sessi
 
 
 @requires_postgres
-def test_probe_membership_returns_yes_via_postgres_role_grants_repo(
-    api_client, db_session
-):
+def test_probe_membership_returns_yes_via_postgres_role_grants_repo(api_client, db_session):
     """End-to-end with the Postgres-backed RoleGrantsRepo wired:
     a contract with a granted role for ``member`` resolves to
     ``yes`` (not ``unknown``/external_check_only). This is the
@@ -382,9 +373,7 @@ def test_probe_membership_returns_yes_via_postgres_role_grants_repo(
             }
         },
     }
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=artifact
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=artifact)
 
     # Granted member -> yes
     granted_resp = api_client.post(
@@ -417,9 +406,7 @@ def test_probe_membership_returns_yes_via_postgres_role_grants_repo(
 
 
 @requires_postgres
-def test_probe_signature_returns_unknown_for_non_signature_leaf(
-    api_client, db_session
-):
+def test_probe_signature_returns_unknown_for_non_signature_leaf(api_client, db_session):
     """The signature probe at index 0 of a membership leaf returns
     unknown with reason=non_signature_leaf — the routes are
     differentiated."""
@@ -451,9 +438,7 @@ def test_probe_signature_returns_unknown_for_non_signature_leaf(
             }
         },
     }
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=artifact
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=artifact)
 
     resp = api_client.post(
         f"/api/contract/{address}/probe/signature",
@@ -503,9 +488,7 @@ def test_probe_signature_route_for_signature_auth_leaf(api_client, db_session):
             }
         },
     }
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=artifact
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=artifact)
 
     resp = api_client.post(
         f"/api/contract/{address}/probe/signature",
@@ -696,9 +679,7 @@ def test_probe_rate_limit_disabled_when_zero(api_client, db_session, monkeypatch
 
 
 @requires_postgres
-def test_probe_rate_limit_applies_to_signature_route_too(
-    api_client, db_session, monkeypatch
-):
+def test_probe_rate_limit_applies_to_signature_route_too(api_client, db_session, monkeypatch):
     """Both probe routes share the rate limiter."""
     import api as api_module
 
@@ -731,9 +712,7 @@ def test_probe_rate_limit_applies_to_signature_route_too(
     # (key, address) budget.
     api_client.post(f"/api/contract/{address}/probe/membership", json=membership_payload, headers=headers)
     api_client.post(f"/api/contract/{address}/probe/signature", json=sig_payload, headers=headers)
-    third = api_client.post(
-        f"/api/contract/{address}/probe/signature", json=sig_payload, headers=headers
-    )
+    third = api_client.post(f"/api/contract/{address}/probe/signature", json=sig_payload, headers=headers)
     assert third.status_code == 429
 
 
@@ -769,18 +748,28 @@ def test_probe_membership_picks_most_recent_completed_job(api_client, db_session
     db_session.add_all([older, newer])
     db_session.flush()
 
-    store_artifact(
-        db_session,
-        older.id,
-        "predicate_trees",
-        data={"schema_version": "v2", "trees": {"f()": {"op": "LEAF", "leaf": {"kind": "equality", "operator": "eq", "authority_role": "caller_authority", "operands": [], "references_msg_sender": True, "parameter_indices": [], "expression": "OLD", "basis": []}}}},
-    )
-    store_artifact(
-        db_session,
-        newer.id,
-        "predicate_trees",
-        data={"schema_version": "v2", "trees": {"f()": {"op": "LEAF", "leaf": {"kind": "equality", "operator": "eq", "authority_role": "caller_authority", "operands": [], "references_msg_sender": True, "parameter_indices": [], "expression": "NEW", "basis": []}}}},
-    )
+    def _tree(expr: str) -> dict:
+        return {
+            "schema_version": "v2",
+            "trees": {
+                "f()": {
+                    "op": "LEAF",
+                    "leaf": {
+                        "kind": "equality",
+                        "operator": "eq",
+                        "authority_role": "caller_authority",
+                        "operands": [],
+                        "references_msg_sender": True,
+                        "parameter_indices": [],
+                        "expression": expr,
+                        "basis": [],
+                    },
+                }
+            },
+        }
+
+    store_artifact(db_session, older.id, "predicate_trees", data=_tree("OLD"))
+    store_artifact(db_session, newer.id, "predicate_trees", data=_tree("NEW"))
     db_session.commit()
 
     resp = api_client.post(

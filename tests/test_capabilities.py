@@ -25,7 +25,6 @@ from services.resolution.capabilities import (  # noqa: E402
     union,
 )
 
-
 # Test fixtures.
 ADDR_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ADDR_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

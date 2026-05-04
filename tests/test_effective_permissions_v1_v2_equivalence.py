@@ -44,7 +44,6 @@ from services.static.contract_analysis_pipeline.semantic_guards import (  # noqa
     synthesize_semantic_guards_from_predicate_trees,
 )
 
-
 # ---------------------------------------------------------------------------
 # Project scaffold (mirrors test_v1_v2_equivalence._write_project)
 # ---------------------------------------------------------------------------
@@ -71,9 +70,7 @@ def _write_project(tmp_path: Path, *, source_code: str) -> Path:
         )
         + "\n"
     )
-    (project_dir / "slither_results.json").write_text(
-        json.dumps({"results": {"detectors": []}}) + "\n"
-    )
+    (project_dir / "slither_results.json").write_text(json.dumps({"results": {"detectors": []}}) + "\n")
     return project_dir
 
 
@@ -126,9 +123,7 @@ def _normalize_controller(c: dict) -> dict:
         "label": c.get("label"),
         "kind": c.get("kind"),
         "principal_addresses": sorted(
-            (p.get("address") or "").lower()
-            for p in (c.get("principals") or [])
-            if isinstance(p, dict)
+            (p.get("address") or "").lower() for p in (c.get("principals") or []) if isinstance(p, dict)
         ),
     }
 
@@ -148,12 +143,10 @@ def _compare(v1_payload, v2_payload, *, fixture: str) -> None:
 
     for fn in sorted(v1_priv & v2_priv):
         v1_ctrls = sorted(
-            (json.dumps(_normalize_controller(c), sort_keys=True))
-            for c in _function_controllers(v1_payload, fn)
+            (json.dumps(_normalize_controller(c), sort_keys=True)) for c in _function_controllers(v1_payload, fn)
         )
         v2_ctrls = sorted(
-            (json.dumps(_normalize_controller(c), sort_keys=True))
-            for c in _function_controllers(v2_payload, fn)
+            (json.dumps(_normalize_controller(c), sort_keys=True)) for c in _function_controllers(v2_payload, fn)
         )
         # v2 may have a STRICT-SUPERSET of v1 controllers (more typed
         # grants from the predicate tree's structural data) — that's

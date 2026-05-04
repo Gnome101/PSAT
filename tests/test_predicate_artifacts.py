@@ -292,6 +292,7 @@ def test_artifact_helper_engine_cache_skips_repeated_callees(tmp_path):
                         from services.static.contract_analysis_pipeline.predicates import (
                             build_predicate_tree,
                         )
+
                         build_predicate_tree(fn)
         finally:
             _helper_engine_cache.reset(token)
@@ -301,8 +302,7 @@ def test_artifact_helper_engine_cache_skips_repeated_callees(tmp_path):
 
     # Cached path runs strictly fewer engines than uncached.
     assert cached_count < uncached_count, (
-        f"helper-engine cache did not reduce engine count: "
-        f"cached={cached_count} uncached={uncached_count}"
+        f"helper-engine cache did not reduce engine count: cached={cached_count} uncached={uncached_count}"
     )
 
 

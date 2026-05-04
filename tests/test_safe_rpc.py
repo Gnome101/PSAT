@@ -16,8 +16,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.resolution.repos.safe_rpc import RpcSafeRepo  # noqa: E402
@@ -60,9 +58,7 @@ def test_happy_path_returns_owners_and_threshold(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.safe_rpc.rpc_request", fake_rpc)
     repo = RpcSafeRepo({1: "http://eth.invalid"})
-    result = repo.get_owners_threshold(
-        chain_id=1, contract_address="0x" + "ab" * 20
-    )
+    result = repo.get_owners_threshold(chain_id=1, contract_address="0x" + "ab" * 20)
     assert result is not None
     got_owners, got_threshold = result
     assert got_owners == [a.lower() for a in owners]
@@ -106,9 +102,7 @@ def test_block_parameter_forwarded_as_hex(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.safe_rpc.rpc_request", fake_rpc)
     repo = RpcSafeRepo({1: "http://eth.invalid"})
-    repo.get_owners_threshold(
-        chain_id=1, contract_address="0x" + "ab" * 20, block=18_000_000
-    )
+    repo.get_owners_threshold(chain_id=1, contract_address="0x" + "ab" * 20, block=18_000_000)
     # Both eth_call invocations use the same hex block tag.
     assert captured == [hex(18_000_000), hex(18_000_000)]
 
@@ -139,9 +133,7 @@ def test_one_owner_threshold_one(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.safe_rpc.rpc_request", fake_rpc)
     repo = RpcSafeRepo({1: "http://eth.invalid"})
-    owners, threshold = repo.get_owners_threshold(
-        chain_id=1, contract_address="0x" + "ab" * 20
-    )  # type: ignore[misc]
+    owners, threshold = repo.get_owners_threshold(chain_id=1, contract_address="0x" + "ab" * 20)  # type: ignore[misc]
     assert owners == [only_owner.lower()]
     assert threshold == 1
 
@@ -158,9 +150,7 @@ def test_owners_lowercased(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.safe_rpc.rpc_request", fake_rpc)
     repo = RpcSafeRepo({1: "http://eth.invalid"})
-    owners, _ = repo.get_owners_threshold(
-        chain_id=1, contract_address="0x" + "ab" * 20
-    )  # type: ignore[misc]
+    owners, _ = repo.get_owners_threshold(chain_id=1, contract_address="0x" + "ab" * 20)  # type: ignore[misc]
     assert owners == [a.lower() for a in mixed_case]
 
 
@@ -196,7 +186,4 @@ def test_partial_failure_returns_none(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.safe_rpc.rpc_request", fake_rpc)
     repo = RpcSafeRepo({1: "http://eth.invalid"})
-    assert (
-        repo.get_owners_threshold(chain_id=1, contract_address="0x" + "ab" * 20)
-        is None
-    )
+    assert repo.get_owners_threshold(chain_id=1, contract_address="0x" + "ab" * 20) is None

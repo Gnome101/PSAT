@@ -32,7 +32,6 @@ from typing import Any
 
 from utils.rpc import rpc_request
 
-
 # Function selectors for the Safe ABI.
 _GET_OWNERS_SELECTOR = "0xa0e67e2b"
 _GET_THRESHOLD_SELECTOR = "0xe75235b8"
@@ -63,9 +62,7 @@ class RpcSafeRepo:
 
         try:
             owners_raw = _eth_call(url, contract_address, _GET_OWNERS_SELECTOR, block_tag)
-            threshold_raw = _eth_call(
-                url, contract_address, _GET_THRESHOLD_SELECTOR, block_tag
-            )
+            threshold_raw = _eth_call(url, contract_address, _GET_THRESHOLD_SELECTOR, block_tag)
         except Exception:
             return None
         if owners_raw is None or threshold_raw is None:
@@ -83,9 +80,7 @@ class RpcSafeRepo:
 # ---------------------------------------------------------------------------
 
 
-def _eth_call(
-    rpc_url: str, contract_address: str, calldata: str, block_tag: str
-) -> str | None:
+def _eth_call(rpc_url: str, contract_address: str, calldata: str, block_tag: str) -> str | None:
     """Single ``eth_call`` round-trip. Returns the hex response or
     ``None`` if the call returned ``0x`` (function-absent / revert)."""
     payload: dict[str, Any] = {"to": contract_address, "data": calldata}

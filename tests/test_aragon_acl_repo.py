@@ -17,9 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_DB_URL: str = (
-    os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
-)
+_DB_URL: str = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
 
 
 def _can_connect() -> bool:
@@ -37,9 +35,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 @pytest.fixture
@@ -134,9 +130,7 @@ def test_members_for_permission_replays_grant_then_revoke(session_with_acl_contr
     session.commit()
 
     repo = PostgresAragonACLRepo(session)
-    result = repo.members_for_permission(
-        chain_id=1, acl_address=acl_addr, target_app=app, role=role
-    )
+    result = repo.members_for_permission(chain_id=1, acl_address=acl_addr, target_app=app, role=role)
     assert result.members == [granted]
     assert result.confidence == "enumerable"
 
@@ -182,12 +176,8 @@ def test_members_for_permission_block_filter(session_with_acl_contract):
     session.commit()
 
     repo = PostgresAragonACLRepo(session)
-    at_200 = repo.members_for_permission(
-        chain_id=1, acl_address=acl_addr, target_app=app, role=role, block=200
-    )
-    at_400 = repo.members_for_permission(
-        chain_id=1, acl_address=acl_addr, target_app=app, role=role, block=400
-    )
+    at_200 = repo.members_for_permission(chain_id=1, acl_address=acl_addr, target_app=app, role=role, block=200)
+    at_400 = repo.members_for_permission(chain_id=1, acl_address=acl_addr, target_app=app, role=role, block=400)
     assert at_200.members == [member]
     assert at_400.members == []
 
@@ -226,7 +216,6 @@ def test_members_for_permission_uses_cursor_for_freshness(session_with_acl_contr
     not the highest event block. Same contract as
     PostgresRoleGrantsRepo."""
     from db.models import AragonAclCursor
-
     from services.resolution.repos.aragon_acl_pg import PostgresAragonACLRepo
 
     session, cid, acl_addr = session_with_acl_contract

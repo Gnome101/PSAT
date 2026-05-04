@@ -20,9 +20,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_DB_URL: str = (
-    os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
-)
+_DB_URL: str = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
 
 
 def _can_connect() -> bool:
@@ -40,9 +38,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 # ---------------------------------------------------------------------------
@@ -178,10 +174,12 @@ def test_fresh_index_inserts_and_advances_cursor(session_with_contract):
 
     session, cid, addr = session_with_contract
     role = b"\x11" * 32
-    fetcher = FakeLogFetcher([
-        _grant(100, 0, role, "0x" + "11" * 20),
-        _grant(150, 0, role, "0x" + "22" * 20),
-    ])
+    fetcher = FakeLogFetcher(
+        [
+            _grant(100, 0, role, "0x" + "11" * 20),
+            _grant(150, 0, role, "0x" + "22" * 20),
+        ]
+    )
     hashes = FakeBlockHashFetcher({988: b"\xbb" * 32})
     result = index_role_grants_step(
         session,
@@ -225,12 +223,14 @@ def test_finality_depth_caps_scan(session_with_contract):
 
     session, cid, addr = session_with_contract
     role = b"\x22" * 32
-    fetcher = FakeLogFetcher([
-        _grant(100, 0, role, "0x" + "33" * 20),
-        # block 989 is finality_depth=12 below head=1000, so 989 is
-        # finalized; 995 is past the cap and must not be ingested.
-        _grant(995, 0, role, "0x" + "44" * 20),
-    ])
+    fetcher = FakeLogFetcher(
+        [
+            _grant(100, 0, role, "0x" + "33" * 20),
+            # block 989 is finality_depth=12 below head=1000, so 989 is
+            # finalized; 995 is past the cap and must not be ingested.
+            _grant(995, 0, role, "0x" + "44" * 20),
+        ]
+    )
     hashes = FakeBlockHashFetcher()
     result = index_role_grants_step(
         session,
@@ -259,7 +259,6 @@ def test_reorg_rewind_deletes_window_and_re_indexes(session_with_contract):
     chain → indexer rewinds ``finality_depth`` blocks, deletes
     events in the window, and re-fetches. Idempotent across runs."""
     from db.models import RoleGrantsEvent
-
     from workers.role_grants_indexer import index_role_grants_step
 
     session, cid, addr = session_with_contract
@@ -293,9 +292,7 @@ def test_reorg_rewind_deletes_window_and_re_indexes(session_with_contract):
     session.commit()
     assert result.inserted == 3
     assert result.new_cursor == 288
-    pre_count = (
-        session.query(RoleGrantsEvent).filter_by(contract_id=cid).count()
-    )
+    pre_count = session.query(RoleGrantsEvent).filter_by(contract_id=cid).count()
     assert pre_count == 3
 
     # Reorg: hash at 288 changed AND the chain replaced block 285's
@@ -325,10 +322,7 @@ def test_reorg_rewind_deletes_window_and_re_indexes(session_with_contract):
     assert result2.rewound is True
     # The block-200 event is gone; 100/150 survive (within the
     # rewound-to point); the post-reorg block-280 grant is added.
-    members = {
-        ev.member
-        for ev in session.query(RoleGrantsEvent).filter_by(contract_id=cid).all()
-    }
+    members = {ev.member for ev in session.query(RoleGrantsEvent).filter_by(contract_id=cid).all()}
     assert "0x" + "aa" * 20 in members
     assert "0x" + "bb" * 20 in members
     assert "0x" + "cc" * 20 not in members  # rewound away
@@ -343,7 +337,6 @@ def test_batch_size_chunks_large_range(session_with_contract):
     from workers.role_grants_indexer import index_role_grants_step
 
     session, cid, addr = session_with_contract
-    role = b"\x44" * 32
     fetcher = FakeLogFetcher([])
     hashes = FakeBlockHashFetcher({988: b"\xee" * 32})
 
@@ -415,7 +408,6 @@ def test_cursor_records_hash_at_finalized_head_not_last_event(session_with_contr
     pass falsely detects a reorg when comparing against the live
     chain hash at the same height."""
     from db.models import RoleGrantsCursor
-
     from workers.role_grants_indexer import index_role_grants_step
 
     session, cid, addr = session_with_contract
@@ -423,9 +415,7 @@ def test_cursor_records_hash_at_finalized_head_not_last_event(session_with_contr
     # Event at block 100; finalized cursor will be at 988. The two
     # hashes differ — the test fails if the cursor records the
     # event's hash instead of the cursor's hash.
-    fetcher = FakeLogFetcher(
-        [_grant(100, 0, role, "0x" + "55" * 20, hash_byte=0xCC)]
-    )
+    fetcher = FakeLogFetcher([_grant(100, 0, role, "0x" + "55" * 20, hash_byte=0xCC)])
     head_hash = b"\xff" * 32
     hashes = FakeBlockHashFetcher({988: head_hash})
 
@@ -442,9 +432,7 @@ def test_cursor_records_hash_at_finalized_head_not_last_event(session_with_contr
     )
     session.commit()
 
-    cursor_row = (
-        session.query(RoleGrantsCursor).filter_by(contract_id=cid).one()
-    )
+    cursor_row = session.query(RoleGrantsCursor).filter_by(contract_id=cid).one()
     assert cursor_row.last_indexed_block == 988
     # Critical: hash matches the height-988 hash, not the event's
     # hash at block 100.

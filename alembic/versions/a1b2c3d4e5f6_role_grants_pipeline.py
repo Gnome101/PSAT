@@ -72,9 +72,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["contract_id"], ["contracts.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["contract_id"], ["contracts.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("chain_id", "contract_id", "tx_hash", "log_index"),
     )
     op.create_index(
@@ -105,9 +103,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["contract_id"], ["contracts.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["contract_id"], ["contracts.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("chain_id", "contract_id"),
     )
 
@@ -126,10 +122,7 @@ def upgrade() -> None:
             sa.column("name", sa.String()),
             sa.column("confirmation_depth", sa.Integer()),
         ),
-        [
-            {"chain_id": cid, "name": name, "confirmation_depth": depth}
-            for cid, name, depth in _DEFAULT_FINALITY
-        ],
+        [{"chain_id": cid, "name": name, "confirmation_depth": depth} for cid, name, depth in _DEFAULT_FINALITY],
     )
 
 

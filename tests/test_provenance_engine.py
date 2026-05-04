@@ -667,8 +667,7 @@ def test_sub_engine_memo_collapses_repeated_internal_calls(tmp_path):
     pre_keys = set(eng._sub_engine_memo.keys())
     eng.run()
     assert set(eng._sub_engine_memo.keys()) == pre_keys, (
-        "re-running the same engine introduced new memo keys — bindings "
-        "may have shifted, breaking memo stability"
+        "re-running the same engine introduced new memo keys — bindings may have shifted, breaking memo stability"
     )
 
 

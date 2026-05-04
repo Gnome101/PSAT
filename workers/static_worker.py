@@ -1498,9 +1498,7 @@ class StaticWorker(BaseWorker):
         (project_dir / "contract_analysis.json").write_text(json.dumps(analysis_data, indent=2) + "\n")
         (project_dir / "semantic_guards.json").write_text(json.dumps(semantic_guards, indent=2) + "\n")
         if v2_predicate_trees is not None:
-            (project_dir / "predicate_trees.json").write_text(
-                json.dumps(v2_predicate_trees, indent=2) + "\n"
-            )
+            (project_dir / "predicate_trees.json").write_text(json.dumps(v2_predicate_trees, indent=2) + "\n")
 
         # Keep as artifacts — downstream stages read these as JSON.
         store_artifact(session, job.id, "contract_analysis", data=analysis_data)

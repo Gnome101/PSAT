@@ -30,19 +30,14 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 def _v1(name: str, *fns_with_kinds):
     return {
         "subject": {"name": name},
         "access_control": {
-            "privileged_functions": [
-                {"function": fn, "guard_kinds": list(kinds)}
-                for fn, kinds in fns_with_kinds
-            ]
+            "privileged_functions": [{"function": fn, "guard_kinds": list(kinds)} for fn, kinds in fns_with_kinds]
         },
     }
 
@@ -134,9 +129,7 @@ def test_dry_run_aggregates_severities(db_session):
         v1=_v1("Drift", ("f()", ["access_control"])),
         v2=_v2("Drift", ("f()", ["pause"])),
     )
-    _seed_with_artifacts(
-        db_session, address=not_elig, v1=None, v2=None
-    )
+    _seed_with_artifacts(db_session, address=not_elig, v1=None, v2=None)
 
     out = run_dry_run(db_session, address_prefix="0x" + pfx)
     assert out["total_addresses"] == 5

@@ -51,9 +51,7 @@ logger = logging.getLogger(__name__)
 
 # SetPermission(address indexed entity, address indexed app, bytes32 indexed role, bool allowed)
 # topic0 = keccak256("SetPermission(address,address,bytes32,bool)")
-SET_PERMISSION_TOPIC0 = bytes.fromhex(
-    "80f1d1bdcdef74de9d34a2cf3a5b5cb56d40b6cc20cffd1bd328eaa6f5a96ed3"
-)
+SET_PERMISSION_TOPIC0 = bytes.fromhex("80f1d1bdcdef74de9d34a2cf3a5b5cb56d40b6cc20cffd1bd328eaa6f5a96ed3")
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +146,7 @@ def index_aragon_acl_step(
     rewound = False
 
     if cursor_row is not None and cursor_row.last_indexed_block_hash and last_indexed_block > 0:
-        live_hash = block_hash_fetcher.block_hash(
-            chain_id=chain_id, block_number=last_indexed_block
-        )
+        live_hash = block_hash_fetcher.block_hash(chain_id=chain_id, block_number=last_indexed_block)
         if live_hash is not None and live_hash != cursor_row.last_indexed_block_hash:
             rewind_to = max(last_indexed_block - finality_depth, 0)
             session.execute(
@@ -191,9 +187,7 @@ def index_aragon_acl_step(
             to_block=chunk_end,
         )
         if logs:
-            inserted += _bulk_insert_logs(
-                session, chain_id=chain_id, acl_contract_id=acl_contract_id, logs=logs
-            )
+            inserted += _bulk_insert_logs(session, chain_id=chain_id, acl_contract_id=acl_contract_id, logs=logs)
         cursor = chunk_end + 1
 
     # Hash AT the cursor block, NOT the last event's hash — same
@@ -201,9 +195,7 @@ def index_aragon_acl_step(
     # using logs[-1].block_hash falsely triggers a reorg-rewind
     # next pass when the finalized head has no SetPermission events.
     new_cursor_block = target
-    new_cursor_hash = block_hash_fetcher.block_hash(
-        chain_id=chain_id, block_number=new_cursor_block
-    )
+    new_cursor_hash = block_hash_fetcher.block_hash(chain_id=chain_id, block_number=new_cursor_block)
     _upsert_cursor(session, chain_id, acl_contract_id, new_cursor_block, new_cursor_hash)
     return IndexResult(
         inserted=inserted,
@@ -243,8 +235,10 @@ def _bulk_insert_logs(
     ]
     if not rows:
         return 0
-    stmt = pg_insert(AragonAclEvent).values(rows).on_conflict_do_nothing(
-        index_elements=["chain_id", "acl_contract_id", "tx_hash", "log_index"]
+    stmt = (
+        pg_insert(AragonAclEvent)
+        .values(rows)
+        .on_conflict_do_nothing(index_elements=["chain_id", "acl_contract_id", "tx_hash", "log_index"])
     )
     result = session.execute(stmt)
     return getattr(result, "rowcount", 0) or 0
@@ -278,16 +272,18 @@ def _lock_key(chain_id: int) -> int:
     return int(hashlib.sha1(str(chain_id).encode()).hexdigest()[:7], 16) & 0x7FFFFFFF
 
 
-def enroll_acl_contract(
-    session: Session, *, chain_id: int, acl_contract_id: int
-) -> None:
+def enroll_acl_contract(session: Session, *, chain_id: int, acl_contract_id: int) -> None:
     """Idempotently insert an ``aragon_acl_cursors`` row at
     block 0. Caller commits."""
-    stmt = pg_insert(AragonAclCursor).values(
-        chain_id=chain_id,
-        acl_contract_id=acl_contract_id,
-        last_indexed_block=0,
-    ).on_conflict_do_nothing(index_elements=["chain_id", "acl_contract_id"])
+    stmt = (
+        pg_insert(AragonAclCursor)
+        .values(
+            chain_id=chain_id,
+            acl_contract_id=acl_contract_id,
+            last_indexed_block=0,
+        )
+        .on_conflict_do_nothing(index_elements=["chain_id", "acl_contract_id"])
+    )
     session.execute(stmt)
 
 
@@ -402,7 +398,5 @@ def run_aragon_acl_indexer_loop(
 
 
 def _load_finality_config(session: Session) -> dict[int, int]:
-    rows = session.execute(
-        select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)
-    ).all()
+    rows = session.execute(select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)).all()
     return {cid: depth for cid, depth in rows}

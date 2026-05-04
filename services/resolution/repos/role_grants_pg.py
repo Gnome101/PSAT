@@ -33,7 +33,6 @@ from sqlalchemy.orm import Session
 from db.models import ChainFinalityConfig, Contract, RoleGrantsCursor, RoleGrantsEvent
 from services.resolution.adapters import EnumerationResult, Trit
 
-
 # Hardcoded fallback for chain_id → chain_name when the
 # chain_finality_config table is empty (development DB without the
 # seed migration). The migration seeds the full set; in production
@@ -124,9 +123,7 @@ class PostgresRoleGrantsRepo:
         # Last event wins.
         return Trit.YES if rows[-1][0] == "grant" else Trit.NO
 
-    def list_observed_roles(
-        self, *, chain_id: int, contract_address: str
-    ) -> list[bytes]:
+    def list_observed_roles(self, *, chain_id: int, contract_address: str) -> list[bytes]:
         cid = self._resolve_contract_id(chain_id, contract_address)
         if cid is None:
             return []
@@ -156,9 +153,7 @@ class PostgresRoleGrantsRepo:
     # Internals
     # ------------------------------------------------------------------
 
-    def _replay_to_set(
-        self, chain_id: int, contract_id: int, role: bytes, block: int | None
-    ) -> Iterable[str]:
+    def _replay_to_set(self, chain_id: int, contract_id: int, role: bytes, block: int | None) -> Iterable[str]:
         """Replay (member, direction) events in (block, log_index)
         order; the final direction per member determines membership."""
         q = (
@@ -189,9 +184,7 @@ class PostgresRoleGrantsRepo:
         ).first()
         return row[0] if row else None
 
-    def _resolve_contract_id(
-        self, chain_id: int, contract_address: str
-    ) -> int | None:
+    def _resolve_contract_id(self, chain_id: int, contract_address: str) -> int | None:
         chain_name = self._chain_name(chain_id)
         # Match address case-insensitively (canonical addresses in
         # the contracts table are mixed-case checksummed; events are
@@ -202,9 +195,7 @@ class PostgresRoleGrantsRepo:
         addr_lower = contract_address.lower()
         accepted_names = set(_CHAIN_NAME_ALIASES.get(chain_name, (chain_name,)))
         candidates = self.session.execute(
-            select(Contract.id, Contract.chain).where(
-                Contract.address.ilike(addr_lower)
-            )
+            select(Contract.id, Contract.chain).where(Contract.address.ilike(addr_lower))
         ).all()
         for row_id, row_chain in candidates:
             if row_chain in accepted_names:
@@ -215,10 +206,6 @@ class PostgresRoleGrantsRepo:
 
     def _chain_name(self, chain_id: int) -> str:
         if self._chain_name_cache is None:
-            rows = self.session.execute(
-                select(ChainFinalityConfig.chain_id, ChainFinalityConfig.name)
-            ).all()
+            rows = self.session.execute(select(ChainFinalityConfig.chain_id, ChainFinalityConfig.name)).all()
             self._chain_name_cache = {cid: name for cid, name in rows}
-        return self._chain_name_cache.get(
-            chain_id, _FALLBACK_CHAIN_NAMES.get(chain_id, "ethereum")
-        )
+        return self._chain_name_cache.get(chain_id, _FALLBACK_CHAIN_NAMES.get(chain_id, "ethereum"))

@@ -15,8 +15,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.resolution.repos.role_grants_rpc import (  # noqa: E402
@@ -82,9 +80,7 @@ def test_decode_role_granted(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.role_grants_rpc.rpc_request", fake_rpc)
     fetcher = RpcLogFetcher("http://node.invalid")
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=200
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=200)
     assert len(logs) == 1
     log = logs[0]
     assert log.direction == "grant"
@@ -116,9 +112,7 @@ def test_decode_role_revoked(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.role_grants_rpc.rpc_request", fake_rpc)
     fetcher = RpcLogFetcher("http://node.invalid")
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=200
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=200)
     assert len(logs) == 1
     assert logs[0].direction == "revoke"
 
@@ -170,9 +164,7 @@ def test_malformed_logs_skipped(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.role_grants_rpc.rpc_request", fake_rpc)
     fetcher = RpcLogFetcher("http://node.invalid")
-    logs = fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=200
-    )
+    logs = fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=200)
     assert len(logs) == 1
     assert logs[0].member == good_member
 
@@ -191,9 +183,7 @@ def test_fetcher_chunks_large_range(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.role_grants_rpc.rpc_request", fake_rpc)
     fetcher = RpcLogFetcher("http://node.invalid", max_block_range=500)
-    fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=1, to_block=1500
-    )
+    fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=1, to_block=1500)
     assert calls == [(1, 500), (501, 1000), (1001, 1500)]
 
 
@@ -243,9 +233,7 @@ def test_fetcher_uses_role_topics_in_filter(monkeypatch):
 
     monkeypatch.setattr("services.resolution.repos.role_grants_rpc.rpc_request", fake_rpc)
     fetcher = RpcLogFetcher("http://node.invalid")
-    fetcher.fetch_logs(
-        chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=10
-    )
+    fetcher.fetch_logs(chain_id=1, contract_address="0x" + "ab" * 20, from_block=0, to_block=10)
     assert captured
     topics = captured[0].get("topics") or []
     assert len(topics) == 1

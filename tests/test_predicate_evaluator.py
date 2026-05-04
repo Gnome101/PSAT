@@ -16,6 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 slither = pytest.importorskip("slither")
 from slither import Slither  # noqa: E402
 
+from services.resolution.predicate_evaluator import (  # noqa: E402
+    evaluate_tree,
+)
 from services.static.contract_analysis_pipeline.predicates import (  # noqa: E402
     build_predicate_tree,
 )
@@ -24,10 +27,6 @@ from services.static.contract_analysis_pipeline.reentrancy_pause import (  # noq
 )
 from services.static.contract_analysis_pipeline.writer_gate import (  # noqa: E402
     apply_writer_gate_pass,
-)
-from services.resolution.predicate_evaluator import (  # noqa: E402
-    EvaluationContext,
-    evaluate_tree,
 )
 
 

@@ -31,9 +31,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 def _no_auth(api_module):
@@ -46,10 +44,7 @@ def _v1(name, *fns_with_kinds):
     return {
         "subject": {"name": name},
         "access_control": {
-            "privileged_functions": [
-                {"function": fn, "guard_kinds": list(kinds)}
-                for fn, kinds in fns_with_kinds
-            ]
+            "privileged_functions": [{"function": fn, "guard_kinds": list(kinds)} for fn, kinds in fns_with_kinds]
         },
     }
 
@@ -125,9 +120,7 @@ def test_migration_status_aggregates_fleet(api_client, db_session):
         v2=_v2("Reg", ("f()", ["caller_authority"])),
     )
 
-    resp = api_client.get(
-        f"/api/v2/migration_status?address_prefix=0x{pfx}"
-    )
+    resp = api_client.get(f"/api/v2/migration_status?address_prefix=0x{pfx}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["total_addresses"] == 2
@@ -175,9 +168,7 @@ def test_migration_status_max_regressions_caps_list(api_client, db_session):
             v1=_v1("R", ("f()", ["access_control"]), ("g()", ["pause"])),
             v2=_v2("R", ("f()", ["caller_authority"])),
         )
-    resp = api_client.get(
-        f"/api/v2/migration_status?address_prefix=0x{pfx}&max_regressions=2"
-    )
+    resp = api_client.get(f"/api/v2/migration_status?address_prefix=0x{pfx}&max_regressions=2")
     body = resp.json()
     assert body["counts"]["regression"] == 3
     assert len(body["regressions"]) == 2

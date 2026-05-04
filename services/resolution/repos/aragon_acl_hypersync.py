@@ -21,7 +21,6 @@ from workers.aragon_acl_indexer import (
     FetchedAragonLog,
 )
 
-
 # Per-chain HyperSync hostnames. Aligned with role_grants_hypersync
 # and chain_finality_config.
 _DEFAULT_URL_FOR_CHAIN = {
@@ -90,8 +89,7 @@ class HyperSyncAragonACLLogFetcher:
         hs = self._resolve_module()
         if not self.bearer_token:
             raise RuntimeError(
-                "HyperSyncAragonACLLogFetcher requires an API token. "
-                "Set ENVIO_API_TOKEN or pass bearer_token=."
+                "HyperSyncAragonACLLogFetcher requires an API token. Set ENVIO_API_TOKEN or pass bearer_token=."
             )
         url = self.url_for_chain.get(chain_id)
         if url is None:
@@ -99,9 +97,7 @@ class HyperSyncAragonACLLogFetcher:
                 f"HyperSync URL not configured for chain_id={chain_id}; "
                 "pass url_for_chain={...} to extend the default map."
             )
-        client = hs.HypersyncClient(
-            hs.ClientConfig(url=url, bearer_token=self.bearer_token)
-        )
+        client = hs.HypersyncClient(hs.ClientConfig(url=url, bearer_token=self.bearer_token))
 
         topic0_hex = "0x" + SET_PERMISSION_TOPIC0.hex()
         out: list[FetchedAragonLog] = []

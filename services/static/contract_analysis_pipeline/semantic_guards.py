@@ -24,7 +24,6 @@ from typing import Any
 from schemas.contract_analysis import ContractAnalysis
 
 
-
 def build_semantic_guards(analysis: ContractAnalysis) -> dict[str, Any]:
     """Translate ``analysis``'s embedded v2 ``predicate_trees`` into
     the legacy ``semantic_guards`` artifact shape.
@@ -57,6 +56,8 @@ def build_semantic_guards(analysis: ContractAnalysis) -> dict[str, Any]:
         contract_address=contract_address,
         contract_name=contract_name,
     )
+
+
 def synthesize_semantic_guards_from_predicate_trees(
     predicate_trees: dict[str, Any],
     *,
@@ -201,11 +202,7 @@ def _leaf_to_v1_predicate(leaf: dict[str, Any]) -> dict[str, Any] | None:
         # output but the v2 schema doesn't strictly require it.
         keys = descriptor.get("key_sources") or operands
         controller_op = next(
-            (
-                k
-                for k in keys
-                if k.get("source") not in ("msg_sender", "tx_origin", "signature_recovery")
-            ),
+            (k for k in keys if k.get("source") not in ("msg_sender", "tx_origin", "signature_recovery")),
             None,
         )
         return {
@@ -219,11 +216,7 @@ def _leaf_to_v1_predicate(leaf: dict[str, Any]) -> dict[str, Any] | None:
     if kind == "equality" and operator == "eq" and role == "caller_authority":
         # caller_equals_controller: the non-caller operand is the
         # controller.
-        non_caller = [
-            o
-            for o in operands
-            if o.get("source") not in ("msg_sender", "tx_origin", "signature_recovery")
-        ]
+        non_caller = [o for o in operands if o.get("source") not in ("msg_sender", "tx_origin", "signature_recovery")]
         controller_op = non_caller[0] if non_caller else None
         return {
             "kind": "caller_equals_controller",

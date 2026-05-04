@@ -13,14 +13,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.resolution.adapters import EvaluationContext  # noqa: E402
 from services.resolution.capabilities import CapabilityExpr, ExternalCheck  # noqa: E402
 from services.resolution.probe import probe_membership  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Stub registry — returns whatever CapabilityExpr the test set up.
@@ -123,16 +120,12 @@ def test_index_picks_leaf_by_dfs_order():
 
     # index=0 picks the membership leaf -> resolvable
     reg = _StubRegistry(CapabilityExpr.finite_set(["0x" + "11" * 20]))
-    res0 = probe_membership(
-        tree, predicate_index=0, member="0x" + "11" * 20, registry=reg, ctx=EvaluationContext()
-    )
+    res0 = probe_membership(tree, predicate_index=0, member="0x" + "11" * 20, registry=reg, ctx=EvaluationContext())
     assert res0["result"] == "yes"
     assert res0["leaf_kind"] == "membership"
 
     # index=1 picks the equality leaf -> not membership
-    res1 = probe_membership(
-        tree, predicate_index=1, member="0x" + "11" * 20, registry=reg, ctx=EvaluationContext()
-    )
+    res1 = probe_membership(tree, predicate_index=1, member="0x" + "11" * 20, registry=reg, ctx=EvaluationContext())
     assert res1["leaf_kind"] == "equality"
     assert res1["reason"] == "non_membership_leaf"
 
@@ -213,9 +206,7 @@ def test_finite_set_upper_bound_absent_is_no():
 
 
 def test_threshold_group_signer_yes():
-    reg = _StubRegistry(
-        CapabilityExpr.threshold_group(2, ["0x" + "11" * 20, "0x" + "22" * 20, "0x" + "33" * 20])
-    )
+    reg = _StubRegistry(CapabilityExpr.threshold_group(2, ["0x" + "11" * 20, "0x" + "22" * 20, "0x" + "33" * 20]))
     yes = probe_membership(
         _leaf_node(_membership_leaf()),
         predicate_index=0,

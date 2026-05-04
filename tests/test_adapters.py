@@ -18,7 +18,6 @@ from services.resolution.adapters.access_control import (  # noqa: E402
     AccessControlAdapter,
 )
 from services.resolution.adapters.safe import SafeAdapter  # noqa: E402
-from services.resolution.capabilities import CapabilityExpr  # noqa: E402
 
 ADDR_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 ADDR_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

@@ -53,9 +53,7 @@ def _probe_rate_check(admin_key: str | None, address: str) -> None:
     import collections as _collections
     import time as _time
 
-    state = _probe_rate_state.setdefault(
-        (admin_key or "<no-key>", address.lower()), _collections.deque()
-    )
+    state = _probe_rate_state.setdefault((admin_key or "<no-key>", address.lower()), _collections.deque())
     now = _time.time()
     while state and state[0] + _PROBE_RATE_WINDOW_S < now:
         state.popleft()
@@ -251,9 +249,7 @@ def probe_contract_membership(
             .limit(1)
         ).scalar_one_or_none()
         if job is None:
-            raise HTTPException(
-                status_code=404, detail=f"No completed analysis job found for {addr}"
-            )
+            raise HTTPException(status_code=404, detail=f"No completed analysis job found for {addr}")
 
         artifact = deps.get_artifact(session, job.id, "predicate_trees")
         if artifact is None:
@@ -269,11 +265,7 @@ def probe_contract_membership(
             # Either an error-path placeholder ({"error": "..."}) or a
             # malformed payload — surface the reason rather than silently
             # treating as no-tree.
-            reason = (
-                artifact.get("error")
-                if isinstance(artifact, dict)
-                else "predicate_trees payload was not a dict"
-            )
+            reason = artifact.get("error") if isinstance(artifact, dict) else "predicate_trees payload was not a dict"
             return {
                 "result": "unknown",
                 "reason": "predicate_trees_unavailable",
@@ -364,9 +356,7 @@ def probe_contract_signature(
             .limit(1)
         ).scalar_one_or_none()
         if job is None:
-            raise HTTPException(
-                status_code=404, detail=f"No completed analysis job found for {addr}"
-            )
+            raise HTTPException(status_code=404, detail=f"No completed analysis job found for {addr}")
         artifact = deps.get_artifact(session, job.id, "predicate_trees")
         if artifact is None:
             raise HTTPException(
@@ -377,9 +367,7 @@ def probe_contract_signature(
             return {
                 "result": "unknown",
                 "reason": "predicate_trees_unavailable",
-                "detail": (
-                    artifact.get("error") if isinstance(artifact, dict) else "malformed"
-                ),
+                "detail": (artifact.get("error") if isinstance(artifact, dict) else "malformed"),
             }
         tree = artifact["trees"].get(req.function_signature)
         if tree is None:
@@ -461,9 +449,7 @@ def get_contract_capabilities(
         return cached
 
     with deps.SessionLocal() as session:
-        capabilities = resolve_contract_capabilities(
-            session, address=addr, chain_id=chain_id, block=block
-        )
+        capabilities = resolve_contract_capabilities(session, address=addr, chain_id=chain_id, block=block)
         if capabilities is None:
             raise HTTPException(
                 status_code=404,
@@ -539,9 +525,7 @@ def get_contract_v1_v2_diff(address: str) -> dict[str, Any]:
     "/api/v2/migration_status",
     dependencies=[Depends(deps.require_admin_key)],
 )
-def get_v2_migration_status(
-    address_prefix: str | None = None, max_regressions: int = 50
-) -> dict[str, Any]:
+def get_v2_migration_status(address_prefix: str | None = None, max_regressions: int = 50) -> dict[str, Any]:
     """Fleet-wide v2 cutover-readiness snapshot. Operationally
     equivalent to scripts/cutover_dry_run.py but live over HTTP so an
     operator dashboard can poll it without DB access.
@@ -606,9 +590,7 @@ def company_v2_capabilities(company_name: str) -> dict[str, Any]:
     from services.resolution.capability_resolver import resolve_contract_capabilities
 
     with deps.SessionLocal() as session:
-        protocol_row = session.execute(
-            select(Protocol).where(Protocol.name == company_name)
-        ).scalar_one_or_none()
+        protocol_row = session.execute(select(Protocol).where(Protocol.name == company_name)).scalar_one_or_none()
         if protocol_row is None:
             raise HTTPException(status_code=404, detail="Company not found")
 

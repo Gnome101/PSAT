@@ -46,9 +46,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["acl_contract_id"], ["contracts.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["acl_contract_id"], ["contracts.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("chain_id", "acl_contract_id", "tx_hash", "log_index"),
     )
     op.create_index(
@@ -87,9 +85,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["acl_contract_id"], ["contracts.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["acl_contract_id"], ["contracts.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("chain_id", "acl_contract_id"),
     )
 

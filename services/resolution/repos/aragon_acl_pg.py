@@ -39,7 +39,6 @@ from db.models import (
 )
 from services.resolution.adapters import EnumerationResult
 
-
 _FALLBACK_CHAIN_NAMES = {
     1: "ethereum",
     10: "optimism",
@@ -130,16 +129,12 @@ class PostgresAragonACLRepo:
         ).first()
         return row[0] if row else None
 
-    def _resolve_contract_id(
-        self, chain_id: int, contract_address: str
-    ) -> int | None:
+    def _resolve_contract_id(self, chain_id: int, contract_address: str) -> int | None:
         chain_name = self._chain_name(chain_id)
         accepted_names = set(_CHAIN_NAME_ALIASES.get(chain_name, (chain_name,)))
         addr_lower = contract_address.lower()
         candidates = self.session.execute(
-            select(Contract.id, Contract.chain).where(
-                Contract.address.ilike(addr_lower)
-            )
+            select(Contract.id, Contract.chain).where(Contract.address.ilike(addr_lower))
         ).all()
         for row_id, row_chain in candidates:
             if row_chain in accepted_names:
@@ -150,10 +145,6 @@ class PostgresAragonACLRepo:
 
     def _chain_name(self, chain_id: int) -> str:
         if self._chain_name_cache is None:
-            rows = self.session.execute(
-                select(ChainFinalityConfig.chain_id, ChainFinalityConfig.name)
-            ).all()
+            rows = self.session.execute(select(ChainFinalityConfig.chain_id, ChainFinalityConfig.name)).all()
             self._chain_name_cache = {cid: name for cid, name in rows}
-        return self._chain_name_cache.get(
-            chain_id, _FALLBACK_CHAIN_NAMES.get(chain_id, "ethereum")
-        )
+        return self._chain_name_cache.get(chain_id, _FALLBACK_CHAIN_NAMES.get(chain_id, "ethereum"))

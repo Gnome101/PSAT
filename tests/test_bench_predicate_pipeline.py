@@ -26,7 +26,6 @@ from scripts.bench_predicate_pipeline import (  # noqa: E402
     _percentiles,
 )
 
-
 # ---------------------------------------------------------------------------
 # _pct — nearest-rank single-percentile
 # ---------------------------------------------------------------------------

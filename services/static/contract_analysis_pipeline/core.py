@@ -95,9 +95,7 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
 
     permission_graph = build_permission_graph(subject_contract, project_dir)
     classification = _detect_contract_classification(subject_contract, project_dir)
-    access_control = _detect_access_control(
-        subject_contract, project_dir, permission_graph, v2_predicate_trees
-    )
+    access_control = _detect_access_control(subject_contract, project_dir, permission_graph, v2_predicate_trees)
     controller_tracking = build_controller_tracking(subject_contract, project_dir, permission_graph, access_control)
     policy_tracking = build_policy_tracking(subject_contract, project_dir, permission_graph)
     upgradeability = _detect_upgradeability(subject_contract, project_dir)

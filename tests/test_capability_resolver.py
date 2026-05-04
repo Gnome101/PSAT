@@ -17,9 +17,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_DB_URL: str = (
-    os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
-)
+_DB_URL: str = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
 
 
 def _can_connect() -> bool:
@@ -37,9 +35,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 @pytest.fixture
@@ -117,9 +113,7 @@ def _seed_contract(session, *, address: str):
 def test_resolve_returns_none_when_no_completed_job(session):
     from services.resolution.capability_resolver import resolve_contract_capabilities
 
-    out = resolve_contract_capabilities(
-        session, address="0x" + "ee" * 20, chain_id=1
-    )
+    out = resolve_contract_capabilities(session, address="0x" + "ee" * 20, chain_id=1)
     assert out is None
 
 
@@ -184,7 +178,6 @@ def test_resolve_yields_finite_set_with_role_grants_repo(session):
     AccessControlAdapter promotes from lower_bound when the role
     domain seeds the default admin and the repo has data)."""
     from db.models import RoleGrantsCursor, RoleGrantsEvent
-
     from services.resolution.capability_resolver import resolve_contract_capabilities
 
     address = "0x" + uuid.uuid4().hex[:8] + "02" * 16

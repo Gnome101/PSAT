@@ -26,11 +26,10 @@ Resolution path:
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
 from ..capabilities import CapabilityExpr, ExternalCheck
 from . import EnumerationResult, EvaluationContext
-
 
 # canPerform(address,address,bytes32,uint256[])
 ARAGON_CAN_PERFORM_SELECTOR = "0xfdef9106"

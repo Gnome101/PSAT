@@ -879,9 +879,7 @@ class RoleGrantsEvent(Base):
     __tablename__ = "role_grants_events"
 
     chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True)
     tx_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
     log_index: Mapped[int] = mapped_column(Integer, primary_key=True)
     role: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
@@ -890,9 +888,7 @@ class RoleGrantsEvent(Base):
     block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
     block_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
     transaction_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    detected_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index(
@@ -923,9 +919,7 @@ class RoleGrantsCursor(Base):
     __tablename__ = "role_grants_cursors"
 
     chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    contract_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True
-    )
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True)
     last_indexed_block: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
     last_indexed_block_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32), nullable=True)
     last_run_at: Mapped[datetime] = mapped_column(
@@ -955,9 +949,7 @@ class AragonAclEvent(Base):
     block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
     block_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
     transaction_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    detected_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index(

@@ -831,8 +831,7 @@ def _detect_access_control(
             "guards": list(graph_entry["guards"]) if graph_entry else [],
             "guard_kinds": graph_entry["guard_kinds"] if graph_entry else [],
             "controller_refs": _dedupe_strings(
-                (graph_entry["controller_refs"] if graph_entry else [])
-                + target_controller_refs
+                (graph_entry["controller_refs"] if graph_entry else []) + target_controller_refs
             ),
             "sink_ids": graph_entry["sink_ids"] if graph_entry else [],
             "effects": effects,

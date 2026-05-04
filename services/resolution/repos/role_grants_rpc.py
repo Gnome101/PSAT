@@ -23,7 +23,6 @@ from workers.role_grants_indexer import (
     event_direction,
 )
 
-
 # Free-tier RPC limit used by the existing watchers. Keeps requests
 # safe across providers (Alchemy free tier caps at 10k blocks; some
 # providers cap lower).
@@ -115,9 +114,7 @@ class RpcBlockHashFetcher:
 
     def block_hash(self, *, chain_id: int, block_number: int) -> bytes | None:
         try:
-            block = rpc_request(
-                self.rpc_url, "eth_getBlockByNumber", [hex(block_number), False]
-            )
+            block = rpc_request(self.rpc_url, "eth_getBlockByNumber", [hex(block_number), False])
         except Exception:
             return None
         if not isinstance(block, dict):

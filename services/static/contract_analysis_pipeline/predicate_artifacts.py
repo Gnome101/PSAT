@@ -31,7 +31,6 @@ from .predicates import _helper_engine_cache, build_predicate_tree
 from .reentrancy_pause import apply_reentrancy_pause_pass
 from .writer_gate import apply_writer_gate_pass
 
-
 SCHEMA_VERSION = "v2"
 
 

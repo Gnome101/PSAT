@@ -21,7 +21,7 @@ with the event topic as the probe interface.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
 from ..capabilities import CapabilityExpr, ExternalCheck
 from . import EnumerationResult, EvaluationContext

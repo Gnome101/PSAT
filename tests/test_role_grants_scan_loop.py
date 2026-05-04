@@ -23,9 +23,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_DB_URL: str = (
-    os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
-)
+_DB_URL: str = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
 
 
 def _can_connect() -> bool:
@@ -43,9 +41,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +169,6 @@ def session_with_two_contracts():
 @requires_postgres
 def test_enroll_contract_idempotent(session_with_two_contracts):
     from db.models import RoleGrantsCursor
-
     from workers.role_grants_indexer import enroll_contract
 
     session, (a_id, _), _ = session_with_two_contracts
@@ -181,11 +176,7 @@ def test_enroll_contract_idempotent(session_with_two_contracts):
     session.commit()
     enroll_contract(session, chain_id=1, contract_id=a_id)
     session.commit()
-    rows = (
-        session.query(RoleGrantsCursor)
-        .filter_by(chain_id=1, contract_id=a_id)
-        .all()
-    )
+    rows = session.query(RoleGrantsCursor).filter_by(chain_id=1, contract_id=a_id).all()
     assert len(rows) == 1
     assert rows[0].last_indexed_block == 0
 
@@ -193,7 +184,6 @@ def test_enroll_contract_idempotent(session_with_two_contracts):
 @requires_postgres
 def test_scan_iterates_all_cursors_and_caches_head(session_with_two_contracts):
     from db.models import RoleGrantsEvent
-
     from workers.role_grants_indexer import enroll_contract, scan_enrolled_contracts
 
     session, (a_id, a_addr), (b_id, b_addr) = session_with_two_contracts
@@ -202,30 +192,34 @@ def test_scan_iterates_all_cursors_and_caches_head(session_with_two_contracts):
     session.commit()
 
     role = b"\x11" * 32
-    a_logs = FakeLogFetcher([
-        _FakeLog(
-            block_number=100,
-            block_hash=b"\xaa" * 32,
-            tx_hash=b"\x01" * 32,
-            log_index=0,
-            transaction_index=0,
-            role=role,
-            member="0x" + "11" * 20,
-            direction="grant",
-        ),
-    ])
-    b_logs = FakeLogFetcher([
-        _FakeLog(
-            block_number=200,
-            block_hash=b"\xbb" * 32,
-            tx_hash=b"\x02" * 32,
-            log_index=0,
-            transaction_index=0,
-            role=role,
-            member="0x" + "22" * 20,
-            direction="grant",
-        ),
-    ])
+    a_logs = FakeLogFetcher(
+        [
+            _FakeLog(
+                block_number=100,
+                block_hash=b"\xaa" * 32,
+                tx_hash=b"\x01" * 32,
+                log_index=0,
+                transaction_index=0,
+                role=role,
+                member="0x" + "11" * 20,
+                direction="grant",
+            ),
+        ]
+    )
+    b_logs = FakeLogFetcher(
+        [
+            _FakeLog(
+                block_number=200,
+                block_hash=b"\xbb" * 32,
+                tx_hash=b"\x02" * 32,
+                log_index=0,
+                transaction_index=0,
+                role=role,
+                member="0x" + "22" * 20,
+                direction="grant",
+            ),
+        ]
+    )
 
     # Same fetcher per chain — but real production wires one per
     # chain, NOT per contract. To simulate per-contract fan-out
@@ -277,7 +271,6 @@ def test_scan_isolates_failures(session_with_two_contracts):
     """An RPC error on one contract rolls back only that pass —
     the other contract still processes."""
     from db.models import RoleGrantsEvent
-
     from workers.role_grants_indexer import enroll_contract, scan_enrolled_contracts
 
     session, (a_id, a_addr), (b_id, b_addr) = session_with_two_contracts
@@ -286,18 +279,20 @@ def test_scan_isolates_failures(session_with_two_contracts):
     session.commit()
 
     role = b"\x33" * 32
-    good_logs = FakeLogFetcher([
-        _FakeLog(
-            block_number=100,
-            block_hash=b"\xcc" * 32,
-            tx_hash=b"\x03" * 32,
-            log_index=0,
-            transaction_index=0,
-            role=role,
-            member="0x" + "33" * 20,
-            direction="grant",
-        ),
-    ])
+    good_logs = FakeLogFetcher(
+        [
+            _FakeLog(
+                block_number=100,
+                block_hash=b"\xcc" * 32,
+                tx_hash=b"\x03" * 32,
+                log_index=0,
+                transaction_index=0,
+                role=role,
+                member="0x" + "33" * 20,
+                direction="grant",
+            ),
+        ]
+    )
     bad = ExplodingLogFetcher()
 
     class Dispatcher:

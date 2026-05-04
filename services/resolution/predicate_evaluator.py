@@ -30,7 +30,6 @@ from typing import Any, Protocol
 
 from services.static.contract_analysis_pipeline.predicate_types import (
     LeafPredicate,
-    Operand,
     PredicateTree,
     SetDescriptor,
 )
@@ -43,7 +42,6 @@ from .capabilities import (
     negate,
     union,
 )
-
 
 # ---------------------------------------------------------------------------
 # Adapter protocol (placeholder — week-5 fully-typed registry replaces this)
@@ -239,7 +237,6 @@ def _resolve_equality_principal(leaf: LeafPredicate) -> CapabilityExpr:
         return CapabilityExpr.unsupported(f"equality_constant_non_address_{val}")
 
     if src == "state_variable":
-        name = op.get("state_variable_name") or "?"
         # Adapter would resolve via on-chain read; placeholder for week 5.
         return CapabilityExpr.finite_set(
             [],

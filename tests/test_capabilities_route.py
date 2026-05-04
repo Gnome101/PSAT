@@ -35,9 +35,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 def _seed_completed_job_with_artifact(db_session, *, address: str, predicate_trees):
@@ -88,9 +86,7 @@ def _equality_leaf_artifact(contract_name: str = "T") -> dict:
 @requires_postgres
 def test_capabilities_returns_per_function_dict(api_client, db_session):
     address = "0x" + uuid.uuid4().hex[:8] + "a1" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
 
     resp = api_client.get(f"/api/contract/{address}/capabilities")
     assert resp.status_code == 200, resp.text
@@ -118,9 +114,7 @@ def test_capabilities_returns_404_for_legacy_pre_v2_contract(api_client, db_sess
     pre-v2 analysis). The route returns 404 with the documented
     fallback note so a UI knows to query the v1 endpoints."""
     address = "0x" + uuid.uuid4().hex[:8] + "b2" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=None
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=None)
     resp = api_client.get(f"/api/contract/{address}/capabilities")
     assert resp.status_code == 404
     assert "predates the schema-v2 emit" in resp.json()["detail"]
@@ -148,12 +142,8 @@ def test_capabilities_block_query_param(api_client, db_session):
     """``block=N`` supports point-in-time queries — the response
     echoes the block back so a UI can display 'as of block N'."""
     address = "0x" + uuid.uuid4().hex[:8] + "d4" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
-    resp = api_client.get(
-        f"/api/contract/{address}/capabilities", params={"block": 18_000_000}
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
+    resp = api_client.get(f"/api/contract/{address}/capabilities", params={"block": 18_000_000})
     assert resp.status_code == 200
     assert resp.json()["block"] == 18_000_000
 
@@ -163,12 +153,8 @@ def test_capabilities_chain_id_query_param(api_client, db_session):
     """``chain_id`` defaults to 1 (mainnet) but is overridable for
     multi-chain contracts."""
     address = "0x" + uuid.uuid4().hex[:8] + "e5" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
-    resp = api_client.get(
-        f"/api/contract/{address}/capabilities", params={"chain_id": 137}
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
+    resp = api_client.get(f"/api/contract/{address}/capabilities", params={"chain_id": 137})
     assert resp.status_code == 200
     assert resp.json()["chain_id"] == 137
 
@@ -178,9 +164,7 @@ def test_capabilities_response_includes_data_freshness(api_client, db_session, m
     """The response carries a ``data_freshness`` block summarizing
     the indexer cursor for the contract. UI uses this to render
     'data current as of block X' and warn if it's stale."""
-    import api as api_module
     from db.models import Contract, Protocol, RoleGrantsCursor
-
     from routers import v2 as v2_module
 
     v2_module._capabilities_cache.clear()
@@ -206,9 +190,7 @@ def test_capabilities_response_includes_data_freshness(api_client, db_session, m
     )
     db_session.commit()
 
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
 
     resp = api_client.get(f"/api/contract/{address}/capabilities")
     assert resp.status_code == 200, resp.text
@@ -225,7 +207,6 @@ def test_capabilities_response_freshness_null_when_no_cursor(api_client, db_sess
     """No RoleGrantsCursor -> data_freshness.role_grants is null
     (legacy pre-v2 contract or AC contract not yet enrolled in
     the indexer)."""
-    import api as api_module
 
     from routers import v2 as v2_module
 
@@ -233,9 +214,7 @@ def test_capabilities_response_freshness_null_when_no_cursor(api_client, db_sess
     monkeypatch.setattr(v2_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)
 
     address = "0x" + uuid.uuid4().hex[:8] + "fa" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
 
     resp = api_client.get(f"/api/contract/{address}/capabilities")
     assert resp.status_code == 200
@@ -248,13 +227,10 @@ def test_capabilities_response_is_cached(api_client, db_session, monkeypatch):
     """Repeat hits within the TTL window short-circuit the
     resolver — proven by counting resolve_contract_capabilities
     invocations across two requests."""
-    import api as api_module
     from services.resolution import capability_resolver as resolver_mod
 
     address = "0x" + uuid.uuid4().hex[:8] + "ca" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
 
     # Empty the cache so the test starts clean (other tests may
     # have warmed it).
@@ -287,13 +263,10 @@ def test_capabilities_cache_ttl_disabled_when_zero(api_client, db_session, monke
     """``PSAT_CAPABILITIES_CACHE_TTL_S=0`` (or default-overridden
     to 0) disables caching entirely — every request runs the
     resolver fresh."""
-    import api as api_module
     from services.resolution import capability_resolver as resolver_mod
 
     address = "0x" + uuid.uuid4().hex[:8] + "cb" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
 
     from routers import v2 as v2_module
 
@@ -319,13 +292,10 @@ def test_capabilities_cache_keyed_on_block_and_chain(api_client, db_session, mon
     """Different ``block`` or ``chain_id`` parameters cache
     independently — no cross-contamination between e.g. mainnet
     and polygon, or between point-in-time queries."""
-    import api as api_module
     from services.resolution import capability_resolver as resolver_mod
 
     address = "0x" + uuid.uuid4().hex[:8] + "cc" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
 
     from routers import v2 as v2_module
 
@@ -363,9 +333,7 @@ def test_capabilities_route_is_not_admin_gated(api_client, db_session):
     api_module.app.dependency_overrides.pop(require_admin_key, None)
 
     address = "0x" + uuid.uuid4().hex[:8] + "f6" * 16
-    _seed_completed_job_with_artifact(
-        db_session, address=address, predicate_trees=_equality_leaf_artifact()
-    )
+    _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
     # Send with no X-PSAT-Admin-Key header -> still 200.
     resp = api_client.get(f"/api/contract/{address}/capabilities")
     assert resp.status_code == 200

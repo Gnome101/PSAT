@@ -53,7 +53,6 @@ from services.static.contract_analysis_pipeline.semantic_guards import (  # noqa
     synthesize_semantic_guards_from_predicate_trees,
 )
 
-
 # ---------------------------------------------------------------------------
 # Project scaffold (mirrors test_contract_analysis._write_project but inline)
 # ---------------------------------------------------------------------------
@@ -76,9 +75,7 @@ def _write_project(tmp_path: Path, *, contract_name: str, source_code: str) -> P
         )
         + "\n"
     )
-    (project_dir / "slither_results.json").write_text(
-        json.dumps({"results": {"detectors": []}}) + "\n"
-    )
+    (project_dir / "slither_results.json").write_text(json.dumps({"results": {"detectors": []}}) + "\n")
     return project_dir
 
 
@@ -145,7 +142,6 @@ def _assert_equivalent(v1: dict, v2: dict, *, contract_name: str) -> None:
     v2_priv = _privileged(v2)
 
     v1_only = v1_priv - v2_priv
-    v2_only = v2_priv - v1_priv
     if v1_only:
         pytest.fail(
             f"[{contract_name}] v1 flagged {sorted(v1_only)} as privileged but "
@@ -540,9 +536,7 @@ _FIXTURES = [
 
 @pytest.mark.parametrize("contract_name,source", _FIXTURES, ids=lambda x: x if isinstance(x, str) else None)
 def test_v1_v2_semantic_guards_equivalent(tmp_path, contract_name, source):
-    project_dir = _write_project(
-        tmp_path, contract_name="C", source_code=textwrap.dedent(source).strip() + "\n"
-    )
+    project_dir = _write_project(tmp_path, contract_name="C", source_code=textwrap.dedent(source).strip() + "\n")
     v1 = _v1_emit(project_dir)
     v2 = _v2_emit(project_dir, "C")
 
@@ -557,9 +551,7 @@ def test_assert_equivalent_detects_regression(tmp_path):
     dict that DROPS a function v1 marks privileged; the
     comparison must fail."""
     v1 = {
-        "functions": [
-            {"function": "f()", "status": "resolved", "predicates": [{"kind": "caller_equals_controller"}]}
-        ]
+        "functions": [{"function": "f()", "status": "resolved", "predicates": [{"kind": "caller_equals_controller"}]}]
     }
     v2 = {"_synthetic_from": "v2_predicate_trees", "functions": []}
     with pytest.raises(pytest.fail.Exception, match="REGRESSION"):
@@ -571,9 +563,7 @@ def test_assert_equivalent_allows_new_coverage(tmp_path):
     v1 = {"functions": []}
     v2 = {
         "_synthetic_from": "v2_predicate_trees",
-        "functions": [
-            {"function": "f()", "status": "resolved", "predicates": [{"kind": "caller_equals_controller"}]}
-        ],
+        "functions": [{"function": "f()", "status": "resolved", "predicates": [{"kind": "caller_equals_controller"}]}],
     }
     _assert_equivalent(v1, v2, contract_name="X")  # must not raise
 

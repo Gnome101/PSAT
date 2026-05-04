@@ -16,9 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_DB_URL: str = (
-    os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
-)
+_DB_URL: str = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
 
 
 def _can_connect() -> bool:
@@ -36,9 +34,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 @pytest.fixture
@@ -127,9 +123,15 @@ def test_members_for_role_replays_grant_then_revoke(session_with_contract):
     role = b"\x01" * 32
     addr_a = "0x" + "11" * 20
     addr_b = "0x" + "22" * 20
-    _add_event(session, contract_id=contract_id, role=role, member=addr_a, direction="grant", block_number=100, log_index=0)
-    _add_event(session, contract_id=contract_id, role=role, member=addr_b, direction="grant", block_number=200, log_index=0)
-    _add_event(session, contract_id=contract_id, role=role, member=addr_a, direction="revoke", block_number=300, log_index=0)
+    _add_event(
+        session, contract_id=contract_id, role=role, member=addr_a, direction="grant", block_number=100, log_index=0
+    )
+    _add_event(
+        session, contract_id=contract_id, role=role, member=addr_b, direction="grant", block_number=200, log_index=0
+    )
+    _add_event(
+        session, contract_id=contract_id, role=role, member=addr_a, direction="revoke", block_number=300, log_index=0
+    )
     session.commit()
 
     repo = PostgresRoleGrantsRepo(session)
@@ -147,8 +149,12 @@ def test_members_for_role_block_filter(session_with_contract):
     session, contract_id, addr = session_with_contract
     role = b"\x02" * 32
     member = "0x" + "33" * 20
-    _add_event(session, contract_id=contract_id, role=role, member=member, direction="grant", block_number=100, log_index=0)
-    _add_event(session, contract_id=contract_id, role=role, member=member, direction="revoke", block_number=300, log_index=0)
+    _add_event(
+        session, contract_id=contract_id, role=role, member=member, direction="grant", block_number=100, log_index=0
+    )
+    _add_event(
+        session, contract_id=contract_id, role=role, member=member, direction="revoke", block_number=300, log_index=0
+    )
     session.commit()
 
     repo = PostgresRoleGrantsRepo(session)
@@ -186,17 +192,23 @@ def test_members_for_role_unknown_contract_returns_empty():
 
 @requires_postgres
 def test_has_member_returns_yes_no_unknown(session_with_contract):
-    from services.resolution.repos.role_grants_pg import PostgresRoleGrantsRepo
     from services.resolution.adapters import Trit
+    from services.resolution.repos.role_grants_pg import PostgresRoleGrantsRepo
 
     session, contract_id, addr = session_with_contract
     role = b"\x03" * 32
     granted = "0x" + "44" * 20
     revoked = "0x" + "55" * 20
     never = "0x" + "66" * 20
-    _add_event(session, contract_id=contract_id, role=role, member=granted, direction="grant", block_number=100, log_index=0)
-    _add_event(session, contract_id=contract_id, role=role, member=revoked, direction="grant", block_number=110, log_index=0)
-    _add_event(session, contract_id=contract_id, role=role, member=revoked, direction="revoke", block_number=120, log_index=0)
+    _add_event(
+        session, contract_id=contract_id, role=role, member=granted, direction="grant", block_number=100, log_index=0
+    )
+    _add_event(
+        session, contract_id=contract_id, role=role, member=revoked, direction="grant", block_number=110, log_index=0
+    )
+    _add_event(
+        session, contract_id=contract_id, role=role, member=revoked, direction="revoke", block_number=120, log_index=0
+    )
     session.commit()
 
     repo = PostgresRoleGrantsRepo(session)
@@ -224,9 +236,15 @@ def test_list_observed_roles_distinct(session_with_contract):
     role_a = b"\xa0" * 32
     role_b = b"\xb0" * 32
     member = "0x" + "77" * 20
-    _add_event(session, contract_id=contract_id, role=role_a, member=member, direction="grant", block_number=100, log_index=0)
-    _add_event(session, contract_id=contract_id, role=role_a, member=member, direction="revoke", block_number=110, log_index=0)
-    _add_event(session, contract_id=contract_id, role=role_b, member=member, direction="grant", block_number=120, log_index=0)
+    _add_event(
+        session, contract_id=contract_id, role=role_a, member=member, direction="grant", block_number=100, log_index=0
+    )
+    _add_event(
+        session, contract_id=contract_id, role=role_a, member=member, direction="revoke", block_number=110, log_index=0
+    )
+    _add_event(
+        session, contract_id=contract_id, role=role_b, member=member, direction="grant", block_number=120, log_index=0
+    )
     session.commit()
 
     repo = PostgresRoleGrantsRepo(session)
@@ -253,7 +271,6 @@ def test_members_for_role_uses_cursor_for_last_indexed_block(session_with_contra
     capabilities should still report the cursor as the freshness
     marker."""
     from db.models import RoleGrantsCursor
-
     from services.resolution.repos.role_grants_pg import PostgresRoleGrantsRepo
 
     session, contract_id, addr = session_with_contract

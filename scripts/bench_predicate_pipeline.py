@@ -33,8 +33,8 @@ import argparse
 import json
 import statistics
 import sys
-import textwrap
 import tempfile
+import textwrap
 import time
 from pathlib import Path
 from typing import Any
@@ -236,8 +236,7 @@ def _bench_one_fixture(name: str, source: str, *, runs: int) -> dict[str, Any]:
         functions = [
             fn
             for fn in contract.functions
-            if getattr(fn, "visibility", None) in ("external", "public")
-            and not getattr(fn, "is_constructor", False)
+            if getattr(fn, "visibility", None) in ("external", "public") and not getattr(fn, "is_constructor", False)
         ]
 
         registry = AdapterRegistry()
@@ -334,22 +333,16 @@ def run_benchmark(*, runs: int, fixture_filter: str | None = None) -> dict[str, 
 def _format_text(report: dict[str, Any]) -> str:
     lines: list[str] = []
     lines.append(
-        f"Predicate-pipeline benchmark — {len(report['fixtures'])} fixtures, "
-        f"{report['runs_per_fixture']} runs each"
+        f"Predicate-pipeline benchmark — {len(report['fixtures'])} fixtures, {report['runs_per_fixture']} runs each"
     )
     lines.append("=" * 78)
-    lines.append(
-        f"  {'fixture':<24} {'fns':>4} {'build p99':>10} {'artifact p99':>13} {'eval p99':>10}"
-    )
+    lines.append(f"  {'fixture':<24} {'fns':>4} {'build p99':>10} {'artifact p99':>13} {'eval p99':>10}")
     lines.append(f"  {'-' * 24} {'-' * 4} {'-' * 10} {'-' * 13} {'-' * 10}")
     for r in report["fixtures"]:
         bp = r["build"].get("p99", 0.0)
         ap = r.get("build_artifact_per_fn", {}).get("p99", 0.0) if r.get("build_artifact_per_fn") else 0.0
         ep = r["eval"].get("p99", 0.0)
-        lines.append(
-            f"  {r['fixture']:<24} {r['function_count']:>4} "
-            f"{bp:>10.3f} {ap:>13.3f} {ep:>10.3f}"
-        )
+        lines.append(f"  {r['fixture']:<24} {r['function_count']:>4} {bp:>10.3f} {ap:>13.3f} {ep:>10.3f}")
     s = report["summary"]
     lines.append("")
     lines.append(

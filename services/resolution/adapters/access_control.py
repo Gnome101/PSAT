@@ -23,7 +23,6 @@ from typing import Any, Literal
 from ..capabilities import CapabilityExpr, Confidence
 from . import EvaluationContext
 
-
 # RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)
 ROLE_GRANTED_TOPIC0 = "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
 HAS_ROLE_SELECTOR = "0x91d14854"  # hasRole(bytes32,address)

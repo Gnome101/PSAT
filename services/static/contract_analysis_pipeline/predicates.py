@@ -48,6 +48,29 @@ try:
 except Exception:  # pragma: no cover
     SLITHER_AVAILABLE = False
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Helper-engine cache (perf optimization for cross-fn build path)
+# ---------------------------------------------------------------------------
+#
+# When ``build_predicate_artifacts`` walks every function on a
+# contract, the same helper (e.g. ``_checkRole(role)``) often
+# appears on the call_chain of multiple functions (grantRole /
+# revokeRole / renounceRole all funnel through it). Each
+# ``_build_chain_bindings`` invocation re-runs ProvenanceEngine on
+# every helper in its chain — work that's pure repetition when
+# the (callee, parameter_bindings) tuple matches a previous call.
+#
+# This contextvar holds an optional dict mapping
+# ``(callee_id, bindings_signature)`` → ``ProvenanceMap``. The
+# artifact builder sets it on entry and clears on exit; tests
+# calling ``build_predicate_tree`` directly see ``None`` and run
+# the engine as before (correctness is identical either way; the
+# cache is a pure perf optimization).
+import contextvars as _contextvars  # noqa: E402
+
 from .predicate_types import (
     AuthorityRole,
     Confidence,
@@ -71,33 +94,6 @@ from .provenance import (
     is_top,
 )
 from .revert_detect import RevertDetector, RevertGate
-
-
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Helper-engine cache (perf optimization for cross-fn build path)
-# ---------------------------------------------------------------------------
-#
-# When ``build_predicate_artifacts`` walks every function on a
-# contract, the same helper (e.g. ``_checkRole(role)``) often
-# appears on the call_chain of multiple functions (grantRole /
-# revokeRole / renounceRole all funnel through it). Each
-# ``_build_chain_bindings`` invocation re-runs ProvenanceEngine on
-# every helper in its chain — work that's pure repetition when
-# the (callee, parameter_bindings) tuple matches a previous call.
-#
-# This contextvar holds an optional dict mapping
-# ``(callee_id, bindings_signature)`` → ``ProvenanceMap``. The
-# artifact builder sets it on entry and clears on exit; tests
-# calling ``build_predicate_tree`` directly see ``None`` and run
-# the engine as before (correctness is identical either way; the
-# cache is a pure perf optimization).
-
-import contextvars as _contextvars  # noqa: E402
 
 _helper_engine_cache: _contextvars.ContextVar[dict | None] = _contextvars.ContextVar(
     "psat_predicate_helper_engine_cache", default=None
@@ -334,9 +330,7 @@ def _build_subtree_from_value(
         op_type = getattr(defining_ir, "type", None)
         if op_type == getattr(UnaryType, "BANG", "!"):
             inner_value = defining_ir.rvalue
-            flipped_polarity = (
-                "allowed_when_true" if gate.polarity == "allowed_when_false" else "allowed_when_false"
-            )
+            flipped_polarity = "allowed_when_true" if gate.polarity == "allowed_when_false" else "allowed_when_false"
             inner_gate = RevertGate(
                 kind=gate.kind,
                 condition_value=inner_value,
@@ -487,9 +481,7 @@ def _build_internal_call_leaf(
     return _classify_leaf_from_ir(inner, sub_prov, gate, callee)
 
 
-def _build_internal_call_or_and_subtree(
-    ir: Any, prov: ProvenanceMap, gate: RevertGate
-) -> PredicateTree | None:
+def _build_internal_call_or_and_subtree(ir: Any, prov: ProvenanceMap, gate: RevertGate) -> PredicateTree | None:
     """If the helper's return-defining IR is a Binary AND/OR,
     recursively build an AND/OR subtree where each child is itself
     walked through ``_build_subtree_from_value`` (so deeper
@@ -548,10 +540,7 @@ def _build_internal_call_or_and_subtree(
         call_args = list(getattr(inner, "arguments", []) or [])
         if not call_args:
             return None
-        children = [
-            _build_subtree_from_value(arg, sub_prov, gate, callee)
-            for arg in call_args
-        ]
+        children = [_build_subtree_from_value(arg, sub_prov, gate, callee) for arg in call_args]
     else:
         # Path 2: helper IS the assembly OR/AND combinator (Maker's
         # ``either`` / ``both``). Slither doesn't expose the assembly
@@ -567,8 +556,7 @@ def _build_internal_call_or_and_subtree(
             if not call_args:
                 return None
             children = [
-                _build_subtree_from_value(arg, prov, gate, gate.containing_function or callee)
-                for arg in call_args
+                _build_subtree_from_value(arg, prov, gate, gate.containing_function or callee) for arg in call_args
             ]
         else:
             # Path 4: helper is an if-else chain returning bool
@@ -604,9 +592,7 @@ def _build_internal_call_or_and_subtree(
     return make_or_node(children) if op_name == "and" else make_and_node(children)
 
 
-def _build_if_else_returns_or_children(
-    callee: Any, sub_prov: ProvenanceMap, gate: RevertGate
-) -> list[PredicateTree]:
+def _build_if_else_returns_or_children(callee: Any, sub_prov: ProvenanceMap, gate: RevertGate) -> list[PredicateTree]:
     """For helpers with an if-else chain returning bool literals/
     expressions, build OR-children — one per Return node.
 
@@ -722,9 +708,7 @@ def _detect_assembly_combinator_op(callee: Any) -> str | None:
     return None
 
 
-def _resolve_internal_call_return(
-    ir: Any, prov: ProvenanceMap
-) -> tuple[Any, ProvenanceMap, Any, Any | None] | None:
+def _resolve_internal_call_return(ir: Any, prov: ProvenanceMap) -> tuple[Any, ProvenanceMap, Any, Any | None] | None:
     """Shared helper: bind args + run sub-engine + locate return
     value's defining IR. Returns ``(callee, sub_prov, return_value,
     inner_ir)`` or None when the call can't be resolved."""
@@ -1526,9 +1510,7 @@ def _derive_confidence(leaf: LeafPredicate) -> Confidence:
     if role == "caller_authority":
         if kind == "equality" and operator == "eq":
             non_caller = [
-                o
-                for o in operands
-                if o.get("source") not in ("msg_sender", "tx_origin", "signature_recovery")
+                o for o in operands if o.get("source") not in ("msg_sender", "tx_origin", "signature_recovery")
             ]
             if any(
                 o.get("source") in ("state_variable", "view_call", "parameter", "signature_recovery")
@@ -1538,9 +1520,7 @@ def _derive_confidence(leaf: LeafPredicate) -> Confidence:
             return "medium"
         if kind == "membership" and descriptor:
             keys = descriptor.get("key_sources", []) or []
-            caller_key = any(
-                k.get("source") in ("msg_sender", "tx_origin", "signature_recovery") for k in keys
-            )
+            caller_key = any(k.get("source") in ("msg_sender", "tx_origin", "signature_recovery") for k in keys)
             if len(keys) >= 2 and caller_key:
                 # Multi-key permission table — Rule B direct promote.
                 return "high"

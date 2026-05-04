@@ -13,9 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-_DB_URL: str = (
-    os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
-)
+_DB_URL: str = os.environ.get("TEST_DATABASE_URL", os.environ.get("DATABASE_URL", "")) or ""
 
 
 def _can_connect() -> bool:
@@ -33,9 +31,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +160,6 @@ def session_with_two_acl_contracts():
 @requires_postgres
 def test_scan_iterates_all_acl_cursors_and_caches_head(session_with_two_acl_contracts):
     from db.models import AragonAclEvent
-
     from workers.aragon_acl_indexer import (
         enroll_acl_contract,
         scan_enrolled_acl_contracts,
@@ -176,32 +171,36 @@ def test_scan_iterates_all_acl_cursors_and_caches_head(session_with_two_acl_cont
     session.commit()
 
     role = b"\x11" * 32
-    a_logs = FakeLogFetcher([
-        _FakeLog(
-            block_number=100,
-            block_hash=b"\xaa" * 32,
-            tx_hash=b"\x01" * 32,
-            log_index=0,
-            transaction_index=0,
-            entity="0x" + "11" * 20,
-            app="0x" + "ee" * 20,
-            role=role,
-            allowed=True,
-        ),
-    ])
-    b_logs = FakeLogFetcher([
-        _FakeLog(
-            block_number=200,
-            block_hash=b"\xbb" * 32,
-            tx_hash=b"\x02" * 32,
-            log_index=0,
-            transaction_index=0,
-            entity="0x" + "22" * 20,
-            app="0x" + "ff" * 20,
-            role=role,
-            allowed=True,
-        ),
-    ])
+    a_logs = FakeLogFetcher(
+        [
+            _FakeLog(
+                block_number=100,
+                block_hash=b"\xaa" * 32,
+                tx_hash=b"\x01" * 32,
+                log_index=0,
+                transaction_index=0,
+                entity="0x" + "11" * 20,
+                app="0x" + "ee" * 20,
+                role=role,
+                allowed=True,
+            ),
+        ]
+    )
+    b_logs = FakeLogFetcher(
+        [
+            _FakeLog(
+                block_number=200,
+                block_hash=b"\xbb" * 32,
+                tx_hash=b"\x02" * 32,
+                log_index=0,
+                transaction_index=0,
+                entity="0x" + "22" * 20,
+                app="0x" + "ff" * 20,
+                role=role,
+                allowed=True,
+            ),
+        ]
+    )
 
     class Dispatcher:
         def fetch_logs(self, *, chain_id, contract_address, from_block, to_block):
@@ -246,7 +245,6 @@ def test_scan_iterates_all_acl_cursors_and_caches_head(session_with_two_acl_cont
 @requires_postgres
 def test_scan_isolates_failures(session_with_two_acl_contracts):
     from db.models import AragonAclEvent
-
     from workers.aragon_acl_indexer import (
         enroll_acl_contract,
         scan_enrolled_acl_contracts,
@@ -258,19 +256,21 @@ def test_scan_isolates_failures(session_with_two_acl_contracts):
     session.commit()
 
     role = b"\x33" * 32
-    good_logs = FakeLogFetcher([
-        _FakeLog(
-            block_number=100,
-            block_hash=b"\xcc" * 32,
-            tx_hash=b"\x03" * 32,
-            log_index=0,
-            transaction_index=0,
-            entity="0x" + "33" * 20,
-            app="0x" + "ee" * 20,
-            role=role,
-            allowed=True,
-        ),
-    ])
+    good_logs = FakeLogFetcher(
+        [
+            _FakeLog(
+                block_number=100,
+                block_hash=b"\xcc" * 32,
+                tx_hash=b"\x03" * 32,
+                log_index=0,
+                transaction_index=0,
+                entity="0x" + "33" * 20,
+                app="0x" + "ee" * 20,
+                role=role,
+                allowed=True,
+            ),
+        ]
+    )
     bad = ExplodingLogFetcher()
 
     class Dispatcher:

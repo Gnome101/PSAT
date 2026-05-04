@@ -379,7 +379,7 @@ def _is_authority_derived_counter(
         tree = all_trees.get(fn.full_name)
         if tree is None:
             continue
-        if (_tree_has_other_authority(tree) or _tree_has_self_admin(tree, storage_var)):
+        if _tree_has_other_authority(tree) or _tree_has_self_admin(tree, storage_var):
             has_authority_additive_writer = True
 
     return has_authority_additive_writer and not has_unguarded_settable_writer

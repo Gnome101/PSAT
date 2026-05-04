@@ -36,9 +36,7 @@ def _can_connect() -> bool:
         return False
 
 
-requires_postgres = pytest.mark.skipif(
-    not _can_connect(), reason="PostgreSQL not available"
-)
+requires_postgres = pytest.mark.skipif(not _can_connect(), reason="PostgreSQL not available")
 
 
 def _seed_protocol_with_jobs(db_session, *, name: str, addresses_with_artifacts):
@@ -158,9 +156,7 @@ def test_company_v2_capabilities_empty_when_no_completed_jobs(api_client, db_ses
 
 
 @requires_postgres
-def test_company_v2_capabilities_resolver_failure_treated_as_missing(
-    api_client, db_session, monkeypatch
-):
+def test_company_v2_capabilities_resolver_failure_treated_as_missing(api_client, db_session, monkeypatch):
     """If the resolver raises for a contract, that contract is
     counted as missing rather than 500ing the whole endpoint."""
     name = f"company_failsafe_{uuid.uuid4().hex[:6]}"
@@ -171,14 +167,10 @@ def test_company_v2_capabilities_resolver_failure_treated_as_missing(
         addresses_with_artifacts=[(addr, _v2_artifact_with_guard())],
     )
 
-    import api as api_module
-
     def _boom(*a, **kw):
         raise RuntimeError("simulated resolver failure")
 
-    monkeypatch.setattr(
-        "services.resolution.capability_resolver.resolve_contract_capabilities", _boom
-    )
+    monkeypatch.setattr("services.resolution.capability_resolver.resolve_contract_capabilities", _boom)
     # The api module imported the function lazily inside the
     # handler, so monkeypatching the module-level export is enough.
     # Ensure the api module also picks up the patch on the next call.
@@ -199,7 +191,6 @@ def test_company_v2_capabilities_route_not_admin_gated(api_client, db_session):
     endpoint is read-only and external consumers need it without
     credentials."""
     import api as api_module
-
     from routers.deps import require_admin_key
 
     api_module.app.dependency_overrides.pop(require_admin_key, None)
