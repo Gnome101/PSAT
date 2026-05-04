@@ -54,6 +54,85 @@ def analyze_contract(project_dir: Path) -> Path:
     return output_path
 
 
+def _augment_controller_tracking_from_predicate_trees(
+    controller_tracking: list,
+    subject_contract,
+    v2_predicate_trees: dict,
+) -> None:
+    """Add ``state_variable:<name>`` entries to ``controller_tracking`` for
+    every state-var operand referenced by the v2 predicate trees but not yet
+    tracked. The resolution worker reads ``controller_tracking`` to populate
+    ``controller_values`` rows; without these entries, the v2 capability
+    resolver can't enumerate operands like Ownable's ``_owner`` into
+    concrete addresses. Mutates the list in place."""
+    if not isinstance(v2_predicate_trees, dict):
+        return
+    trees = v2_predicate_trees.get("trees")
+    if not isinstance(trees, dict):
+        return
+
+    referenced: set[str] = set()
+
+    def _walk(node):
+        if not isinstance(node, dict):
+            return
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            for op in leaf.get("operands", []) or []:
+                if op.get("source") == "state_variable":
+                    name = op.get("state_variable_name")
+                    if name:
+                        referenced.add(name)
+            descriptor = leaf.get("set_descriptor") or {}
+            authority = descriptor.get("authority_contract") or {}
+            address_source = authority.get("address_source") or {}
+            if address_source.get("source") == "state_variable":
+                sv = address_source.get("state_variable_name")
+                if sv:
+                    referenced.add(sv)
+            return
+        for child in node.get("children") or []:
+            _walk(child)
+
+    for tree in trees.values():
+        _walk(tree)
+
+    if not referenced:
+        return
+
+    existing_ids = {target.get("controller_id") for target in controller_tracking}
+    # Map state-var name → its declared type, so the resolution worker can pick
+    # the right read (slot/getter/etc.). Only address-typed vars resolve into
+    # ControllerValue rows the capability evaluator can consume; non-address
+    # vars are tracked anyway so they show up in the snapshot for diagnostics.
+    state_vars_by_name = {sv.name: sv for sv in getattr(subject_contract, "state_variables_ordered", [])}
+    for name in sorted(referenced):
+        controller_id = f"state_variable:{name}"
+        if controller_id in existing_ids:
+            continue
+        sv = state_vars_by_name.get(name)
+        type_str = str(getattr(sv, "type", "")) if sv is not None else ""
+        controller_tracking.append(
+            {
+                "controller_id": controller_id,
+                "label": name,
+                "source": name,
+                "kind": "state_variable",
+                "read_spec": {
+                    "kind": "state_variable",
+                    "state_variable_name": name,
+                    "type": type_str,
+                },
+                "tracking_mode": "state_only",
+                "associated_events": [],
+                "writer_functions": [],
+                "polling_sources": [name],
+                "notes": ["added by v2 predicate-tree post-processing"],
+            }
+        )
+        existing_ids.add(controller_id)
+
+
 def _build_predicate_trees_for_project(project_dir: Path) -> dict:
     """Re-parse with Slither and run the predicate pipeline. Vyper
     projects skip the artifact (the predicate pipeline operates on
@@ -97,6 +176,18 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
     classification = _detect_contract_classification(subject_contract, project_dir)
     access_control = _detect_access_control(subject_contract, project_dir, permission_graph, v2_predicate_trees)
     controller_tracking = build_controller_tracking(subject_contract, project_dir, permission_graph, access_control)
+    # Schema-v2 augmentation: every state_variable operand referenced by a
+    # predicate tree leaf must end up resolvable via controller_values, or the
+    # capability resolver collapses to lower_bound/partial. The v1 controller-
+    # tracking heuristic misses inherited Ownable's ``_owner`` and other shapes
+    # the predicate builder catches (it walks Slither IR rather than name
+    # patterns). Add any missing state-vars so the resolution worker writes
+    # ControllerValue rows for them on the next run.
+    _augment_controller_tracking_from_predicate_trees(
+        controller_tracking,
+        subject_contract,
+        v2_predicate_trees,
+    )
     policy_tracking = build_policy_tracking(subject_contract, project_dir, permission_graph)
     upgradeability = _detect_upgradeability(subject_contract, project_dir)
     pausability = _detect_pausability(subject_contract, project_dir)
