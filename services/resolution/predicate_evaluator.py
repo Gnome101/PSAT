@@ -215,15 +215,17 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
             descriptor = leaf.get("set_descriptor")
             if descriptor is not None:
                 cap = ctx.adapter.enumerate(descriptor, ctx.contract_address)
-                # Only return the enumerated capability when it actually
-                # carries useful information. ``external_check_only`` and
-                # ``unsupported`` mean "no backend matched / no data" —
-                # surfacing those would mask the true business condition
-                # the FE needs to render. Empty lower_bound finite_set
-                # is the same: "I scanned and found nothing" with low
-                # confidence, less informative than the predicate text.
-                useful = cap.kind == "finite_set" and (bool(cap.members) or cap.membership_quality != "lower_bound")
-                if useful:
+                # Only return the enumerated capability when it has
+                # at least one concrete member. Anything else
+                # (``external_check_only``, ``unsupported``, empty
+                # ``finite_set`` regardless of quality) means "no
+                # useful data" — and a side-condition leaf's
+                # description is more informative than an empty
+                # principal list. Codex review #3 caught the
+                # ``finite_set([], exact)`` case where a genuinely-
+                # business predicate could silently lose its
+                # description; gating on ``cap.members`` fixes it.
+                if cap.kind == "finite_set" and cap.members:
                     return cap
         cond = _condition_from_leaf(leaf)
         return CapabilityExpr.conditional_universal(cond)

@@ -21,7 +21,16 @@ Caveats encoded in the adapter:
     → return ``external_check_only`` with ``basis=["abi_decode_failed"]``.
     Honest fallback rather than a wrong empty set.
   * ``staticcall`` and reverted calls (non-empty ``error``) skipped.
-  * ``delegatecall`` writes counted (proxy upgrade pattern).
+  * **Proxy + delegatecall: known limitation.** The production trace
+    fetcher (``repos/mapping_value_hypersync.HyperSyncTraceFetcher``)
+    queries traces with ``to == subject_address``. For UUPS / TUP
+    proxies the actual write happens in a child trace with
+    ``to == implementation_address, call_type == delegatecall`` —
+    that trace is filtered out at the fetcher boundary, so the
+    adapter never sees it and the population looks empty. Full
+    proxy support requires resolving the EIP-1967 implementation
+    address and adding it to the trace ``to`` filter; until then
+    the adapter only handles non-proxy contracts. Codex review #2.
   * Constructor / create traces included so initial assignments
     are captured.
 """

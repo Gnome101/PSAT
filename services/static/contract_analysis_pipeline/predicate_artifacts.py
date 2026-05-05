@@ -130,8 +130,24 @@ def _walk_and_annotate(node: Any, by_mapping: dict[str, list[str]]) -> None:
             leaf = node.get("leaf") or {}
             descriptor = leaf.get("set_descriptor") or {}
             mapping = descriptor.get("storage_var")
-            if descriptor.get("value_predicate") and mapping in by_mapping and not descriptor.get("writer_selectors"):
-                descriptor["writer_selectors"] = list(by_mapping[mapping])
+            if mapping in by_mapping and not descriptor.get("writer_selectors"):
+                # Attach for any mapping_membership descriptor whose
+                # storage var has a writer-event signature — value-
+                # predicate descriptors (PR D.1) and Maker-wards-style
+                # 1-key bool mappings both need the trace adapter when
+                # no event hint is present. The adapter only matches
+                # when ``value_predicate`` is also set, so for the
+                # bool case (``if (m[k]) revert``) we synthesize a
+                # "any_nonzero" predicate — semantically "key is in
+                # the set iff its latest value is truthy."
+                if descriptor.get("kind") == "mapping_membership":
+                    descriptor["writer_selectors"] = list(by_mapping[mapping])
+                    if not descriptor.get("value_predicate") and leaf.get("kind") == "membership":
+                        descriptor["value_predicate"] = {
+                            "op": "any_nonzero",
+                            "rhs_values": [],
+                            "value_type": "uint256",
+                        }
         for child in node.get("children") or []:
             _walk_and_annotate(child, by_mapping)
 

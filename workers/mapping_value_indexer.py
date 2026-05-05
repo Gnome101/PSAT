@@ -1,5 +1,22 @@
 """Indexer for mapping-value set events (D.3).
 
+Status: **building blocks only**, same shape as
+``workers/role_grants_indexer.py``. Both expose
+``index_*_step`` + ``enroll_contract`` and a
+``scan_enrolled_contracts`` driver, but neither is currently invoked
+from a long-running worker entrypoint — the role-grants indexer has
+the same wire-up gap. When a scheduler is added (a recurring task
+that reads enrolled cursors and calls ``index_mapping_values_step``
+for each), this module is ready. Until then ``MappingValueEvent``
+rows only appear via tests; the resolver's ``PostgresMappingValueRepo``
+read path silently returns 0 rows in production and the
+``EventIndexedAdapter`` falls through to the on-demand HyperSync
+replay (D.2).
+
+Codex review #1 flagged this honestly. The fix is a separate piece
+of ops work, not a D-introduced regression — same pattern was true
+for role_grants pre-D.
+
 Mirrors ``workers/role_grants_indexer.py`` exactly: per-(chain_id,
 contract_id), the indexer:
 

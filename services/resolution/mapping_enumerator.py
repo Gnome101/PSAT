@@ -699,12 +699,26 @@ def enumerate_mapping_values_sync(
     value_predicate: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> EnumerationValueResult:
-    """Sync wrapper for ``enumerate_mapping_values`` with the same
-    two-tier cache as the present-set path. ``value_predicate``
-    participates in the cache fingerprint via
-    ``mapping_enumeration_cache.specs_fingerprint``, so the same
-    address scanned with two different predicates produces two
-    independent cache rows."""
+    """Sync wrapper for ``enumerate_mapping_values``.
+
+    L1 (in-process) cache only. L2 / Postgres caching for the value
+    path is deferred — ``MappingEnumerationCache`` is shaped for the
+    add/remove ``EnumerationResult`` and the value-aware fold
+    produces a different shape (``EnumerationValueResult``). Wiring
+    L2 here would require either widening the cache schema or
+    serializing ``EnumerationValueResult`` into the existing
+    columns, neither of which is worth doing while the durable
+    indexer (D.3 ``mapping_value_events``) is the long-term home
+    for cross-process value reads.
+
+    ``chain``, ``value_predicate``, and the dict-converted writer
+    specs are accepted for forward-compatibility — the
+    ``specs_fingerprint`` extension at
+    ``db/mapping_enumeration_cache.py:51`` already accepts a
+    ``value_predicate`` kwarg, so once the L2 schema lands here the
+    fingerprint will key on it. Until then they're pass-through
+    arguments only.
+    """
     cache_key = contract_address.lower()
     now = time.monotonic()
 

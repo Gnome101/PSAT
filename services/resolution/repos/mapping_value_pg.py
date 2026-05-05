@@ -112,11 +112,19 @@ class PostgresMappingValueRepo:
         mapping names. Cheaper than a window function for the small
         per-mapping cardinalities we expect (10s-100s of keys).
         """
+        # Order by ``(block_number, transaction_index, log_index)``:
+        # within a block, events fire in tx-index order then per-tx
+        # log-index order. Two assignments to the same key in the
+        # same tx (rare but legal — e.g. a multicall that sets twice)
+        # need the per-tx position to break the tie correctly. Codex
+        # review surfaced ``transaction_index`` as a stored-but-unused
+        # column; it's now part of the canonical ordering.
         q = (
             select(
                 MappingValueEvent.key_hex,
                 MappingValueEvent.value_hex,
                 MappingValueEvent.block_number,
+                MappingValueEvent.transaction_index,
                 MappingValueEvent.log_index,
             )
             .where(MappingValueEvent.chain_id == chain_id)
@@ -124,13 +132,14 @@ class PostgresMappingValueRepo:
             .where(MappingValueEvent.mapping_name.in_(mapping_names))
             .order_by(
                 MappingValueEvent.block_number.asc(),
+                MappingValueEvent.transaction_index.asc(),
                 MappingValueEvent.log_index.asc(),
             )
         )
         if block is not None:
             q = q.where(MappingValueEvent.block_number <= block)
         latest: dict[str, str] = {}
-        for key_hex, value_hex, _block, _log in self.session.execute(q).all():
+        for key_hex, value_hex, _block, _tx_idx, _log in self.session.execute(q).all():
             latest[key_hex.lower()] = value_hex
         return latest
 

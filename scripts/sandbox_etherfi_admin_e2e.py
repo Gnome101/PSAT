@@ -50,23 +50,41 @@ contract EtherFiAdminLike {
     // OZ Ownable shape — _owner state var, transferOwnership/renounceOwnership
     address private _owner;
     bool public paused;
+    uint256 private _reentrancyStatus;
     mapping(address => uint256) public balances;
+    mapping(address => bool) public delegators;
     IRoleRegistry public roleRegistry;
 
     bytes32 public constant PROTOCOL_PAUSER = keccak256("PROTOCOL_PAUSER");
+    bytes32 public constant PROTOCOL_ADMIN = keccak256("PROTOCOL_ADMIN");
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event Paused();
+    event Unpaused();
     event BalanceSet(address indexed user, uint256 amount);
+    event DelegatorSet(address indexed who, bool allowed);
 
     constructor(address registry_) {
         _owner = msg.sender;
         roleRegistry = IRoleRegistry(registry_);
+        _reentrancyStatus = 1;
     }
 
     modifier onlyOwner() {
         require(msg.sender == _owner, "not owner");
         _;
+    }
+
+    modifier whenNotPaused() {
+        require(!paused, "paused");
+        _;
+    }
+
+    modifier nonReentrant() {
+        require(_reentrancyStatus != 2, "reentrancy");
+        _reentrancyStatus = 2;
+        _;
+        _reentrancyStatus = 1;
     }
 
     function owner() public view returns (address) {
@@ -98,12 +116,43 @@ contract EtherFiAdminLike {
         emit Paused();
     }
 
+    // whenNotPaused + role check — exercises pause-side-condition.
+    function unpauseContract() external whenNotPaused {
+        // Inverted: callable only if NOT paused, by PROTOCOL_ADMIN.
+        require(roleRegistry.hasRole(PROTOCOL_ADMIN, msg.sender), "not admin");
+        paused = false;
+        emit Unpaused();
+    }
+
+    // Multi-role OR — pauser OR admin can drain.
+    function emergencyAction() external nonReentrant {
+        require(
+            roleRegistry.hasRole(PROTOCOL_PAUSER, msg.sender)
+                || roleRegistry.hasRole(PROTOCOL_ADMIN, msg.sender),
+            "no role"
+        );
+        // ... emergency logic ...
+    }
+
     // Value predicate (PR D.1+): caller must hold balance >= 10 to set
     // someone else's balance. Polarity-folded into op="gte", rhs=["10"].
-    function setBalance(address user, uint256 amount) external {
+    function setBalance(address user, uint256 amount) external whenNotPaused {
         if (balances[msg.sender] < 10) revert();
         balances[user] = amount;
         emit BalanceSet(user, amount);
+    }
+
+    // Bool-mapping membership: ``delegators[msg.sender] == true``.
+    function delegate(address target) external {
+        require(delegators[msg.sender], "not delegator");
+        // ... delegation logic ...
+        target;
+    }
+
+    // Owner-managed bool-mapping: only owner adds delegators.
+    function setDelegator(address who, bool allowed) external onlyOwner {
+        delegators[who] = allowed;
+        emit DelegatorSet(who, allowed);
     }
 }
 """
@@ -170,10 +219,14 @@ def main() -> int:
 
         alice = "0x" + "11" * 20
         eve = "0x" + "22" * 20
-        set_balance_selector = "0xe30443bc"  # keccak256("setBalance(address,uint256)")[:4]
+        bob = "0x" + "33" * 20
+        from eth_utils.crypto import keccak
 
-        def _trace(caller: str, value: int, block: int) -> FetchedTrace:
-            body = encode(["address", "uint256"], [caller, value]).hex()
+        set_balance_selector = "0x" + keccak(text="setBalance(address,uint256)").hex()[:8]
+        set_delegator_selector = "0x" + keccak(text="setDelegator(address,bool)").hex()[:8]
+
+        def _balance_trace(user: str, value: int, block: int) -> FetchedTrace:
+            body = encode(["address", "uint256"], [user, value]).hex()
             return FetchedTrace(
                 block_number=block,
                 transaction_index=0,
@@ -183,11 +236,26 @@ def main() -> int:
                 error=None,
             )
 
+        def _delegator_trace(who: str, allowed: bool, block: int) -> FetchedTrace:
+            body = encode(["address", "bool"], [who, allowed]).hex()
+            return FetchedTrace(
+                block_number=block,
+                transaction_index=0,
+                trace_address=(0,),
+                input_data=set_delegator_selector + body,
+                call_type="call",
+                error=None,
+            )
+
         class _StubTraceFetcher:
             def fetch_traces(self, **_):
                 return [
-                    _trace(alice, 50, block=100),
-                    _trace(eve, 3, block=101),
+                    _balance_trace(alice, 50, block=100),
+                    _balance_trace(eve, 3, block=101),
+                    # bob became a delegator; eve was added then revoked.
+                    _delegator_trace(bob, True, block=200),
+                    _delegator_trace(eve, True, block=201),
+                    _delegator_trace(eve, False, block=202),
                 ]
 
         ctx = EvaluationContext(
