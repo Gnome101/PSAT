@@ -169,6 +169,17 @@ def _build_subtree_from_gate(
         )
         return make_leaf_node(leaf)
 
+    if gate.kind == "external_authority_call":
+        # ``state_var.fn(msg.sender, ...)`` void call — the local fn
+        # reverts iff the callee reverts. Build an external_bool leaf
+        # whose descriptor records the registry state-var + the function
+        # name so the resolver can either (a) hash the function name as
+        # a role identifier and look up role_grants_events, or (b) load
+        # the registry's predicate_trees and inline its function under
+        # the original caller's msg.sender (B.5 part b).
+        leaf = _build_external_authority_call_leaf(gate)
+        return make_leaf_node(leaf)
+
     cond = gate.condition_value
     if cond is None:
         return make_leaf_node(_unsupported_leaf(reason="missing_condition", expression=gate.expression_text))
@@ -1300,6 +1311,75 @@ def _build_solidity_call_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) ->
         reason=f"solidity_call_{name}_unsupported_as_gate",
         expression=str(ir),
     )
+
+
+def _build_external_authority_call_leaf(gate: RevertGate) -> LeafPredicate:
+    """Build an ``external_bool`` leaf from a ``external_authority_call``
+    gate (a void HighLevelCall to a state-variable contract that reverts
+    on auth failure, e.g. ``roleRegistry.onlyProtocolUpgrader(msg.sender)``).
+
+    The leaf carries a ``mapping_membership`` set_descriptor so the
+    AccessControlAdapter's existing matches/enumerate path is available.
+    The crucial fields:
+      * ``authority_contract.address_source`` — the state variable that
+        holds the registry contract's address. The resolver translates
+        this to the actual address via ``ctx.state_var_values`` (B.3).
+      * ``callee_function`` — the function name on the registry, e.g.
+        ``onlyProtocolUpgrader``. Used by the resolver to either
+        cross-contract-inline (load B's predicate_trees and re-evaluate)
+        or hash via the OZ ``onlyXxx`` convention.
+      * ``key_sources`` — synthetic ``[external_call:callee, msg_sender]``
+        so AC adapter's role_key_constants helper can hash the callee
+        name into a role identifier (codex-fix to A.1).
+    """
+    ir = gate.condition_value
+    callee_name = (
+        getattr(getattr(ir, "function", None), "name", None) or getattr(ir, "function_name", None) or "<unknown>"
+    )
+    destination = getattr(ir, "destination", None)
+    state_var_name = getattr(destination, "name", None) or str(destination or "")
+
+    descriptor: dict = {
+        "kind": "mapping_membership",
+        "key_sources": [
+            {"source": "external_call", "callee": callee_name},
+            {"source": "msg_sender"},
+        ],
+        "enumeration_hint": [
+            {
+                "topic0": _ROLE_GRANTED_TOPIC0,
+                "topics_to_keys": {1: 0, 2: 1},
+                "data_to_keys": {},
+                "direction": "add",
+            }
+        ],
+        "authority_contract": {
+            "address_source": {
+                "source": "state_variable",
+                "state_variable_name": state_var_name,
+            },
+            "abi_hint": "openzeppelin_access_control",
+        },
+        # Captured for cross-contract inlining (C.2): the resolver looks
+        # up B's predicate_trees and evaluates the function with this
+        # name under A's caller context.
+        "callee_function": callee_name,
+    }
+    leaf: LeafPredicate = {
+        "kind": "external_bool",
+        "operator": "truthy",
+        "authority_role": "delegated_authority",
+        "operands": [
+            {"source": "external_call", "callee": callee_name},
+            {"source": "msg_sender"},
+        ],
+        "set_descriptor": cast(SetDescriptor, descriptor),
+        "references_msg_sender": True,
+        "parameter_indices": [],
+        "expression": gate.expression_text or f"{state_var_name}.{callee_name}(msg.sender)",
+        "basis": list(gate.basis or []),
+    }
+    return leaf
 
 
 def _build_truthy_leaf(cond: Any, prov: ProvenanceMap, gate: RevertGate) -> LeafPredicate:

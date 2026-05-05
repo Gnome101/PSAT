@@ -65,6 +65,15 @@ RevertKind = Literal[
     "if_revert",
     "inline_asm",
     "try_catch_revert",
+    # ``state_var.fn(msg.sender, ...)`` HighLevelCall whose callee returns
+    # void. The callee reverts internally on auth failure (OZ AccessManaged's
+    # ``_checkAccess``, EtherFi's ``roleRegistry.onlyProtocolUpgrader``,
+    # any ``onlyXxx``-pattern enforcement helper). The local function has
+    # no Condition IR — slither sees a bare call — but the function reverts
+    # iff the callee reverts, so we record a gate with the call IR as
+    # condition_value and let the predicate builder lift it into an
+    # external_bool leaf with a cross-contract authority descriptor.
+    "external_authority_call",
     "opaque",
 ]
 
@@ -277,6 +286,40 @@ class RevertDetector:
                 )
                 return
 
+        # New gate kind: bare void-call to a state-variable contract that
+        # may revert based on auth (e.g. ``roleRegistry.onlyProtocolUpgrader(
+        # msg.sender)``). The callee returns void, takes msg.sender as an
+        # arg, and reverts internally on failure. From the local function's
+        # perspective there's no Condition IR, but the function reverts iff
+        # the callee reverts — record a gate with the call IR so the
+        # predicate builder can produce an external_bool leaf pointing at
+        # the callee.
+        for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
+            if not isinstance(ir, HighLevelCall):
+                continue
+            if getattr(ir, "lvalue", None) is not None:
+                continue  # has a return value → handled elsewhere when consumed
+            if not self._high_level_call_is_authority_shape(ir):
+                continue
+            callee_name = (
+                getattr(getattr(ir, "function", None), "name", None)
+                or getattr(ir, "function_name", None)
+                or "<unknown>"
+            )
+            self._gates.append(
+                RevertGate(
+                    kind="external_authority_call",
+                    condition_value=ir,
+                    polarity="allowed_when_true",
+                    node=node,
+                    containing_function=container,
+                    call_chain=list(self._call_chain_irs),
+                    expression_text=f"{callee_name}(msg.sender)",
+                    basis=[f"void external authority call {callee_name}(msg.sender)"],
+                    unsupported_reason=None,
+                )
+            )
+
         # Cross-function revert detection: recurse into InternalCall /
         # LibraryCall callees. The OZ AccessControl ``onlyRole`` modifier
         # body is just ``_checkRole(role); _;`` — the actual revert
@@ -401,6 +444,42 @@ class RevertDetector:
         # less common false branch (typical pattern is `if (bad)
         # revert`, so true is the bad branch).
         return "allowed_when_false"
+
+    def _high_level_call_is_authority_shape(self, ir: Any) -> bool:
+        """Recognise ``state_var.fn(msg.sender, ...)`` HighLevelCalls
+        whose callee returns void.
+
+        Two structural conditions:
+          * The destination (the contract being called) is a state
+            variable on ``self``. State variables identify cross-contract
+            call targets that the resolver can later trace back to a
+            concrete address via ``controller_values`` / ``state_var_values``.
+          * At least one argument traces to ``msg.sender``. This is what
+            makes the call an authority check rather than a side effect
+            (``token.transfer(to, amt)`` shouldn't be a gate).
+
+        Returns False when either condition fails so we don't over-emit
+        gates. Conservative — false negatives (missing gates) leave the
+        function under-classified rather than mis-classifying business
+        side effects as auth gates.
+        """
+        # Destination must be a state variable. Slither's StateIRVariable
+        # is the SSA wrapper around a Solidity state var; older / mocked
+        # IRs may use the flat ``StateVariable``. We accept both.
+        destination = getattr(ir, "destination", None)
+        dest_class = type(destination).__name__ if destination is not None else ""
+        if "StateIRVariable" not in dest_class and "StateVariable" not in dest_class:
+            return False
+        # At least one argument must trace to msg.sender. The arg is a
+        # SlithIR Variable; ``str(value).startswith('msg.sender')`` is
+        # the direct shape, ``ReferenceVariable`` wrapping a member
+        # access also matches via str repr. SSA renaming preserves the
+        # ``msg.sender`` token.
+        for arg in getattr(ir, "arguments", ()) or ():
+            arg_repr = str(arg) if arg is not None else ""
+            if "msg.sender" in arg_repr:
+                return True
+        return False
 
     def _try_node_primary_call(self, try_node: Any) -> Any | None:
         """Return the HighLevelCall IR whose return value drives the TRY's
