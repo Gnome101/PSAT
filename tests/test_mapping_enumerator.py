@@ -629,3 +629,141 @@ def test_clear_enumeration_cache_drops_entries():
     assert mapping_enumerator._CACHE  # populated
     clear_enumeration_cache()
     assert not mapping_enumerator._CACHE
+
+
+# ---------------------------------------------------------------------------
+# D.2 — value-aware fold (latest-value-per-key, filter by ValuePredicate)
+# ---------------------------------------------------------------------------
+
+
+def _owner_set_spec() -> dict[str, Any]:
+    """``OwnerSet(address indexed key, uint256 value)``.
+    key_position=0, value_position=1, only key is indexed.
+    """
+    return {
+        "mapping_name": "owners",
+        "event_signature": "OwnerSet(address,uint256)",
+        "event_name": "OwnerSet",
+        "key_position": 0,
+        "value_position": 1,
+        "indexed_positions": [0],
+        "direction": "set",
+        "writer_function": "setOwner(address,uint256)",
+    }
+
+
+def _set_log(topic0: str, key_addr: str, value: int, *, block: int, log_index: int = 0) -> SimpleNamespace:
+    """``OwnerSet(addr indexed, uint256)`` — key is topic1, value lives in data."""
+    return SimpleNamespace(
+        topics=[topic0, _indexed_topic(key_addr)],
+        data=_uint_topic(value),  # 32-byte word in data
+        block_number=block,
+        transaction_hash="0x" + "f" * 64,
+        log_index=log_index,
+    )
+
+
+def test_value_predicate_eq_filters_to_matching_keys():
+    """``OwnerSet(a, 10), OwnerSet(b, 7)`` → predicate ``eq 10`` returns ``[a]``.
+
+    Validates the core D.2 fold: latest-value-per-key, then filter by
+    op + rhs_values.
+    """
+    from services.resolution.mapping_enumerator import (
+        enumerate_mapping_values,
+        filter_value_entries,
+    )
+
+    topic0 = _event_topic0("OwnerSet(address,uint256)")
+    a = _addr("a11ce")
+    b = _addr("b0b")
+    client, _ = _fake_client(
+        [
+            (
+                [
+                    _set_log(topic0, a, 10, block=100, log_index=0),
+                    _set_log(topic0, b, 7, block=100, log_index=1),
+                ],
+                None,
+            )
+        ]
+    )
+    result = _run(
+        enumerate_mapping_values(
+            "0xCC00000000000000000000000000000000000001",
+            cast(Any, [_owner_set_spec()]),
+            client=client,
+            hypersync_module=_FakeHypersyncModule(),
+        )
+    )
+    assert result["status"] == "complete"
+    assert len(result["entries"]) == 2
+
+    matched = filter_value_entries(
+        result["entries"],
+        {"op": "eq", "rhs_values": ["10"], "value_type": "uint256"},
+    )
+    assert matched == [a.lower()]
+
+
+def test_value_predicate_latest_value_wins_over_older_assignment():
+    """``OwnerSet(a, 10)`` then ``OwnerSet(a, 5)`` — only the second
+    value participates in filtering. ``eq 10`` returns empty.
+    """
+    from services.resolution.mapping_enumerator import (
+        enumerate_mapping_values,
+        filter_value_entries,
+    )
+
+    topic0 = _event_topic0("OwnerSet(address,uint256)")
+    a = _addr("a11ce")
+    client, _ = _fake_client(
+        [
+            (
+                [
+                    _set_log(topic0, a, 10, block=100, log_index=0),
+                    _set_log(topic0, a, 5, block=110, log_index=0),
+                ],
+                None,
+            )
+        ]
+    )
+    result = _run(
+        enumerate_mapping_values(
+            "0xCC00000000000000000000000000000000000001",
+            cast(Any, [_owner_set_spec()]),
+            client=client,
+            hypersync_module=_FakeHypersyncModule(),
+        )
+    )
+    assert filter_value_entries(
+        result["entries"], {"op": "eq", "rhs_values": ["10"], "value_type": "uint256"}
+    ) == []
+    # And 5 matches.
+    assert filter_value_entries(
+        result["entries"], {"op": "eq", "rhs_values": ["5"], "value_type": "uint256"}
+    ) == [a.lower()]
+
+
+def test_value_predicate_passes_op_handles_addresses_and_any_nonzero():
+    """Cover the address compare path + ``any_nonzero``."""
+    from services.resolution.mapping_enumerator import _value_predicate_passes
+
+    addr_word = "0x" + "00" * 12 + "deadbeef".rjust(40, "0")
+    assert _value_predicate_passes(
+        addr_word,
+        {"op": "eq", "rhs_values": ["0x" + "deadbeef".rjust(40, "0")], "value_type": "address"},
+    )
+    assert not _value_predicate_passes(
+        addr_word,
+        {"op": "eq", "rhs_values": ["0x" + "00" * 20], "value_type": "address"},
+    )
+
+    one_word = "0x" + "01".rjust(64, "0")
+    zero_word = "0x" + "0" * 64
+    assert _value_predicate_passes(
+        one_word, {"op": "any_nonzero", "rhs_values": [], "value_type": "uint256"}
+    )
+    assert not _value_predicate_passes(
+        zero_word, {"op": "any_nonzero", "rhs_values": [], "value_type": "uint256"}
+    )
