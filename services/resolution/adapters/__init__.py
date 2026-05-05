@@ -142,6 +142,18 @@ class EvaluationContext:
     # without hitting the chain. ``None`` falls back to the
     # lower_bound/partial placeholder behavior.
     state_var_values: dict[str, str] | None = None
+    # SQLAlchemy Session — needed for cross-contract evaluator inlining
+    # (loading the registry contract's predicate_trees artifact when an
+    # external_bool leaf carries ``callee_function``). Optional so older
+    # call sites that build the context inline (tests, the legacy
+    # adapter-only path) keep working without a DB.
+    session: Any = None
+    # Recursion guard for cross-contract inlining. Keys are
+    # ``(chain_id, address.lower(), function_signature)``. The evaluator
+    # adds an entry before recursing into B's tree and removes it after;
+    # encountering an already-visited entry short-circuits to
+    # external_check_only so a malformed dep graph can't loop.
+    evaluation_stack: set[tuple[int, str, str]] = field(default_factory=set)
     # Free-form metadata bag for adapter-specific state; avoid using
     # for general-purpose data.
     meta: dict[str, Any] = field(default_factory=dict)

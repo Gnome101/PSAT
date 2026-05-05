@@ -112,6 +112,14 @@ def evaluate_tree_with_registry(
     unsupported(no_adapter)."""
 
     class _RegistryBackedAdapter:
+        # ``_outer_ctx`` exposes the full week-5 ctx (session, role_grants,
+        # state_var_values, evaluation_stack, …) to leaf evaluators that
+        # need cross-contract inlining. ``_registry`` is the AdapterRegistry
+        # the recursive ``evaluate_tree_with_registry`` re-uses when it
+        # spawns a child ctx for B's tree.
+        _outer_ctx = ctx
+        _registry = registry
+
         def enumerate(self, descriptor, contract_address):  # noqa: ARG002
             return registry.enumerate(descriptor, ctx)
 
@@ -203,14 +211,20 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
         return CapabilityExpr.unsupported(f"equality_op_{operator}_unsupported")
 
     if kind == "external_bool":
-        # When the leaf carries a set_descriptor (the cross-contract
-        # role-registry shape — ``roleRegistry.hasRole(role, sender)``),
-        # route through the adapter registry exactly like a membership
-        # leaf so AccessControlAdapter can expand to actual role
-        # holders. Without a descriptor we fall back to the
-        # external_check_only placeholder.
         descriptor = leaf.get("set_descriptor")
         if descriptor is not None:
+            # Cross-contract inlining: when the leaf records a
+            # ``callee_function`` (C.1's external_authority_call shape),
+            # try evaluating the registry's predicate_trees for that
+            # function under the original caller's msg.sender. If it
+            # produces a useful capability we use it; otherwise fall
+            # through to the adapter-registry path which handles
+            # role_grants_events lookups for canonical OZ shapes.
+            inlined = _maybe_inline_cross_contract_call(leaf, descriptor, ctx)
+            if inlined is not None:
+                if operator == "falsy":
+                    inlined = negate(inlined)
+                return inlined
             cap = ctx.adapter.enumerate(descriptor, ctx.contract_address)
             if operator == "falsy":
                 cap = negate(cap)
@@ -304,6 +318,144 @@ def _resolve_equality_principal(
         return CapabilityExpr.unsupported(f"equality_operand_computed_{op.get('computed_kind')}")
 
     return CapabilityExpr.unsupported(f"equality_operand_source_{src}")
+
+
+def _maybe_inline_cross_contract_call(
+    leaf: LeafPredicate,
+    descriptor: dict,
+    ctx: EvaluationContext,
+) -> CapabilityExpr | None:
+    """Try to resolve an ``external_authority_call``-shaped leaf by
+    evaluating the registry contract's predicate trees under the
+    caller's context.
+
+    The leaf must carry:
+      * ``set_descriptor.authority_contract.address_source`` — pointing
+        at the state-variable that holds the registry address.
+      * ``set_descriptor.callee_function`` — the registry function to
+        inline (e.g. ``onlyProtocolUpgrader``).
+
+    Returns:
+      * a ``CapabilityExpr`` from re-evaluating B's tree under A's
+        sender, OR
+      * ``None`` if any precondition isn't met (no session, no
+        state-var resolution, no Job for the registry, no
+        predicate_trees artifact, no matching function tree, or the
+        recursion guard fires) — caller falls through to the existing
+        adapter path.
+
+    The resolver carries an ``evaluation_stack`` set on the context to
+    short-circuit cycles: ``(chain_id, address.lower(), function_signature)``
+    is added before recursing and removed after. A repeat hit (e.g.
+    A→B→A or B→B) returns ``CapabilityExpr.external_check_only`` so
+    the leaf still surfaces as 'gated' even if we can't resolve.
+    """
+    callee_fn = descriptor.get("callee_function")
+    if not isinstance(callee_fn, str) or not callee_fn:
+        return None
+
+    # session lives on the OUTER (adapters) context — pulled by the
+    # registry-backed adapter wrapper. Fall back to None gracefully.
+    outer_ctx = getattr(getattr(ctx, "adapter", None), "_outer_ctx", None)
+    if outer_ctx is None:
+        return None
+    session = getattr(outer_ctx, "session", None)
+    if session is None:
+        return None
+
+    authority_contract = descriptor.get("authority_contract") or {}
+    address_source = authority_contract.get("address_source") or {}
+    if address_source.get("source") != "state_variable":
+        return None
+    sv_name = address_source.get("state_variable_name")
+    if not isinstance(sv_name, str) or not sv_name:
+        return None
+    state_vars = getattr(outer_ctx, "state_var_values", None) or {}
+    registry_addr = state_vars.get(sv_name)
+    if not isinstance(registry_addr, str) or not registry_addr.startswith("0x") or len(registry_addr) != 42:
+        return None
+    registry_addr = registry_addr.lower()
+
+    chain_id = getattr(outer_ctx, "chain_id", 1)
+    stack = outer_ctx.evaluation_stack if hasattr(outer_ctx, "evaluation_stack") else set()
+    key = (chain_id, registry_addr, callee_fn)
+    if key in stack:
+        # Cycle: B's resolution depends on its own gate, or we've already
+        # walked through this address+function in this evaluation tree.
+        return CapabilityExpr.external_check_only(
+            ExternalCheck(
+                target_address=registry_addr,
+                target_call_selector=None,
+                extra={"basis": ["cycle_detected_in_cross_contract_inlining"]},
+            )
+        )
+
+    # Look up the registry job + its predicate_trees.
+    from db.models import Job, JobStatus
+    from db.queue import get_artifact
+
+    registry_job = (
+        session.query(Job)
+        .filter(Job.address == registry_addr)
+        .filter(Job.status == JobStatus.completed)
+        .order_by(Job.updated_at.desc())
+        .limit(1)
+        .first()
+    )
+    if registry_job is None:
+        return None
+    artifact = get_artifact(session, registry_job.id, "predicate_trees")
+    if not isinstance(artifact, dict):
+        return None
+    trees = artifact.get("trees")
+    if not isinstance(trees, dict) or not trees:
+        return None
+
+    # Match by function name first; the trees key includes the full
+    # signature (e.g. ``onlyProtocolUpgrader(address)``), but the leaf
+    # only knows the bare name. Pick the first tree whose key starts
+    # with ``callee_fn(``; this is unambiguous in practice (a contract
+    # rarely overloads role-check helpers).
+    callee_tree = None
+    for sig, tree in trees.items():
+        if isinstance(sig, str) and sig.split("(", 1)[0] == callee_fn:
+            callee_tree = tree
+            break
+    if callee_tree is None:
+        return None
+
+    # Build a child evaluation context targeting the registry. msg.sender
+    # is preserved (the call passes through). state_var_values come
+    # from B's own controller_values rows, not A's.
+    from services.resolution.capability_resolver import _load_state_var_values
+
+    child_outer = type(outer_ctx)(
+        chain_id=chain_id,
+        rpc_url=getattr(outer_ctx, "rpc_url", None),
+        block=getattr(outer_ctx, "block", None),
+        finality_depth=getattr(outer_ctx, "finality_depth", 12),
+        contract_address=registry_addr,
+        role_grants=outer_ctx.role_grants,
+        safe_repo=outer_ctx.safe_repo,
+        bytecode=outer_ctx.bytecode,
+        recursive_resolver=outer_ctx.recursive_resolver,
+        state_var_values=_load_state_var_values(session, registry_addr),
+        session=session,
+        evaluation_stack=stack | {key},
+        meta=dict(outer_ctx.meta),
+    )
+
+    # The legacy ctx wrapping the registry — same registry-backed
+    # adapter pattern as evaluate_tree_with_registry, just keyed on
+    # the child outer ctx.
+    from services.resolution.adapters import AdapterRegistry as _Reg
+
+    registry_adapters = (
+        ctx.adapter._registry  # type: ignore[attr-defined]
+        if hasattr(ctx.adapter, "_registry")
+        else _Reg()
+    )
+    return evaluate_tree_with_registry(callee_tree, registry_adapters, child_outer)
 
 
 def _resolve_external_bool(leaf: LeafPredicate) -> CapabilityExpr:

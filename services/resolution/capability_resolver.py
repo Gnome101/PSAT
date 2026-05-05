@@ -120,6 +120,7 @@ def resolve_contract_capabilities(
         block=block,
         role_grants=role_grants_repo,
         state_var_values=state_var_values,
+        session=session,
         meta={"aragon_acl_repo": aragon_repo},
     )
 
