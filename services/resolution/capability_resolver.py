@@ -56,7 +56,7 @@ from .adapters.event_indexed import EventIndexedAdapter
 from .adapters.safe import SafeAdapter
 from .capabilities import CapabilityExpr
 from .predicate_evaluator import evaluate_tree_with_registry
-from .repos import PostgresAragonACLRepo, PostgresRoleGrantsRepo
+from .repos import PostgresAragonACLRepo, PostgresMappingValueRepo, PostgresRoleGrantsRepo
 
 
 def resolve_contract_capabilities(
@@ -113,12 +113,14 @@ def resolve_contract_capabilities(
 
     role_grants_repo = PostgresRoleGrantsRepo(session)
     aragon_repo = PostgresAragonACLRepo(session)
+    mapping_value_repo = PostgresMappingValueRepo(session)
     state_var_values = _load_state_var_values(session, addr)
     ctx = EvaluationContext(
         chain_id=chain_id,
         contract_address=addr,
         block=block,
         role_grants=role_grants_repo,
+        mapping_value_repo=mapping_value_repo,
         state_var_values=state_var_values,
         session=session,
         meta={"aragon_acl_repo": aragon_repo},

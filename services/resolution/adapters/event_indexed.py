@@ -195,9 +195,13 @@ class EventIndexedAdapter:
                 }
             )
 
-        # Prefer the durable repo when wired (D.3 wires this on
-        # ctx.meta). Otherwise fall back to on-demand replay.
-        repo = ctx.meta.get("mapping_value_repo") if ctx.meta else None
+        # Prefer the durable repo when wired. Otherwise fall back to
+        # on-demand replay. ``ctx.mapping_value_repo`` is the typed
+        # field; ``ctx.meta['mapping_value_repo']`` is the legacy seam
+        # tests use to inject fakes without constructing a full ctx.
+        repo = ctx.mapping_value_repo
+        if repo is None and ctx.meta:
+            repo = ctx.meta.get("mapping_value_repo")
         if repo is not None:
             try:
                 keys = repo.latest_keys_passing_predicate(

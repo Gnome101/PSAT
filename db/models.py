@@ -1001,6 +1001,78 @@ class RoleGrantsCursor(Base):
     )
 
 
+class MappingValueEvent(Base):
+    """Append-only log of mapping-value-set events (D.3).
+
+    Mirrors RoleGrantsEvent but for arbitrary ``mapping(K => V)``
+    setters: ``OwnerSet(addr indexed, uint256)`` and friends. The
+    static pipeline detects writers + extracts ``key_position`` /
+    ``value_position`` (mapping_events.py); this table captures
+    decoded ``(key, value, block, log_index)`` tuples so the
+    capability resolver can compute "latest value per key" filtered
+    by ``ValuePredicate`` without a fresh hypersync scan.
+
+    ``mapping_name`` participates in the PK so a contract with
+    multiple value-keyed mappings (e.g. ``owners`` AND ``balances``)
+    indexes them independently. ``key_hex`` stores the lowercase
+    20-byte address for ``mapping(address => ...)`` and the full
+    32-byte hex word otherwise — the indexer canonicalizes both into
+    0x-prefixed lowercase hex.
+    """
+
+    __tablename__ = "mapping_value_events"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True)
+    mapping_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    tx_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    log_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key_hex: Mapped[str] = mapped_column(String(66), nullable=False)
+    value_hex: Mapped[str] = mapped_column(String(66), nullable=False)
+    block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    block_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    transaction_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_mapping_value_events_lookup",
+            "chain_id",
+            "contract_id",
+            "mapping_name",
+            "key_hex",
+            "block_number",
+            "log_index",
+        ),
+        Index(
+            "ix_mapping_value_events_block",
+            "chain_id",
+            "contract_id",
+            "block_number",
+            "log_index",
+        ),
+    )
+
+
+class MappingValueCursor(Base):
+    """Per-contract reorg cursor for the mapping-value indexer (D.3).
+
+    Mirrors ``RoleGrantsCursor`` exactly. One row per (chain_id,
+    contract_id); ``last_indexed_block_hash`` is compared against the
+    chain's hash on the next run to detect reorgs and trigger rewind.
+    """
+
+    __tablename__ = "mapping_value_cursors"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True)
+    last_indexed_block: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    last_indexed_block_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32), nullable=True)
+    last_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class AragonAclEvent(Base):
     """Append-only log of Aragon ACL ``SetPermission`` events.
     Aragon stores permissions as ``(entity, app, role, allowed)``

@@ -119,6 +119,26 @@ class BytecodeRepo(Protocol):
     def declares_event(self, *, chain_id: int, contract_address: str, topic0: str) -> bool: ...
 
 
+class MappingValueRepo(Protocol):
+    """Reads ``mapping_value_events`` (D.3 durable indexer).
+
+    Used by ``EventIndexedAdapter._enumerate_value_predicate`` to
+    answer "which keys of mapping ``M`` have a latest value passing
+    ``ValuePredicate`` ``P``?" without an on-demand HyperSync scan.
+    Concrete impl: ``services.resolution.repos.PostgresMappingValueRepo``.
+    """
+
+    def latest_keys_passing_predicate(
+        self,
+        *,
+        chain_id: int,
+        contract_address: str,
+        writer_specs: list[dict],
+        value_predicate: dict,
+        block: int | None = None,
+    ) -> list[str]: ...
+
+
 # ---------------------------------------------------------------------------
 # EvaluationContext
 # ---------------------------------------------------------------------------
@@ -134,6 +154,11 @@ class EvaluationContext:
     role_grants: RoleGrantsRepo | None = None
     safe_repo: SafeRepo | None = None
     bytecode: BytecodeRepo | None = None
+    # D.3 — durable mapping_value_events repo. Wired by
+    # ``capability_resolver`` from ``PostgresMappingValueRepo``; tests
+    # provide in-memory fakes. ``None`` means the EventIndexedAdapter
+    # value path falls through to the on-demand HyperSync replay.
+    mapping_value_repo: MappingValueRepo | None = None
     recursive_resolver: Any = None
     # Persisted state-variable values keyed by storage-var name (e.g.
     # ``"_owner" → "0xabc..."``). Populated by the resolver from the

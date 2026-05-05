@@ -10,7 +10,13 @@ Tests provide in-memory fakes (``tests/test_adapters.py:FakeRoleGrantsRepo``);
 this module is the production wiring."""
 
 from .aragon_acl_pg import PostgresAragonACLRepo
+from .mapping_value_pg import PostgresMappingValueRepo
 from .role_grants_pg import PostgresRoleGrantsRepo
 from .safe_rpc import RpcSafeRepo
 
-__all__ = ["PostgresAragonACLRepo", "PostgresRoleGrantsRepo", "RpcSafeRepo"]
+__all__ = [
+    "PostgresAragonACLRepo",
+    "PostgresMappingValueRepo",
+    "PostgresRoleGrantsRepo",
+    "RpcSafeRepo",
+]
