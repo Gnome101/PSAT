@@ -557,7 +557,11 @@ class ResolutionWorker(BaseWorker):
                 )
             )
             result = session.execute(stmt)
-            if (result.rowcount or 0) > 0:
+            # ``Result.rowcount`` is on the concrete ``CursorResult``
+            # but the generic ``Result[Any]`` Protocol pyright sees
+            # doesn't expose it. Same ``getattr`` pattern as
+            # ``workers.role_grants_indexer._bulk_insert_logs``.
+            if (getattr(result, "rowcount", 0) or 0) > 0:
                 edges_inserted += 1
 
         if edges_inserted:
