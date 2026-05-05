@@ -1001,6 +1001,18 @@ def _try_threshold_membership(
         "key_sources": keys,
         "truthy_value": str(threshold_value),
     }
+    # First-class predicate form (D.1). ``operator`` here is already
+    # polarity-folded + operand-swap-folded (see ``_apply_polarity``
+    # earlier and ``_swap_operator`` above), so it describes the
+    # ALLOWED relation directly. ``balances[msg.sender] < 10 revert``
+    # → operator="gte", rhs=["10"]; downstream backends apply the
+    # predicate to latest-value-per-key without re-deriving polarity.
+    threshold_value_predicate: ValuePredicate = {
+        "op": operator,  # type: ignore[typeddict-item]
+        "rhs_values": [str(threshold_value)],
+        "value_type": _value_type_of_index_ir(index_ir),
+    }
+    descriptor["value_predicate"] = threshold_value_predicate
     base_var = _find_index_base(index_ir, function)
     if base_var is not None:
         descriptor["storage_var"] = getattr(base_var, "name", None)

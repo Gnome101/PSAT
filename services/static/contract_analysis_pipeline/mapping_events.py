@@ -75,13 +75,23 @@ def _extract_index_writes(function: Any) -> list[tuple[str, Any, Any]]:
     return triples
 
 
-def _direction_of_write(value_var: Any) -> Literal["add", "remove"] | None:
+def _direction_of_write(value_var: Any) -> Literal["add", "remove", "set"] | None:
+    """Classify a mapping write by the assigned value.
+
+    Returns ``"add"`` / ``"remove"`` for constant 1/0 (Maker
+    ``wards[u] = 1`` shape) and ``"set"`` for variable assignments
+    (``balances[u] = amount`` shape) where the value has to be
+    decoded from the emitted event / trace at indexing time. PR D's
+    backends consume the ``set`` direction; PR-A-era code paths
+    only check for ``add``/``remove`` so the new value is invisible
+    to them — exactly what we want.
+    """
     if value_var is None:
         return "remove"
     value = getattr(value_var, "value", None)
     type_str = str(getattr(value_var, "type", "") or "")
     if value is None:
-        return None
+        return "set"
     if isinstance(value, bool):
         return "add" if value else "remove"
     try:
@@ -94,7 +104,7 @@ def _direction_of_write(value_var: Any) -> Literal["add", "remove"] | None:
             return "add"
         if str(value).lower() in ("false", "0"):
             return "remove"
-    return None
+    return "set"
 
 
 def _abi_type(type_obj: Any) -> str:

@@ -124,7 +124,9 @@ def _annotate_writer_selectors(contract: Any, trees: dict[str, PredicateTree]) -
 
 def _walk_and_annotate(node: Any, by_mapping: dict[str, list[str]]) -> None:
     if isinstance(node, dict):
-        if node.get("kind") == "leaf":
+        # PredicateTree node: ``{op: "LEAF", leaf: {...}}`` for leaves,
+        # ``{op: "AND"|"OR", children: [...]}`` for compositions.
+        if node.get("op") == "LEAF":
             leaf = node.get("leaf") or {}
             descriptor = leaf.get("set_descriptor") or {}
             mapping = descriptor.get("storage_var")

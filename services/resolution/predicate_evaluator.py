@@ -180,14 +180,51 @@ def evaluate_tree(
 # ---------------------------------------------------------------------------
 
 
+def _has_caller_keyed_value_predicate(leaf: LeafPredicate) -> bool:
+    """True iff ``leaf.set_descriptor`` carries a ``value_predicate``
+    AND at least one ``key_sources`` entry is ``msg_sender`` (i.e. the
+    threshold is keyed on the caller). Used to upgrade
+    ``business``-flavored thresholds (PR D.1+) into finite-set
+    enumerations when the adapter chain has data, while still letting
+    pure-business thresholds (``amount > 1000``) fall through to
+    ``conditional_universal``.
+    """
+    descriptor = leaf.get("set_descriptor") or {}
+    if not descriptor.get("value_predicate"):
+        return False
+    keys = descriptor.get("key_sources") or []
+    return any(k.get("source") in ("msg_sender", "tx_origin", "signature_recovery") for k in keys)
+
+
 def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExpr:
     # 0. unsupported is structural — check first (round-5 #3 fix).
     if leaf.get("kind") == "unsupported":
         return CapabilityExpr.unsupported(leaf.get("unsupported_reason") or "unsupported")
 
-    # 1. Non-authority leaves go to side-conditions.
+    # 1. Non-authority leaves go to side-conditions — UNLESS the
+    # descriptor carries a caller-keyed value_predicate (PR D.1+).
+    # ``balances[msg.sender] < 10 revert`` is structurally a business
+    # threshold but operationally an authority gate over the set of
+    # callers whose latest mapping value satisfies the predicate.
+    # When the adapter chain has data (durable indexer / on-demand
+    # event replay / trace replay) we get a concrete finite_set;
+    # otherwise the fallback path produces conditional_universal.
     role = leaf.get("authority_role")
     if role in ("reentrancy", "pause", "business", "time"):
+        if _has_caller_keyed_value_predicate(leaf):
+            descriptor = leaf.get("set_descriptor")
+            if descriptor is not None:
+                cap = ctx.adapter.enumerate(descriptor, ctx.contract_address)
+                # Only return the enumerated capability when it actually
+                # carries useful information. ``external_check_only`` and
+                # ``unsupported`` mean "no backend matched / no data" —
+                # surfacing those would mask the true business condition
+                # the FE needs to render. Empty lower_bound finite_set
+                # is the same: "I scanned and found nothing" with low
+                # confidence, less informative than the predicate text.
+                useful = cap.kind == "finite_set" and (bool(cap.members) or cap.membership_quality != "lower_bound")
+                if useful:
+                    return cap
         cond = _condition_from_leaf(leaf)
         return CapabilityExpr.conditional_universal(cond)
 
@@ -322,7 +359,7 @@ def _resolve_equality_principal(
 
 def _maybe_inline_cross_contract_call(
     leaf: LeafPredicate,
-    descriptor: dict,
+    descriptor: SetDescriptor,
     ctx: EvaluationContext,
 ) -> CapabilityExpr | None:
     """Try to resolve an ``external_authority_call``-shaped leaf by
