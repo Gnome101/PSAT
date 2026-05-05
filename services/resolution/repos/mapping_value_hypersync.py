@@ -109,13 +109,15 @@ class HyperSyncTraceFetcher:
             traces = list(getattr(data, "traces", None) or [])
             for raw in traces:
                 trace_address_raw = getattr(raw, "trace_address", None) or []
+                tx_pos_raw = getattr(raw, "transaction_position", None) or getattr(raw, "transaction_index", 0) or 0
+                call_type_raw = getattr(raw, "call_type", None) or getattr(raw, "type", "") or ""
                 out.append(
                     FetchedTrace(
                         block_number=int(getattr(raw, "block_number", 0) or 0),
-                        transaction_index=int(getattr(raw, "transaction_position", None) or getattr(raw, "transaction_index", 0) or 0),
+                        transaction_index=int(tx_pos_raw),
                         trace_address=tuple(int(x) for x in trace_address_raw),
                         input_data=str(getattr(raw, "input", "") or ""),
-                        call_type=str(getattr(raw, "call_type", None) or getattr(raw, "type", "") or ""),
+                        call_type=str(call_type_raw),
                         error=getattr(raw, "error", None),
                     )
                 )

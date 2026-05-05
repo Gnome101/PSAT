@@ -79,9 +79,7 @@ def specs_fingerprint(
         }
         for s in writer_specs
     ]
-    has_new_fields = value_predicate is not None or any(
-        s.get("value_position") is not None for s in writer_specs
-    )
+    has_new_fields = value_predicate is not None or any(s.get("value_position") is not None for s in writer_specs)
     if not has_new_fields:
         # Legacy fingerprint — must remain byte-identical to pre-D.1
         # output so existing cache rows stay valid after the upgrade.

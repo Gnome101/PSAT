@@ -53,6 +53,7 @@ from .adapters import AdapterRegistry, EvaluationContext
 from .adapters.access_control import AccessControlAdapter
 from .adapters.aragon_acl import AragonACLAdapter, DSAuthAdapter, EIP1271Adapter
 from .adapters.event_indexed import EventIndexedAdapter
+from .adapters.mapping_trace import MappingTraceAdapter
 from .adapters.safe import SafeAdapter
 from .capabilities import CapabilityExpr
 from .predicate_evaluator import evaluate_tree_with_registry
@@ -108,6 +109,7 @@ def resolve_contract_capabilities(
         DSAuthAdapter,
         EIP1271Adapter,
         EventIndexedAdapter,
+        MappingTraceAdapter,
     ):
         registry.register(cls)
 
@@ -121,6 +123,7 @@ def resolve_contract_capabilities(
         block=block,
         role_grants=role_grants_repo,
         mapping_value_repo=mapping_value_repo,
+        trace_fetcher=_maybe_trace_fetcher(),
         state_var_values=state_var_values,
         session=session,
         meta={"aragon_acl_repo": aragon_repo},
@@ -131,6 +134,25 @@ def resolve_contract_capabilities(
         cap = evaluate_tree_with_registry(tree, registry, ctx)
         out[fn_signature] = capability_to_dict(cap)
     return out
+
+
+def _maybe_trace_fetcher() -> Any:
+    """Lazy-construct the HyperSync trace fetcher when ``ENVIO_API_TOKEN``
+    is set. Returns ``None`` otherwise so the ``MappingTraceAdapter``
+    falls through. Spinning up a client just to no-op would burn a
+    descriptor every time the resolver runs in a dev DB without an
+    Envio token.
+    """
+    import os
+
+    if not os.getenv("ENVIO_API_TOKEN"):
+        return None
+    try:
+        from .repos.mapping_value_hypersync import HyperSyncTraceFetcher
+
+        return HyperSyncTraceFetcher()
+    except Exception:
+        return None
 
 
 def _load_state_var_values(session: Session, address: str) -> dict[str, str]:

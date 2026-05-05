@@ -224,9 +224,7 @@ def test_reorg_rewind_deletes_events_and_rolls_cursor(session_with_contract):
 
     session, cid, addr = session_with_contract
     # Phase 1: ingest with one chain history.
-    chain_a_hashes = FakeBlockHashFetcher(
-        {988: b"\xaa" * 32, 980: b"\xa9" * 32}
-    )
+    chain_a_hashes = FakeBlockHashFetcher({988: b"\xaa" * 32, 980: b"\xa9" * 32})
     fetcher = FakeLogFetcher(
         [
             _set_event(950, 0, "owners", "0x" + "11" * 20, 10, hash_byte=0xAA),

@@ -230,9 +230,7 @@ def discover_mapping_writer_events(contract: Any) -> list[WriterEventSpec]:
             if key in seen:
                 continue
             seen.add(key)
-            value_position = _match_event_value_position(
-                emissions, value_var, event_signature, key_position
-            )
+            value_position = _match_event_value_position(emissions, value_var, event_signature, key_position)
             specs.append(
                 {
                     "mapping_name": mapping_name,

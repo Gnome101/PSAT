@@ -24,11 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from eth_abi.abi import encode  # noqa: E402
 
 from services.resolution.adapters import EvaluationContext  # noqa: E402
-from services.resolution.adapters.mapping_trace import (  # noqa: E402
-    FetchedTrace,
-    MappingTraceAdapter,
-)
-
+from services.resolution.adapters.mapping_trace import FetchedTrace, MappingTraceAdapter  # noqa: E402
 
 SET_OWNER_SELECTOR = "0x49d8e30c"  # arbitrary — fixture-only; the adapter just matches input[0..4]
 

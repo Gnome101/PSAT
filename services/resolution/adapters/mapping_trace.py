@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Protocol
 
 from eth_abi.abi import decode
 
@@ -180,7 +180,8 @@ class MappingTraceAdapter:
             return self._fallback(contract_address, ["abi_decode_failed"])
 
         keys = sorted(
-            key for key, (value_hex, _b, _t, _ta) in latest.items()
+            key
+            for key, (value_hex, _b, _t, _ta) in latest.items()
             if _value_predicate_passes(value_hex, value_predicate)
         )
         return CapabilityExpr.finite_set(

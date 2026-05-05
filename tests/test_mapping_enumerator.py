@@ -736,13 +736,11 @@ def test_value_predicate_latest_value_wins_over_older_assignment():
             hypersync_module=_FakeHypersyncModule(),
         )
     )
-    assert filter_value_entries(
-        result["entries"], {"op": "eq", "rhs_values": ["10"], "value_type": "uint256"}
-    ) == []
+    assert filter_value_entries(result["entries"], {"op": "eq", "rhs_values": ["10"], "value_type": "uint256"}) == []
     # And 5 matches.
-    assert filter_value_entries(
-        result["entries"], {"op": "eq", "rhs_values": ["5"], "value_type": "uint256"}
-    ) == [a.lower()]
+    assert filter_value_entries(result["entries"], {"op": "eq", "rhs_values": ["5"], "value_type": "uint256"}) == [
+        a.lower()
+    ]
 
 
 def test_value_predicate_passes_op_handles_addresses_and_any_nonzero():
@@ -761,9 +759,5 @@ def test_value_predicate_passes_op_handles_addresses_and_any_nonzero():
 
     one_word = "0x" + "01".rjust(64, "0")
     zero_word = "0x" + "0" * 64
-    assert _value_predicate_passes(
-        one_word, {"op": "any_nonzero", "rhs_values": [], "value_type": "uint256"}
-    )
-    assert not _value_predicate_passes(
-        zero_word, {"op": "any_nonzero", "rhs_values": [], "value_type": "uint256"}
-    )
+    assert _value_predicate_passes(one_word, {"op": "any_nonzero", "rhs_values": [], "value_type": "uint256"})
+    assert not _value_predicate_passes(zero_word, {"op": "any_nonzero", "rhs_values": [], "value_type": "uint256"})

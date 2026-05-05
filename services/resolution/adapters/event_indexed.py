@@ -70,11 +70,7 @@ class EventIndexedAdapter:
         # in the hint is the shape ``OwnerSet(addr, val)`` produces.
         if descriptor.get("value_predicate"):
             for hint in hints:
-                if (
-                    hint.get("topic0")
-                    and hint.get("direction") == "set"
-                    and hint.get("value_position") is not None
-                ):
+                if hint.get("topic0") and hint.get("direction") == "set" and hint.get("value_position") is not None:
                     return 55
         return 0
 
@@ -91,7 +87,8 @@ class EventIndexedAdapter:
         hints = descriptor.get("enumeration_hint") or []
         if value_predicate and ctx.contract_address is not None:
             set_hints = [
-                h for h in hints
+                h
+                for h in hints
                 if h.get("direction") == "set" and h.get("value_position") is not None and h.get("topic0")
             ]
             if set_hints:

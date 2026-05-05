@@ -136,7 +136,5 @@ class PostgresMappingValueRepo:
 
     def _resolve_contract_id(self, contract_address: str) -> int | None:
         addr_lower = contract_address.lower()
-        row = self.session.execute(
-            select(Contract.id).where(Contract.address.ilike(addr_lower)).limit(1)
-        ).first()
+        row = self.session.execute(select(Contract.id).where(Contract.address.ilike(addr_lower)).limit(1)).first()
         return row[0] if row else None

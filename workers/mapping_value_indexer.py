@@ -223,9 +223,7 @@ def _bulk_insert_writes(
     stmt = (
         pg_insert(MappingValueEvent)
         .values(rows)
-        .on_conflict_do_nothing(
-            index_elements=["chain_id", "contract_id", "mapping_name", "tx_hash", "log_index"]
-        )
+        .on_conflict_do_nothing(index_elements=["chain_id", "contract_id", "mapping_name", "tx_hash", "log_index"])
     )
     result = session.execute(stmt)
     return getattr(result, "rowcount", 0) or 0
