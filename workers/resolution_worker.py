@@ -524,6 +524,19 @@ class ResolutionWorker(BaseWorker):
             if provider_job.id == job.id:
                 continue
 
+            # Cycle detection: would inserting (A → B) close a path
+            # that's already (B → ... → A)? If so we'd have A waiting on
+            # B which is (transitively) waiting on A — deadlock under
+            # the claim gate. Insert with status='cycle_degraded'
+            # instead so the gate doesn't block A and the resolver
+            # short-circuits the leaf to external_check_only at
+            # evaluation time.
+            cycle_path = _detect_dep_cycle(
+                session,
+                proposed_depender_id=job.id,
+                proposed_provider_id=provider_job.id,
+            )
+            edge_status = "cycle_degraded" if cycle_path else "pending"
             stmt = (
                 _pg_insert(JobDependency)
                 .values(
@@ -531,7 +544,8 @@ class ResolutionWorker(BaseWorker):
                     provider_chain=chain,
                     provider_address=target_addr,
                     required_stage=JobStage.policy,
-                    status="pending",
+                    status=edge_status,
+                    cycle_path=cycle_path,
                 )
                 .on_conflict_do_nothing(
                     index_elements=[
@@ -575,6 +589,76 @@ def _collect_authority_contract_state_vars(node: dict, out: set[str]) -> None:
         return
     for child in node.get("children") or []:
         _collect_authority_contract_state_vars(child, out)
+
+
+def _detect_dep_cycle(
+    session: Session,
+    *,
+    proposed_depender_id,
+    proposed_provider_id,
+) -> list[str] | None:
+    """If adding edge ``(depender → provider)`` would close a cycle,
+    return the dep-chain path through job IDs (most-recent-first) for
+    ops debugging. Otherwise return ``None`` and the edge is safe.
+
+    Uses a recursive CTE walking forward from ``proposed_provider_id``:
+    each hop joins ``job_dependencies.depender_job_id`` to the previous
+    row's provider via ``Job.address`` (we don't carry job-id pointers
+    on the dep row's provider side — only chain+address — so the join
+    goes through the ``jobs`` table). Bounded by ``ARRAY[…]`` cycle
+    elimination on ``path``. The CTE answer is "is the proposed
+    depender reachable from the proposed provider?"
+    """
+    from sqlalchemy import text as _sa_text
+
+    sql = _sa_text(
+        """
+        WITH RECURSIVE chain AS (
+            -- Base: edges leaving the proposed provider.
+            SELECT
+                jd.id AS edge_id,
+                jd.depender_job_id AS from_job,
+                provider_job.id AS to_job,
+                ARRAY[jd.depender_job_id::text] AS path
+            FROM job_dependencies jd
+            JOIN jobs provider_job
+              ON LOWER(provider_job.address) = LOWER(jd.provider_address)
+             AND COALESCE(provider_job.request->>'chain', '') = COALESCE(jd.provider_chain, '')
+            WHERE jd.depender_job_id = :start_provider
+              AND jd.status IN ('pending', 'satisfied')
+
+            UNION
+
+            -- Recurse: follow the next hop's depender forward.
+            SELECT
+                jd.id,
+                jd.depender_job_id,
+                provider_job.id,
+                chain.path || jd.depender_job_id::text
+            FROM job_dependencies jd
+            JOIN jobs provider_job
+              ON LOWER(provider_job.address) = LOWER(jd.provider_address)
+             AND COALESCE(provider_job.request->>'chain', '') = COALESCE(jd.provider_chain, '')
+            JOIN chain ON jd.depender_job_id = chain.to_job
+            WHERE jd.status IN ('pending', 'satisfied')
+              AND NOT (jd.depender_job_id::text = ANY(chain.path))
+        )
+        SELECT path FROM chain WHERE to_job = :target_depender LIMIT 1
+        """
+    )
+    row = session.execute(
+        sql,
+        {
+            "start_provider": str(proposed_provider_id),
+            "target_depender": str(proposed_depender_id),
+        },
+    ).first()
+    if row is None:
+        return None
+    path = list(row[0]) if row[0] is not None else []
+    # Append the closing edge so the path reads "B → ... → A → B".
+    path.append(str(proposed_provider_id))
+    return path
 
 
 def _stable_lock_key(chain: str | None, address: str) -> int:
