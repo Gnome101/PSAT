@@ -159,6 +159,12 @@ class EvaluationContext:
     # provide in-memory fakes. ``None`` means the EventIndexedAdapter
     # value path falls through to the on-demand HyperSync replay.
     mapping_value_repo: MappingValueRepo | None = None
+    # D.4 — HyperSync trace fetcher. ``None`` means the
+    # ``MappingTraceAdapter`` won't match. Lazy-constructed by the
+    # capability_resolver only when a leaf actually carries
+    # ``writer_selectors`` AND ``ENVIO_API_TOKEN`` is set, since
+    # spinning the trace client just to no-op is wasteful.
+    trace_fetcher: Any = None
     recursive_resolver: Any = None
     # Persisted state-variable values keyed by storage-var name (e.g.
     # ``"_owner" → "0xabc..."``). Populated by the resolver from the

@@ -26,6 +26,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from eth_utils.crypto import keccak
+
+from .mapping_events import discover_mapping_writer_events
 from .predicate_types import PredicateTree
 from .predicates import _helper_engine_cache, build_predicate_tree
 from .reentrancy_pause import apply_reentrancy_pause_pass
@@ -68,12 +71,67 @@ def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
     if trees:
         apply_writer_gate_pass(contract, trees)
         apply_reentrancy_pause_pass(contract, trees)
+        # D.4 — annotate value-predicate descriptors with
+        # ``writer_selectors`` so the MappingTraceAdapter can replay
+        # calldata. Selectors are keccak256[:4] of the writer
+        # function's canonical signature; the trace adapter expects
+        # ``"<selector>|<arg_types>"`` form so it can ABI-decode.
+        _annotate_writer_selectors(contract, trees)
 
     return {
         "schema_version": SCHEMA_VERSION,
         "contract_name": getattr(contract, "name", None),
         "trees": trees,
     }
+
+
+def _annotate_writer_selectors(contract: Any, trees: dict[str, PredicateTree]) -> None:
+    """For every ``mapping_membership`` set descriptor with a
+    ``value_predicate``, attach the selectors of the contract's
+    writer functions targeting that mapping. ``writer_selectors``
+    flows from the static pipeline through to
+    ``MappingTraceAdapter`` (D.4).
+
+    No-op when the contract has no writer-event records — the
+    adapter simply doesn't match.
+    """
+    writer_events = discover_mapping_writer_events(contract)
+    if not writer_events:
+        return
+    # Build {mapping_name: [selector_with_argtypes, ...]}.
+    by_mapping: dict[str, list[str]] = {}
+    seen_per_mapping: dict[str, set[str]] = {}
+    for spec in writer_events:
+        mapping = spec.get("mapping_name") or ""
+        writer_fn_signature = spec.get("writer_function") or ""
+        if not mapping or not writer_fn_signature or "(" not in writer_fn_signature:
+            continue
+        # signature = "name(types)" canonical form, suitable for keccak256.
+        selector = "0x" + keccak(text=writer_fn_signature).hex()[:8]
+        arg_blob = writer_fn_signature.partition("(")[2].rstrip(")")
+        entry = f"{selector}|{arg_blob}" if arg_blob else selector
+        bucket = by_mapping.setdefault(mapping, [])
+        seen = seen_per_mapping.setdefault(mapping, set())
+        if entry not in seen:
+            bucket.append(entry)
+            seen.add(entry)
+    if not by_mapping:
+        return
+
+    for tree in trees.values():
+        _walk_and_annotate(tree, by_mapping)
+
+
+def _walk_and_annotate(node: Any, by_mapping: dict[str, list[str]]) -> None:
+    if isinstance(node, dict):
+        if node.get("kind") == "leaf":
+            leaf = node.get("leaf") or {}
+            descriptor = leaf.get("set_descriptor") or {}
+            mapping = descriptor.get("storage_var")
+            if descriptor.get("value_predicate") and mapping in by_mapping and not descriptor.get("writer_selectors"):
+                descriptor["writer_selectors"] = list(by_mapping[mapping])
+        for child in node.get("children") or []:
+            _walk_and_annotate(child, by_mapping)
 
 
 def _is_externally_callable(fn: Any) -> bool:
