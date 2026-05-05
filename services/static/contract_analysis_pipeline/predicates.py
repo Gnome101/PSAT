@@ -80,6 +80,7 @@ from .predicate_types import (
     Operand,
     PredicateTree,
     SetDescriptor,
+    ValuePredicate,
     make_and_node,
     make_leaf_node,
     make_or_node,
@@ -872,6 +873,18 @@ def _try_membership_via_value_compare(
         "key_sources": keys,
         "truthy_value": str(const_value),
     }
+    # First-class predicate form (D.1). The function reverts when
+    # ``map[k] != const``, which means the ALLOWED state is
+    # ``map[k] == const``. Polarity-fold here so backends never need
+    # to know the gate's revert semantics — they read
+    # ``value_predicate`` as "filter values where this op + RHS holds".
+    allowed_op = "eq" if operator == "eq" else "ne"
+    value_predicate: ValuePredicate = {
+        "op": allowed_op,  # type: ignore[typeddict-item]
+        "rhs_values": [str(const_value)],
+        "value_type": _value_type_of_index_ir(index_ir),
+    }
+    descriptor["value_predicate"] = value_predicate
     base_var = _find_index_base(index_ir, function)
     if base_var is not None:
         descriptor["storage_var"] = getattr(base_var, "name", None)
@@ -1951,6 +1964,22 @@ def _find_index_base(ir: Any, function: Any | None = None) -> Any | None:
             return left
         current = defining
     return None
+
+
+def _value_type_of_index_ir(ir: Any) -> str:
+    """Best-effort solidity type of the value produced by ``map[k]``.
+
+    Used by ``ValuePredicate`` so downstream backends know how to
+    decode the assigned value (event topic / calldata word). Falls
+    back to ``"uint256"`` when the IR doesn't expose a usable type —
+    callers must treat ``value_type`` as advisory, not authoritative.
+    """
+    lvalue = getattr(ir, "lvalue", None)
+    type_obj = getattr(lvalue, "type", None) if lvalue is not None else None
+    if type_obj is None:
+        return "uint256"
+    type_str = getattr(type_obj, "name", None) or str(type_obj)
+    return type_str if type_str else "uint256"
 
 
 # Re-export for tests / consumers.

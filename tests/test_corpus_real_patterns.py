@@ -430,6 +430,48 @@ def test_maker_wards_pattern(tmp_path):
     assert leaf["kind"] == "membership"
     assert leaf["set_descriptor"]["truthy_value"] == "1"
     assert leaf["authority_role"] == "caller_authority"
+    # D.1 — value_predicate preserves the operator and RHS the v1
+    # ``truthy_value`` flattened. ``wards[msg.sender] == 1`` keeps
+    # ``op="eq"``, ``rhs_values=["1"]``.
+    vp = leaf["set_descriptor"].get("value_predicate")
+    assert vp is not None
+    assert vp["op"] == "eq"
+    assert vp["rhs_values"] == ["1"]
+
+
+def test_mapping_value_predicate_polarity_folds_neq_to_eq(tmp_path):
+    """D.1 — ``if (owners[msg.sender] != 10) revert()`` describes the
+    ALLOWED state ``owners[msg.sender] == 10``. The predicate builder
+    must polarity-fold the gate's revert semantics so backends never
+    have to know the gate direction.
+    """
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(address => uint256) public owners;
+            function touch() external {
+                if (owners[msg.sender] != 10) revert();
+            }
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_pipeline(contract)
+    leaves = _all_leaves(trees["touch()"])
+    assert len(leaves) == 1
+    leaf = leaves[0]
+    assert leaf["kind"] == "membership"
+    desc = leaf["set_descriptor"]
+    # Backward-compat: truthy_value still set for v1 consumers.
+    assert desc["truthy_value"] == "10"
+    # D.1: structured form with allowed-state semantics.
+    vp = desc.get("value_predicate")
+    assert vp is not None, "value_predicate must be emitted alongside truthy_value"
+    assert vp["op"] == "eq", "!= revert folds to == allowed"
+    assert vp["rhs_values"] == ["10"]
+    assert vp["value_type"]  # uint256 in this case, but type detection is best-effort
 
 
 # ---------------------------------------------------------------------------

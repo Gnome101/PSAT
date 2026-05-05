@@ -97,12 +97,45 @@ class EventHint(TypedDict):
     key_value_taint: NotRequired[str | None]
 
 
+class ValuePredicate(TypedDict):
+    """Filter on the *value* a mapping read returns.
+
+    The static layer used to collapse ``map[k] == const`` into
+    ``truthy_value`` only, dropping both the operator and the RHS
+    structure. ``ValuePredicate`` preserves the polarity-folded form so
+    downstream backends (HyperSync direct replay, durable indexer,
+    trace replay) can filter latest-value state by the predicate the
+    contract actually checks.
+
+    Always describes the **allowed** value(s) — i.e. an
+    ``if (m[k] != 10) revert`` source ends up as
+    ``op="eq", rhs_values=["10"]``.
+    """
+
+    op: Literal["eq", "ne", "lt", "lte", "gt", "gte", "in", "any_nonzero"]
+    rhs_values: list[str]
+    value_type: str  # solidity type, e.g. "uint256", "address", "bytes32"
+    mask: NotRequired[str | None]  # optional bit-mask for flag patterns
+
+
 class SetDescriptor(TypedDict):
     kind: SetKind
     storage_var: NotRequired[str | None]
     storage_slot: NotRequired[str | None]
     key_sources: list[Operand]
     truthy_value: NotRequired[str | None]
+    # First-class form of the same constraint ``truthy_value`` partially
+    # captured. Adapters that understand value predicates (D.2-D.5)
+    # filter members by ``op``+``rhs_values`` against latest mapping
+    # values; older adapters that only read ``truthy_value`` keep
+    # working unchanged.
+    value_predicate: NotRequired[ValuePredicate | None]
+    # Selectors of functions whose body assigns to this mapping —
+    # populated by the static pipeline from the existing writer-function
+    # list. Used by ``MappingTraceAdapter`` to filter HyperSync trace
+    # rows by ``input[0..4]`` when the contract emits no events for
+    # writes.
+    writer_selectors: NotRequired[list[str]]
     enumeration_hint: NotRequired[list[EventHint]]
     authority_contract: NotRequired[AuthorityContract | None]
     role_domain: NotRequired[RoleDomain | None]
