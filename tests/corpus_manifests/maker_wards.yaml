@@ -1,0 +1,41 @@
+contract_name: C
+description: |
+  Maker DSS wards: ``rely(addr)`` self-administered (writer reads
+  the same map M as its own gate). Both ``rely`` and the privileged
+  ``mint`` see ``wards[msg.sender] == 1`` — the value-compare
+  membership lift in the predicate builder picks this up as 1-key
+  caller-keyed; writer-gate's b.ii path promotes to caller_authority
+  + HIGH confidence (self-admin is a tight structural match).
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      mapping(address => uint256) public wards;
+      uint256 public x;
+      function rely(address addr) external {
+          require(wards[msg.sender] == 1);
+          wards[addr] = 1;
+      }
+      function deny(address addr) external {
+          require(wards[msg.sender] == 1);
+          wards[addr] = 0;
+      }
+      function mint(uint256 v) external {
+          require(wards[msg.sender] == 1);
+          x = v;
+      }
+  }
+
+expected_functions:
+  "rely(address)":
+    authority_role: caller_authority
+    kind: membership
+    confidence: high
+  "deny(address)":
+    authority_role: caller_authority
+    kind: membership
+    confidence: high
+  "mint(uint256)":
+    authority_role: caller_authority
+    kind: membership
+    confidence: high

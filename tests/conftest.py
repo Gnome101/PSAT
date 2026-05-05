@@ -22,13 +22,18 @@ _STORAGE_ENV_KEYS = (
 )
 
 from db.models import (  # noqa: E402
+    AragonAclCursor,
+    AragonAclEvent,
     AuditContractCoverage,
+    Contract,
     MonitoredContract,
     MonitoredEvent,
     Protocol,
     ProtocolSubscription,
     ProxySubscription,
     ProxyUpgradeEvent,
+    RoleGrantsCursor,
+    RoleGrantsEvent,
     TvlSnapshot,
     WatchedProxy,
 )
@@ -294,6 +299,18 @@ def db_session():
             ProxyUpgradeEvent,
             ProxySubscription,
             WatchedProxy,
+            # role_grants + aragon_acl cursors / events MUST go
+            # before Contract — they FK Contract.id ondelete=CASCADE
+            # but Contract.protocol_id is SET NULL, so deleting
+            # Protocol leaves orphan Contract rows whose
+            # role_grants_cursors leak into other tests'
+            # ``scan_enrolled_contracts`` (which iterates the
+            # whole table). Delete them explicitly here.
+            RoleGrantsEvent,
+            RoleGrantsCursor,
+            AragonAclEvent,
+            AragonAclCursor,
+            Contract,
             Protocol,
         ]:
             session.query(model).delete()

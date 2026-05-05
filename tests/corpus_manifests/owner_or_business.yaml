@@ -1,0 +1,34 @@
+contract_name: C
+description: |
+  Codex round-3 blocker #2: ``require(msg.sender == owner || amount
+  > minThreshold)`` produces an OR-tree with two leaves preserved.
+  The first leaf is caller_authority/equality (the owner check);
+  the second is the business comparison (amount > minThreshold).
+
+  Pinning the manifest locks down OR-composition tree-shape via
+  the caller_authority leaf — the harness picks the first matching
+  leaf per expectations, so this verifies that the OR didn't
+  collapse to a single business leaf or drop the caller-equality
+  side. Capability evaluator turns this into OR(finite_set,
+  conditional_universal); see test_corpus_real_patterns.test_owner_or_business_or_branch_preserved
+  for the resolver-side assertion.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      address public ownerVar;
+      uint256 public minThreshold;
+      uint256 public x;
+      function f(uint256 amount) external {
+          require(msg.sender == ownerVar || amount > minThreshold);
+          x = amount;
+      }
+  }
+
+expected_functions:
+  "f(uint256)":
+    authority_role: caller_authority
+    kind: equality
+    operator: eq
+    confidence: high
+    references_msg_sender: true

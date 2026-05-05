@@ -1,3 +1,21 @@
+"""``build_semantic_guards`` smoke tests under the schema-v2 cutover.
+
+Post-cutover ``build_semantic_guards`` is a thin wrapper that pulls
+the embedded ``_v2_predicate_trees`` out of a contract_analysis dict
+and runs the v2 shim. Comprehensive shim-shape coverage lives in
+``test_v2_to_v1_shim.py``; this file only spot-checks that the
+end-to-end ``collect_contract_analysis -> build_semantic_guards``
+path round-trips for a canonical Ownable-style contract.
+
+Earlier v1-specific tests pinning ``role_member`` / ``external_helper``
+shapes (which v1 derived from name-heuristic pattern matching on
+``roleRegistry.hasRole`` / ``onlyProtocolUpgrader`` / ``policy.q``
+function names) were removed — those heuristics are gone and v2
+classifies via structural shape (``external_authority_check``
+emitted as ``external_helper`` only when it matches structurally,
+not by function-name match).
+"""
+
 import json
 import sys
 from pathlib import Path
@@ -59,126 +77,7 @@ def test_semantic_guards_direct_owner_pause(tmp_path):
             "read_spec": None,
         }
     ]
-
-
-def test_semantic_guards_external_role_guard(tmp_path):
-    project_dir = _write_project(
-        tmp_path,
-        "ExternalRolePause",
-        """
-        pragma solidity ^0.8.19;
-
-        interface IRoleRegistry {
-            function hasRole(bytes32 role, address account) external view returns (bool);
-            function PROTOCOL_PAUSER() external view returns (bytes32);
-        }
-
-        contract ExternalRolePause {
-            IRoleRegistry public roleRegistry;
-            bool public paused;
-
-            constructor(IRoleRegistry registry) {
-                roleRegistry = registry;
-            }
-
-            function pauseContract() external {
-                require(roleRegistry.hasRole(roleRegistry.PROTOCOL_PAUSER(), msg.sender), "bad role");
-                paused = true;
-            }
-        }
-        """,
-    )
-    analysis = collect_contract_analysis(project_dir)
-
-    payload = build_semantic_guards(analysis)
-    pause = _semantic_function(payload, "pauseContract()")
-
-    assert pause["status"] == "resolved"
-    assert {
-        (predicate["kind"], predicate.get("role_source"), predicate.get("authority_source"))
-        for predicate in pause["predicates"]
-    } == {("role_member", "PROTOCOL_PAUSER", "roleRegistry")}
-
-
-def test_semantic_guards_external_helper_remains_partial(tmp_path):
-    project_dir = _write_project(
-        tmp_path,
-        "RoleRegistryUpgradeTarget",
-        """
-        pragma solidity ^0.8.19;
-
-        contract RoleRegistryLike {
-            function onlyProtocolUpgrader(address) external view {}
-        }
-
-        contract RoleRegistryUpgradeTarget {
-            RoleRegistryLike public roleRegistry;
-
-            constructor(RoleRegistryLike registry) {
-                roleRegistry = registry;
-            }
-
-            function upgradeTo(address newImplementation) external {
-                roleRegistry.onlyProtocolUpgrader(msg.sender);
-                (bool ok,) = newImplementation.delegatecall("");
-                require(ok, "delegatecall failed");
-            }
-        }
-        """,
-    )
-    analysis = collect_contract_analysis(project_dir)
-
-    payload = build_semantic_guards(analysis)
-    upgrade = _semantic_function(payload, "upgradeTo(address)")
-
-    assert upgrade["status"] == "partial"
-    assert upgrade["predicates"] == [
-        {
-            "kind": "external_helper",
-            "authority_source": ["roleRegistry"],
-            "helper": "onlyProtocolUpgrader",
-            "status": "unresolved",
-        }
-    ]
-
-
-def test_semantic_guards_external_policy_helper_is_canonicalized(tmp_path):
-    project_dir = _write_project(
-        tmp_path,
-        "OpaqueExternalPolicyGuard",
-        """
-        pragma solidity ^0.8.19;
-
-        interface IPolicy {
-            function q(address who, address target, bytes4 sig) external view;
-        }
-
-        contract OpaqueExternalPolicyGuard {
-            IPolicy public policy;
-            bool public executed;
-
-            constructor(IPolicy policy_) {
-                policy = policy_;
-            }
-
-            function execute() external {
-                policy.q(msg.sender, address(this), this.execute.selector);
-                executed = true;
-            }
-        }
-        """,
-    )
-    analysis = collect_contract_analysis(project_dir)
-
-    payload = build_semantic_guards(analysis)
-    execute = _semantic_function(payload, "execute()")
-
-    assert execute["status"] == "partial"
-    assert execute["predicates"] == [
-        {
-            "kind": "policy_check",
-            "authority_source": ["policy"],
-            "helper": "q",
-            "status": "unresolved",
-        }
-    ]
+    # Synthetic marker pinned: every post-cutover semantic_guards
+    # output is shim-derived. Earlier v1 native emit didn't carry
+    # this key.
+    assert payload.get("_synthetic_from") == "v2_predicate_trees"

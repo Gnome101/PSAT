@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -148,6 +149,80 @@ class Job(Base):
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+
+
+class JobDependency(Base):
+    """Durable edge ``A depends on B`` so A's stage claim can be gated on
+    B reaching ``required_stage``.
+
+    Inserted by the resolution worker when A's predicate trees reference
+    a state-variable-resolved external contract address. The ``claim_job``
+    queue gate skips A while at least one row with status='pending'
+    exists for ``A.id``. ``BaseWorker._satisfy_dependencies`` flips rows
+    to ``satisfied`` when B reaches the required stage and to
+    ``degraded`` when B terminally fails (so dependents fall back to
+    ``external_check_only`` rather than block forever).
+    """
+
+    __tablename__ = "job_dependencies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    depender_job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    # ``provider_chain`` mirrors ``Job.request['chain']`` for the provider
+    # contract; nullable for legacy / mainnet-default rows.
+    provider_chain: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    provider_address: Mapped[str] = mapped_column(String(42), nullable=False)
+    # Stage of the provider that A needs reached before unblocking. Stage
+    # ordering follows the ``JobStage`` enum's natural order (discovery <
+    # static < resolution < policy < coverage < done).
+    required_stage: Mapped[JobStage] = mapped_column(Enum(JobStage), nullable=False)
+    # ``pending`` — provider hasn't reached required_stage yet (claim gate
+    # blocks A).
+    # ``satisfied`` — provider reached or passed required_stage.
+    # ``degraded`` — provider terminally failed; dependent should
+    # short-circuit to ``external_check_only``.
+    # ``cycle_degraded`` — adding this edge would close a cycle in the
+    # dep graph; treat as a non-blocking degradation to preserve liveness.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", server_default="pending")
+    # When status='cycle_degraded', the dep-chain that closed back to the
+    # depender is recorded here for ops debugging.
+    cycle_path: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    satisfied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # An edge is uniquely identified by (depender, provider_chain,
+        # provider_address, required_stage). Duplicate inserts on
+        # re-runs of the resolution stage are no-ops via
+        # ON CONFLICT DO NOTHING.
+        UniqueConstraint(
+            "depender_job_id",
+            "provider_chain",
+            "provider_address",
+            "required_stage",
+            name="uq_job_dep_edge",
+        ),
+        # Powers the satisfy-on-advance scan: one provider job's
+        # advance walks every pending row for (chain, address) +
+        # required_stage<=completed.
+        Index(
+            "ix_job_dep_provider",
+            "provider_chain",
+            "provider_address",
+            "required_stage",
+            "status",
+        ),
+        # Powers the claim gate's NOT EXISTS — most edges become
+        # satisfied quickly so a partial index keeps the gate
+        # sub-millisecond.
+        Index(
+            "ix_job_dep_pending",
+            "depender_job_id",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
 
 
 class Artifact(Base):
@@ -865,6 +940,214 @@ class TvlSnapshot(Base):
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="on_chain")
 
     __table_args__ = (Index("ix_tvl_snapshots_protocol_timestamp", "protocol_id", "timestamp"),)
+
+
+class RoleGrantsEvent(Base):
+    """Append-only log of RoleGranted / RoleRevoked events observed
+    on AccessControl-style contracts. Used by AccessControlAdapter
+    (services/resolution/adapters/access_control.py) to enumerate
+    role members exactly. Indexed by the role_grants_indexer worker
+    (workers/role_grants_indexer.py) per (chain_id, contract_id)
+    using advisory locks for reorg-safe replay."""
+
+    __tablename__ = "role_grants_events"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True)
+    tx_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    log_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    member: Mapped[str] = mapped_column(String(42), nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    block_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    transaction_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_role_grants_events_lookup",
+            "chain_id",
+            "contract_id",
+            "role",
+            "member",
+            "block_number",
+            "log_index",
+        ),
+        Index(
+            "ix_role_grants_events_block",
+            "chain_id",
+            "contract_id",
+            "block_number",
+            "log_index",
+        ),
+    )
+
+
+class RoleGrantsCursor(Base):
+    """One row per (chain_id, contract_id). Tracks the indexer's
+    last-indexed block + block-hash for reorg detection. The indexer
+    takes a Postgres advisory lock on (contract_id) to serialize
+    work across worker replicas."""
+
+    __tablename__ = "role_grants_cursors"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True)
+    last_indexed_block: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    last_indexed_block_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32), nullable=True)
+    last_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class MappingValueEvent(Base):
+    """Append-only log of mapping-value-set events (D.3).
+
+    Mirrors RoleGrantsEvent but for arbitrary ``mapping(K => V)``
+    setters: ``OwnerSet(addr indexed, uint256)`` and friends. The
+    static pipeline detects writers + extracts ``key_position`` /
+    ``value_position`` (mapping_events.py); this table captures
+    decoded ``(key, value, block, log_index)`` tuples so the
+    capability resolver can compute "latest value per key" filtered
+    by ``ValuePredicate`` without a fresh hypersync scan.
+
+    ``mapping_name`` participates in the PK so a contract with
+    multiple value-keyed mappings (e.g. ``owners`` AND ``balances``)
+    indexes them independently. ``key_hex`` stores the lowercase
+    20-byte address for ``mapping(address => ...)`` and the full
+    32-byte hex word otherwise — the indexer canonicalizes both into
+    0x-prefixed lowercase hex.
+    """
+
+    __tablename__ = "mapping_value_events"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True)
+    mapping_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    tx_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    log_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key_hex: Mapped[str] = mapped_column(String(66), nullable=False)
+    value_hex: Mapped[str] = mapped_column(String(66), nullable=False)
+    block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    block_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    transaction_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_mapping_value_events_lookup",
+            "chain_id",
+            "contract_id",
+            "mapping_name",
+            "key_hex",
+            "block_number",
+            "log_index",
+        ),
+        Index(
+            "ix_mapping_value_events_block",
+            "chain_id",
+            "contract_id",
+            "block_number",
+            "log_index",
+        ),
+    )
+
+
+class MappingValueCursor(Base):
+    """Per-contract reorg cursor for the mapping-value indexer (D.3).
+
+    Mirrors ``RoleGrantsCursor`` exactly. One row per (chain_id,
+    contract_id); ``last_indexed_block_hash`` is compared against the
+    chain's hash on the next run to detect reorgs and trigger rewind.
+    """
+
+    __tablename__ = "mapping_value_cursors"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True)
+    last_indexed_block: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    last_indexed_block_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32), nullable=True)
+    last_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AragonAclEvent(Base):
+    """Append-only log of Aragon ACL ``SetPermission`` events.
+    Aragon stores permissions as ``(entity, app, role, allowed)``
+    tuples — a flip of ``allowed`` per event, no separate revoke
+    topic. Used by ``PostgresAragonACLRepo`` to enumerate currently-
+    allowed entities for a given ``(app, role)``."""
+
+    __tablename__ = "aragon_acl_events"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    acl_contract_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True
+    )
+    tx_hash: Mapped[bytes] = mapped_column(LargeBinary(32), primary_key=True)
+    log_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    app: Mapped[str] = mapped_column(String(42), nullable=False)
+    role: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    entity: Mapped[str] = mapped_column(String(42), nullable=False)
+    allowed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    block_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    block_hash: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
+    transaction_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_aragon_acl_events_lookup",
+            "chain_id",
+            "acl_contract_id",
+            "app",
+            "role",
+            "entity",
+            "block_number",
+            "log_index",
+        ),
+        Index(
+            "ix_aragon_acl_events_block",
+            "chain_id",
+            "acl_contract_id",
+            "block_number",
+            "log_index",
+        ),
+    )
+
+
+class AragonAclCursor(Base):
+    """One row per ``(chain_id, acl_contract_id)`` — tracks the
+    indexer's progress + last-indexed block hash for reorg detect.
+    Mirrors ``RoleGrantsCursor`` shape so the same indexer step
+    pattern applies once the LogFetcher is parameterized."""
+
+    __tablename__ = "aragon_acl_cursors"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    acl_contract_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contracts.id", ondelete="CASCADE"), primary_key=True
+    )
+    last_indexed_block: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    last_indexed_block_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32), nullable=True)
+    last_run_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class ChainFinalityConfig(Base):
+    """Per-chain confirmation depth — how many blocks deep an event
+    must be before considered final (not subject to reorg). Seeded
+    by the migration; can be overridden per deployment by updating
+    the row directly."""
+
+    __tablename__ = "chain_finality_config"
+
+    chain_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False)
+    confirmation_depth: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class EtherscanCache(Base):

@@ -13,8 +13,14 @@ class WriterEventSpec(TypedDict):
     event_name: str
     key_position: int
     indexed_positions: list[int]
-    direction: Literal["add", "remove"]
+    direction: Literal["add", "remove", "set"]
     writer_function: str
+    # Position of the assigned value in the event's args (D.1). For
+    # ``add``/``remove`` semantics the assigned value is implicit so
+    # this is ``None``; for ``set`` semantics it points at the topic
+    # / data slot carrying the new value, e.g. ``OwnerSet(addr, val)``
+    # would record ``key_position=0, value_position=1``.
+    value_position: int | None
 
 
 class _EventMetadata(TypedDict):
@@ -69,13 +75,23 @@ def _extract_index_writes(function: Any) -> list[tuple[str, Any, Any]]:
     return triples
 
 
-def _direction_of_write(value_var: Any) -> Literal["add", "remove"] | None:
+def _direction_of_write(value_var: Any) -> Literal["add", "remove", "set"] | None:
+    """Classify a mapping write by the assigned value.
+
+    Returns ``"add"`` / ``"remove"`` for constant 1/0 (Maker
+    ``wards[u] = 1`` shape) and ``"set"`` for variable assignments
+    (``balances[u] = amount`` shape) where the value has to be
+    decoded from the emitted event / trace at indexing time. PR D's
+    backends consume the ``set`` direction; PR-A-era code paths
+    only check for ``add``/``remove`` so the new value is invisible
+    to them — exactly what we want.
+    """
     if value_var is None:
         return "remove"
     value = getattr(value_var, "value", None)
     type_str = str(getattr(value_var, "type", "") or "")
     if value is None:
-        return None
+        return "set"
     if isinstance(value, bool):
         return "add" if value else "remove"
     try:
@@ -88,7 +104,7 @@ def _direction_of_write(value_var: Any) -> Literal["add", "remove"] | None:
             return "add"
         if str(value).lower() in ("false", "0"):
             return "remove"
-    return None
+    return "set"
 
 
 def _abi_type(type_obj: Any) -> str:
@@ -224,6 +240,7 @@ def discover_mapping_writer_events(contract: Any) -> list[WriterEventSpec]:
             if key in seen:
                 continue
             seen.add(key)
+            value_position = _match_event_value_position(emissions, value_var, event_signature, key_position)
             specs.append(
                 {
                     "mapping_name": mapping_name,
@@ -233,6 +250,38 @@ def discover_mapping_writer_events(contract: Any) -> list[WriterEventSpec]:
                     "indexed_positions": list(indexed_positions),
                     "direction": direction,
                     "writer_function": getattr(function, "full_name", getattr(function, "name", "")),
+                    "value_position": value_position,
                 }
             )
     return specs
+
+
+def _match_event_value_position(
+    emissions: list[tuple[str, list[Any], list[int]]],
+    value_var: Any,
+    event_signature: str,
+    key_position: int,
+) -> int | None:
+    """Locate the value argument's position in the matched event.
+
+    Used by D.1+: when ``map[k] = v`` writes are mirrored by an event
+    like ``OwnerSet(addr indexed, uint256)``, the value lives at a
+    different arg position than the key. We match by identity against
+    the value-var that drove the write; fall back to ``None`` so
+    consumers (durable indexer, on-demand replay) skip value-aware
+    decoding rather than guessing.
+    """
+    if value_var is None:
+        return None
+    target_name = getattr(value_var, "name", None)
+    for sig, args, _indexed in emissions:
+        if sig != event_signature:
+            continue
+        for idx, arg in enumerate(args):
+            if idx == key_position:
+                continue
+            if arg is value_var:
+                return idx
+            if target_name is not None and getattr(arg, "name", None) == target_name:
+                return idx
+    return None

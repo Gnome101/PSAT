@@ -1,0 +1,260 @@
+"""SetAdapter framework — week 5.
+
+Adapters know how to read on-chain state for a particular standard
+(OZ AccessControl, Gnosis Safe, DSAuth/Aragon, EIP-1271). They share
+a uniform interface so the resolver's predicate evaluator can call
+them without per-standard branches.
+
+Per v4 plan + v5 round-3 #5/#7 fixes:
+  - EvaluationContext carries chain, rpc, block, finality_depth,
+    contract_meta, repo handles, recursive_resolver.
+  - SetAdapter Protocol has classmethod matches(descriptor, ctx) → 0-100,
+    enumerate(descriptor, ctx) → EnumerationResult,
+    membership(descriptor, ctx, member) → Trit,
+    supports_external_check_only() → bool.
+  - AdapterRegistry orders adapters by registration; pick() returns
+    the highest-scoring; ties broken by registration order; score 0
+    from all adapters → unsupported(no_adapter).
+
+Adapters are pluggable via a backend (the *Repo classes) so tests can
+inject fake on-chain state without RPC. The real RPC integration is
+done in a follow-up by wiring backends to ``services.resolution`` /
+``utils.eth_rpc``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Protocol
+
+from ..capabilities import CapabilityExpr, Confidence
+
+# Convenience re-export for adapters that need to construct caps.
+__all__ = [
+    "AdapterRegistry",
+    "EnumerationResult",
+    "EvaluationContext",
+    "RoleGrantsRepo",
+    "SafeRepo",
+    "SetAdapter",
+    "Trit",
+]
+
+
+# ---------------------------------------------------------------------------
+# Trit
+# ---------------------------------------------------------------------------
+
+
+class Trit(Enum):
+    YES = "yes"
+    NO = "no"
+    UNKNOWN = "unknown"
+
+
+# ---------------------------------------------------------------------------
+# EnumerationResult
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EnumerationResult:
+    """Adapter output for enumerate()."""
+
+    members: list[str] = field(default_factory=list)
+    confidence: Confidence = "enumerable"
+    partial_reason: str | None = None
+    last_indexed_block: int | None = None
+
+
+# ---------------------------------------------------------------------------
+# Repo Protocols (backends)
+# ---------------------------------------------------------------------------
+
+
+class RoleGrantsRepo(Protocol):
+    """Reads from the role_grants_events table (v4 plan §role_grants).
+    Concrete implementation queries Postgres; fakes for tests provide
+    in-memory data.
+
+    For role-domain expansion (v3 round-3 #10 fix):
+      - ``list_observed_roles`` returns every role bytes32 value
+        ever seen in RoleGranted events for the contract. Used to
+        seed the role-domain for parametric AC reads.
+      - ``get_role_admin`` returns the admin role for a given role
+        (the OZ AccessControl ``getRoleAdmin(role)`` semantic).
+        Used to walk the admin chain to fixed point.
+    """
+
+    def members_for_role(
+        self, *, chain_id: int, contract_address: str, role: bytes, block: int | None = None
+    ) -> EnumerationResult: ...
+
+    def has_member(self, *, chain_id: int, contract_address: str, role: bytes, member: str) -> Trit: ...
+
+    def list_observed_roles(self, *, chain_id: int, contract_address: str) -> list[bytes]: ...
+
+    def get_role_admin(
+        self, *, chain_id: int, contract_address: str, role: bytes, block: int | None = None
+    ) -> bytes | None: ...
+
+
+class SafeRepo(Protocol):
+    """Reads Safe owner+threshold from chain (or a fake)."""
+
+    def get_owners_threshold(
+        self, *, chain_id: int, contract_address: str, block: int | None = None
+    ) -> tuple[list[str], int] | None: ...
+
+
+class BytecodeRepo(Protocol):
+    """Reads contract code metadata an adapter uses to score
+    matches() — selectors present in the bytecode, declared events,
+    inherited interfaces. Adapters can also inspect descriptor
+    fields directly."""
+
+    def has_selector(self, *, chain_id: int, contract_address: str, selector: str) -> bool: ...
+
+    def declares_event(self, *, chain_id: int, contract_address: str, topic0: str) -> bool: ...
+
+
+class MappingValueRepo(Protocol):
+    """Reads ``mapping_value_events`` (D.3 durable indexer).
+
+    Used by ``EventIndexedAdapter._enumerate_value_predicate`` to
+    answer "which keys of mapping ``M`` have a latest value passing
+    ``ValuePredicate`` ``P``?" without an on-demand HyperSync scan.
+    Concrete impl: ``services.resolution.repos.PostgresMappingValueRepo``.
+    """
+
+    def latest_keys_passing_predicate(
+        self,
+        *,
+        chain_id: int,
+        contract_address: str,
+        writer_specs: list[dict],
+        value_predicate: dict,
+        block: int | None = None,
+    ) -> list[str]: ...
+
+
+# ---------------------------------------------------------------------------
+# EvaluationContext
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EvaluationContext:
+    chain_id: int = 1
+    rpc_url: str | None = None
+    block: int | None = None
+    finality_depth: int = 12
+    contract_address: str | None = None
+    role_grants: RoleGrantsRepo | None = None
+    safe_repo: SafeRepo | None = None
+    bytecode: BytecodeRepo | None = None
+    # D.3 — durable mapping_value_events repo. Wired by
+    # ``capability_resolver`` from ``PostgresMappingValueRepo``; tests
+    # provide in-memory fakes. ``None`` means the EventIndexedAdapter
+    # value path falls through to the on-demand HyperSync replay.
+    mapping_value_repo: MappingValueRepo | None = None
+    # D.4 — HyperSync trace fetcher. ``None`` means the
+    # ``MappingTraceAdapter`` won't match. Lazy-constructed by the
+    # capability_resolver only when a leaf actually carries
+    # ``writer_selectors`` AND ``ENVIO_API_TOKEN`` is set, since
+    # spinning the trace client just to no-op is wasteful.
+    trace_fetcher: Any = None
+    recursive_resolver: Any = None
+    # Persisted state-variable values keyed by storage-var name (e.g.
+    # ``"_owner" → "0xabc..."``). Populated by the resolver from the
+    # ``controller_values`` table so the predicate evaluator can
+    # enumerate ``state_variable`` operands into concrete addresses
+    # without hitting the chain. ``None`` falls back to the
+    # lower_bound/partial placeholder behavior.
+    state_var_values: dict[str, str] | None = None
+    # SQLAlchemy Session — needed for cross-contract evaluator inlining
+    # (loading the registry contract's predicate_trees artifact when an
+    # external_bool leaf carries ``callee_function``). Optional so older
+    # call sites that build the context inline (tests, the legacy
+    # adapter-only path) keep working without a DB.
+    session: Any = None
+    # Recursion guard for cross-contract inlining. Keys are
+    # ``(chain_id, address.lower(), function_signature)``. The evaluator
+    # adds an entry before recursing into B's tree and removes it after;
+    # encountering an already-visited entry short-circuits to
+    # external_check_only so a malformed dep graph can't loop.
+    evaluation_stack: set[tuple[int, str, str]] = field(default_factory=set)
+    # Free-form metadata bag for adapter-specific state; avoid using
+    # for general-purpose data.
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# SetAdapter Protocol
+# ---------------------------------------------------------------------------
+
+
+SetDescriptor = dict  # forward-import-light alias; full type lives in predicate_types
+
+
+class SetAdapter(Protocol):
+    """Standard-ABI adapter for resolving a set descriptor's members."""
+
+    @classmethod
+    def matches(cls, descriptor: SetDescriptor, ctx: EvaluationContext) -> int:
+        """Return 0-100. 0 means definitely not this adapter; 100
+        means definitely yes. Ties at the registry level are broken
+        by registration order. Score 0 from all → unsupported."""
+        ...
+
+    @classmethod
+    def supports_external_check_only(cls) -> bool:
+        """True iff the adapter can answer membership() against a
+        live backend (used by the predicate evaluator to decide
+        whether to emit external_check_only vs lower_bound finite_set
+        when enumerate returns partial)."""
+        ...
+
+    def enumerate(self, descriptor: SetDescriptor, ctx: EvaluationContext) -> CapabilityExpr:
+        """Populate the capability — finite_set for enumerable, or
+        partial / external_check_only when the adapter can't fully
+        list members."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# AdapterRegistry
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AdapterRegistry:
+    """Ordered list of adapters. ``pick()`` returns the highest-
+    scoring adapter for a descriptor; on a tie, registration order
+    wins. Score 0 from all → returns None and the caller emits
+    unsupported(no_adapter)."""
+
+    adapters: list[type[SetAdapter]] = field(default_factory=list)
+
+    def register(self, adapter_cls: type[SetAdapter]) -> None:
+        if adapter_cls in self.adapters:
+            return
+        self.adapters.append(adapter_cls)
+
+    def pick(self, descriptor: SetDescriptor, ctx: EvaluationContext) -> type[SetAdapter] | None:
+        best: tuple[int, type[SetAdapter]] | None = None
+        for cls in self.adapters:
+            score = cls.matches(descriptor, ctx)
+            if score <= 0:
+                continue
+            if best is None or score > best[0]:
+                best = (score, cls)
+        return best[1] if best is not None else None
+
+    def enumerate(self, descriptor: SetDescriptor, ctx: EvaluationContext) -> CapabilityExpr:
+        adapter_cls = self.pick(descriptor, ctx)
+        if adapter_cls is None:
+            return CapabilityExpr.unsupported("no_adapter")
+        adapter = adapter_cls()
+        return adapter.enumerate(descriptor, ctx)

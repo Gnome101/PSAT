@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -378,3 +378,9 @@ class ContractAnalysis(TypedDict):
     tracking_hints: list[TrackingHint]
     controller_tracking: list[ControllerTrackingTarget]
     policy_tracking: list[PolicyTrackingTarget]
+    # Schema-v2 shadow-mode predicate-tree artifact, embedded by
+    # ``collect_contract_analysis`` so callers can persist it as a
+    # separate artifact without paying for a second Slither parse.
+    # Popped by the static worker before the v1 dict is stored, so
+    # the v1 ``contract_analysis`` artifact's shape stays unchanged.
+    _v2_predicate_trees: NotRequired[dict[str, Any]]

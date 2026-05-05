@@ -1,0 +1,28 @@
+contract_name: C
+description: |
+  Time-only gate: ``require(block.timestamp > deadline)`` — at least
+  one operand is block_context (timestamp) and no operand is caller-
+  related (no msg.sender, no caller-keyed map read). The
+  AuthorityClassifier classifies the leaf as authority_role=time.
+
+  Pinning this manifest locks down the time-vs-business
+  discriminator. Time gates are common in vesting, deadlines, and
+  reveal/commit schemes — getting this wrong (e.g. classifying as
+  business and dropping the gate) would silently let a UI render
+  these functions as "Public" when they're actually time-locked.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      uint256 public deadline;
+      function f() external view {
+          require(block.timestamp > deadline);
+      }
+  }
+
+expected_functions:
+  "f()":
+    authority_role: time
+    kind: comparison
+    operator: gt
+    confidence: high

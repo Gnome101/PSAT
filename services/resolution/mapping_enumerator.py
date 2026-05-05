@@ -48,6 +48,31 @@ class EnumerationResult(TypedDict):
     error: str | None
 
 
+class EnumeratedKeyValue(TypedDict):
+    """One key's latest observed value (D.2). Used by the value-aware
+    fold which replaces the add/remove ``present`` boolean with the
+    raw value of the most recent assignment, so a downstream
+    ``ValuePredicate`` can decide which keys belong in the finite
+    set.
+    """
+
+    key: str  # 0x-prefixed canonical address (or 0x... hex word for non-address keys)
+    mapping_name: str
+    value_hex: str  # 0x-prefixed canonical hex of the latest assigned value
+    last_block: int
+    last_log_index: int
+
+
+class EnumerationValueResult(TypedDict):
+    """Latest-value-per-key fold + status (mirrors ``EnumerationResult``)."""
+
+    entries: list[EnumeratedKeyValue]
+    status: str
+    pages_fetched: int
+    last_block_scanned: int
+    error: str | None
+
+
 # Process-wide cache keyed on lowercased contract address; head_block is in the value, not the key, so cascade siblings
 # reuse results.
 _CACHE: dict[str, tuple[EnumerationResult, float]] = {}
@@ -108,6 +133,116 @@ def _decode_address_arg_from_data(data: str, position: int) -> str:
         return ""
     slot = hex_body[start:end]
     return _normalize_hex("0x" + slot[-40:])
+
+
+def _extract_value_word(
+    log: Any,
+    value_position: int,
+    *,
+    indexed_positions: list[int] | None = None,
+) -> str:
+    """Extract the assigned value at ``value_position`` from the log.
+
+    Returns a 0x-prefixed 32-byte hex word (the canonical "uint256
+    slot" form), regardless of whether the value is indexed (topic) or
+    in data. The downstream ``_value_predicate_passes`` interprets the
+    bytes per ``value_type``.
+    """
+    topics = _topics_from_log(log)
+    indexed_positions = sorted(set(indexed_positions or []))
+    if value_position in indexed_positions:
+        rank = indexed_positions.index(value_position)
+        topic_index = 1 + rank
+        if topic_index < len(topics):
+            return _normalize_hex(topics[topic_index])
+        return ""
+    non_indexed_up_to = [p for p in range(value_position + 1) if p not in indexed_positions]
+    if not non_indexed_up_to:
+        return ""
+    data_rank = len(non_indexed_up_to) - 1
+    raw = getattr(log, "data", "0x") or "0x"
+    body = raw[2:] if raw.startswith("0x") else raw
+    start = 64 * data_rank
+    end = start + 64
+    if end > len(body):
+        return ""
+    return _normalize_hex("0x" + body[start:end])
+
+
+def _value_predicate_passes(value_hex: str, predicate: dict[str, Any]) -> bool:
+    """Apply a ``ValuePredicate`` to a 32-byte hex word.
+
+    Numeric ops decode as ``int(value_hex, 16)``; address ops compare
+    canonicalized lowercase hex. ``any_nonzero`` matches any nonzero
+    word and ignores ``rhs_values`` (used as a "is this slot ever
+    written" probe).
+    """
+    if not value_hex.startswith("0x") or len(value_hex) != 66:
+        return False
+    op = str(predicate.get("op") or "")
+    rhs_raw = predicate.get("rhs_values") or []
+    value_type = str(predicate.get("value_type") or "uint256")
+    mask_hex = predicate.get("mask")
+
+    if op == "any_nonzero":
+        body = value_hex[2:]
+        return any(c not in "0" for c in body)
+
+    if value_type == "address":
+        # Compare lowercased 20-byte tail. RHS may be the full
+        # checksummed address; normalize both.
+        actual = "0x" + value_hex[-40:]
+        for r in rhs_raw:
+            r_norm = (r or "").lower()
+            if not r_norm.startswith("0x"):
+                continue
+            if op == "eq" and r_norm[-40:] == actual[2:]:
+                return True
+            if op == "ne" and r_norm[-40:] != actual[2:]:
+                return True
+        return False
+
+    # Numeric. Decode value, optionally apply mask, then compare.
+    try:
+        actual_int = int(value_hex, 16)
+    except ValueError:
+        return False
+    if isinstance(mask_hex, str) and mask_hex.startswith("0x"):
+        try:
+            actual_int = actual_int & int(mask_hex, 16)
+        except ValueError:
+            pass
+    if op == "in":
+        rhs_set = {_to_int(r) for r in rhs_raw}
+        rhs_set.discard(None)  # type: ignore[arg-type]
+        return actual_int in rhs_set
+    if not rhs_raw:
+        return False
+    rhs_int = _to_int(rhs_raw[0])
+    if rhs_int is None:
+        return False
+    if op == "eq":
+        return actual_int == rhs_int
+    if op == "ne":
+        return actual_int != rhs_int
+    if op == "lt":
+        return actual_int < rhs_int
+    if op == "lte":
+        return actual_int <= rhs_int
+    if op == "gt":
+        return actual_int > rhs_int
+    if op == "gte":
+        return actual_int >= rhs_int
+    return False
+
+
+def _to_int(s: Any) -> int | None:
+    if not isinstance(s, str):
+        return None
+    try:
+        return int(s, 16) if s.startswith("0x") else int(s)
+    except ValueError:
+        return None
 
 
 def _extract_key_address(
@@ -410,3 +545,219 @@ def _db_cache_enabled() -> bool:
     that want the in-process behaviour set ``PSAT_MAPPING_ENUMERATION_DB_CACHE=0``.
     """
     return os.getenv("PSAT_MAPPING_ENUMERATION_DB_CACHE", "1").lower() in ("1", "true", "yes")
+
+
+# ---------------------------------------------------------------------------
+# D.2 — value-aware fold: latest-value-per-key, filterable by ValuePredicate.
+# ---------------------------------------------------------------------------
+
+
+async def enumerate_mapping_values(
+    contract_address: str,
+    writer_specs: list[WriterEventSpec],
+    *,
+    hypersync_url: str = DEFAULT_HYPERSYNC_URL,
+    bearer_token: str | None = None,
+    from_block: int = 0,
+    to_block: int | None = None,
+    client: Any = None,
+    hypersync_module: Any = None,
+    timeout_s: float | None = None,
+    max_pages: int | None = None,
+) -> EnumerationValueResult:
+    """Replay set-style writer events into a latest-value-per-key map.
+
+    Differs from ``enumerate_mapping_allowlist``: that one uses
+    ``direction in {"add","remove"}`` to fold a present-set; this one
+    uses ``direction == "set"`` (or any direction with
+    ``value_position`` populated) to remember the most recent value
+    each key was assigned. Caller (the EventIndexedAdapter D.2 path)
+    then filters by ``ValuePredicate``.
+    """
+    eff_timeout = _TIMEOUT_S if timeout_s is None else timeout_s
+    eff_max_pages = _MAX_PAGES if max_pages is None else max_pages
+
+    if not writer_specs:
+        return EnumerationValueResult(
+            entries=[], status="complete", pages_fetched=0, last_block_scanned=from_block, error=None
+        )
+
+    # Only specs with a known value_position participate; without it
+    # we have no idea which event arg holds the assigned value.
+    eligible = [s for s in writer_specs if s.get("value_position") is not None]
+    if not eligible:
+        return EnumerationValueResult(
+            entries=[], status="complete", pages_fetched=0, last_block_scanned=from_block, error=None
+        )
+
+    topic0_to_specs: dict[str, list[WriterEventSpec]] = {}
+    for spec in eligible:
+        topic0 = _event_topic0(spec["event_signature"])
+        topic0_to_specs.setdefault(topic0, []).append(spec)
+
+    if hypersync_module is None:
+        import hypersync as hypersync_module  # type: ignore
+    if client is None:
+        if not bearer_token:
+            raise RuntimeError("Hypersync requires an API token; pass bearer_token= or set ENVIO_API_TOKEN.")
+        client = hypersync_module.HypersyncClient(
+            hypersync_module.ClientConfig(url=hypersync_url, bearer_token=bearer_token)
+        )
+
+    topic0s = sorted(topic0_to_specs.keys())
+    query = _build_query(hypersync_module, contract_address, topic0s, from_block, to_block)
+
+    # state: (mapping_name, key) -> (value_hex, last_block, last_log_index)
+    state: dict[tuple[str, str], tuple[str, int, int]] = {}
+    current_from = from_block
+    page_count = 0
+    started = time.monotonic()
+    status = "complete"
+    error: str | None = None
+    while True:
+        if time.monotonic() - started > eff_timeout:
+            status = "incomplete_timeout"
+            break
+        if page_count >= eff_max_pages:
+            status = "incomplete_max_pages"
+            break
+        try:
+            result = await client.get(query)
+        except Exception as exc:
+            status = "error"
+            error = str(exc)
+            break
+        page_count += 1
+        data_obj = getattr(result, "data", None)
+        if data_obj is not None and hasattr(data_obj, "logs"):
+            logs = list(getattr(data_obj, "logs", None) or [])
+        elif isinstance(data_obj, list):
+            logs = data_obj
+        else:
+            logs = list(getattr(result, "logs", None) or [])
+        for raw_log in logs:
+            topics = _topics_from_log(raw_log)
+            if not topics:
+                continue
+            topic0 = topics[0]
+            matching_specs = topic0_to_specs.get(topic0)
+            if not matching_specs:
+                continue
+            for spec in matching_specs:
+                indexed = list(spec.get("indexed_positions") or [])
+                key_str = _extract_key_address(raw_log, spec["key_position"], indexed_positions=indexed)
+                if not key_str:
+                    continue
+                value_pos = spec.get("value_position")
+                if value_pos is None:
+                    continue
+                value_hex = _extract_value_word(raw_log, int(value_pos), indexed_positions=indexed)
+                if not value_hex:
+                    continue
+                block = int(getattr(raw_log, "block_number", 0) or 0)
+                log_idx = int(getattr(raw_log, "log_index", 0) or 0)
+                key_tuple = (spec["mapping_name"], key_str.lower())
+                prior = state.get(key_tuple)
+                if prior is None or (block, log_idx) > (prior[1], prior[2]):
+                    state[key_tuple] = (value_hex, block, log_idx)
+
+        next_from = getattr(result, "next_block", None)
+        if next_from is None or next_from <= current_from:
+            break
+        current_from = next_from
+        query = _build_query(hypersync_module, contract_address, topic0s, current_from, to_block)
+
+    entries: list[EnumeratedKeyValue] = [
+        {
+            "key": key,
+            "mapping_name": mapping_name,
+            "value_hex": value_hex,
+            "last_block": last_block,
+            "last_log_index": last_log_index,
+        }
+        for (mapping_name, key), (value_hex, last_block, last_log_index) in state.items()
+    ]
+    return EnumerationValueResult(
+        entries=entries,
+        status=status,
+        pages_fetched=page_count,
+        last_block_scanned=current_from,
+        error=error,
+    )
+
+
+# Separate L1 cache for the value path so a re-run with a different
+# predicate doesn't blow away the present-set cache.
+_VALUE_CACHE: dict[str, tuple[EnumerationValueResult, float]] = {}
+
+
+def enumerate_mapping_values_sync(
+    contract_address: str,
+    writer_specs: list[WriterEventSpec],
+    *,
+    chain: str | None = None,
+    value_predicate: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> EnumerationValueResult:
+    """Sync wrapper for ``enumerate_mapping_values``.
+
+    L1 (in-process) cache only. L2 / Postgres caching for the value
+    path is deferred — ``MappingEnumerationCache`` is shaped for the
+    add/remove ``EnumerationResult`` and the value-aware fold
+    produces a different shape (``EnumerationValueResult``). Wiring
+    L2 here would require either widening the cache schema or
+    serializing ``EnumerationValueResult`` into the existing
+    columns, neither of which is worth doing while the durable
+    indexer (D.3 ``mapping_value_events``) is the long-term home
+    for cross-process value reads.
+
+    ``chain``, ``value_predicate``, and the dict-converted writer
+    specs are accepted for forward-compatibility — the
+    ``specs_fingerprint`` extension at
+    ``db/mapping_enumeration_cache.py:51`` already accepts a
+    ``value_predicate`` kwarg, so once the L2 schema lands here the
+    fingerprint will key on it. Until then they're pass-through
+    arguments only.
+    """
+    cache_key = contract_address.lower()
+    now = time.monotonic()
+
+    with _CACHE_LOCK:
+        cached = _VALUE_CACHE.get(cache_key)
+        if cached is not None:
+            result, inserted_at = cached
+            if now - inserted_at < _cache_ttl_s():
+                return result
+            del _VALUE_CACHE[cache_key]
+
+    specs_as_dicts = [dict(s) for s in writer_specs]
+
+    result = asyncio.run(enumerate_mapping_values(contract_address, writer_specs, **kwargs))
+
+    with _CACHE_LOCK:
+        _VALUE_CACHE[cache_key] = (result, now)
+    # specs_hash + L2 caching for the value path is intentionally
+    # deferred — the L2 schema is keyed on EnumerationResult shape, not
+    # EnumerationValueResult, so persisting requires a schema change
+    # we'll do alongside the durable indexer (D.3).
+    _ = (chain, value_predicate, specs_as_dicts)
+    return result
+
+
+def filter_value_entries(
+    entries: list[EnumeratedKeyValue],
+    predicate: dict[str, Any],
+) -> list[str]:
+    """Return the keys whose latest value satisfies ``predicate``.
+
+    Caller-friendly wrapper around ``_value_predicate_passes`` that
+    takes the entry list as produced by ``enumerate_mapping_values``
+    and emits the matching keys. Empty list means either no events
+    seen or no key passed the predicate; the caller surfaces that as
+    ``finite_set([])`` with quality lower_bound when the underlying
+    scan was incomplete."""
+    out: list[str] = []
+    for entry in entries:
+        if _value_predicate_passes(entry["value_hex"], predicate):
+            out.append(entry["key"])
+    return out

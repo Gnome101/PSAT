@@ -28,6 +28,7 @@ from routers import (
     monitored,
     protocols,
     spa,
+    v2,
     watched_proxies,
 )
 from utils.logging import bind_trace_context, configure_logging
@@ -111,6 +112,7 @@ app.include_router(protocols.router)
 app.include_router(monitored.router)
 app.include_router(address_labels.router)
 app.include_router(agent.router)
+app.include_router(v2.router)
 # SPA catch-all MUST be last - its /{full_path:path} would otherwise
 # swallow any /api/* route registered after it.
 app.include_router(spa.router)

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStage, JobStatus, SessionLocal
+from db.models import Job, JobDependency, JobStage, JobStatus, SessionLocal
 from db.queue import (
     DEFAULT_JOB_LEASE_TTL_S,
     LeaseLost,
@@ -345,6 +345,12 @@ class BaseWorker:
                     # artifact is visible to the next-stage worker at its claim.
                     if degraded_accumulator:
                         self._persist_stage_errors(job, degraded_accumulator)
+                    # Flip JobDependency rows where this job is the provider
+                    # and its just-completed stage meets-or-exceeds the
+                    # depender's required_stage. Queued in the same tx as
+                    # advance_job/complete_job below so dependents become
+                    # claimable atomically with the stage change.
+                    self._satisfy_dependencies(session, job, completed_stage=self.stage)
                     if self.next_stage == JobStage.done:
                         from db.queue import complete_job
 
@@ -496,6 +502,12 @@ class BaseWorker:
                                 lease_id=claim_lease_id,
                             )
                         else:
+                            # Terminal failure → flip pending deps where this
+                            # job is the provider to ``degraded`` so dependents
+                            # short-circuit instead of blocking forever.
+                            # Queued before fail_job_terminal so the same tx
+                            # commits both.
+                            self._degrade_dependencies(session, job)
                             fail_job_terminal(
                                 session,
                                 job.id,
@@ -540,6 +552,7 @@ class BaseWorker:
                                     lease_id=claim_lease_id,
                                 )
                             else:
+                                self._degrade_dependencies(fresh, job)
                                 fail_job_terminal(
                                     fresh,
                                     job.id,
@@ -771,6 +784,100 @@ class BaseWorker:
                 session.rollback()
             except Exception:
                 logger.debug("heartbeat rollback failed", exc_info=True)
+
+    def _satisfy_dependencies(self, session: Session, job: Job, *, completed_stage: JobStage) -> int:
+        """Mark every pending ``JobDependency`` row whose provider is this
+        job as ``satisfied`` when the just-completed stage meets-or-exceeds
+        the depender's ``required_stage``.
+
+        Stage ordering follows the natural ``JobStage`` enum order
+        (discovery < dapp_crawl < ... < policy < coverage < done). Mutates
+        rows IN this session WITHOUT committing — the caller's
+        ``advance_job`` / ``complete_job`` commit flushes them in the same
+        transaction so dependents become claimable atomically with the
+        provider's stage change.
+
+        Returns the count of rows flipped (mostly for logging / tests).
+        Best-effort: a query failure logs and returns 0 rather than
+        propagating; the success path of stage advancement should not be
+        blocked by a dependency-bookkeeping bug.
+        """
+        chain = self._provider_chain_for(job)
+        addr = (getattr(job, "address", None) or "").lower()
+        if not addr:
+            return 0
+        try:
+            stage_order = [s.value for s in JobStage]
+            completed_idx = stage_order.index(completed_stage.value)
+            satisfied_stages = {s for s in JobStage if stage_order.index(s.value) <= completed_idx}
+            stmt = select(JobDependency).where(
+                JobDependency.provider_chain == chain,
+                JobDependency.provider_address == addr,
+                JobDependency.status == "pending",
+                JobDependency.required_stage.in_(satisfied_stages),
+            )
+            rows = session.execute(stmt).scalars().all()
+            now = datetime.now(timezone.utc)
+            for row in rows:
+                row.status = "satisfied"
+                row.satisfied_at = now
+            return len(rows)
+        except Exception as exc:
+            logger.warning(
+                "satisfy_dependencies failed for job %s: %s",
+                job.id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
+            return 0
+
+    def _degrade_dependencies(self, session: Session, job: Job) -> int:
+        """Mark every pending ``JobDependency`` row whose provider is this
+        job as ``degraded`` after the provider terminally fails.
+
+        Dependents short-circuit cross-contract authority leaves to
+        ``external_check_only`` rather than block forever. Same
+        non-committing semantics as ``_satisfy_dependencies``.
+        """
+        chain = self._provider_chain_for(job)
+        addr = (getattr(job, "address", None) or "").lower()
+        if not addr:
+            return 0
+        try:
+            stmt = select(JobDependency).where(
+                JobDependency.provider_chain == chain,
+                JobDependency.provider_address == addr,
+                JobDependency.status == "pending",
+            )
+            rows = session.execute(stmt).scalars().all()
+            now = datetime.now(timezone.utc)
+            for row in rows:
+                row.status = "degraded"
+                row.satisfied_at = now
+            return len(rows)
+        except Exception as exc:
+            logger.warning(
+                "degrade_dependencies failed for job %s: %s",
+                job.id,
+                exc,
+                extra={"exc_type": type(exc).__name__},
+            )
+            return 0
+
+    @staticmethod
+    def _provider_chain_for(job: Job) -> str | None:
+        """Pull the provider's chain identifier out of the job's request
+        payload. Mirrors the convention ``_queue_discovered_contracts``
+        uses when stamping ``request['chain']`` on spawned children.
+
+        ``getattr`` over direct attribute access so test doubles
+        (SimpleNamespace fakes that omit ``request``) don't trigger
+        AttributeError on the dependency hooks."""
+        request = getattr(job, "request", None)
+        if not isinstance(request, dict):
+            return None
+        chain = request.get("chain")
+        return chain if isinstance(chain, str) and chain else None
 
     def _persist_stage_errors(self, job: Job, errors: list[StageError]) -> None:
         """Write the ``stage_errors`` artifact via a fresh session, merging

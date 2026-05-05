@@ -315,7 +315,12 @@ def test_constructor_skipped():
     assert discover_mapping_writer_events(_contract([fn])) == []
 
 
-def test_non_literal_value_skipped():
+def test_non_literal_value_emits_set_direction():
+    """Pre-D: non-literal RHS dropped the writer event (no way to know
+    add vs remove). PR D: emit ``direction="set"`` so the durable
+    indexer / on-demand replay / trace replay can decode the actual
+    value at index time and feed it through ``ValuePredicate``.
+    """
     wards = _mapping("wards")
     guy = _local("guy")
     some = _local("someValue", "uint256")
@@ -333,7 +338,11 @@ def test_non_literal_value_skipped():
         ],
         written=[wards],
     )
-    assert discover_mapping_writer_events(_contract([fn])) == []
+    specs = discover_mapping_writer_events(_contract([fn]))
+    assert len(specs) == 1
+    assert specs[0]["direction"] == "set"
+    assert specs[0]["mapping_name"] == "wards"
+    assert specs[0]["key_position"] == 0
 
 
 def test_multi_arg_event_with_key_not_first():
