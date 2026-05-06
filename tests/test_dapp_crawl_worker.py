@@ -123,7 +123,7 @@ def _patch_worker_deps(
 
     monkeypatch.setattr(worker_module, "store_artifact", fake_store_artifact)
 
-    def fake_complete_job(session, job_id, detail="", *, lease_id=None):
+    def fake_complete_job(session, job_id, detail=""):
         complete_calls.append((job_id, detail))
 
     monkeypatch.setattr(worker_module, "complete_job", fake_complete_job)

@@ -126,16 +126,6 @@ def _patch_session_local(monkeypatch):
     yield
 
 
-@pytest.fixture(autouse=True)
-def _preserve_pytest_log_handlers(monkeypatch):
-    """``AuditRowWorker.__init__`` calls ``configure_logging`` which clears
-    every root handler — including pytest's caplog handler — so log assertions
-    fail. Stub ``configure_logging`` to a no-op for these unit tests; we don't
-    care about JSON formatting here, only that the message hits caplog."""
-    monkeypatch.setattr(arw_module, "configure_logging", lambda *a, **kw: None)
-    yield
-
-
 # ---------------------------------------------------------------------------
 # _handle_signal — flips _running to False and logs once.
 # ---------------------------------------------------------------------------

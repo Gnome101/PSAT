@@ -44,11 +44,10 @@ from __future__ import annotations
 import logging
 import os
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from db.models import Job, JobStage, JobStatus
-from db.queue import get_contract_for_job
+from db.models import Contract, Job, JobStage, JobStatus
 from workers.base import BaseWorker
 
 logger = logging.getLogger("workers.coverage_worker")
@@ -179,7 +178,7 @@ class CoverageWorker(BaseWorker):
         """
         from services.audits.coverage import upsert_coverage_for_contract
 
-        contract = get_contract_for_job(session, job)
+        contract = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
         if contract is None:
             # Address-only jobs where discovery/static skipped the Contract
             # write (cached path reassigned it) can land here. Nothing to

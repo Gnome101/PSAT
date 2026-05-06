@@ -481,71 +481,23 @@ def claim_job(
     return job
 
 
-def _atomic_lease_update(
-    session: Session,
-    job_id: Any,
-    set_clause: str,
-    params: dict[str, Any],
-    lease_id: uuid.UUID | None,
-    *,
-    op: str,
-) -> bool:
-    """Issue a conditional UPDATE on the ``jobs`` row, atomic against lease loss.
+def _check_lease_or_raise(job: Job, lease_id: uuid.UUID | None) -> None:
+    """Verify the caller still holds the row's lease; raise ``LeaseLost`` if not.
 
-    Replaces the SELECT-then-in-memory-check pattern that
-    ``Session(expire_on_commit=False)`` made racy: the in-memory check
-    racy: the ORM row stays cached after the claim commit, so a stale
-    ``job.lease_id`` could pass the check while the row had already been
-    swept by ``reclaim_stuck_jobs`` and re-claimed by a sibling. The
-    conditional UPDATE makes the lease test and the write happen in one
-    statement, so a sibling claim that lands between then and now causes
-    the UPDATE to match zero rows.
-
-    *set_clause* is the ``SET`` body without the leading keyword (e.g.
-    ``"stage = :next_stage, status = 'queued'"``). *params* binds the
-    referenced placeholders. *lease_id* gates the WHERE clause:
-
-    - ``None`` → unconditional update (legacy / admin path; preserves the
-      pre-lease semantic for callers that don't thread a lease through).
-    - non-None → ``WHERE id = :job_id AND (lease_id = :lease_id OR
-      lease_id IS NULL)`` so the caller's lease wins, and pre-migration
-      rows with ``lease_id IS NULL`` still accept writes.
-
-    *op* is a short label for the LeaseLost message (e.g. ``"advance"``).
-
-    On a successful match the function calls ``session.expire_all()`` so
-    any cached ``Job`` ORM instance in the session reflects the new row
-    state on next access. Without this, a caller (or test) holding a
-    pre-update ``Job`` object would see stale ``status``/``stage``/``lease_id``
-    attributes — the raw ``text()`` UPDATE bypasses the identity map.
-
-    Returns ``True`` if the update matched a row, ``False`` if no row
-    matched (only possible on the ``lease_id=None`` path; the conditional
-    path raises ``LeaseLost`` instead so callers like ``BaseWorker`` can
-    bail without further writes). Caller is responsible for committing.
+    ``lease_id=None`` means the caller doesn't care (legacy/admin path);
+    skip the check. The pre-claim ``lease_id`` column may itself be NULL
+    on rows that pre-date the lease columns — in that case treat the
+    write as authoritative (no live competing claimant).
     """
     if lease_id is None:
-        result = session.execute(
-            text(f"UPDATE jobs SET {set_clause} WHERE id = :job_id RETURNING id"),
-            {**params, "job_id": job_id},
+        return
+    if job.lease_id is None:
+        return
+    if job.lease_id != lease_id:
+        raise LeaseLost(
+            f"Job {job.id}: lease {lease_id} no longer holds the row "
+            f"(current holder: {job.lease_id}, worker_id={job.worker_id})"
         )
-        matched = bool(result.fetchall())
-        if matched:
-            session.expire_all()
-        return matched
-
-    result = session.execute(
-        text(
-            f"UPDATE jobs SET {set_clause} "
-            "WHERE id = :job_id AND (lease_id = :lease_id OR lease_id IS NULL) "
-            "RETURNING id"
-        ),
-        {**params, "job_id": job_id, "lease_id": lease_id},
-    )
-    if not result.fetchall():
-        raise LeaseLost(f"Job {job_id}: {op} rejected — lease {lease_id} no longer holds the row")
-    session.expire_all()
-    return True
 
 
 def heartbeat_job(
@@ -603,25 +555,17 @@ def advance_job(
     holds the row's lease (raises ``LeaseLost``). ``BaseWorker``
     threads its claim-time lease through here so a worker that's been
     silently reclaimed can't advance a job a sibling is now processing.
-    The check is atomic with the write — see :func:`_atomic_lease_update`.
     """
-    _atomic_lease_update(
-        session,
-        job_id,
-        "stage = :next_stage, "
-        "status = 'queued', "
-        "detail = :detail, "
-        "worker_id = NULL, "
-        "lease_id = NULL, "
-        "lease_expires_at = NULL, "
-        "updated_at = NOW()",
-        {
-            "next_stage": next_stage.value,
-            "detail": detail or f"Advanced to {next_stage.value}",
-        },
-        lease_id,
-        op="advance",
-    )
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    _check_lease_or_raise(job, lease_id)
+    job.stage = next_stage
+    job.status = JobStatus.queued
+    job.detail = detail or f"Advanced to {next_stage.value}"
+    job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
     session.commit()
 
 
@@ -633,20 +577,16 @@ def complete_job(
     lease_id: uuid.UUID | None = None,
 ) -> None:
     """Mark a job as completed with stage=done. See :func:`advance_job` for *lease_id*."""
-    _atomic_lease_update(
-        session,
-        job_id,
-        "stage = 'done', "
-        "status = 'completed', "
-        "detail = :detail, "
-        "worker_id = NULL, "
-        "lease_id = NULL, "
-        "lease_expires_at = NULL, "
-        "updated_at = NOW()",
-        {"detail": detail},
-        lease_id,
-        op="complete",
-    )
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    _check_lease_or_raise(job, lease_id)
+    job.stage = JobStage.done
+    job.status = JobStatus.completed
+    job.detail = detail
+    job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
     session.commit()
 
 
@@ -689,28 +629,19 @@ def requeue_job(
     every attempt — this function does not touch it. The caller (typically
     ``BaseWorker``) appends the just-failed attempt before calling here.
     """
-    _atomic_lease_update(
-        session,
-        job_id,
-        "status = 'queued', "
-        "error = :error, "
-        "retry_count = :retry_count, "
-        "next_attempt_at = :next_attempt_at, "
-        "last_failure_kind = 'transient', "
-        "detail = :detail, "
-        "worker_id = NULL, "
-        "lease_id = NULL, "
-        "lease_expires_at = NULL, "
-        "updated_at = NOW()",
-        {
-            "error": error,
-            "retry_count": retry_count,
-            "next_attempt_at": next_attempt_at,
-            "detail": f"Retry scheduled for {next_attempt_at.isoformat()}",
-        },
-        lease_id,
-        op="requeue",
-    )
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    _check_lease_or_raise(job, lease_id)
+    job.status = JobStatus.queued
+    job.error = error
+    job.retry_count = retry_count
+    job.next_attempt_at = next_attempt_at
+    job.last_failure_kind = "transient"
+    job.detail = f"Retry scheduled for {next_attempt_at.isoformat()}"
+    job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
     session.commit()
 
 
@@ -797,22 +728,20 @@ def fail_job_terminal(
     retried, so the count shouldn't move). The retries-exhausted path
     passes ``new_retry_count`` so the row records the total attempt count.
     """
-    set_clause = (
-        "status = 'failed_terminal', "
-        "error = :error, "
-        "detail = 'Failed (terminal)', "
-        "last_failure_kind = :kind, "
-        "next_attempt_at = NULL, "
-        "worker_id = NULL, "
-        "lease_id = NULL, "
-        "lease_expires_at = NULL, "
-        "updated_at = NOW()"
-    )
-    params: dict[str, Any] = {"error": error, "kind": kind}
+    job = session.get(Job, job_id)
+    if job is None:
+        return
+    _check_lease_or_raise(job, lease_id)
+    job.status = JobStatus.failed_terminal
+    job.error = error
+    job.detail = "Failed (terminal)"
+    job.last_failure_kind = kind
+    job.next_attempt_at = None
+    job.worker_id = None
+    job.lease_id = None
+    job.lease_expires_at = None
     if retry_count is not None:
-        set_clause += ", retry_count = :retry_count"
-        params["retry_count"] = retry_count
-    _atomic_lease_update(session, job_id, set_clause, params, lease_id, op="fail_terminal")
+        job.retry_count = retry_count
     session.commit()
 
 
@@ -1332,29 +1261,6 @@ def find_existing_job_for_address(session: Session, address: str, chain: str | N
                 continue
         return c
     return None
-
-
-def get_contract_for_job(session: Session, job: Job) -> Contract | None:
-    """Return the Contract row a worker should treat as belonging to ``job``.
-
-    Tries ``Contract.job_id == job.id`` first; falls back to ``(address, chain)``
-    when concurrent discovery for the same address rebound the row to a sibling
-    job's id (workers/discovery.py existing-row branch) or ``copy_static_cache``
-    reassigned it to a later target. Without this fallback the static stage
-    raises ``RuntimeError("Contract row not found for this job")`` and the
-    resolution / policy / coverage stages silently skip per-contract writes.
-    """
-    contract = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
-    if contract is not None:
-        return contract
-    if not job.address:
-        return None
-    request = job.request if isinstance(job.request, dict) else {}
-    chain = request.get("chain")
-    stmt = select(Contract).where(func.lower(Contract.address) == job.address.lower())
-    if chain is not None:
-        stmt = stmt.where(Contract.chain == chain)
-    return session.execute(stmt.limit(1)).scalar_one_or_none()
 
 
 def is_known_proxy(session: Session, address: str, chain: str | None = None) -> bool:

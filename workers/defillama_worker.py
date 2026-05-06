@@ -150,7 +150,6 @@ class DefiLlamaWorker(BaseWorker):
             session,
             job.id,
             f"DefiLlama scan complete for {protocol}: {len(addresses)} addresses written to contracts table",
-            lease_id=getattr(job, "lease_id", None),
         )
         raise JobHandledDirectly()
 

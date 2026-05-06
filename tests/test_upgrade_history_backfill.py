@@ -12,7 +12,7 @@ The actual functions under test live in
   - ``backfill_historical_impl_contracts`` — ensures a Contract row
     exists for every historical impl address.
 The ``_run_pipeline`` helper below wires them together the same way
-``static_worker._finalize_upgrade_history`` does in production.
+``static_worker._resolve_upgrade_history`` does in production.
 
 Also covers the two pollution-guard consumers:
   - ``POST /api/company/{name}/analyze-remaining`` must NOT enqueue
@@ -69,7 +69,7 @@ def _backfill(session, *, protocol_id, chain, impl_addrs):
 def _run_pipeline(session, *, contract, artifact_data, protocol_id=None):
     """Project an artifact into UpgradeEvent rows + backfill impl Contracts.
 
-    Mirrors what ``static_worker._finalize_upgrade_history`` does in production
+    Mirrors what ``static_worker._resolve_upgrade_history`` does in production
     after ``store_artifact`` — the same two service-level calls in the same
     order, exercising the same code paths the live pipeline exercises.
     """
@@ -186,7 +186,7 @@ def _add_contract(session, **fields):
 
 
 # ---------------------------------------------------------------------------
-# 1. backfill_historical_impl_contracts — the core unit
+# 1. _backfill_historical_impls — the core unit
 # ---------------------------------------------------------------------------
 
 
@@ -399,11 +399,13 @@ def test_backfill_degrades_gracefully_on_etherscan_failure(db_session, seed_prot
 
 
 # ---------------------------------------------------------------------------
-# 2. project_to_events + backfill — the pipeline that pulls everything together
+# 2. _run_upgrade_history — the caller that pulls everything together
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_writes_events_and_backfills_impls(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
+def test_run_upgrade_history_writes_events_and_backfills_impls(
+    db_session, seed_protocol, worker, stub_etherscan, monkeypatch
+):
     """End-to-end: given an upgrade_history artifact, writes UpgradeEvent
     rows AND backfills Contract rows for each unique new_impl.
     """
@@ -474,7 +476,9 @@ def test_pipeline_writes_events_and_backfills_impls(db_session, seed_protocol, w
     assert {r.contract_name for r in impl_rows} == {"ImplA", "ImplB"}
 
 
-def test_pipeline_keys_events_to_proxy_not_subject(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
+def test_run_upgrade_history_keys_events_to_proxy_not_subject(
+    db_session, seed_protocol, worker, stub_etherscan, monkeypatch
+):
     """Regression: when the subject Contract isn't itself the proxy
     described in the artifact, ``UpgradeEvent.contract_id`` must point
     at the PROXY's Contract row, not the subject's.
@@ -582,7 +586,9 @@ def test_pipeline_keys_events_to_proxy_not_subject(db_session, seed_protocol, wo
     assert {r.contract_name for r in impls} == {"Impl1", "Impl2"}
 
 
-def test_pipeline_skips_proxies_not_in_inventory(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
+def test_run_upgrade_history_skips_proxies_not_in_inventory(
+    db_session, seed_protocol, worker, stub_etherscan, monkeypatch
+):
     """If the artifact mentions a proxy whose Contract row doesn't exist,
     silently skip those events — nothing to key them to, and writing
     with a NULL contract_id would violate the NOT NULL constraint. The
@@ -636,7 +642,7 @@ def test_pipeline_skips_proxies_not_in_inventory(db_session, seed_protocol, work
 # tested static_worker's pre-projection guard, which is structural rather
 # than a service-level concern. It's enforced by the
 # ``contract_row = session.execute(...); if contract_row is None: return``
-# block in ``static_worker._finalize_upgrade_history`` and is unreachable
+# block in ``static_worker._resolve_upgrade_history`` and is unreachable
 # from the service entry points exercised here, so we no longer assert it
 # at this layer. The static-worker integration tests cover that path.
 
@@ -768,7 +774,7 @@ def test_coverage_matcher_links_audit_to_backfilled_impl(db_session, seed_protoc
 
 def test_backfill_triggers_coverage_refresh_for_created_rows(db_session, seed_protocol, worker, stub_etherscan):
     """Regression for the "RoleRegistry shows unaudited" bug: when
-    ``backfill_historical_impl_contracts`` creates a new historical-impl Contract
+    ``_backfill_historical_impls`` creates a new historical-impl Contract
     row, coverage for every existing audit whose scope names that impl
     must be upserted in the same pass.
 
@@ -954,7 +960,7 @@ def test_backfill_coverage_refresh_covers_adopted_rows_too(db_session, seed_prot
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_persists_event_timestamp(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
+def test_run_upgrade_history_persists_event_timestamp(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
     """Regression for the "LiquidityPool shows no audit coverage" bug:
     the artifact carries a unix-seconds timestamp per event, and
     ``UpgradeEvent.timestamp`` is ``DateTime(timezone=True)``. The worker
@@ -1036,7 +1042,7 @@ def test_pipeline_persists_event_timestamp(db_session, seed_protocol, worker, st
     assert windows[0].from_ts == expected_dt
 
 
-def test_pipeline_handles_missing_timestamp(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
+def test_run_upgrade_history_handles_missing_timestamp(db_session, seed_protocol, worker, stub_etherscan, monkeypatch):
     """Defensive: if the artifact omits the timestamp (older artifact, RPC
     returned None, etc.), the write must still succeed with a NULL
     timestamp — not raise on a ``fromtimestamp(None)``.
@@ -1103,7 +1109,7 @@ def test_backfill_coverage_refresh_runs_source_equivalence(
     """Regression for the "LiquidityPool shows no audit coverage" bug —
     the source-equivalence half.
 
-    When ``backfill_historical_impl_contracts`` creates a Contract row for a
+    When ``_backfill_historical_impls`` creates a Contract row for a
     historical impl, there's no downstream Job for this impl (it's
     ``job_id=None``), so ``workers.coverage_worker`` never runs for it.
     The backfill's inline ``upsert_coverage_for_contract`` call is the

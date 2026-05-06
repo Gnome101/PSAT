@@ -436,21 +436,10 @@ class TestAnvilProxyCache:
         # --- Upgrade the dependency proxy to IMPL_B ---
         _set_storage(anvil_rpc, dep_addr, _EIP1967_IMPL_SLOT, _ANVIL_IMPL_B)
 
-        # Mock non-classification parts of _run_dependency_phase. PR #60
-        # parallelised the dynamic-deps fan-out and dropped the legacy
-        # _resolve_dynamic_deps wrapper; mock the underlying call directly.
+        # Mock non-classification parts of _run_dependency_phase
         monkeypatch.setattr(
-            "workers.static_worker.find_dynamic_dependencies",
-            lambda *a, **kw: {
-                "address": target_addr,
-                "rpc": anvil_rpc,
-                "transactions_analyzed": [],
-                "trace_methods": [],
-                "dependencies": [],
-                "provenance": {},
-                "dependency_graph": [],
-                "trace_errors": [],
-            },
+            "workers.static_worker._resolve_dynamic_deps",
+            lambda *a, **kw: (None, "mocked"),
         )
         monkeypatch.setattr(
             "workers.static_worker.build_unified_dependencies",
