@@ -25,6 +25,11 @@ from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, TypeVar
 
+# Importing the LeaseLost type from the queue layer is a deliberate cross-cut:
+# every parallel fan-out site that takes a *heartbeat* callback uses it for
+# lease extension, and a swallowed lease-loss signal here would let stale
+# attempts keep writing artifacts/rows for a job a sibling now owns.
+from db.queue import LeaseLost
 from utils.rpc import MAX_BATCH_SIZE, rpc_batch_request_with_status
 
 logger = logging.getLogger(__name__)
@@ -63,6 +68,12 @@ def parallel_map(
     *heartbeat*, if provided, is called once per completion. It runs on the
     submitting thread (after ``as_completed`` yields) so DB sessions captured
     in the closure stay on the worker's thread.
+
+    ``LeaseLost`` raised by *heartbeat* is **not** swallowed: it propagates
+    to the caller so a worker that's been silently reclaimed stops writing
+    further artifacts/rows for a job a sibling now owns. Other heartbeat
+    exceptions (transient DB blips) are logged and ignored — the next
+    completion's heartbeat or the stale-job sweep will recover.
     """
     items_list = list(items)
     if not items_list:
@@ -82,6 +93,8 @@ def parallel_map(
             if heartbeat is not None:
                 try:
                     heartbeat()
+                except LeaseLost:
+                    raise
                 except Exception:
                     logger.exception("parallel_map: heartbeat raised — continuing")
         return results
@@ -122,6 +135,14 @@ def parallel_map(
         if heartbeat is not None:
             try:
                 heartbeat()
+            except LeaseLost:
+                # Caller (BaseWorker._execute_job) catches this and bails so
+                # the worker stops writing for a job a sibling now owns.
+                # Already-submitted futures will run to completion in the
+                # shared executor — that's bounded extra work, but the
+                # conditional-UPDATE in advance_job/complete_job will reject
+                # any final stage transition keyed off the lost lease.
+                raise
             except Exception:
                 logger.exception("parallel_map: heartbeat raised — continuing")
 

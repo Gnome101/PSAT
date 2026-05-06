@@ -68,7 +68,7 @@ def _patch_worker_deps(monkeypatch: pytest.MonkeyPatch) -> dict[str, list]:
     def fake_store(session, job_id, name, data=None, text_data=None):
         store_calls.append((name, data))
 
-    def fake_complete(session, job_id, detail=""):
+    def fake_complete(session, job_id, detail="", *, lease_id=None):
         complete_calls.append((job_id, detail))
 
     def fake_update_detail(session, job_id, detail):

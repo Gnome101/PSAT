@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import select
 
 from db.models import Artifact, Contract, Job, JobStatus
+from db.queue import get_contract_for_job
 from services.aggregations import build_analysis_detail
 from services.governance.proxies import _merge_proxy_impl_entries
 
@@ -179,7 +180,7 @@ def analysis_artifact(run_name: str, artifact_name: str):
         if artifact is None and lookup_name == "upgrade_history":
             from services.discovery.upgrade_history import synthesize_from_events
 
-            contract = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+            contract = get_contract_for_job(session, job)
             if contract is not None:
                 artifact = synthesize_from_events(session, contract)
 

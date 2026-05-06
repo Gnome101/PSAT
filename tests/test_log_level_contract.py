@@ -62,7 +62,7 @@ ALLOW_LIST: dict[str, dict[int, str]] = {
         # stage. The v1 path is independent and already wrote its own
         # artifacts; surfacing this as degraded would mislead operators
         # into thinking the v1 contract analysis was incomplete.
-        1510: "v2-only artifact store failure; v1 contract_analysis path unaffected.",
+        1472: "v2-only artifact store failure; v1 contract_analysis path unaffected.",
     },
 }
 
