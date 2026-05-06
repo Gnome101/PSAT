@@ -24,6 +24,7 @@ from db.queue import (
     find_completed_static_cache,
     find_previous_company_inventory,
     get_artifact,
+    get_contract_for_job,
     get_or_create_protocol,
     store_artifact,
     store_source_files,
@@ -332,11 +333,7 @@ class DiscoveryWorker(BaseWorker):
 
                 # Set job name from the cached contract if not already set
                 if not job.name:
-                    from sqlalchemy import select as sa_select
-
-                    contract_row = session.execute(
-                        sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-                    ).scalar_one_or_none()
+                    contract_row = get_contract_for_job(session, job)
                     if contract_row and contract_row.contract_name:
                         job.name = f"{contract_row.contract_name}_{address[2:10]}"
                         session.commit()

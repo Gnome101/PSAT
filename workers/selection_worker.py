@@ -365,7 +365,7 @@ class SelectionWorker(BaseWorker):
             detail = f"Selection complete: {len(ranked)} candidates, none queued (budget full or all deduped)"
         else:
             detail = "Selection complete: no eligible candidates"
-        complete_job(session, job.id, detail)
+        complete_job(session, job.id, detail, lease_id=getattr(job, "lease_id", None))
         raise JobHandledDirectly()
 
 

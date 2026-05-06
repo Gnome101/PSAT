@@ -21,6 +21,7 @@ from db.models import (
     JobStatus,
     PrincipalLabel,
 )
+from db.queue import get_contract_for_job
 
 # Indirect through ``routers.deps`` so tests get a single patch point for
 # ``SessionLocal``/``get_all_artifacts``.
@@ -50,16 +51,9 @@ def build_analysis_detail(session: Session, run_name: str) -> dict[str, Any] | N
     # Load artifacts (for those still stored as artifacts)
     all_artifacts = deps.get_all_artifacts(session, job.id)
 
-    # Fall back to address lookup when copy_static_cache has reassigned
-    # the Contract row to a newer job. Chain-scoped so we don't pick up
-    # the same address on a different chain.
-    contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
-    if contract_row is None and job.address:
-        fallback_stmt = select(Contract).where(Contract.address == job.address.lower())
-        job_chain = job.request.get("chain") if isinstance(job.request, dict) else None
-        if job_chain:
-            fallback_stmt = fallback_stmt.where(Contract.chain == job_chain)
-        contract_row = session.execute(fallback_stmt.limit(1)).scalar_one_or_none()
+    # Address-fallback covers copy_static_cache reassignment and concurrent
+    # discovery rebinding the row's job_id to a sibling.
+    contract_row = get_contract_for_job(session, job)
 
     def _company_for(j: Job) -> str | None:
         seen: set[str] = set()
@@ -311,7 +305,7 @@ def _inherit_from_impl(session: Session, payload: dict[str, Any], job: Job, impl
             if val is not None:
                 payload[fallback_name] = val
 
-    impl_c = session.execute(select(Contract).where(Contract.job_id == impl_job.id).limit(1)).scalar_one_or_none()
+    impl_c = get_contract_for_job(session, impl_job)
     if impl_c:
         if "effective_permissions" not in payload:
             impl_efs = list(

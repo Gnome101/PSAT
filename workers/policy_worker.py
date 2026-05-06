@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from db.models import (
-    Contract,
     EffectiveFunction,
     FunctionPrincipal,
     Job,
@@ -21,7 +20,7 @@ from db.models import (
 )
 from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, artifact_key, parse_key
 from db.nested_artifacts import store_bundle as store_nested_artifacts
-from db.queue import get_artifact, store_artifact
+from db.queue import get_artifact, get_contract_for_job, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
 from schemas.effective_permissions import PrincipalResolution
 from services.policy import build_effective_permissions, build_principal_labels
@@ -459,7 +458,7 @@ class PolicyWorker(BaseWorker):
         )
 
         # Write to effective_functions and function_principals tables
-        contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
+        contract_row = get_contract_for_job(session, job)
         if contract_row and isinstance(ep_data, dict):
             session.query(EffectiveFunction).filter(EffectiveFunction.contract_id == contract_row.id).delete()
             for fn in ep_data.get("functions", []):
@@ -807,9 +806,7 @@ class PolicyWorker(BaseWorker):
                 enriched,
             )
             # Update the effective_functions table with new labels
-            contract_row = session.execute(
-                select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
+            contract_row = get_contract_for_job(session, job)
             if contract_row:
                 for fn_sig, new_labels in enriched.items():
                     ef = session.execute(

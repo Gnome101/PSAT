@@ -1370,7 +1370,10 @@ def test_static_worker_proxy_skips_analysis_and_completes(monkeypatch):
     monkeypatch.setattr(worker, "update_detail", lambda *_a, **_kw: None)
 
     completed = []
-    monkeypatch.setattr("db.queue.complete_job", lambda _s, _j, detail="": completed.append(True))
+    monkeypatch.setattr(
+        "db.queue.complete_job",
+        lambda _s, _j, detail="", *, lease_id=None: completed.append(True),
+    )
 
     # Analysis/tracking-plan should NOT be called for a proxy parent
     # (proxies short-circuit to spawn an impl child job).

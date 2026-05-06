@@ -17,7 +17,14 @@ from typing import cast
 from sqlalchemy import select
 
 from db.models import Contract, ContractSummary, Job, JobStage, PrivilegedFunction, RoleDefinition
-from db.queue import _MUTABLE_CONTRACT_FIELDS, create_job, get_artifact, get_source_files, store_artifact
+from db.queue import (
+    _MUTABLE_CONTRACT_FIELDS,
+    create_job,
+    get_artifact,
+    get_contract_for_job,
+    get_source_files,
+    store_artifact,
+)
 from schemas.contract_analysis import ContractAnalysis
 from services.discovery import (
     build_dependency_visualization,
@@ -186,48 +193,6 @@ def _merge_dynamic_deps(prev: dict, new: dict) -> dict:
         "dependency_graph": merged_graph,
         "trace_errors": merged_errors,
     }
-
-
-def _resolve_dynamic_deps(
-    session,
-    job,
-    address: str,
-    dynamic_rpc: str | None,
-    tx_limit: int,
-    tx_hashes: list[str] | None,
-    proxy_addr: str | None,
-    code_cache: dict[str, str],
-) -> tuple[dict | None, str | None]:
-    """Load cached dynamic deps, discover new ones, merge, and persist.
-
-    Returns ``(dyn_output, error_string)``.  On success *error_string* is
-    ``None``.  When previous deps exist and no new transactions are found,
-    the previous output is returned as-is (not an error).
-    """
-    prev_dyn = _load_prev_dynamic_deps(session, job, tx_hashes)
-    start_block = _start_block_from_prev_dyn(prev_dyn)
-    try:
-        dyn_output = find_dynamic_dependencies(
-            address,
-            rpc_url=dynamic_rpc,
-            tx_limit=tx_limit,
-            tx_hashes=tx_hashes,
-            proxy_address=proxy_addr,
-            code_cache=code_cache,
-            start_block=start_block,
-        )
-    except NoNewTransactionsError:
-        if prev_dyn:
-            store_artifact(session, job.id, "dynamic_dependencies", data=prev_dyn)
-            return prev_dyn, None
-        return None, "No representative transactions found"
-    except Exception as exc:
-        return None, str(exc)
-
-    if prev_dyn and not tx_hashes:
-        dyn_output = _merge_dynamic_deps(prev_dyn, dyn_output)
-    store_artifact(session, job.id, "dynamic_dependencies", data=dyn_output)
-    return dyn_output, None
 
 
 def _load_prev_dynamic_deps(session, job, tx_hashes: list[str] | None) -> dict | None:
@@ -723,16 +688,13 @@ class StaticWorker(BaseWorker):
     next_stage = JobStage.resolution
 
     def process(self, session, job):
-        from sqlalchemy import select as sa_select
-
         sources = get_source_files(session, job.id)
         if not sources:
             raise RuntimeError("No source files found in DB for this job")
 
-        # Read from contracts table instead of artifacts
-        contract_row = session.execute(
-            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        # Address-fallback covers the concurrent-discovery case where a
+        # sibling job's discovery rebound this row's job_id.
+        contract_row = get_contract_for_job(session, job)
         if not contract_row:
             raise RuntimeError("Contract row not found for this job")
 
@@ -826,10 +788,18 @@ class StaticWorker(BaseWorker):
                     job_id_str,
                     contract_name,
                 )
-                # Proxy jobs skip resolution/policy — complete directly
+                # Proxy jobs skip resolution/policy — complete directly. Pass
+                # the claim-time lease through so a sibling that swept the
+                # row before we got here can't get its claim overwritten;
+                # complete_job raises LeaseLost and BaseWorker bails.
                 from db.queue import complete_job
 
-                complete_job(session, job.id, f"Proxy {contract_name} — impl child job queued for full analysis")
+                complete_job(
+                    session,
+                    job.id,
+                    f"Proxy {contract_name} — impl child job queued for full analysis",
+                    lease_id=getattr(job, "lease_id", None),
+                )
                 raise JobHandledDirectly()
             elif has_cached_static:
                 # Static artifacts already present from cache — skip analysis phases.
@@ -936,11 +906,7 @@ class StaticWorker(BaseWorker):
         facets = classification.get("facets")
 
         # Update contracts table with proxy info
-        from sqlalchemy import select as sa_select
-
-        contract_row = session.execute(
-            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        contract_row = get_contract_for_job(session, job)
         if contract_row:
             contract_row.is_proxy = True
             contract_row.proxy_type = proxy_type
@@ -1362,11 +1328,7 @@ class StaticWorker(BaseWorker):
             store_artifact(session, job.id, "enrichment_cache", data=enrichment_data)
 
             # Write to contract_dependencies table
-            from sqlalchemy import select as sa_select
-
-            contract_row = session.execute(
-                sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-            ).scalar_one_or_none()
+            contract_row = get_contract_for_job(session, job)
             if contract_row:
                 from db.models import ContractDependency
 
@@ -1501,11 +1463,7 @@ class StaticWorker(BaseWorker):
 
     def _write_analysis_tables(self, session, job: Job, analysis: ContractAnalysis | dict) -> None:
         """Extract structured data from contract_analysis JSON into relational tables."""
-        from sqlalchemy import select as sa_select
-
-        contract_row = session.execute(
-            sa_select(Contract).where(Contract.job_id == job.id).limit(1)
-        ).scalar_one_or_none()
+        contract_row = get_contract_for_job(session, job)
         if not contract_row:
             return
 
@@ -1518,7 +1476,7 @@ class StaticWorker(BaseWorker):
 
         # Write contract_summary
         existing_summary = session.execute(
-            sa_select(ContractSummary).where(ContractSummary.contract_id == contract_row.id)
+            select(ContractSummary).where(ContractSummary.contract_id == contract_row.id)
         ).scalar_one_or_none()
         if existing_summary:
             session.delete(existing_summary)
