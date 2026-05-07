@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from schemas.contract_analysis import (
     AccessControlAnalysis,
     ContractClassification,
     ControlModel,
     PausabilityAnalysis,
-    PermissionGraph,
     RiskLevel,
     RoleDefinition,
     SlitherFinding,
@@ -21,16 +22,11 @@ from schemas.contract_analysis import (
 )
 
 from .constants import (
-    ACCESS_CONTROL_INHERITANCE,
-    ACCESS_GUARD_KEYWORDS,
-    ADMIN_VAR_KEYWORDS,
     FACTORY_NAME_KEYWORDS,
-    PAUSE_MODIFIER_KEYWORDS,
     SEVERITY_ORDER,
     STANDARD_EVENTS,
     STANDARD_SIGNATURES,
 )
-from .graph import privileged_functions_from_graph
 from .shared import (
     _all_modifiers,
     _all_state_variables,
@@ -41,170 +37,9 @@ from .shared import (
     _declaring_contract_name,
     _dedupe_strings,
     _entry_points,
-    _function_effects,
-    _looks_like_role_identifier_name,
-    _node_contains_require_or_assert,
-    _role_identifier_tokens,
     _source_evidence,
     _source_fragment,
 )
-
-
-def _looks_like_access_guard(name: str) -> bool:
-    lowered = name.lower()
-    return any(keyword in lowered for keyword in ACCESS_GUARD_KEYWORDS)
-
-
-def _looks_like_pause_guard(name: str) -> bool:
-    lowered = name.lower()
-    return any(keyword in lowered for keyword in PAUSE_MODIFIER_KEYWORDS)
-
-
-def _normalize_guard_label(name: str) -> str:
-    lowered = name.lower()
-    if "owner" in lowered:
-        return "owner"
-    if "role" in lowered:
-        return "role"
-    if "timelock" in lowered:
-        return "timelock"
-    if "admin" in lowered:
-        return "admin"
-    if "guardian" in lowered:
-        return "guardian"
-    if "pauser" in lowered:
-        return "pauser"
-    return name
-
-
-def _role_constants_from_function(function, project_dir: Path) -> list[str]:
-    roles = set(_role_identifier_tokens(_source_fragment(function, project_dir)))
-
-    for variable in _call_or_value(function, "all_state_variables_read"):
-        name = getattr(variable, "name", "")
-        if _looks_like_role_identifier_name(name):
-            roles.add(name)
-
-    for call in _call_or_value(function, "all_internal_calls"):
-        for argument in getattr(call, "arguments", []) or []:
-            name = getattr(argument, "name", "")
-            if _looks_like_role_identifier_name(name):
-                roles.add(name)
-
-    return sorted(roles)
-
-
-def _state_variable_looks_like_auth(name: str) -> bool:
-    lowered = name.lower()
-    return (
-        any(keyword in lowered for keyword in ADMIN_VAR_KEYWORDS)
-        or lowered in {"wards", "admins", "roles", "authority", "authorities"}
-        or "auth" in lowered
-        or "role" in lowered
-        or "ward" in lowered
-    )
-
-
-def _high_level_call_guards(function) -> list[str]:
-    guards = []
-    for node in getattr(function, "nodes", []):
-        for _, call in getattr(node, "high_level_calls", []) or []:
-            function_name = getattr(call, "function_name", None) or getattr(call, "function", None)
-            named_function = getattr(function_name, "name", None) if function_name is not None else None
-            if named_function is not None:
-                function_name = named_function
-            if str(function_name) != "canCall":
-                continue
-            destination = getattr(call, "destination", None)
-            destination_name = getattr(destination, "name", None) or str(destination)
-            guards.append(f"{destination_name}.canCall")
-    return guards
-
-
-def _internal_auth_calls(function) -> list[str]:
-    guards = []
-    for call in _call_or_value(function, "all_internal_calls"):
-        if type(call).__name__ != "InternalCall":
-            continue
-        callee = getattr(call, "function", None)
-        callee_name = getattr(callee, "name", None) or str(callee)
-        lowered = callee_name.lower()
-        if any(token in lowered for token in ("checkauth", "checkrole", "authorize", "authoriz", "auth")):
-            guards.append(callee_name)
-    return guards
-
-
-def _infer_function_guards(function, project_dir: Path) -> list[str]:
-    guards = []
-    modifier_names = [modifier.name for modifier in getattr(function, "modifiers", [])]
-    guards.extend(modifier_names)
-    guards.extend(_normalize_guard_label(name) for name in modifier_names)
-
-    role_constants = _role_constants_from_function(function, project_dir)
-    guards.extend(role_constants)
-    if role_constants:
-        guards.append("role")
-
-    guards.extend(_internal_auth_calls(function))
-    guards.extend(_high_level_call_guards(function))
-
-    all_solidity_reads = [str(variable) for variable in _call_or_value(function, "all_solidity_variables_read")]
-    all_state_reads = [
-        getattr(variable, "name", "") for variable in _call_or_value(function, "all_state_variables_read")
-    ]
-    if "msg.sender" in all_solidity_reads:
-        guards.extend(name for name in all_state_reads if _state_variable_looks_like_auth(name))
-
-    for node in getattr(function, "nodes", []):
-        if not _node_contains_require_or_assert(node):
-            continue
-        node_solidity_reads = [str(variable) for variable in getattr(node, "solidity_variables_read", [])]
-        node_state_reads = [getattr(variable, "name", "") for variable in getattr(node, "state_variables_read", [])]
-        if "msg.sender" in node_solidity_reads:
-            guards.extend(name for name in node_state_reads if _state_variable_looks_like_auth(name))
-        guards.extend(_role_identifier_tokens(str(getattr(node, "expression", "") or "")))
-
-    return _dedupe_strings(guards)
-
-
-def _is_access_control_guard_label(label: str) -> bool:
-    return (
-        _looks_like_access_guard(label)
-        or _state_variable_looks_like_auth(label)
-        or _looks_like_role_identifier_name(label)
-        or label == "role"
-    )
-
-
-def _access_control_inferred_guards(function, project_dir: Path) -> list[str]:
-    return [label for label in _infer_function_guards(function, project_dir) if _is_access_control_guard_label(label)]
-
-
-def _controller_refs_from_inferred_guards(guards: list[str]) -> list[str]:
-    refs = []
-    for guard in guards:
-        normalized = _normalize_guard_label(guard)
-        lowered = guard.lower()
-        if _is_access_control_guard_label(normalized):
-            preserve_explicit = (
-                normalized != guard
-                and not lowered.startswith(("only", "_"))
-                and (
-                    (
-                        normalized in {"owner", "authority", "admin", "timelock", "governance", "guardian", "pauser"}
-                        and ("_" in guard or any(char.isupper() for char in guard))
-                    )
-                    or (
-                        normalized == "role"
-                        and any(token in lowered for token in ("registry", "controller"))
-                        and _state_variable_looks_like_auth(guard)
-                    )
-                )
-            )
-            if preserve_explicit:
-                refs.append(guard)
-            refs.append(normalized)
-    return _dedupe_strings(refs)
 
 
 def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]:
@@ -223,6 +58,246 @@ def _has_graph_permission_evidence(graph_entry: dict[str, object] | None) -> boo
     guard_kinds = graph_entry.get("guard_kinds", [])
     controller_refs = graph_entry.get("controller_refs", [])
     return bool(guards or guard_kinds or controller_refs)
+
+
+_SENSITIVE_SINK_KINDS = frozenset({"state_write", "external_call", "delegatecall", "contract_creation", "selfdestruct"})
+
+
+def _tree_has_caller_or_delegated_authority(tree: dict | None) -> bool:
+    """True iff some leaf in ``tree`` carries
+    ``authority_role IN {caller_authority, delegated_authority}``.
+    The structural inclusion gate for v2 ``privileged_functions``
+    (replaces the v1 effects+guards heuristic which over-included
+    side-condition trees of only time/reentrancy/pause/business roles)."""
+    if not isinstance(tree, dict):
+        return False
+    if tree.get("op") == "LEAF":
+        leaf = tree.get("leaf") or {}
+        return leaf.get("authority_role") in ("caller_authority", "delegated_authority")
+    for child in tree.get("children") or []:
+        if _tree_has_caller_or_delegated_authority(child):
+            return True
+    return False
+
+
+def _function_has_sensitive_sink(effect_info: dict | None) -> bool:
+    if not isinstance(effect_info, dict):
+        return False
+    for sink in effect_info.get("sinks") or []:
+        if isinstance(sink, dict) and sink.get("kind") in _SENSITIVE_SINK_KINDS:
+            return True
+    return False
+
+
+_OZ_ROLE_GRANTED_TOPIC0 = "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
+
+
+def _is_oz_role_descriptor(descriptor: Mapping[str, Any]) -> bool:
+    if descriptor.get("kind") != "mapping_membership":
+        return False
+    return any(
+        isinstance(hint, dict) and hint.get("topic0") == _OZ_ROLE_GRANTED_TOPIC0
+        for hint in descriptor.get("enumeration_hint") or []
+    )
+
+
+def _role_key_names_from_descriptor(descriptor: Mapping[str, Any]) -> set[str]:
+    if not _is_oz_role_descriptor(descriptor):
+        return set()
+    names: set[str] = set()
+    for key_source in descriptor.get("key_sources") or []:
+        if not isinstance(key_source, dict):
+            continue
+        if key_source.get("source") == "state_variable":
+            name = key_source.get("state_variable_name")
+        elif key_source.get("source") == "external_call":
+            name = key_source.get("callee")
+        else:
+            name = None
+        if isinstance(name, str) and name:
+            names.add(name)
+    return names
+
+
+def _role_names_from_tree(tree: dict | None, state_vars_by_name: Mapping[str, Any] | None = None) -> set[str]:
+    if not isinstance(tree, dict):
+        return set()
+    roles: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            if not isinstance(leaf, dict):
+                return
+            descriptor = leaf.get("set_descriptor") or {}
+            if isinstance(descriptor, dict):
+                roles.update(_role_key_names_from_descriptor(descriptor))
+            if leaf.get("authority_role") in {"caller_authority", "delegated_authority"}:
+                for operand in leaf.get("operands") or []:
+                    if not isinstance(operand, dict) or operand.get("source") != "state_variable":
+                        continue
+                    name = operand.get("state_variable_name")
+                    if (
+                        isinstance(name, str)
+                        and state_vars_by_name is not None
+                        and _is_bytes32_constant(state_vars_by_name.get(name))
+                    ):
+                        roles.add(name)
+            return
+        for child in node.get("children") or []:
+            visit(child)
+
+    visit(tree)
+    return roles
+
+
+def _role_names_from_predicate_trees(
+    predicate_trees: Mapping[str, Any] | None,
+    state_vars_by_name: Mapping[str, Any] | None = None,
+) -> set[str]:
+    if not isinstance(predicate_trees, dict):
+        return set()
+    trees = predicate_trees.get("trees")
+    if not isinstance(trees, dict):
+        return set()
+    roles: set[str] = set()
+    for tree in trees.values():
+        roles.update(_role_names_from_tree(tree, state_vars_by_name))
+    return roles
+
+
+def _is_bytes32_constant(variable: Any) -> bool:
+    return (
+        variable is not None
+        and str(getattr(variable, "type", "")) == "bytes32"
+        and bool(getattr(variable, "is_constant", False))
+    )
+
+
+def _caller_equality_state_vars_from_tree(tree: dict | None) -> set[str]:
+    if not isinstance(tree, dict):
+        return set()
+    out: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            if not isinstance(leaf, dict):
+                return
+            if leaf.get("kind") != "equality" or leaf.get("authority_role") != "caller_authority":
+                return
+            operands = [op for op in leaf.get("operands") or [] if isinstance(op, dict)]
+            has_caller = any(op.get("source") in {"msg_sender", "tx_origin", "signature_recovery"} for op in operands)
+            if not has_caller:
+                return
+            for operand in operands:
+                if operand.get("source") == "state_variable":
+                    name = operand.get("state_variable_name")
+                    if isinstance(name, str) and name:
+                        out.add(name)
+            return
+        for child in node.get("children") or []:
+            visit(child)
+
+    visit(tree)
+    return out
+
+
+def _authority_roles_from_tree(tree: dict | None) -> set[str]:
+    if not isinstance(tree, dict):
+        return set()
+    roles: set[str] = set()
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            if isinstance(leaf, dict):
+                role = leaf.get("authority_role")
+                if isinstance(role, str) and role:
+                    roles.add(role)
+            return
+        for child in node.get("children") or []:
+            visit(child)
+
+    visit(tree)
+    return roles
+
+
+def _controller_refs_from_tree(tree: dict | None) -> list[str]:
+    """Walk a predicate_tree and return the unique state-variable / role
+    operand names referenced by any leaf. Used to populate the legacy
+    ``privileged_functions[*].controller_refs`` field from v2 data.
+
+    Also surfaces external-call callees only when they appear as a key source
+    on an OZ-style ``mapping_membership`` descriptor.
+    """
+    if not isinstance(tree, dict):
+        return []
+    refs: list[str] = []
+    seen: set[str] = set()
+
+    def add(name: str | None) -> None:
+        if isinstance(name, str) and name and name not in seen:
+            seen.add(name)
+            refs.append(name)
+
+    def visit(node):
+        if not isinstance(node, dict):
+            return
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            for operand in leaf.get("operands") or []:
+                if not isinstance(operand, dict):
+                    continue
+                if operand.get("source") == "state_variable":
+                    add(operand.get("state_variable_name"))
+            descriptor = leaf.get("set_descriptor") or {}
+            if isinstance(descriptor, dict):
+                authority = descriptor.get("authority_contract") or {}
+                if isinstance(authority, dict):
+                    address_source = authority.get("address_source") or {}
+                    if isinstance(address_source, dict) and address_source.get("source") == "state_variable":
+                        add(address_source.get("state_variable_name"))
+                for key_source in descriptor.get("key_sources") or []:
+                    if not isinstance(key_source, dict):
+                        continue
+                    if key_source.get("source") == "state_variable":
+                        add(key_source.get("state_variable_name"))
+                    elif key_source.get("source") == "external_call":
+                        callee = key_source.get("callee")
+                        if not isinstance(callee, str):
+                            continue
+                        if callee in _role_key_names_from_descriptor(descriptor):
+                            add(callee)
+            return
+        for child in node.get("children") or []:
+            visit(child)
+
+    visit(tree)
+    return refs
+
+
+def _sink_ids_from_effect_info(effect_info: dict | None) -> list[str]:
+    """Carry sink IDs through from the v2 effects record so the legacy
+    ``privileged_functions[*].sink_ids`` field stays populated."""
+    if not isinstance(effect_info, dict):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for sink in effect_info.get("sinks") or []:
+        if not isinstance(sink, dict):
+            continue
+        sid = sink.get("id")
+        if isinstance(sid, str) and sid and sid not in seen:
+            seen.add(sid)
+            out.append(sid)
+    return out
 
 
 def _internal_call_names(function) -> list[str]:
@@ -822,67 +897,67 @@ def _detect_contract_classification(contract, project_dir: Path) -> ContractClas
     }
 
 
-# Role-membership checks. `grantRole`/`revokeRole` are deliberately
-# excluded — we want role-gating, not role-admin.
-_ROLE_CHECK_CALLEES = {"hasRole", "_checkRole", "checkRole", "_hasRole", "hasAnyRole"}
+def _build_method_to_role_map(
+    predicate_trees: Mapping[str, Any] | None,
+    state_vars_by_name: Mapping[str, Any] | None = None,
+) -> dict[str, list[str]]:
+    """Map authority methods to role identifiers from predicate trees.
 
-
-def _function_calls_role_check(function) -> bool:
-    for call in _call_or_value(function, "all_internal_calls"):
-        callee = getattr(call, "function", None)
-        name = getattr(callee, "name", None) or str(callee or "")
-        if name in _ROLE_CHECK_CALLEES:
-            return True
-    for node in getattr(function, "nodes", []) or []:
-        for ir in getattr(node, "irs", []) or []:
-            if type(ir).__name__ not in {"HighLevelCall", "InternalCall", "LibraryCall"}:
-                continue
-            function_ref = getattr(ir, "function_name", None) or getattr(ir, "function", None)
-            name = getattr(function_ref, "name", None) or str(function_ref or "")
-            if name in _ROLE_CHECK_CALLEES:
-                return True
-    return False
-
-
-def _build_method_to_role_map(contract, project_dir: Path) -> dict[str, list[str]]:
-    """Map each public/external method that invokes a role-membership
-    check to the role constants it references — feeds the cross-contract
-    policy-stage role join."""
+    This replaces the previous call/name scan. A method maps to a role only
+    when its predicate tree carries an OZ role-key descriptor or a bytes32
+    constant used in an authority leaf.
+    """
     result: dict[str, list[str]] = {}
-    for function in _contract_functions(contract):
-        if getattr(function, "is_constructor", False):
+    if not isinstance(predicate_trees, dict):
+        return result
+    trees = predicate_trees.get("trees")
+    if not isinstance(trees, dict):
+        return result
+    for signature, tree in trees.items():
+        if not isinstance(signature, str):
             continue
-        visibility = getattr(function, "visibility", "")
-        if visibility not in ("public", "external"):
-            continue
-        if not _function_calls_role_check(function):
-            continue
-        roles = _role_constants_from_function(function, project_dir)
+        roles = _role_names_from_tree(tree, state_vars_by_name)
         if roles:
-            name = getattr(function, "name", "") or ""
+            name = signature.split("(", 1)[0]
             if name:
                 result[name] = sorted(set(roles))
     return result
 
 
-def _detect_access_control(contract, project_dir: Path, permission_graph: PermissionGraph) -> AccessControlAnalysis:
-    state_variables = _all_state_variables(contract)
-    modifiers = _all_modifiers(contract)
-    functions = _entry_points(contract)
-    inheritance_names = [base.name for base in getattr(contract, "inheritance", [])]
-    lower_inheritance_names = [name.lower() for name in inheritance_names]
+def _detect_access_control(
+    contract,
+    project_dir: Path,
+    predicate_trees: Mapping[str, Any] | None,
+    effects: Mapping[str, Any] | None,
+) -> AccessControlAnalysis:
+    """Build the access-control analysis from v2 sources only.
 
-    owner_variables = []
-    admin_variables = []
+    Privileged-function inclusion is structural: a function is privileged
+    iff EITHER its predicate tree contains a leaf with
+    ``authority_role IN {caller_authority, delegated_authority}`` OR
+    its effects record carries a sensitive sink (state_write,
+    external_call, delegatecall, contract_creation, selfdestruct).
+
+    Role definitions come from role keys observed in predicate-tree leaves.
+    """
+    state_variables = _all_state_variables(contract)
+    state_vars_by_name = {getattr(variable, "name", ""): variable for variable in state_variables}
+    functions = _entry_points(contract)
+    v2_trees = (predicate_trees or {}).get("trees") or {}
+    effects_functions = (effects or {}).get("functions") or {}
+
+    owner_variables = sorted(
+        {
+            name
+            for tree in v2_trees.values()
+            for name in _caller_equality_state_vars_from_tree(tree if isinstance(tree, dict) else None)
+        }
+    )
+    admin_variables: list[str] = []
     role_definitions = []
-    for variable in state_variables:
-        name = getattr(variable, "name", "")
-        lowered = name.lower()
-        if "owner" in lowered:
-            owner_variables.append(name)
-        if any(keyword in lowered for keyword in ADMIN_VAR_KEYWORDS):
-            admin_variables.append(name)
-        if _looks_like_role_identifier_name(name):
+    for name in sorted(_role_names_from_predicate_trees(predicate_trees, state_vars_by_name)):
+        variable = state_vars_by_name.get(name)
+        if variable is not None:
             role_definitions.append(
                 {
                     "role": name,
@@ -890,87 +965,75 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
                     "evidence": [_source_evidence(variable, project_dir)],
                 }
             )
+        else:
+            role_definitions.append({"role": name, "declared_in": contract.name, "evidence": []})
 
-    if any("accesscontrol" in name for name in lower_inheritance_names):
-        for inferred_role in ("DEFAULT_ADMIN_ROLE",):
-            if inferred_role not in {role["role"] for role in role_definitions}:
-                role_definitions.append(
-                    {
-                        "role": inferred_role,
-                        "declared_in": contract.name,
-                        "evidence": [],
-                    }
-                )
-
-    privileged_functions_by_signature = privileged_functions_from_graph(contract, permission_graph)
     privileged_functions = []
     for function in functions:
         function_signature = getattr(function, "full_name", getattr(function, "name", ""))
-        graph_entry = privileged_functions_by_signature.get(function_signature)
-        inferred_guards = _access_control_inferred_guards(function, project_dir)
-        inferred_controller_refs = _controller_refs_from_inferred_guards(inferred_guards)
-        graph_guard_controller_refs = _controller_refs_from_inferred_guards(
-            graph_entry["guards"] if graph_entry else []
-        )
-        effects = graph_entry["effects"] if graph_entry else _function_effects(function)
-        effect_targets = _effect_targets(function, graph_entry, effects)
-        target_controller_refs = _controller_refs_from_effect_targets(effect_targets)
-        effect_labels = _effect_labels(function, effects, effect_targets, graph_entry)
-        action_summary = _action_summary(effect_labels, effect_targets)
-        if not _has_graph_permission_evidence(graph_entry) and not inferred_guards:
+        tree = v2_trees.get(function_signature)
+        effect_info = effects_functions.get(function_signature)
+
+        has_caller_authority_leaf = _tree_has_caller_or_delegated_authority(tree)
+        has_sensitive_sink = _function_has_sensitive_sink(effect_info)
+        # Structural inclusion gate (codex's correction): caller/delegated
+        # authority leaf OR sensitive effect. Tree-keys-as-privileged is
+        # gone — pause/reentrancy/business/time-only trees no longer
+        # admit a function into privileged_functions.
+        if not (has_caller_authority_leaf or has_sensitive_sink):
             continue
 
-        guards = _dedupe_strings((graph_entry["guards"] if graph_entry else []) + inferred_guards)
-        # `sinks` is the canonical source; `external_call_guards` is a derived
-        # legacy-shape view for consumers that haven't migrated.
-        from .caller_sinks import caller_reach_analysis, sinks_to_external_call_guards
+        # Source effect/effect_target/effect_label/action_summary from the
+        # per-function effects record. If the effects artifact is missing,
+        # leave these compatibility fields empty rather than reintroducing
+        # a separate heuristic path.
+        if isinstance(effect_info, dict):
+            effects_list = list(effect_info.get("effects") or [])
+            effect_targets = list(effect_info.get("effect_targets") or [])
+            effect_labels = list(effect_info.get("effect_labels") or [])
+            action_summary = effect_info.get("action_summary") or _action_summary(effect_labels, effect_targets)
+        else:
+            effects_list = []
+            effect_targets = []
+            effect_labels = []
+            action_summary = _action_summary(effect_labels, effect_targets)
 
-        caller_sinks = caller_reach_analysis(function, project_dir)
-        external_call_guards = sinks_to_external_call_guards(caller_sinks)
+        target_controller_refs = _controller_refs_from_effect_targets(effect_targets)
+        # Schema-v2 cutover: aux fields (guards / guard_kinds / sink_ids /
+        # controller_refs) used to come from the v1 permission graph. The
+        # v2 path no longer reads it — these fields are populated from the
+        # predicate-tree leaves where possible. Phase A.6 deletes them.
+        leaf_controller_refs = _controller_refs_from_tree(tree) if isinstance(tree, dict) else []
+        sink_ids = _sink_ids_from_effect_info(effect_info)
+
         entry: dict = {
             "contract": _declaring_contract_name(function, contract.name),
             "function": function_signature,
             "visibility": getattr(function, "visibility", "unknown"),
-            "guards": guards,
-            "guard_kinds": graph_entry["guard_kinds"] if graph_entry else [],
-            "controller_refs": _dedupe_strings(
-                (graph_entry["controller_refs"] if graph_entry else [])
-                + graph_guard_controller_refs
-                + inferred_controller_refs
-                + target_controller_refs
-            ),
-            "sink_ids": graph_entry["sink_ids"] if graph_entry else [],
-            "effects": effects,
+            "guards": [],
+            "guard_kinds": [],
+            "controller_refs": _dedupe_strings(leaf_controller_refs + target_controller_refs),
+            "sink_ids": sink_ids,
+            "effects": effects_list,
             "effect_targets": effect_targets,
             "effect_labels": effect_labels,
             "value_flows": _extract_value_flows(function),
             "action_summary": action_summary,
         }
-        if external_call_guards:
-            entry["external_call_guards"] = external_call_guards
-        if caller_sinks:
-            entry["sinks"] = caller_sinks
         privileged_functions.append(entry)
 
-    modifier_names = [modifier.name.lower() for modifier in modifiers]
+    authority_roles = {
+        role
+        for tree in v2_trees.values()
+        for role in _authority_roles_from_tree(tree if isinstance(tree, dict) else None)
+    }
+    has_oz_role_descriptor = bool(_role_names_from_predicate_trees(predicate_trees, state_vars_by_name))
     pattern = "unknown"
-    if (
-        any("accesscontrol" in name for name in lower_inheritance_names)
-        or any("onlyrole" in name for name in modifier_names)
-        or any(_looks_like_role_identifier_name(item["role"]) for item in role_definitions)
-    ):
+    if has_oz_role_descriptor or "delegated_authority" in authority_roles:
         pattern = "access_control"
-    elif any("ownable" in name for name in lower_inheritance_names) or "onlyowner" in modifier_names or owner_variables:
+    elif owner_variables:
         pattern = "ownable"
-    elif (
-        any("auth" in name for name in lower_inheritance_names)
-        or "auth" in modifier_names
-        or any(role["role"].lower() == "wards" for role in role_definitions)
-    ):
-        pattern = "auth"
-    elif any(any(keyword in name for keyword in ACCESS_CONTROL_INHERITANCE) for name in lower_inheritance_names):
-        pattern = "governance"
-    elif privileged_functions or admin_variables:
+    elif privileged_functions:
         pattern = "custom"
 
     result: AccessControlAnalysis = {
@@ -984,7 +1047,7 @@ def _detect_access_control(contract, project_dir: Path, permission_graph: Permis
         },
     }
     if pattern in ("access_control", "governance") or role_definitions:
-        method_to_role = _build_method_to_role_map(contract, project_dir)
+        method_to_role = _build_method_to_role_map(predicate_trees, state_vars_by_name)
         if method_to_role:
             result["method_to_role"] = method_to_role
     from .mapping_events import discover_mapping_writer_events
@@ -1047,43 +1110,110 @@ def _detect_upgradeability(contract, project_dir: Path) -> UpgradeabilityAnalysi
     }
 
 
-def _detect_pausability(contract, project_dir: Path) -> PausabilityAnalysis:
-    state_variables = _all_state_variables(contract)
+def _detect_pausability(
+    contract,
+    project_dir: Path,
+    pause_info: Mapping[str, Any] | None = None,
+) -> PausabilityAnalysis:
+    """Detect pausability structurally from the v2 ``PauseInfo`` export.
+
+    ``pause_info`` (returned by ``apply_reentrancy_pause_pass``) carries
+    the structural pause-state-var set and toggle-function list — the
+    modifier-name heuristic ``_looks_like_pause_guard`` is gone.
+
+    Modifiers that read a structural pause var are surfaced as
+    ``gating_modifiers``. ``pause_functions`` / ``unpause_functions``
+    are derived from the toggle list by inspecting which value the
+    function writes (true = pause, false = unpause); when the structural
+    classification can't disambiguate, every toggle function is listed in
+    both pause and unpause.
+    """
+    info = pause_info or {}
+    pause_state_vars: list[str] = list(info.get("pause_state_vars") or [])
+    toggle_functions: list[str] = list(info.get("pause_toggle_functions") or [])
+
+    pause_var_set = set(pause_state_vars)
+    pause_functions: set[str] = set()
+    unpause_functions: set[str] = set()
+
+    if pause_var_set:
+        functions_by_full = {}
+        for fn in getattr(contract, "functions", []) or []:
+            full = getattr(fn, "full_name", None) or getattr(fn, "name", None)
+            if isinstance(full, str):
+                functions_by_full[full] = fn
+
+        for full_name in toggle_functions:
+            fn = functions_by_full.get(full_name)
+            if fn is None:
+                pause_functions.add(full_name)
+                continue
+            polarity = _classify_pause_toggle_polarity(fn, pause_var_set)
+            if polarity == "pause":
+                pause_functions.add(full_name)
+            elif polarity == "unpause":
+                unpause_functions.add(full_name)
+            else:
+                # Ambiguous polarity (parameter-driven setPaused(bool)
+                # or branched writes): surface as both.
+                pause_functions.add(full_name)
+                unpause_functions.add(full_name)
+
     modifiers = _all_modifiers(contract)
-    pause_functions = []
-    unpause_functions = []
-    authorized_roles = []
-
-    for function in _entry_points(contract):
-        name = getattr(function, "name", "")
-        lowered = name.lower()
-        inferred_guards = _infer_function_guards(function, project_dir)
-        if lowered == "pause" or lowered.endswith("_pause"):
-            pause_functions.append(getattr(function, "full_name", name))
-            authorized_roles.extend(inferred_guards)
-        if lowered == "unpause" or lowered.endswith("_unpause"):
-            unpause_functions.append(getattr(function, "full_name", name))
-            authorized_roles.extend(inferred_guards)
-
-    gating_modifiers = [modifier.name for modifier in modifiers if _looks_like_pause_guard(modifier.name)]
-    pause_variables = [
-        variable.name for variable in state_variables if variable.name.lower() in {"paused", "_paused", "live", "_live"}
-    ]
-
+    gating_modifiers: list[str] = []
     evidence = []
-    for modifier in modifiers:
-        if _looks_like_pause_guard(modifier.name):
-            evidence.append(_source_evidence(modifier, project_dir))
+    if pause_var_set:
+        for modifier in modifiers:
+            read_names = {getattr(v, "name", "") for v in getattr(modifier, "state_variables_read", []) or []}
+            if read_names & pause_var_set:
+                gating_modifiers.append(modifier.name)
+                evidence.append(_source_evidence(modifier, project_dir))
 
     return {
-        "is_pausable": bool(pause_functions or unpause_functions or gating_modifiers or pause_variables),
+        "is_pausable": bool(pause_functions or unpause_functions or gating_modifiers or pause_state_vars),
         "pause_functions": sorted(pause_functions),
         "unpause_functions": sorted(unpause_functions),
         "gating_modifiers": sorted(gating_modifiers),
-        "pause_variables": sorted(pause_variables),
-        "authorized_roles": _dedupe_strings(authorized_roles),
+        "pause_variables": sorted(pause_state_vars),
+        "authorized_roles": [],
         "evidence": evidence,
     }
+
+
+def _classify_pause_toggle_polarity(function, pause_vars: set[str]) -> str:
+    """Return ``"pause"`` if ``function`` writes one of ``pause_vars``
+    with a true-ish constant, ``"unpause"`` if false-ish, or ``""`` if
+    the polarity can't be determined statically.
+
+    Walks IR Assignment ops for ``var = <const>`` shapes; anything else
+    (param write, cross-branch toggle, derived value) returns ambiguous."""
+    polarities: set[str] = set()
+    for node in getattr(function, "nodes", []) or []:
+        for ir in getattr(node, "irs", []) or []:
+            op = type(ir).__name__
+            if op != "Assignment":
+                continue
+            lvalue = getattr(ir, "lvalue", None)
+            target = getattr(lvalue, "name", None)
+            if isinstance(target, str):
+                # Strip Slither SSA suffix.
+                parts = target.rsplit("_", 1)
+                if len(parts) == 2 and parts[1].isdigit():
+                    target = parts[0]
+            if target not in pause_vars:
+                continue
+            rvalue = getattr(ir, "rvalue", None)
+            rtext = getattr(rvalue, "name", None) or getattr(rvalue, "value", None) or str(rvalue or "")
+            rtext_lower = str(rtext).strip().lower()
+            if rtext_lower in ("true", "1"):
+                polarities.add("pause")
+            elif rtext_lower in ("false", "0"):
+                polarities.add("unpause")
+    if polarities == {"pause"}:
+        return "pause"
+    if polarities == {"unpause"}:
+        return "unpause"
+    return ""
 
 
 def _detect_timelock(contract, project_dir: Path, role_definitions: list[RoleDefinition]) -> TimelockAnalysis:
@@ -1104,7 +1234,6 @@ def _detect_timelock(contract, project_dir: Path, role_definitions: list[RoleDef
         lowered = getattr(function, "name", "").lower()
         if any(keyword in lowered for keyword in ("schedule", "queue", "execute", "cancel")):
             queue_execute_functions.append(getattr(function, "full_name", function.name))
-            authorized_roles.extend(_infer_function_guards(function, project_dir))
             evidence.append(_source_evidence(function, project_dir))
 
     role_names = {role["role"] for role in role_definitions}

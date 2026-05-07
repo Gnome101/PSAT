@@ -777,13 +777,36 @@ def test_fuzz_fixtures_are_valid(shape_name: str, variant: int, tmp_path: Path):
     project_g = _write_project(tmp_path / "g", "C", guarded_src)
     collect_contract_analysis(project_g)  # exception → fixture broken
 
-    # 3. Negative control: unguarded twin must NOT admit.
+    # 3. Negative control: unguarded twin must NOT carry a caller-authority
+    # leaf in its predicate tree.
+    #
+    # Schema-v2 cutover: the v2 ``privileged_functions`` inclusion rule
+    # is "caller/delegated authority leaf OR sensitive sink". Functions
+    # with state writes (every fuzz-generated unguarded twin has them)
+    # are now admitted into ``privileged_functions`` even without a
+    # gate — the structural-rule equivalent of the v1 negative control
+    # is "no caller_authority / delegated_authority leaf in the
+    # predicate tree", not "absent from privileged_functions".
     project_u = _write_project(tmp_path / "u", "C", unguarded_src)
-    analysis_u = collect_contract_analysis(project_u)
-    assert _privileged_entry(analysis_u, sig_u) is None, (
-        f"[{shape_name} v{variant}] unguarded twin {sig_u} ADMITTED — "
-        f"either the fixture has an incidental check or the admission "
-        f"gate is overinclusive.\n{unguarded_src}"
+    from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
+
+    _analysis_u, predicate_trees_u, _effects_u = collect_contract_analysis_with_artifacts(project_u)
+    v2_trees = ((predicate_trees_u or {}).get("trees")) or {}
+    tree_u = v2_trees.get(sig_u)
+
+    def _has_caller_authority_leaf(node) -> bool:
+        if not isinstance(node, dict):
+            return False
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            return leaf.get("authority_role") in ("caller_authority", "delegated_authority")
+        return any(_has_caller_authority_leaf(c) for c in node.get("children") or [])
+
+    assert not _has_caller_authority_leaf(tree_u), (
+        f"[{shape_name} v{variant}] unguarded twin {sig_u} surfaced a "
+        f"caller_authority/delegated_authority leaf — fixture has an "
+        f"incidental check or the structural classification is "
+        f"overinclusive.\n{unguarded_src}"
     )
 
 

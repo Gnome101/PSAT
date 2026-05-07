@@ -1,0 +1,50 @@
+contract_name: C
+description: |
+  Real OZ 5.0+ ReentrancyGuard shape — distinct from
+  oz_reentrancy_guard.yaml's pre-5.x inline form. The 5.x version
+  splits the modifier into two helpers:
+
+    nonReentrant() modifier
+      → _nonReentrantBefore() (pre-write + revert-on-entered)
+      → _; (placeholder)
+      → _nonReentrantAfter() (post-write to NOT_ENTERED)
+
+  And uses a custom error ReentrancyGuardReentrantCall instead of
+  a bare revert string. The actual write/revert/write triple no
+  longer lives in the modifier's own body — it's split across two
+  internal helpers. ReentrancyAnalyzer's pre-/post-placeholder
+  walk needs to recurse into helper bodies to find the pattern.
+
+  This is the layout @openzeppelin/contracts ships in 5.0+ and is
+  used by every modern protocol relying on the reentrancy mixin.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      uint256 private constant NOT_ENTERED = 1;
+      uint256 private constant ENTERED = 2;
+      uint256 private _status;
+      uint256 public x;
+      error ReentrancyGuardReentrantCall();
+
+      function _nonReentrantBefore() private {
+          if (_status == ENTERED) revert ReentrancyGuardReentrantCall();
+          _status = ENTERED;
+      }
+      function _nonReentrantAfter() private {
+          _status = NOT_ENTERED;
+      }
+      modifier nonReentrant() {
+          _nonReentrantBefore();
+          _;
+          _nonReentrantAfter();
+      }
+      function withdraw() external nonReentrant {
+          x = x + 1;
+      }
+  }
+
+expected_functions:
+  "withdraw()":
+    authority_role: reentrancy
+    confidence: high

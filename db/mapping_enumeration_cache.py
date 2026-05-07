@@ -48,7 +48,11 @@ def is_enabled() -> bool:
     return os.getenv("PSAT_MAPPING_ENUMERATION_DB_CACHE", "1").lower() in ("1", "true", "yes")
 
 
-def specs_fingerprint(writer_specs: list[dict[str, Any]]) -> str:
+def specs_fingerprint(
+    writer_specs: list[dict[str, Any]],
+    *,
+    value_predicate: dict[str, Any] | None = None,
+) -> str:
     """Stable SHA-256 of the normalized writer-spec list.
 
     Only the fields that affect the enumeration semantics participate:
@@ -56,21 +60,46 @@ def specs_fingerprint(writer_specs: list[dict[str, Any]]) -> str:
     sorted set of indexed_positions. A change to any of these yields a
     fresh cache row instead of silently returning a stale enumeration
     keyed off prior config.
+
+    D.1+: ``value_position`` and the ``value_predicate`` (op +
+    rhs_values + value_type) are folded into the hash too so that an
+    "set ev → latest value per key, filter by op" pass can't return a
+    cache row populated by a "set ev → latest value, filter by
+    different op" pass on the same address. ``value_position=None``
+    and ``value_predicate=None`` collapse back to the legacy
+    fingerprint (the JSON keys are just absent in the canonical form).
     """
-    canonical = json.dumps(
-        [
-            {
-                "event_signature": s["event_signature"],
-                "mapping_name": s["mapping_name"],
-                "direction": s["direction"],
-                "key_position": s["key_position"],
-                "indexed_positions": sorted(s.get("indexed_positions") or []),
-            }
-            for s in writer_specs
-        ],
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    legacy_specs = [
+        {
+            "event_signature": s["event_signature"],
+            "mapping_name": s["mapping_name"],
+            "direction": s["direction"],
+            "key_position": s["key_position"],
+            "indexed_positions": sorted(s.get("indexed_positions") or []),
+        }
+        for s in writer_specs
+    ]
+    has_new_fields = value_predicate is not None or any(s.get("value_position") is not None for s in writer_specs)
+    if not has_new_fields:
+        # Legacy fingerprint — must remain byte-identical to pre-D.1
+        # output so existing cache rows stay valid after the upgrade.
+        canonical = json.dumps(legacy_specs, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    extended_specs = []
+    for legacy, original in zip(legacy_specs, writer_specs, strict=True):
+        out = dict(legacy)
+        if original.get("value_position") is not None:
+            out["value_position"] = int(original["value_position"])
+        extended_specs.append(out)
+    payload: dict[str, Any] = {"specs": extended_specs}
+    if value_predicate is not None:
+        payload["value_predicate"] = {
+            "op": value_predicate.get("op"),
+            "rhs_values": list(value_predicate.get("rhs_values") or []),
+            "value_type": value_predicate.get("value_type"),
+            "mask": value_predicate.get("mask"),
+        }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 

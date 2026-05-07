@@ -519,7 +519,6 @@ class TestProcessFanoutParity:
                 "control_snapshot": control_snapshot,
                 "resolved_control_graph": resolved_graph,
                 "control_tracking_plan": tracking_plan,
-                "semantic_guards": None,
                 "classified_addresses": None,
             }.get(name)
 

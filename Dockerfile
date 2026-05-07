@@ -38,6 +38,11 @@ WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
 RUN uv sync --frozen --no-dev
 
+# Vyper compiler binary on PATH so crytic-compile (used by Slither for *.vy)
+# can shell out. Pinned to 0.3.10: 0.4.x has an upstream crytic-compile bug
+# (platform/vyper.py:101 splits a dict that the new sourceMap format returns).
+RUN uv pip install "vyper==0.3.10"
+
 # Playwright browsers + OS deps (required by dapp_crawl_worker). ~400MB.
 RUN uv run --no-sync playwright install --with-deps chromium
 

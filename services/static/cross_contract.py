@@ -26,6 +26,8 @@ def _compute_selector(signature: str) -> str:
 
 def build_callee_effect_map(
     analyses: dict[str, dict[str, Any]],
+    *,
+    effects_by_address: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, dict[str, list[str]]]:
     """Build a lookup: {contract_address → {selector → [effect_labels]}}.
 
@@ -33,8 +35,14 @@ def build_callee_effect_map(
     ----------
     analyses : dict
         Mapping of contract address (lowered) to its contract_analysis dict.
+    effects_by_address : dict, optional
+        Mapping of contract address (lowered) to its v2 ``effects``
+        artifact. When provided, public-but-unguarded functions get
+        their labels via the v2 effects walker (replaces
+        ``permission_graph["sinks"]`` from the v1 graph).
     """
     callee_map: dict[str, dict[str, list[str]]] = {}
+    effects_by_address = effects_by_address or {}
 
     for address, analysis in analyses.items():
         address = address.lower()
@@ -52,18 +60,24 @@ def build_callee_effect_map(
                 fn_name = fn_sig.split("(")[0]
                 selector_effects[f"name:{fn_name}"] = effects
 
-        # Also include ALL entry point functions (not just privileged ones)
-        # since a public mint/burn might not have access control
-        for fn_data in analysis.get("permission_graph", {}).get("sinks", []):
-            fn_sig = fn_data.get("function", "")
-            effects = fn_data.get("effect_labels", [])
-            if fn_sig and effects:
-                selector = _compute_selector(fn_sig)
-                if selector not in selector_effects:
-                    selector_effects[selector] = effects
-                fn_name = fn_sig.split("(")[0]
-                if f"name:{fn_name}" not in selector_effects:
-                    selector_effects[f"name:{fn_name}"] = effects
+        # Also include ALL externally-observable functions (not just
+        # privileged ones), since a public mint/burn might not have
+        # access control. Schema-v2 (Wave 4 A.6): replaces the v1
+        # ``permission_graph["sinks"]`` walk with the per-function
+        # ``effects`` carrier.
+        effects_artifact = effects_by_address.get(address) or {}
+        for fn_sig, fn_record in (effects_artifact.get("functions") or {}).items():
+            if not isinstance(fn_record, dict):
+                continue
+            effects = fn_record.get("effect_labels") or []
+            if not fn_sig or not effects:
+                continue
+            selector = _compute_selector(fn_sig)
+            if selector not in selector_effects:
+                selector_effects[selector] = list(effects)
+            fn_name = fn_sig.split("(")[0]
+            if f"name:{fn_name}" not in selector_effects:
+                selector_effects[f"name:{fn_name}"] = list(effects)
 
         if selector_effects:
             callee_map[address] = selector_effects

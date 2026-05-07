@@ -1,0 +1,70 @@
+contract_name: C
+description: |
+  Real OZ 5.x AccessControl shape — overloaded ``_checkRole``
+  helper chain with custom error and ``hasRole`` getter wrapping.
+  Distinct from oz_ac_cross_fn_helper.yaml's 2-hop synthetic case.
+
+  The 4-hop chain:
+    onlyRole(role) modifier
+      → _checkRole(role) [single-arg version delegates]
+        → _checkRole(role, _msgSender()) [the 2-arg version]
+          → hasRole(role, account) [public getter]
+            → reads _roles[role].hasRole[account]
+
+  And the if-revert: ``if (!hasRole(role, account)) revert
+  AccessControlUnauthorizedAccount(account, role)`` is a custom
+  error, not a bare revert().
+
+  Pinning this manifest validates:
+
+    1. internal_call_depth=4 default is high enough for OZ 5.x
+       (3 internal calls + getter resolve to a base state read)
+    2. Overloaded function selection (``_checkRole(bytes32)`` vs
+       ``_checkRole(bytes32,address)``) doesn't confuse the call_chain
+    3. Custom error AccessControlUnauthorizedAccount classifies as
+       if_revert (not opaque)
+    4. Multi-key membership (role + msg.sender) direct-promotes via
+       Rule B to caller_authority HIGH
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      mapping(bytes32 => mapping(address => bool)) private _roles;
+      uint256 public x;
+      error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+
+      function _msgSender() internal view returns (address) { return msg.sender; }
+
+      function hasRole(bytes32 role, address account) public view returns (bool) {
+          return _roles[role][account];
+      }
+
+      function _checkRole(bytes32 role, address account) internal view {
+          if (!hasRole(role, account)) {
+              revert AccessControlUnauthorizedAccount(account, role);
+          }
+      }
+
+      function _checkRole(bytes32 role) internal view {
+          _checkRole(role, _msgSender());
+      }
+
+      modifier onlyRole(bytes32 role) {
+          _checkRole(role);
+          _;
+      }
+
+      function grantRole(bytes32 role, address account) public onlyRole(role) {
+          _roles[role][account] = true;
+      }
+  }
+
+expected_functions:
+  "grantRole(bytes32,address)":
+    authority_role: caller_authority
+    kind: membership
+    confidence: high
+    references_msg_sender: true
+
+unguarded:
+  - "hasRole(bytes32,address)"

@@ -323,51 +323,11 @@ class PolicyTrackingTarget(TypedDict):
     notes: list[str]
 
 
-class ControllerRef(TypedDict):
-    id: str
-    kind: ControllerKind
-    label: str
-    source: str
-    read_spec: ControllerReadSpec | None
-    confidence: ControllerConfidence | None
-    evidence: list[Evidence]
-
-
-class GuardRecord(TypedDict):
-    id: str
-    contract: str
-    function: str
-    kind: GuardKind
-    confidence: NotRequired[ControllerConfidence]
-    controller_ids: list[str]
-    evidence: list[Evidence]
-    details: list[str]
-
-
-class SinkRecord(TypedDict):
-    id: str
-    contract: str
-    function: str
-    kind: SinkKind
-    target: str
-    node_id: int
-    guarded_by: list[str]
-    effects: list[str]
-    evidence: list[Evidence]
-
-
-class PermissionGraph(TypedDict):
-    controllers: list[ControllerRef]
-    guards: list[GuardRecord]
-    sinks: list[SinkRecord]
-
-
 class ContractAnalysis(TypedDict):
     schema_version: str
     subject: Subject
     analysis_status: AnalysisStatus
     summary: Summary
-    permission_graph: PermissionGraph
     contract_classification: ContractClassification
     access_control: AccessControlAnalysis
     upgradeability: UpgradeabilityAnalysis

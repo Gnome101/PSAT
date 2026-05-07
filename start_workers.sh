@@ -93,6 +93,10 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.audit_scope_extraction &
 PIDS+=($!)
+# v2 capability resolver indexer. It follows generic event hints
+# discovered by the semantic predicate pipeline.
+"${PYTHON_CMD[@]}" -m workers.event_log_indexer &
+PIDS+=($!)
 
 echo "All workers started: ${PIDS[*]}"
 # Exit on first death — Fly restarts the machine so every worker

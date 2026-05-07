@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -28,6 +28,7 @@ class ResolvedPrincipal(TypedDict):
     details: dict[str, object]
     source_contract: NotRequired[str]
     source_controller_id: NotRequired[str]
+    principal_type: NotRequired[str]
 
 
 class AuthorityRoleGrant(TypedDict):
@@ -56,8 +57,10 @@ class EffectiveFunctionPermission(TypedDict):
     effect_labels: list[str]
     action_summary: str
     notes: list[str]
-    external_call_guards: NotRequired[list[dict]]
-    sinks: NotRequired[list[dict]]
+    capability_expr: NotRequired[dict[str, Any]]
+    conditions: NotRequired[list[dict[str, Any]]]
+    status: NotRequired[str]
+    signature_witnesses: NotRequired[list[ResolvedPrincipal]]
 
 
 class EffectivePermissions(TypedDict):

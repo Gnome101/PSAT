@@ -1,0 +1,215 @@
+"""Wave 3 Track 2 A.1: ``build_controller_tracking`` v2-only behavior.
+
+Validates the predicate-tree + effects-driven builder catches every
+shape v1 caught (superset regression) and that:
+
+* Inherited Ownable's ``_owner`` private state-var (a v1+augment-pass
+  shape) gets emitted as ``state_variable:_owner`` directly from leaves.
+* External authority registries (``set_descriptor.authority_contract.
+  address_source``) get promoted to ``external_contract`` kind.
+* OZ-style ``hasRole(role, msg.sender)`` patterns surface their role
+  identifier as ``role_identifier:<NAME>`` even when the constant name
+  doesn't match the auth-ish pattern (``BREAK_GLASS``).
+"""
+
+from __future__ import annotations
+
+import sys
+import textwrap
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+slither = pytest.importorskip("slither")
+from slither import Slither  # noqa: E402
+
+from services.static.contract_analysis_pipeline.effects import build_effects  # noqa: E402
+from services.static.contract_analysis_pipeline.predicate_artifacts import (  # noqa: E402
+    build_predicate_artifacts,
+)
+from services.static.contract_analysis_pipeline.summaries import (  # noqa: E402
+    _detect_access_control,
+)
+from services.static.contract_analysis_pipeline.tracking import (  # noqa: E402
+    build_controller_tracking,
+)
+
+
+def _compile(tmp_path: Path, source: str, contract_name: str = "C"):
+    src = textwrap.dedent(source).strip() + "\n"
+    f = tmp_path / "C.sol"
+    f.write_text(src)
+    sl = Slither(str(f))
+    return next(c for c in sl.contracts if c.name == contract_name)
+
+
+def _build(tmp_path, source, contract_name="C"):
+    contract = _compile(tmp_path, source, contract_name)
+    predicate_trees = build_predicate_artifacts(contract)
+    effects = build_effects(contract)
+    access_control = _detect_access_control(contract, tmp_path, predicate_trees, effects)
+    targets = build_controller_tracking(contract, tmp_path, predicate_trees, effects, access_control)
+    return targets
+
+
+def test_inherited_owner_caught_from_predicate_tree(tmp_path):
+    """Ownable's private ``_owner`` is the canonical shape that v1+augment
+    handled. The v2 builder should emit it directly from the leaf operand
+    walk."""
+    source = """
+    pragma solidity ^0.8.19;
+    contract Ownable {
+        address private _owner;
+        modifier onlyOwner() {
+            require(msg.sender == _owner, "not owner");
+            _;
+        }
+        function owner() public view returns (address) {
+            return _owner;
+        }
+    }
+    contract C is Ownable {
+        uint256 public value;
+        function setValue(uint256 v) external onlyOwner {
+            value = v;
+        }
+    }
+    """
+    targets = _build(tmp_path, source)
+    by_id = {t["controller_id"]: t for t in targets}
+    assert "state_variable:_owner" in by_id, list(by_id.keys())
+    target = by_id["state_variable:_owner"]
+    assert target["kind"] == "state_variable"
+    # Private state-var with same-name getter ``owner()`` → read_spec
+    # points at the GETTER, not the var.
+    read_spec = target.get("read_spec")
+    assert isinstance(read_spec, dict)
+    assert read_spec["target"] == "owner"
+
+
+def test_authority_state_var_promoted_to_external_contract(tmp_path):
+    """A state var carrying a registry address (used as
+    ``set_descriptor.authority_contract.address_source``) gets the
+    ``external_contract`` kind."""
+    source = """
+    pragma solidity ^0.8.19;
+    interface IRoleRegistry {
+        function hasRole(bytes32 role, address account) external view returns (bool);
+    }
+    contract C {
+        IRoleRegistry public roleRegistry;
+        bool public paused;
+        bytes32 public constant PAUSER_ROLE = keccak256("PAUSER");
+        constructor(address rr) { roleRegistry = IRoleRegistry(rr); }
+        function pauseContract() external {
+            require(roleRegistry.hasRole(PAUSER_ROLE, msg.sender), "no");
+            paused = true;
+        }
+    }
+    """
+    targets = _build(tmp_path, source)
+    by_id = {t["controller_id"]: t for t in targets}
+    assert "external_contract:roleRegistry" in by_id, list(by_id.keys())
+    assert by_id["external_contract:roleRegistry"]["kind"] == "external_contract"
+
+
+def test_role_identifier_with_authority_contract_source(tmp_path):
+    """``PAUSER_ROLE`` paired with ``roleRegistry.hasRole(...)`` should
+    have ``contract_source: roleRegistry`` on the role read_spec."""
+    source = """
+    pragma solidity ^0.8.19;
+    interface IRoleRegistry {
+        function hasRole(bytes32 role, address account) external view returns (bool);
+    }
+    contract C {
+        IRoleRegistry public roleRegistry;
+        bool public paused;
+        bytes32 public constant PAUSER_ROLE = keccak256("PAUSER");
+        constructor(address rr) { roleRegistry = IRoleRegistry(rr); }
+        function pauseContract() external {
+            require(roleRegistry.hasRole(PAUSER_ROLE, msg.sender), "no");
+            paused = true;
+        }
+    }
+    """
+    targets = _build(tmp_path, source)
+    by_id = {t["controller_id"]: t for t in targets}
+    assert "role_identifier:PAUSER_ROLE" in by_id
+    spec = by_id["role_identifier:PAUSER_ROLE"]["read_spec"]
+    assert isinstance(spec, dict)
+    assert spec["target"] == "PAUSER_ROLE"
+    assert spec.get("contract_source") == "roleRegistry"
+
+
+def test_writer_functions_from_effects(tmp_path):
+    """Writer attribution comes from ``effects.functions[*].sinks``
+    filtered to ``state_write`` — not from ``permission_graph`` sinks."""
+    source = """
+    pragma solidity ^0.8.19;
+    contract C {
+        address public owner;
+        constructor() { owner = msg.sender; }
+        function transferOwnership(address newOwner) external {
+            require(msg.sender == owner, "not owner");
+            owner = newOwner;
+        }
+    }
+    """
+    targets = _build(tmp_path, source)
+    by_id = {t["controller_id"]: t for t in targets}
+    target = by_id["state_variable:owner"]
+    assert {w["function"] for w in target["writer_functions"]} == {"transferOwnership(address)"}
+
+
+def test_opaque_role_constant_not_authish_name_classified_as_role(tmp_path):
+    """``BREAK_GLASS`` (bytes32 constant) doesn't match the auth-ish
+    name pattern but is structurally a role identifier (used as a key
+    in an OZ ``hasRole`` check). The v2 builder should classify it as
+    ``role_identifier`` via the OZ-style descriptor heuristic."""
+    source = """
+    pragma solidity ^0.8.19;
+    interface IRoleRegistry {
+        function hasRole(bytes32 role, address account) external view returns (bool);
+        function BREAK_GLASS() external view returns (bytes32);
+    }
+    contract C {
+        IRoleRegistry public roleRegistry;
+        bool public paused;
+        constructor(IRoleRegistry r) { roleRegistry = r; }
+        function pauseContract() external {
+            require(
+                roleRegistry.hasRole(roleRegistry.BREAK_GLASS(), msg.sender),
+                "no"
+            );
+            paused = true;
+        }
+    }
+    """
+    targets = _build(tmp_path, source)
+    by_id = {t["controller_id"]: t for t in targets}
+    assert "role_identifier:BREAK_GLASS" in by_id, list(by_id.keys())
+
+
+def test_writer_emits_event_promotes_tracking_mode(tmp_path):
+    """When a writer emits an event tied to the tracked state var, the
+    target's ``tracking_mode`` becomes ``event_plus_state``."""
+    source = """
+    pragma solidity ^0.8.19;
+    contract C {
+        address public owner;
+        event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+        constructor() { owner = msg.sender; }
+        function transferOwnership(address newOwner) external {
+            require(msg.sender == owner);
+            emit OwnershipTransferred(owner, newOwner);
+            owner = newOwner;
+        }
+    }
+    """
+    targets = _build(tmp_path, source)
+    by_id = {t["controller_id"]: t for t in targets}
+    target = by_id["state_variable:owner"]
+    assert target["tracking_mode"] == "event_plus_state"
+    assert any(e["name"] == "OwnershipTransferred" for e in target["associated_events"])

@@ -19,7 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from slither.slither import Slither
 
-from services.static.contract_analysis_pipeline.graph import build_permission_graph
+from services.static.contract_analysis_pipeline.effects import build_effects
+from services.static.contract_analysis_pipeline.predicate_artifacts import (
+    build_predicate_artifacts,
+)
 from services.static.contract_analysis_pipeline.shared import _select_subject_contract
 from services.static.contract_analysis_pipeline.summaries import _detect_access_control
 
@@ -36,8 +39,11 @@ def _analyze(source: str, name: str = "Target"):
         subject = _select_subject_contract(slither, name)
         if subject is None:
             raise RuntimeError(f"Contract {name} not found")
-        pg = build_permission_graph(subject, Path(tmp))
-        return _detect_access_control(subject, Path(tmp), pg)
+        # Schema-v2 cutover: _detect_access_control reads predicate_trees +
+        # effects (not permission_graph).
+        predicate_trees = build_predicate_artifacts(subject)
+        effects = build_effects(subject)
+        return _detect_access_control(subject, Path(tmp), predicate_trees, effects)
 
 
 def _labels(ac, fn_name: str) -> set[str]:

@@ -20,6 +20,7 @@ from .models import (
     Contract,
     ContractSummary,
     Job,
+    JobDependency,
     JobStage,
     JobStatus,
     Protocol,
@@ -450,13 +451,31 @@ def claim_job(
     retry in the future is skipped until the DB clock catches up. We compare
     against ``NOW()`` (Postgres-side) rather than Python's clock so workers
     spread across processes/timezones agree on eligibility.
+
+    Honours ``job_dependencies``: a job with at least one row whose status
+    is ``'pending'`` is skipped. Dependent rows are flipped to
+    ``'satisfied'`` by ``BaseWorker._satisfy_dependencies`` when the
+    provider job completes the required stage, and to ``'degraded'`` if
+    the provider terminally fails (so dependents fall back to
+    ``external_check_only`` rather than block forever). The partial
+    index ``ix_job_dep_pending`` keeps the ``NOT EXISTS`` clause sub-ms
+    even at fleet scale.
     """
+    pending_dep_exists = (
+        select(JobDependency.id)
+        .where(
+            JobDependency.depender_job_id == Job.id,
+            JobDependency.status == "pending",
+        )
+        .exists()
+    )
     stmt = (
         select(Job)
         .where(
             Job.stage == target_stage,
             Job.status == JobStatus.queued,
             (Job.next_attempt_at.is_(None) | (Job.next_attempt_at <= func.now())),
+            ~pending_dep_exists,
         )
         .order_by(Job.created_at)
         .limit(1)

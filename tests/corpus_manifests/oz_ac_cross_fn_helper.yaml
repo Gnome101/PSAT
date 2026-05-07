@@ -1,0 +1,51 @@
+contract_name: C
+description: |
+  OZ AccessControl 5.0+ pattern: ``grantRole`` is gated by
+  ``onlyRole(getRoleAdmin(role))`` which dispatches to
+  ``_checkRole`` which contains the ``if (!_roles[role][msg.sender])
+  revert()`` membership check. This is the canonical
+  EtherFiTimelock pattern from #7 and the original motivation for
+  the predicate-pipeline rewrite.
+
+  Cross-function revert detection (RevertDetector recursing into
+  InternalCall callees) + caller-side ParameterBindingEnv (binding
+  the helper's ``role`` param to the caller-site ``role`` param)
+  should produce a 2-key membership leaf inside ``_checkRole`` —
+  caller_authority via Rule B's multi-key direct-promote, HIGH
+  confidence.
+
+  Pinning this manifest locks the entire cross-fn machinery against
+  regression: revert-walking through helpers, parameter-binding
+  through modifier+helper chains, and the writer-gate-aware
+  classifier all need to fire correctly to land on a caller_authority
+  leaf for ``grantRole``.
+
+source: |
+  pragma solidity ^0.8.19;
+  contract C {
+      mapping(bytes32 => mapping(address => bool)) private _roles;
+      mapping(bytes32 => bytes32) private _roleAdmins;
+      modifier onlyRole(bytes32 role) {
+          _checkRole(role);
+          _;
+      }
+      function _checkRole(bytes32 role) internal view {
+          if (!_roles[role][msg.sender]) revert();
+      }
+      function getRoleAdmin(bytes32 role) public view returns (bytes32) {
+          return _roleAdmins[role];
+      }
+      function grantRole(bytes32 role, address account) public onlyRole(getRoleAdmin(role)) {
+          _roles[role][account] = true;
+      }
+  }
+
+expected_functions:
+  "grantRole(bytes32,address)":
+    authority_role: caller_authority
+    kind: membership
+    confidence: high
+    references_msg_sender: true
+
+unguarded:
+  - "getRoleAdmin(bytes32)"

@@ -386,6 +386,20 @@ def _nested_principals_for_details(resolved_type: str, details: dict[str, object
     return principals
 
 
+def _safe_role_int(role: Any) -> int | None:
+    """Coerce a role identifier to int, returning None for non-int shapes.
+
+    The v1 builder used ``int(role_grant["role"])`` which crashes on B.1's
+    role-name strings and Condition-mapping shapes. The recursive
+    resolver's role-principal accumulator stores ``set[int]`` and cannot
+    hold non-int role values; callers must skip those grants entirely.
+    """
+    try:
+        return int(role)
+    except (TypeError, ValueError):
+        return None
+
+
 def _role_principals_from_effective_permissions(effective_permissions: dict[str, Any]) -> list[RolePrincipal]:
     principals: dict[str, RolePrincipalAccumulator] = {}
     for function in effective_permissions.get("functions", []):
@@ -395,7 +409,14 @@ def _role_principals_from_effective_permissions(effective_permissions: dict[str,
         for role_grant in function.get("authority_roles", []):
             if not isinstance(role_grant, dict):
                 continue
-            role = int(role_grant["role"])
+            role = _safe_role_int(role_grant.get("role"))
+            if role is None:
+                logger.debug(
+                    "recursive: skipping non-int role %r on %s",
+                    role_grant.get("role"),
+                    function_signature,
+                )
+                continue
             for principal in role_grant.get("principals", []):
                 if not isinstance(principal, dict):
                     continue

@@ -148,9 +148,28 @@ def test_renamed_helpers_dispense_role_admits(tmp_path: Path):
 
 
 def test_unguarded_grant_role_does_not_admit(tmp_path: Path):
+    """Schema-v2 cutover: the v2 inclusion rule is "caller/delegated
+    authority leaf OR sensitive sink". An unguarded ``grantRole``
+    writes mapping state → it IS admitted under the structural rule.
+    The original "negative control" (no caller_authority leaf) is now
+    asserted on the predicate tree itself, not on privileged_functions.
+    """
     project = _write_project(tmp_path, "Unguarded", UNGUARDED_SOURCE)
-    analysis = collect_contract_analysis(project)
-    assert "grantRole(bytes32,address)" not in _privileged_signatures(analysis)
+    from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
+
+    _analysis, predicate_trees, _effects = collect_contract_analysis_with_artifacts(project)
+    v2_trees = ((predicate_trees or {}).get("trees")) or {}
+    tree = v2_trees.get("grantRole(bytes32,address)")
+
+    def _has_auth_leaf(node) -> bool:
+        if not isinstance(node, dict):
+            return False
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            return leaf.get("authority_role") in ("caller_authority", "delegated_authority")
+        return any(_has_auth_leaf(c) for c in node.get("children") or [])
+
+    assert not _has_auth_leaf(tree), "unguarded grantRole surfaced a caller/delegated authority leaf"
 
 
 # ---------------------------------------------------------------------------
@@ -185,8 +204,8 @@ def _function_entry(analysis: Any, signature: str) -> dict | None:
         "FIX: model the guard as a typed parametric predicate "
         "(kind='dynamic_role_admin', expression='getRoleAdmin(role_arg)') "
         "in the privileged_function entry, then resolve the holder set "
-        "either statically (against admin-role rows in role_definitions) "
-        "or via on-chain getRoleAdmin call. Remove this xfail when typed "
+        "either statically or through the semantic event/call evidence "
+        "available for that descriptor. Remove this xfail when typed "
         "parametric guards land."
     ),
     strict=True,
@@ -198,7 +217,7 @@ def test_renamed_dispense_role_emits_resolvable_principal_signal(tmp_path: Path)
     holders TBD' instead of just 'Unresolved').
 
     Two acceptable shapes for passing:
-      a. ``role_grants`` non-empty (the runtime-resolved version).
+      a. A non-empty resolved member set from semantic event evidence.
       b. A new typed field, e.g. ``guard_shape`` / ``parametric_guard``,
          identifying this as a getRoleAdmin(role_arg) gate so the UI
          can say 'role admin' instead of 'unresolved'.
