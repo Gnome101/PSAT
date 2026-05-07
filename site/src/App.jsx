@@ -1,46 +1,13 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 
-import {
-  ADDRESS_GRAPH_COLUMNS,
-  PRINCIPAL_COLUMNS,
-  buildVisualAddressGraph,
-  buildVisualPermissionGraph,
-  layoutVisualAddressGraph,
-  layoutVisualPermissionGraph,
-  prettyFunctionName,
-  shortenAddress,
-  wrapText,
-} from "./graph.js";
-// Heavy graph + audit components are deferred so the home page (`/`)
-// doesn't pay their bundle cost on first paint. The pre-split bundle
-// was ~1.9 MB; each lazy chunk cuts a slice that only loads when its
-// route or modal opens.
-const DependencyGraphTab = lazy(() => import("./DependencyGraphTab.jsx"));
-const ProtocolGraph = lazy(() => import("./ProtocolGraph.jsx"));
-const RiskSurface = lazy(() => import("./RiskSurface.jsx"));
-const ProtocolSurface = lazy(() => import("./ProtocolSurface.jsx"));
-const AuditsTab = lazy(() => import("./AuditsTab.jsx"));
-const AuditExtractionShelf = lazy(() => import("./AuditExtractionShelf.jsx"));
-const AddressesModal = lazy(() => import("./AddressesModal.jsx"));
-const AuditsAdminModal = lazy(() => import("./AuditsAdminModal.jsx"));
+import { shortenAddress } from "./graph.js";
 import { api } from "./api/client.js";
-import { getPipeline as getAuditPipeline } from "./api/audits.js";
 import ProductHero from "./ProductHero.jsx";
-// Shelved assembly-line hero — kept on disk, not rendered.
-// import SplashHero from "./SplashHero.jsx";
-// import AssemblyLine from "./AssemblyLine.jsx";
-import ProtocolLogo from "./ProtocolLogo.jsx";
-import ProtocolRadar from "./ProtocolRadar.jsx";
-import { computeProtocolScore } from "./protocolScore.js";
-import { bytecodeVerifiedAudits } from "./auditCoverage.js";
-import { StatCard } from "./ui/StatCard.jsx";
-import { UpgradesPanel } from "./surface/inspector/UpgradesPanel.jsx";
 import ErrorBoundary from "./ErrorBoundary.jsx";
 import HamburgerMenu from "./HamburgerMenu.jsx";
 import {
   TABS,
   buildLocationPath,
-  formatJson,
   isAddress,
   normalizeTab,
   parseLocationPath,
@@ -53,15 +20,21 @@ import UpgradesTab from "./tabs/UpgradesTab.jsx";
 import RawTab from "./tabs/RawTab.jsx";
 import GraphTab from "./tabs/GraphTab.jsx";
 import ProxyWatcherPage from "./pages/ProxyWatcherPage.jsx";
-import PipelineDashboard, { PIPELINE_STAGES } from "./pages/PipelineDashboard.jsx";
+import PipelineDashboard from "./pages/PipelineDashboard.jsx";
 import ProtocolMonitoringPage from "./pages/ProtocolMonitoringPage.jsx";
 import CompanyOverview from "./pages/CompanyOverview.jsx";
 import LoadingFallback from "./LoadingFallback.jsx";
 import RunsPage from "./pages/RunsPage.jsx";
 
-// SurfacePreview was a static SVG mini-map; we now embed the real
-// ProtocolSurface component inline. File kept for possible reuse.
-// import SurfacePreview from "./SurfacePreview.jsx";
+// The control surface, dependency graph, ownership graph, risk matrix,
+// and audits tab are heavy — keep them lazy so the home page bundle
+// stays slim. ProtocolSurface is also imported separately by
+// CompanyOverview; Vite/Rollup dedupe to a single chunk.
+const DependencyGraphTab = lazy(() => import("./DependencyGraphTab.jsx"));
+const ProtocolGraph = lazy(() => import("./ProtocolGraph.jsx"));
+const RiskSurface = lazy(() => import("./RiskSurface.jsx"));
+const ProtocolSurface = lazy(() => import("./ProtocolSurface.jsx"));
+const AuditsTab = lazy(() => import("./AuditsTab.jsx"));
 
 // TODO: replace this with a real sign-in page + session-based auth. Options
 // that fit our Fly deployment: (a) an identity-aware proxy sidecar such as
@@ -73,90 +46,6 @@ import RunsPage from "./pages/RunsPage.jsx";
 // buttons during local dev and early prod — a shared-secret bearer token
 // sitting in every admin's browser, with no per-user audit log and no
 // revocation story beyond rotating the key and logging everyone out.
-
-// ---------------------------------------------------------------------------
-// Company overview
-// ---------------------------------------------------------------------------
-
-// computeProtocolScore moved to ./protocolScore.js so the Surface sidebar
-// can render the same score + radar in its empty Detail state.
-
-
-function mergeProxyImpl(analyses) {
-  const implByProxy = new Map();
-  const mergedProxies = new Set();
-
-  for (const a of analyses) {
-    if (a.proxy_address) implByProxy.set(a.proxy_address.toLowerCase(), a);
-  }
-
-  const merged = [];
-  for (const a of analyses) {
-    if (a.proxy_address) continue; // skip standalone impl entries — they'll be merged into their proxy
-    if (a.is_proxy && a.implementation_address) {
-      const impl = implByProxy.get(a.address?.toLowerCase());
-      if (impl) {
-        merged.push({
-          ...impl,
-          proxy_address_display: a.address,
-          proxy_type_display: a.proxy_type,
-          display_name: displayName(a) || displayName(impl),
-          rank_score: a.rank_score ?? impl.rank_score,
-          company: a.company || impl.company,
-        });
-        mergedProxies.add(a.address?.toLowerCase());
-        continue;
-      }
-    }
-    merged.push(a);
-  }
-  // Add impl entries whose proxy wasn't in the list
-  for (const a of analyses) {
-    if (a.proxy_address && !mergedProxies.has(a.proxy_address.toLowerCase())) {
-      merged.push(a);
-    }
-  }
-  return merged;
-}
-
-// ---------------------------------------------------------------------------
-// Protocol Monitoring
-// ---------------------------------------------------------------------------
-
-
-// ---------------------------------------------------------------------------
-// Proxy Watcher (WIP)
-// ---------------------------------------------------------------------------
-
-
-function monitorJobScope(job) {
-  const request = job?.request && typeof job.request === "object" ? job.request : {};
-
-  if (job.stage === "dapp_crawl") {
-    const urls = Array.isArray(request.dapp_urls) ? request.dapp_urls.filter(Boolean) : [];
-    if (urls.length) {
-      try {
-        return new URL(urls[0]).host;
-      } catch {
-        return String(urls[0]);
-      }
-    }
-  }
-
-  if (job.stage === "defillama_scan" && request.defillama_protocol) {
-    return `protocol ${request.defillama_protocol}`;
-  }
-
-  if (job.stage === "selection" && job.company) {
-    return `ranking ${job.company}`;
-  }
-
-  if (job.company) return job.company;
-  if (job.address) return shortenAddress(job.address);
-  return job.job_id?.slice(0, 8) || "job";
-}
-
-
 
 // ---------------------------------------------------------------------------
 // App
