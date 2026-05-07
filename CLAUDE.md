@@ -38,6 +38,31 @@ PSAT_LLM_STUB_DIR=tests/fixtures/scope_extraction/llm_responses \
 - `MonitoredContract` rows leak across runs: `WatchedProxy.delete` is `ON DELETE SET NULL` for the link (`db/models.py`), and there's no admin DELETE. Use a stable `(address, chain)` rather than randomizing — the unique key keeps it a singleton.
 
 
+## Frontend tests
+
+`site/` runs vitest + Playwright. Both auto-discover; CI runs them in the
+`frontend-test` job.
+
+- `npm test` (vitest, ~1.3s): unit + render smoke tests. App-router
+  smoke covers every URL; ProtocolSurface state-variant tests cover
+  every sidebar mode. Setup is in `src/test/setup.js`; fetch is mocked
+  via `setFetchHandler()` in `src/test/fetchMock.js`.
+- `npx playwright test` (e2e + visual baselines): real browser. The
+  `visual-baseline.spec.js` uses `toHaveScreenshot()` to catch CSS
+  cascade/specificity regressions — critical for any styles.css edit.
+
+### Updating visual baselines after intentional CSS changes
+
+```bash
+cd site
+npx playwright test e2e/visual-baseline.spec.js --update-snapshots
+git add e2e/visual-baseline.spec.js-snapshots/
+```
+
+Snapshots are platform-sensitive. CI runs `ubuntu-latest`; local dev
+should match (WSL Linux works). macOS will produce different baselines
+that won't match CI — don't commit snapshots taken on macOS.
+
 ## Style
 
 Comments only when the *why* is non-obvious. Don't narrate what the code says.
