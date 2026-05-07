@@ -29,6 +29,24 @@ are conservative against observed reorg depths on those chains;
 operators MUST raise the depth for any chain where deeper reorgs
 are realistic. A common-ancestor walk would handle arbitrary depth
 but is not implemented here.
+
+Operational defaults (Wave 3 cutover, PR #70 §E.1):
+
+* **Backfill = job-triggered** (Option C). Cursors are inserted by
+  ``enroll_contract`` when a ``JobDependency`` row references an
+  authority contract (resolution stage's dep-edge emitter in
+  ``workers/resolution_worker.py``). On first sight ``last_indexed_block=0``
+  so the next pass backfills from genesis up to ``head -
+  finality_depth``. This avoids full-fleet genesis scans and keeps
+  history aligned with what the resolver actually queries.
+* **Freshness = stale-OK.** The resolver reads whatever's in
+  ``role_grants_events``; ``last_run_at`` / ``last_indexed_block``
+  are exposed via ``routers/v2.py:_compute_data_freshness`` so the
+  UI can show data currency.
+* **Enrollment = dep-edge-driven.** ``_enroll_from_job_dependencies``
+  runs once per pass and inserts cursor rows for every
+  ``JobDependency.provider_address`` whose chain is known to this
+  process (i.e. has an RPC URL configured).
 """
 
 from __future__ import annotations
@@ -405,6 +423,57 @@ def scan_enrolled_contracts(
     return results
 
 
+def enroll_from_job_dependencies(
+    session: Session,
+    *,
+    chain_name_to_id: dict[str, int],
+    chain_ids_with_fetchers: set[int],
+) -> int:
+    """Insert ``role_grants_cursors`` rows for every external
+    authority contract referenced by a ``JobDependency`` row whose
+    ``(chain_id, address)`` we can serve from this process's
+    configured RPC fetchers. Idempotent — relies on
+    ``enroll_contract``'s ``ON CONFLICT DO NOTHING``.
+
+    Returns the number of newly enrolled cursors. Ignores rows whose
+    chain isn't in ``chain_ids_with_fetchers`` so an indexer instance
+    only enrolls contracts it can actually scan.
+    """
+    from db.models import Contract, JobDependency
+
+    rows = session.execute(select(JobDependency.provider_chain, JobDependency.provider_address).distinct()).all()
+    inserted = 0
+    for provider_chain, provider_address in rows:
+        chain_id = chain_name_to_id.get((provider_chain or "ethereum").lower())
+        if chain_id is None or chain_id not in chain_ids_with_fetchers:
+            continue
+        # Use the existing contract row for the (chain_name, address)
+        # tuple. Resolution worker guarantees one is created via
+        # ``create_job`` before the JobDependency row appears.
+        contract_row = session.execute(
+            select(Contract.id).where(
+                Contract.address == provider_address,
+                Contract.chain == (provider_chain or "ethereum"),
+            )
+        ).first()
+        if contract_row is None:
+            continue
+        before = session.execute(
+            select(RoleGrantsCursor).where(
+                RoleGrantsCursor.chain_id == chain_id,
+                RoleGrantsCursor.contract_id == contract_row[0],
+            )
+        ).scalar_one_or_none()
+        if before is not None:
+            continue
+        enroll_contract(session, chain_id=chain_id, contract_id=contract_row[0])
+        inserted += 1
+    if inserted:
+        session.commit()
+        logger.info("role_grants indexer: enrolled %d new contract(s) from JobDependency rows", inserted)
+    return inserted
+
+
 def run_role_grants_indexer_loop(
     session_factory: Callable[[], Session],
     *,
@@ -412,15 +481,28 @@ def run_role_grants_indexer_loop(
     block_hash_fetcher_for_chain: dict[int, "BlockHashFetcher"],
     head_block_fetcher: HeadBlockFetcher,
     interval: float = 30.0,
+    chain_name_to_id: dict[str, int] | None = None,
 ) -> None:
     """Blocking polling loop. Each pass opens a fresh session,
-    runs ``scan_enrolled_contracts``, then sleeps. Exceptions are
-    logged and the loop continues — designed to run as a long-lived
-    worker process behind a supervisor."""
+    enrolls any new ``JobDependency`` providers, runs
+    ``scan_enrolled_contracts``, then sleeps. Exceptions are logged
+    and the loop continues — designed to run as a long-lived worker
+    process behind a supervisor."""
     logger.info("starting role_grants indexer loop interval=%ss", interval)
+    chain_ids_with_fetchers = set(log_fetcher_for_chain.keys()) & set(block_hash_fetcher_for_chain.keys())
     while True:
         try:
             with session_factory() as session:
+                if chain_name_to_id:
+                    try:
+                        enroll_from_job_dependencies(
+                            session,
+                            chain_name_to_id=chain_name_to_id,
+                            chain_ids_with_fetchers=chain_ids_with_fetchers,
+                        )
+                    except Exception:
+                        logger.exception("role_grants indexer enrollment pass failed")
+                        session.rollback()
                 scan_enrolled_contracts(
                     session,
                     log_fetcher_for_chain=log_fetcher_for_chain,
@@ -435,3 +517,85 @@ def run_role_grants_indexer_loop(
 def _load_finality_config(session: Session) -> dict[int, int]:
     rows = session.execute(select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)).all()
     return {cid: depth for cid, depth in rows}
+
+
+# ---------------------------------------------------------------------------
+# Worker entrypoint
+# ---------------------------------------------------------------------------
+
+
+# Mapping from ``Contract.chain`` string to chain_id, mirroring
+# ``services/discovery/inventory_domain.CHAIN_IDS``. Kept inline here
+# so the indexer's process boot doesn't pull the discovery surface in.
+_CHAIN_NAME_TO_ID: dict[str, int] = {
+    "ethereum": 1,
+    "arbitrum": 42161,
+    "optimism": 10,
+    "polygon": 137,
+    "base": 8453,
+    "avalanche": 43114,
+    "bsc": 56,
+    "linea": 59144,
+    "scroll": 534352,
+    "zksync": 324,
+    "blast": 81457,
+}
+
+
+def _build_rpc_fetchers() -> tuple[dict, dict, "HeadBlockFetcher"]:
+    """Construct per-chain ``LogFetcher`` / ``BlockHashFetcher`` /
+    ``HeadBlockFetcher`` from env vars. The ethereum mainnet URL
+    falls back to ``ETH_RPC`` (the same env var
+    ``workers/resolution_worker.py`` and ``workers/policy_worker.py``
+    already consume) for parity with the rest of the worker fleet."""
+    import os
+
+    from services.resolution.repos.role_grants_rpc import (
+        RpcBlockHashFetcher,
+        RpcHeadBlockFetcher,
+        RpcLogFetcher,
+    )
+
+    rpc_url = os.getenv("PSAT_INDEXER_RPC_URL") or os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+    # Single-chain bring-up — the indexer infrastructure supports
+    # per-chain URLs, but Wave 3 cutover ships ethereum first. Add
+    # additional chains by registering ``PSAT_INDEXER_RPC_URL_<chain>``
+    # in a follow-up; the data path is already chain-keyed.
+    rpc_url_for_chain = {1: rpc_url}
+    log_fetcher_for_chain = {1: RpcLogFetcher(rpc_url)}
+    block_hash_fetcher_for_chain = {1: RpcBlockHashFetcher(rpc_url)}
+    head_block_fetcher = RpcHeadBlockFetcher(rpc_url_for_chain)
+    return log_fetcher_for_chain, block_hash_fetcher_for_chain, head_block_fetcher
+
+
+def main() -> None:
+    """Process entrypoint. Reads config from env, constructs RPC
+    fetchers, and runs the polling loop forever."""
+    import os
+
+    from db.models import SessionLocal
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
+    interval = float(os.getenv("PSAT_INDEXER_POLL_INTERVAL_S", "30"))
+    log_fetcher_for_chain, block_hash_fetcher_for_chain, head_block_fetcher = _build_rpc_fetchers()
+    logger.info(
+        "role_grants indexer process starting: chains=%s interval=%ss",
+        sorted(log_fetcher_for_chain.keys()),
+        interval,
+    )
+    run_role_grants_indexer_loop(
+        SessionLocal,
+        log_fetcher_for_chain=log_fetcher_for_chain,
+        block_hash_fetcher_for_chain=block_hash_fetcher_for_chain,
+        head_block_fetcher=head_block_fetcher,
+        interval=interval,
+        chain_name_to_id=_CHAIN_NAME_TO_ID,
+    )
+
+
+if __name__ == "__main__":
+    main()

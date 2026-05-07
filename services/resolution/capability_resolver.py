@@ -40,6 +40,7 @@ v1 in that case.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
@@ -59,6 +60,8 @@ from .capabilities import CapabilityExpr
 from .predicate_evaluator import evaluate_tree_with_registry
 from .repos import PostgresAragonACLRepo, PostgresMappingValueRepo, PostgresRoleGrantsRepo
 
+logger = logging.getLogger(__name__)
+
 
 def resolve_contract_capabilities(
     session: Session,
@@ -67,6 +70,7 @@ def resolve_contract_capabilities(
     chain_id: int = 1,
     block: int | None = None,
     job_id: Any = None,
+    chain: str | None = None,
 ) -> dict[str, dict[str, Any]] | None:
     """Return ``{function_signature: capability_dict}`` for the most
     recent completed analysis of ``address``, or ``None`` if there's
@@ -80,6 +84,14 @@ def resolve_contract_capabilities(
     enrichment pass) target the job they're currently processing. The
     default ``Job.status == completed`` filter would otherwise skip
     the in-progress job and return None or stale prior artifacts.
+
+    ``chain`` is the string chain identifier (e.g. ``"ethereum"``,
+    ``"optimism"``) matching ``Contract.chain``. Together with
+    ``job_id`` it scopes the per-job ``ControllerValue`` lookup so a
+    re-analysis on a different chain (or a follow-up run on the same
+    address) doesn't leak rows back into a completed job's resolved
+    capabilities. Falls back to address-only lookup with a warn-log
+    when ``job_id`` is None (legacy callers / tests).
     """
     addr = address.lower()
     if job_id is not None:
@@ -101,6 +113,15 @@ def resolve_contract_capabilities(
     if not isinstance(artifact, dict) or "trees" not in artifact:
         return None
 
+    # Default chain from Job.request when caller didn't supply one. The
+    # downstream ``_load_state_var_values`` only filters by chain when
+    # it's non-None, so this is best-effort: a job whose request lacks
+    # a 'chain' key falls back to address-only Contract lookup.
+    if chain is None and isinstance(job.request, dict):
+        req_chain = job.request.get("chain")
+        if isinstance(req_chain, str) and req_chain:
+            chain = req_chain
+
     registry = AdapterRegistry()
     for cls in (
         AccessControlAdapter,
@@ -116,7 +137,7 @@ def resolve_contract_capabilities(
     role_grants_repo = PostgresRoleGrantsRepo(session)
     aragon_repo = PostgresAragonACLRepo(session)
     mapping_value_repo = PostgresMappingValueRepo(session)
-    state_var_values = _load_state_var_values(session, addr)
+    state_var_values = _load_state_var_values(session, addr, job_id=job_id, chain=chain)
     ctx = EvaluationContext(
         chain_id=chain_id,
         contract_address=addr,
@@ -155,7 +176,13 @@ def _maybe_trace_fetcher() -> Any:
         return None
 
 
-def _load_state_var_values(session: Session, address: str) -> dict[str, str]:
+def _load_state_var_values(
+    session: Session,
+    address: str,
+    *,
+    job_id: Any = None,
+    chain: str | None = None,
+) -> dict[str, str]:
     """Read persisted ``controller_values`` rows for ``address`` and key
     them by the bare state-variable name the predicate evaluator looks
     up (e.g. ``"_owner"``, ``"roleRegistry"``).
@@ -168,9 +195,46 @@ def _load_state_var_values(session: Session, address: str) -> dict[str, str]:
     a state-variable and an external-contract row exist for the same
     name.
 
-    Returns an empty dict when the contract has no row — the evaluator
+    Scoping rules (Option 2 — reproducible per job):
+      - ``Contract.address`` matches (always).
+      - ``Contract.chain == :chain`` when ``chain`` is non-None — keeps
+        a same-address contract on a different chain from leaking in.
+      - ``Contract.created_at <= job.created_at`` when ``job_id`` is
+        non-None — defines the temporal floor so a follow-up job's
+        re-discovered ``ControllerValue`` rows don't bleed into the
+        completed job's resolution.
+
+    ``ControllerValue`` itself has no timestamp column; the static
+    pipeline rewrites the rows under a fresh ``Contract`` row per job,
+    so scoping the Contract row is sufficient to scope the values.
+
+    Picks the latest ``Contract`` (by ``created_at desc``) matching all
+    constraints. Falls back to address-only with a WARN log when
+    ``job_id`` is None (legacy callers / tests).
+
+    Returns an empty dict when no contract row matches — the evaluator
     falls back to the lower_bound/partial placeholder."""
-    contract = session.execute(select(Contract).where(Contract.address == address).limit(1)).scalar_one_or_none()
+    job_created_at = None
+    if job_id is not None:
+        job = session.get(Job, job_id)
+        if job is not None:
+            job_created_at = job.created_at
+    else:
+        logger.warning(
+            "_load_state_var_values called without job_id for address=%s; "
+            "falling back to address-only Contract lookup. "
+            "Capability resolution may surface controller rows from a "
+            "different job/chain.",
+            address,
+        )
+
+    stmt = select(Contract).where(Contract.address == address)
+    if chain is not None:
+        stmt = stmt.where(Contract.chain == chain)
+    if job_created_at is not None:
+        stmt = stmt.where(Contract.created_at <= job_created_at)
+    stmt = stmt.order_by(Contract.created_at.desc()).limit(1)
+    contract = session.execute(stmt).scalar_one_or_none()
     if contract is None:
         return {}
     rows = session.execute(select(ControllerValue).where(ControllerValue.contract_id == contract.id)).scalars()

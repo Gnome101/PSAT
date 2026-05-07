@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -323,51 +323,11 @@ class PolicyTrackingTarget(TypedDict):
     notes: list[str]
 
 
-class ControllerRef(TypedDict):
-    id: str
-    kind: ControllerKind
-    label: str
-    source: str
-    read_spec: ControllerReadSpec | None
-    confidence: ControllerConfidence | None
-    evidence: list[Evidence]
-
-
-class GuardRecord(TypedDict):
-    id: str
-    contract: str
-    function: str
-    kind: GuardKind
-    confidence: NotRequired[ControllerConfidence]
-    controller_ids: list[str]
-    evidence: list[Evidence]
-    details: list[str]
-
-
-class SinkRecord(TypedDict):
-    id: str
-    contract: str
-    function: str
-    kind: SinkKind
-    target: str
-    node_id: int
-    guarded_by: list[str]
-    effects: list[str]
-    evidence: list[Evidence]
-
-
-class PermissionGraph(TypedDict):
-    controllers: list[ControllerRef]
-    guards: list[GuardRecord]
-    sinks: list[SinkRecord]
-
-
 class ContractAnalysis(TypedDict):
     schema_version: str
     subject: Subject
     analysis_status: AnalysisStatus
     summary: Summary
-    permission_graph: PermissionGraph
     contract_classification: ContractClassification
     access_control: AccessControlAnalysis
     upgradeability: UpgradeabilityAnalysis
@@ -378,9 +338,3 @@ class ContractAnalysis(TypedDict):
     tracking_hints: list[TrackingHint]
     controller_tracking: list[ControllerTrackingTarget]
     policy_tracking: list[PolicyTrackingTarget]
-    # Schema-v2 shadow-mode predicate-tree artifact, embedded by
-    # ``collect_contract_analysis`` so callers can persist it as a
-    # separate artifact without paying for a second Slither parse.
-    # Popped by the static worker before the v1 dict is stored, so
-    # the v1 ``contract_analysis`` artifact's shape stays unchanged.
-    _v2_predicate_trees: NotRequired[dict[str, Any]]

@@ -93,6 +93,20 @@ PIDS+=($!)
 PIDS+=($!)
 "${PYTHON_CMD[@]}" -m workers.audit_scope_extraction &
 PIDS+=($!)
+# v2 capability resolver indexers (PR #70 §E.1). Each runs as its
+# own long-lived process polling for new RoleGranted /
+# SetPermission / mapping-write events on contracts that became
+# JobDependency providers (or, for mapping_value, contracts whose
+# predicate_trees artifact carries writer_selectors). Without these
+# the AccessControlAdapter / AragonACLAdapter / EventIndexedAdapter
+# fall back to lower-bound capabilities — silently empty principals
+# on cross-contract auth contracts.
+"${PYTHON_CMD[@]}" -m workers.role_grants_indexer &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.aragon_acl_indexer &
+PIDS+=($!)
+"${PYTHON_CMD[@]}" -m workers.mapping_value_indexer &
+PIDS+=($!)
 
 echo "All workers started: ${PIDS[*]}"
 # Exit on first death — Fly restarts the machine so every worker

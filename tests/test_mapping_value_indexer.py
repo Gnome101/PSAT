@@ -409,3 +409,40 @@ def test_repo_block_constraint_uses_pre_block_state(session_with_contract):
         block=105,
     )
     assert out == [a.lower()]
+
+
+def test_module_runs_as_main():
+    """Wave 3 entrypoint: ``python -m workers.mapping_value_indexer``
+    must resolve to a callable ``main`` that ``start_workers.sh``
+    launches. We import-check rather than execute since ``main``
+    starts an infinite poll loop. Also pins the predicate-tree-driven
+    enrollment helper that's the Wave 3 plumbing for this indexer."""
+    from workers import mapping_value_indexer
+
+    assert hasattr(mapping_value_indexer, "main")
+    assert callable(mapping_value_indexer.main)
+    assert hasattr(mapping_value_indexer, "enroll_from_predicate_trees")
+    assert callable(mapping_value_indexer.enroll_from_predicate_trees)
+    assert hasattr(mapping_value_indexer, "scan_enrolled_contracts")
+    assert callable(mapping_value_indexer.scan_enrolled_contracts)
+
+
+def test_has_writer_selectors_helper():
+    """The enrollment predicate walks predicate-tree nodes looking
+    for any leaf with ``set_descriptor.writer_selectors``."""
+    from workers.mapping_value_indexer import _has_writer_selectors
+
+    no_selectors = {
+        "op": "LEAF",
+        "leaf": {"set_descriptor": {"writer_selectors": []}},
+    }
+    with_selectors = {
+        "op": "LEAF",
+        "leaf": {"set_descriptor": {"writer_selectors": ["0xabcd1234"]}},
+    }
+    nested = {"op": "AND", "children": [no_selectors, {"op": "OR", "children": [with_selectors]}]}
+    only_no = {"op": "AND", "children": [no_selectors, no_selectors]}
+    assert _has_writer_selectors(with_selectors) is True
+    assert _has_writer_selectors(no_selectors) is False
+    assert _has_writer_selectors(nested) is True
+    assert _has_writer_selectors(only_no) is False

@@ -44,6 +44,8 @@ class Operand(TypedDict):
     parameter_name: NotRequired[str | None]
     state_variable_name: NotRequired[str | None]
     callee: NotRequired[str | None]
+    callee_signature: NotRequired[str | None]
+    callee_selector: NotRequired[str | None]
     callee_args: NotRequired[list["Operand"]]
     constant_value: NotRequired[str | None]
     computed_kind: NotRequired[str | None]
@@ -140,6 +142,9 @@ class SetDescriptor(TypedDict):
     authority_contract: NotRequired[AuthorityContract | None]
     role_domain: NotRequired[RoleDomain | None]
     selector_context: NotRequired[SelectorContext | None]
+    callee_function: NotRequired[str | None]
+    callee_signature: NotRequired[str | None]
+    callee_selector: NotRequired[str | None]
 
 
 # ---------------------------------------------------------------------------

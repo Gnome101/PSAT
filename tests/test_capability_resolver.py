@@ -525,3 +525,172 @@ def test_external_set_resolves_to_role_grants_members(session):
     assert {member_a, member_b} <= members, (
         f"seeded role-grants members not present in resolved capability; got {sorted(members)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# C.1 cutover: ``_load_state_var_values`` scoped by (job_id, chain).
+# Reproducible per job — a re-analysis on a different chain or a follow-up
+# job on the same address must NOT leak ControllerValue rows into the
+# resolved capability for an earlier job.
+# ---------------------------------------------------------------------------
+
+
+@requires_postgres
+def test_load_state_var_values_scoped_by_chain(session):
+    """Two Contract rows for the same address, different chains. The
+    resolver, given chain='ethereum', must read only the ethereum
+    Contract's ControllerValue — not the optimism row's stale value."""
+    from db.models import Contract, ControllerValue, Protocol
+    from services.resolution.capability_resolver import _load_state_var_values
+
+    address = "0x" + uuid.uuid4().hex[:8] + "c1" * 16
+    eth_owner = "0x" + "ee" * 20
+    op_owner = "0x" + "ff" * 20
+
+    proto = Protocol(name=f"capres_chain_{uuid.uuid4().hex[:8]}")
+    session.add(proto)
+    session.flush()
+
+    eth_contract = Contract(address=address, chain="ethereum", protocol_id=proto.id)
+    op_contract = Contract(address=address, chain="optimism", protocol_id=proto.id)
+    session.add_all([eth_contract, op_contract])
+    session.flush()
+
+    session.add(
+        ControllerValue(
+            contract_id=eth_contract.id,
+            controller_id="state_variable:_owner",
+            value=eth_owner,
+            resolved_type="eoa",
+            source="state_variable",
+        )
+    )
+    session.add(
+        ControllerValue(
+            contract_id=op_contract.id,
+            controller_id="state_variable:_owner",
+            value=op_owner,
+            resolved_type="eoa",
+            source="state_variable",
+        )
+    )
+    session.commit()
+
+    # Seed a job with chain='ethereum' so the temporal floor is met.
+    job = _seed_job_with_artifact(session, address=address, predicate_trees=None)
+
+    eth_values = _load_state_var_values(session, address, job_id=job.id, chain="ethereum")
+    assert eth_values.get("_owner") == eth_owner, (
+        f"expected ethereum-chain owner ({eth_owner}); got {eth_values.get('_owner')} "
+        f"(would have been the optimism row {op_owner} without chain scoping)"
+    )
+
+    op_values = _load_state_var_values(session, address, job_id=job.id, chain="optimism")
+    assert op_values.get("_owner") == op_owner, (
+        f"expected optimism-chain owner ({op_owner}); got {op_values.get('_owner')}"
+    )
+
+
+@requires_postgres
+def test_load_state_var_values_scoped_by_job_created_at(session):
+    """A Contract row whose ``created_at`` is AFTER the job's
+    ``created_at`` must NOT be selected — Option 2 reproducibility.
+    A re-discovery on the same (address, chain) overwrites the
+    Contract row's ``created_at`` to ``now``; an earlier completed
+    job must not pick up that newer row when re-rendered.
+
+    The ``uq_contract_address_chain`` constraint guarantees one
+    Contract per (address, chain) so the realistic scenario is
+    "the existing Contract row was just rewritten by a follow-up
+    discovery and is now newer than this job." With the temporal
+    floor in place the resolver returns nothing; without it, the
+    later row's ControllerValues would leak into older jobs."""
+    from datetime import timedelta
+
+    from db.models import Contract, ControllerValue, Job, JobStage, JobStatus, Protocol
+    from services.resolution.capability_resolver import _load_state_var_values
+
+    address = "0x" + uuid.uuid4().hex[:8] + "c2" * 16
+    late_owner = "0x" + "22" * 20
+
+    proto = Protocol(name=f"capres_temporal_{uuid.uuid4().hex[:8]}")
+    session.add(proto)
+    session.flush()
+
+    base_time = datetime.now(timezone.utc) - timedelta(hours=2)
+    job_time = base_time + timedelta(minutes=30)
+
+    # Job at job_time (30 minutes after base).
+    job = Job(
+        address=address,
+        request={"address": address, "name": "T", "chain": "ethereum"},
+        status=JobStatus.completed,
+        stage=JobStage.done,
+        created_at=job_time,
+        updated_at=job_time,
+    )
+    session.add(job)
+    session.commit()
+
+    # Contract row created AFTER job_time — represents a follow-up
+    # discovery overwriting the row.
+    late_contract = Contract(address=address, chain="ethereum", protocol_id=proto.id)
+    late_contract.created_at = job_time + timedelta(hours=1)
+    session.add(late_contract)
+    session.flush()
+    session.add(
+        ControllerValue(
+            contract_id=late_contract.id,
+            controller_id="state_variable:_owner",
+            value=late_owner,
+            resolved_type="eoa",
+            source="state_variable",
+        )
+    )
+    session.commit()
+
+    values = _load_state_var_values(session, address, job_id=job.id, chain="ethereum")
+    assert "_owner" not in values, (
+        f"expected the temporally-newer Contract row to be filtered out by "
+        f"created_at <= job.created_at; got {values.get('_owner')} (={late_owner})"
+    )
+
+
+@requires_postgres
+def test_load_state_var_values_falls_back_when_job_id_missing(session, caplog):
+    """Legacy behavior: when job_id is None, fall back to the latest
+    Contract by address (today's behavior). MUST WARN-log the
+    fallback so callers can audit the regression risk."""
+    import logging
+
+    from db.models import Contract, ControllerValue, Protocol
+    from services.resolution.capability_resolver import _load_state_var_values
+
+    address = "0x" + uuid.uuid4().hex[:8] + "c3" * 16
+    owner = "0x" + "33" * 20
+
+    proto = Protocol(name=f"capres_fallback_{uuid.uuid4().hex[:8]}")
+    session.add(proto)
+    session.flush()
+    contract = Contract(address=address, chain="ethereum", protocol_id=proto.id)
+    session.add(contract)
+    session.flush()
+    session.add(
+        ControllerValue(
+            contract_id=contract.id,
+            controller_id="state_variable:_owner",
+            value=owner,
+            resolved_type="eoa",
+            source="state_variable",
+        )
+    )
+    session.commit()
+
+    with caplog.at_level(logging.WARNING, logger="services.resolution.capability_resolver"):
+        values = _load_state_var_values(session, address, job_id=None, chain=None)
+
+    assert values.get("_owner") == owner, "legacy address-only fallback should still resolve"
+    # WARN-log fired so an operator can spot the unscoped path.
+    assert any("without job_id" in rec.message for rec in caplog.records), (
+        f"expected a warn-log about job_id=None fallback; got {[r.message for r in caplog.records]}"
+    )

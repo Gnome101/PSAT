@@ -41,7 +41,7 @@ membership/equality leaves reading those vars.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 try:
     from slither.core.cfg.node import NodeType  # type: ignore[import]
@@ -61,6 +61,21 @@ except Exception:  # pragma: no cover
 from .predicate_types import LeafPredicate, PredicateTree
 
 GuardKind = Literal["reentrancy", "pause"]
+
+
+class PauseInfo(TypedDict):
+    """Structured export from ``apply_reentrancy_pause_pass``.
+
+    Lets ``_detect_pausability`` skip the modifier-name heuristic and
+    consume the structural classification directly. ``pause_state_vars``
+    + ``reentrancy_state_vars`` are the names PauseAnalyzer/Reentrancy-
+    Analyzer flagged; the function lists are derived from each state
+    var's writers / from modifiers that toggle the var."""
+
+    pause_state_vars: list[str]
+    pause_toggle_functions: list[str]
+    reentrancy_state_vars: list[str]
+    reentrancy_guarded_functions: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -388,17 +403,25 @@ def _tree_has_authority(tree: PredicateTree) -> bool:
 def apply_reentrancy_pause_pass(
     contract: Any,
     predicate_trees: dict[str, PredicateTree],
-) -> None:
-    """Run both analyzers, then mutate predicate_trees in place:
-    leaves whose operands read a reentrancy/pause var get their
-    authority_role updated. Pure-side-condition leaves (no other
-    auth basis) end up annotated rather than admitted."""
+) -> PauseInfo:
+    """Run both analyzers, mutate predicate_trees in place, and return
+    a ``PauseInfo`` so ``_detect_pausability`` can consume the
+    structural classification directly (replaces the v1 modifier-name
+    heuristic).
+
+    Leaves whose operands read a reentrancy/pause var get their
+    ``authority_role`` updated. Pure-side-condition leaves (no other
+    auth basis) end up annotated rather than admitted.
+    """
     if not SLITHER_AVAILABLE:
         raise RuntimeError("apply_reentrancy_pause_pass requires slither")
     reentrancy_vars = ReentrancyAnalyzer(contract).run()
     pause_vars = PauseAnalyzer(contract, predicate_trees).run()
+
+    pause_info = _build_pause_info(contract, pause_vars, reentrancy_vars)
+
     if not reentrancy_vars and not pause_vars:
-        return
+        return pause_info
     for tree in predicate_trees.values():
         if tree is None:
             continue
@@ -410,6 +433,65 @@ def apply_reentrancy_pause_pass(
 
     for tree in predicate_trees.values():
         apply_confidence_to_tree(tree)
+    return pause_info
+
+
+def _build_pause_info(
+    contract: Any,
+    pause_vars: set[str],
+    reentrancy_vars: set[str],
+) -> PauseInfo:
+    """Derive function lists from the analyzer-flagged state-var sets.
+
+    * ``pause_toggle_functions``: every non-constructor function that
+      writes any pause state var. PauseAnalyzer only admits a var after
+      one writer has been auth-gated, but we list ALL writers so
+      consumers can spot misconfigured-but-detectable pause shapes.
+    * ``reentrancy_guarded_functions``: every function whose modifier
+      list includes a reentrancy-classified modifier (one whose body
+      writes a reentrancy var on both sides of PLACEHOLDER).
+    """
+    pause_toggle_fns: list[str] = []
+    reentrancy_guarded_fns: list[str] = []
+    seen_pause: set[str] = set()
+    seen_reentrancy: set[str] = set()
+
+    if pause_vars:
+        for fn in getattr(contract, "functions", []) or []:
+            if getattr(fn, "is_constructor", False):
+                continue
+            written = {getattr(v, "name", "") for v in (getattr(fn, "state_variables_written", []) or [])}
+            if written & pause_vars:
+                full_name = getattr(fn, "full_name", None) or getattr(fn, "name", None)
+                if isinstance(full_name, str) and full_name and full_name not in seen_pause:
+                    seen_pause.add(full_name)
+                    pause_toggle_fns.append(full_name)
+
+    if reentrancy_vars:
+        # A modifier is reentrancy-classified if its body writes any
+        # reentrancy var. Functions that apply such a modifier are
+        # reentrancy-guarded.
+        reentrancy_modifier_ids: set[int] = set()
+        for modifier in getattr(contract, "modifiers", []) or []:
+            written = {getattr(v, "name", "") for v in (getattr(modifier, "state_variables_written", []) or [])}
+            if written & reentrancy_vars:
+                reentrancy_modifier_ids.add(id(modifier))
+        for fn in getattr(contract, "functions", []) or []:
+            if getattr(fn, "is_constructor", False):
+                continue
+            applied = list(getattr(fn, "modifiers", []) or [])
+            if any(id(m) in reentrancy_modifier_ids for m in applied):
+                full_name = getattr(fn, "full_name", None) or getattr(fn, "name", None)
+                if isinstance(full_name, str) and full_name and full_name not in seen_reentrancy:
+                    seen_reentrancy.add(full_name)
+                    reentrancy_guarded_fns.append(full_name)
+
+    return {
+        "pause_state_vars": sorted(pause_vars),
+        "pause_toggle_functions": sorted(pause_toggle_fns),
+        "reentrancy_state_vars": sorted(reentrancy_vars),
+        "reentrancy_guarded_functions": sorted(reentrancy_guarded_fns),
+    }
 
 
 def _walk_and_classify(tree: PredicateTree, reentrancy_vars: set[str], pause_vars: set[str]) -> None:

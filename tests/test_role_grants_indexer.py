@@ -450,3 +450,19 @@ def test_event_direction_topic_decoding():
     assert event_direction(ROLE_GRANTED_TOPIC0) == "grant"
     assert event_direction(ROLE_REVOKED_TOPIC0) == "revoke"
     assert event_direction(b"\x00" * 32) is None
+
+
+def test_module_runs_as_main():
+    """Verify the Wave 3 worker entrypoint is callable. We don't
+    invoke ``main()`` (it would start an infinite loop) — just check
+    that importing the module exposes a ``main`` symbol so
+    ``python -m workers.role_grants_indexer`` resolves correctly
+    when ``start_workers.sh`` launches the process."""
+    from workers import role_grants_indexer
+
+    assert hasattr(role_grants_indexer, "main")
+    assert callable(role_grants_indexer.main)
+    # The dep-edge enrollment helper is the Wave 3 plumbing — verify
+    # its contract too, for the same reason.
+    assert hasattr(role_grants_indexer, "enroll_from_job_dependencies")
+    assert callable(role_grants_indexer.enroll_from_job_dependencies)

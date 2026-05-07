@@ -3,7 +3,6 @@
 Hosts the read path that consumes the v2 ``predicate_trees`` artifact:
  - per-contract / per-company capability resolution
  - membership and signature probes against individual leaves
- - v1↔v2 diff harness + fleet-wide migration status
 
 These shipped on the predicate-pipeline branch while ``api.py`` was still
 a single-file monolith; under the routers refactor they live here so the
@@ -449,7 +448,31 @@ def get_contract_capabilities(
         return cached
 
     with deps.SessionLocal() as session:
-        capabilities = resolve_contract_capabilities(session, address=addr, chain_id=chain_id, block=block)
+        # Resolve the chain string from the most recent completed Job's
+        # request so ``_load_state_var_values`` can scope ``Contract``
+        # by (address, chain). The resolver itself defaults from the
+        # job's request when chain is None, but doing it here too keeps
+        # cache and direct resolver lookups aligned.
+        chain_str: str | None = None
+        latest_job = session.execute(
+            select(Job)
+            .where(Job.address == addr)
+            .where(Job.status == JobStatus.completed)
+            .order_by(Job.updated_at.desc(), Job.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        if latest_job is not None and isinstance(latest_job.request, dict):
+            req_chain = latest_job.request.get("chain")
+            if isinstance(req_chain, str) and req_chain:
+                chain_str = req_chain
+        capabilities = resolve_contract_capabilities(
+            session,
+            address=addr,
+            chain_id=chain_id,
+            block=block,
+            job_id=latest_job.id if latest_job is not None else None,
+            chain=chain_str,
+        )
         if capabilities is None:
             raise HTTPException(
                 status_code=404,
@@ -471,84 +494,6 @@ def get_contract_capabilities(
     return response
 
 
-@router.get(
-    "/api/contract/{address}/v1_v2_diff",
-    dependencies=[Depends(deps.require_admin_key)],
-)
-def get_contract_v1_v2_diff(address: str) -> dict[str, Any]:
-    """Per-contract cutover-gate report. Loads BOTH the v1
-    ``contract_analysis`` and v2 ``predicate_trees`` artifacts for the
-    most recent completed analysis of ``address``, runs the diff
-    harness, and returns a structured JSON report.
-
-    Response shape::
-
-        {
-          "address": "0x...",
-          "job_id": "<uuid>",
-          "severity": "regression" | "new_coverage" | "role_drift" | "clean",
-          "contract_name": "...",
-          "agreed": [...],
-          "v1_only": [...],
-          "v2_only": [...],
-          "role_disagreements": { fn: {v1_guard_kinds, v2_authority_roles} },
-          "safe_to_cut_over": bool
-        }
-
-    Admin-gated because the diff exposes internal classifier detail not
-    meant for external consumers. This is the human audit surface for
-    #18.
-    """
-    from services.static.contract_analysis_pipeline.cutover_check import (
-        cutover_check_for_address,
-        is_safe_to_cut_over,
-    )
-
-    addr = deps._normalize_address_or_400(address)
-    with deps.SessionLocal() as session:
-        report = cutover_check_for_address(session, address=addr)
-    if report is None:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                "Cannot run cutover check for this address — either no "
-                "completed analysis exists, the v1 contract_analysis "
-                "artifact is missing, or the v2 predicate_trees artifact "
-                "is missing (legacy pre-v2 contract). Re-analyze before "
-                "evaluating."
-            ),
-        )
-    return {**report, "safe_to_cut_over": is_safe_to_cut_over(report)}
-
-
-@router.get(
-    "/api/v2/migration_status",
-    dependencies=[Depends(deps.require_admin_key)],
-)
-def get_v2_migration_status(address_prefix: str | None = None, max_regressions: int = 50) -> dict[str, Any]:
-    """Fleet-wide v2 cutover-readiness snapshot. Operationally
-    equivalent to scripts/cutover_dry_run.py but live over HTTP so an
-    operator dashboard can poll it without DB access.
-
-    Same severity buckets as the per-contract /v1_v2_diff: clean,
-    new_coverage, role_drift, regression, not_eligible. Returns counts
-    + the regression / role_drift address lists + safe_to_cut_count +
-    safe_pct.
-
-    Admin-gated because the report leaks per-contract classifier
-    detail.
-    """
-    from scripts.cutover_dry_run import run_dry_run
-
-    with deps.SessionLocal() as session:
-        report = run_dry_run(
-            session,
-            address_prefix=address_prefix,
-            max_regressions=max_regressions,
-        )
-    return report
-
-
 @router.get("/api/company/{company_name}/v2_capabilities")
 def company_v2_capabilities(company_name: str) -> dict[str, Any]:
     """v2 capability map for every analyzed contract in a company.
@@ -558,8 +503,8 @@ def company_v2_capabilities(company_name: str) -> dict[str, Any]:
     the AdapterRegistry over each contract's predicate trees + repo
     lookups — adds tens of milliseconds per contract, not free to
     include in the already-1-3MB overview response. UI consumers fetch
-    this when they want to render guard details for the v2 cutover;
-    otherwise they keep using the overview's v1 fields.
+    this when they want to render resolved guard details without
+    inflating the overview response.
 
     Response shape::
 
@@ -611,8 +556,30 @@ def company_v2_capabilities(company_name: str) -> dict[str, Any]:
         contracts: dict[str, Any] = {}
         missing = 0
         for addr in addresses:
+            # Find the latest completed Job for this (protocol, address)
+            # so the resolver can scope ControllerValue lookups by
+            # (job_id, chain). Without this the resolver hits the
+            # legacy fallback path and warn-logs once per address.
+            latest_job = session.execute(
+                select(Job)
+                .where(Job.protocol_id == protocol_row.id)
+                .where(Job.address == addr)
+                .where(Job.status == JobStatus.completed)
+                .order_by(Job.updated_at.desc(), Job.created_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            chain_str: str | None = None
+            if latest_job is not None and isinstance(latest_job.request, dict):
+                req_chain = latest_job.request.get("chain")
+                if isinstance(req_chain, str) and req_chain:
+                    chain_str = req_chain
             try:
-                caps = resolve_contract_capabilities(session, address=addr)
+                caps = resolve_contract_capabilities(
+                    session,
+                    address=addr,
+                    job_id=latest_job.id if latest_job is not None else None,
+                    chain=chain_str,
+                )
             except Exception as exc:
                 logger.warning(
                     "v2 capabilities resolution failed for %s in company %s: %s",

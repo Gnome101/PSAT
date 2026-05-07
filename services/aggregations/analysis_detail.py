@@ -108,12 +108,24 @@ def build_analysis_detail(session: Session, run_name: str) -> dict[str, Any] | N
     # predicate_trees lives on the artifact; resolving it to the typed
     # CapabilityExpr requires the AdapterRegistry + repos. Defensive: a
     # v2-resolution failure MUST NOT fail the whole analysis_detail
-    # response (the v1 fields stay authoritative through the cutover).
+    # response; the rest of the detail payload is still useful.
     if "predicate_trees" in all_artifacts and job.address:
         try:
             from services.resolution.capability_resolver import resolve_contract_capabilities
 
-            v2_caps = resolve_contract_capabilities(session, address=job.address.lower())
+            # Per C.1 cutover: scope by (job_id, chain) so a re-analysis
+            # on a different chain or a follow-up job on the same address
+            # doesn't leak controller rows into this job's resolution.
+            # Chain comes from the Contract row when present, falling
+            # back to job.request['chain'].
+            req_chain = job.request.get("chain") if isinstance(job.request, dict) else None
+            chain = (contract_row.chain if contract_row and contract_row.chain else None) or req_chain
+            v2_caps = resolve_contract_capabilities(
+                session,
+                address=job.address.lower(),
+                job_id=job.id,
+                chain=chain if isinstance(chain, str) else None,
+            )
             if v2_caps is not None:
                 payload["v2_capabilities"] = v2_caps
         except Exception as exc:
@@ -248,31 +260,44 @@ def _serialize_effective_functions(ef_rows: list[EffectiveFunction]) -> list[dic
     out: list[dict[str, Any]] = []
     for ef in ef_rows:
         direct_owner = None
-        controller_principals = []
+        controller_principals: list[dict[str, Any]] = []
+        signature_witnesses: list[dict[str, Any]] = []
         for fp in ef.principals or []:
             principal_dict = {
                 "address": fp.address,
                 "resolved_type": fp.resolved_type,
                 "source_controller_id": fp.origin,
+                "principal_type": fp.principal_type,
                 "details": fp.details or {},
             }
             if fp.principal_type == "direct_owner" and direct_owner is None:
                 direct_owner = principal_dict
+            elif fp.principal_type == "signature_witness":
+                signature_witnesses.append(principal_dict)
             else:
                 controller_principals.append(principal_dict)
-        out.append(
-            {
-                "function": ef.abi_signature or ef.function_name,
-                "selector": ef.selector,
-                "effect_labels": list(ef.effect_labels or []),
-                "effect_targets": list(ef.effect_targets or []),
-                "action_summary": ef.action_summary,
-                "authority_public": ef.authority_public,
-                "controllers": [{"principals": controller_principals}] if controller_principals else [],
-                "authority_roles": ef.authority_roles or [],
-                "direct_owner": direct_owner,
-            }
-        )
+        entry: dict[str, Any] = {
+            "function": ef.abi_signature or ef.function_name,
+            "selector": ef.selector,
+            "effect_labels": list(ef.effect_labels or []),
+            "effect_targets": list(ef.effect_targets or []),
+            "action_summary": ef.action_summary,
+            "authority_public": ef.authority_public,
+            "controllers": [{"principals": controller_principals}] if controller_principals else [],
+            "authority_roles": ef.authority_roles or [],
+            "direct_owner": direct_owner,
+            "signature_witnesses": signature_witnesses,
+        }
+        capability_expr = getattr(ef, "capability_expr", None)
+        if capability_expr is not None:
+            entry["capability_expr"] = capability_expr
+        conditions = getattr(ef, "conditions", None)
+        if conditions is not None:
+            entry["conditions"] = conditions
+        status = getattr(ef, "status", None)
+        if status is not None:
+            entry["status"] = status
+        out.append(entry)
     return out
 
 

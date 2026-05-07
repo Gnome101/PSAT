@@ -30,6 +30,17 @@ events. The seeded ``chain_finality_config`` depths (mainnet=12,
 polygon=128, ...) are conservative for the supported chains.
 A common-ancestor walk would handle arbitrary depth and is a
 future shared improvement across both indexers.
+
+Operational defaults (Wave 3 cutover, PR #70 §E.1) — same as the
+role_grants indexer:
+
+* **Backfill = job-triggered** via ``enroll_acl_contract`` from
+  ``JobDependency`` rows.
+* **Freshness = stale-OK.** ``last_run_at`` / ``last_indexed_block``
+  on ``aragon_acl_cursors`` are exposed via the same freshness
+  surface as role_grants once wired.
+* **Enrollment = dep-edge-driven.** ``_enroll_from_job_dependencies``
+  filters JobDependency rows to chains this process can serve.
 """
 
 from __future__ import annotations
@@ -370,6 +381,55 @@ def scan_enrolled_acl_contracts(
     return results
 
 
+def enroll_from_job_dependencies(
+    session: Session,
+    *,
+    chain_name_to_id: dict[str, int],
+    chain_ids_with_fetchers: set[int],
+) -> int:
+    """Insert ``aragon_acl_cursors`` rows for every authority
+    contract referenced by a ``JobDependency`` row whose chain we
+    can serve. Idempotent via ``enroll_acl_contract``'s
+    ``ON CONFLICT DO NOTHING``.
+
+    Note: this enrolls every JobDependency provider, not just those
+    we know are Aragon ACLs. Non-Aragon contracts will scan and find
+    zero ``SetPermission`` events — wasted RPC calls but no
+    correctness issue. The cleaner shape (only enroll when the
+    provider's analysis says it's an Aragon kernel) is a follow-up.
+    """
+    from db.models import Contract, JobDependency
+
+    rows = session.execute(select(JobDependency.provider_chain, JobDependency.provider_address).distinct()).all()
+    inserted = 0
+    for provider_chain, provider_address in rows:
+        chain_id = chain_name_to_id.get((provider_chain or "ethereum").lower())
+        if chain_id is None or chain_id not in chain_ids_with_fetchers:
+            continue
+        contract_row = session.execute(
+            select(Contract.id).where(
+                Contract.address == provider_address,
+                Contract.chain == (provider_chain or "ethereum"),
+            )
+        ).first()
+        if contract_row is None:
+            continue
+        before = session.execute(
+            select(AragonAclCursor).where(
+                AragonAclCursor.chain_id == chain_id,
+                AragonAclCursor.acl_contract_id == contract_row[0],
+            )
+        ).scalar_one_or_none()
+        if before is not None:
+            continue
+        enroll_acl_contract(session, chain_id=chain_id, acl_contract_id=contract_row[0])
+        inserted += 1
+    if inserted:
+        session.commit()
+        logger.info("aragon_acl indexer: enrolled %d new contract(s) from JobDependency rows", inserted)
+    return inserted
+
+
 def run_aragon_acl_indexer_loop(
     session_factory: Callable[[], Session],
     *,
@@ -377,15 +437,27 @@ def run_aragon_acl_indexer_loop(
     block_hash_fetcher_for_chain: dict[int, "BlockHashFetcher"],
     head_block_fetcher: HeadBlockFetcher,
     interval: float = 30.0,
+    chain_name_to_id: dict[str, int] | None = None,
 ) -> None:
     """Blocking polling loop, mirroring
     ``run_role_grants_indexer_loop``. Designed to run as a
     long-lived worker process behind a supervisor. Per-pass
     exceptions are logged and the loop continues."""
     logger.info("starting aragon_acl indexer loop interval=%ss", interval)
+    chain_ids_with_fetchers = set(log_fetcher_for_chain.keys()) & set(block_hash_fetcher_for_chain.keys())
     while True:
         try:
             with session_factory() as session:
+                if chain_name_to_id:
+                    try:
+                        enroll_from_job_dependencies(
+                            session,
+                            chain_name_to_id=chain_name_to_id,
+                            chain_ids_with_fetchers=chain_ids_with_fetchers,
+                        )
+                    except Exception:
+                        logger.exception("aragon_acl indexer enrollment pass failed")
+                        session.rollback()
                 scan_enrolled_acl_contracts(
                     session,
                     log_fetcher_for_chain=log_fetcher_for_chain,
@@ -400,3 +472,77 @@ def run_aragon_acl_indexer_loop(
 def _load_finality_config(session: Session) -> dict[int, int]:
     rows = session.execute(select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)).all()
     return {cid: depth for cid, depth in rows}
+
+
+# ---------------------------------------------------------------------------
+# Worker entrypoint
+# ---------------------------------------------------------------------------
+
+
+_CHAIN_NAME_TO_ID: dict[str, int] = {
+    "ethereum": 1,
+    "arbitrum": 42161,
+    "optimism": 10,
+    "polygon": 137,
+    "base": 8453,
+    "avalanche": 43114,
+    "bsc": 56,
+    "linea": 59144,
+    "scroll": 534352,
+    "zksync": 324,
+    "blast": 81457,
+}
+
+
+def _build_rpc_fetchers() -> tuple[dict, dict, "HeadBlockFetcher"]:
+    """Construct per-chain Aragon ACL log + block-hash + head-block
+    fetchers. Reuses ``role_grants_rpc.RpcHeadBlockFetcher`` /
+    ``RpcBlockHashFetcher`` since chain-head and block-hash queries
+    are event-agnostic; only the log fetcher is Aragon-specific."""
+    import os
+
+    from services.resolution.repos.aragon_acl_rpc import RpcAragonACLLogFetcher
+    from services.resolution.repos.role_grants_rpc import (
+        RpcBlockHashFetcher,
+        RpcHeadBlockFetcher,
+    )
+
+    rpc_url = os.getenv("PSAT_INDEXER_RPC_URL") or os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+    rpc_url_for_chain = {1: rpc_url}
+    log_fetcher_for_chain = {1: RpcAragonACLLogFetcher(rpc_url)}
+    block_hash_fetcher_for_chain = {1: RpcBlockHashFetcher(rpc_url)}
+    head_block_fetcher = RpcHeadBlockFetcher(rpc_url_for_chain)
+    return log_fetcher_for_chain, block_hash_fetcher_for_chain, head_block_fetcher
+
+
+def main() -> None:
+    """Process entrypoint. Reads env, constructs RPC fetchers, runs
+    the polling loop forever."""
+    import os
+
+    from db.models import SessionLocal
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
+    interval = float(os.getenv("PSAT_INDEXER_POLL_INTERVAL_S", "30"))
+    log_fetcher_for_chain, block_hash_fetcher_for_chain, head_block_fetcher = _build_rpc_fetchers()
+    logger.info(
+        "aragon_acl indexer process starting: chains=%s interval=%ss",
+        sorted(log_fetcher_for_chain.keys()),
+        interval,
+    )
+    run_aragon_acl_indexer_loop(
+        SessionLocal,
+        log_fetcher_for_chain=log_fetcher_for_chain,
+        block_hash_fetcher_for_chain=block_hash_fetcher_for_chain,
+        head_block_fetcher=head_block_fetcher,
+        interval=interval,
+        chain_name_to_id=_CHAIN_NAME_TO_ID,
+    )
+
+
+if __name__ == "__main__":
+    main()

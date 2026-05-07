@@ -26,7 +26,9 @@ correct, just unfilled.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
+
+from eth_utils.crypto import keccak
 
 from services.static.contract_analysis_pipeline.predicate_types import (
     LeafPredicate,
@@ -252,10 +254,10 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
     if kind == "external_bool":
         descriptor = leaf.get("set_descriptor")
         if descriptor is not None:
-            # Cross-contract inlining: when the leaf records a
-            # ``callee_function`` (C.1's external_authority_call shape),
-            # try evaluating the registry's predicate_trees for that
-            # function under the original caller's msg.sender. If it
+            # Cross-contract inlining: when the leaf records an exact
+            # callee signature/selector, try evaluating the registry's
+            # predicate_trees for that function under the original
+            # caller's msg.sender. If it
             # produces a useful capability we use it; otherwise fall
             # through to the adapter-registry path which handles
             # role_grants_events lookups for canonical OZ shapes.
@@ -371,8 +373,8 @@ def _maybe_inline_cross_contract_call(
     The leaf must carry:
       * ``set_descriptor.authority_contract.address_source`` — pointing
         at the state-variable that holds the registry address.
-      * ``set_descriptor.callee_function`` — the registry function to
-        inline (e.g. ``onlyProtocolUpgrader``).
+      * ``set_descriptor.callee_signature`` or ``callee_selector`` — the
+        exact registry function to inline.
 
     Returns:
       * a ``CapabilityExpr`` from re-evaluating B's tree under A's
@@ -389,8 +391,13 @@ def _maybe_inline_cross_contract_call(
     A→B→A or B→B) returns ``CapabilityExpr.external_check_only`` so
     the leaf still surfaces as 'gated' even if we can't resolve.
     """
-    callee_fn = descriptor.get("callee_function")
-    if not isinstance(callee_fn, str) or not callee_fn:
+    callee_signature = descriptor.get("callee_signature")
+    callee_selector = descriptor.get("callee_selector")
+    if not isinstance(callee_signature, str):
+        callee_signature = None
+    if not isinstance(callee_selector, str):
+        callee_selector = None
+    if not callee_signature and not callee_selector:
         return None
 
     # session lives on the OUTER (adapters) context — pulled by the
@@ -417,14 +424,15 @@ def _maybe_inline_cross_contract_call(
 
     chain_id = getattr(outer_ctx, "chain_id", 1)
     stack = outer_ctx.evaluation_stack if hasattr(outer_ctx, "evaluation_stack") else set()
-    key = (chain_id, registry_addr, callee_fn)
+    callee_identity = callee_signature or callee_selector or ""
+    key = (chain_id, registry_addr, callee_identity)
     if key in stack:
         # Cycle: B's resolution depends on its own gate, or we've already
         # walked through this address+function in this evaluation tree.
         return CapabilityExpr.external_check_only(
             ExternalCheck(
                 target_address=registry_addr,
-                target_call_selector=None,
+                target_call_selector=callee_selector,
                 extra={"basis": ["cycle_detected_in_cross_contract_inlining"]},
             )
         )
@@ -450,16 +458,11 @@ def _maybe_inline_cross_contract_call(
     if not isinstance(trees, dict) or not trees:
         return None
 
-    # Match by function name first; the trees key includes the full
-    # signature (e.g. ``onlyProtocolUpgrader(address)``), but the leaf
-    # only knows the bare name. Pick the first tree whose key starts
-    # with ``callee_fn(``; this is unambiguous in practice (a contract
-    # rarely overloads role-check helpers).
-    callee_tree = None
-    for sig, tree in trees.items():
-        if isinstance(sig, str) and sig.split("(", 1)[0] == callee_fn:
-            callee_tree = tree
-            break
+    callee_tree = _tree_for_signature_or_selector(
+        trees,
+        callee_signature=callee_signature,
+        callee_selector=callee_selector,
+    )
     if callee_tree is None:
         return None
 
@@ -495,6 +498,31 @@ def _maybe_inline_cross_contract_call(
         else _Reg()
     )
     return evaluate_tree_with_registry(callee_tree, registry_adapters, child_outer)
+
+
+def _tree_for_signature_or_selector(
+    trees: dict[str, Any],
+    *,
+    callee_signature: str | None,
+    callee_selector: str | None,
+) -> PredicateTree | None:
+    """Find a predicate tree by exact ABI signature or selector."""
+    if callee_signature and callee_signature in trees:
+        tree = trees[callee_signature]
+        return cast(PredicateTree, tree) if isinstance(tree, dict) else None
+    if callee_selector:
+        for signature, tree in trees.items():
+            if not isinstance(signature, str):
+                continue
+            if _selector_for_signature(signature) == callee_selector and isinstance(tree, dict):
+                return cast(PredicateTree, tree)
+    return None
+
+
+def _selector_for_signature(signature: str) -> str | None:
+    if "(" not in signature or not signature.endswith(")"):
+        return None
+    return "0x" + keccak(text=signature).hex()[:8]
 
 
 def _resolve_external_bool(leaf: LeafPredicate) -> CapabilityExpr:

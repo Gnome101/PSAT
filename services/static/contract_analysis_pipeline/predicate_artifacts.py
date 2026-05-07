@@ -5,10 +5,9 @@ function + ``apply_writer_gate_pass`` + ``apply_reentrancy_pause_pass``
 across the contract) and returns a JSON-ready dict keyed on each
 externally-callable function's full name.
 
-The artifact is emitted alongside the existing
-``contract_analysis.json`` and ``semantic_guards.json`` during
-the schema-v2 rollout; downstream consumers (resolver, UI) start
-consuming it incrementally without breaking the v1 path.
+The artifact is emitted as the static stage's guard carrier. The
+separate ``effects`` artifact carries sink/effect data for every
+externally-observable function.
 
 Convention:
   * present + tree → function is guarded by the tree's predicate.
@@ -31,10 +30,27 @@ from eth_utils.crypto import keccak
 from .mapping_events import discover_mapping_writer_events
 from .predicate_types import PredicateTree
 from .predicates import _helper_engine_cache, build_predicate_tree
-from .reentrancy_pause import apply_reentrancy_pause_pass
+from .reentrancy_pause import PauseInfo, apply_reentrancy_pause_pass
 from .writer_gate import apply_writer_gate_pass
 
 SCHEMA_VERSION = "v2"
+
+
+def _empty_pause_info() -> PauseInfo:
+    return {
+        "pause_state_vars": [],
+        "pause_toggle_functions": [],
+        "reentrancy_state_vars": [],
+        "reentrancy_guarded_functions": [],
+    }
+
+
+_EMPTY_PAUSE_INFO: PauseInfo = {
+    "pause_state_vars": [],
+    "pause_toggle_functions": [],
+    "reentrancy_state_vars": [],
+    "reentrancy_guarded_functions": [],
+}
 
 
 def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
@@ -45,6 +61,17 @@ def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
     from the output. The resolver treats absent entries as
     unguarded.
     """
+    artifact, _ = build_predicate_artifacts_with_pause_info(contract)
+    return artifact
+
+
+def build_predicate_artifacts_with_pause_info(
+    contract: Any,
+) -> tuple[dict[str, Any], PauseInfo]:
+    """Build the v2 predicate artifact AND return the structured
+    ``PauseInfo`` from ``apply_reentrancy_pause_pass``. The pipeline
+    consumes the pause info to drive ``_detect_pausability`` (replacing
+    the v1 modifier-name heuristic)."""
     # Scope a per-contract helper-engine cache for the cross-fn
     # build path. Multiple functions on the same AC contract
     # often share helpers (grantRole / revokeRole / renounceRole
@@ -63,6 +90,7 @@ def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
     finally:
         _helper_engine_cache.reset(cache_token)
 
+    pause_info = _empty_pause_info()
     # Cross-contract passes mutate trees in place: writer-gate's
     # writer-side analysis can promote 1-key membership leaves to
     # caller_authority once it sees the full set of writers, and
@@ -70,7 +98,7 @@ def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
     # the contract's functions.
     if trees:
         apply_writer_gate_pass(contract, trees)
-        apply_reentrancy_pause_pass(contract, trees)
+        pause_info = apply_reentrancy_pause_pass(contract, trees)
         # D.4 — annotate value-predicate descriptors with
         # ``writer_selectors`` so the MappingTraceAdapter can replay
         # calldata. Selectors are keccak256[:4] of the writer
@@ -78,11 +106,12 @@ def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
         # ``"<selector>|<arg_types>"`` form so it can ABI-decode.
         _annotate_writer_selectors(contract, trees)
 
-    return {
+    artifact = {
         "schema_version": SCHEMA_VERSION,
         "contract_name": getattr(contract, "name", None),
         "trees": trees,
     }
+    return artifact, pause_info
 
 
 def _annotate_writer_selectors(contract: Any, trees: dict[str, PredicateTree]) -> None:

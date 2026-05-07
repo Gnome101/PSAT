@@ -1,24 +1,6 @@
 """Indexer for mapping-value set events (D.3).
 
-Status: **building blocks only**, same shape as
-``workers/role_grants_indexer.py``. Both expose
-``index_*_step`` + ``enroll_contract`` and a
-``scan_enrolled_contracts`` driver, but neither is currently invoked
-from a long-running worker entrypoint — the role-grants indexer has
-the same wire-up gap. When a scheduler is added (a recurring task
-that reads enrolled cursors and calls ``index_mapping_values_step``
-for each), this module is ready. Until then ``MappingValueEvent``
-rows only appear via tests; the resolver's ``PostgresMappingValueRepo``
-read path silently returns 0 rows in production and the
-``EventIndexedAdapter`` falls through to the on-demand HyperSync
-replay (D.2).
-
-Codex review #1 flagged this honestly. The fix is a separate piece
-of ops work, not a D-introduced regression — same pattern was true
-for role_grants pre-D.
-
-Mirrors ``workers/role_grants_indexer.py`` exactly: per-(chain_id,
-contract_id), the indexer:
+Per-(chain_id, contract_id), the indexer:
 
   1. Acquires a Postgres transactional advisory lock on
      ``(chain_id, contract_id)`` so concurrent worker replicas
@@ -41,20 +23,50 @@ The fetcher is a Protocol — production wiring is a thin RPC /
 HyperSync adapter; tests inject a static list. Same reorg-depth
 caveat as ``role_grants_indexer``: rewind-by-finality-depth is correct
 only when reorg depth ≤ finality_depth.
+
+Operational defaults (Wave 3 cutover, PR #70 §E.1):
+
+* **Backfill = job-triggered.** Cursors are inserted by
+  ``enroll_from_predicate_trees`` for any contract whose
+  ``predicate_trees`` artifact carries ``set_descriptor.writer_selectors``
+  on a leaf — that's the signal the resolver will need durable
+  mapping-value events for that contract.
+* **Freshness = stale-OK.** ``MappingValueCursor.last_run_at`` and
+  ``last_indexed_block`` are stored on the cursor; surfacing on the
+  freshness API is a follow-up.
+* **Enrollment = predicate-tree-driven** (vs. dep-edge for role_grants
+  / aragon_acl). Reason: a mapping_membership predicate is structural
+  on the *subject* contract, not on a separate authority registry —
+  ``JobDependency`` rows wouldn't reference it. The trade-off is that
+  enrollment requires reading every job's ``predicate_trees`` artifact
+  per pass; we paginate at the SQL level so memory stays bounded.
+
+Status: **no production fetcher implementation yet.** The
+``MappingValueLogFetcher`` Protocol matches event-shaped writes; the
+existing HyperSync surface for mapping-value replay is
+trace-shaped (``HyperSyncTraceFetcher`` in
+``services/resolution/repos/mapping_value_hypersync.py``). Wiring
+the trace path into a ``MappingValueLogFetcher`` adapter is a
+separate piece of work; until then the worker process boots, scans
+its empty fetcher map, and idles. The capability resolver still
+falls through to on-demand HyperSync replay via
+``EventIndexedAdapter`` so capability output isn't degraded — only
+the read-path-cache benefit is missing.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from dataclasses import dataclass
-from typing import Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 from sqlalchemy import and_, delete, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from db.models import MappingValueCursor, MappingValueEvent
+from db.models import ChainFinalityConfig, Contract, MappingValueCursor, MappingValueEvent
 
 logger = logging.getLogger(__name__)
 
@@ -293,3 +305,300 @@ def enroll_contract(session: Session, *, chain_id: int, contract_id: int) -> Non
         .on_conflict_do_nothing(index_elements=["chain_id", "contract_id"])
     )
     session.execute(stmt)
+
+
+# ---------------------------------------------------------------------------
+# Scan loop + enrollment
+# ---------------------------------------------------------------------------
+
+
+class HeadBlockFetcher(Protocol):
+    """Returns the current chain head per chain_id. Same shape as
+    the role_grants HeadBlockFetcher."""
+
+    def head_block(self, *, chain_id: int) -> int: ...
+
+
+def scan_enrolled_contracts(
+    session: Session,
+    *,
+    log_fetcher_for_chain: dict[int, "MappingValueLogFetcher"],
+    block_hash_fetcher_for_chain: dict[int, "BlockHashFetcher"],
+    head_block_fetcher: HeadBlockFetcher,
+    finality_for_chain: dict[int, int] | None = None,
+    use_advisory_lock: bool = True,
+) -> list["IndexResult"]:
+    """One scan pass over every ``mapping_value_cursors`` row.
+
+    Mirrors ``role_grants_indexer.scan_enrolled_contracts``: each
+    contract runs in its own transaction (commit between contracts),
+    failures are logged-and-skipped, chains without configured
+    fetchers are silently skipped.
+    """
+    if finality_for_chain is None:
+        finality_for_chain = _load_finality_config(session)
+
+    cursors = session.execute(
+        select(
+            MappingValueCursor.chain_id,
+            MappingValueCursor.contract_id,
+            Contract.address,
+        ).join(Contract, MappingValueCursor.contract_id == Contract.id)
+    ).all()
+
+    head_cache: dict[int, int] = {}
+    results: list[IndexResult] = []
+    for chain_id, contract_id, address in cursors:
+        if chain_id not in log_fetcher_for_chain:
+            continue
+        if chain_id not in block_hash_fetcher_for_chain:
+            continue
+
+        if chain_id not in head_cache:
+            head_cache[chain_id] = head_block_fetcher.head_block(chain_id=chain_id)
+        head = head_cache[chain_id]
+        if head <= 0:
+            continue
+
+        try:
+            result = index_mapping_values_step(
+                session,
+                chain_id=chain_id,
+                contract_id=contract_id,
+                contract_address=address,
+                head_block=head,
+                log_fetcher=log_fetcher_for_chain[chain_id],
+                block_hash_fetcher=block_hash_fetcher_for_chain[chain_id],
+                finality_depth=finality_for_chain.get(chain_id, 12),
+                use_advisory_lock=use_advisory_lock,
+            )
+            session.commit()
+            results.append(result)
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "mapping_value indexer pass failed for chain=%s contract_id=%s address=%s",
+                chain_id,
+                contract_id,
+                address,
+            )
+    return results
+
+
+def _has_writer_selectors(node: Any) -> bool:
+    """Recursively walk a predicate-tree node looking for any leaf
+    whose ``set_descriptor.writer_selectors`` is non-empty. Returns
+    True on first hit so the worst case is one full walk per
+    artifact."""
+    if isinstance(node, dict):
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            descriptor = leaf.get("set_descriptor") or {}
+            selectors = descriptor.get("writer_selectors") or []
+            if selectors:
+                return True
+            return False
+        for child in node.get("children") or []:
+            if _has_writer_selectors(child):
+                return True
+    return False
+
+
+def enroll_from_predicate_trees(
+    session: Session,
+    *,
+    chain_name_to_id: dict[str, int],
+    chain_ids_with_fetchers: set[int],
+) -> int:
+    """Insert ``mapping_value_cursors`` rows for every contract
+    whose latest ``predicate_trees`` artifact carries at least one
+    leaf with ``set_descriptor.writer_selectors``.
+
+    Walks the latest predicate_trees per ``(address, chain)`` and
+    enrolls if any leaf has writer_selectors annotated. Idempotent
+    via ``enroll_contract``'s ``ON CONFLICT DO NOTHING``.
+    """
+    from db.models import Artifact, Job
+    from db.queue import get_artifact
+
+    # Latest job per (address, chain) — same shape as the
+    # capability resolver's lookup but column-light. Limit by
+    # only-Job-rows-with-a-predicate_trees-artifact to keep this
+    # bounded under typical fleet sizes.
+    candidate_jobs = session.execute(
+        select(Job.id, Job.address, Job.request)
+        .join(Artifact, Artifact.job_id == Job.id)
+        .where(Artifact.name == "predicate_trees")
+        .order_by(Job.created_at.desc())
+    ).all()
+
+    seen_addr_chain: set[tuple[str, str]] = set()
+    inserted = 0
+    for job_id, address, request in candidate_jobs:
+        if not address:
+            continue
+        chain_name = "ethereum"
+        if isinstance(request, dict) and isinstance(request.get("chain"), str):
+            chain_name = request["chain"]
+        chain_id = chain_name_to_id.get(chain_name.lower())
+        if chain_id is None or chain_id not in chain_ids_with_fetchers:
+            continue
+        key = (address.lower(), chain_name)
+        if key in seen_addr_chain:
+            continue
+        seen_addr_chain.add(key)
+
+        artifact = get_artifact(session, job_id, "predicate_trees")
+        if not isinstance(artifact, dict):
+            continue
+        trees = artifact.get("trees") or {}
+        if not any(_has_writer_selectors(t) for t in trees.values() if isinstance(t, dict)):
+            continue
+
+        contract_row = session.execute(
+            select(Contract.id).where(
+                Contract.address == address,
+                Contract.chain == chain_name,
+            )
+        ).first()
+        if contract_row is None:
+            continue
+        before = session.execute(
+            select(MappingValueCursor).where(
+                MappingValueCursor.chain_id == chain_id,
+                MappingValueCursor.contract_id == contract_row[0],
+            )
+        ).scalar_one_or_none()
+        if before is not None:
+            continue
+        enroll_contract(session, chain_id=chain_id, contract_id=contract_row[0])
+        inserted += 1
+    if inserted:
+        session.commit()
+        logger.info("mapping_value indexer: enrolled %d new contract(s) from predicate_trees", inserted)
+    return inserted
+
+
+def run_mapping_value_indexer_loop(
+    session_factory: Callable[[], Session],
+    *,
+    log_fetcher_for_chain: dict[int, "MappingValueLogFetcher"],
+    block_hash_fetcher_for_chain: dict[int, "BlockHashFetcher"],
+    head_block_fetcher: HeadBlockFetcher,
+    interval: float = 30.0,
+    chain_name_to_id: dict[str, int] | None = None,
+) -> None:
+    """Blocking polling loop. Each pass enrolls newly-seen
+    predicate_trees, scans every enrolled cursor, then sleeps."""
+    logger.info("starting mapping_value indexer loop interval=%ss", interval)
+    chain_ids_with_fetchers = set(log_fetcher_for_chain.keys()) & set(block_hash_fetcher_for_chain.keys())
+    while True:
+        try:
+            with session_factory() as session:
+                if chain_name_to_id:
+                    try:
+                        enroll_from_predicate_trees(
+                            session,
+                            chain_name_to_id=chain_name_to_id,
+                            chain_ids_with_fetchers=chain_ids_with_fetchers,
+                        )
+                    except Exception:
+                        logger.exception("mapping_value indexer enrollment pass failed")
+                        session.rollback()
+                scan_enrolled_contracts(
+                    session,
+                    log_fetcher_for_chain=log_fetcher_for_chain,
+                    block_hash_fetcher_for_chain=block_hash_fetcher_for_chain,
+                    head_block_fetcher=head_block_fetcher,
+                )
+        except Exception:
+            logger.exception("mapping_value indexer pass failed")
+        time.sleep(interval)
+
+
+def _load_finality_config(session: Session) -> dict[int, int]:
+    rows = session.execute(select(ChainFinalityConfig.chain_id, ChainFinalityConfig.confirmation_depth)).all()
+    return {cid: depth for cid, depth in rows}
+
+
+# ---------------------------------------------------------------------------
+# Worker entrypoint
+# ---------------------------------------------------------------------------
+
+
+_CHAIN_NAME_TO_ID: dict[str, int] = {
+    "ethereum": 1,
+    "arbitrum": 42161,
+    "optimism": 10,
+    "polygon": 137,
+    "base": 8453,
+    "avalanche": 43114,
+    "bsc": 56,
+    "linea": 59144,
+    "scroll": 534352,
+    "zksync": 324,
+    "blast": 81457,
+}
+
+
+def _build_rpc_fetchers() -> tuple[dict, dict, "HeadBlockFetcher"]:
+    """Construct head-block + block-hash fetchers from
+    ``role_grants_rpc`` (event-agnostic). The
+    ``MappingValueLogFetcher`` Protocol is left unimplemented at the
+    repo level — see module docstring; the worker boots with an
+    empty log-fetcher map, exercises the enrollment + scan-loop
+    plumbing, and idles on the actual log scan until a
+    ``MappingValueLogFetcher`` adapter ships."""
+    import os
+
+    from services.resolution.repos.role_grants_rpc import (
+        RpcBlockHashFetcher,
+        RpcHeadBlockFetcher,
+    )
+
+    rpc_url = os.getenv("PSAT_INDEXER_RPC_URL") or os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
+    rpc_url_for_chain = {1: rpc_url}
+    log_fetcher_for_chain: dict[int, "MappingValueLogFetcher"] = {}
+    block_hash_fetcher_for_chain = {1: RpcBlockHashFetcher(rpc_url)}
+    head_block_fetcher = RpcHeadBlockFetcher(rpc_url_for_chain)
+    return log_fetcher_for_chain, block_hash_fetcher_for_chain, head_block_fetcher
+
+
+def main() -> None:
+    """Process entrypoint. Reads env, constructs fetchers, runs the
+    polling loop forever. The empty ``log_fetcher_for_chain`` shape
+    is intentional — see module docstring."""
+    import os
+
+    from db.models import SessionLocal
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        force=True,
+    )
+    interval = float(os.getenv("PSAT_INDEXER_POLL_INTERVAL_S", "30"))
+    log_fetcher_for_chain, block_hash_fetcher_for_chain, head_block_fetcher = _build_rpc_fetchers()
+    logger.info(
+        "mapping_value indexer process starting: chains_with_log_fetchers=%s interval=%ss",
+        sorted(log_fetcher_for_chain.keys()),
+        interval,
+    )
+    if not log_fetcher_for_chain:
+        logger.warning(
+            "mapping_value indexer: no MappingValueLogFetcher configured for any chain. "
+            "Enrollment + cursor management will run; log scan will idle. "
+            "See workers/mapping_value_indexer.py module docstring."
+        )
+    run_mapping_value_indexer_loop(
+        SessionLocal,
+        log_fetcher_for_chain=log_fetcher_for_chain,
+        block_hash_fetcher_for_chain=block_hash_fetcher_for_chain,
+        head_block_fetcher=head_block_fetcher,
+        interval=interval,
+        chain_name_to_id=_CHAIN_NAME_TO_ID,
+    )
+
+
+if __name__ == "__main__":
+    main()

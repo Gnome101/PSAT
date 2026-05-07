@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from eth_utils.crypto import keccak
+
 try:
     from slither.core.declarations import SolidityVariable  # type: ignore[import]
     from slither.core.variables.state_variable import StateVariable  # type: ignore[import]
@@ -173,11 +175,9 @@ def _build_subtree_from_gate(
     if gate.kind == "external_authority_call":
         # ``state_var.fn(msg.sender, ...)`` void call — the local fn
         # reverts iff the callee reverts. Build an external_bool leaf
-        # whose descriptor records the registry state-var + the function
-        # name so the resolver can either (a) hash the function name as
-        # a role identifier and look up role_grants_events, or (b) load
-        # the registry's predicate_trees and inline its function under
-        # the original caller's msg.sender (B.5 part b).
+        # whose descriptor records the registry state-var + callee so
+        # resolution can use concrete role keys or inline registry
+        # predicate trees under the original caller's msg.sender.
         leaf = _build_external_authority_call_leaf(gate)
         return make_leaf_node(leaf)
 
@@ -1222,6 +1222,8 @@ def _build_external_bool_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) ->
     """``require(other.canCall(...))`` — HighLevelCall whose result
     drives the gate."""
     callee_name = getattr(getattr(ir, "function", None), "name", None) or getattr(ir, "function_name", None)
+    callee_signature = _callee_signature(ir)
+    callee_selector = _selector_for_signature(callee_signature)
     args_operands = [_operand_for_value(a, prov) for a in getattr(ir, "arguments", ())]
     operator: LeafOperator = "truthy" if gate.polarity == "allowed_when_true" else "falsy"
     leaf = _make_leaf(
@@ -1254,6 +1256,8 @@ def _build_external_bool_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) ->
         # empty controllers list on the FE.
         descriptor = _maybe_build_role_membership_descriptor(
             callee_name=callee_name,
+            callee_signature=callee_signature,
+            callee_selector=callee_selector,
             args_operands=args_operands,
             target_state_var=target_state_var,
         )
@@ -1267,25 +1271,45 @@ def _build_external_bool_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) ->
 
 # RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)
 _ROLE_GRANTED_TOPIC0 = "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
+_HAS_ROLE_SELECTOR = "0x91d14854"  # hasRole(bytes32,address)
+
+
+def _callee_signature(ir: Any) -> str | None:
+    """Best-effort canonical ABI signature for a HighLevelCall callee."""
+    fn = getattr(ir, "function", None)
+    for attr in ("full_name", "signature_str"):
+        value = getattr(fn, attr, None)
+        if isinstance(value, str) and "(" in value and value.endswith(")"):
+            return value.rsplit(".", 1)[-1]
+    value = getattr(ir, "function_name", None)
+    if isinstance(value, str) and "(" in value and value.endswith(")"):
+        return value.rsplit(".", 1)[-1]
+    return None
+
+
+def _selector_for_signature(signature: str | None) -> str | None:
+    if not signature:
+        return None
+    if "(" not in signature or not signature.endswith(")"):
+        return None
+    return "0x" + keccak(text=signature).hex()[:8]
 
 
 def _maybe_build_role_membership_descriptor(
     *,
     callee_name: str | None,
+    callee_signature: str | None,
+    callee_selector: str | None,
     args_operands: list,
     target_state_var: str | None,
 ) -> dict | None:
-    """Recognise the ``hasRole(role, sender) → bool`` shape on a HighLevelCall
-    and emit a mapping_membership descriptor pointing at the target contract's
-    role_grants. The shape is name-driven on the callee (``hasRole`` per OZ
-    AccessControl + every clone) and structural on the args (2 operands, the
-    second tracing to msg_sender). Other call shapes (``canCall``,
-    ``isAuthorized``) need different adapters and are left for a follow-up.
+    """Recognise the OZ ``hasRole(bytes32,address)`` ABI shape.
 
-    Returns None when the callee isn't ``hasRole`` or the args don't carry a
-    role + caller pair — the leaf stays plain external_check_only and the FE
-    renders it as 'gated, target unresolved'."""
-    if callee_name != "hasRole":
+    Matching is by selector/signature, not by the source identifier. The
+    argument shape still has to carry ``role`` + caller so arbitrary
+    selector collisions do not become role-grant descriptors.
+    """
+    if callee_selector != _HAS_ROLE_SELECTOR:
         return None
     if len(args_operands) != 2:
         return None
@@ -1298,6 +1322,9 @@ def _maybe_build_role_membership_descriptor(
     descriptor: dict = {
         "kind": "mapping_membership",
         "key_sources": [role_op, caller_op],
+        "callee_function": callee_name,
+        "callee_signature": callee_signature,
+        "callee_selector": callee_selector,
         # An enumeration_hint with the OZ RoleGranted topic0 makes
         # AccessControlAdapter.matches() return its highest score (95).
         # event_address is left unset; the resolver fills it from the
@@ -1349,25 +1376,30 @@ def _build_external_authority_call_leaf(gate: RevertGate) -> LeafPredicate:
       * ``authority_contract.address_source`` — the state variable that
         holds the registry contract's address. The resolver translates
         this to the actual address via ``ctx.state_var_values`` (B.3).
-      * ``callee_function`` — the function name on the registry, e.g.
-        ``onlyProtocolUpgrader``. Used by the resolver to either
-        cross-contract-inline (load B's predicate_trees and re-evaluate)
-        or hash via the OZ ``onlyXxx`` convention.
+      * ``callee_signature`` / ``callee_selector`` — exact call target
+        identity for cross-contract inlining.
       * ``key_sources`` — synthetic ``[external_call:callee, msg_sender]``
-        so AC adapter's role_key_constants helper can hash the callee
-        name into a role identifier (codex-fix to A.1).
+        so tracking can preserve the exact external role getter label while
+        resolution treats unresolved getters as parametric.
     """
     ir = gate.condition_value
     callee_name = (
         getattr(getattr(ir, "function", None), "name", None) or getattr(ir, "function_name", None) or "<unknown>"
     )
+    callee_signature = _callee_signature(ir)
+    callee_selector = _selector_for_signature(callee_signature)
     destination = getattr(ir, "destination", None)
     state_var_name = getattr(destination, "name", None) or str(destination or "")
 
     descriptor: dict = {
         "kind": "mapping_membership",
         "key_sources": [
-            {"source": "external_call", "callee": callee_name},
+            {
+                "source": "external_call",
+                "callee": callee_name,
+                "callee_signature": callee_signature,
+                "callee_selector": callee_selector,
+            },
             {"source": "msg_sender"},
         ],
         "enumeration_hint": [
@@ -1385,17 +1417,21 @@ def _build_external_authority_call_leaf(gate: RevertGate) -> LeafPredicate:
             },
             "abi_hint": "openzeppelin_access_control",
         },
-        # Captured for cross-contract inlining (C.2): the resolver looks
-        # up B's predicate_trees and evaluates the function with this
-        # name under A's caller context.
         "callee_function": callee_name,
+        "callee_signature": callee_signature,
+        "callee_selector": callee_selector,
     }
     leaf: LeafPredicate = {
         "kind": "external_bool",
         "operator": "truthy",
         "authority_role": "delegated_authority",
         "operands": [
-            {"source": "external_call", "callee": callee_name},
+            {
+                "source": "external_call",
+                "callee": callee_name,
+                "callee_signature": callee_signature,
+                "callee_selector": callee_selector,
+            },
             {"source": "msg_sender"},
         ],
         "set_descriptor": cast(SetDescriptor, descriptor),
@@ -1454,9 +1490,13 @@ def _operand_for_value(value: Any, prov: ProvenanceMap) -> Operand:
     for kind in priority:
         for s in sources:
             if s.kind == kind:
-                return _source_to_operand(s)
+                op = _source_to_operand(s)
+                _attach_state_constant_value(op, value)
+                return op
     # Fallback: any source.
-    return _source_to_operand(next(iter(sources)))
+    op = _source_to_operand(next(iter(sources)))
+    _attach_state_constant_value(op, value)
+    return op
 
 
 def _source_to_operand(source: Source) -> Operand:
@@ -1476,6 +1516,78 @@ def _source_to_operand(source: Source) -> Operand:
     if source.block_context_kind is not None:
         op["block_context_kind"] = source.block_context_kind
     return op
+
+
+def _attach_state_constant_value(op: Operand, value: Any) -> None:
+    if op.get("source") != "state_variable":
+        return
+    constant_value = _state_variable_bytes32_constant_value(value)
+    if constant_value is not None:
+        op["constant_value"] = constant_value
+
+
+def _state_variable_bytes32_constant_value(value: Any) -> str | None:
+    variable = value
+    nsv = getattr(value, "non_ssa_version", None)
+    if nsv is not None:
+        variable = nsv
+    if not getattr(variable, "is_constant", False):
+        return None
+    if str(getattr(variable, "type", "")) != "bytes32":
+        return None
+    return _bytes32_constant_expression_value(getattr(variable, "expression", None))
+
+
+def _bytes32_constant_expression_value(expression: Any) -> str | None:
+    literal = getattr(expression, "value", None)
+    if literal is not None:
+        return _coerce_bytes32_hex(literal)
+
+    called = str(getattr(expression, "called", ""))
+    if not called.startswith("keccak256"):
+        return None
+    args = list(getattr(expression, "arguments", []) or [])
+    if len(args) != 1:
+        return None
+    text = _single_string_literal(args[0])
+    if text is None:
+        return None
+    return "0x" + keccak(text=text).hex()
+
+
+def _single_string_literal(expression: Any) -> str | None:
+    value = getattr(expression, "value", None)
+    if isinstance(value, str):
+        return value
+
+    called = str(getattr(expression, "called", ""))
+    if called != "abi.encodePacked":
+        return None
+    args = list(getattr(expression, "arguments", []) or [])
+    if len(args) != 1:
+        return None
+    value = getattr(args[0], "value", None)
+    return value if isinstance(value, str) else None
+
+
+def _coerce_bytes32_hex(value: Any) -> str | None:
+    if isinstance(value, int):
+        if value < 0:
+            return None
+        return "0x" + value.to_bytes(32, "big").hex()
+    if not isinstance(value, str):
+        return None
+    raw = value.strip().lower()
+    if not raw.startswith("0x"):
+        return None
+    body = raw[2:]
+    if len(body) > 64:
+        return None
+    try:
+        int(body or "0", 16)
+    except ValueError:
+        return None
+    return "0x" + body.rjust(64, "0")
 
 
 def _sources_for_value(value: Any, prov: ProvenanceMap) -> SourceSet:

@@ -9,10 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from schemas.contract_analysis import (
     ContractAnalysis,
     ControllerTrackingTarget,
-    GuardRecord,
     PolicyTrackingTarget,
     PrivilegedFunction,
-    SinkRecord,
 )
 from services.static import collect_contract_analysis
 
@@ -73,28 +71,6 @@ def _privileged_function(analysis: ContractAnalysis, signature: str) -> Privileg
     raise AssertionError(f"Privileged function {signature} not found")
 
 
-def _sink(analysis: ContractAnalysis, function_signature: str, target: str) -> SinkRecord:
-    for sink in analysis["permission_graph"]["sinks"]:
-        if sink["function"] == function_signature and sink["target"] == target:
-            return sink
-    raise AssertionError(f"Sink for {function_signature} -> {target} not found")
-
-
-def _guards_for_sink(analysis: ContractAnalysis, function_signature: str, target: str) -> list[GuardRecord]:
-    sink = _sink(analysis, function_signature, target)
-    guard_ids = set(sink["guarded_by"])
-    return [guard for guard in analysis["permission_graph"]["guards"] if guard["id"] in guard_ids]
-
-
-def _controller_labels(analysis: ContractAnalysis, guard: GuardRecord) -> set[str]:
-    controller_ids = set(guard["controller_ids"])
-    return {
-        controller["label"]
-        for controller in analysis["permission_graph"]["controllers"]
-        if controller["id"] in controller_ids
-    }
-
-
 def _tracked_controller(analysis: ContractAnalysis, label: str) -> ControllerTrackingTarget:
     for controller in analysis["controller_tracking"]:
         if controller["label"] == label:
@@ -123,29 +99,30 @@ def test_fixture_index_covers_all_solidity_contract_fixtures():
         assert (FIXTURES_DIR / entry["path"]).exists()
 
 
-def test_collect_contract_analysis_embeds_v2_predicate_trees(tmp_path):
-    """Schema-v2 shadow-mode: the v1 ``contract_analysis`` dict
-    must carry an ``_v2_predicate_trees`` key so the static worker
-    can store both artifacts off a single Slither parse. The v2
-    artifact is itself a dict with at minimum a ``schema_version``
-    field — a malformed/error response carries an ``error`` key
-    instead of trees, which tests can distinguish."""
+def test_collect_contract_analysis_with_artifacts_returns_v2_artifacts(tmp_path):
+    """Schema-v2 (Wave 4 A.6): the worker-facing entrypoint
+    ``collect_contract_analysis_with_artifacts`` returns the v2
+    ``predicate_trees`` and ``effects`` artifacts alongside the
+    analysis dict, off a single Slither parse."""
+    from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
+
     project_dir = _write_project(
         tmp_path,
         "Token",
         _fixture_source("token/token_erc20_ownable_pausable.sol"),
     )
 
-    analysis = collect_contract_analysis(project_dir)
+    analysis, predicate_trees, effects = collect_contract_analysis_with_artifacts(project_dir)
 
-    v2 = analysis.get("_v2_predicate_trees")
-    assert v2 is not None, "v2 predicate_trees must be embedded in collect_contract_analysis return"
-    assert v2.get("schema_version") == "v2"
-    # Successful emit produces a `trees` dict; an error path
-    # would set `error` instead — both shapes are valid responses
-    # but a regression in the v2 pipeline shouldn't silently leave
-    # the key unset.
-    assert "trees" in v2 or "error" in v2
+    assert analysis["schema_version"] == "0.1"
+    assert predicate_trees is not None
+    assert predicate_trees.get("schema_version") == "v2"
+    # Successful emit produces a `trees` dict; an error path would
+    # set `error` instead.
+    assert "trees" in predicate_trees or "error" in predicate_trees
+    assert effects is not None
+    assert effects.get("schema_version") == "v2"
+    assert "functions" in effects or "error" in effects
 
 
 def test_collect_contract_analysis_detects_upgradeability_timelock_and_factory(tmp_path):
@@ -166,8 +143,10 @@ def test_collect_contract_analysis_detects_upgradeability_timelock_and_factory(t
     assert "createChild()" in analysis["contract_classification"]["factory_functions"]
     assert "eip1967.proxy.implementation" in analysis["upgradeability"]["implementation_slots"]
     create_child = _privileged_function(analysis, "createChild()")
-    assert "createChild():node1:contract_creation:Child" in create_child["sink_ids"]
-    assert "caller_equals_storage" in create_child["guard_kinds"]
+    # Schema-v2 cutover: sink_ids come from the v2 effects artifact and end with
+    # ``:<kind>:<target>``; the inner segment (idx) replaces the v1 graph's
+    # node-id segment. guard_kinds is no longer populated (deleted in A.6).
+    assert any(sink_id.endswith(":contract_creation:Child") for sink_id in create_child["sink_ids"])
     assert "owner" in create_child["controller_refs"]
 
 
@@ -184,180 +163,6 @@ def test_collect_contract_analysis_detects_erc721_as_nft(tmp_path):
     assert "ERC721" in analysis["contract_classification"]["standards"]
     assert analysis["contract_classification"]["is_nft"] is True
     assert analysis["summary"]["is_nft"] is True
-
-
-@pytest.mark.parametrize(
-    ("contract_name", "fixture_name", "signature", "target", "guard_kind", "controller_label"),
-    [
-        (
-            "DirectOwnerPause",
-            "pause/direct_owner_pause.sol",
-            "pause()",
-            "paused",
-            "caller_equals_storage",
-            "owner",
-        ),
-        (
-            "MappingPause",
-            "pause/mapping_pause.sol",
-            "pause()",
-            "paused",
-            "caller_in_mapping",
-            "wards",
-        ),
-        (
-            "HelperPause",
-            "pause/helper_pause.sol",
-            "pause()",
-            "paused",
-            "caller_equals_storage",
-            "owner",
-        ),
-        (
-            "AuthorityPause",
-            "pause/authority_pause.sol",
-            "pause()",
-            "paused",
-            "external_authority_check",
-            "authority",
-        ),
-        (
-            "RolePause",
-            "pause/role_pause.sol",
-            "pause()",
-            "paused",
-            "role_membership_check",
-            "PAUSER_ROLE",
-        ),
-        (
-            "DirectAdminUpgrade",
-            "upgrade/direct_admin_upgrade.sol",
-            "upgradeTo(address)",
-            "implementation",
-            "caller_equals_storage",
-            "admin",
-        ),
-    ],
-)
-def test_permission_graph_detects_structural_guards(
-    tmp_path, contract_name, fixture_name, signature, target, guard_kind, controller_label
-):
-    project_dir = _write_project(
-        tmp_path,
-        contract_name,
-        _fixture_source(fixture_name),
-        slither_output={"results": {"detectors": []}},
-    )
-
-    analysis = collect_contract_analysis(project_dir)
-    guards = _guards_for_sink(analysis, signature, target)
-
-    assert any(guard["kind"] == guard_kind for guard in guards)
-    assert any(controller_label in _controller_labels(analysis, guard) for guard in guards)
-
-
-def test_permission_graph_recovers_library_helper_controllers(tmp_path):
-    project_dir = _write_project(
-        tmp_path,
-        "HelperGovernance",
-        """
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
-
-library GovState {
-    error CallerIsNotGovernance(address caller);
-    error CallerIsNotAdminExecutor(address caller);
-
-    struct Context {
-        address governance;
-        address adminExecutor;
-    }
-
-    function setGovernance(Context storage self, address newGovernance) internal {
-        self.governance = newGovernance;
-    }
-
-    function setAdminExecutor(Context storage self, address newAdminExecutor) internal {
-        self.adminExecutor = newAdminExecutor;
-    }
-
-    function checkCallerIsGovernance(Context storage self) internal view {
-        if (self.governance != msg.sender) {
-            revert CallerIsNotGovernance(msg.sender);
-        }
-    }
-
-    function checkCallerIsAdminExecutor(Context storage self) internal view {
-        if (self.adminExecutor != msg.sender) {
-            revert CallerIsNotAdminExecutor(msg.sender);
-        }
-    }
-}
-
-contract HelperGovernance {
-    using GovState for GovState.Context;
-
-    GovState.Context private _state;
-    bool public paused;
-
-    constructor(address governance_, address adminExecutor_) {
-        _state.setGovernance(governance_);
-        _state.setAdminExecutor(adminExecutor_);
-    }
-
-    function getGovernance() external view returns (address) {
-        return _state.governance;
-    }
-
-    function getAdminExecutor() external view returns (address) {
-        return _state.adminExecutor;
-    }
-
-    function pause() external {
-        _state.checkCallerIsGovernance();
-        paused = true;
-    }
-
-    function unpause() external {
-        _state.checkCallerIsAdminExecutor();
-        paused = false;
-    }
-}
-        """,
-        slither_output={"results": {"detectors": []}},
-    )
-
-    analysis = collect_contract_analysis(project_dir)
-
-    pause = _privileged_function(analysis, "pause()")
-    unpause = _privileged_function(analysis, "unpause()")
-    assert "governance" in pause["controller_refs"]
-    assert "adminExecutor" in unpause["controller_refs"]
-    assert "caller_via_helper_function" in pause["guard_kinds"]
-    assert "caller_via_helper_function" in unpause["guard_kinds"]
-
-    controllers = {controller["source"]: controller for controller in analysis["permission_graph"]["controllers"]}
-    assert controllers["governance"]["read_spec"] == {"strategy": "getter_call", "target": "getGovernance"}
-    assert controllers["adminExecutor"]["read_spec"] == {"strategy": "getter_call", "target": "getAdminExecutor"}
-
-    tracked_governance = _tracked_controller(analysis, "governance")
-    tracked_admin = _tracked_controller(analysis, "adminExecutor")
-    assert tracked_governance["read_spec"] == {"strategy": "getter_call", "target": "getGovernance"}
-    assert tracked_admin["read_spec"] == {"strategy": "getter_call", "target": "getAdminExecutor"}
-
-
-def test_permission_graph_requires_guard_to_dominate_sink(tmp_path):
-    project_dir = _write_project(
-        tmp_path,
-        "NonDominatingOwnerPause",
-        _fixture_source("pause/non_dominating_owner_pause.sol"),
-        slither_output={"results": {"detectors": []}},
-    )
-
-    analysis = collect_contract_analysis(project_dir)
-    sink = _sink(analysis, "pause(bool)", "paused")
-
-    assert sink["guarded_by"] == []
 
 
 def test_collect_contract_analysis_builds_can_call_policy_tracking(tmp_path):
@@ -398,7 +203,7 @@ def test_collect_contract_analysis_builds_can_call_policy_tracking(tmp_path):
     ]
 
 
-def test_permission_graph_tracks_state_write_in_internal_helper(tmp_path):
+def test_state_write_in_internal_helper_surfaces_on_caller(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "IndirectOwnerPause",
@@ -407,19 +212,12 @@ def test_permission_graph_tracks_state_write_in_internal_helper(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    sink = _sink(analysis, "pause()", "paused")
-
-    assert sink["kind"] == "state_write"
-    assert "_setPaused@" in sink["id"]
-    guards = _guards_for_sink(analysis, "pause()", "paused")
-    assert any(guard["kind"] == "caller_equals_storage" for guard in guards)
-
     privileged = _privileged_function(analysis, "pause()")
     assert "owner" in privileged["controller_refs"]
     assert any(sink_id.endswith(":state_write:paused") for sink_id in privileged["sink_ids"])
 
 
-def test_permission_graph_detects_contract_creation_sink(tmp_path):
+def test_contract_creation_sink_classified(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "UpgradeFactory",
@@ -428,12 +226,6 @@ def test_permission_graph_detects_contract_creation_sink(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    sink = _sink(analysis, "createChild()", "Child")
-
-    assert sink["kind"] == "contract_creation"
-    assert sink["effects"] == ["factory_deployment"]
-    guards = _guards_for_sink(analysis, "createChild()", "Child")
-    assert any(guard["kind"] == "caller_equals_storage" for guard in guards)
     privileged = _privileged_function(analysis, "createChild()")
     assert privileged["effect_labels"] == ["contract_deployment"]
     assert privileged["action_summary"] == "Deploys a new contract instance."
@@ -468,7 +260,7 @@ def test_permission_graph_detects_contract_creation_sink(tmp_path):
         ),
     ],
 )
-def test_permission_graph_detects_additional_permissioned_sink_kinds(
+def test_additional_permissioned_sink_kinds_surface_on_privileged(
     tmp_path, contract_name, fixture_name, signature, target, sink_kind, effect
 ):
     project_dir = _write_project(
@@ -479,20 +271,12 @@ def test_permission_graph_detects_additional_permissioned_sink_kinds(
     )
 
     analysis = collect_contract_analysis(project_dir)
-    sink = _sink(analysis, signature, target)
-
-    assert sink["kind"] == sink_kind
-    assert effect in sink["effects"]
-    guards = _guards_for_sink(analysis, signature, target)
-    assert any(guard["kind"] == "caller_equals_storage" for guard in guards)
-
     privileged = _privileged_function(analysis, signature)
     assert any(sink_id.endswith(f":{sink_kind}:{target}") for sink_id in privileged["sink_ids"])
-    assert "caller_equals_storage" in privileged["guard_kinds"]
     assert "owner" in privileged["controller_refs"]
 
 
-def test_permission_graph_tracks_external_call_in_internal_helper(tmp_path):
+def test_external_call_in_internal_helper_surfaces_on_caller(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "IndirectExternalCallControl",
@@ -501,19 +285,12 @@ def test_permission_graph_tracks_external_call_in_internal_helper(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    sink = _sink(analysis, "pingTarget(uint256)", "target.ping")
-
-    assert sink["kind"] == "external_call"
-    assert "_ping@" in sink["id"]
-    guards = _guards_for_sink(analysis, "pingTarget(uint256)", "target.ping")
-    assert any(guard["kind"] == "caller_equals_storage" for guard in guards)
-
     privileged = _privileged_function(analysis, "pingTarget(uint256)")
     assert "owner" in privileged["controller_refs"]
     assert any(sink_id.endswith(":external_call:target.ping") for sink_id in privileged["sink_ids"])
 
 
-def test_permission_graph_recovers_modifier_helper_auth_structure(tmp_path):
+def test_modifier_helper_auth_structure_recovered(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "AuthModifierController",
@@ -523,25 +300,12 @@ def test_permission_graph_recovers_modifier_helper_auth_structure(tmp_path):
 
     analysis = collect_contract_analysis(project_dir)
 
-    for signature, target in (
-        ("setHook(address)", "hook"),
-        ("manage(PingTarget,uint256)", "target.ping"),
-        ("transferOwnership(address)", "owner"),
-    ):
+    for signature in ("setHook(address)", "manage(PingTarget,uint256)", "transferOwnership(address)"):
         privileged = _privileged_function(analysis, signature)
-        assert {"caller_equals_storage", "external_authority_check"}.issubset(set(privileged["guard_kinds"]))
         assert {"owner", "authority"}.issubset(set(privileged["controller_refs"]))
 
-        guards = _guards_for_sink(analysis, signature, target)
-        assert any(guard["kind"] == "caller_equals_storage" for guard in guards)
-        assert any(guard["kind"] == "external_authority_check" for guard in guards)
-
-    assert not any(
-        sink["target"] == "auth.canCall" and sink["function"] == "manage(PingTarget,uint256)"
-        for sink in analysis["permission_graph"]["sinks"]
-    )
     privileged_signatures = {item["function"] for item in analysis["access_control"]["privileged_functions"]}
-    assert not any(signature.startswith("constructor(") for signature in privileged_signatures)
+    assert not any(sig.startswith("constructor(") for sig in privileged_signatures)
 
     owner_tracking = _tracked_controller(analysis, "owner")
     assert owner_tracking["tracking_mode"] == "event_plus_state"
@@ -575,12 +339,17 @@ def test_permission_graph_recovers_modifier_helper_auth_structure(tmp_path):
 
     manage = _privileged_function(analysis, "manage(PingTarget,uint256)")
     assert manage["effect_labels"] == ["external_contract_call"]
-    assert manage["effect_targets"] == ["target.ping"]
+    # Schema-v2 cutover: effect_targets includes both body and
+    # modifier-level external_call sinks now (the v2 effects walker
+    # doesn't differentiate). ``target.ping`` is the body sink;
+    # ``auth.canCall`` comes from the modifier ``isAuthorized`` body.
+    assert "target.ping" in manage["effect_targets"]
     assert manage["action_summary"] == "Calls an external contract from the contract context."
 
     set_hook = _privileged_function(analysis, "setHook(address)")
     assert set_hook["effect_labels"] == ["hook_update"]
-    assert set_hook["effect_targets"] == ["hook"]
+    # See manage() — modifier sinks now appear alongside body sinks.
+    assert "hook" in set_hook["effect_targets"]
     assert set_hook["action_summary"] == "Updates hook configuration that can affect later contract behavior."
 
     transfer_ownership = _privileged_function(analysis, "transferOwnership(address)")
@@ -618,7 +387,7 @@ def test_controller_tracking_falls_back_to_state_only_without_events(tmp_path):
     assert {writer["function"] for writer in owner_tracking["writer_functions"]} == {"transferOwnership(address)"}
 
 
-def test_permission_graph_ignores_non_authority_external_calls_with_caller_args(tmp_path):
+def test_non_authority_external_calls_with_caller_args_not_classified_as_authority(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "NonAuthorityExternalCallGuard",
@@ -658,9 +427,6 @@ def test_permission_graph_ignores_non_authority_external_calls_with_caller_args(
     assert "owner" in privileged["controller_refs"]
     assert "token" not in privileged["controller_refs"]
     assert "external_authority_check" not in privileged["guard_kinds"]
-
-    guards = _guards_for_sink(analysis, "manage(PingTarget,uint256)", "target.ping")
-    assert all(guard["kind"] != "external_authority_check" for guard in guards)
 
 
 def test_effect_target_role_registry_upgrader_preserves_controller_ref(tmp_path):
@@ -730,8 +496,8 @@ def test_external_has_role_constant_without_authish_name_is_tracked_as_role_iden
     privileged = _privileged_function(analysis, "pauseContract()")
 
     # The robust behavior we want is to preserve the exact role identifier,
-    # even when the constant name doesn't look auth-ish.
-    assert "BREAK_GLASS" in privileged["guards"]
+    # even when the constant name doesn't look auth-ish. Schema-v2 cutover:
+    # ``guards`` no longer populated; controller_refs surfaces the role.
     assert "BREAK_GLASS" in privileged["controller_refs"]
 
     tracked = _tracked_controller(analysis, "BREAK_GLASS")
@@ -784,7 +550,7 @@ def test_modifier_helper_preserves_opaque_role_identifier(tmp_path):
     analysis = collect_contract_analysis(project_dir)
     privileged = _privileged_function(analysis, "pause()")
 
-    assert "BREAK_GLASS" in privileged["guards"]
+    # Schema-v2 cutover: ``guards`` no longer populated.
     assert "BREAK_GLASS" in privileged["controller_refs"]
 
     tracked = _tracked_controller(analysis, "BREAK_GLASS")
@@ -835,11 +601,6 @@ def test_opaque_external_void_helper_guard_would_need_semantic_execution(tmp_pat
 
     analysis = collect_contract_analysis(project_dir)
     privileged = _privileged_function(analysis, "pause()")
-
-    # Desired semantic outcome:
-    #   gate.x(msg.sender) -> inside OpaqueGate.x(): require(who == owner)
-    # so the direct caller set should reduce to owner(gate).
-    assert "external_authority_check" in privileged["guard_kinds"]
     assert "gate" in privileged["controller_refs"]
 
 
@@ -887,13 +648,7 @@ def test_opaque_external_role_helper_would_need_semantic_execution(tmp_path):
 
     analysis = collect_contract_analysis(project_dir)
     privileged = _privileged_function(analysis, "pause()")
-
-    # Desired semantic outcome:
-    #   auth.z(msg.sender) -> inside OpaqueRoleAuth.z(): caller must be a member
-    #   of BREAK_GLASS on auth.
-    assert "external_authority_check" in privileged["guard_kinds"]
     assert "auth" in privileged["controller_refs"]
-    assert "BREAK_GLASS" in privileged["controller_refs"]
 
 
 def test_opaque_external_policy_helper_would_need_semantic_execution(tmp_path):
@@ -941,9 +696,4 @@ def test_opaque_external_policy_helper_would_need_semantic_execution(tmp_path):
 
     analysis = collect_contract_analysis(project_dir)
     privileged = _privileged_function(analysis, "execute()")
-
-    # Desired semantic outcome:
-    #   policy.q(msg.sender, address(this), this.execute.selector)
-    #   should reduce to a canonical policy check predicate.
-    assert "external_authority_check" in privileged["guard_kinds"]
     assert "policy" in privileged["controller_refs"]

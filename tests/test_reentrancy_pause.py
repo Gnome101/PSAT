@@ -325,3 +325,200 @@ def test_pause_does_not_clobber_sibling_role_check(tmp_path):
     assert auth_leaves, (
         f"role-check leaf was clobbered or dropped — got authority_roles={[leaf['authority_role'] for leaf in leaves]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# A.4 — apply_reentrancy_pause_pass returns PauseInfo
+# ---------------------------------------------------------------------------
+
+
+def test_apply_pass_returns_pause_info_for_canonical_pause(tmp_path):
+    """apply_reentrancy_pause_pass returns a PauseInfo dict; the OZ
+    Pausable shape produces non-empty pause state vars + toggle list.
+    """
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            bool public _paused;
+            modifier whenNotPaused() {
+                require(!_paused);
+                _;
+            }
+            function pause() external {
+                require(msg.sender == ownerVar);
+                _paused = true;
+            }
+            function unpause() external {
+                require(msg.sender == ownerVar);
+                _paused = false;
+            }
+            function someAction() external whenNotPaused {}
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    pause_info = apply_reentrancy_pause_pass(contract, trees)
+    assert pause_info is not None
+    assert "_paused" in pause_info["pause_state_vars"]
+    # Both pause/unpause functions should appear in the toggle list
+    # (PauseAnalyzer admits the var since one writer is auth-gated;
+    # _build_pause_info enumerates all writers).
+    assert "pause()" in pause_info["pause_toggle_functions"]
+    assert "unpause()" in pause_info["pause_toggle_functions"]
+
+
+def test_apply_pass_returns_pause_info_for_canonical_reentrancy(tmp_path):
+    """apply_reentrancy_pause_pass returns a PauseInfo dict; OZ
+    ReentrancyGuard's ``_status`` shape populates the reentrancy
+    fields."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 private _status;
+            uint256 private constant _NOT_ENTERED = 1;
+            uint256 private constant _ENTERED = 2;
+            modifier nonReentrant() {
+                require(_status != _ENTERED);
+                _status = _ENTERED;
+                _;
+                _status = _NOT_ENTERED;
+            }
+            function f() external nonReentrant {}
+            function g() external nonReentrant {}
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    pause_info = apply_reentrancy_pause_pass(contract, trees)
+    assert "_status" in pause_info["reentrancy_state_vars"]
+    assert {"f()", "g()"}.issubset(set(pause_info["reentrancy_guarded_functions"]))
+
+
+def test_apply_pass_returns_empty_pause_info_when_nothing_detected(tmp_path):
+    """No pause / reentrancy vars → all four lists empty."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public x;
+            function f() external { x = 1; }
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    pause_info = apply_reentrancy_pause_pass(contract, trees)
+    assert pause_info["pause_state_vars"] == []
+    assert pause_info["pause_toggle_functions"] == []
+    assert pause_info["reentrancy_state_vars"] == []
+    assert pause_info["reentrancy_guarded_functions"] == []
+
+
+# ---------------------------------------------------------------------------
+# A.4 — _detect_pausability consumes PauseInfo
+# ---------------------------------------------------------------------------
+
+
+def test_detect_pausability_consumes_pause_info(tmp_path):
+    """_detect_pausability now takes a ``pause_info`` dict and surfaces
+    the structural pause vars + toggle functions — no modifier-name
+    heuristic."""
+    from services.static.contract_analysis_pipeline.summaries import _detect_pausability
+
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            bool public _paused;
+            modifier whenNotPaused() {
+                require(!_paused);
+                _;
+            }
+            function pause() external {
+                require(msg.sender == ownerVar);
+                _paused = true;
+            }
+            function unpause() external {
+                require(msg.sender == ownerVar);
+                _paused = false;
+            }
+            function someAction() external whenNotPaused {}
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    pause_info = apply_reentrancy_pause_pass(contract, trees)
+    pausability = _detect_pausability(contract, tmp_path, pause_info)
+    assert pausability["is_pausable"] is True
+    assert "_paused" in pausability["pause_variables"]
+    assert "pause()" in pausability["pause_functions"]
+    assert "unpause()" in pausability["unpause_functions"]
+    # whenNotPaused reads _paused → it's a structural gating modifier.
+    assert "whenNotPaused" in pausability["gating_modifiers"]
+
+
+def test_detect_pausability_renamed_pause_modifier(tmp_path):
+    """Modifier-name heuristic is gone: a non-standard modifier name
+    still gets surfaced as gating because it READS the pause var."""
+    from services.static.contract_analysis_pipeline.summaries import _detect_pausability
+
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            bool public flag;
+            modifier gate() {
+                require(!flag);
+                _;
+            }
+            function freeze() external {
+                require(msg.sender == ownerVar);
+                flag = true;
+            }
+            function someAction() external gate {}
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    pause_info = apply_reentrancy_pause_pass(contract, trees)
+    pausability = _detect_pausability(contract, tmp_path, pause_info)
+    assert pausability["is_pausable"] is True
+    assert "flag" in pausability["pause_variables"]
+    # ``gate`` is a structural pause-reader → gating_modifier.
+    assert "gate" in pausability["gating_modifiers"]
+
+
+def test_detect_pausability_empty_when_no_pause(tmp_path):
+    """No pause shape → not pausable."""
+    from services.static.contract_analysis_pipeline.summaries import _detect_pausability
+
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            uint256 public x;
+            function f() external { x = 1; }
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    pause_info = apply_reentrancy_pause_pass(contract, trees)
+    pausability = _detect_pausability(contract, tmp_path, pause_info)
+    assert pausability["is_pausable"] is False
+    assert pausability["pause_variables"] == []

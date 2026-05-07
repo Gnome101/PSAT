@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 SEVERITY_ORDER = {"High": 0, "Medium": 1, "Low": 2, "Informational": 3, "Optimization": 4}
 CONTROL_EFFECTS = {
     "pause_state_change",
@@ -52,38 +50,4 @@ STANDARD_EVENTS = {
     "ERC721": {"Transfer", "Approval", "ApprovalForAll"},
     "ERC1155": {"TransferSingle", "TransferBatch", "ApprovalForAll"},
 }
-ADMIN_VAR_KEYWORDS = (
-    "owner",
-    "admin",
-    "guardian",
-    "governor",
-    "operator",
-    "manager",
-    "authority",
-    "timelock",
-    "upgrader",
-    "pauser",
-)
-ACCESS_GUARD_KEYWORDS = (
-    "onlyowner",
-    "onlyrole",
-    "auth",
-    "authorize",
-    "authorized",
-    "admin",
-    "govern",
-    "guardian",
-    "operator",
-    "manager",
-    "timelock",
-    "pauser",
-    "minter",
-)
-ACCESS_CONTROL_INHERITANCE = ("ownable", "accesscontrol", "roles", "auth", "governor", "timelock")
-PAUSE_MODIFIER_KEYWORDS = ("whennotpaused", "whenpaused", "onlywhenlive")
 FACTORY_NAME_KEYWORDS = ("factory", "create", "deploy", "spawn", "clone")
-ROLE_CONSTANT_PATTERN = re.compile(r"\b[A-Z][A-Z0-9_]*_ROLE\b")
-ROLE_NAME_PATTERNS = (
-    re.compile(r".*_role$", re.IGNORECASE),
-    re.compile(r"^(wards|admins|authority|authorities)$", re.IGNORECASE),
-)

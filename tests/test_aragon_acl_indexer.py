@@ -401,3 +401,16 @@ def test_enroll_acl_contract_idempotent(session_with_acl_contract):
     rows = session.query(AragonAclCursor).filter_by(chain_id=1, acl_contract_id=cid).all()
     assert len(rows) == 1
     assert rows[0].last_indexed_block == 0
+
+
+def test_module_runs_as_main():
+    """Wave 3 entrypoint: ``python -m workers.aragon_acl_indexer``
+    must resolve to a callable ``main`` that ``start_workers.sh``
+    launches. We import-check rather than execute since ``main``
+    starts an infinite poll loop."""
+    from workers import aragon_acl_indexer
+
+    assert hasattr(aragon_acl_indexer, "main")
+    assert callable(aragon_acl_indexer.main)
+    assert hasattr(aragon_acl_indexer, "enroll_from_job_dependencies")
+    assert callable(aragon_acl_indexer.enroll_from_job_dependencies)

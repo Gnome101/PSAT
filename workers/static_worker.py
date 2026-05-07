@@ -30,8 +30,7 @@ from services.discovery import (
 from services.discovery.dynamic_dependencies import NoNewTransactionsError
 from services.monitoring.proxy_watcher import resolve_current_implementation
 from services.resolution.tracking_plan import build_control_tracking_plan
-from services.static import collect_contract_analysis
-from services.static.contract_analysis_pipeline import build_semantic_guards
+from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
 from utils.logging import record_degraded
 from utils.rpc import normalize_hex  # used for address comparison
 from workers.base import BaseWorker, JobHandledDirectly
@@ -1470,7 +1469,7 @@ class StaticWorker(BaseWorker):
         """Run structured contract analysis. Returns the analysis dict or None on failure."""
         self.update_detail(session, job, "Building structured contract analysis")
         try:
-            analysis_data = collect_contract_analysis(project_dir)
+            analysis_data, v2_predicate_trees, v2_effects = collect_contract_analysis_with_artifacts(project_dir)
         except Exception as exc:
             record_degraded(
                 phase="contract_analysis",
@@ -1481,34 +1480,31 @@ class StaticWorker(BaseWorker):
             store_artifact(session, job.id, "analysis_error", data={"error": str(exc)})
             return None
 
-        # Schema-v2 cutover: semantic_guards is now derived from the
-        # embedded ``_v2_predicate_trees`` (populated by
-        # collect_contract_analysis) via the shim — see
-        # services/static/contract_analysis_pipeline/semantic_guards.py.
-        # Build it BEFORE popping the v2 key so the shim has the data
-        # it needs; the v2 trees are then persisted as their own
-        # ``predicate_trees`` artifact for downstream resolver / probe
-        # consumers, and the contract_analysis artifact is stored
-        # without the embedded v2 dict.
-        semantic_guards = build_semantic_guards(analysis_data)
-        v2_predicate_trees = analysis_data.pop("_v2_predicate_trees", None)
-
-        # Persist side artifacts into the temp workspace so later static
-        # subphases (tracking plan) can read them from disk.
+        # Schema-v2 (Wave 4 A.6/B.2): predicate_trees + effects are the
+        # only v2-derived artifacts. The v1 ``semantic_guards`` artifact
+        # is gone; ``effective_permissions`` consumes ``predicate_trees``
+        # directly (see ``workers/policy_worker.py``).
         (project_dir / "contract_analysis.json").write_text(json.dumps(analysis_data, indent=2) + "\n")
-        (project_dir / "semantic_guards.json").write_text(json.dumps(semantic_guards, indent=2) + "\n")
         if v2_predicate_trees is not None:
             (project_dir / "predicate_trees.json").write_text(json.dumps(v2_predicate_trees, indent=2) + "\n")
+        if v2_effects is not None:
+            (project_dir / "effects.json").write_text(json.dumps(v2_effects, indent=2) + "\n")
 
-        # Keep as artifacts — downstream stages read these as JSON.
         store_artifact(session, job.id, "contract_analysis", data=analysis_data)
-        store_artifact(session, job.id, "semantic_guards", data=semantic_guards)
         if v2_predicate_trees is not None:
             try:
                 store_artifact(session, job.id, "predicate_trees", data=v2_predicate_trees)
             except Exception:
                 logger.exception(
-                    "Static stage: predicate_trees artifact store failed for job %s; v1 path unaffected",
+                    "Static stage: predicate_trees artifact store failed for job %s",
+                    job.id,
+                )
+        if v2_effects is not None:
+            try:
+                store_artifact(session, job.id, "effects", data=v2_effects)
+            except Exception:
+                logger.exception(
+                    "Static stage: effects artifact store failed for job %s",
                     job.id,
                 )
         self._write_analysis_tables(session, job, analysis_data)

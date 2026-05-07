@@ -18,7 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from slither.slither import Slither
 
-from services.static.contract_analysis_pipeline.graph import build_permission_graph
+from services.static.contract_analysis_pipeline.effects import build_effects
+from services.static.contract_analysis_pipeline.predicate_artifacts import (
+    build_predicate_artifacts,
+)
 from services.static.contract_analysis_pipeline.shared import _select_subject_contract
 from services.static.contract_analysis_pipeline.summaries import (
     _detect_access_control,
@@ -39,10 +42,13 @@ def _scaffold_and_analyze(solidity_source: str, contract_name: str = "Target") -
         if subject is None:
             raise RuntimeError(f"Contract {contract_name} not found")
 
-        permission_graph = build_permission_graph(subject, project_dir)
-        access_control = _detect_access_control(subject, project_dir, permission_graph)
+        # Schema-v2 cutover: _detect_access_control reads predicate_trees
+        # + effects.
+        predicate_trees = build_predicate_artifacts(subject)
+        effects = build_effects(subject)
+        access_control = _detect_access_control(subject, project_dir, predicate_trees, effects)
 
-        return {"access_control": access_control, "permission_graph": permission_graph}
+        return {"access_control": access_control, "effects": effects}
 
 
 def _get_function_labels(analysis: dict, function_name: str) -> set[str]:

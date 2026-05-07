@@ -175,9 +175,9 @@ class EvaluationContext:
     state_var_values: dict[str, str] | None = None
     # SQLAlchemy Session — needed for cross-contract evaluator inlining
     # (loading the registry contract's predicate_trees artifact when an
-    # external_bool leaf carries ``callee_function``). Optional so older
-    # call sites that build the context inline (tests, the legacy
-    # adapter-only path) keep working without a DB.
+    # external_bool leaf carries a callee signature/selector). Optional
+    # so call sites that build the context inline can keep working
+    # without a DB.
     session: Any = None
     # Recursion guard for cross-contract inlining. Keys are
     # ``(chain_id, address.lower(), function_signature)``. The evaluator
