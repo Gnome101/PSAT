@@ -706,6 +706,9 @@ class EffectiveFunction(Base):
     action_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     authority_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     authority_roles: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    capability_expr: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    conditions: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="effective_functions")
     principals: Mapped[list["FunctionPrincipal"]] = relationship(
@@ -730,7 +733,16 @@ class FunctionPrincipal(Base):
 
     function: Mapped[EffectiveFunction] = relationship("EffectiveFunction", back_populates="principals")
 
-    __table_args__ = (Index("ix_function_principals_function_id", "function_id"),)
+    __table_args__ = (
+        Index("ix_function_principals_function_id", "function_id"),
+        Index("ix_function_principals_lower_address", text("lower(address)")),
+        Index(
+            "ix_function_principals_safe_owners",
+            text("(details->'owners')"),
+            postgresql_using="gin",
+            postgresql_where=text("resolved_type = 'safe'"),
+        ),
+    )
 
 
 class PrincipalLabel(Base):
