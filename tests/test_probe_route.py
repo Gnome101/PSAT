@@ -566,10 +566,10 @@ def test_probe_rate_limit_blocks_after_limit(api_client, db_session, monkeypatch
 
     # Tighten the limit to 3 so the test isn't slow. Also clear
     # any per-key state from previous tests.
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    monkeypatch.setattr(v2_module, "_PROBE_RATE_LIMIT", 3)
-    v2_module._probe_rate_state.clear()
+    monkeypatch.setattr(predicate_capabilities, "_PROBE_RATE_LIMIT", 3)
+    predicate_capabilities._probe_rate_state.clear()
 
     payload = {
         "function_signature": "open()",
@@ -614,10 +614,10 @@ def test_probe_rate_limit_keyed_per_address(api_client, db_session, monkeypatch)
             predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
         )
 
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    monkeypatch.setattr(v2_module, "_PROBE_RATE_LIMIT", 2)
-    v2_module._probe_rate_state.clear()
+    monkeypatch.setattr(predicate_capabilities, "_PROBE_RATE_LIMIT", 2)
+    predicate_capabilities._probe_rate_state.clear()
 
     payload = {
         "function_signature": "open()",
@@ -652,10 +652,10 @@ def test_probe_rate_limit_disabled_when_zero(api_client, db_session, monkeypatch
         predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
     )
 
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    monkeypatch.setattr(v2_module, "_PROBE_RATE_LIMIT", 0)
-    v2_module._probe_rate_state.clear()
+    monkeypatch.setattr(predicate_capabilities, "_PROBE_RATE_LIMIT", 0)
+    predicate_capabilities._probe_rate_state.clear()
 
     payload = {
         "function_signature": "open()",
@@ -685,10 +685,10 @@ def test_probe_rate_limit_applies_to_signature_route_too(api_client, db_session,
         predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
     )
 
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    monkeypatch.setattr(v2_module, "_PROBE_RATE_LIMIT", 2)
-    v2_module._probe_rate_state.clear()
+    monkeypatch.setattr(predicate_capabilities, "_PROBE_RATE_LIMIT", 2)
+    predicate_capabilities._probe_rate_state.clear()
 
     headers = {"X-PSAT-Admin-Key": "test-key"}
     sig_payload = {

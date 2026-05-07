@@ -165,10 +165,10 @@ def test_capabilities_response_includes_data_freshness(api_client, db_session, m
     the indexer cursor for the contract. UI uses this to render
     'data current as of block X' and warn if it's stale."""
     from db.models import IndexedEventCursor
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    v2_module._capabilities_cache.clear()
-    monkeypatch.setattr(v2_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)  # disable cache for the test
+    predicate_capabilities._capabilities_cache.clear()
+    monkeypatch.setattr(predicate_capabilities, "_CAPABILITIES_CACHE_TTL_S", 0.0)  # disable cache for the test
 
     address = "0x" + uuid.uuid4().hex[:8] + "df" * 16
 
@@ -200,10 +200,10 @@ def test_capabilities_response_includes_data_freshness(api_client, db_session, m
 def test_capabilities_response_freshness_null_when_no_cursor(api_client, db_session, monkeypatch):
     """No IndexedEventCursor -> data_freshness.event_logs is null."""
 
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    v2_module._capabilities_cache.clear()
-    monkeypatch.setattr(v2_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)
+    predicate_capabilities._capabilities_cache.clear()
+    monkeypatch.setattr(predicate_capabilities, "_CAPABILITIES_CACHE_TTL_S", 0.0)
 
     address = "0x" + uuid.uuid4().hex[:8] + "fa" * 16
     _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
@@ -226,10 +226,10 @@ def test_capabilities_response_is_cached(api_client, db_session, monkeypatch):
 
     # Empty the cache so the test starts clean (other tests may
     # have warmed it).
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    v2_module._capabilities_cache.clear()
-    monkeypatch.setattr(v2_module, "_CAPABILITIES_CACHE_TTL_S", 60.0)
+    predicate_capabilities._capabilities_cache.clear()
+    monkeypatch.setattr(predicate_capabilities, "_CAPABILITIES_CACHE_TTL_S", 60.0)
 
     calls = {"n": 0}
     original = resolver_mod.resolve_contract_capabilities
@@ -260,10 +260,10 @@ def test_capabilities_cache_ttl_disabled_when_zero(api_client, db_session, monke
     address = "0x" + uuid.uuid4().hex[:8] + "cb" * 16
     _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
 
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    v2_module._capabilities_cache.clear()
-    monkeypatch.setattr(v2_module, "_CAPABILITIES_CACHE_TTL_S", 0.0)
+    predicate_capabilities._capabilities_cache.clear()
+    monkeypatch.setattr(predicate_capabilities, "_CAPABILITIES_CACHE_TTL_S", 0.0)
 
     calls = {"n": 0}
     original = resolver_mod.resolve_contract_capabilities
@@ -289,10 +289,10 @@ def test_capabilities_cache_keyed_on_block_and_chain(api_client, db_session, mon
     address = "0x" + uuid.uuid4().hex[:8] + "cc" * 16
     _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=_equality_leaf_artifact())
 
-    from routers import v2 as v2_module
+    from routers import predicate_capabilities
 
-    v2_module._capabilities_cache.clear()
-    monkeypatch.setattr(v2_module, "_CAPABILITIES_CACHE_TTL_S", 60.0)
+    predicate_capabilities._capabilities_cache.clear()
+    monkeypatch.setattr(predicate_capabilities, "_CAPABILITIES_CACHE_TTL_S", 60.0)
 
     calls = {"n": 0}
     original = resolver_mod.resolve_contract_capabilities

@@ -174,7 +174,7 @@ def test_predicate_trees_has_typed_leaves(analyzed_weth, live_client: LiveClient
 def test_capability_resolution_returns_non_empty(analyzed_weth, live_client: LiveClient):
     """Gates the resolver read path (services/resolution/capability_resolver.py).
 
-    Hits ``GET /api/contract/{address}/capabilities`` (routers/v2.py) and
+    Hits ``GET /api/contract/{address}/capabilities`` and
     asserts the response shape matches the v2 contract. WETH is
     controls-free, so ``capabilities`` may be ``{}`` (every function
     unguarded — the resolver convention). When non-empty, asserts at
@@ -189,8 +189,8 @@ def test_capability_resolution_returns_non_empty(analyzed_weth, live_client: Liv
     assert addr.startswith("0x"), f"analyzed_weth.address missing or malformed: {addr!r}"
 
     # Use the session directly — LiveClient doesn't expose a typed helper
-    # for the v2 capability route yet (intentional: this lives in
-    # routers/v2.py and post-cutover it'll be the canonical read path,
+    # for the predicate capability route yet (intentional: this lives in
+    # routers/predicate_capabilities.py and post-cutover it'll be the canonical read path,
     # at which point it should get a method on LiveClient).
     resp = live_client._session.get(
         live_client._url(f"/api/contract/{addr}/capabilities"),

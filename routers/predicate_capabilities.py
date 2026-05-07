@@ -1,13 +1,8 @@
-"""Schema-v2 capability + probe endpoints (predicate-pipeline cutover).
+"""Predicate capability + probe endpoints.
 
-Hosts the read path that consumes the v2 ``predicate_trees`` artifact:
+Hosts the read path that consumes the semantic ``predicate_trees`` artifact:
  - per-contract / per-company capability resolution
  - membership and signature probes against individual leaves
-
-These shipped on the predicate-pipeline branch while ``api.py`` was still
-a single-file monolith; under the routers refactor they live here so the
-existing handler is untouched and the registration is one line in
-``api.py``.
 """
 
 from __future__ import annotations
