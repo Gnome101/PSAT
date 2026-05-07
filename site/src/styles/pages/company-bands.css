@@ -1,0 +1,232 @@
+/* ── Company page: edge-to-edge bands (no panel cards at the top) ────────── */
+
+.company-page {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: calc(100vh - 52px);
+}
+
+/* Hero band: logo + protocol name, no card */
+.company-hero-band {
+  padding: 48px 72px 36px;
+  background: linear-gradient(180deg, #0d1220 0%, #0a0e15 100%);
+}
+
+.company-hero-inner {
+  max-width: 1440px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+
+.company-hero-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.company-hero-subtitle {
+  font-size: 13px;
+  color: #94a3b8;
+  margin: 4px 0 0;
+}
+
+/* Score band: score + stats on left, radar on right. No panel. */
+.company-score-band {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 64px;
+  padding: 32px 72px;
+  border-top: 1px solid rgba(148, 163, 184, 0.10);
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.company-score-left {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  flex: 1;
+  min-width: 0;
+}
+
+.company-score-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Shrink the big score a bit (from the sketch's 128px) */
+.company-score-left .company-hero-score-value {
+  font-size: 80px;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+}
+.company-score-left .company-hero-score-unit {
+  font-size: 20px;
+  font-weight: 600;
+  color: #64748b;
+}
+.company-score-left .company-hero-score-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--teal);
+  margin-top: 6px;
+}
+
+.company-hero-grade-bar {
+  margin-top: 14px;
+  width: 340px;
+  max-width: 100%;
+  height: 8px;
+  background: #141a24;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.company-hero-grade-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #f87171 0%, #fb923c 50%, #facc15 75%, #4ade80 100%);
+  border-radius: 5px;
+  transition: width 360ms ease;
+}
+
+.company-hero-grade-bar.grade-a .company-hero-grade-bar-fill { background: #4ade80; }
+.company-hero-grade-bar.grade-b .company-hero-grade-bar-fill { background: #2dd4bf; }
+.company-hero-grade-bar.grade-c .company-hero-grade-bar-fill { background: #facc15; }
+.company-hero-grade-bar.grade-d .company-hero-grade-bar-fill { background: #fb923c; }
+.company-hero-grade-bar.grade-f .company-hero-grade-bar-fill { background: #f87171; }
+
+/* Stats stacked under the score — no panel, tight grid */
+.company-score-left .company-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, max-content));
+  gap: 28px;
+  margin-top: 0;
+}
+
+.company-score-left .company-hero-stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #e2e8f0;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.company-score-left .company-hero-stat-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-top: 5px;
+}
+
+/* Explore pills: inline, no big cards */
+.company-explore-band {
+  padding: 16px 72px 28px;
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
+  border-top: 1px solid rgba(148, 163, 184, 0.10);
+}
+
+.explore-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.explore-pill {
+  background: #141a24;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  color: #e2e8f0;
+  padding: 10px 16px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: none;
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.explore-pill:hover {
+  background: #1a2230;
+  border-color: rgba(45, 212, 191, 0.35);
+  transform: none;
+}
+
+.explore-pill.primary {
+  border-color: rgba(45, 212, 191, 0.45);
+}
+
+.explore-pill.primary .explore-pill-arrow {
+  color: #2dd4bf;
+}
+
+.explore-pill.primary .explore-pill-name {
+  color: #e2e8f0;
+}
+
+.explore-pill-arrow {
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.explore-pill-name {
+  color: #e2e8f0;
+}
+
+.explore-pill-sep {
+  color: #475569;
+  font-weight: 600;
+}
+
+.explore-pill-sub {
+  color: #94a3b8;
+  font-weight: 500;
+  font-size: 11px;
+}
+
+/* Remaining sections (ownership hierarchy, controller details, all addresses)
+   keep their panel styling but need page-width + padding so they don't
+   stretch edge to edge. */
+.company-page-rest {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 16px 24px 48px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (max-width: 960px) {
+  .company-hero-band { padding: 32px 24px 24px; }
+  .company-hero-inner { flex-direction: column; align-items: flex-start; }
+  .company-score-band {
+    flex-direction: column;
+    padding: 24px;
+    gap: 24px;
+  }
+  .company-score-right { align-items: flex-start; }
+  .company-explore-band { padding: 16px 24px 24px; }
+  .company-page-rest { padding: 8px 16px 32px; }
+}
+
+

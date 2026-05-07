@@ -1,0 +1,124 @@
+/* ── Inline Control Surface embed on /company/:name ──────────────────────── */
+
+.company-surface-band {
+  max-width: 1440px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 16px 72px 8px;
+}
+
+.company-surface-band-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.company-surface-band-title {
+  margin: 4px 0 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #e2e8f0;
+  letter-spacing: -0.02em;
+}
+
+.company-surface-band-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.company-surface-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.55);
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease,
+    transform 140ms ease;
+}
+
+.company-surface-action:hover {
+  background: rgba(45, 212, 191, 0.08);
+  border-color: rgba(45, 212, 191, 0.4);
+  color: #e2e8f0;
+  transform: translateY(-1px);
+}
+
+.company-surface-action svg {
+  flex-shrink: 0;
+  color: #2dd4bf;
+}
+
+.company-surface-action-count {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(45, 212, 191, 0.12);
+  color: #2dd4bf;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.company-surface-action.primary {
+  background: rgba(45, 212, 191, 0.14);
+  border-color: rgba(45, 212, 191, 0.45);
+  color: #2dd4bf;
+}
+
+.company-surface-action.primary svg {
+  color: #a7f3d0;
+}
+
+.company-surface-action.primary:hover {
+  background: rgba(45, 212, 191, 0.28);
+  color: #f0fdfa;
+}
+
+/* The real ProtocolSurface expects full-viewport height. Inside this
+   bounded container we override the 100vh assumptions so it fits the
+   allotted box. No props changes to ProtocolSurface needed. */
+.company-surface-embed {
+  position: relative;
+  height: 780px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: #12151a;
+  overflow: hidden;
+}
+
+.company-surface-embed .ps-surface {
+  min-height: 100%;
+  height: 100%;
+  padding: 0;
+  border-radius: 0;
+}
+
+.company-surface-embed .ps-layout {
+  height: 100%;
+}
+
+.company-surface-embed .ps-sidebar {
+  max-height: 100%;
+}
+
+/* Overlays inside ProtocolSurface are positioned with `top: 16px`,
+   which now places them inside the embed container — good. */
+
+@media (max-width: 960px) {
+  .company-surface-band { padding: 12px 16px 4px; }
+  .company-surface-embed { height: 520px; }
+}
+
+

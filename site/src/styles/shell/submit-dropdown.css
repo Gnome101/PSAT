@@ -1,0 +1,43 @@
+/* Submit dropdown */
+.submit-dropdown {
+  position: sticky;
+  top: 52px;
+  z-index: 99;
+  background: linear-gradient(180deg, rgba(17, 22, 32, 0.98), rgba(14, 18, 24, 0.96));
+  border-bottom: 1px solid var(--panel-border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  padding: 16px 24px;
+}
+
+.submit-form {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.submit-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #cbd5e1;
+  flex: 1;
+  min-width: 140px;
+}
+
+.submit-form input {
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.submit-form button[type="submit"] {
+  padding: 9px 20px;
+  border-radius: 10px;
+  font-size: 13px;
+  white-space: nowrap;
+  align-self: end;
+}

@@ -1,0 +1,39 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0f16;
+  --bg-soft: rgba(17, 22, 32, 0.74);
+  --line: rgba(148, 163, 184, 0.10);
+  --panel: #111620;
+  --panel-border: rgba(148, 163, 184, 0.14);
+  --shadow: 0 18px 54px rgba(0, 0, 0, 0.35);
+  --shadow-strong: 0 24px 60px rgba(0, 0, 0, 0.5);
+  --ink: #e2e8f0;
+  --muted: #94a3b8;
+  --teal: #2dd4bf;
+  --teal-soft: rgba(45, 212, 191, 0.12);
+  --amber: #f59e0b;
+  --amber-deep: #fbbf24;
+  --amber-soft: rgba(245, 158, 11, 0.14);
+
+  /* Effect tones — function classification by what it does (lifted from
+     ProtocolSurface LANE_META). Used for lane chips, function ports, and
+     any cross-page surface that classifies behavior. */
+  --tone-control: #8b92a8;
+  --tone-ops: #6b7590;
+  --tone-inflow: #6a9e94;
+  --tone-outflow: #9a8a6e;
+  --tone-ownership: #7a8098;
+  --tone-pause: #998a6a;
+  --tone-timelock: #9a8a6e;
+
+  /* Status — generic state vocabulary for jobs, audits, findings, runs. */
+  --status-ok: #22c55e;
+  --status-warn: #f59e0b;
+  --status-err: #ef4444;
+  --status-info: #38bdf8;
+  --status-mute: #64748b;
+
+  font-family: "Instrument Sans", "Inter", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}

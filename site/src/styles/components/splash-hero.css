@@ -1,0 +1,191 @@
+/* ============================================================
+ * Splash hero — assembly line
+ * ============================================================ */
+
+.splash-page {
+  position: relative;
+  min-height: 1800px;
+  background:
+    radial-gradient(1200px 420px at 85% 6%, rgba(45, 212, 191, 0.06), transparent 60%),
+    radial-gradient(900px 380px at 10% 35%, rgba(245, 158, 11, 0.04), transparent 60%),
+    var(--bg);
+  overflow: hidden;
+}
+
+.splash-page-bg {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.92;
+  overflow: hidden;
+}
+
+.assembly-line {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1320px;
+  height: 1800px;
+  display: block;
+  max-width: none;
+}
+
+.splash-page > :not(.splash-page-bg) {
+  position: relative;
+  z-index: 2;
+}
+
+.splash-hero {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  padding: 280px 24px 32px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.splash-hero-inner {
+  position: relative;
+  max-width: 1400px;
+  margin: 0 auto;
+  z-index: 2;
+}
+
+.splash-hero-copy {
+  max-width: 560px;
+}
+
+.splash-hero-eyebrow {
+  margin: 0 0 16px;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: var(--teal);
+}
+
+.splash-hero-title {
+  margin: 0 0 20px;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: clamp(36px, 5vw, 56px);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.splash-hero-sub {
+  margin: 0 0 32px;
+  font-size: 16px;
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 500px;
+}
+
+.splash-hero-form {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) 120px 80px auto;
+  gap: 10px;
+  padding: 14px;
+  background: rgba(17, 22, 32, 0.82);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  max-width: 640px;
+}
+
+.splash-hero-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.splash-hero-field > span {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.splash-hero-field input {
+  width: 100%;
+  padding: 9px 10px;
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  transition: border-color 0.15s;
+}
+
+.splash-hero-field input:focus {
+  outline: none;
+  border-color: var(--teal);
+}
+
+.splash-hero-submit {
+  align-self: end;
+  padding: 10px 18px;
+  background: var(--teal);
+  color: #0b0f16;
+  border: none;
+  border-radius: 6px;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+
+.splash-hero-submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(45, 212, 191, 0.25);
+}
+
+.splash-hero-submit:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 900px) {
+  .splash-hero {
+    min-height: 0;
+    padding: 40px 20px 24px;
+  }
+  .splash-hero-bg {
+    opacity: 0.35;
+  }
+  .assembly-line {
+    max-height: 420px;
+  }
+  .splash-hero-copy {
+    padding-top: 40px;
+  }
+  .splash-hero-form {
+    grid-template-columns: 1fr 1fr;
+  }
+  .splash-hero-field-main {
+    grid-column: 1 / -1;
+  }
+  .splash-hero-submit {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assembly-line animate,
+  .assembly-line animateMotion,
+  .assembly-line animateTransform {
+    display: none;
+  }
+}
