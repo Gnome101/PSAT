@@ -45,6 +45,12 @@ import {
   normalizeTab,
   parseLocationPath,
 } from "./router.js";
+import { displayName } from "./displayName.js";
+import SummaryTab from "./tabs/SummaryTab.jsx";
+import PermissionsTab from "./tabs/PermissionsTab.jsx";
+import PrincipalsTab from "./tabs/PrincipalsTab.jsx";
+import UpgradesTab from "./tabs/UpgradesTab.jsx";
+import RawTab from "./tabs/RawTab.jsx";
 
 function LoadingFallback({ label = "Loading..." }) {
   return (
@@ -115,180 +121,6 @@ function edgeSlotPercents(count) {
   const end = 82;
   const step = (end - start) / (count - 1);
   return Array.from({ length: count }, (_, index) => start + index * step);
-}
-
-function SummaryTab({ detail }) {
-  const summary = detail?.contract_analysis?.summary || detail?.summary || {};
-  const subject = detail?.contract_analysis?.subject || {};
-  const standards = summary.standards || [];
-  return (
-    <div className="stack">
-      <div className="summary-grid">
-        <StatCard label="Contract" value={displayName(detail) || subject.name || "Unknown"} />
-        <StatCard label="Control Model" value={summary.control_model || "unknown"} />
-        <StatCard label="Risk" value={summary.static_risk_level || "unknown"} />
-        <StatCard label="Standards" value={standards.length || 0} />
-      </div>
-      <div className="card">
-        <h3>Summary</h3>
-        <div className="kv-grid">
-          <div className="kv-row">
-            <span className="key">Address</span>
-            <span className="mono">{detail?.address || subject.address || "Unknown"}</span>
-          </div>
-          <div className="kv-row">
-            <span className="key">Upgradeable</span>
-            <span>{String(Boolean(summary.is_upgradeable))}</span>
-          </div>
-          <div className="kv-row">
-            <span className="key">Pausable</span>
-            <span>{String(Boolean(summary.is_pausable))}</span>
-          </div>
-          <div className="kv-row">
-            <span className="key">Timelock</span>
-            <span>{String(Boolean(summary.has_timelock))}</span>
-          </div>
-          <div className="kv-row">
-            <span className="key">Standards</span>
-            <span>{standards.join(", ") || "None"}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PermissionsTab({ detail }) {
-  const payload = detail?.effective_permissions;
-  if (!payload?.functions?.length) {
-    return <p className="empty">No permission artifact available.</p>;
-  }
-  return (
-    <div className="card-grid">
-      {payload.functions.map((entry) => {
-        const principals = [
-          ...(entry.direct_owner?.address ? [entry.direct_owner] : []),
-          ...(entry.authority_roles || []).flatMap((role) => role.principals || []),
-          ...(entry.controllers || []).flatMap((controller) => controller.principals || []),
-        ];
-        return (
-          <article className="card" key={entry.selector}>
-            <div className="card-header-row">
-              <h3>{prettyFunctionName(entry.function)}</h3>
-              <span className="chip alt">{(entry.effect_labels || []).join(" · ") || "permissioned"}</span>
-            </div>
-            <p className="muted">{entry.action_summary}</p>
-            <div className="kv-grid compact">
-              <div className="kv-row">
-                <span className="key">Authority public</span>
-                <span>{entry.authority_public ? "Yes" : "No"}</span>
-              </div>
-              <div className="kv-row">
-                <span className="key">Direct owner</span>
-                <span>{entry.direct_owner?.address ? shortenAddress(entry.direct_owner.address) : "None"}</span>
-              </div>
-              <div className="kv-row">
-                <span className="key">Effect targets</span>
-                <span>{(entry.effect_targets || []).join(", ") || "None"}</span>
-              </div>
-            </div>
-            <div className="subsection">
-              <div className="subsection-title">Current principals</div>
-              <div className="chips">
-                {principals.length
-                  ? principals.map((principal) => (
-                      <span className="chip" key={`${entry.selector}-${principal.address}`}>
-                        {shortenAddress(principal.address)}
-                      </span>
-                    ))
-                  : <span className="chip warn">No principals resolved in artifact</span>}
-              </div>
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function PrincipalsTab({ detail }) {
-  const payload = detail?.principal_labels;
-  if (!payload?.principals?.length) {
-    return <p className="empty">No principal labels available.</p>;
-  }
-  return (
-    <div className="card-grid">
-      {payload.principals.map((principal) => (
-        <article className="card" key={principal.address}>
-          <div className="card-header-row">
-            <h3>{principal.display_name || shortenAddress(principal.address)}</h3>
-            <span className="chip alt">{principal.resolved_type}</span>
-          </div>
-          <div className="mono muted">{principal.address}</div>
-          <div className="chips" style={{ marginTop: 12 }}>
-            {(principal.labels || []).map((label) => (
-              <span className="chip" key={label}>
-                {label}
-              </span>
-            ))}
-          </div>
-          {principal.permissions?.length ? (
-            <div className="subsection">
-              <div className="subsection-title">Permissions</div>
-              <div className="chips">
-                {principal.permissions.map((permission, index) => (
-                  <span className="chip" key={`${principal.address}-${index}`}>
-                    {prettyFunctionName(permission.function)}
-                    {permission.role != null ? ` · role ${permission.role}` : ""}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function UpgradesTab({ detail }) {
-  return (
-    <UpgradesPanel
-      upgradeHistory={detail?.upgrade_history}
-      contractId={detail?.contract_id ?? null}
-      companyName={detail?.company || null}
-      contractAddress={detail?.address}
-      contractName={detail?.run_name || detail?.contract_name}
-      dependencies={detail?.dependencies?.dependencies || {}}
-    />
-  );
-}
-
-function RawTab({ detail }) {
-  const [selection, setSelection] = useState("contract_analysis");
-  const available = {
-    contract_analysis: detail?.contract_analysis,
-    control_snapshot: detail?.control_snapshot,
-    dependencies: detail?.dependencies,
-    dependency_graph_viz: detail?.dependency_graph_viz,
-    effective_permissions: detail?.effective_permissions,
-    principal_labels: detail?.principal_labels,
-    resolved_control_graph: detail?.resolved_control_graph,
-    upgrade_history: detail?.upgrade_history,
-  };
-
-  return (
-    <div className="stack">
-      <select className="select" value={selection} onChange={(event) => setSelection(event.target.value)}>
-        {Object.keys(available).map((key) => (
-          <option key={key} value={key}>
-            {key}
-          </option>
-        ))}
-      </select>
-      <pre className="pre-wrap code-block">{formatJson(available[selection] || {})}</pre>
-    </div>
-  );
 }
 
 function GraphNodeDetails({ node, extra }) {
@@ -1118,20 +950,6 @@ function CompanyOverview({ companyName, onSelectContract, onNavigateToSurface })
 
 const PIPELINE_STAGES = ["discovery", "dapp_crawl", "defillama_scan", "selection", "static", "resolution", "policy", "coverage"];
 const ALL_STAGES = [...PIPELINE_STAGES, "done"];
-const GENERIC_PROXY_NAMES = new Set(["uupsproxy", "erc1967proxy", "transparentupgradeableproxy", "proxy", "beaconproxy", "ossifiableproxy", "withdrawalsmanagerproxy", "upgradeablebeacon"]);
-
-function displayName(entry) {
-  const explicit = entry?.display_name || "";
-  if (explicit) {
-    return explicit;
-  }
-  const contractName = entry?.contract_name || "";
-  if (GENERIC_PROXY_NAMES.has(contractName.toLowerCase())) {
-    return entry.run_name || contractName;
-  }
-  return contractName || entry?.run_name || "";
-}
-
 function mergeProxyImpl(analyses) {
   const implByProxy = new Map();
   const mergedProxies = new Set();
