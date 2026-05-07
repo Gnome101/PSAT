@@ -36,6 +36,7 @@ import { bytecodeVerifiedAudits } from "./auditCoverage.js";
 import { StatCard } from "./ui/StatCard.jsx";
 import { UpgradesPanel } from "./surface/inspector/UpgradesPanel.jsx";
 import ErrorBoundary from "./ErrorBoundary.jsx";
+import HamburgerMenu from "./HamburgerMenu.jsx";
 
 function LoadingFallback({ label = "Loading..." }) {
   return (
@@ -2666,41 +2667,6 @@ function RunsPage({ analyses, activeJobs, onSelect, onDiscoverMore, onSelectComp
         )}
       </section>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Hamburger menu (slide-out drawer)
-// ---------------------------------------------------------------------------
-
-function HamburgerMenu({ onClose, viewMode, companyName, companyTab, onNavigate, onNavigateCompanyTab }) {
-  return (
-    <>
-      <div className="hamburger-backdrop" onClick={onClose} />
-      <aside className="hamburger-drawer">
-        <div className="hamburger-header">
-          <span className="hamburger-brand">PSAT</span>
-          <button className="hamburger-close" onClick={onClose}>&times;</button>
-        </div>
-        <nav className="hamburger-nav">
-          <div className="hamburger-section-label">Navigation</div>
-          <button className={`hamburger-link ${viewMode === "default" ? "active" : ""}`} onClick={() => { onNavigate("/", "default"); onClose(); }}>Runs</button>
-          <button className={`hamburger-link ${viewMode === "monitor" ? "active" : ""}`} onClick={() => { onNavigate("/monitor", "monitor"); onClose(); }}>Monitor</button>
-          <button className={`hamburger-link ${viewMode === "proxies" ? "active" : ""}`} onClick={() => { onNavigate("/proxies", "proxies"); onClose(); }}>Proxies</button>
-        </nav>
-        {companyName && (
-          <nav className="hamburger-nav hamburger-company-section">
-            <div className="hamburger-section-label">{companyName}</div>
-            <button className={`hamburger-link ${viewMode === "company" && companyTab === "overview" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("overview"); onClose(); }}>Overview</button>
-            <button className={`hamburger-link ${viewMode === "company" && companyTab === "surface" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("surface"); onClose(); }}>Surface</button>
-            <button className={`hamburger-link ${viewMode === "company" && companyTab === "graph" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("graph"); onClose(); }}>Ownership</button>
-            <button className={`hamburger-link ${viewMode === "company" && companyTab === "risk" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("risk"); onClose(); }}>Risk Matrix</button>
-            <button className={`hamburger-link ${viewMode === "company" && companyTab === "audits" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("audits"); onClose(); }}>Audits</button>
-            <button className={`hamburger-link ${viewMode === "company" && companyTab === "monitoring" ? "active" : ""}`} onClick={() => { onNavigateCompanyTab("monitoring"); onClose(); }}>Monitoring</button>
-          </nav>
-        )}
-      </aside>
-    </>
   );
 }
 
