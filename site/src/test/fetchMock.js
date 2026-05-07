@@ -39,7 +39,7 @@ function defaultDispatch(url) {
   return jsonResponse({});
 }
 
-function dispatch(input, init = {}) {
+async function dispatch(input, init = {}) {
   const rawUrl =
     typeof input === "string" || input instanceof URL
       ? String(input)
@@ -48,16 +48,18 @@ function dispatch(input, init = {}) {
   try {
     url = new URL(rawUrl, "http://localhost");
   } catch {
-    return Promise.resolve(textResponse(""));
+    return textResponse("");
   }
   for (let i = handlers.length - 1; i >= 0; i--) {
     const { match, respond } = handlers[i];
     if (match(url, init)) {
-      const result = respond(url, init);
-      return Promise.resolve(result);
+      // Await first so a responder that returns a never-resolving promise
+      // actually keeps the request pending instead of getting wrapped in
+      // a JSON envelope of the Promise object itself.
+      return await respond(url, init);
     }
   }
-  return Promise.resolve(defaultDispatch(url));
+  return defaultDispatch(url);
 }
 
 export function setFetchHandler(matcher, responder) {
@@ -68,8 +70,8 @@ export function setFetchHandler(matcher, responder) {
       ? (url) => matcher.test(url.pathname) || matcher.test(url.toString())
       : (url) => url.pathname === matcher || url.pathname.startsWith(matcher);
 
-  const respond = (url, init) => {
-    const result = responder(url, init);
+  const respond = async (url, init) => {
+    const result = await responder(url, init);
     if (result instanceof Response) return result;
     if (typeof result === "string") return textResponse(result);
     return jsonResponse(result ?? {});
