@@ -45,16 +45,16 @@ PIPELINE_WORKERS: tuple[str, ...] = (
 ALLOW_LIST: dict[str, dict[int, str]] = {
     "workers/policy_worker.py": {
         # v2 capability resolver failure (Wave 3 B.1): the policy stage
-        # falls back to v1 inputs only — no degraded contract because
+        # falls back to compatibility inputs — no degraded contract because
         # the artifact builder still emits a complete payload (just
         # without v2 columns).
-        402: "v2 capability resolver failure; v1 inputs still produce a complete payload.",
+        144: "v2 capability resolver failure; compatibility inputs still produce a complete payload.",
         # Reanalysis-completion notifier: the reanalysis itself completed
         # before the notifier ran, so its failure is a side-effect that
         # doesn't change the job's stage output. record_degraded would
         # mislead callers of /api/jobs/{id}/errors into thinking the
         # reanalysis was degraded.
-        772: "Notifier side-effect; reanalysis already completed before this fired.",
+        478: "Notifier side-effect; reanalysis already completed before this fired.",
     },
     "workers/static_worker.py": {
         # v2 predicate_trees artifact store failure during the static
