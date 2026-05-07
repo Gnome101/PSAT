@@ -22,7 +22,6 @@ crytic-export/
 out/
 *.pen
 *.png
-# Visual regression baselines — checked in so CI has something to compare against.
 !site/e2e/**/*.png
 .db_snapshots/
 .claude/
