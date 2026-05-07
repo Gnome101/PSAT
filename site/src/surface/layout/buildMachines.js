@@ -1,0 +1,66 @@
+// Group functions per contract into the four lanes (control / ops / inflow /
+// outflow), sort within each lane, and project the contract → "machine" view
+// the canvas + sidebar consume. Pure — no React.
+
+import { functionName, isRoleConstant } from "../format.js";
+import {
+  compactActionSummary,
+  laneForFunction,
+  lanePriority,
+  toneForFunction,
+} from "../lane.js";
+import { collectPrincipals } from "./controlGraph.js";
+import { guardSummary } from "./guardSummary.js";
+
+export function buildMachines(companyData, functionData) {
+  return companyData.contracts
+    .map((contract) => {
+      const rawFunctions = (functionData[contract.address] || [])
+        .filter((fn) => !isRoleConstant(functionName(fn.function)));
+      const lanes = { top: [], left: [], right: [], ops: [] };
+
+      for (const fn of rawFunctions) {
+        const lane = laneForFunction(fn);
+        const { direct, indirect } = collectPrincipals(fn, companyData);
+        lanes[lane].push({
+          key: `${contract.address}:${fn.selector || fn.function}`,
+          contractName: contract.name,
+          contractAddress: contract.address,
+          name: functionName(fn.function),
+          signature: fn.function || fn.abi_signature || "?",
+          lane,
+          tone: toneForFunction(fn, lane),
+          action: compactActionSummary(fn),
+          effectLabels: fn.effect_labels || [],
+          guard: guardSummary(fn, companyData),
+          // `principals` is the direct-callers list — exactly who can fire
+          // msg.sender on this function right now. `indirectPrincipals` is the
+          // governance path above any contract principals, shown as secondary
+          // context in the inspector (never used to claim call rights).
+          principals: direct,
+          indirectPrincipals: indirect,
+          authorityPublic: Boolean(fn.authority_public),
+        });
+      }
+
+      for (const lane of Object.keys(lanes)) {
+        lanes[lane].sort((left, right) => {
+          const score = lanePriority({ effect_labels: left.effectLabels }) - lanePriority({ effect_labels: right.effectLabels });
+          if (score !== 0) return score;
+          return left.name.localeCompare(right.name);
+        });
+      }
+
+      const totalFunctions = lanes.top.length + lanes.ops.length + lanes.left.length + lanes.right.length;
+      return {
+        ...contract,
+        totalFunctions,
+        lanes,
+      };
+    })
+    .filter((machine) => machine.totalFunctions > 0 || machine.is_proxy)
+    .sort((left, right) => {
+      if (right.totalFunctions !== left.totalFunctions) return right.totalFunctions - left.totalFunctions;
+      return String(left.name || "").localeCompare(String(right.name || ""));
+    });
+}
