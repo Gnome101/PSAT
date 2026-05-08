@@ -103,11 +103,28 @@ jobs:
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "endpoint_host=$ENDPOINT_HOST" >> $GITHUB_OUTPUT
 
-      - name: Stage forked DATABASE_URL on preview
-        # --stage so the auto-restart doesn't un-stop the workers/monitor/browser
-        # we just turned off. We restart only the web group below.
+      - name: Reset role password and stage DATABASE_URL on preview
+        # Neon stores role passwords per-branch, so prod's neondb_owner
+        # password (which CI never has) doesn't apply to the fork. Reset it
+        # on the new branch to get a fresh password we can use for this
+        # preview only — prod's password is unaffected.
+        #
+        # --stage so the auto-restart doesn't un-stop the workers/monitor/
+        # browser we just turned off. We restart only the web group below.
         run: |
-          DB_URL="postgresql://staging_admin:${{ secrets.NEON_STAGING_PASSWORD }}@${{ steps.branch.outputs.endpoint_host }}/neondb?sslmode=require"
+          BRANCH_ID="${{ steps.branch.outputs.branch_id }}"
+          PW_RESPONSE=$(curl -sf -X POST \
+            -H "Authorization: Bearer $NEON_API_KEY" \
+            "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches/$BRANCH_ID/roles/neondb_owner/reset_password")
+          NEW_PW=$(echo "$PW_RESPONSE" | jq -r '.role.password')
+          if [[ -z "$NEW_PW" || "$NEW_PW" == "null" ]]; then
+            echo "::error::Password reset returned unexpected shape: $PW_RESPONSE"
+            exit 1
+          fi
+          # Mask the password from logs before it gets used; even though
+          # `flyctl secrets set` won't echo it, defense in depth.
+          echo "::add-mask::$NEW_PW"
+          DB_URL="postgresql://neondb_owner:${NEW_PW}@${{ steps.branch.outputs.endpoint_host }}/neondb?sslmode=require"
           flyctl secrets set --stage -a "$APP_NAME" DATABASE_URL="$DB_URL"
 
       - name: Restart preview web machines
