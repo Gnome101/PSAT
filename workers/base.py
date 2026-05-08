@@ -730,8 +730,12 @@ class BaseWorker:
         """Update the job's progress detail message."""
         update_job_detail(session, job.id, detail)
 
-    def _heartbeat(self, session: Session, job: Job) -> None:
-        """Extend the row's lease past now+ttl.
+    def _heartbeat(self, session: Session, job: Job) -> None:  # noqa: ARG002 — session kept for caller back-compat
+        """Extend the row's lease past now+ttl using a fresh session.
+
+        The *session* arg is intentionally ignored. Callers pass their
+        worker's main ORM session by reflex, but we open a fresh
+        ``SessionLocal()`` for the actual write — see the bug below.
 
         Used inside long parallel sections so the stale-job sweep doesn't
         requeue live work. The conditional UPDATE inside ``heartbeat_job``
@@ -739,11 +743,27 @@ class BaseWorker:
         lease — a reclaimed worker's heartbeat is a no-op and ``LeaseLost``
         is raised so the caller can bail.
 
-        ``LeaseLost`` is intentionally NOT swallowed here: the catch site
-        in ``_execute_job`` needs to see it so the worker stops doing
-        further work on a job a sibling now owns. Other exceptions
-        (transient DB blips) are swallowed since the next heartbeat or the
-        sweep will recover.
+        Why a fresh session: the worker's main session sits idle for
+        minutes during long parallel sections (forge build fan-outs run
+        in the executor pool while the worker thread blocks in semaphore
+        / ``as_completed``). Neon's pooler-side SSL idle timeout closes
+        that idle connection. If we issued the heartbeat UPDATE through
+        the worker's session, ``session.execute`` raises
+        ``OperationalError``; the previous version of this method
+        swallowed that at DEBUG level — ``updated_at`` never refreshed,
+        the stale-job sweep requeued live work to a sibling worker, and
+        the symptom looked just like the old materialize_or_wait SSL
+        bug. A fresh session goes through the pool with
+        ``pool_pre_ping=True`` so dead connections are replaced on
+        checkout; the heartbeat write is a single short UPDATE so the
+        new session's lifecycle is sub-second.
+
+        ``LeaseLost`` is intentionally NOT swallowed: the catch site in
+        ``_execute_job`` needs to see it so the worker stops doing
+        further work on a job a sibling now owns. Other exceptions are
+        logged at WARNING (used to be DEBUG) — the heartbeat is
+        load-bearing for stall detection, and silent failures on a
+        critical path is what hid this bug across multiple PR previews.
         """
         lease_id = getattr(job, "lease_id", None)
         if lease_id is None:
@@ -753,24 +773,20 @@ class BaseWorker:
             from sqlalchemy import update as sa_update
 
             try:
-                session.execute(sa_update(Job).where(Job.id == job.id).values(updated_at=datetime.now(timezone.utc)))
-                session.commit()
+                with SessionLocal() as fresh:
+                    fresh.execute(sa_update(Job).where(Job.id == job.id).values(updated_at=datetime.now(timezone.utc)))
+                    fresh.commit()
             except Exception:
-                try:
-                    session.rollback()
-                except Exception:
-                    logger.debug("heartbeat rollback failed", exc_info=True)
+                logger.warning("heartbeat (legacy path) write failed", exc_info=True)
             return
 
         try:
-            heartbeat_job(session, job.id, lease_id=lease_id, lease_ttl_seconds=DEFAULT_JOB_LEASE_TTL_S)
+            with SessionLocal() as fresh:
+                heartbeat_job(fresh, job.id, lease_id=lease_id, lease_ttl_seconds=DEFAULT_JOB_LEASE_TTL_S)
         except LeaseLost:
             raise
         except Exception:
-            try:
-                session.rollback()
-            except Exception:
-                logger.debug("heartbeat rollback failed", exc_info=True)
+            logger.warning("heartbeat write failed (non-fatal)", exc_info=True)
 
     def _persist_stage_errors(self, job: Job, errors: list[StageError]) -> None:
         """Write the ``stage_errors`` artifact via a fresh session, merging
