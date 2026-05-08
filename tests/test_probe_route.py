@@ -241,7 +241,7 @@ def test_probe_membership_semantic_error_payload_returns_unknown(api_client, db_
     body = resp.json()
     assert body["result"] == "unknown"
     assert body["reason"] == "predicate_trees_unavailable"
-    assert body["detail"] == "v2_emit_blew_up"
+    assert body["detail"] == "semantic_emit_blew_up"
 
 
 @requires_postgres
