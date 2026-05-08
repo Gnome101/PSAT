@@ -113,9 +113,18 @@ jobs:
         # browser we just turned off. We restart only the web group below.
         run: |
           BRANCH_ID="${{ steps.branch.outputs.branch_id }}"
-          PW_RESPONSE=$(curl -sf -X POST \
-            -H "Authorization: Bearer $NEON_API_KEY" \
-            "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches/$BRANCH_ID/roles/neondb_owner/reset_password")
+          # Retry: Neon returns 4xx on reset_password until the create-branch
+          # operations finish provisioning. A few seconds is usually enough.
+          PW_RESPONSE=""
+          for i in $(seq 1 24); do
+            if PW_RESPONSE=$(curl -sf -X POST \
+                -H "Authorization: Bearer $NEON_API_KEY" \
+                "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches/$BRANCH_ID/roles/neondb_owner/reset_password"); then
+              break
+            fi
+            echo "attempt $i: branch not ready, sleeping 5s"
+            sleep 5
+          done
           NEW_PW=$(echo "$PW_RESPONSE" | jq -r '.role.password')
           if [[ -z "$NEW_PW" || "$NEW_PW" == "null" ]]; then
             echo "::error::Password reset returned unexpected shape: $PW_RESPONSE"
