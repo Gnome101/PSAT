@@ -14,6 +14,8 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+import random
+import time
 from dataclasses import dataclass
 from typing import Final, Literal
 from urllib.parse import urlparse
@@ -63,6 +65,26 @@ _ACCEPTED_TEXT_CONTENT_TYPES: Final[frozenset[str]] = frozenset(
 _TEXT_URL_SUFFIXES: Final[tuple[str, ...]] = (".md", ".markdown", ".txt", ".rst")
 
 AUDIT_TEXT_CONTENT_TYPE: Final[str] = "text/plain; charset=utf-8"
+
+# Retry policy for transport-layer flakes. Prod observed bursts of
+# ConnectionResetError(104) from auditor CDNs that turned every batch into a
+# wave of permanent ``failed`` rows; retries absorb the brief upstream
+# windows where every connection RSTs at once. Bounded so a genuinely dead
+# host fails fast rather than wedging the worker.
+_RETRY_ATTEMPTS: Final[int] = 3
+_RETRY_INITIAL_BACKOFF: Final[float] = 0.5
+_RETRY_BACKOFF_CAP: Final[float] = 10.0
+# 408/429 are transient by spec; 5xx is the HTTP analogue of an RST. Other
+# 4xx (404, 403, 410) are terminal — refetching the same URL won't fix them.
+_TRANSIENT_HTTP_STATUS: Final[frozenset[int]] = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def _retry_sleep(seconds: float) -> None:
+    """Sleep ``seconds`` with ±50% jitter. Factored out so unit tests can
+    stub the wall-clock wait without monkeypatching the whole ``time``
+    module — tests under ``TestDownloadAuditBodyRetry`` rely on this.
+    """
+    time.sleep(random.uniform(seconds * 0.5, seconds * 1.5))
 
 
 # --- Errors ---------------------------------------------------------------
@@ -157,50 +179,93 @@ def download_audit_body(
 
     Raises ``PdfDownloadError`` for network / HTTP failures and
     ``PdfTooLargeError`` when the body exceeds ``_MAX_PDF_BYTES``.
+
+    Retries transient transport flakes (``ConnectionError``, ``Timeout``)
+    and transient HTTP statuses (408/429/5xx) with jittered exponential
+    backoff. 4xx other than 408/429 and content-type mismatches are fatal
+    — refetching won't change a 404 or a login-wall HTML page.
     """
     sess = session or requests
-    try:
-        resp = sess.get(
-            url,
-            timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),
-            stream=True,
-            headers={"User-Agent": "PSAT-audit-text-extractor/0.1"},
-            allow_redirects=True,
-        )
-    except requests.RequestException as exc:
-        raise PdfDownloadError(f"fetch error: {exc}") from exc
+    backoff = _RETRY_INITIAL_BACKOFF
 
-    try:
-        if resp.status_code != 200:
-            raise PdfDownloadError(f"HTTP {resp.status_code}")
+    for attempt in range(_RETRY_ATTEMPTS):
+        last_attempt = attempt == _RETRY_ATTEMPTS - 1
+        try:
+            resp = sess.get(
+                url,
+                timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),
+                stream=True,
+                headers={"User-Agent": "PSAT-audit-text-extractor/0.1"},
+                allow_redirects=True,
+            )
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            if last_attempt:
+                raise PdfDownloadError(f"fetch error: {exc}") from exc
+            logger.warning(
+                "Audit fetch transient %s, retrying in %.1fs (attempt %d/%d)",
+                type(exc).__name__,
+                backoff,
+                attempt + 1,
+                _RETRY_ATTEMPTS,
+            )
+            _retry_sleep(backoff)
+            backoff = min(backoff * 2, _RETRY_BACKOFF_CAP)
+            continue
+        except requests.RequestException as exc:
+            # SSLError on a bad cert, InvalidURL, MissingSchema — not
+            # transport flakes, retrying won't help. Fail fast.
+            raise PdfDownloadError(f"fetch error: {exc}") from exc
 
-        content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-        accepted = _ACCEPTED_TEXT_CONTENT_TYPES if kind == "text" else _ACCEPTED_CONTENT_TYPES
-        # GitHub serves raw PDFs with content-type application/pdf; gitbook
-        # CDNs often use octet-stream. Reject text/html / application/json
-        # etc. — we've been redirected to an error page.
-        if content_type and content_type not in accepted:
-            raise PdfDownloadError(f"unexpected content-type {content_type!r}")
+        # Transient HTTP status: discard the response and back off. We
+        # don't read the body so close immediately to release the conn.
+        if resp.status_code in _TRANSIENT_HTTP_STATUS and not last_attempt:
+            status = resp.status_code
+            resp.close()
+            logger.warning(
+                "Audit fetch HTTP %d, retrying in %.1fs (attempt %d/%d)",
+                status,
+                backoff,
+                attempt + 1,
+                _RETRY_ATTEMPTS,
+            )
+            _retry_sleep(backoff)
+            backoff = min(backoff * 2, _RETRY_BACKOFF_CAP)
+            continue
 
-        # Server-reported size check — saves us the round trip if we can
-        # tell upfront the body is too big.
-        content_length = resp.headers.get("content-length")
-        if content_length and content_length.isdigit() and int(content_length) > _MAX_PDF_BYTES:
-            raise PdfTooLargeError(f"Content-Length {content_length} exceeds cap {_MAX_PDF_BYTES}")
+        try:
+            if resp.status_code != 200:
+                raise PdfDownloadError(f"HTTP {resp.status_code}")
 
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in resp.iter_content(chunk_size=131_072):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > _MAX_PDF_BYTES:
-                raise PdfTooLargeError(f"streamed body exceeded cap {_MAX_PDF_BYTES}")
-            chunks.append(chunk)
+            content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+            accepted = _ACCEPTED_TEXT_CONTENT_TYPES if kind == "text" else _ACCEPTED_CONTENT_TYPES
+            # GitHub serves raw PDFs with content-type application/pdf; gitbook
+            # CDNs often use octet-stream. Reject text/html / application/json
+            # etc. — we've been redirected to an error page.
+            if content_type and content_type not in accepted:
+                raise PdfDownloadError(f"unexpected content-type {content_type!r}")
 
-        return b"".join(chunks)
-    finally:
-        resp.close()
+            # Server-reported size check — saves us the round trip if we can
+            # tell upfront the body is too big.
+            content_length = resp.headers.get("content-length")
+            if content_length and content_length.isdigit() and int(content_length) > _MAX_PDF_BYTES:
+                raise PdfTooLargeError(f"Content-Length {content_length} exceeds cap {_MAX_PDF_BYTES}")
+
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=131_072):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > _MAX_PDF_BYTES:
+                    raise PdfTooLargeError(f"streamed body exceeded cap {_MAX_PDF_BYTES}")
+                chunks.append(chunk)
+
+            return b"".join(chunks)
+        finally:
+            resp.close()
+
+    # Every branch above either returns or raises by ``last_attempt``.
+    raise PdfDownloadError("retry budget exhausted")  # pragma: no cover
 
 
 def download_pdf(url: str, session: requests.Session | None = None) -> bytes:
