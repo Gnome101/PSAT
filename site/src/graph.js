@@ -319,7 +319,7 @@ export function buildVisualPermissionGraph(detail) {
       column: "function",
       title: prettyFunctionName(entry.function),
       subtitle: entry.action_summary || "",
-      meta: (entry.effect_labels || []).join(" · ") || "permissioned function",
+      meta: (entry.effect_labels || []).join(" · ") || "controlled function",
       kind: "function",
       detailTitle: entry.function,
       raw: entry,

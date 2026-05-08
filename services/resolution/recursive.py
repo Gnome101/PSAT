@@ -19,7 +19,8 @@ from schemas.control_tracking import ControlSnapshot
 from schemas.resolved_control_graph import ResolvedControlGraph, ResolvedGraphEdge, ResolvedGraphNode
 from services.discovery.fetch import fetch, scaffold
 from services.policy.effective_permissions import build_effective_permissions
-from services.static import collect_contract_analysis
+from services.static.contract_analysis_pipeline.core import collect_contract_analysis_with_artifacts
+from services.static.contract_analysis_pipeline.mapping_events import WriterEventSpec
 from utils.logging import record_degraded
 
 from .tracking import (
@@ -41,6 +42,7 @@ class LoadedArtifacts(TypedDict):
     analysis: dict[str, Any]
     tracking_plan: dict[str, Any]
     snapshot: ControlSnapshot
+    predicate_trees: NotRequired[dict[str, Any] | None]
     effective_permissions: NotRequired[dict[str, Any] | None]
 
 
@@ -94,7 +96,7 @@ def _build_effective_permissions(
     analysis: dict[str, Any],
     snapshot: ControlSnapshot,
 ) -> dict[str, Any] | None:
-    """Compute the effective-permissions payload (matches the legacy ``effective_permissions.json`` shape)."""
+    """Compute the effective-permissions payload for nested resolution."""
     try:
         return cast(
             dict,
@@ -112,7 +114,7 @@ def _build_effective_permissions(
 def _build_static_artifacts(
     effective_address: str,
     workspace_prefix: str,
-) -> tuple[str, dict[str, Any], dict[str, Any]]:
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     """Run the expensive forge+Slither pipeline for *effective_address* and return
     ``(contract_name, analysis, tracking_plan)``.
 
@@ -127,10 +129,10 @@ def _build_static_artifacts(
     with tempfile.TemporaryDirectory(prefix=f"psat_{workspace_prefix}_") as tmp:
         project_dir = Path(tmp) / project_name
         scaffold(effective_address, result, project_dir)
-        analysis = cast(dict, collect_contract_analysis(project_dir))
+        analysis, predicate_trees, _effects = collect_contract_analysis_with_artifacts(project_dir)
 
     plan = cast(dict, build_control_tracking_plan(cast(ContractAnalysis, analysis)))
-    return contract_name, analysis, plan
+    return contract_name, cast(dict[str, Any], analysis), plan, predicate_trees
 
 
 def _materialize_with_cross_process_cache(
@@ -138,7 +140,7 @@ def _materialize_with_cross_process_cache(
     effective_address: str,
     bytecode_keccak: str | None,
     workspace_prefix: str,
-) -> tuple[str, dict[str, Any], dict[str, Any]]:
+) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, Any] | None]:
     """Consult the persistent contract_materializations table; build on miss.
 
     Falls back to a direct ``_build_static_artifacts`` call when:
@@ -146,9 +148,8 @@ def _materialize_with_cross_process_cache(
       * the DB layer raises (e.g., the table doesn't exist in a
         fixture-isolated test, or the DB is unreachable).
 
-    The graceful-fallback path matches the legacy behaviour byte-for-byte
-    so the builder remains the source of truth and the cache is purely
-    additive.
+    The graceful-fallback path keeps the builder as the source of truth
+    when the cache layer is unavailable.
     """
     if not bytecode_keccak:
         return _build_static_artifacts(effective_address, workspace_prefix)
@@ -169,7 +170,7 @@ def _materialize_with_cross_process_cache(
     chain = os.getenv("PSAT_DEFAULT_CHAIN", "ethereum")
 
     def _builder() -> Mapping[str, Any]:
-        name, analysis, plan = _build_static_artifacts(effective_address, workspace_prefix)
+        name, analysis, plan, _predicate_trees = _build_static_artifacts(effective_address, workspace_prefix)
         return {"contract_name": name, "analysis": analysis, "tracking_plan": plan}
 
     try:
@@ -186,26 +187,26 @@ def _materialize_with_cross_process_cache(
         # own retry/terminal classification. If the failure was in the
         # DB layer (lock acquisition, schema absent), fall back so we
         # don't fail-stop the whole pipeline on a cache outage.
-        if _looks_like_builder_exception(exc):
+        if _is_builder_exception(exc):
             raise
         logger.warning("contract_materializations.materialize_or_wait failed, falling back: %s", exc)
         return _build_static_artifacts(effective_address, workspace_prefix)
 
     # ``hydrate_*`` transparently reads from blob storage when the row's
-    # ``*_blob_key`` is set (the new path) or falls back to inline JSONB
-    # (legacy rows pre-backfill, or rows written when storage was
-    # unconfigured). The blob path's ``json.loads`` already returns a
+    # ``*_blob_key`` is set or falls back to inline JSONB (rows written
+    # before blob storage was enabled, or when storage was unconfigured).
+    # The blob path's ``json.loads`` already returns a
     # fresh dict per call, but the inline path returns the SQLAlchemy
     # JSONB-cached dict, so the deepcopy is still required to avoid
     # downstream mutations leaking back into the ORM identity map.
     analysis = copy.deepcopy(cm.hydrate_analysis(row) or {})
     plan = copy.deepcopy(cm.hydrate_tracking_plan(row) or {})
     contract_name = row.contract_name or "Contract"
-    return contract_name, analysis, plan
+    return contract_name, analysis, plan, None
 
 
-def _looks_like_builder_exception(exc: BaseException) -> bool:
-    """Heuristic: did *exc* originate inside the materialization builder
+def _is_builder_exception(exc: BaseException) -> bool:
+    """Did *exc* originate inside the materialization builder
     rather than the DB cache layer?
 
     Builder exceptions are anything raised by ``fetch`` / ``scaffold`` /
@@ -243,8 +244,7 @@ def _materialize_contract_artifacts(
 
     # Resolve bytecode_keccak so the persistent contract_materializations
     # row is keyed on byte-exact code match: identical-bytecode contracts
-    # at different addresses (every OZ ERC1967Proxy, Gnosis Safe singleton,
-    # …) share one row.
+    # at different addresses share one row.
     bytecode_keccak: str | None = None
     try:
         from utils.rpc import get_code_with_keccak
@@ -260,7 +260,7 @@ def _materialize_contract_artifacts(
     # ``materialize_or_wait`` ensures concurrent same-bytecode requests
     # across processes only run the builder once; the loser blocks on the
     # lock and reads the result.
-    contract_name, analysis, plan = _materialize_with_cross_process_cache(
+    contract_name, analysis, plan, predicate_trees = _materialize_with_cross_process_cache(
         effective_address=effective_address,
         bytecode_keccak=bytecode_keccak,
         workspace_prefix=workspace_prefix,
@@ -282,6 +282,7 @@ def _materialize_contract_artifacts(
         "analysis": cast(dict, analysis),
         "tracking_plan": plan,
         "snapshot": snapshot,
+        "predicate_trees": predicate_trees,
         "effective_permissions": effective_permissions,
     }
 
@@ -389,10 +390,9 @@ def _nested_principals_for_details(resolved_type: str, details: dict[str, object
 def _safe_role_int(role: Any) -> int | None:
     """Coerce a role identifier to int, returning None for non-int shapes.
 
-    The v1 builder used ``int(role_grant["role"])`` which crashes on B.1's
-    role-name strings and Condition-mapping shapes. The recursive
-    resolver's role-principal accumulator stores ``set[int]`` and cannot
-    hold non-int role values; callers must skip those grants entirely.
+    Role-name strings and Condition-mapping shapes cannot be represented
+    in the recursive resolver's ``set[int]`` accumulator; callers must skip
+    those grants entirely.
     """
     try:
         return int(role)
@@ -487,6 +487,77 @@ def _role_principals_from_effective_permissions(effective_permissions: dict[str,
             }
         )
     return sorted(serialized, key=lambda item: str(item["address"]))
+
+
+def _mapping_writer_specs_from_predicate_trees(predicate_trees: Mapping[str, Any] | None) -> list[WriterEventSpec]:
+    if not isinstance(predicate_trees, Mapping):
+        return []
+    trees = predicate_trees.get("trees")
+    if not isinstance(trees, Mapping):
+        return []
+
+    specs: list[WriterEventSpec] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("op") != "LEAF":
+            for child in node.get("children") or []:
+                visit(child)
+            return
+
+        leaf = node.get("leaf")
+        if not isinstance(leaf, dict):
+            return
+        descriptor = leaf.get("set_descriptor")
+        if not isinstance(descriptor, dict):
+            return
+        storage_var = descriptor.get("storage_var")
+        for hint in descriptor.get("enumeration_hint") or []:
+            if not isinstance(hint, dict) or hint.get("direction") not in {"add", "remove"}:
+                continue
+            mapping_name = hint.get("mapping_name")
+            if not isinstance(mapping_name, str) or not mapping_name:
+                mapping_name = storage_var if isinstance(storage_var, str) else ""
+            if not mapping_name:
+                continue
+            event_signature = hint.get("event_signature")
+            event_name = hint.get("event_name")
+            key_position = hint.get("key_position")
+            if not isinstance(event_signature, str) or not isinstance(event_name, str):
+                continue
+            if not isinstance(key_position, int):
+                continue
+            identity = (
+                mapping_name,
+                event_signature,
+                hint.get("direction"),
+                key_position,
+                hint.get("value_position"),
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            specs.append(
+                cast(
+                    WriterEventSpec,
+                    {
+                        "mapping_name": mapping_name,
+                        "event_signature": event_signature,
+                        "event_name": event_name,
+                        "key_position": key_position,
+                        "indexed_positions": list(hint.get("indexed_positions") or []),
+                        "direction": hint.get("direction"),
+                        "writer_function": hint.get("writer_function") or "",
+                        "value_position": hint.get("value_position"),
+                    },
+                )
+            )
+
+    for tree in trees.values():
+        visit(tree)
+    return specs
 
 
 def _maybe_queue_address(
@@ -712,13 +783,7 @@ def resolve_control_graph(
             effective_permissions = artifacts.get("effective_permissions")
             subject = analysis.get("subject", {})
             contract_name = str(subject.get("name", address))
-            # Carry `method_to_role` onto the graph node so the policy stage can resolve authority method names without
-            # keyword heuristics.
-            access_control_block = analysis.get("access_control") or {}
-            method_to_role = access_control_block.get("method_to_role") or {}
             node_details: dict[str, object] = {"address": address}
-            if method_to_role:
-                node_details["method_to_role"] = dict(method_to_role)
             contract_node_id = _ensure_node(
                 nodes,
                 address=address,
@@ -732,9 +797,9 @@ def resolve_control_graph(
                 artifacts={"data_key": f"recursive:{address.lower()}"},
             )
 
-            # Replay mapping-allowlist writer events into principal nodes; bounded enumeration
-            # surfaces truncation via the `status` field.
-            mapping_specs = list(access_control_block.get("mapping_writer_events") or [])
+            # Replay semantic mapping-writer event hints into principal nodes;
+            # bounded enumeration surfaces truncation via the `status` field.
+            mapping_specs = _mapping_writer_specs_from_predicate_trees(artifacts.get("predicate_trees"))
             enumerated: list[Any] = []
             enumeration_status = "skipped"
             if mapping_specs:

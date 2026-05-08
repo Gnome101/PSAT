@@ -175,28 +175,3 @@ def _call_or_value(item, attr_name: str) -> list[Any]:
 def _node_contains_require_or_assert(node) -> bool:
     marker = getattr(node, "contains_require_or_assert", False)
     return bool(marker()) if callable(marker) else bool(marker)
-
-
-def _function_effects(function) -> list[str]:
-    effects = []
-    name = getattr(function, "name", "").lower()
-    written_state = [getattr(variable, "name", "") for variable in getattr(function, "state_variables_written", [])]
-    if "pause" in name:
-        effects.append("pause_state_change")
-    if "upgrade" in name:
-        effects.append("upgrade_control")
-    if "ownership" in name or any("owner" in variable.lower() for variable in written_state):
-        effects.append("ownership_change")
-    if "grant" in name or "revoke" in name or "role" in name:
-        effects.append("role_management")
-    if "mint" in name:
-        effects.append("mint_capability")
-    if "burn" in name:
-        effects.append("burn_capability")
-    if any(token in name for token in ("schedule", "queue", "execute", "cancel")):
-        effects.append("timelock_control")
-    if any(token in name for token in ("create", "deploy", "clone")):
-        effects.append("factory_deployment")
-    if not effects and written_state:
-        effects.extend(f"writes:{variable}" for variable in written_state if variable)
-    return _dedupe_strings(effects)

@@ -1,6 +1,6 @@
 """End-to-end tests for ``GET /api/contract/{address}/capabilities``.
 
-Read path for the schema-v2 cutover (#18). Read-only and not
+Semantic capability read path. Read-only and not
 admin-gated (idempotent, no side effects), so tests skip the
 ``require_admin_key`` override.
 """
@@ -60,7 +60,7 @@ def _seed_completed_job_with_artifact(db_session, *, address: str, predicate_tre
 
 def _equality_leaf_artifact(contract_name: str = "T") -> dict:
     return {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": contract_name,
         "trees": {
             "f()": {
@@ -105,19 +105,17 @@ def test_capabilities_returns_per_function_dict(api_client, db_session):
 def test_capabilities_returns_404_for_unknown_address(api_client, db_session):
     resp = api_client.get(f"/api/contract/0x{'ee' * 20}/capabilities")
     assert resp.status_code == 404
-    assert "No v2 capabilities" in resp.json()["detail"]
+    assert "No semantic capabilities" in resp.json()["detail"]
 
 
 @requires_postgres
-def test_capabilities_returns_404_for_legacy_pre_v2_contract(api_client, db_session):
-    """A completed Job without a predicate_trees artifact (legacy
-    pre-v2 analysis). The route returns 404 with the documented
-    fallback note so a UI knows to query the v1 endpoints."""
+def test_capabilities_returns_404_when_predicate_tree_artifact_is_missing(api_client, db_session):
+    """A completed Job without a predicate_trees artifact returns 404."""
     address = "0x" + uuid.uuid4().hex[:8] + "b2" * 16
     _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=None)
     resp = api_client.get(f"/api/contract/{address}/capabilities")
     assert resp.status_code == 404
-    assert "predates the schema-v2 emit" in resp.json()["detail"]
+    assert "predicate-tree artifact is missing" in resp.json()["detail"]
 
 
 @requires_postgres
@@ -129,7 +127,7 @@ def test_capabilities_empty_dict_for_unguarded_only_contract(api_client, db_sess
     _seed_completed_job_with_artifact(
         db_session,
         address=address,
-        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+        predicate_trees={"schema_version": "semantic", "contract_name": "T", "trees": {}},
     )
     resp = api_client.get(f"/api/contract/{address}/capabilities")
     assert resp.status_code == 200

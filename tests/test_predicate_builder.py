@@ -507,6 +507,110 @@ def test_modifier_with_external_bool_call(tmp_path):
     leaf = leaves[0]
     assert leaf["kind"] == "external_bool"
     assert leaf["authority_role"] == "delegated_authority"
+    descriptor = leaf.get("set_descriptor")
+    assert isinstance(descriptor, dict)
+    authority = descriptor.get("authority_contract")
+    assert isinstance(authority, dict)
+    address_source = authority.get("address_source")
+    assert isinstance(address_source, dict)
+    assert descriptor.get("kind") == "external_set"
+    assert address_source.get("state_variable_name") == "authority"
+    assert descriptor.get("callee_signature") == "canCall(address)"
+
+
+def test_external_bool_descriptor_is_not_name_based(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IAuthority {
+            function permitted(address who, bytes32 role) external view returns (bool);
+        }
+        contract C {
+            bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+            IAuthority public authority;
+            function f() external view {
+                require(authority.permitted(msg.sender, OPERATOR_ROLE));
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    assert tree is not None
+    leaves = _all_leaves(tree)
+    assert len(leaves) == 1
+    leaf = leaves[0]
+    assert leaf["kind"] == "external_bool"
+    assert leaf["authority_role"] == "delegated_authority"
+    descriptor = leaf.get("set_descriptor")
+    assert isinstance(descriptor, dict)
+    authority = descriptor.get("authority_contract")
+    assert isinstance(authority, dict)
+    address_source = authority.get("address_source")
+    assert isinstance(address_source, dict)
+    assert descriptor.get("kind") == "external_set"
+    assert address_source.get("state_variable_name") == "authority"
+    assert descriptor.get("callee_signature") == "permitted(address,bytes32)"
+    assert descriptor.get("callee_function") == "permitted"
+
+
+def test_bare_void_state_var_call_does_not_become_delegated_authority(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IGate {
+            function check(address who) external view;
+        }
+        contract C {
+            IGate public gate;
+            uint256 public x;
+            function f() external {
+                gate.check(msg.sender);
+                x = 1;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    assert build_predicate_tree(fn) is None
+
+
+def test_try_catch_external_bool_call_builds_delegated_authority(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IAuthority {
+            function canCall(address who) external view returns (bool);
+        }
+        contract C {
+            IAuthority public authority;
+            function f() external {
+                try authority.canCall(msg.sender) returns (bool ok) {
+                    require(ok);
+                } catch {
+                    revert("denied");
+                }
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    tree = build_predicate_tree(fn)
+    assert tree is not None
+    leaves = _all_leaves(tree)
+    leaf = next(
+        leaf
+        for leaf in leaves
+        if leaf.get("kind") == "external_bool" and leaf.get("authority_role") == "delegated_authority"
+    )
+    assert leaf["kind"] == "external_bool"
+    assert leaf["authority_role"] == "delegated_authority"
+    descriptor = leaf.get("set_descriptor")
+    assert isinstance(descriptor, dict)
+    assert descriptor.get("callee_signature") == "canCall(address)"
 
 
 def test_modifier_chained_yields_multiple_gates(tmp_path):
@@ -722,11 +826,11 @@ def test_parameter_indices_resolved_caller_side_through_modifier(tmp_path):
             // param index (0) is NOT the same as the function-side
             // index for 'admin' (1) — a regression where the
             // modifier's index leaks would show parameter_indices=[0].
-            function privileged(uint256 extra, address admin) external onlyAddr(admin) {}
+            function guarded(uint256 extra, address admin) external onlyAddr(admin) {}
         }
     """,
     )
-    fn = _function(sl, "privileged")
+    fn = _function(sl, "guarded")
     leaves = _all_leaves(build_predicate_tree(fn))
     assert leaves[0]["parameter_indices"] == [1]
     operand_param = next(o for o in leaves[0]["operands"] if o.get("source") == "parameter")
@@ -749,11 +853,11 @@ def test_parameter_indices_resolved_caller_side_through_helper(tmp_path):
             function _check(address allowed) internal view {
                 require(msg.sender == allowed);
             }
-            function privileged(uint256 extra, address admin) external onlyAddr(admin) {}
+            function guarded(uint256 extra, address admin) external onlyAddr(admin) {}
         }
     """,
     )
-    fn = _function(sl, "privileged")
+    fn = _function(sl, "guarded")
     leaves = _all_leaves(build_predicate_tree(fn))
     assert leaves[0]["parameter_indices"] == [1]
 

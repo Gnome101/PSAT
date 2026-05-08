@@ -1320,7 +1320,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1339,7 +1339,7 @@
         "node_id": 12,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1358,7 +1358,7 @@
         "node_id": 13,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1396,7 +1396,7 @@
         "node_id": 15,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1453,7 +1453,7 @@
         "node_id": 6,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1472,7 +1472,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1491,7 +1491,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1510,7 +1510,7 @@
         "node_id": 8,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1548,7 +1548,7 @@
         "node_id": 9,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1588,7 +1588,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node11:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1631,7 +1631,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node12:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1674,7 +1674,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node13:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1717,7 +1717,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node17:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1736,7 +1736,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1757,7 +1757,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node8:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1778,7 +1778,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node9:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1799,7 +1799,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_accrueInterest@12:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1820,7 +1820,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_accrueInterest@13:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1863,7 +1863,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_accrueInterest@15:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1928,7 +1928,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_accrueInterest@6:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1949,7 +1949,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_accrueInterest@7:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1970,7 +1970,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_accrueInterest@7:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1991,7 +1991,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_accrueInterest@8:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2034,7 +2034,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_accrueInterest@9:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2077,7 +2077,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_isHealthy@1:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2098,7 +2098,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_isHealthy@2:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2119,7 +2119,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_isHealthy@2:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2140,7 +2140,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_isHealthy@4:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2197,7 +2197,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2254,7 +2254,7 @@
         "node_id": 9,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2315,7 +2315,7 @@
         "node_id": 3,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2334,7 +2334,7 @@
         "node_id": 4,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2353,7 +2353,7 @@
         "node_id": 5,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2372,7 +2372,7 @@
         "node_id": 10,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2391,7 +2391,7 @@
         "node_id": 10,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2410,7 +2410,7 @@
         "node_id": 11,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2429,7 +2429,7 @@
         "node_id": 11,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2448,7 +2448,7 @@
         "node_id": 11,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2467,7 +2467,7 @@
         "node_id": 13,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2486,7 +2486,7 @@
         "node_id": 14,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2525,7 +2525,7 @@
         "node_id": 15,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2564,7 +2564,7 @@
         "node_id": 16,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2583,7 +2583,7 @@
         "node_id": 16,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2622,7 +2622,7 @@
         "node_id": 17,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2661,7 +2661,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2680,7 +2680,7 @@
         "node_id": 22,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2699,7 +2699,7 @@
         "node_id": 22,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2718,7 +2718,7 @@
         "node_id": 23,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2757,7 +2757,7 @@
         "node_id": 24,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2796,7 +2796,7 @@
         "node_id": 25,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2855,7 +2855,7 @@
         "node_id": 29,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2874,7 +2874,7 @@
         "node_id": 31,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2893,7 +2893,7 @@
         "node_id": 33,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2912,7 +2912,7 @@
         "node_id": 5,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2931,7 +2931,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2950,7 +2950,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2969,7 +2969,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -2988,7 +2988,7 @@
         "node_id": 9,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3007,7 +3007,7 @@
         "node_id": 12,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3026,7 +3026,7 @@
         "node_id": 13,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3065,7 +3065,7 @@
         "node_id": 15,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3124,7 +3124,7 @@
         "node_id": 6,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3143,7 +3143,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3162,7 +3162,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3181,7 +3181,7 @@
         "node_id": 8,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3220,7 +3220,7 @@
         "node_id": 9,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3259,7 +3259,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3278,7 +3278,7 @@
         "node_id": 2,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3297,7 +3297,7 @@
         "node_id": 2,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3316,7 +3316,7 @@
         "node_id": 10,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3355,7 +3355,7 @@
         "node_id": 11,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3394,7 +3394,7 @@
         "node_id": 12,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3413,7 +3413,7 @@
         "node_id": 12,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3452,7 +3452,7 @@
         "node_id": 15,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3471,7 +3471,7 @@
         "node_id": 17,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3490,7 +3490,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3509,7 +3509,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3528,7 +3528,7 @@
         "node_id": 8,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3547,7 +3547,7 @@
         "node_id": 12,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3566,7 +3566,7 @@
         "node_id": 13,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3605,7 +3605,7 @@
         "node_id": 15,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3664,7 +3664,7 @@
         "node_id": 6,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3683,7 +3683,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3702,7 +3702,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3721,7 +3721,7 @@
         "node_id": 8,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3760,7 +3760,7 @@
         "node_id": 9,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3862,7 +3862,7 @@
           "setFee(MarketParams,uint256):node1:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3904,7 +3904,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@12:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3925,7 +3925,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@13:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -3967,7 +3967,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@15:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4030,7 +4030,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@6:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4051,7 +4051,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@7:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4072,7 +4072,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@7:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4093,7 +4093,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@8:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4135,7 +4135,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@9:caller_equals_storage:state_variable:owner"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4237,7 +4237,7 @@
         "node_id": 11,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4276,7 +4276,7 @@
         "node_id": 12,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4315,7 +4315,7 @@
         "node_id": 15,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4334,7 +4334,7 @@
         "node_id": 17,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4353,7 +4353,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4372,7 +4372,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4391,7 +4391,7 @@
         "node_id": 8,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4410,7 +4410,7 @@
         "node_id": 12,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4429,7 +4429,7 @@
         "node_id": 13,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4468,7 +4468,7 @@
         "node_id": 15,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4527,7 +4527,7 @@
         "node_id": 6,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4546,7 +4546,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4565,7 +4565,7 @@
         "node_id": 7,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4584,7 +4584,7 @@
         "node_id": 8,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4623,7 +4623,7 @@
         "node_id": 9,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4662,7 +4662,7 @@
         "node_id": 10,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4681,7 +4681,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4700,7 +4700,7 @@
         "node_id": 5,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4738,7 +4738,7 @@
         "node_id": 8,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4781,7 +4781,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node12:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4824,7 +4824,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node13:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4867,7 +4867,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node16:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4886,7 +4886,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4907,7 +4907,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node8:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4928,7 +4928,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node9:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4949,7 +4949,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@12:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -4970,7 +4970,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@13:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5013,7 +5013,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@15:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5078,7 +5078,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@6:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5099,7 +5099,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@7:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5120,7 +5120,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@7:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5141,7 +5141,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@8:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5184,7 +5184,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@9:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5227,7 +5227,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node10:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5246,7 +5246,7 @@
         "node_id": 1,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5267,7 +5267,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node7:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5309,7 +5309,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_accrueInterest@12:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5330,7 +5330,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_accrueInterest@13:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5372,7 +5372,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_accrueInterest@15:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5435,7 +5435,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_accrueInterest@6:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5456,7 +5456,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_accrueInterest@7:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5477,7 +5477,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_accrueInterest@7:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5498,7 +5498,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_accrueInterest@8:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5540,7 +5540,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_accrueInterest@9:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5582,7 +5582,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_isHealthy@1:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5603,7 +5603,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_isHealthy@2:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5624,7 +5624,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_isHealthy@2:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5645,7 +5645,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_isHealthy@4:caller_in_mapping:mapping_membership:isAuthorized"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -5674,7 +5674,7 @@
       }
     ]
   },
-  "access_control": {
+  "semantic_control": {
     "pattern": "ownable",
     "owner_variables": [
       "owner"
@@ -5683,7 +5683,7 @@
       "owner"
     ],
     "role_definitions": [],
-    "privileged_functions": [
+    "semantic_functions": [
       {
         "contract": "Morpho",
         "function": "borrow(MarketParams,uint256,uint256,address,address)",
@@ -5729,7 +5729,7 @@
           "borrow(MarketParams,uint256,uint256,address,address):node_isHealthy@4:external_call:TMP_267.price"
         ],
         "effects": [
-          "privileged_external_call",
+          "arbitrary_external_call",
           "writes:market",
           "writes:position"
         ],
@@ -5872,7 +5872,7 @@
           "setFee(MarketParams,uint256):node_accrueInterest@9:state_write:market"
         ],
         "effects": [
-          "privileged_external_call",
+          "arbitrary_external_call",
           "writes:market"
         ],
         "effect_targets": [
@@ -5988,7 +5988,7 @@
           "withdraw(MarketParams,uint256,uint256,address,address):node_accrueInterest@9:state_write:market"
         ],
         "effects": [
-          "privileged_external_call",
+          "arbitrary_external_call",
           "writes:market",
           "writes:position"
         ],
@@ -6053,7 +6053,7 @@
           "withdrawCollateral(MarketParams,uint256,address,address):node_isHealthy@4:external_call:TMP_267.price"
         ],
         "effects": [
-          "privileged_external_call",
+          "arbitrary_external_call",
           "writes:position"
         ],
         "effect_targets": [
@@ -6246,6 +6246,5 @@
         "No deterministically associated post-deploy events were found for this controller state; rely on periodic RPC reads and reconciliation."
       ]
     }
-  ],
-  "policy_tracking": []
+  ]
 }

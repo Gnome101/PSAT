@@ -164,13 +164,13 @@ def _build_snapshot(session: Session, mc: MonitoredContract) -> dict[str, Any]:
         snap["control_model"] = summary.control_model
         snap["is_pausable"] = summary.is_pausable
 
-    # Privileged function names
+    # Effective function names
     fns = (
         session.execute(select(EffectiveFunction.function_name).where(EffectiveFunction.contract_id == contract.id))
         .scalars()
         .all()
     )
-    snap["privileged_functions"] = sorted(fns)
+    snap["effective_functions"] = sorted(fns)
 
     # Owner value
     owner_cv = (
@@ -244,8 +244,8 @@ def build_reanalysis_diff(session: Session, job: Job) -> list[str]:
         if old_model and summary.control_model and old_model != summary.control_model:
             changes.append(f"Control model: {old_model} → {summary.control_model}")
 
-    # Privileged functions diff
-    old_fns = set(snapshot.get("privileged_functions", []))
+    # Effective functions diff
+    old_fns = set(snapshot.get("effective_functions", []))
     new_fns_rows = (
         session.execute(select(EffectiveFunction.function_name).where(EffectiveFunction.contract_id == contract.id))
         .scalars()

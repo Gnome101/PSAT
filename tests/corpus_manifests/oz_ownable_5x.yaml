@@ -14,7 +14,7 @@ description: |
 
   This is the pattern @openzeppelin/contracts ships in 5.0+ and is
   what protocols like EtherFi, Lido, and most modern DeFi adopt
-  unless they're on the older AccessControl path. Locking down this
+  unless they're on the older role-mapping path. Locking down this
   manifest validates:
 
     1. RevertDetector classifies the if-revert with a custom error

@@ -1150,7 +1150,7 @@ class TestSnapshotAndDiff:
                 "chain": "ethereum",
                 "reanalysis_trigger": "upgraded",
                 "reanalysis_snapshot": {
-                    "privileged_functions": ["transfer", "approve"],
+                    "effective_functions": ["transfer", "approve"],
                 },
             },
         )

@@ -1,13 +1,9 @@
-"""Pin the v2 enrichment of ``GET /api/analyses/{run_name}``.
+"""Pin semantic enrichment of ``GET /api/analyses/{run_name}``.
 
-The endpoint stays v1-shaped for existing consumers; adds two
-keys when a v2 artifact exists:
+The endpoint adds two keys when a predicate-tree artifact exists:
 
-  - ``predicate_trees`` — raw v2 trees-by-function dict
-  - ``v2_capabilities`` — resolved CapabilityExpr per function
-
-Existing v1 consumers ignore both. v2-aware consumers can adopt
-either incrementally during the cutover.
+  - ``predicate_trees`` — raw trees-by-function dict
+  - ``semantic_capabilities`` — resolved CapabilityExpr per function
 """
 
 from __future__ import annotations
@@ -59,9 +55,9 @@ def _seed_completed_job(db_session, *, address: str):
     return job
 
 
-def _v2_artifact() -> dict:
+def _semantic_artifact() -> dict:
     return {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "f()": {
@@ -85,23 +81,23 @@ def _v2_artifact() -> dict:
 
 
 @requires_postgres
-def test_endpoint_includes_v2_keys_when_artifact_present(api_client, db_session):
+def test_endpoint_includes_semantic_keys_when_artifact_present(api_client, db_session):
     from db.queue import store_artifact
 
     address = "0x" + uuid.uuid4().hex[:8] + "11" * 16
     job = _seed_completed_job(db_session, address=address)
-    store_artifact(db_session, job.id, "predicate_trees", data=_v2_artifact())
+    store_artifact(db_session, job.id, "predicate_trees", data=_semantic_artifact())
     db_session.commit()
 
     resp = api_client.get(f"/api/analyses/{address}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    # Both v2 enrichment keys present.
+    # Both semantic enrichment keys present.
     assert "predicate_trees" in body
-    assert body["predicate_trees"]["schema_version"] == "v2"
-    assert "v2_capabilities" in body
-    assert "f()" in body["v2_capabilities"]
-    cap = body["v2_capabilities"]["f()"]
+    assert body["predicate_trees"]["schema_version"] == "semantic"
+    assert "semantic_capabilities" in body
+    assert "f()" in body["semantic_capabilities"]
+    cap = body["semantic_capabilities"]["f()"]
     assert "kind" in cap
     assert "confidence" in cap
     # available_artifacts surface lists the artifact name too.
@@ -109,9 +105,8 @@ def test_endpoint_includes_v2_keys_when_artifact_present(api_client, db_session)
 
 
 @requires_postgres
-def test_endpoint_omits_v2_keys_when_artifact_missing(api_client, db_session):
-    """Legacy pre-v2 contract: no predicate_trees stored. Existing
-    response shape stays exactly v1 — no v2 keys appear."""
+def test_endpoint_omits_semantic_keys_when_artifact_missing(api_client, db_session):
+    """No predicate_trees stored means no semantic enrichment keys appear."""
     address = "0x" + uuid.uuid4().hex[:8] + "22" * 16
     _seed_completed_job(db_session, address=address)
     db_session.commit()
@@ -120,21 +115,21 @@ def test_endpoint_omits_v2_keys_when_artifact_missing(api_client, db_session):
     assert resp.status_code == 200
     body = resp.json()
     assert "predicate_trees" not in body
-    assert "v2_capabilities" not in body
+    assert "semantic_capabilities" not in body
     # available_artifacts doesn't list it either.
     assert "predicate_trees" not in body["available_artifacts"]
 
 
 @requires_postgres
 def test_endpoint_includes_predicate_trees_even_when_resolver_fails(api_client, db_session, monkeypatch):
-    """A v2 resolution failure must not break the endpoint. The
+    """A semantic resolution failure must not break the endpoint. The
     raw ``predicate_trees`` artifact stays inlined; only the
-    resolved ``v2_capabilities`` is dropped."""
+    resolved ``semantic_capabilities`` is dropped."""
     from db.queue import store_artifact
 
     address = "0x" + uuid.uuid4().hex[:8] + "33" * 16
     job = _seed_completed_job(db_session, address=address)
-    store_artifact(db_session, job.id, "predicate_trees", data=_v2_artifact())
+    store_artifact(db_session, job.id, "predicate_trees", data=_semantic_artifact())
     db_session.commit()
 
     # Force the resolver import to raise.
@@ -151,13 +146,13 @@ def test_endpoint_includes_predicate_trees_even_when_resolver_fails(api_client, 
     # Raw trees still present.
     assert "predicate_trees" in body
     # Resolved capabilities dropped because resolution exploded.
-    assert "v2_capabilities" not in body
+    assert "semantic_capabilities" not in body
 
 
 @requires_postgres
 def test_endpoint_handles_unguarded_only_contract_with_empty_caps(api_client, db_session):
     """Contract with only public functions: predicate_trees has
-    trees={}. v2_capabilities resolves to {} — both keys present
+    trees={}. semantic_capabilities resolves to {} — both keys present
     but empty, signaling 'analyzed, every function public'."""
     from db.queue import store_artifact
 
@@ -167,7 +162,7 @@ def test_endpoint_handles_unguarded_only_contract_with_empty_caps(api_client, db
         db_session,
         job.id,
         "predicate_trees",
-        data={"schema_version": "v2", "contract_name": "T", "trees": {}},
+        data={"schema_version": "semantic", "contract_name": "T", "trees": {}},
     )
     db_session.commit()
 
@@ -175,4 +170,4 @@ def test_endpoint_handles_unguarded_only_contract_with_empty_caps(api_client, db
     assert resp.status_code == 200
     body = resp.json()
     assert body["predicate_trees"]["trees"] == {}
-    assert body["v2_capabilities"] == {}
+    assert body["semantic_capabilities"] == {}

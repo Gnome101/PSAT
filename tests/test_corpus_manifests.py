@@ -5,11 +5,11 @@ For every ``tests/corpus_manifests/*.yaml`` file:
   1. Compile the Solidity declared inline (or referenced via
      ``source_path:``) against Slither.
   2. Run ``build_predicate_artifacts`` on the named subject contract.
-  3. Assert each function in ``expected_functions`` matches the v2
+  3. Assert each function in ``expected_functions`` matches the semantic
      output's leaf fields (authority_role / kind / operator /
      confidence / unsupported_reason / references_msg_sender /
      parameter_indices).
-  4. Assert every function in ``unguarded`` is absent from the v2
+  4. Assert every function in ``unguarded`` is absent from the semantic
      trees dict (resolver convention: absent = publicly callable).
 
 Manifests live alongside this harness so #18's go/no-go gate has
@@ -73,15 +73,17 @@ def test_corpus_manifest(manifest_path: Path, tmp_path: Path):
     # Guarded functions must have a tree with at least one leaf
     # matching the expected fields.
     for fn, expectations in expected_functions.items():
-        assert fn in trees, f"manifest expected {fn} to be guarded; v2 trees dict has {sorted(trees.keys())}"
+        assert fn in trees, f"manifest expected {fn} to be guarded; semantic trees dict has {sorted(trees.keys())}"
         leaves = list(_walk_leaves(trees[fn]))
-        assert leaves, f"v2 tree for {fn} has no leaves"
+        assert leaves, f"semantic tree for {fn} has no leaves"
         match_index = _find_matching_leaf(leaves, expectations)
         assert match_index is not None, _format_no_match(fn, leaves, expectations)
 
     # Unguarded functions must NOT appear (absent = public).
     for fn in unguarded:
-        assert fn not in trees, f"manifest expected {fn} to be unguarded but v2 produced a tree: {trees[fn]}"
+        assert fn not in trees, (
+            f"manifest expected {fn} to be unguarded but semantic pipeline produced a tree: {trees[fn]}"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Membership-probe service for the v2 predicate pipeline.
+"""Membership-probe service for semantic predicate trees.
 
 Given a serialized PredicateTree, a leaf index, and a candidate
 member address, returns a structured answer to "is this address in
@@ -15,7 +15,7 @@ Three answers ``probe_membership`` returns:
     external_check_only / signature_witness shapes).
 
 The shape of "unknown" matters: it tells the caller whether to fall
-back to an out-of-band probe (RPC ``hasRole``, EIP-1271
+back to an out-of-band probe (RPC authority check, EIP-1271
 ``isValidSignature``) or accept the ambiguity. The membership
 quality + confidence on the CapabilityExpr drive the trit.
 
@@ -41,7 +41,7 @@ def probe_membership(
     ctx: EvaluationContext,
 ) -> dict[str, Any]:
     """Return ``{"result": "yes"|"no"|"unknown", ...}`` for the
-    leaf at ``predicate_index`` in the v2 ``tree``."""
+    leaf at ``predicate_index`` in the predicate tree."""
     leaves = list(_walk_leaves(tree))
     if not 0 <= predicate_index < len(leaves):
         return {
@@ -209,7 +209,7 @@ def _resolve_in_capability(cap: CapabilityExpr, member: str) -> dict[str, Any]:
 
     if cap.kind == "external_check_only":
         # The adapter can't enumerate; the caller needs to invoke
-        # the probe interface (e.g. canCall / isValidSignature) at
+        # the probe interface (e.g. authority check / isValidSignature) at
         # the chain level. Surface the probe descriptor so the
         # caller can do that.
         check = cap.check

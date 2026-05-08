@@ -1,4 +1,4 @@
-"""Heuristic guardrail for the WARNING-degraded-with-record_degraded contract.
+"""Static guardrail for the WARNING-degraded-with-record_degraded contract.
 
 The level contract in ``utils/logging.py`` says: any worker emitting
 ``logger.warning`` (or ``logger.exception``) inside a swallowed-exception
@@ -44,27 +44,12 @@ PIPELINE_WORKERS: tuple[str, ...] = (
 # prefer adding record_degraded to silence the test.
 ALLOW_LIST: dict[str, dict[int, str]] = {
     "workers/policy_worker.py": {
-        # v2 capability resolver failure (Wave 3 B.1): the policy stage
-        # falls back to compatibility inputs — no degraded contract because
-        # the artifact builder still emits a complete payload (just
-        # without v2 columns).
-        144: "v2 capability resolver failure; compatibility inputs still produce a complete payload.",
         # Reanalysis-completion notifier: the reanalysis itself completed
         # before the notifier ran, so its failure is a side-effect that
         # doesn't change the job's stage output. record_degraded would
         # mislead callers of /api/jobs/{id}/errors into thinking the
         # reanalysis was degraded.
-        478: "Notifier side-effect; reanalysis already completed before this fired.",
-    },
-    "workers/static_worker.py": {
-        # v2 predicate_trees artifact store failure during the static
-        # stage. The v1 path is independent and already wrote its own
-        # artifacts; surfacing this as degraded would mislead operators
-        # into thinking the v1 contract analysis was incomplete.
-        1498: "v2 predicate_trees artifact store failure; v1 contract_analysis path unaffected.",
-        # v2 effects artifact store failure — same independence
-        # rationale as the predicate_trees case above.
-        1506: "v2 effects artifact store failure; v1 contract_analysis path unaffected.",
+        536: "Notifier side-effect; reanalysis already completed before this fired.",
     },
 }
 

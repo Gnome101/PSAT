@@ -20,9 +20,9 @@ from .predicate_artifacts import (
 from .reentrancy_pause import PauseInfo
 from .shared import _load_json, _select_subject_contract
 from .summaries import (
+    _build_semantic_control_summary,
     _build_tracking_hints,
     _derive_static_risk_level,
-    _detect_access_control,
     _detect_contract_classification,
     _detect_pausability,
     _detect_timelock,
@@ -30,7 +30,7 @@ from .summaries import (
     _determine_control_model,
     _summarize_slither,
 )
-from .tracking import build_controller_tracking, build_policy_tracking
+from .tracking import build_controller_tracking
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,8 @@ def _slither_target(project_dir: Path, meta: dict) -> str:
 
 def analyze_contract(project_dir: Path) -> Path:
     """Generate contract_analysis.json + predicate_trees.json + effects.json
-    for a scaffolded project. Schema-v2 cutover (Wave 4 A.6/B.2): the v1
-    ``permission_graph`` field and the ``semantic_guards.json`` artifact
-    are gone — predicate_trees + effects are the source of truth."""
+    for a scaffolded project. ``predicate_trees`` + ``effects`` are the
+    semantic source of truth."""
     analysis, predicate_trees, effects = collect_contract_analysis_with_artifacts(project_dir)
     output_path = project_dir / "contract_analysis.json"
     output_path.write_text(json.dumps(analysis, indent=2) + "\n")
@@ -119,7 +118,7 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
     Most callers (tests, resolution.recursive) only need the analysis
     dict. The static worker uses
     :func:`collect_contract_analysis_with_artifacts` to also receive
-    the v2 ``predicate_trees`` and ``effects`` artifacts so it can
+    the semantic ``predicate_trees`` and ``effects`` artifacts so it can
     persist them off a single Slither parse.
     """
     analysis, _trees, _effects = collect_contract_analysis_with_artifacts(project_dir)
@@ -129,7 +128,7 @@ def collect_contract_analysis(project_dir: Path) -> ContractAnalysis:
 def collect_contract_analysis_with_artifacts(
     project_dir: Path,
 ) -> tuple[ContractAnalysis, dict[str, Any] | None, Mapping[str, Any] | None]:
-    """Collect the analysis dict + v2 predicate_trees + v2 effects in
+    """Collect the analysis dict plus semantic predicate/effect artifacts in
     a single pass. Returns ``(analysis, predicate_trees, effects)``.
 
     Vyper projects flow through the same Slither path as Solidity.
@@ -143,16 +142,15 @@ def collect_contract_analysis_with_artifacts(
     if subject_contract is None:
         raise RuntimeError(f"No analyzable contracts found in {project_dir}")
 
-    # Schema-v2 (Wave 4): predicate_trees + effects are the only
-    # source of truth for the static stage's controller-tracking /
-    # access-control / pausability outputs.
-    v2_predicate_trees: dict[str, Any]
+    # Predicate trees + effects are the only source of truth for the static
+    # stage's controller-tracking / semantic-control / pausability outputs.
+    predicate_trees_artifact: dict[str, Any]
     pause_info: PauseInfo
     try:
-        v2_predicate_trees, pause_info = build_predicate_artifacts_with_pause_info(subject_contract)
+        predicate_trees_artifact, pause_info = build_predicate_artifacts_with_pause_info(subject_contract)
     except Exception as exc:
-        logger.exception("v2 predicate_trees emit failed for %s", project_dir)
-        v2_predicate_trees = {"schema_version": "v2", "error": str(exc)}
+        logger.exception("semantic predicate_trees emit failed for %s", project_dir)
+        predicate_trees_artifact = {"schema_version": "semantic", "error": str(exc)}
         pause_info = {
             "pause_state_vars": [],
             "pause_toggle_functions": [],
@@ -160,31 +158,30 @@ def collect_contract_analysis_with_artifacts(
             "reentrancy_guarded_functions": [],
         }
 
-    v2_effects: EffectsArtifact | dict[str, Any]
+    effects_artifact: EffectsArtifact | dict[str, Any]
     try:
-        v2_effects = build_effects(subject_contract)
+        effects_artifact = build_effects(subject_contract)
     except Exception as exc:
-        logger.exception("v2 effects emit failed for %s", project_dir)
-        v2_effects = {"schema_version": "v2", "error": str(exc)}
+        logger.exception("semantic effects emit failed for %s", project_dir)
+        effects_artifact = {"schema_version": "semantic", "error": str(exc)}
 
-    classification = _detect_contract_classification(subject_contract, project_dir)
-    access_control = _detect_access_control(
+    classification = _detect_contract_classification(subject_contract, project_dir, effects_artifact)
+    semantic_control = _build_semantic_control_summary(
         subject_contract,
         project_dir,
-        v2_predicate_trees,
-        v2_effects,
+        predicate_trees_artifact,
+        effects_artifact,
     )
     controller_tracking = build_controller_tracking(
         subject_contract,
         project_dir,
-        v2_predicate_trees,
-        v2_effects,
-        access_control,
+        predicate_trees_artifact,
+        effects_artifact,
+        semantic_control,
     )
-    policy_tracking = build_policy_tracking(subject_contract, project_dir, v2_effects)
-    upgradeability = _detect_upgradeability(subject_contract, project_dir)
+    upgradeability = _detect_upgradeability(subject_contract, project_dir, effects_artifact)
     pausability = _detect_pausability(subject_contract, project_dir, pause_info)
-    timelock = _detect_timelock(subject_contract, project_dir, access_control["role_definitions"])
+    timelock = _detect_timelock(subject_contract, project_dir, semantic_control["role_definitions"])
     slither_summary = _summarize_slither(slither_output)
     audit_alignment: AuditAlignment = {
         "status": "not_checked",
@@ -193,7 +190,7 @@ def collect_contract_analysis_with_artifacts(
     }
 
     summary: Summary = {
-        "control_model": _determine_control_model(subject_contract, access_control, timelock),
+        "control_model": _determine_control_model(subject_contract, semantic_control, timelock),
         "is_upgradeable": upgradeability["is_upgradeable"],
         "is_pausable": pausability["is_pausable"],
         "has_timelock": timelock["has_timelock"],
@@ -218,14 +215,13 @@ def collect_contract_analysis_with_artifacts(
         },
         "summary": summary,
         "contract_classification": classification,
-        "access_control": access_control,
+        "semantic_control": semantic_control,
         "upgradeability": upgradeability,
         "pausability": pausability,
         "timelock": timelock,
         "audit_alignment": audit_alignment,
         "slither": slither_summary,
-        "tracking_hints": _build_tracking_hints(access_control, upgradeability, pausability, timelock),
+        "tracking_hints": _build_tracking_hints(semantic_control, upgradeability, pausability, timelock),
         "controller_tracking": controller_tracking,
-        "policy_tracking": policy_tracking,
     }
-    return analysis, v2_predicate_trees, v2_effects
+    return analysis, predicate_trees_artifact, effects_artifact

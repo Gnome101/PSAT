@@ -193,38 +193,37 @@ def _classify_writers(
     all_trees: dict[str, PredicateTree],
 ) -> str:
     """Returns one of:
-    - "promote_self_admin"  — at least one external_keyed writer is
-      itself gated by reading the same storage var (rule b.ii). Tight
-      self-admin ACL shape; downstream confidence is HIGH.
-    - "promote"  — at least one external_keyed writer is gated by
-      some other authority leaf (rule b.i). Confidence is MEDIUM
-      because the auth signal is transitive.
+    - "promote_self_admin"  — every external_keyed writer is gated by
+      reading the same storage var (rule b.ii). Tight self-admin ACL
+      shape; downstream confidence is HIGH.
+    - "promote"  — every external_keyed writer is gated, with at least
+      one writer gated by some other authority leaf (rule b.i).
+      Confidence is MEDIUM because the auth signal is transitive.
     - "keep_business" — rule a (all self-keyed) or rule c (open
       registration)
     """
-    write_kinds: list[str] = []  # per writer
-    has_external_keyed_self_admin = False
-    has_external_keyed_other_auth = False
+    write_kinds: list[str] = []  # per write site
+    external_writer_gates: list[str] = []
     for fn in writers:
         kinds = _classify_writer_keys(fn, storage_var)
         write_kinds.extend(kinds)
         if "external_keyed" in kinds:
             gating = _writer_gating_kind(fn, storage_var, all_trees)
-            if gating == "self_admin":
-                has_external_keyed_self_admin = True
-            elif gating == "other_auth":
-                has_external_keyed_other_auth = True
+            if gating is None:
+                return "keep_business"
+            external_writer_gates.append(gating)
 
     # Rule a: ALL self_keyed → business.
     if write_kinds and all(k == "self_keyed" for k in write_kinds):
         return "keep_business"
 
-    if has_external_keyed_self_admin:
-        return "promote_self_admin"
-    if has_external_keyed_other_auth:
-        return "promote"
+    if not external_writer_gates:
+        return "keep_business"
 
-    return "keep_business"
+    if all(gating == "self_admin" for gating in external_writer_gates):
+        return "promote_self_admin"
+
+    return "promote"
 
 
 def _classify_writer_keys(fn: Any, storage_var: str) -> list[str]:

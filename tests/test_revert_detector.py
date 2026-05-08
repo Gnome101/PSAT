@@ -343,6 +343,28 @@ def test_try_catch_with_require_in_catch_also_emits_gate(tmp_path):
     assert any(g.kind == "opaque" and g.unsupported_reason == "opaque_try_catch" for g in gates)
 
 
+def test_bare_void_state_var_call_is_not_a_revert_gate(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IGate {
+            function check(address who) external view;
+        }
+        contract C {
+            IGate public gate;
+            uint256 public x;
+            function f() external {
+                gate.check(msg.sender);
+                x = 1;
+            }
+        }
+    """,
+    )
+    fn = _function(sl, "f")
+    assert RevertDetector(fn).run() == []
+
+
 # ---------------------------------------------------------------------------
 # Bug 1: try/catch wrapping a single external authority-check call should not
 # collapse to opaque(opaque_try_catch). Recognising the shape (one

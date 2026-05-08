@@ -67,12 +67,12 @@ class TestAnalysisPhaseSuccess:
             "subject": {"name": "TestContract"},
             "summary": {"control_model": "ownable"},
         }
-        v2_predicate_trees = {"schema_version": "v2", "trees": {}}
-        v2_effects = {"schema_version": "v2", "functions": {}}
+        predicate_trees = {"schema_version": "semantic", "trees": {}}
+        effects = {"schema_version": "semantic", "functions": {}}
 
         monkeypatch.setattr(
             "workers.static_worker.collect_contract_analysis_with_artifacts",
-            lambda project_dir: (analysis_data, v2_predicate_trees, v2_effects),
+            lambda project_dir: (analysis_data, predicate_trees, effects),
         )
         calls = _capture_store_artifact(monkeypatch)
 
@@ -82,8 +82,8 @@ class TestAnalysisPhaseSuccess:
         names = [call["name"] for call in calls]
         assert names == ["contract_analysis", "predicate_trees", "effects"]
         assert calls[0]["data"] == analysis_data
-        assert calls[1]["data"] == v2_predicate_trees
-        assert calls[2]["data"] == v2_effects
+        assert calls[1]["data"] == predicate_trees
+        assert calls[2]["data"] == effects
 
     def test_stores_predicate_trees_and_effects_side_artifacts(self, monkeypatch, tmp_path):
         worker = StaticWorker()
@@ -97,14 +97,14 @@ class TestAnalysisPhaseSuccess:
             "subject": {"name": "TestContract"},
             "summary": {"control_model": "ownable"},
         }
-        v2_predicate_trees = {"schema_version": "v2", "trees": {}}
-        v2_effects = {"schema_version": "v2", "functions": {}}
+        predicate_trees = {"schema_version": "semantic", "trees": {}}
+        effects = {"schema_version": "semantic", "functions": {}}
         analysis_path = tmp_path / "contract_analysis.json"
         analysis_path.write_text(json.dumps(analysis_data))
 
         monkeypatch.setattr(
             "workers.static_worker.collect_contract_analysis_with_artifacts",
-            lambda project_dir: (analysis_data, v2_predicate_trees, v2_effects),
+            lambda project_dir: (analysis_data, predicate_trees, effects),
         )
         calls = _capture_store_artifact(monkeypatch)
 

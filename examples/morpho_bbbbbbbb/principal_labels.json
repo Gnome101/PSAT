@@ -137,7 +137,7 @@
         "controller_value",
         "morpho_direct_owner",
         "morpho_owner",
-        "morpho_permissioned",
+        "morpho_controlled",
         "owner_controller",
         "safe",
         "safe_multisig"

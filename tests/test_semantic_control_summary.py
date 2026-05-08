@@ -1,15 +1,14 @@
-"""Wave 3 Track 2 A.3: ``_detect_access_control`` v2-only signal.
+"""Wave 3 Track 2 A.3: ``_build_semantic_control_summary`` semantic signal.
 
 Validates the structural inclusion rule: a function is in
-``privileged_functions`` iff EITHER:
+``semantic_functions`` iff EITHER:
   * its predicate tree has a leaf with
     ``authority_role IN {caller_authority, delegated_authority}``, OR
   * its effects record carries a sensitive sink (state_write,
     external_call, delegatecall, contract_creation, selfdestruct).
 
-Tree-keys-as-privileged is the v1 rule that over-included pause /
-reentrancy / time / business side-condition trees. This test pins
-the new rule in place.
+Tree-keys-as-included used to over-include pause / reentrancy / time /
+business side-condition trees. This test pins the structural rule in place.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from services.static.contract_analysis_pipeline.predicate_artifacts import (  # 
     build_predicate_artifacts,
 )
 from services.static.contract_analysis_pipeline.summaries import (  # noqa: E402
-    _detect_access_control,
+    _build_semantic_control_summary,
 )
 
 
@@ -46,12 +45,12 @@ def _detect(tmp_path, source, contract_name="C"):
     contract = _compile(tmp_path, source, contract_name)
     predicate_trees = build_predicate_artifacts(contract)
     effects = build_effects(contract)
-    return _detect_access_control(contract, tmp_path, predicate_trees, effects)
+    return _build_semantic_control_summary(contract, tmp_path, predicate_trees, effects)
 
 
 def test_caller_authority_leaf_admits_function(tmp_path):
     """Direct ``msg.sender == owner`` gate → caller_authority leaf →
-    privileged."""
+    included."""
     source = """
     pragma solidity ^0.8.19;
     contract C {
@@ -65,13 +64,13 @@ def test_caller_authority_leaf_admits_function(tmp_path):
     }
     """
     ac = _detect(tmp_path, source)
-    privileged_signatures = {pf["function"] for pf in ac["privileged_functions"]}
-    assert "setValue(uint256)" in privileged_signatures
+    semantic_signatures = {pf["function"] for pf in ac["semantic_functions"]}
+    assert "setValue(uint256)" in semantic_signatures
 
 
 def test_sensitive_sink_admits_unguarded_function(tmp_path):
     """An unguarded external_call / state_write counts as a sensitive
-    sink — the function is still privileged so consumers can find
+    sink — the function is still included so consumers can find
     it."""
     source = """
     pragma solidity ^0.8.19;
@@ -83,15 +82,14 @@ def test_sensitive_sink_admits_unguarded_function(tmp_path):
     }
     """
     ac = _detect(tmp_path, source)
-    privileged_signatures = {pf["function"] for pf in ac["privileged_functions"]}
-    assert "publicSetOwner(address)" in privileged_signatures
+    semantic_signatures = {pf["function"] for pf in ac["semantic_functions"]}
+    assert "publicSetOwner(address)" in semantic_signatures
 
 
 def test_pause_only_tree_does_not_admit_function(tmp_path):
     """A function whose only tree-leaf is a pause check should NOT be
-    in privileged_functions if it has no sensitive sink. Pause-only
-    is a side-condition; it doesn't make a function privileged in the
-    caller-authority sense."""
+    in semantic_functions if it has no sensitive sink. Pause-only
+    is a side-condition; it doesn't make a function caller-authorized."""
     source = """
     pragma solidity ^0.8.19;
     contract C {
@@ -114,11 +112,11 @@ def test_pause_only_tree_does_not_admit_function(tmp_path):
     }
     """
     ac = _detect(tmp_path, source)
-    privileged_signatures = {pf["function"] for pf in ac["privileged_functions"]}
-    # ``pause()`` is privileged (caller_authority + state_write).
-    assert "pause()" in privileged_signatures
+    semantic_signatures = {pf["function"] for pf in ac["semantic_functions"]}
+    # ``pause()`` has caller_authority + state_write.
+    assert "pause()" in semantic_signatures
     # ``readOnly()`` has only a pause leaf and no sensitive sink.
-    assert "readOnly()" not in privileged_signatures
+    assert "readOnly()" not in semantic_signatures
 
 
 def test_role_definitions_from_predicate_role_keys(tmp_path):
@@ -151,7 +149,7 @@ def test_role_definitions_from_predicate_role_keys(tmp_path):
 
 def test_delegated_authority_leaf_admits_function(tmp_path):
     """Cross-contract ``hasRole`` gate → delegated_authority leaf →
-    privileged."""
+    included."""
     source = """
     pragma solidity ^0.8.19;
     interface IRoleRegistry {
@@ -169,5 +167,5 @@ def test_delegated_authority_leaf_admits_function(tmp_path):
     }
     """
     ac = _detect(tmp_path, source)
-    privileged_signatures = {pf["function"] for pf in ac["privileged_functions"]}
-    assert "pauseContract()" in privileged_signatures
+    semantic_signatures = {pf["function"] for pf in ac["semantic_functions"]}
+    assert "pauseContract()" in semantic_signatures

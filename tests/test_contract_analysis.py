@@ -9,8 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from schemas.contract_analysis import (
     ContractAnalysis,
     ControllerTrackingTarget,
-    PolicyTrackingTarget,
-    PrivilegedFunction,
+    SemanticFunctionSummary,
 )
 from services.static import collect_contract_analysis
 
@@ -64,11 +63,11 @@ def _fixture_index() -> list[dict]:
     return json.loads(FIXTURE_INDEX_PATH.read_text())["fixtures"]
 
 
-def _privileged_function(analysis: ContractAnalysis, signature: str) -> PrivilegedFunction:
-    for function in analysis["access_control"]["privileged_functions"]:
+def _semantic_function(analysis: ContractAnalysis, signature: str) -> SemanticFunctionSummary:
+    for function in analysis["semantic_control"]["semantic_functions"]:
         if function["function"] == signature:
             return function
-    raise AssertionError(f"Privileged function {signature} not found")
+    raise AssertionError(f"Semantic function {signature} not found")
 
 
 def _tracked_controller(analysis: ContractAnalysis, label: str) -> ControllerTrackingTarget:
@@ -76,13 +75,6 @@ def _tracked_controller(analysis: ContractAnalysis, label: str) -> ControllerTra
         if controller["label"] == label:
             return controller
     raise AssertionError(f"Tracked controller {label} not found")
-
-
-def _tracked_policy(analysis: ContractAnalysis, label: str) -> PolicyTrackingTarget:
-    for policy in analysis["policy_tracking"]:
-        if policy["label"] == label:
-            return policy
-    raise AssertionError(f"Tracked policy {label} not found")
 
 
 def test_fixture_index_covers_all_solidity_contract_fixtures():
@@ -99,9 +91,9 @@ def test_fixture_index_covers_all_solidity_contract_fixtures():
         assert (FIXTURES_DIR / entry["path"]).exists()
 
 
-def test_collect_contract_analysis_with_artifacts_returns_v2_artifacts(tmp_path):
-    """Schema-v2 (Wave 4 A.6): the worker-facing entrypoint
-    ``collect_contract_analysis_with_artifacts`` returns the v2
+def test_collect_contract_analysis_with_artifacts_returns_semantic_artifacts(tmp_path):
+    """The worker-facing entrypoint
+    ``collect_contract_analysis_with_artifacts`` returns the semantic
     ``predicate_trees`` and ``effects`` artifacts alongside the
     analysis dict, off a single Slither parse."""
     from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
@@ -116,16 +108,16 @@ def test_collect_contract_analysis_with_artifacts_returns_v2_artifacts(tmp_path)
 
     assert analysis["schema_version"] == "0.1"
     assert predicate_trees is not None
-    assert predicate_trees.get("schema_version") == "v2"
+    assert predicate_trees.get("schema_version") == "semantic"
     # Successful emit produces a `trees` dict; an error path would
     # set `error` instead.
     assert "trees" in predicate_trees or "error" in predicate_trees
     assert effects is not None
-    assert effects.get("schema_version") == "v2"
+    assert effects.get("schema_version") == "semantic"
     assert "functions" in effects or "error" in effects
 
 
-def test_collect_contract_analysis_detects_upgradeability_timelock_and_factory(tmp_path):
+def test_collect_contract_analysis_uses_semantic_factory_without_upgrade_timelock_name_guessing(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "UpgradeFactory",
@@ -135,17 +127,16 @@ def test_collect_contract_analysis_detects_upgradeability_timelock_and_factory(t
 
     analysis = collect_contract_analysis(project_dir)
 
-    assert analysis["summary"]["is_upgradeable"] is True
-    assert analysis["upgradeability"]["pattern"] == "uups"
-    assert analysis["timelock"]["has_timelock"] is True
-    assert analysis["timelock"]["pattern"] == "custom"
+    assert analysis["summary"]["is_upgradeable"] is False
+    assert analysis["upgradeability"]["pattern"] == "none"
+    assert analysis["timelock"]["has_timelock"] is False
+    assert analysis["timelock"]["pattern"] == "none"
     assert analysis["contract_classification"]["is_factory"] is True
     assert "createChild()" in analysis["contract_classification"]["factory_functions"]
-    assert "eip1967.proxy.implementation" in analysis["upgradeability"]["implementation_slots"]
-    create_child = _privileged_function(analysis, "createChild()")
-    # Schema-v2 cutover: sink_ids come from the v2 effects artifact and end with
-    # ``:<kind>:<target>``; the inner segment (idx) replaces the v1 graph's
-    # node-id segment. guard_kinds is no longer populated (deleted in A.6).
+    assert analysis["upgradeability"]["implementation_slots"] == []
+    create_child = _semantic_function(analysis, "createChild()")
+    # sink_ids come from the semantic effects artifact and end with
+    # ``:<kind>:<target>``; the inner segment is the per-function sink index.
     assert any(sink_id.endswith(":contract_creation:Child") for sink_id in create_child["sink_ids"])
     assert "owner" in create_child["controller_refs"]
 
@@ -165,44 +156,6 @@ def test_collect_contract_analysis_detects_erc721_as_nft(tmp_path):
     assert analysis["summary"]["is_nft"] is True
 
 
-def test_collect_contract_analysis_builds_can_call_policy_tracking(tmp_path):
-    project_dir = _write_project(
-        tmp_path,
-        "RolesAuthorityPolicy",
-        _fixture_source("tracking/roles_authority_policy.sol"),
-        slither_output={"results": {"detectors": []}},
-    )
-
-    analysis = collect_contract_analysis(project_dir)
-    policy = _tracked_policy(analysis, "canCall policy")
-
-    assert policy["policy_function"] == "canCall(address,address,bytes4)"
-    assert policy["tracked_state_targets"] == [
-        "getRolesWithCapability",
-        "getUserRoles",
-        "isCapabilityPublic",
-    ]
-    assert {item["function"] for item in policy["writer_functions"]} == {
-        "setPublicCapability(address,bytes4,bool)",
-        "setRoleCapability(uint8,address,bytes4,bool)",
-        "setUserRole(address,uint8,bool)",
-    }
-    assert {item["name"] for item in policy["associated_events"]} == {
-        "PublicCapabilityUpdated",
-        "RoleCapabilityUpdated",
-        "UserRoleUpdated",
-    }
-
-    role_capability = next(item for item in policy["associated_events"] if item["name"] == "RoleCapabilityUpdated")
-    assert role_capability["signature"] == "RoleCapabilityUpdated(uint8,address,bytes4,bool)"
-    assert role_capability["inputs"] == [
-        {"name": "role", "type": "uint8", "indexed": True},
-        {"name": "target", "type": "address", "indexed": True},
-        {"name": "functionSig", "type": "bytes4", "indexed": True},
-        {"name": "enabled", "type": "bool", "indexed": False},
-    ]
-
-
 def test_state_write_in_internal_helper_surfaces_on_caller(tmp_path):
     project_dir = _write_project(
         tmp_path,
@@ -212,9 +165,9 @@ def test_state_write_in_internal_helper_surfaces_on_caller(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "pause()")
-    assert "owner" in privileged["controller_refs"]
-    assert any(sink_id.endswith(":state_write:paused") for sink_id in privileged["sink_ids"])
+    semantic = _semantic_function(analysis, "pause()")
+    assert "owner" in semantic["controller_refs"]
+    assert any(sink_id.endswith(":state_write:paused") for sink_id in semantic["sink_ids"])
 
 
 def test_contract_creation_sink_classified(tmp_path):
@@ -226,13 +179,13 @@ def test_contract_creation_sink_classified(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "createChild()")
-    assert privileged["effect_labels"] == ["contract_deployment"]
-    assert privileged["action_summary"] == "Deploys a new contract instance."
+    semantic = _semantic_function(analysis, "createChild()")
+    assert semantic["effect_labels"] == ["contract_deployment"]
+    assert semantic["action_summary"] == "Deploys a new contract instance."
 
 
 @pytest.mark.parametrize(
-    ("contract_name", "fixture_name", "signature", "target", "sink_kind", "effect"),
+    ("contract_name", "fixture_name", "signature", "target", "sink_kind"),
     [
         (
             "ExternalCallControl",
@@ -240,7 +193,6 @@ def test_contract_creation_sink_classified(tmp_path):
             "pingTarget(uint256)",
             "target.ping",
             "external_call",
-            "privileged_external_call",
         ),
         (
             "DelegateCallControl",
@@ -248,7 +200,6 @@ def test_contract_creation_sink_classified(tmp_path):
             "execute(bytes)",
             "implementation",
             "delegatecall",
-            "delegatecall_control",
         ),
         (
             "SelfDestructControl",
@@ -256,12 +207,11 @@ def test_contract_creation_sink_classified(tmp_path):
             "destroy()",
             "selfdestruct",
             "selfdestruct",
-            "selfdestruct_capability",
         ),
     ],
 )
-def test_additional_permissioned_sink_kinds_surface_on_privileged(
-    tmp_path, contract_name, fixture_name, signature, target, sink_kind, effect
+def test_additional_semantic_sink_kinds_surface_on_semantic_summary(
+    tmp_path, contract_name, fixture_name, signature, target, sink_kind
 ):
     project_dir = _write_project(
         tmp_path,
@@ -271,9 +221,9 @@ def test_additional_permissioned_sink_kinds_surface_on_privileged(
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, signature)
-    assert any(sink_id.endswith(f":{sink_kind}:{target}") for sink_id in privileged["sink_ids"])
-    assert "owner" in privileged["controller_refs"]
+    semantic = _semantic_function(analysis, signature)
+    assert any(sink_id.endswith(f":{sink_kind}:{target}") for sink_id in semantic["sink_ids"])
+    assert "owner" in semantic["controller_refs"]
 
 
 def test_external_call_in_internal_helper_surfaces_on_caller(tmp_path):
@@ -285,9 +235,9 @@ def test_external_call_in_internal_helper_surfaces_on_caller(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "pingTarget(uint256)")
-    assert "owner" in privileged["controller_refs"]
-    assert any(sink_id.endswith(":external_call:target.ping") for sink_id in privileged["sink_ids"])
+    semantic = _semantic_function(analysis, "pingTarget(uint256)")
+    assert "owner" in semantic["controller_refs"]
+    assert any(sink_id.endswith(":external_call:target.ping") for sink_id in semantic["sink_ids"])
 
 
 def test_modifier_helper_auth_structure_recovered(tmp_path):
@@ -301,11 +251,11 @@ def test_modifier_helper_auth_structure_recovered(tmp_path):
     analysis = collect_contract_analysis(project_dir)
 
     for signature in ("setHook(address)", "manage(PingTarget,uint256)", "transferOwnership(address)"):
-        privileged = _privileged_function(analysis, signature)
-        assert {"owner", "authority"}.issubset(set(privileged["controller_refs"]))
+        semantic = _semantic_function(analysis, signature)
+        assert {"owner", "authority"}.issubset(set(semantic["controller_refs"]))
 
-    privileged_signatures = {item["function"] for item in analysis["access_control"]["privileged_functions"]}
-    assert not any(sig.startswith("constructor(") for sig in privileged_signatures)
+    semantic_signatures = {item["function"] for item in analysis["semantic_control"]["semantic_functions"]}
+    assert not any(sig.startswith("constructor(") for sig in semantic_signatures)
 
     owner_tracking = _tracked_controller(analysis, "owner")
     assert owner_tracking["tracking_mode"] == "event_plus_state"
@@ -337,27 +287,26 @@ def test_modifier_helper_auth_structure_recovered(tmp_path):
     ]
     assert {writer["function"] for writer in authority_tracking["writer_functions"]} == {"setAuthority(AuthorityLike)"}
 
-    manage = _privileged_function(analysis, "manage(PingTarget,uint256)")
+    manage = _semantic_function(analysis, "manage(PingTarget,uint256)")
     assert manage["effect_labels"] == ["external_contract_call"]
-    # Schema-v2 cutover: effect_targets includes both body and
-    # modifier-level external_call sinks now (the v2 effects walker
-    # doesn't differentiate). ``target.ping`` is the body sink;
-    # ``auth.canCall`` comes from the modifier ``isAuthorized`` body.
+    # Semantic effects include both body and modifier-level external_call
+    # sinks. ``target.ping`` is the body sink; ``auth.canCall`` comes from
+    # the modifier ``isAuthorized`` body.
     assert "target.ping" in manage["effect_targets"]
     assert manage["action_summary"] == "Calls an external contract from the contract context."
 
-    set_hook = _privileged_function(analysis, "setHook(address)")
+    set_hook = _semantic_function(analysis, "setHook(address)")
     assert set_hook["effect_labels"] == ["hook_update"]
     # See manage() — modifier sinks now appear alongside body sinks.
     assert "hook" in set_hook["effect_targets"]
     assert set_hook["action_summary"] == "Updates hook configuration that can affect later contract behavior."
 
-    transfer_ownership = _privileged_function(analysis, "transferOwnership(address)")
+    transfer_ownership = _semantic_function(analysis, "transferOwnership(address)")
     assert transfer_ownership["effect_labels"] == ["ownership_transfer"]
     assert transfer_ownership["action_summary"] == "Transfers contract ownership."
 
 
-def test_privileged_function_semantics_detect_pause_and_asset_flow(tmp_path):
+def test_semantic_function_semantics_detect_pause_and_asset_flow(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "Token",
@@ -366,7 +315,7 @@ def test_privileged_function_semantics_detect_pause_and_asset_flow(tmp_path):
 
     analysis = collect_contract_analysis(project_dir)
 
-    pause = _privileged_function(analysis, "pause()")
+    pause = _semantic_function(analysis, "pause()")
     assert "pause_toggle" in pause["effect_labels"]
     assert pause["action_summary"] == "Changes the contract pause state."
 
@@ -422,14 +371,14 @@ def test_non_authority_external_calls_with_caller_args_not_classified_as_authori
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "manage(PingTarget,uint256)")
+    semantic = _semantic_function(analysis, "manage(PingTarget,uint256)")
 
-    assert "owner" in privileged["controller_refs"]
-    assert "token" not in privileged["controller_refs"]
-    assert "external_authority_check" not in privileged["guard_kinds"]
+    assert "owner" in semantic["controller_refs"]
+    assert "token" not in semantic["controller_refs"]
+    assert "external_authority_check" not in semantic["guard_kinds"]
 
 
-def test_effect_target_role_registry_upgrader_preserves_controller_ref(tmp_path):
+def test_void_role_registry_upgrader_is_not_a_controller_ref(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "RoleRegistryUpgradeTarget",
@@ -458,12 +407,13 @@ def test_effect_target_role_registry_upgrader_preserves_controller_ref(tmp_path)
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "upgradeTo(address)")
+    semantic = _semantic_function(analysis, "upgradeTo(address)")
 
-    assert "roleRegistry" in privileged["controller_refs"]
+    assert "roleRegistry" not in semantic["controller_refs"]
+    assert "delegatecall_execution" in semantic["effect_labels"]
 
 
-def test_external_has_role_constant_without_authish_name_is_tracked_as_role_identifier(tmp_path):
+def test_external_role_getter_name_is_not_tracked_as_role_identifier(tmp_path):
     project_dir = _write_project(
         tmp_path,
         "OpaqueRolePause",
@@ -493,21 +443,14 @@ def test_external_has_role_constant_without_authish_name_is_tracked_as_role_iden
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "pauseContract()")
+    semantic = _semantic_function(analysis, "pauseContract()")
 
-    # The robust behavior we want is to preserve the exact role identifier,
-    # even when the constant name doesn't look auth-ish. Schema-v2 cutover:
-    # ``guards`` no longer populated; controller_refs surfaces the role.
-    assert "BREAK_GLASS" in privileged["controller_refs"]
+    assert "roleRegistry" in semantic["controller_refs"]
+    assert "BREAK_GLASS" not in semantic["controller_refs"]
 
-    tracked = _tracked_controller(analysis, "BREAK_GLASS")
-    assert tracked["controller_id"] == "role_identifier:BREAK_GLASS"
-    assert tracked["kind"] == "role_identifier"
-    assert tracked["read_spec"] == {
-        "strategy": "getter_call",
-        "target": "BREAK_GLASS",
-        "contract_source": "roleRegistry",
-    }
+    tracked_ids = {target["controller_id"] for target in analysis["controller_tracking"]}
+    assert "external_contract:roleRegistry" in tracked_ids
+    assert "role_identifier:BREAK_GLASS" not in tracked_ids
 
 
 def test_modifier_helper_preserves_opaque_role_identifier(tmp_path):
@@ -548,10 +491,10 @@ def test_modifier_helper_preserves_opaque_role_identifier(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "pause()")
+    semantic = _semantic_function(analysis, "pause()")
 
-    # Schema-v2 cutover: ``guards`` no longer populated.
-    assert "BREAK_GLASS" in privileged["controller_refs"]
+    # ``guards`` is no longer populated by the semantic summary.
+    assert "BREAK_GLASS" in semantic["controller_refs"]
 
     tracked = _tracked_controller(analysis, "BREAK_GLASS")
     assert tracked["controller_id"] == "role_identifier:BREAK_GLASS"
@@ -600,8 +543,9 @@ def test_opaque_external_void_helper_guard_would_need_semantic_execution(tmp_pat
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "pause()")
-    assert "gate" in privileged["controller_refs"]
+    semantic = _semantic_function(analysis, "pause()")
+    assert "gate" not in semantic["controller_refs"]
+    assert "external_contract_call" in semantic["effect_labels"]
 
 
 def test_opaque_external_role_helper_would_need_semantic_execution(tmp_path):
@@ -647,8 +591,9 @@ def test_opaque_external_role_helper_would_need_semantic_execution(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "pause()")
-    assert "auth" in privileged["controller_refs"]
+    semantic = _semantic_function(analysis, "pause()")
+    assert "auth" not in semantic["controller_refs"]
+    assert "external_contract_call" in semantic["effect_labels"]
 
 
 def test_opaque_external_policy_helper_would_need_semantic_execution(tmp_path):
@@ -695,5 +640,6 @@ def test_opaque_external_policy_helper_would_need_semantic_execution(tmp_path):
     )
 
     analysis = collect_contract_analysis(project_dir)
-    privileged = _privileged_function(analysis, "execute()")
-    assert "policy" in privileged["controller_refs"]
+    semantic = _semantic_function(analysis, "execute()")
+    assert "policy" not in semantic["controller_refs"]
+    assert "external_contract_call" in semantic["effect_labels"]

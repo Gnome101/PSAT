@@ -1,6 +1,6 @@
 """Adversarial effect label tests — simulating a malicious developer.
 
-Names are randomized so the heuristic can't rely on naming conventions.
+Names are randomized so detection can't rely on naming conventions.
 These test whether the detection works based on *what the code does*
 (AST structure, data flow, IR) rather than *what things are called*.
 """
@@ -20,7 +20,7 @@ from services.static.contract_analysis_pipeline.predicate_artifacts import (
     build_predicate_artifacts,
 )
 from services.static.contract_analysis_pipeline.shared import _select_subject_contract
-from services.static.contract_analysis_pipeline.summaries import _detect_access_control
+from services.static.contract_analysis_pipeline.summaries import _build_semantic_control_summary
 
 
 def _rand(n: int = 8) -> str:
@@ -37,16 +37,15 @@ def _scaffold_and_analyze(solidity_source: str, contract_name: str = "Target") -
         subject = _select_subject_contract(slither, contract_name)
         if subject is None:
             raise RuntimeError(f"Contract {contract_name} not found")
-        # Schema-v2 cutover: _detect_access_control reads predicate_trees
-        # + effects.
+        # _build_semantic_control_summary reads predicate_trees + effects.
         predicate_trees = build_predicate_artifacts(subject)
         effects = build_effects(subject)
-        ac = _detect_access_control(subject, project_dir, predicate_trees, effects)
-        return {"access_control": ac, "effects": effects}
+        semantic_control = _build_semantic_control_summary(subject, project_dir, predicate_trees, effects)
+        return {"semantic_control": semantic_control, "effects": effects}
 
 
 def _get_function_labels(analysis: dict, function_name: str) -> set[str]:
-    for pf in analysis.get("access_control", {}).get("privileged_functions", []):
+    for pf in analysis.get("semantic_control", {}).get("semantic_functions", []):
         if pf.get("function", "").split("(")[0] == function_name:
             return set(pf.get("effect_labels", []))
     return set()
@@ -185,7 +184,7 @@ contract Target {{
 # =========================================================================
 # 5. Randomized function name for cross-contract mint
 #    Calls token.mint() but the calling function has a random name.
-#    Our fix checks effect_targets for .mint — this should still work.
+#    The label comes from the called selector, not the caller name.
 # =========================================================================
 
 
@@ -210,7 +209,7 @@ contract Target {{
 # =========================================================================
 # 6. Cross-contract mint with randomized interface method name
 #    The external function is NOT called "mint" — it's called something random.
-#    This should fail because we only match .mint() in effect_targets.
+#    The label comes from the observed totalSupply delta around the call.
 # =========================================================================
 
 
@@ -301,8 +300,8 @@ contract Target {{
 
 # =========================================================================
 # 9. Ownership transfer with randomized variable name
-#    The "owner" variable has a random name, so the target-name heuristic misses it.
-#    But Slither should still detect the ownership pattern via the modifier.
+#    The "owner" variable has a random name; detection should still find
+#    the ownership pattern via the modifier.
 # =========================================================================
 
 

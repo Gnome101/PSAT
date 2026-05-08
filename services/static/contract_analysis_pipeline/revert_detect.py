@@ -27,8 +27,7 @@ Per the v4 plan (round-2 finding #8 on edge-case soundness), we cover:
      predicate builder turns this into a ``kind="unsupported",
      reason="opaque_control_flow"`` leaf.
 
-Cases 1-4 reuse the structural primitives from caller_sinks.py
-(``_node_is_revert_gate``, ``_ir_is_revert``); cases 5-7 are added
+Cases 1-4 use shared structural revert primitives; cases 5-7 are added
 here. Case 8 is detected by checking whether the function has any
 InlineAssemblyOperation IR that we couldn't resolve — at which point
 we mark the function as needing review.
@@ -65,15 +64,6 @@ RevertKind = Literal[
     "if_revert",
     "inline_asm",
     "try_catch_revert",
-    # ``state_var.fn(msg.sender, ...)`` HighLevelCall whose callee returns
-    # void. The callee reverts internally on auth failure (OZ AccessManaged's
-    # ``_checkAccess``, EtherFi's ``roleRegistry.onlyProtocolUpgrader``,
-    # any ``onlyXxx``-pattern enforcement helper). The local function has
-    # no Condition IR — slither sees a bare call — but the function reverts
-    # iff the callee reverts, so we record a gate with the call IR as
-    # condition_value and let the predicate builder lift it into an
-    # external_bool leaf with a cross-contract authority descriptor.
-    "external_authority_call",
     "opaque",
 ]
 
@@ -118,8 +108,8 @@ class RevertGate:
 
 
 # ---------------------------------------------------------------------------
-# Primitive predicates — adapted from caller_sinks.py but exposed as
-# building blocks the predicate builder can call directly.
+# Primitive predicates exposed as building blocks the predicate builder
+# can call directly.
 # ---------------------------------------------------------------------------
 
 
@@ -214,8 +204,8 @@ class RevertDetector:
         # internal-call IRs are both traversed via the in-body scan
         # (the recursion handles both uniformly), so the call_chain
         # captures modifier parameter bindings naturally — needed
-        # for full caller-side ParameterBindingEnv on chains like
-        # ``grantRole → onlyRole(getRoleAdmin(role)) → _checkRole(role)``.
+        # for full caller-side ParameterBindingEnv when a public entrypoint
+        # routes through nested helper guards with dynamic parameters.
         for node in self.function.nodes:
             self._scan_node(node, container=self.function)
         # Case 8: opaque-Yul fallback.
@@ -245,9 +235,8 @@ class RevertDetector:
 
         # Case 6: try/catch with revert in the catch block. The
         # function reverts iff the try-body call reverts. When the
-        # try-body has a SINGLE HighLevelCall (the typical OZ
-        # AccessManaged / EtherFi RoleRegistry "try authority.canCall(...)
-        # catch revert" shape), we record it as ``try_catch_revert``
+        # try-body has a SINGLE HighLevelCall, we record it as
+        # ``try_catch_revert``
         # with the call IR preserved so the predicate builder can lift
         # the call's selector + target into an external_check_only leaf.
         # When the try-body has zero or multiple HighLevelCalls, we fall
@@ -286,45 +275,9 @@ class RevertDetector:
                 )
                 return
 
-        # New gate kind: bare void-call to a state-variable contract that
-        # may revert based on auth (e.g. ``roleRegistry.onlyProtocolUpgrader(
-        # msg.sender)``). The callee returns void, takes msg.sender as an
-        # arg, and reverts internally on failure. From the local function's
-        # perspective there's no Condition IR, but the function reverts iff
-        # the callee reverts — record a gate with the call IR so the
-        # predicate builder can produce an external_bool leaf pointing at
-        # the callee.
-        for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
-            if not isinstance(ir, HighLevelCall):
-                continue
-            if getattr(ir, "lvalue", None) is not None:
-                continue  # has a return value → handled elsewhere when consumed
-            if not self._high_level_call_is_authority_shape(ir):
-                continue
-            callee_name = (
-                getattr(getattr(ir, "function", None), "name", None)
-                or getattr(ir, "function_name", None)
-                or "<unknown>"
-            )
-            self._gates.append(
-                RevertGate(
-                    kind="external_authority_call",
-                    condition_value=ir,
-                    polarity="allowed_when_true",
-                    node=node,
-                    containing_function=container,
-                    call_chain=list(self._call_chain_irs),
-                    expression_text=f"{callee_name}(msg.sender)",
-                    basis=[f"void external authority call {callee_name}(msg.sender)"],
-                    unsupported_reason=None,
-                )
-            )
-
         # Cross-function revert detection: recurse into InternalCall /
-        # LibraryCall callees. The OZ AccessControl ``onlyRole`` modifier
-        # body is just ``_checkRole(role); _;`` — the actual revert
-        # lives inside ``_checkRole``. RevertDetector follows the call
-        # to find gates the modifier doesn't directly contain.
+        # LibraryCall callees to find gates the modifier doesn't directly
+        # contain.
         for ir in getattr(node, "irs_ssa", None) or getattr(node, "irs", []) or []:
             if isinstance(ir, (InternalCall, LibraryCall)):
                 callee = getattr(ir, "function", None)
@@ -445,63 +398,29 @@ class RevertDetector:
         # revert`, so true is the bad branch).
         return "allowed_when_false"
 
-    def _high_level_call_is_authority_shape(self, ir: Any) -> bool:
-        """Recognise ``state_var.fn(msg.sender, ...)`` HighLevelCalls
-        whose callee returns void.
-
-        Two structural conditions:
-          * The destination (the contract being called) is a state
-            variable on ``self``. State variables identify cross-contract
-            call targets that the resolver can later trace back to a
-            concrete address via ``controller_values`` / ``state_var_values``.
-          * At least one argument traces to ``msg.sender``. This is what
-            makes the call an authority check rather than a side effect
-            (``token.transfer(to, amt)`` shouldn't be a gate).
-
-        Returns False when either condition fails so we don't over-emit
-        gates. Conservative — false negatives (missing gates) leave the
-        function under-classified rather than mis-classifying business
-        side effects as auth gates.
-        """
-        # Destination must be a state variable. Slither's StateIRVariable
-        # is the SSA wrapper around a Solidity state var; older / mocked
-        # IRs may use the flat ``StateVariable``. We accept both.
-        destination = getattr(ir, "destination", None)
-        dest_class = type(destination).__name__ if destination is not None else ""
-        if "StateIRVariable" not in dest_class and "StateVariable" not in dest_class:
-            return False
-        # At least one argument must trace to msg.sender. The arg is a
-        # SlithIR Variable; ``str(value).startswith('msg.sender')`` is
-        # the direct shape, ``ReferenceVariable`` wrapping a member
-        # access also matches via str repr. SSA renaming preserves the
-        # ``msg.sender`` token.
-        for arg in getattr(ir, "arguments", ()) or ():
-            arg_repr = str(arg) if arg is not None else ""
-            if "msg.sender" in arg_repr:
-                return True
-        return False
-
     def _try_node_primary_call(self, try_node: Any) -> Any | None:
         """Return the HighLevelCall IR whose return value drives the TRY's
         body, or None when the call's return is unused (the
         ``try h.helper() {} catch { revert }`` shape — opaque, no signal).
 
-        The OZ AccessManaged / RoleRegistry pattern
-        (``try authority.canCall(...) returns (bool ok) { require(ok); } catch { revert; }``)
-        is structurally a single HighLevelCall whose lvalue is consumed
-        downstream — the success arm references the returned value. We
-        proxy "return is consumed" with "lvalue is not None"; an external
-        call returning ``void`` cannot be reasoned about by the predicate
-        builder anyway. When there are multiple calls or none return a
-        value, we leave the gate opaque."""
+        A try/catch authority check is structurally a single bool-returning
+        HighLevelCall. Calls returning ``void`` or non-bool values cannot be
+        lifted into an authority predicate by shape alone. When there are
+        multiple candidate calls, we leave the gate opaque."""
         calls = [
             ir
             for ir in (getattr(try_node, "irs_ssa", None) or getattr(try_node, "irs", []) or [])
-            if isinstance(ir, HighLevelCall) and getattr(ir, "lvalue", None) is not None
+            if isinstance(ir, HighLevelCall) and self._call_lvalue_is_bool(ir)
         ]
         if len(calls) == 1:
             return calls[0]
         return None
+
+    def _call_lvalue_is_bool(self, ir: Any) -> bool:
+        lvalue = getattr(ir, "lvalue", None)
+        if lvalue is None:
+            return False
+        return str(getattr(lvalue, "type", "") or "") == "bool"
 
     def _try_catch_has_revert(self, try_node: Any) -> bool:
         """Walk descendants reachable from a TRY node through CATCH

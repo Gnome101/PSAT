@@ -278,10 +278,10 @@ contract TestTimelock {
 }
 """
 
-ACCESS_CONTROL_SOURCE = """
+ROLE_CONTROL_SOURCE = """
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
-contract TestAccessControl {
+contract TestRoleControl {
     event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
     event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
 
@@ -419,7 +419,7 @@ def _register_contract(
             "watch_upgrades": contract_type == "proxy",
             "watch_ownership": True,
             "watch_pause": contract_type == "pausable",
-            "watch_roles": contract_type == "access_control",
+            "watch_roles": contract_type == "role_control",
             "watch_safe_signers": contract_type == "safe",
             "watch_timelock": contract_type == "timelock",
         }
@@ -559,15 +559,15 @@ def test_timelock_operations_detected(anvil_env, test_db):
 
 
 def test_role_changes_detected(anvil_env, test_db):
-    """Deploy AccessControl, grant/revoke, scan, assert 2 events."""
+    """Deploy a role-control contract, grant/revoke, scan, assert 2 events."""
     rpc_url, tmp_path = anvil_env
     from services.monitoring.unified_watcher import scan_for_events
 
-    addr = _compile_and_deploy(ACCESS_CONTROL_SOURCE, "TestAccessControl", [], rpc_url, PRIVATE_KEY, tmp_path)
+    addr = _compile_and_deploy(ROLE_CONTROL_SOURCE, "TestRoleControl", [], rpc_url, PRIVATE_KEY, tmp_path)
     current_block = int(_cast(["block-number"], rpc_url))
 
     _register_contract(
-        test_db, addr, "access_control", current_block, monitoring_config={"watch_roles": True, "watch_ownership": True}
+        test_db, addr, "role_control", current_block, monitoring_config={"watch_roles": True, "watch_ownership": True}
     )
 
     role = "0x" + "00" * 32  # DEFAULT_ADMIN_ROLE

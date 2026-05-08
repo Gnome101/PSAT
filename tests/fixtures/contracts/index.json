@@ -32,7 +32,7 @@
       "path": "pause/authority_pause.sol",
       "category": "pause",
       "contract_name": "AuthorityPause",
-      "description": "Pause is controlled by an external authority.canCall check.",
+      "description": "Pause is controlled by an external boolean authorization check.",
       "detection_patterns": ["external_authority", "pause_control"]
     },
     {
@@ -109,7 +109,7 @@
       "path": "composed/auth_modifier_controller.sol",
       "category": "composed",
       "contract_name": "AuthModifierController",
-      "description": "Inherited modifier-based auth expands into an internal helper with owner or authority.canCall authorization.",
+      "description": "Inherited modifier-based auth expands into an internal helper with owner or external boolean authorization.",
       "detection_patterns": ["modifier_auth", "internal_helper_auth", "external_authority", "owner_guard"]
     },
     {
@@ -117,28 +117,28 @@
       "category": "calls",
       "contract_name": "ExternalCallControl",
       "description": "An external contract call guarded by an owner check.",
-      "detection_patterns": ["external_call", "owner_guard", "permissioned_call"]
+      "detection_patterns": ["external_call", "owner_guard", "guarded_call"]
     },
     {
       "path": "calls/delegatecall_control.sol",
       "category": "calls",
       "contract_name": "DelegateCallControl",
       "description": "A delegatecall sink guarded by an owner check.",
-      "detection_patterns": ["delegatecall", "owner_guard", "permissioned_call"]
+      "detection_patterns": ["delegatecall", "owner_guard", "guarded_call"]
     },
     {
       "path": "calls/selfdestruct_control.sol",
       "category": "calls",
       "contract_name": "SelfDestructControl",
       "description": "A selfdestruct sink guarded by an owner check.",
-      "detection_patterns": ["selfdestruct", "owner_guard", "permissioned_call"]
+      "detection_patterns": ["selfdestruct", "owner_guard", "guarded_call"]
     },
     {
       "path": "calls/indirect_external_call_control.sol",
       "category": "calls",
       "contract_name": "IndirectExternalCallControl",
       "description": "An internal helper checks auth and performs the external call.",
-      "detection_patterns": ["interprocedural_sink", "external_call", "owner_guard", "permissioned_call"]
+      "detection_patterns": ["interprocedural_sink", "external_call", "owner_guard", "guarded_call"]
     },
     {
       "path": "tracking/owner_update_no_event.sol",
@@ -146,13 +146,6 @@
       "contract_name": "OwnerNoEvent",
       "description": "Controller state changes through a writer function without an associated event, requiring polling fallback.",
       "detection_patterns": ["controller_tracking", "state_only_tracking", "owner_guard"]
-    },
-    {
-      "path": "tracking/roles_authority_policy.sol",
-      "category": "tracking",
-      "contract_name": "RolesAuthorityPolicy",
-      "description": "RolesAuthority-style canCall policy writes emit deterministic capability and role update events.",
-      "detection_patterns": ["policy_tracking", "authority_policy", "canCall", "event_first_tracking"]
     }
   ]
 }

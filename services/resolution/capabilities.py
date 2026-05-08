@@ -1,6 +1,6 @@
 """CapabilityExpr — resolver-side authority-set algebra.
 
-The static stage produces a ``PredicateTree`` per privileged function;
+The static stage produces a ``PredicateTree`` per guarded function;
 the resolver evaluates the tree against on-chain state and emits a
 ``CapabilityExpr``. This module defines that type plus the closed,
 total combinators (intersect/union/negate) called by the evaluator.

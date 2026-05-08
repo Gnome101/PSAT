@@ -1,10 +1,10 @@
-"""Regression test: parametric guards land in privileged_functions but
+"""Regression test: parametric guards land in semantic_functions but
 resolve to no concrete principals — the EtherFiTimelock symptom.
 
 Original todo (#7 in /home/gnome2/asu/capstone/PSAT/todo.txt): the
 EtherFiTimelock's grantRole/revokeRole/renounceRole show as 'Unresolved'
-in the UI even though the contract is plainly access-controlled. The
-analyzer admits these functions to ``privileged_functions`` (we
+in the UI even though the contract is plainly role-controlled. The
+analyzer admits these functions to ``semantic_functions`` (we
 verified — see ``test_renamed_helpers_dispense_role_is_admitted``
 below). What it does NOT do is bind them to concrete principals, so
 ``effective_permissions`` emits an entry with empty
@@ -14,7 +14,7 @@ below). What it does NOT do is bind them to concrete principals, so
 This test pins three claims:
 
   1. Both OZ-style and renamed-helper variants admit to
-     privileged_functions. (Both pass today — confirms the admission
+     semantic_functions. (Both pass today — confirms the admission
      gate isn't actually the broken layer.)
   2. The Unguarded negative control does NOT admit. (Pin against
      overinclusive future fixes.)
@@ -119,9 +119,9 @@ def _write_project(tmp_path: Path, contract_name: str, source: str) -> Path:
     return project_dir
 
 
-def _privileged_signatures(analysis: Any) -> set[str]:
-    ac = analysis.get("access_control") or {}
-    return {fn["function"] for fn in (ac.get("privileged_functions") or [])}
+def _semantic_signatures(analysis: Any) -> set[str]:
+    ac = analysis.get("semantic_control") or {}
+    return {fn["function"] for fn in (ac.get("semantic_functions") or [])}
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ def _privileged_signatures(analysis: Any) -> set[str]:
 def test_oz_style_grant_role_admits(tmp_path: Path):
     project = _write_project(tmp_path, "OZStyle", OZ_SOURCE)
     analysis = collect_contract_analysis(project)
-    assert "grantRole(bytes32,address)" in _privileged_signatures(analysis)
+    assert "grantRole(bytes32,address)" in _semantic_signatures(analysis)
 
 
 def test_renamed_helpers_dispense_role_admits(tmp_path: Path):
@@ -144,22 +144,22 @@ def test_renamed_helpers_dispense_role_admits(tmp_path: Path):
     broken stage."""
     project = _write_project(tmp_path, "Renamed", RENAMED_SOURCE)
     analysis = collect_contract_analysis(project)
-    assert "dispenseRole(bytes32,address)" in _privileged_signatures(analysis)
+    assert "dispenseRole(bytes32,address)" in _semantic_signatures(analysis)
 
 
 def test_unguarded_grant_role_does_not_admit(tmp_path: Path):
-    """Schema-v2 cutover: the v2 inclusion rule is "caller/delegated
+    """Semantic inclusion is "caller/delegated
     authority leaf OR sensitive sink". An unguarded ``grantRole``
     writes mapping state → it IS admitted under the structural rule.
     The original "negative control" (no caller_authority leaf) is now
-    asserted on the predicate tree itself, not on privileged_functions.
+    asserted on the predicate tree itself, not on semantic_functions.
     """
     project = _write_project(tmp_path, "Unguarded", UNGUARDED_SOURCE)
     from services.static.contract_analysis_pipeline import collect_contract_analysis_with_artifacts
 
     _analysis, predicate_trees, _effects = collect_contract_analysis_with_artifacts(project)
-    v2_trees = ((predicate_trees or {}).get("trees")) or {}
-    tree = v2_trees.get("grantRole(bytes32,address)")
+    semantic_trees = ((predicate_trees or {}).get("trees")) or {}
+    tree = semantic_trees.get("grantRole(bytes32,address)")
 
     def _has_auth_leaf(node) -> bool:
         if not isinstance(node, dict):
@@ -179,13 +179,13 @@ def test_unguarded_grant_role_does_not_admit(tmp_path: Path):
 
 
 def _function_entry(analysis: Any, signature: str) -> dict | None:
-    """Pull the ``privileged_function`` entry. Resolution-stage output
+    """Pull the semantic function entry. Resolution-stage output
     layers (effective_permissions / function_principals) live in a
     later pipeline pass that this test deliberately skips — the empty
-    principal state is observable directly from the privileged_function
+    principal state is observable directly from the semantic function
     entry's controller_refs/guards/sinks before policy join."""
-    ac = analysis.get("access_control") or {}
-    for fn in ac.get("privileged_functions") or []:
+    ac = analysis.get("semantic_control") or {}
+    for fn in ac.get("semantic_functions") or []:
         if fn["function"] == signature:
             return dict(fn)
     return None
@@ -193,17 +193,14 @@ def _function_entry(analysis: Any, signature: str) -> dict | None:
 
 @pytest.mark.xfail(
     reason=(
-        "ROOT CAUSE: ``services/static/contract_analysis_pipeline/summaries.py:"
-        "_build_method_to_role_map`` only records concrete-role-constant "
-        "bindings. For parametric admin methods (grantRole/revokeRole "
-        "with role as a runtime arg), no concrete constant exists, so "
-        "the privileged_function entry comes back with an EMPTY "
+        "ROOT CAUSE: for parametric admin methods with role as a runtime arg, "
+        "no concrete constant exists, so the semantic function entry has an EMPTY "
         "controller_refs-resolves-to-principals chain. effective_permissions "
         "then emits direct_owner=None / authority_roles=[] / controllers=[], "
         "which the UI renders as 'Unresolved'. "
         "FIX: model the guard as a typed parametric predicate "
         "(kind='dynamic_role_admin', expression='getRoleAdmin(role_arg)') "
-        "in the privileged_function entry, then resolve the holder set "
+        "in the semantic function entry, then resolve the holder set "
         "either statically or through the semantic event/call evidence "
         "available for that descriptor. Remove this xfail when typed "
         "parametric guards land."
@@ -211,7 +208,7 @@ def _function_entry(analysis: Any, signature: str) -> dict | None:
     strict=True,
 )
 def test_renamed_dispense_role_emits_resolvable_principal_signal(tmp_path: Path):
-    """Beyond mere admission, the privileged_function entry must carry
+    """Beyond mere admission, the semantic function entry must carry
     enough typed signal that the policy stage downstream can compute a
     non-empty principal set (or explicitly mark it as 'parametric,
     holders TBD' instead of just 'Unresolved').

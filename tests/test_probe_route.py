@@ -105,7 +105,7 @@ def test_probe_membership_returns_yes_for_known_member(api_client, db_session):
     # layer (resolve address → job → artifact → tree → probe_membership)
     # plumbs through; we assert the payload shape.
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "f()": {
@@ -152,7 +152,7 @@ def test_probe_membership_returns_yes_for_known_member(api_client, db_session):
 
 @requires_postgres
 def test_probe_membership_unguarded_function_returns_yes(api_client, db_session):
-    """Resolver convention: a function absent from v2 trees is
+    """Resolver convention: a function absent from semantic trees is
     publicly callable. The probe surface translates that into
     ``yes`` with reason ``function_unguarded`` so a UI can render
     'anyone can call this'."""
@@ -160,7 +160,7 @@ def test_probe_membership_unguarded_function_returns_yes(api_client, db_session)
 
     _no_auth(api_module)
     address = "0x" + "cd" * 20
-    artifact = {"schema_version": "v2", "contract_name": "T", "trees": {}}
+    artifact = {"schema_version": "semantic", "contract_name": "T", "trees": {}}
     _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=artifact)
 
     resp = api_client.post(
@@ -196,9 +196,7 @@ def test_probe_membership_no_completed_job_returns_404(api_client, db_session):
 
 @requires_postgres
 def test_probe_membership_no_artifact_returns_404(api_client, db_session):
-    """A completed job without a predicate_trees artifact (legacy
-    pre-v2 analysis) returns 404 with a clear reason. The UI then
-    knows to surface 'this contract was analyzed before v2'."""
+    """A completed job without a predicate_trees artifact returns 404."""
     import api as api_module
 
     _no_auth(api_module)
@@ -218,8 +216,8 @@ def test_probe_membership_no_artifact_returns_404(api_client, db_session):
 
 
 @requires_postgres
-def test_probe_membership_v2_error_payload_returns_unknown(api_client, db_session):
-    """When predicate_trees was emitted with an error (v2 emit
+def test_probe_membership_semantic_error_payload_returns_unknown(api_client, db_session):
+    """When predicate_trees was emitted with an error (semantic emit
     failed mid-analysis), the artifact carries
     ``{"error": "..."}`` instead of ``trees``. The route returns
     a 200 with result=unknown so the UI can degrade gracefully
@@ -228,7 +226,7 @@ def test_probe_membership_v2_error_payload_returns_unknown(api_client, db_sessio
 
     _no_auth(api_module)
     address = "0x" + "f2" * 20
-    artifact = {"schema_version": "v2", "error": "v2_emit_blew_up"}
+    artifact = {"schema_version": "semantic", "error": "semantic_emit_blew_up"}
     _seed_completed_job_with_artifact(db_session, address=address, predicate_trees=artifact)
 
     resp = api_client.post(
@@ -258,7 +256,7 @@ def test_probe_membership_rejects_malformed_address_payload(api_client, db_sessi
     _seed_completed_job_with_artifact(
         db_session,
         address=address,
-        predicate_trees={"schema_version": "v2", "trees": {}},
+        predicate_trees={"schema_version": "semantic", "trees": {}},
     )
 
     resp = api_client.post(
@@ -332,7 +330,7 @@ def test_probe_membership_returns_yes_via_postgres_event_log_repo(api_client, db
     db_session.flush()
 
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "guardedFn()": {
@@ -409,7 +407,7 @@ def test_probe_signature_returns_unknown_for_non_signature_leaf(api_client, db_s
     _no_auth(api_module)
     address = "0x" + uuid.uuid4().hex[:8] + "8a" * 16
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "f()": {
@@ -461,7 +459,7 @@ def test_probe_signature_route_for_signature_auth_leaf(api_client, db_session):
     _no_auth(api_module)
     address = "0x" + uuid.uuid4().hex[:8] + "8b" * 16
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "execute()": {
@@ -512,7 +510,7 @@ def test_probe_signature_rejects_malformed_signer(api_client, db_session):
     _seed_completed_job_with_artifact(
         db_session,
         address=address,
-        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+        predicate_trees={"schema_version": "semantic", "contract_name": "T", "trees": {}},
     )
     resp = api_client.post(
         f"/api/contract/{address}/probe/signature",
@@ -534,7 +532,7 @@ def test_probe_signature_unguarded_function_returns_yes(api_client, db_session):
     _seed_completed_job_with_artifact(
         db_session,
         address=address,
-        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+        predicate_trees={"schema_version": "semantic", "contract_name": "T", "trees": {}},
     )
     resp = api_client.post(
         f"/api/contract/{address}/probe/signature",
@@ -561,7 +559,7 @@ def test_probe_rate_limit_blocks_after_limit(api_client, db_session, monkeypatch
     _seed_completed_job_with_artifact(
         db_session,
         address=address,
-        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+        predicate_trees={"schema_version": "semantic", "contract_name": "T", "trees": {}},
     )
 
     # Tighten the limit to 3 so the test isn't slow. Also clear
@@ -611,7 +609,7 @@ def test_probe_rate_limit_keyed_per_address(api_client, db_session, monkeypatch)
         _seed_completed_job_with_artifact(
             db_session,
             address=addr,
-            predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+            predicate_trees={"schema_version": "semantic", "contract_name": "T", "trees": {}},
         )
 
     from routers import predicate_capabilities
@@ -649,7 +647,7 @@ def test_probe_rate_limit_disabled_when_zero(api_client, db_session, monkeypatch
     _seed_completed_job_with_artifact(
         db_session,
         address=address,
-        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+        predicate_trees={"schema_version": "semantic", "contract_name": "T", "trees": {}},
     )
 
     from routers import predicate_capabilities
@@ -682,7 +680,7 @@ def test_probe_rate_limit_applies_to_signature_route_too(api_client, db_session,
     _seed_completed_job_with_artifact(
         db_session,
         address=address,
-        predicate_trees={"schema_version": "v2", "contract_name": "T", "trees": {}},
+        predicate_trees={"schema_version": "semantic", "contract_name": "T", "trees": {}},
     )
 
     from routers import predicate_capabilities
@@ -744,7 +742,7 @@ def test_probe_membership_picks_most_recent_completed_job(api_client, db_session
 
     def _tree(expr: str) -> dict:
         return {
-            "schema_version": "v2",
+            "schema_version": "semantic",
             "trees": {
                 "f()": {
                     "op": "LEAF",

@@ -1,13 +1,9 @@
 """Deterministic controller tracking metadata for event-first, polling-backed monitoring.
 
-Schema-v2 cutover (Wave 3 Track 2 — A.1):
-    ``build_controller_tracking`` and ``build_policy_tracking`` source their
-    inputs from the v2 ``predicate_trees`` and ``effects`` artifacts
-    instead of the v1 ``permission_graph``. The walker enumerates
-    every state-variable operand referenced by any predicate-tree leaf
-    (catching inherited Ownable's ``_owner`` and other shapes the v1
-    heuristic missed), then pulls writers from ``effects.functions``
-    state_write sinks.
+``build_controller_tracking`` sources inputs from semantic
+``predicate_trees`` and ``effects`` artifacts. The walker enumerates every
+state-variable operand referenced by any predicate-tree leaf, then pulls
+writers from ``effects.functions`` state_write sinks.
 """
 
 from __future__ import annotations
@@ -19,14 +15,13 @@ from typing import Any, Iterable, cast
 from eth_utils.crypto import keccak
 
 from schemas.contract_analysis import (
-    AccessControlAnalysis,
     AssociatedEvent,
     AssociatedEventInput,
     ControllerReadSpec,
     ControllerTrackingTarget,
     ControllerWriterFunction,
     Evidence,
-    PolicyTrackingTarget,
+    SemanticControlAnalysis,
 )
 
 from .shared import (
@@ -168,7 +163,7 @@ def _functions_by_signature(contract) -> dict[str, object]:
 
 
 # ---------------------------------------------------------------------------
-# v2 source extraction: walk predicate_trees / effects for raw signals.
+# Semantic source extraction: walk predicate_trees / effects for raw signals.
 # ---------------------------------------------------------------------------
 
 
@@ -185,41 +180,10 @@ def _walk_leaves(node: Any, callback) -> None:
         _walk_leaves(child, callback)
 
 
-def _collect_external_call_role_callees(predicate_trees: Mapping[str, Any] | None) -> set[str]:
-    """External-call role keys from OZ-style mapping descriptors."""
-    if not isinstance(predicate_trees, dict):
-        return set()
-    trees = predicate_trees.get("trees")
-    if not isinstance(trees, dict):
-        return set()
-
-    oz_role_key_callees: set[str] = set()
-
-    def visit(leaf: dict[str, Any]) -> None:
-        descriptor = leaf.get("set_descriptor") or {}
-        if not isinstance(descriptor, dict):
-            return
-        is_oz_role = descriptor.get("kind") == "mapping_membership" and any(
-            isinstance(h, dict) and h.get("topic0") == _OZ_ROLE_GRANTED_TOPIC0
-            for h in descriptor.get("enumeration_hint") or []
-        )
-        for key_source in descriptor.get("key_sources") or []:
-            if isinstance(key_source, dict) and key_source.get("source") == "external_call":
-                callee = key_source.get("callee")
-                if is_oz_role and isinstance(callee, str) and callee:
-                    oz_role_key_callees.add(callee)
-
-    for tree in trees.values():
-        _walk_leaves(tree, visit)
-    return oz_role_key_callees
-
-
 def _collect_state_var_operands(predicate_trees: Mapping[str, Any] | None) -> set[str]:
     """Every state_variable operand surfaced by any leaf — direct
     operands AND set_descriptor.storage_var / key_sources AND
-    authority_contract.address_source. Catches inherited Ownable's
-    ``_owner`` and similar shapes the v1 permission-graph heuristic
-    missed."""
+    authority_contract.address_source."""
     if not isinstance(predicate_trees, dict):
         return set()
     trees = predicate_trees.get("trees")
@@ -257,47 +221,10 @@ def _collect_state_var_operands(predicate_trees: Mapping[str, Any] | None) -> se
     return state_vars
 
 
-_OZ_ROLE_GRANTED_TOPIC0 = "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
-
-
-def _collect_role_key_state_vars(predicate_trees: Mapping[str, Any] | None) -> set[str]:
-    """State-variable names that appear as a ``key_source`` of a
-    ``mapping_membership`` set_descriptor whose enumeration_hint
-    matches the OZ ``RoleGranted`` topic. These are role-identifier
-    bytes32 constants used in cross-contract ``hasRole(role, account)``
-    checks; v1 flagged them as role_identifier through the graph's
-    role-argument detection."""
-    if not isinstance(predicate_trees, dict):
-        return set()
-    trees = predicate_trees.get("trees")
-    if not isinstance(trees, dict):
-        return set()
-
-    role_vars: set[str] = set()
-
-    def visit(leaf: dict[str, Any]) -> None:
-        descriptor = leaf.get("set_descriptor") or {}
-        if not isinstance(descriptor, dict) or descriptor.get("kind") != "mapping_membership":
-            return
-        hints = descriptor.get("enumeration_hint") or []
-        is_oz_role = any(isinstance(h, dict) and h.get("topic0") == _OZ_ROLE_GRANTED_TOPIC0 for h in hints)
-        if not is_oz_role:
-            return
-        for key_source in descriptor.get("key_sources") or []:
-            if isinstance(key_source, dict) and key_source.get("source") == "state_variable":
-                name = key_source.get("state_variable_name")
-                if isinstance(name, str) and name:
-                    role_vars.add(name)
-
-    for tree in trees.values():
-        _walk_leaves(tree, visit)
-    return role_vars
-
-
 def _collect_authority_state_vars(predicate_trees: Mapping[str, Any] | None) -> set[str]:
     """State-variable names appearing as
     ``set_descriptor.authority_contract.address_source.state_variable_name``.
-    These are external authority registries (e.g. ``roleRegistry``);
+    These are external authority registries;
     promote them from ``state_variable`` to ``external_contract`` kind so
     downstream resolution treats them as cross-contract delegates."""
     if not isinstance(predicate_trees, dict):
@@ -331,7 +258,7 @@ def _collect_external_contract_state_vars_from_effects(
     state_var_names: set[str],
 ) -> set[str]:
     """State-variable names invoked as external-call destinations
-    (``authority.canCall(...)``, ``hook.beforeTransfer(...)``). Sourced
+    (``authority.check(...)``, ``hook.beforeTransfer(...)``). Sourced
     from ``effects.functions[*].sinks`` filtered to ``external_call``;
     we keep only sinks whose target's leading prefix matches an actual
     state-var name (so ``msg.sender.transfer`` etc. don't false-positive)."""
@@ -444,8 +371,7 @@ def _build_getter_index(contract) -> dict[str, str]:
     """Map private state-var name → its public getter function name.
 
     Walks the subject's view/pure functions whose body is
-    ``return <state_var>;``. OZ Ownable's ``owner()`` returning ``_owner``
-    is the canonical case."""
+    ``return <state_var>;``."""
     out: dict[str, str] = {}
     for fn in getattr(contract, "functions", []) or []:
         visibility = getattr(fn, "visibility", None)
@@ -492,101 +418,6 @@ def _state_var_read_spec(
     return spec
 
 
-def _role_authority_for_external_callee(callee_name: str, predicate_trees: Mapping[str, Any] | None) -> str | None:
-    """Like ``_role_authority_for`` but matches the role identifier
-    against external-call callee names instead of state-variable
-    operands. Used for cross-contract role getters (``registry.ROLE()``).
-    """
-    if not isinstance(predicate_trees, dict):
-        return None
-    trees = predicate_trees.get("trees")
-    if not isinstance(trees, dict):
-        return None
-
-    candidates: dict[str, set[str]] = {}
-
-    def visit(leaf: dict[str, Any]) -> None:
-        descriptor = leaf.get("set_descriptor") or {}
-        if not isinstance(descriptor, dict):
-            return
-        authority = descriptor.get("authority_contract") or {}
-        if not isinstance(authority, dict):
-            return
-        address_source = authority.get("address_source") or {}
-        if not isinstance(address_source, dict) or address_source.get("source") != "state_variable":
-            return
-        registry = address_source.get("state_variable_name")
-        if not isinstance(registry, str) or not registry:
-            return
-        is_oz_role = descriptor.get("kind") == "mapping_membership" and any(
-            isinstance(h, dict) and h.get("topic0") == _OZ_ROLE_GRANTED_TOPIC0
-            for h in descriptor.get("enumeration_hint") or []
-        )
-        for source in list(leaf.get("operands") or []) + list(descriptor.get("key_sources") or []):
-            if isinstance(source, dict) and source.get("source") == "external_call":
-                op_name = source.get("callee")
-                if not isinstance(op_name, str):
-                    continue
-                if is_oz_role:
-                    candidates.setdefault(op_name, set()).add(registry)
-
-    for tree in trees.values():
-        _walk_leaves(tree, visit)
-
-    sources = candidates.get(callee_name)
-    if not sources or len(sources) != 1:
-        return None
-    return next(iter(sources))
-
-
-def _role_authority_for(role_name: str, predicate_trees: Mapping[str, Any] | None) -> str | None:
-    """Look at predicate_trees for a leaf that pairs ``role_name`` with a
-    state-variable-backed authority_contract address_source. Returns the
-    state-variable name (the registry source). Mirrors v1 behavior on a
-    per-role basis: only attaches a contract_source when exactly ONE
-    registry pairs with the role across the tree."""
-    if not isinstance(predicate_trees, dict):
-        return None
-    trees = predicate_trees.get("trees")
-    if not isinstance(trees, dict):
-        return None
-
-    candidates: dict[str, set[str]] = {}
-
-    def visit(leaf: dict[str, Any]) -> None:
-        descriptor = leaf.get("set_descriptor") or {}
-        if not isinstance(descriptor, dict):
-            return
-        authority = descriptor.get("authority_contract") or {}
-        if not isinstance(authority, dict):
-            return
-        address_source = authority.get("address_source") or {}
-        if not isinstance(address_source, dict) or address_source.get("source") != "state_variable":
-            return
-        registry = address_source.get("state_variable_name")
-        if not isinstance(registry, str) or not registry:
-            return
-        is_oz_role = descriptor.get("kind") == "mapping_membership" and any(
-            isinstance(h, dict) and h.get("topic0") == _OZ_ROLE_GRANTED_TOPIC0
-            for h in descriptor.get("enumeration_hint") or []
-        )
-        if not is_oz_role:
-            return
-        for key_source in descriptor.get("key_sources") or []:
-            if isinstance(key_source, dict) and key_source.get("source") == "state_variable":
-                op_name = key_source.get("state_variable_name")
-                if isinstance(op_name, str):
-                    candidates.setdefault(op_name, set()).add(registry)
-
-    for tree in trees.values():
-        _walk_leaves(tree, visit)
-
-    sources = candidates.get(role_name)
-    if not sources or len(sources) != 1:
-        return None
-    return next(iter(sources))
-
-
 # ---------------------------------------------------------------------------
 # Top-level builders.
 # ---------------------------------------------------------------------------
@@ -597,26 +428,25 @@ def build_controller_tracking(
     project_dir: Path,
     predicate_trees: Mapping[str, Any] | None,
     effects: Mapping[str, Any] | None,
-    access_control: AccessControlAnalysis | None = None,
+    semantic_control: SemanticControlAnalysis | None = None,
 ) -> list[ControllerTrackingTarget]:
-    """Build event-first tracking metadata from the v2 predicate-tree +
+    """Build event-first tracking metadata from the semantic predicate-tree +
     effects artifacts.
 
     Inputs:
-      * ``predicate_trees`` — v2 artifact from ``build_predicate_artifacts``.
+      * ``predicate_trees`` — artifact from ``build_predicate_artifacts``.
         Walked for every state-variable operand referenced by a leaf
         (direct operand, set-descriptor storage_var/key_source, or
         authority_contract.address_source). Each unique name becomes a
         ``ControllerTrackingTarget``.
-      * ``effects`` — v2 artifact from ``build_effects``. Filtered to
+      * ``effects`` — artifact from ``build_effects``. Filtered to
         ``state_write`` sinks per externally-callable function; supplies
         the writer functions for each state-variable target.
-      * ``access_control`` — supplies role definitions for
+      * ``semantic_control`` — supplies role definitions for
         ``role_identifier`` targets found from predicate-tree role keys.
 
-    The result is a SUPERSET of the v1 permission-graph + augment pass —
-    by construction, since predicate_trees catches the inherited Ownable
-    ``_owner`` shapes the v1 heuristic missed.
+    Predicate trees provide the structural controller reads; effects provide
+    the writer side.
     """
     event_lookup = _event_index(contract)
     state_vars_by_name = {sv.name: sv for sv in getattr(contract, "state_variables_ordered", [])}
@@ -636,18 +466,12 @@ def build_controller_tracking(
     # they don't appear as a leaf operand (e.g. ``hook`` written by
     # ``setHook(address)`` and called from the body, but not gated).
     referenced_state_vars |= external_contract_vars_from_effects
-    external_role_callees = _collect_external_call_role_callees(predicate_trees)
-    role_key_state_vars = _collect_role_key_state_vars(predicate_trees)
-
-    role_definitions = list(access_control.get("role_definitions", []) if access_control else [])
+    role_definitions = list(semantic_control.get("role_definitions", []) if semantic_control else [])
 
     tracking_targets: list[ControllerTrackingTarget] = []
     seen_ids: set[str] = set()
 
-    # Pass 1: role identifiers (drawn from access_control.role_definitions —
-    # the static pipeline's bytes32-constant scan). Each becomes a
-    # role_identifier ControllerTrackingTarget; if predicate_trees
-    # disambiguates a single registry source, attach contract_source.
+    # Pass 1: role identifiers drawn from semantic_control.role_definitions.
     #
     # Skip role_definitions whose name is also an authority-registry state var.
     # The external_contract target gets writer/events through Pass 2; emitting
@@ -662,12 +486,6 @@ def build_controller_tracking(
         if controller_id in seen_ids:
             continue
         read_spec: ControllerReadSpec = {"strategy": "getter_call", "target": role_name}
-        authority_source = _role_authority_for(role_name, predicate_trees) or _role_authority_for_external_callee(
-            role_name,
-            predicate_trees,
-        )
-        if authority_source:
-            read_spec["contract_source"] = authority_source
         tracking_targets.append(
             {
                 "controller_id": controller_id,
@@ -704,20 +522,17 @@ def build_controller_tracking(
         if name in role_def_names:
             continue
         sv = state_vars_by_name.get(name)
-        # Role-identifier classification is structural: a var is a role when
-        # it is used as an OZ role key or is a referenced bytes32 constant.
+        # Role-identifier classification is structural: a referenced bytes32
+        # constant can be read once and passed into semantic authority checks.
         is_bytes32_constant = (
             sv is not None and str(getattr(sv, "type", "")) == "bytes32" and bool(getattr(sv, "is_constant", False))
         )
-        is_role = name in role_key_state_vars or is_bytes32_constant
+        is_role = is_bytes32_constant
         if is_role:
             controller_id = f"role_identifier:{name}"
             if controller_id in seen_ids:
                 continue
             read_spec_role: ControllerReadSpec = {"strategy": "getter_call", "target": name}
-            authority_source = _role_authority_for(name, predicate_trees)
-            if authority_source:
-                read_spec_role["contract_source"] = authority_source
             tracking_targets.append(
                 {
                     "controller_id": controller_id,
@@ -788,93 +603,4 @@ def build_controller_tracking(
         )
         seen_ids.add(controller_id)
 
-    # Pass 3: external-call callees used as OZ role keys (e.g.
-    # ``roleRegistry.BREAK_GLASS()``). The role constant lives on the registry
-    # contract; read it via getter on the registry. Pair with the registry
-    # source from authority_contract.address_source when disambiguated.
-    for callee_name in sorted(external_role_callees):
-        controller_id = f"role_identifier:{callee_name}"
-        if controller_id in seen_ids:
-            continue
-        if callee_name in role_def_names:
-            continue
-        read_spec_external: ControllerReadSpec = {"strategy": "getter_call", "target": callee_name}
-        authority_source = _role_authority_for_external_callee(callee_name, predicate_trees)
-        if authority_source:
-            read_spec_external["contract_source"] = authority_source
-        tracking_targets.append(
-            {
-                "controller_id": controller_id,
-                "label": callee_name,
-                "source": callee_name,
-                "kind": "role_identifier",
-                "read_spec": read_spec_external,
-                "confidence": None,
-                "tracking_mode": "state_only",
-                "writer_functions": [],
-                "associated_events": [],
-                "polling_sources": [callee_name],
-                "notes": [
-                    "Role identifier sourced via cross-contract call "
-                    "(e.g. ``registry.ROLE()``); resolve through the "
-                    "authority adapter."
-                ],
-            }
-        )
-        seen_ids.add(controller_id)
-
     return sorted(tracking_targets, key=lambda item: item["label"])
-
-
-def build_policy_tracking(
-    contract,
-    project_dir: Path,
-    effects: Mapping[str, Any] | None = None,
-) -> list[PolicyTrackingTarget]:
-    """Build event-driven tracking metadata for table-backed authorization
-    policies like ``canCall``. Sources writers from the v2 ``effects``
-    artifact (no permission_graph dependency)."""
-    event_lookup = _event_index(contract)
-    policy_targets: list[PolicyTrackingTarget] = []
-
-    for function in _contract_functions(contract):
-        if getattr(function, "full_name", "") != "canCall(address,address,bytes4)":
-            continue
-
-        tracked_state_targets = sorted(
-            {
-                getattr(variable, "name", "")
-                for variable in getattr(function, "state_variables_read", [])
-                if getattr(variable, "name", "")
-            }
-        )
-        if not tracked_state_targets:
-            continue
-
-        writer_functions, associated_events = _writer_records_from_effects(
-            contract,
-            project_dir,
-            tracked_state_targets,
-            event_lookup,
-            effects,
-        )
-        if not writer_functions or not associated_events:
-            continue
-
-        policy_targets.append(
-            {
-                "policy_id": "canCall_policy",
-                "label": "canCall policy",
-                "policy_function": getattr(function, "full_name", getattr(function, "name", "canCall")),
-                "tracked_state_targets": tracked_state_targets,
-                "writer_functions": writer_functions,
-                "associated_events": associated_events,
-                "notes": [
-                    "Track authorization-policy mutations through emitted events; "
-                    "the underlying table-backed state is non-enumerable for "
-                    "generic polling."
-                ],
-            }
-        )
-
-    return sorted(policy_targets, key=lambda item: item["label"])

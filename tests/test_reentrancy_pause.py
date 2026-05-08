@@ -429,8 +429,8 @@ def test_apply_pass_returns_empty_pause_info_when_nothing_detected(tmp_path):
 
 def test_detect_pausability_consumes_pause_info(tmp_path):
     """_detect_pausability now takes a ``pause_info`` dict and surfaces
-    the structural pause vars + toggle functions — no modifier-name
-    heuristic."""
+    the structural pause vars + toggle functions without relying on
+    modifier names."""
     from services.static.contract_analysis_pipeline.summaries import _detect_pausability
 
     sl = _compile(
@@ -469,8 +469,8 @@ def test_detect_pausability_consumes_pause_info(tmp_path):
 
 
 def test_detect_pausability_renamed_pause_modifier(tmp_path):
-    """Modifier-name heuristic is gone: a non-standard modifier name
-    still gets surfaced as gating because it READS the pause var."""
+    """A non-standard modifier name still gets surfaced as gating because
+    it READS the pause var."""
     from services.static.contract_analysis_pipeline.summaries import _detect_pausability
 
     sl = _compile(

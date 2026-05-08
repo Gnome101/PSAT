@@ -535,9 +535,6 @@ class Contract(Base):
     summary: Mapped["ContractSummary | None"] = relationship(
         "ContractSummary", back_populates="contract", uselist=False, cascade="all, delete-orphan"
     )
-    privileged_functions: Mapped[list["PrivilegedFunction"]] = relationship(
-        "PrivilegedFunction", back_populates="contract", cascade="all, delete-orphan"
-    )
     role_definitions: Mapped[list["RoleDefinition"]] = relationship(
         "RoleDefinition", back_populates="contract", cascade="all, delete-orphan"
     )
@@ -591,23 +588,6 @@ class ContractSummary(Base):
     source_verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     contract: Mapped[Contract] = relationship("Contract", back_populates="summary")
-
-
-class PrivilegedFunction(Base):
-    __tablename__ = "privileged_functions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id", ondelete="CASCADE"), nullable=False)
-    function_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    selector: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    abi_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
-    effect_labels: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
-    action_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    authority_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-    contract: Mapped[Contract] = relationship("Contract", back_populates="privileged_functions")
-
-    __table_args__ = (Index("ix_privileged_functions_contract_id", "contract_id"),)
 
 
 class RoleDefinition(Base):

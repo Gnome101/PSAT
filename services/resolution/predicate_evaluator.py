@@ -26,6 +26,7 @@ correct, just unfilled.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Protocol, cast
 
 from eth_utils.crypto import keccak
@@ -53,7 +54,7 @@ from .capabilities import (
 class SetAdapter(Protocol):
     """Minimal adapter interface for week-4. The full SetAdapter
     Protocol (with EvaluationContext, matches/enumerate/membership)
-    lands in week 5 alongside the AccessControl + Safe adapters."""
+    lands in week 5 alongside concrete adapters."""
 
     def enumerate(self, descriptor: SetDescriptor, contract_address: str | None) -> CapabilityExpr: ...
 
@@ -97,8 +98,8 @@ class EvaluationContext:
         self.adapter: SetAdapter = adapter or _NullAdapter()
         self.block = block
         # Persisted state-variable values keyed by storage-var name.
-        # Used by ``_resolve_equality_principal`` to enumerate Ownable
-        # _owner / authority / etc. into concrete addresses.
+        # Used by ``_resolve_equality_principal`` to enumerate state-variable
+        # authority values into concrete addresses.
         self.state_var_values = state_var_values or {}
 
 
@@ -125,13 +126,13 @@ def evaluate_tree_with_registry(
         def enumerate(self, descriptor, contract_address):  # noqa: ARG002
             return registry.enumerate(descriptor, ctx)
 
-    legacy_ctx = EvaluationContext(
+    eval_ctx = EvaluationContext(
         contract_address=getattr(ctx, "contract_address", None),
         adapter=_RegistryBackedAdapter(),
         block=getattr(ctx, "block", None),
         state_var_values=getattr(ctx, "state_var_values", None),
     )
-    return evaluate_tree(tree, legacy_ctx)
+    return evaluate_tree(tree, eval_ctx)
 
 
 def evaluate_tree(
@@ -266,9 +267,12 @@ def _evaluate_leaf(leaf: LeafPredicate, ctx: EvaluationContext) -> CapabilityExp
                 if operator == "falsy":
                     inlined = negate(inlined)
                 return inlined
-            cap = ctx.adapter.enumerate(descriptor, ctx.contract_address)
-            if cap.kind == "unsupported" and cap.unsupported_reason == "no_adapter":
+            if descriptor.get("kind") == "external_set":
                 cap = _external_check_from_descriptor(leaf, descriptor, ctx)
+            else:
+                cap = ctx.adapter.enumerate(descriptor, ctx.contract_address)
+                if cap.kind == "unsupported" and cap.unsupported_reason == "no_adapter":
+                    cap = _external_check_from_descriptor(leaf, descriptor, ctx)
             if operator == "falsy":
                 cap = negate(cap)
             return cap
@@ -368,7 +372,7 @@ def _maybe_inline_cross_contract_call(
     descriptor: SetDescriptor,
     ctx: EvaluationContext,
 ) -> CapabilityExpr | None:
-    """Try to resolve an ``external_authority_call``-shaped leaf by
+    """Try to resolve a delegated external-check leaf by
     evaluating the registry contract's predicate trees under the
     caller's context.
 
@@ -439,21 +443,20 @@ def _maybe_inline_cross_contract_call(
             )
         )
 
-    # Look up the registry job + its predicate_trees.
-    from db.models import Job, JobStatus
+    # Look up the registry's semantic artifacts. If the registry address is
+    # a proxy, predicate_trees live on its implementation child job.
     from db.queue import get_artifact
+    from services.resolution.capability_resolver import find_analysis_job_for_address
 
-    registry_job = (
-        session.query(Job)
-        .filter(Job.address == registry_addr)
-        .filter(Job.status == JobStatus.completed)
-        .order_by(Job.updated_at.desc())
-        .limit(1)
-        .first()
+    lookup = find_analysis_job_for_address(
+        session,
+        registry_addr,
+        required_artifact="predicate_trees",
+        completed_only=True,
     )
-    if registry_job is None:
+    if lookup is None:
         return None
-    artifact = get_artifact(session, registry_job.id, "predicate_trees")
+    artifact = get_artifact(session, lookup.analysis_job.id, "predicate_trees")
     if not isinstance(artifact, dict):
         return None
     trees = artifact.get("trees")
@@ -468,10 +471,27 @@ def _maybe_inline_cross_contract_call(
     if callee_tree is None:
         return None
 
+    callee_tree = _bind_callee_parameters(
+        callee_tree,
+        _callee_argument_operands(
+            leaf,
+            callee_signature=callee_signature,
+            callee_selector=callee_selector,
+        ),
+    )
+
     # Build a child evaluation context targeting the registry. msg.sender
     # is preserved (the call passes through). state_var_values come
     # from B's own controller_values rows, not A's.
     from services.resolution.capability_resolver import _load_state_var_values
+
+    state_var_values = _load_state_var_values(
+        session,
+        lookup.analysis_job.address or registry_addr,
+        job_id=lookup.analysis_job.id,
+    )
+    if not state_var_values and lookup.runtime_job.id != lookup.analysis_job.id:
+        state_var_values = _load_state_var_values(session, registry_addr, job_id=lookup.runtime_job.id)
 
     child_outer = type(outer_ctx)(
         chain_id=chain_id,
@@ -482,15 +502,14 @@ def _maybe_inline_cross_contract_call(
         event_log_repo=getattr(outer_ctx, "event_log_repo", None),
         bytecode=outer_ctx.bytecode,
         recursive_resolver=outer_ctx.recursive_resolver,
-        state_var_values=_load_state_var_values(session, registry_addr),
+        state_var_values=state_var_values,
         session=session,
         evaluation_stack=stack | {key},
         meta=dict(outer_ctx.meta),
     )
 
-    # The legacy ctx wrapping the registry — same registry-backed
-    # adapter pattern as evaluate_tree_with_registry, just keyed on
-    # the child outer ctx.
+    # Same registry-backed adapter pattern as evaluate_tree_with_registry,
+    # just keyed on the child outer ctx.
     from services.resolution.adapters import AdapterRegistry as _Reg
 
     registry_adapters = (
@@ -499,6 +518,81 @@ def _maybe_inline_cross_contract_call(
         else _Reg()
     )
     return evaluate_tree_with_registry(callee_tree, registry_adapters, child_outer)
+
+
+def _callee_argument_operands(
+    leaf: LeafPredicate,
+    *,
+    callee_signature: str | None,
+    callee_selector: str | None,
+) -> list[dict[str, Any]]:
+    args: list[dict[str, Any]] = []
+    for raw_operand in leaf.get("operands") or []:
+        if not isinstance(raw_operand, dict):
+            continue
+        operand = cast(dict[str, Any], raw_operand)
+        if _is_target_call_operand(operand, callee_signature=callee_signature, callee_selector=callee_selector):
+            continue
+        args.append(deepcopy(operand))
+    return args
+
+
+def _is_target_call_operand(
+    operand: dict[str, Any],
+    *,
+    callee_signature: str | None,
+    callee_selector: str | None,
+) -> bool:
+    if operand.get("source") != "external_call":
+        return False
+    op_sig = operand.get("callee_signature")
+    if callee_signature and isinstance(op_sig, str) and op_sig == callee_signature:
+        return True
+    op_selector = operand.get("callee_selector")
+    if callee_selector and isinstance(op_selector, str) and op_selector == callee_selector:
+        return True
+    op_callee = operand.get("callee")
+    if callee_signature and isinstance(op_callee, str) and callee_signature.startswith(f"{op_callee}("):
+        return True
+    return False
+
+
+def _bind_callee_parameters(tree: PredicateTree, call_args: list[dict[str, Any]]) -> PredicateTree:
+    bound = _bind_value(deepcopy(tree), call_args)
+    return cast(PredicateTree, bound) if isinstance(bound, dict) else tree
+
+
+def _bind_value(value: Any, call_args: list[dict[str, Any]]) -> Any:
+    if isinstance(value, list):
+        return [_bind_value(item, call_args) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if value.get("source") == "parameter":
+        idx = value.get("parameter_index")
+        if isinstance(idx, int) and 0 <= idx < len(call_args):
+            return deepcopy(call_args[idx])
+    out = {k: _bind_value(v, call_args) for k, v in value.items()}
+    leaf = out.get("leaf")
+    if isinstance(leaf, dict):
+        _promote_bound_caller_leaf(leaf)
+    return out
+
+
+def _promote_bound_caller_leaf(leaf: dict[str, Any]) -> None:
+    if leaf.get("authority_role") != "business":
+        return
+    if leaf.get("kind") not in {"equality", "membership", "external_bool"}:
+        return
+    operands = leaf.get("operands") or []
+    key_sources = (leaf.get("set_descriptor") or {}).get("key_sources") or []
+    has_caller = any(_is_caller_source(item) for item in [*operands, *key_sources] if isinstance(item, dict))
+    if has_caller:
+        leaf["authority_role"] = "delegated_authority"
+        leaf["references_msg_sender"] = True
+
+
+def _is_caller_source(item: dict[str, Any]) -> bool:
+    return item.get("source") in {"msg_sender", "tx_origin", "signature_recovery"}
 
 
 def _tree_for_signature_or_selector(
@@ -527,7 +621,7 @@ def _selector_for_signature(signature: str) -> str | None:
 
 
 def _resolve_external_bool(leaf: LeafPredicate, ctx: EvaluationContext | None = None) -> CapabilityExpr:
-    """``require(authority.canCall(...))`` — produces an
+    """``require(authority.check(...))`` — produces an
     external_check_only capability."""
     selector = None
     for op in leaf.get("operands") or []:

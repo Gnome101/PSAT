@@ -9,11 +9,8 @@ from typing_extensions import NotRequired
 ResolvedAddressType = Literal["zero", "eoa", "safe", "timelock", "proxy_admin", "contract", "unknown"]
 PrincipalResolutionStatus = Literal[
     "complete",
-    "missing_hypersync_token",
-    "missing_policy_state",
     "no_authority",
     "no_authority_snapshot",
-    "no_policy_tracking",
 ]
 
 

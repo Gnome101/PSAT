@@ -57,11 +57,10 @@ def _minimal_contract_analysis() -> dict:
     }
 
 
-def _authority_bundle(snapshot: dict | None = None, policy_tracking: bool = False) -> dict:
+def _authority_bundle(snapshot: dict | None = None) -> dict:
     return {
         "analysis": {
             "subject": {"address": AUTH_ADDRESS, "name": "Authority"},
-            "policy_tracking": policy_tracking,
         },
         "tracking_plan": {
             "schema_version": "0.1",
@@ -69,7 +68,6 @@ def _authority_bundle(snapshot: dict | None = None, policy_tracking: bool = Fals
             "contract_name": "Authority",
             "tracking_strategy": "event_first_with_polling_fallback",
             "tracked_controllers": [],
-            "tracked_policies": [],
         },
         "snapshot": snapshot or {"contract_address": AUTH_ADDRESS, "controller_values": {}},
     }
@@ -81,7 +79,7 @@ def _authority_bundle(snapshot: dict | None = None, policy_tracking: bool = Fals
 
 
 class TestResolveAuthorityNoAuthority:
-    """controller_values has keys but none end with ':authority'."""
+    """controller_values has keys but none resolve to a nested snapshot bundle."""
 
     def test_returns_no_authority(self) -> None:
         worker = PolicyWorker()
@@ -114,122 +112,48 @@ class TestResolveAuthorityZeroAddress:
 
 
 class TestResolveAuthorityNoSnapshot:
-    """Authority address is in the graph but its bundle is missing from nested artifacts."""
+    """A nested controller address is known but its snapshot is missing."""
 
     def test_returns_no_authority_snapshot(self) -> None:
         worker = PolicyWorker()
         session = MagicMock()
         job = _job()
 
-        snapshot = _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}})
+        snapshot = _minimal_snapshot({"external_contract:policy": {"value": AUTH_ADDRESS}})
         graph = _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {}}])
+        nested = cast(
+            Any,
+            {
+                AUTH_ADDRESS: {
+                    "analysis": {
+                        "subject": {"address": AUTH_ADDRESS, "name": "Policy"},
+                    }
+                }
+            },
+        )
 
-        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, {})
+        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, nested)
 
         assert result["principal_resolution"]["status"] == "no_authority_snapshot"
 
 
 class TestResolveAuthorityWithSnapshot:
-    """Authority found with a real snapshot bundle, no policy tracking."""
+    """A nested controller snapshot is joined without any policy-state backfill."""
 
-    def test_returns_authority_snapshot_and_missing_policy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_authority_snapshot(self) -> None:
         worker = PolicyWorker()
         session = MagicMock()
         job = _job()
 
-        snapshot = _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}})
+        snapshot = _minimal_snapshot({"external_contract:policy": {"value": AUTH_ADDRESS}})
         graph = _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {"data_key": f"recursive:{AUTH_ADDRESS}"}}])
-        nested = cast(Any, {AUTH_ADDRESS: _authority_bundle(policy_tracking=False)})
-
-        # No policy_state artifact stored for authority.
-        monkeypatch.setattr("workers.policy_worker.get_artifact", lambda *_args, **_kwargs: None)
+        nested = cast(Any, {AUTH_ADDRESS: _authority_bundle()})
 
         result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, nested)
 
-        assert result["authority_snapshot"] == nested[AUTH_ADDRESS]["snapshot"]
-        assert result["principal_resolution"]["status"] == "missing_policy_state"
-
-
-class TestResolveAuthorityCachedPolicyState:
-    """Authority bundle declares policy_tracking and a cached policy_state exists — reuse it."""
-
-    def test_returns_cached_policy_state_without_backfill(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        worker = PolicyWorker()
-        session = MagicMock()
-        job = _job()
-
-        snapshot = _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}})
-        graph = _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {"data_key": f"recursive:{AUTH_ADDRESS}"}}])
-        nested = cast(Any, {AUTH_ADDRESS: _authority_bundle(policy_tracking=True)})
-
-        cached_policy_state = {"schema_version": "0.1", "event_count": 7, "user_roles": []}
-
-        monkeypatch.setattr(
-            "workers.policy_worker.get_artifact",
-            lambda _session, _job_id, _name: cached_policy_state,
-        )
-        # If the backfill path is (incorrectly) taken, force a loud failure.
-        monkeypatch.setattr(
-            "workers.policy_worker.run_hypersync_policy_backfill",
-            lambda *_a, **_kw: pytest.fail("backfill should not run when cached policy_state exists"),
-        )
-
-        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, nested)
-
-        assert result["policy_state"] is cached_policy_state
         assert result["authority_snapshot"] == nested[AUTH_ADDRESS]["snapshot"]
         assert result["principal_resolution"]["status"] == "complete"
-        assert "Existing" in result["principal_resolution"]["reason"]
-
-
-class TestResolveAuthorityHypersyncBackfill:
-    """Authority has policy_tracking, no cached state, ENVIO_API_TOKEN set — run backfill + persist."""
-
-    def test_runs_backfill_and_persists_events_and_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        worker = PolicyWorker()
-        session = MagicMock()
-        job = _job()
-
-        snapshot = _minimal_snapshot({"state_variable:authority": {"value": AUTH_ADDRESS}})
-        graph = _graph_with_nodes([{"address": AUTH_ADDRESS, "artifacts": {"data_key": f"recursive:{AUTH_ADDRESS}"}}])
-        nested = cast(Any, {AUTH_ADDRESS: _authority_bundle(policy_tracking=True)})
-
-        # No cached policy_state — forces the backfill path.
-        monkeypatch.setattr("workers.policy_worker.get_artifact", lambda *_a, **_kw: None)
-        monkeypatch.setenv("ENVIO_API_TOKEN", "test-token")
-
-        backfill_events = [{"schema_version": "0.1", "block_number": 42}]
-        backfill_state = {"schema_version": "0.1", "event_count": 1, "source": "hypersync"}
-        backfill_calls: list[Any] = []
-
-        def fake_backfill(plan: Any, **_kw: Any) -> tuple[list, dict]:
-            backfill_calls.append(plan)
-            return backfill_events, backfill_state
-
-        monkeypatch.setattr("workers.policy_worker.run_hypersync_policy_backfill", fake_backfill)
-
-        store_calls: list[tuple[str, Any]] = []
-
-        def fake_store(_session: Any, _job_id: Any, name: str, data: Any = None, text_data: Any = None) -> None:
-            store_calls.append((name, data))
-
-        monkeypatch.setattr("workers.policy_worker.store_artifact", fake_store)
-
-        result = worker._resolve_authority(session, cast(Any, job), graph, snapshot, nested)
-
-        # Backfill ran exactly once with the authority's tracking plan.
-        assert len(backfill_calls) == 1
-        assert backfill_calls[0] == nested[AUTH_ADDRESS]["tracking_plan"]
-
-        # Both events and state were persisted under the authority's address-scoped keys.
-        stored = dict(store_calls)
-        assert stored[f"recursive.{AUTH_ADDRESS}.policy_event_history"] == backfill_events
-        assert stored[f"recursive.{AUTH_ADDRESS}.policy_state"] == backfill_state
-
-        assert result["policy_state"] is backfill_state
-        assert result["authority_snapshot"] == nested[AUTH_ADDRESS]["snapshot"]
-        assert result["principal_resolution"]["status"] == "complete"
-        assert "backfill" in result["principal_resolution"]["reason"].lower()
+        assert "semantic" in result["principal_resolution"]["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +216,70 @@ class TestProcessStoresAllArtifacts:
         assert "effective_permissions" in stored_names
         assert "resolved_control_graph" in stored_names
         assert "principal_labels" in stored_names
+
+
+class TestProcessSemanticInputs:
+    """Missing semantic inputs are degraded instead of using a static-summary fallback."""
+
+    def test_missing_predicate_trees_and_effects_records_degraded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        worker = PolicyWorker()
+        session = MagicMock()
+        session.execute.return_value.scalar_one_or_none.return_value = None
+        job = _job()
+
+        contract_analysis = _minimal_contract_analysis()
+        control_snapshot = _minimal_snapshot()
+        resolved_graph = _graph_with_nodes([])
+        tracking_plan = {"schema_version": "0.1", "contract_address": TARGET_ADDRESS, "contract_name": "TestContract"}
+
+        def fake_get_artifact(_session: Any, _job_id: Any, name: str) -> Any:
+            return {
+                "contract_analysis": contract_analysis,
+                "control_snapshot": control_snapshot,
+                "resolved_control_graph": resolved_graph,
+                "control_tracking_plan": tracking_plan,
+            }.get(name)
+
+        degraded: list[dict[str, Any]] = []
+
+        def fake_record_degraded(**kwargs: Any) -> None:
+            degraded.append(kwargs)
+
+        def fake_build_ep(*_args: Any, **kwargs: Any) -> dict:
+            assert kwargs["predicate_trees"] is None
+            assert kwargs["capability_resolver_output"] is None
+            assert kwargs["effects"] is None
+            return {
+                "schema_version": "0.1",
+                "contract_address": TARGET_ADDRESS,
+                "contract_name": "TestContract",
+                "functions": [],
+            }
+
+        monkeypatch.setattr("workers.policy_worker.get_artifact", fake_get_artifact)
+        monkeypatch.setattr("workers.policy_worker.store_artifact", lambda *a, **kw: None)
+        monkeypatch.setattr("workers.policy_worker.record_degraded", fake_record_degraded)
+        monkeypatch.setattr("workers.policy_worker._load_nested_artifacts", lambda *_a, **_kw: {})
+        monkeypatch.setattr("workers.policy_worker.build_effective_permissions", fake_build_ep)
+        monkeypatch.setattr(
+            "workers.policy_worker.resolve_control_graph",
+            lambda **kw: ({"nodes": [], "edges": []}, {}),
+        )
+        monkeypatch.setattr(
+            "workers.policy_worker.build_principal_labels",
+            lambda *a, **kw: {"principals": []},
+        )
+        monkeypatch.setattr(
+            PolicyWorker,
+            "_enrich_cross_contract",
+            lambda self, session, job, contract_analysis, control_snapshot: {},
+        )
+
+        worker.process(session, cast(Any, job))
+
+        semantic_errors = [entry for entry in degraded if entry["phase"] == "effective_permissions_semantic_inputs"]
+        assert len(semantic_errors) == 1
+        assert semantic_errors[0]["context"]["missing_artifacts"] == ["effects", "predicate_trees"]
 
 
 class TestGraphRefreshAfterEffectivePermissions:
@@ -510,7 +498,6 @@ class TestProcessFanoutParity:
             "contract_address": target,
             "contract_name": "VaultBig",
             "tracked_controllers": [],
-            "tracked_policies": [],
         }
 
         def fake_get_artifact(_session: Any, _job_id: Any, name: str) -> Any:

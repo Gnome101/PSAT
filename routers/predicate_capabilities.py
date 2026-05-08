@@ -187,13 +187,13 @@ def probe_contract_membership(
     req: _ProbeMembershipRequest,
     x_psat_admin_key: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    """v2 schema probe: 'is ``member`` allowed by leaf ``predicate_index``
+    """Semantic predicate probe: is ``member`` allowed by leaf ``predicate_index``
     of ``function_signature`` on ``address``?'
 
     Resolves the predicate_trees artifact server-side from the most
     recent successful job for ``address``; the descriptor is NEVER
     client-supplied — clients only carry the leaf index they received
-    from the v2 capability rendering.
+    from the semantic capability rendering.
     """
     addr = deps._normalize_address_or_400(address)
     _probe_rate_check(x_psat_admin_key, addr)
@@ -222,7 +222,7 @@ def probe_contract_membership(
                 status_code=404,
                 detail=(
                     "predicate_trees artifact missing for the latest analysis "
-                    "(contract was analyzed before schema-v2 emit landed, or v2 emit failed)"
+                    "(semantic predicate-tree emit did not run or failed)"
                 ),
             )
 
@@ -340,10 +340,8 @@ def get_contract_capabilities(
     chain_id: int = 1,
     block: int | None = None,
 ) -> dict[str, Any]:
-    """Return the v2 capability per externally-callable function on
-    ``address``. Read path for the schema-v2 cutover (#18) — UI /
-    external consumers query this and fall back to v1 endpoints when
-    the response is 404 (legacy pre-v2 contract).
+    """Return semantic capabilities per externally-callable function on
+    ``address``.
 
     Response shape::
 
@@ -367,8 +365,7 @@ def get_contract_capabilities(
     unguarded (publicly callable) per the resolver convention.
 
     Returns 404 if no completed analysis Job exists for the address, or
-    no predicate_trees artifact has been written for the latest
-    analysis (legacy pre-v2 contract).
+    no predicate_trees artifact has been written for the latest analysis.
     """
     from services.resolution.capability_resolver import resolve_contract_capabilities
 
@@ -408,8 +405,8 @@ def get_contract_capabilities(
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    "No v2 capabilities for this address — either no completed "
-                    "analysis exists or it predates the schema-v2 emit. Fall "
+                    "No semantic capabilities for this address — either no completed "
+                    "analysis exists or the predicate-tree artifact is missing. Fall "
                     "back to /api/company/* or /api/jobs?address=..."
                 ),
             )
@@ -425,9 +422,9 @@ def get_contract_capabilities(
     return response
 
 
-@router.get("/api/company/{company_name}/v2_capabilities")
-def company_v2_capabilities(company_name: str) -> dict[str, Any]:
-    """v2 capability map for every analyzed contract in a company.
+@router.get("/api/company/{company_name}/semantic_capabilities")
+def company_semantic_capabilities(company_name: str) -> dict[str, Any]:
+    """Semantic capability map for every analyzed contract in a company.
 
     Returned as a separate endpoint (not embedded in the company-
     overview payload) because resolving capabilities requires running
@@ -453,11 +450,11 @@ def company_v2_capabilities(company_name: str) -> dict[str, Any]:
             "0xcd...": {...},
             "0xef...": null
           },
-          "missing_v2_count": <int>
+          "missing_semantic_count": <int>
         }
 
-    A contract with no v2 artifact maps to ``null`` so consumers can
-    distinguish "not yet v2-analyzed" from "v2-analyzed and has no
+    A contract with no predicate-tree artifact maps to ``null`` so consumers can
+    distinguish "not yet semantically analyzed" from "semantically analyzed and has no
     guarded functions" (the latter maps to ``{}``).
 
     NOT admin-gated — read-only / idempotent, the same shape contract
@@ -490,7 +487,7 @@ def company_v2_capabilities(company_name: str) -> dict[str, Any]:
             # Find the latest completed Job for this (protocol, address)
             # so the resolver can scope ControllerValue lookups by
             # (job_id, chain). Without this the resolver hits the
-            # legacy fallback path and warn-logs once per address.
+            # address-only fallback path and warn-logs once per address.
             latest_job = session.execute(
                 select(Job)
                 .where(Job.protocol_id == protocol_row.id)
@@ -513,7 +510,7 @@ def company_v2_capabilities(company_name: str) -> dict[str, Any]:
                 )
             except Exception as exc:
                 logger.warning(
-                    "v2 capabilities resolution failed for %s in company %s: %s",
+                    "semantic capability resolution failed for %s in company %s: %s",
                     addr,
                     company_name,
                     exc,
@@ -527,5 +524,5 @@ def company_v2_capabilities(company_name: str) -> dict[str, Any]:
         return {
             "company": company_name,
             "contracts": contracts,
-            "missing_v2_count": missing,
+            "missing_semantic_count": missing,
         }

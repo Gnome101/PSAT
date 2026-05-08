@@ -584,7 +584,7 @@ def poll_for_state_changes(session: Session, rpc_url: str) -> list[MonitoredEven
             start = len(batch_calls)
             batch_calls.append(("eth_getStorageAt", [mc.address, _EIP1967_IMPL_SLOT, "latest"]))
             poll_plan.append((mc, start, "implementation"))
-        if ct in ("proxy", "regular", "pausable", "access_control"):
+        if ct in ("proxy", "regular", "pausable", "role_control"):
             start = len(batch_calls)
             batch_calls.append(("eth_call", [{"to": mc.address, "data": _OWNER_SEL}, "latest"]))
             poll_plan.append((mc, start, "owner"))

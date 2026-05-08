@@ -38,6 +38,16 @@ def _contract(sl: Slither, name: str | None = None):
     return next(c for c in sl.contracts if c.name == name)
 
 
+def _leaves(tree: dict) -> list[dict]:
+    if tree.get("op") == "LEAF":
+        leaf = tree.get("leaf")
+        return [leaf] if isinstance(leaf, dict) else []
+    out: list[dict] = []
+    for child in tree.get("children", []) or []:
+        out.extend(_leaves(child))
+    return out
+
+
 def test_artifact_includes_only_guarded_external_functions(tmp_path):
     """The artifact dict has trees for guarded external/public
     functions and OMITS unguarded ones (resolver convention:
@@ -188,7 +198,7 @@ def test_artifact_writer_gate_runs_on_full_contract(tmp_path):
 
 
 def test_artifact_runs_reentrancy_pause_pass(tmp_path):
-    """OZ Pausable pattern — the v1 ``whenNotPaused`` modifier's
+    """OZ Pausable pattern — the ``whenNotPaused`` modifier's
     leaf classifies as ``pause`` only after the cross-function
     pass. Confirms the artifact builder runs that pass."""
     sl = _compile(
@@ -215,6 +225,106 @@ def test_artifact_runs_reentrancy_pause_pass(tmp_path):
     leaf = transfer_tree["leaf"]
     assert leaf["authority_role"] == "pause"
     assert leaf["confidence"] == "high"
+
+
+def test_artifact_attaches_mapping_writer_event_hints(tmp_path):
+    """Generic writer events should land on the predicate leaf the
+    resolver consumes, not only in a sidecar semantic summary."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            mapping(address => uint256) public wards;
+            event Rely(address indexed guy);
+            event Deny(address indexed guy);
+            function rely(address guy) external {
+                require(msg.sender == ownerVar);
+                wards[guy] = 1;
+                emit Rely(guy);
+            }
+            function deny(address guy) external {
+                require(msg.sender == ownerVar);
+                wards[guy] = 0;
+                emit Deny(guy);
+            }
+            function f() external view {
+                require(wards[msg.sender] == 1);
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl))
+    leaf = _leaves(artifact["trees"]["f()"])[0]
+    descriptor = leaf["set_descriptor"]
+    hints = descriptor.get("enumeration_hint") or []
+
+    assert {h["direction"] for h in hints} == {"add", "remove"}
+    assert all(h["mapping_name"] == "wards" for h in hints)
+    assert all(h["topics_to_keys"] == {1: 0} for h in hints)
+    assert all(h["data_to_keys"] == {} for h in hints)
+    assert {h["event_signature"] for h in hints} == {"Rely(address)", "Deny(address)"}
+
+
+def test_artifact_does_not_invent_role_event_hints_from_names(tmp_path):
+    """Declared events alone are not semantic writer evidence."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            mapping(bytes32 => mapping(address => bool)) private _roles;
+            bytes32 public constant MINTER = keccak256("MINTER");
+            event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+            event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+            function f() external view {
+                require(_roles[MINTER][msg.sender]);
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl))
+    leaf = _leaves(artifact["trees"]["f()"])[0]
+    hints = leaf["set_descriptor"].get("enumeration_hint") or []
+
+    assert hints == []
+
+
+def test_artifact_preserves_bitmask_value_predicate_and_set_hint(tmp_path):
+    """Solady-style bitmask roles need both the mask and the set-event
+    value position to resolve semantically."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            mapping(address => uint256) public roles;
+            uint256 constant MINTER_FLAG = 1;
+            event RolesUpdated(address indexed user, uint256 rolesValue);
+            function setRole(address user, uint256 rolesValue) external {
+                require(msg.sender == ownerVar);
+                roles[user] = rolesValue;
+                emit RolesUpdated(user, rolesValue);
+            }
+            function mint() external view {
+                require((roles[msg.sender] & MINTER_FLAG) != 0);
+            }
+        }
+    """,
+    )
+    artifact = build_predicate_artifacts(_contract(sl))
+    leaf = _leaves(artifact["trees"]["mint()"])[0]
+    descriptor = leaf["set_descriptor"]
+
+    assert descriptor["value_predicate"]["mask"] == "0x1"
+    hints = descriptor.get("enumeration_hint") or []
+    assert len(hints) == 1
+    assert hints[0]["direction"] == "set"
+    assert hints[0]["key_position"] == 0
+    assert hints[0]["value_position"] == 1
+    assert hints[0]["event_signature"] == "RolesUpdated(address,uint256)"
 
 
 def test_artifact_helper_engine_cache_skips_repeated_callees(tmp_path):

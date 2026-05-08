@@ -1,7 +1,7 @@
 """Tests that expose weaknesses in effect label detection.
 
 Each test creates a minimal Solidity contract targeting a specific gap
-in the heuristic-based label detection, runs the full static analysis
+in semantic effect label detection, runs the full static analysis
 pipeline through Slither, and checks whether the expected effect labels
 are present.
 
@@ -24,7 +24,7 @@ from services.static.contract_analysis_pipeline.predicate_artifacts import (
 )
 from services.static.contract_analysis_pipeline.shared import _select_subject_contract
 from services.static.contract_analysis_pipeline.summaries import (
-    _detect_access_control,
+    _build_semantic_control_summary,
 )
 
 
@@ -42,18 +42,17 @@ def _scaffold_and_analyze(solidity_source: str, contract_name: str = "Target") -
         if subject is None:
             raise RuntimeError(f"Contract {contract_name} not found")
 
-        # Schema-v2 cutover: _detect_access_control reads predicate_trees
-        # + effects.
+        # _build_semantic_control_summary reads predicate_trees + effects.
         predicate_trees = build_predicate_artifacts(subject)
         effects = build_effects(subject)
-        access_control = _detect_access_control(subject, project_dir, predicate_trees, effects)
+        semantic_control = _build_semantic_control_summary(subject, project_dir, predicate_trees, effects)
 
-        return {"access_control": access_control, "effects": effects}
+        return {"semantic_control": semantic_control, "effects": effects}
 
 
 def _get_function_labels(analysis: dict, function_name: str) -> set[str]:
     """Extract effect_labels for a specific function from the analysis."""
-    for pf in analysis.get("access_control", {}).get("privileged_functions", []):
+    for pf in analysis.get("semantic_control", {}).get("semantic_functions", []):
         fn = pf.get("function", "")
         # Match by name prefix (before the parens)
         if fn.split("(")[0] == function_name:
@@ -62,9 +61,9 @@ def _get_function_labels(analysis: dict, function_name: str) -> set[str]:
 
 
 def _all_labels(analysis: dict) -> dict[str, set[str]]:
-    """Return {function_name: set(labels)} for all privileged functions."""
+    """Return {function_name: set(labels)} for all semantic functions."""
     result = {}
-    for pf in analysis.get("access_control", {}).get("privileged_functions", []):
+    for pf in analysis.get("semantic_control", {}).get("semantic_functions", []):
         fn = pf.get("function", "").split("(")[0]
         result[fn] = set(pf.get("effect_labels", []))
     return result
@@ -72,8 +71,8 @@ def _all_labels(analysis: dict) -> dict[str, set[str]]:
 
 # =========================================================================
 # WEAKNESS 1: Non-standard naming for implementation slots
-# The heuristic looks for "implementation" or "beacon" in target names.
-# If a contract uses "_logic" or "_target" instead, it's missed.
+# Implementation updates should be found from fallback/delegatecall slot
+# semantics, not from the state-variable name.
 # =========================================================================
 
 
@@ -115,8 +114,8 @@ def test_nonstandard_impl_slot_name():
 
 # =========================================================================
 # WEAKNESS 2: Non-standard naming for pause variables
-# The heuristic checks for "paused", "_paused", "live", "_live".
-# If a contract uses "stopped" or "active", it's missed.
+# Pause toggles should be found from guarded bool-state semantics, not
+# from the state-variable name.
 # =========================================================================
 
 
@@ -161,8 +160,8 @@ def test_nonstandard_pause_var_name():
 
 # =========================================================================
 # WEAKNESS 3: Value transfer via low-level call instead of safeTransfer
-# The heuristic looks for .safeTransfer / .safeTransferFrom. Raw
-# address.call{value:} or token.transfer() are not caught.
+# Value transfer should be found from call/value semantics. Raw
+# address.call{value:} must not require a helper-library spelling.
 # =========================================================================
 
 
@@ -195,7 +194,8 @@ def test_raw_eth_transfer():
 # =========================================================================
 # WEAKNESS 4: ERC20 transfer() instead of safeTransfer()
 # Many contracts use IERC20(token).transfer() directly instead of
-# SafeERC20.safeTransfer(). The heuristic only matches safeTransfer.
+# SafeERC20.safeTransfer(). Direct ERC20 calls should classify from the
+# called selector as asset movement.
 # =========================================================================
 
 
@@ -231,9 +231,8 @@ def test_raw_erc20_transfer():
 
 # =========================================================================
 # WEAKNESS 5: Indirect mint through another contract
-# If contract A calls contract B.mint(), the heuristic sees
-# "external_contract_call" but doesn't recognize it as minting
-# because _mint/mint are only checked as internal calls.
+# If contract A calls contract B.mint(), the semantic effect should carry
+# enough selector/callee evidence to classify the supply-changing action.
 # =========================================================================
 
 
@@ -296,7 +295,7 @@ def test_standard_ownable_transfer():
 
 
 def test_standard_pause():
-    """Standard _paused variable should be detected."""
+    """A pause flag that gates another function should be detected."""
     source = textwrap.dedent("""\
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.20;
@@ -310,12 +309,20 @@ def test_standard_pause():
                 _;
             }
 
+            modifier whenNotPaused() {
+                require(!_paused, "paused");
+                _;
+            }
+
             function pause() external onlyOwner {
                 _paused = true;
             }
 
             function unpause() external onlyOwner {
                 _paused = false;
+            }
+
+            function execute() external whenNotPaused {
             }
         }
     """)
@@ -326,8 +333,8 @@ def test_standard_pause():
     assert "pause_toggle" in labels_unpause, f"Expected pause_toggle for unpause, got: {labels_unpause}"
 
 
-def test_standard_mint_burn():
-    """Internal _mint/_burn calls should be detected."""
+def test_standard_mint_burn_names_are_not_inferred_without_semantic_evidence():
+    """Internal helper names alone should not produce mint/burn labels."""
     source = textwrap.dedent("""\
         // SPDX-License-Identifier: MIT
         pragma solidity ^0.8.20;
@@ -364,5 +371,5 @@ def test_standard_mint_burn():
     analysis = _scaffold_and_analyze(source)
     labels_mint = _get_function_labels(analysis, "mint")
     labels_burn = _get_function_labels(analysis, "burn")
-    assert "mint" in labels_mint, f"Expected mint label, got: {labels_mint}"
-    assert "burn" in labels_burn, f"Expected burn label, got: {labels_burn}"
+    assert "mint" not in labels_mint, f"Did not expect mint label from helper name, got: {labels_mint}"
+    assert "burn" not in labels_burn, f"Did not expect burn label from helper name, got: {labels_burn}"

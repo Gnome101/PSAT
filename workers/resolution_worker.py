@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import cast
 
 from sqlalchemy import select
@@ -18,10 +19,15 @@ from db.models import (
     ControllerValue,
     Job,
     JobStage,
+    JobStatus,
 )
 from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import create_job, get_artifact, store_artifact
 from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
+from services.resolution.capability_resolver import (
+    find_analysis_job_for_address,
+    find_dependency_provider_job_for_address,
+)
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from services.resolution.tracking import build_control_snapshot
 from utils.logging import record_degraded
@@ -37,12 +43,14 @@ def _build_root_artifacts(
     contract_analysis: dict,
     tracking_plan: dict,
     snapshot: ControlSnapshot,
+    predicate_trees: dict | None = None,
 ) -> LoadedArtifacts:
     """Package the root job's in-memory artifacts for the recursive resolver."""
     return {
         "analysis": contract_analysis,
         "tracking_plan": tracking_plan,
         "snapshot": snapshot,
+        "predicate_trees": predicate_trees,
     }
 
 
@@ -70,6 +78,9 @@ class ResolutionWorker(BaseWorker):
         contract_analysis = get_artifact(session, job.id, "contract_analysis")
         if not isinstance(contract_analysis, dict):
             raise RuntimeError("contract_analysis artifact not found")
+        predicate_trees = get_artifact(session, job.id, "predicate_trees")
+        if not isinstance(predicate_trees, dict):
+            predicate_trees = None
 
         # For impl jobs, read storage from the proxy address (where state lives)
         request = job.request if isinstance(job.request, dict) else {}
@@ -126,7 +137,7 @@ class ResolutionWorker(BaseWorker):
         # Fetch token balances
         self._fetch_balances(session, job, contract_row)
 
-        root_artifacts = _build_root_artifacts(contract_analysis, tracking_plan, snapshot)
+        root_artifacts = _build_root_artifacts(contract_analysis, tracking_plan, snapshot, predicate_trees)
 
         self.update_detail(session, job, "Resolving recursive control graph")
         t0 = time.monotonic()
@@ -425,9 +436,11 @@ class ResolutionWorker(BaseWorker):
         leaves whose ``set_descriptor.authority_contract.address_source``
         traces to a state variable, resolves that variable's value via
         the just-written ``controller_values`` snapshot, then inserts an
-        edge ``(A, target_address, required_stage=policy)`` so A's
+        edge ``(A, provider_address, required_stage=policy)`` so A's
         policy stage waits until B's policy stage completes (whereupon
-        ``BaseWorker._satisfy_dependencies`` flips the row).
+        ``BaseWorker._satisfy_dependencies`` flips the row). For proxies,
+        ``provider_address`` is the implementation child job when known,
+        because that is where semantic policy artifacts are produced.
 
         Provider B jobs that don't yet exist are spawned via
         ``create_job`` under a ``(chain, address)`` advisory lock so
@@ -502,7 +515,11 @@ class ResolutionWorker(BaseWorker):
             lock_key = _stable_lock_key(chain, target_addr)
             session.execute(_sa_text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
 
-            provider_job = session.execute(select(Job).where(Job.address == target_addr).limit(1)).scalar_one_or_none()
+            provider_lookup = find_dependency_provider_job_for_address(session, target_addr, chain=chain)
+            provider_job = provider_lookup.analysis_job if provider_lookup is not None else None
+            dependency_provider_addr = (
+                (provider_job.address or target_addr).lower() if provider_job is not None else target_addr
+            )
             if provider_job is None:
                 provider_request = {
                     "address": target_addr,
@@ -519,10 +536,24 @@ class ResolutionWorker(BaseWorker):
                 if job.protocol_id:
                     provider_job.protocol_id = job.protocol_id
                 session.commit()
+                dependency_provider_addr = target_addr
 
             # Don't depend on yourself.
             if provider_job.id == job.id:
                 continue
+
+            satisfied_lookup = find_analysis_job_for_address(
+                session,
+                target_addr,
+                required_artifact="effective_permissions",
+                chain=chain,
+                completed_only=True,
+            )
+            already_satisfied = False
+            if satisfied_lookup is not None:
+                provider_job = satisfied_lookup.analysis_job
+                dependency_provider_addr = (provider_job.address or dependency_provider_addr).lower()
+                already_satisfied = provider_job.status == JobStatus.completed
 
             # Cycle detection: would inserting (A → B) close a path
             # that's already (B → ... → A)? If so we'd have A waiting on
@@ -531,22 +562,27 @@ class ResolutionWorker(BaseWorker):
             # instead so the gate doesn't block A and the resolver
             # short-circuits the leaf to external_check_only at
             # evaluation time.
-            cycle_path = _detect_dep_cycle(
-                session,
-                proposed_depender_id=job.id,
-                proposed_provider_id=provider_job.id,
-            )
-            edge_status = "cycle_degraded" if cycle_path else "pending"
+            cycle_path = None
+            if not already_satisfied:
+                cycle_path = _detect_dep_cycle(
+                    session,
+                    proposed_depender_id=job.id,
+                    proposed_provider_id=provider_job.id,
+                )
+            edge_status = "satisfied" if already_satisfied else ("cycle_degraded" if cycle_path else "pending")
+            values = {
+                "depender_job_id": job.id,
+                "provider_chain": chain,
+                "provider_address": dependency_provider_addr,
+                "required_stage": JobStage.policy,
+                "status": edge_status,
+                "cycle_path": cycle_path,
+            }
+            if already_satisfied:
+                values["satisfied_at"] = datetime.now(timezone.utc)
             stmt = (
                 _pg_insert(JobDependency)
-                .values(
-                    depender_job_id=job.id,
-                    provider_chain=chain,
-                    provider_address=target_addr,
-                    required_stage=JobStage.policy,
-                    status=edge_status,
-                    cycle_path=cycle_path,
-                )
+                .values(**values)
                 .on_conflict_do_nothing(
                     index_elements=[
                         "depender_job_id",
@@ -576,9 +612,9 @@ class ResolutionWorker(BaseWorker):
 def _collect_authority_contract_state_vars(node: dict, out: set[str]) -> None:
     """Walk a predicate-tree node and add every state-variable name that
     appears as an ``authority_contract.address_source`` to ``out``. The
-    address source is what the v2 builder writes when a leaf's external
+    address source is what the semantic builder writes when a leaf's external
     call's destination traced back to a state variable (e.g.
-    ``roleRegistry.hasRole(...)`` — the ``roleRegistry`` storage var)."""
+    ``authority.check(...)`` — the ``authority`` storage var)."""
     if not isinstance(node, dict):
         return
     if node.get("op") == "LEAF":

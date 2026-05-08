@@ -1,7 +1,7 @@
 """ReentrancyAnalyzer + PauseAnalyzer — week 3 deliverables.
 
-Both classify state-variable reads in privileged-function predicate
-trees as ``authority_role="reentrancy"`` or ``"pause"`` rather than
+Both classify state-variable reads in predicate trees as
+``authority_role="reentrancy"`` or ``"pause"`` rather than
 the default business — so the resolver knows these aren't caller-
 authority gates and the UI can render them as side-conditions.
 
@@ -16,7 +16,7 @@ ReentrancyAnalyzer:
         condition involves V being equal to the "entered" sentinel
         (which is the post-write value before the placeholder).
 
-  Concretely for OZ ReentrancyGuard:
+  Common reentrancy-guard shape:
       require(_status != _ENTERED);
       _status = _ENTERED;          // pre-placeholder write
       _;                           // placeholder
@@ -30,7 +30,7 @@ PauseAnalyzer:
         whichever value indicates "paused" — detected by the
         presence of a single write per writer that toggles V).
 
-  Concretely for OZ Pausable:
+  Common pausable shape:
       modifier whenNotPaused() { require(!_paused); _; }
       function pause() onlyOwner { _paused = true; }
 
@@ -66,11 +66,11 @@ GuardKind = Literal["reentrancy", "pause"]
 class PauseInfo(TypedDict):
     """Structured export from ``apply_reentrancy_pause_pass``.
 
-    Lets ``_detect_pausability`` skip the modifier-name heuristic and
-    consume the structural classification directly. ``pause_state_vars``
-    + ``reentrancy_state_vars`` are the names PauseAnalyzer/Reentrancy-
-    Analyzer flagged; the function lists are derived from each state
-    var's writers / from modifiers that toggle the var."""
+    Lets ``_detect_pausability`` consume the structural classification
+    directly. ``pause_state_vars`` + ``reentrancy_state_vars`` are the
+    names PauseAnalyzer/ReentrancyAnalyzer flagged; the function lists
+    are derived from each state var's writers / from modifiers that
+    toggle the var."""
 
     pause_state_vars: list[str]
     pause_toggle_functions: list[str]
@@ -133,7 +133,7 @@ class ReentrancyAnalyzer:
 
     def _function_guard_var(self, fn: Any) -> str | None:
         # Inline guard pattern: same write/restore around each
-        # external call within the function. Rare; skipped for v1.
+        # external call within the function. Rare; not modeled yet.
         return None
 
     def _find_placeholder_index(self, nodes: list[Any]) -> int | None:
@@ -147,11 +147,10 @@ class ReentrancyAnalyzer:
 
     def _collect_state_var_writes(self, nodes: list[Any], visited: set[int]) -> set[str]:
         """Walk ``nodes`` recursively through InternalCall helpers to
-        find every state-variable write. OZ 5.0+ ReentrancyGuard
-        splits the pre-write/post-write logic into _nonReentrantBefore
-        / _nonReentrantAfter helpers, so the modifier's own nodes
-        only contain InternalCall IRs — recursing finds the actual
-        Assignment in the helper body. Cycle-safe via ``visited``."""
+        find every state-variable write. Some guard implementations split
+        pre-write/post-write logic into helper functions, so the modifier's
+        own nodes may only contain InternalCall IRs. Cycle-safe via
+        ``visited``."""
         names: set[str] = set()
         for n in nodes:
             for ir in getattr(n, "irs_ssa", None) or getattr(n, "irs", []) or []:
@@ -173,9 +172,7 @@ class ReentrancyAnalyzer:
         """A helper-aware search: returns True if some descendant (node
         or recursively-walked InternalCall callee) contains BOTH a
         require/revert AND a Binary reading ``var_name``. They don't
-        need to be in the same node — OZ 5.0+ ReentrancyGuard puts
-        the comparison in an IF node and the revert in the IF's body
-        node. Same-node co-location was the previous overly-tight
+        need to be in the same node. Same-node co-location was the previous overly-tight
         match; loosening to per-callee scope catches the cross-fn
         if-revert structure without false positives (the helper's
         scope already bounds what counts as 'this revert reads this
@@ -274,8 +271,8 @@ class PauseAnalyzer:
         # an operand carrying ``state_variable_name == var_name`` came
         # from a revert-detected gate by construction (build_predicate-
         # _tree only emits leaves from RevertGate paths). This catches
-        # cross-fn cases like OZ 5.0+ Pausable where the actual read
-        # lives in a helper (``_requireNotPaused`` calling
+        # cross-fn cases where the actual read lives in a helper
+        # (``_requireNotPaused`` calling
         # ``if (_paused) revert``) — the helper's revert doesn't show
         # up in the modifier's body IRs but the predicate builder has
         # already resolved it via cross-fn provenance walking.
@@ -288,7 +285,7 @@ class PauseAnalyzer:
             tree = self.predicate_trees.get(full_name)
             if tree is not None and _tree_has_state_var_operand(tree, var_name):
                 return True
-        # Fast path 2: legacy direct-IR walk for the inline patterns
+        # Fast path 2: direct-IR walk for inline patterns
         # (``require(!_paused)`` in the modifier itself). Kept for
         # belt-and-braces — there are shapes where the predicate tree
         # might emit unsupported but the underlying body still has a
@@ -406,8 +403,7 @@ def apply_reentrancy_pause_pass(
 ) -> PauseInfo:
     """Run both analyzers, mutate predicate_trees in place, and return
     a ``PauseInfo`` so ``_detect_pausability`` can consume the
-    structural classification directly (replaces the v1 modifier-name
-    heuristic).
+    structural classification directly.
 
     Leaves whose operands read a reentrancy/pause var get their
     ``authority_role`` updated. Pure-side-condition leaves (no other

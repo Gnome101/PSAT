@@ -1,15 +1,14 @@
-"""Wave 3 Track 2 A.1: ``build_controller_tracking`` v2-only behavior.
+"""Wave 3 Track 2 A.1: ``build_controller_tracking`` semantic behavior.
 
-Validates the predicate-tree + effects-driven builder catches every
-shape v1 caught (superset regression) and that:
+Validates the predicate-tree + effects-driven builder covers the old
+controller-tracking shapes and that:
 
-* Inherited Ownable's ``_owner`` private state-var (a v1+augment-pass
-  shape) gets emitted as ``state_variable:_owner`` directly from leaves.
+* Inherited Ownable's ``_owner`` private state-var gets emitted as
+  ``state_variable:_owner`` directly from leaves.
 * External authority registries (``set_descriptor.authority_contract.
   address_source``) get promoted to ``external_contract`` kind.
-* OZ-style ``hasRole(role, msg.sender)`` patterns surface their role
-  identifier as ``role_identifier:<NAME>`` even when the constant name
-  doesn't match the auth-ish pattern (``BREAK_GLASS``).
+* External authority calls promote their registry state variable without
+  inventing role identifiers from standard ABI/event names.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from services.static.contract_analysis_pipeline.predicate_artifacts import (  # 
     build_predicate_artifacts,
 )
 from services.static.contract_analysis_pipeline.summaries import (  # noqa: E402
-    _detect_access_control,
+    _build_semantic_control_summary,
 )
 from services.static.contract_analysis_pipeline.tracking import (  # noqa: E402
     build_controller_tracking,
@@ -49,14 +48,15 @@ def _build(tmp_path, source, contract_name="C"):
     contract = _compile(tmp_path, source, contract_name)
     predicate_trees = build_predicate_artifacts(contract)
     effects = build_effects(contract)
-    access_control = _detect_access_control(contract, tmp_path, predicate_trees, effects)
-    targets = build_controller_tracking(contract, tmp_path, predicate_trees, effects, access_control)
+    semantic_control = _build_semantic_control_summary(contract, tmp_path, predicate_trees, effects)
+    targets = build_controller_tracking(contract, tmp_path, predicate_trees, effects, semantic_control)
     return targets
 
 
 def test_inherited_owner_caught_from_predicate_tree(tmp_path):
-    """Ownable's private ``_owner`` is the canonical shape that v1+augment
-    handled. The v2 builder should emit it directly from the leaf operand
+    """Ownable's private ``_owner`` is the canonical inherited-owner shape.
+
+    The semantic builder should emit it directly from the leaf operand
     walk."""
     source = """
     pragma solidity ^0.8.19;
@@ -115,9 +115,9 @@ def test_authority_state_var_promoted_to_external_contract(tmp_path):
     assert by_id["external_contract:roleRegistry"]["kind"] == "external_contract"
 
 
-def test_role_identifier_with_authority_contract_source(tmp_path):
-    """``PAUSER_ROLE`` paired with ``roleRegistry.hasRole(...)`` should
-    have ``contract_source: roleRegistry`` on the role read_spec."""
+def test_role_identifier_does_not_infer_authority_contract_source(tmp_path):
+    """A local bytes32 constant can be tracked without a standard-specific
+    registry-source assumption."""
     source = """
     pragma solidity ^0.8.19;
     interface IRoleRegistry {
@@ -140,7 +140,7 @@ def test_role_identifier_with_authority_contract_source(tmp_path):
     spec = by_id["role_identifier:PAUSER_ROLE"]["read_spec"]
     assert isinstance(spec, dict)
     assert spec["target"] == "PAUSER_ROLE"
-    assert spec.get("contract_source") == "roleRegistry"
+    assert "contract_source" not in spec
 
 
 def test_writer_functions_from_effects(tmp_path):
@@ -163,11 +163,9 @@ def test_writer_functions_from_effects(tmp_path):
     assert {w["function"] for w in target["writer_functions"]} == {"transferOwnership(address)"}
 
 
-def test_opaque_role_constant_not_authish_name_classified_as_role(tmp_path):
-    """``BREAK_GLASS`` (bytes32 constant) doesn't match the auth-ish
-    name pattern but is structurally a role identifier (used as a key
-    in an OZ ``hasRole`` check). The v2 builder should classify it as
-    ``role_identifier`` via the OZ-style descriptor heuristic."""
+def test_external_role_getter_name_does_not_create_role_identifier(tmp_path):
+    """A getter name on an external authority is not enough to create a
+    local role identifier."""
     source = """
     pragma solidity ^0.8.19;
     interface IRoleRegistry {
@@ -189,7 +187,8 @@ def test_opaque_role_constant_not_authish_name_classified_as_role(tmp_path):
     """
     targets = _build(tmp_path, source)
     by_id = {t["controller_id"]: t for t in targets}
-    assert "role_identifier:BREAK_GLASS" in by_id, list(by_id.keys())
+    assert "external_contract:roleRegistry" in by_id, list(by_id.keys())
+    assert "role_identifier:BREAK_GLASS" not in by_id
 
 
 def test_writer_emits_event_promotes_tracking_mode(tmp_path):

@@ -1,6 +1,6 @@
 contract_name: C
 description: |
-  OZ AccessControl: 2-key role mapping with ``hasRole(role, msg.sender)``.
+  OZ role mapping: 2-key role mapping with ``hasRole(role, msg.sender)``.
   Canonical pattern for newer protocols. The membership leaf has
   multi-key direct-promote (>=2 keys + caller key) so it's HIGH
   confidence caller_authority.

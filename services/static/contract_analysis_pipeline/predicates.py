@@ -14,7 +14,7 @@ For each function:
      root.
 
 This module is the main user of ``ProvenanceEngine`` + ``RevertDetector``
-and the producer of the v2 schema's ``predicate_tree`` artifact field.
+and the producer of the semantic ``predicate_tree`` artifact field.
 
 Scope of this initial cut: equality / membership leaves with the
 caller_authority detection rules from v6 round-5 #1. external_bool /
@@ -123,8 +123,7 @@ def _cache_key_for(callee: Any, bindings: dict[str, Any]) -> tuple | None:
 
 def build_predicate_tree(function: Any) -> PredicateTree | None:
     """Construct a PredicateTree for one function. Returns None if
-    the function has no revert paths (i.e., is unguarded — not in
-    privileged_functions)."""
+    the function has no revert paths."""
     if not SLITHER_AVAILABLE:
         raise RuntimeError("predicate builder requires slither")
     detector = RevertDetector(function)
@@ -172,13 +171,8 @@ def _build_subtree_from_gate(
         )
         return make_leaf_node(leaf)
 
-    if gate.kind == "external_authority_call":
-        # ``state_var.fn(msg.sender, ...)`` void call — the local fn
-        # reverts iff the callee reverts. Build an external_bool leaf
-        # whose descriptor records the registry state-var + callee so
-        # resolution can use concrete role keys or inline registry
-        # predicate trees under the original caller's msg.sender.
-        leaf = _build_external_authority_call_leaf(gate)
+    if gate.kind == "try_catch_revert" and isinstance(gate.condition_value, HighLevelCall):
+        leaf = _build_external_bool_leaf(gate.condition_value, prov, gate)
         return make_leaf_node(leaf)
 
     cond = gate.condition_value
@@ -221,16 +215,16 @@ def _build_chain_bindings(
     the helper's scope. Each link is an InternalCall (or
     modifier-call InternalCall) IR taken to enter the next callee.
 
-    For the OZ AC 3-hop case:
+    For a multi-hop helper case:
       chain = [
-        modifier_call to onlyRole(getRoleAdmin(role)),
-        InternalCall to _checkRole(role),
-        InternalCall to _checkRoleAddr(role, _msgSender()),
+        modifier_call to gate(resolveKey(input)),
+        InternalCall to _check(key),
+        InternalCall to _checkAddress(key, _msgSender()),
       ]
     The walk binds:
-      onlyRole.role        ← getRoleAdmin(grantRole.role) (view_call source)
-      _checkRole.role      ← onlyRole.role (chained)
-      _checkRoleAddr.role  ← _checkRole.role
+      gate.key          ← resolveKey(caller_arg) (view_call source)
+      _check.key        ← gate.key (chained)
+      _checkAddress.key ← _check.key
       _checkRoleAddr.account ← _msgSender() return = msg_sender source
 
     Then the helper's engine seeds parameters with these provenance
@@ -376,7 +370,7 @@ def _build_subtree_from_value(
     # binary_op_{or,and}_unsupported`` and the function falls through
     # to authority_role=business — a real classification gap on every
     # Solmate Auth / DSAuth contract (BoringVault.manage, MKR DSToken,
-    # Maker Vat's wish() permissioned methods, USDT.approve, etc).
+    # Maker Vat's wish() guarded methods, USDT.approve, etc).
     # The helper's return-defining IR is a Binary AND/OR: recurse into
     # the helper's bindings + sub-engine, then build the AND/OR
     # subtree from each side. Polarity propagates the same way as
@@ -395,8 +389,8 @@ def _build_subtree_from_value(
         # the value's provenance and picks up the underlying state var
         # / parameter / signature_recovery source. Pause/reentrancy
         # passes can then promote business -> pause/reentrancy when
-        # the operand reads a recognized guard var. The OZ 5.0+
-        # cross-fn pause shape (``_requireNotPaused`` calling
+        # the operand reads a recognized guard var. The cross-function
+        # pause shape (``_requireNotPaused`` calling
         # ``if (_paused) revert``) hits this path.
         return make_leaf_node(_build_truthy_leaf(cond_value, prov, gate))
     return make_leaf_node(leaf)
@@ -475,15 +469,13 @@ def _build_internal_call_leaf(
     ir: Any, prov: ProvenanceMap, gate: RevertGate, function: Any | None
 ) -> LeafPredicate | None:
     """The condition is the lvalue of an InternalCall returning a
-    bool — e.g. ``if (!hasRole(role, account)) revert``. Recurse into
+    bool — e.g. ``if (!check(role, account)) revert``. Recurse into
     the callee's body, bind parameters from caller-site arg
     provenance, and reclassify on the return-value's defining IR.
 
     This unfolds extra hops past the cross-fn revert chain: the gate
     lives in the helper that *contains* the revert, but the bool
-    actually being negated may itself come from a deeper helper. The
-    OZ AC 5.0+ shape ``hasRole(role,account) → _roles[role][account]``
-    is the canonical case."""
+    actually being negated may itself come from a deeper helper."""
     resolved = _resolve_internal_call_return(ir, prov)
     if resolved is None:
         return None
@@ -527,8 +519,7 @@ def _build_internal_call_or_and_subtree(ir: Any, prov: ProvenanceMap, gate: Reve
     op_name: str | None = None
     children: list[PredicateTree] = []
     if isinstance(inner, Binary):
-        # Path 1: helper returns Binary AND/OR directly (Solmate Auth.
-        # isAuthorized's `(... && canCall) || user==owner`).
+        # Path 1: helper returns Binary AND/OR directly.
         op_name = _binary_op(getattr(inner, "type", None))
         if op_name not in ("and", "or"):
             return None
@@ -578,13 +569,12 @@ def _build_internal_call_or_and_subtree(ir: Any, prov: ProvenanceMap, gate: Reve
             ]
         else:
             # Path 4: helper is an if-else chain returning bool
-            # literals + a tail bool expression — DSAuth.isAuthorized
-            # is the canonical case:
+            # literals + a tail bool expression:
             #
             #   if (src == this)        return true;
             #   else if (src == owner)  return true;
             #   else if (auth == 0)     return false;
-            #   else                    return auth.canCall(...);
+            #   else                    return auth.check(...);
             #
             # The function's effective bool semantics is OR of
             # (path-condition for each return-true / return-expr
@@ -860,9 +850,9 @@ def _try_membership_via_value_compare(
     left = ir.variable_left
     right = ir.variable_right
     # Try: left is Index, right is Constant.
-    index_ir, const_value = _find_index_value_pair(left, right, function)
+    index_ir, const_value, mask_hex = _find_index_value_pair(left, right, function)
     if index_ir is None:
-        index_ir, const_value = _find_index_value_pair(right, left, function)
+        index_ir, const_value, mask_hex = _find_index_value_pair(right, left, function)
     if index_ir is None or const_value is None:
         return None
 
@@ -884,6 +874,8 @@ def _try_membership_via_value_compare(
         "rhs_values": [str(const_value)],
         "value_type": _value_type_of_index_ir(index_ir),
     }
+    if mask_hex is not None:
+        value_predicate["mask"] = mask_hex
     descriptor["value_predicate"] = value_predicate
     base_var = _find_index_base(index_ir, function)
     if base_var is not None:
@@ -902,8 +894,8 @@ def _try_membership_via_value_compare(
     return leaf
 
 
-def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, Any | None]:
-    """Return (index_ir, const_value) if ``a`` is the lvalue of an
+def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, Any | None, str | None]:
+    """Return (index_ir, const_value, mask_hex) if ``a`` is the lvalue of an
     Index IR (possibly with a bitwise mask applied) and ``b`` is a
     constant-like value (literal Constant, state-level
     ``constant``/``immutable``); otherwise (None, None).
@@ -913,11 +905,11 @@ def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, A
     forms ``map[k] >= const`` uniformly.
     """
     if not _is_mask_operand(b):
-        return None, None
+        return None, None, None
     const_value = _coerce_constant_value(b)
     defining = _find_defining_ir(a, None, function)
     if isinstance(defining, Index):
-        return defining, const_value
+        return defining, const_value, None
     # Bitwise mask: ``a`` is the lvalue of a Binary AND whose left
     # is the Index lvalue and whose right is a constant. The outer
     # comparison ``(map[k] & MASK) op CONST`` is structurally a
@@ -938,11 +930,11 @@ def _find_index_value_pair(a: Any, b: Any, function: Any) -> tuple[Any | None, A
             if _is_mask_operand(left) and not _is_mask_operand(right):
                 left, right = right, left
             if not _is_mask_operand(right):
-                return None, None
+                return None, None, None
             inner = _find_defining_ir(left, None, function)
             if isinstance(inner, Index):
-                return inner, const_value
-    return None, None
+                return inner, const_value, _literal_to_hex(_coerce_constant_value(right))
+    return None, None, None
 
 
 def _coerce_constant_value(value: Any) -> Any:
@@ -958,6 +950,27 @@ def _coerce_constant_value(value: Any) -> Any:
             if expr is not None:
                 return getattr(expr, "value", None) or str(expr)
             return getattr(nsv, "name", None)  # fallback to var name
+    return None
+
+
+def _literal_to_hex(value: Any) -> str | None:
+    """Normalize a numeric literal to the hex form value predicates expect."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return hex(int(value))
+    if isinstance(value, int):
+        return hex(value)
+    if isinstance(value, bytes):
+        return "0x" + value.hex()
+    if isinstance(value, str):
+        raw = value.strip().lower()
+        if raw.startswith("0x"):
+            return raw
+        try:
+            return hex(int(raw))
+        except ValueError:
+            return None
     return None
 
 
@@ -984,10 +997,10 @@ def _try_threshold_membership(
         return None
     left = ir.variable_left
     right = ir.variable_right
-    index_ir, threshold_value = _find_index_value_pair(left, right, function)
+    index_ir, threshold_value, mask_hex = _find_index_value_pair(left, right, function)
     if index_ir is None:
         # Try right as the Index side.
-        index_ir, threshold_value = _find_index_value_pair(right, left, function)
+        index_ir, threshold_value, mask_hex = _find_index_value_pair(right, left, function)
         if index_ir is None:
             return None
         # Operator inverts when operands swap (a >= b is b <= a).
@@ -1012,6 +1025,8 @@ def _try_threshold_membership(
         "rhs_values": [str(threshold_value)],
         "value_type": _value_type_of_index_ir(index_ir),
     }
+    if mask_hex is not None:
+        threshold_value_predicate["mask"] = mask_hex
     descriptor["value_predicate"] = threshold_value_predicate
     base_var = _find_index_base(index_ir, function)
     if base_var is not None:
@@ -1219,7 +1234,7 @@ def _build_index_membership_leaf(
 
 
 def _build_external_bool_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) -> LeafPredicate:
-    """``require(other.canCall(...))`` — HighLevelCall whose result
+    """``require(other.check(...))`` — HighLevelCall whose result
     drives the gate."""
     callee_name = getattr(getattr(ir, "function", None), "name", None) or getattr(ir, "function_name", None)
     callee_signature = _callee_signature(ir)
@@ -1247,10 +1262,7 @@ def _build_external_bool_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) ->
     )
     if has_state_target and has_caller_arg:
         leaf["authority_role"] = "delegated_authority"
-        # Cross-contract role-membership shape. Attach a structural
-        # mapping_membership descriptor so generic event replay can expand it
-        # when the relevant events are indexed.
-        descriptor = _maybe_build_role_membership_descriptor(
+        descriptor = _build_generic_external_set_descriptor(
             callee_name=callee_name,
             callee_signature=callee_signature,
             callee_selector=callee_selector,
@@ -1263,11 +1275,6 @@ def _build_external_bool_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) ->
         leaf["authority_role"] = "business"
     leaf["expression"] = f"{callee_name}(...)"
     return leaf
-
-
-# RoleGranted(bytes32 indexed role, address indexed account, address indexed sender)
-_ROLE_GRANTED_TOPIC0 = "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
-_HAS_ROLE_SELECTOR = "0x91d14854"  # hasRole(bytes32,address)
 
 
 def _callee_signature(ir: Any) -> str | None:
@@ -1291,7 +1298,7 @@ def _selector_for_signature(signature: str | None) -> str | None:
     return "0x" + keccak(text=signature).hex()[:8]
 
 
-def _maybe_build_role_membership_descriptor(
+def _build_generic_external_set_descriptor(
     *,
     callee_name: str | None,
     callee_signature: str | None,
@@ -1299,49 +1306,21 @@ def _maybe_build_role_membership_descriptor(
     args_operands: list,
     target_state_var: str | None,
 ) -> dict | None:
-    """Recognise the OZ ``hasRole(bytes32,address)`` ABI shape.
-
-    Matching is by selector/signature, not by the source identifier. The
-    argument shape still has to carry ``role`` + caller so arbitrary
-    selector collisions do not become role-grant descriptors.
-    """
-    if callee_selector != _HAS_ROLE_SELECTOR:
-        return None
-    if len(args_operands) != 2:
-        return None
-    role_op, caller_op = args_operands[0], args_operands[1]
-    # Caller arg must be msg_sender / tx_origin / signature_recovery so the
-    # event-indexed resolver knows which event key represents the principal.
-    if caller_op.get("source") not in ("msg_sender", "tx_origin", "signature_recovery"):
+    if target_state_var is None:
         return None
     descriptor: dict = {
-        "kind": "mapping_membership",
-        "key_sources": [role_op, caller_op],
-        "callee_function": callee_name,
-        "callee_signature": callee_signature,
-        "callee_selector": callee_selector,
-        # event_address is left unset; the resolver fills it from the
-        # authority_contract address_source at run time.
-        "enumeration_hint": [
-            {
-                "topic0": _ROLE_GRANTED_TOPIC0,
-                "topics_to_keys": {1: 0, 2: 1},
-                "data_to_keys": {},
-                "direction": "add",
-            }
-        ],
-    }
-    if target_state_var is not None:
-        # Cross-contract registry — record the address source so the
-        # adapter can pull the registry's value from
-        # ctx.state_var_values[target_state_var] and use it as the
-        # event address for the generic log lookup.
-        descriptor["authority_contract"] = {
+        "kind": "external_set",
+        "key_sources": args_operands,
+        "authority_contract": {
             "address_source": {
                 "source": "state_variable",
                 "state_variable_name": target_state_var,
             },
-        }
+        },
+        "callee_function": callee_name,
+        "callee_signature": callee_signature,
+        "callee_selector": callee_selector,
+    }
     return descriptor
 
 
@@ -1355,83 +1334,6 @@ def _build_solidity_call_leaf(ir: Any, prov: ProvenanceMap, gate: RevertGate) ->
         reason=f"solidity_call_{name}_unsupported_as_gate",
         expression=str(ir),
     )
-
-
-def _build_external_authority_call_leaf(gate: RevertGate) -> LeafPredicate:
-    """Build an ``external_bool`` leaf from a ``external_authority_call``
-    gate (a void HighLevelCall to a state-variable contract that reverts
-    on auth failure, e.g. ``roleRegistry.onlyProtocolUpgrader(msg.sender)``).
-
-    The leaf carries a ``mapping_membership`` set_descriptor so the generic
-    event-indexed resolver can enumerate when relevant events exist.
-    The crucial fields:
-      * ``authority_contract.address_source`` — the state variable that
-        holds the registry contract's address. The resolver translates
-        this to the actual address via ``ctx.state_var_values`` (B.3).
-      * ``callee_signature`` / ``callee_selector`` — exact call target
-        identity for cross-contract inlining.
-      * ``key_sources`` — synthetic ``[external_call:callee, msg_sender]``
-        so tracking can preserve the exact external role getter label while
-        resolution treats unresolved getters as parametric.
-    """
-    ir = gate.condition_value
-    callee_name = (
-        getattr(getattr(ir, "function", None), "name", None) or getattr(ir, "function_name", None) or "<unknown>"
-    )
-    callee_signature = _callee_signature(ir)
-    callee_selector = _selector_for_signature(callee_signature)
-    destination = getattr(ir, "destination", None)
-    state_var_name = getattr(destination, "name", None) or str(destination or "")
-
-    descriptor: dict = {
-        "kind": "mapping_membership",
-        "key_sources": [
-            {
-                "source": "external_call",
-                "callee": callee_name,
-                "callee_signature": callee_signature,
-                "callee_selector": callee_selector,
-            },
-            {"source": "msg_sender"},
-        ],
-        "enumeration_hint": [
-            {
-                "topic0": _ROLE_GRANTED_TOPIC0,
-                "topics_to_keys": {1: 0, 2: 1},
-                "data_to_keys": {},
-                "direction": "add",
-            }
-        ],
-        "authority_contract": {
-            "address_source": {
-                "source": "state_variable",
-                "state_variable_name": state_var_name,
-            },
-        },
-        "callee_function": callee_name,
-        "callee_signature": callee_signature,
-        "callee_selector": callee_selector,
-    }
-    leaf: LeafPredicate = {
-        "kind": "external_bool",
-        "operator": "truthy",
-        "authority_role": "delegated_authority",
-        "operands": [
-            {
-                "source": "external_call",
-                "callee": callee_name,
-                "callee_signature": callee_signature,
-                "callee_selector": callee_selector,
-            },
-            {"source": "msg_sender"},
-        ],
-        "set_descriptor": cast(SetDescriptor, descriptor),
-        "references_msg_sender": True,
-        "parameter_indices": [],
-        "expression": gate.expression_text or f"{state_var_name}.{callee_name}(msg.sender)",
-        "basis": list(gate.basis or []),
-    }
-    return leaf
 
 
 def _build_truthy_leaf(cond: Any, prov: ProvenanceMap, gate: RevertGate) -> LeafPredicate:
@@ -1456,7 +1358,7 @@ def _build_truthy_leaf(cond: Any, prov: ProvenanceMap, gate: RevertGate) -> Leaf
 
 
 def _operand_for_value(value: Any, prov: ProvenanceMap) -> Operand:
-    """Translate a Slither IR value's source set into the v2 Operand
+    """Translate a Slither IR value's source set into the semantic Operand
     record. Picks the most informative source if multiple are
     present."""
     sources = _sources_for_value(value, prov)
@@ -1756,7 +1658,7 @@ def _derive_confidence(leaf: LeafPredicate) -> Confidence:
     """Map a fully-classified leaf to HIGH/MEDIUM/LOW confidence.
 
     Rules (structural):
-      HIGH — shape-tight matches with no heuristic inference:
+      HIGH — shape-tight matches with no indirect inference:
         • equality/eq with caller-source operand vs address-typed
           state/view/parameter/sig_recovery operand (Rule A direct).
         • signature_auth (ecrecover-then-equality, shape-tight by
@@ -1767,12 +1669,12 @@ def _derive_confidence(leaf: LeafPredicate) -> Confidence:
         • reentrancy/pause (cross-referenced via dedicated analyzer).
         • EIP-1271 magic-value match (caller_authority on F3 path).
 
-      MEDIUM — inferred / heuristic / dependent on writer or
+      MEDIUM — inferred / dependent on writer or
       threshold analysis:
         • 1-key caller-keyed membership promoted by writer-gate
           Path 1 (rules b.i/b.ii — depends on writer side analysis).
         • F2 threshold-promote (comparison kind, authority-derived
-          counter inference — heuristic).
+          counter inference).
         • delegated_authority via external_bool (depends on the
           oracle resolving correctly at evaluation time).
 
@@ -1830,7 +1732,7 @@ def _derive_confidence(leaf: LeafPredicate) -> Confidence:
             # context; codex round on this called it out explicitly.
             return "medium"
         if kind == "comparison":
-            # threshold-promote (F2) is heuristic.
+            # threshold-promote (F2) is an inferred authority signal.
             return "medium"
         return "medium"
 
@@ -1979,7 +1881,7 @@ def _reconstruct_index_chain(ir: Any, prov: ProvenanceMap, function: Any | None 
             visited.add(left_name)
         # If the left is itself the lvalue of an outer Index, find
         # that IR and continue the walk. Also bridge struct-field
-        # accesses (``map[k].field[m]`` shape used by OZ AC 5.0+):
+        # accesses (``map[k].field[m]`` shape):
         # the outer Index's left points at a Member whose variable_left
         # is itself an Index — continue from that inner Index.
         if function is None:

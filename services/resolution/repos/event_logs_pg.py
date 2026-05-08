@@ -61,13 +61,90 @@ class PostgresEventLogRepo:
             member = _word_to_address(event_keys.get(member_key))
             if member is None:
                 continue
-            state[member] = direction == "add"
+            state[member] = True
 
         cursor_block = self._cursor_block(chain_id, event_address, topic0)
+        if cursor_block is None or cursor_block <= 0:
+            return EnumerationResult(
+                members=sorted(addr for addr, present in state.items() if present),
+                confidence="partial",
+                partial_reason="no_index_cursor",
+                last_indexed_block=None,
+            )
         return EnumerationResult(
             members=sorted(addr for addr, present in state.items() if present),
             confidence="enumerable",
             last_indexed_block=cursor_block,
+        )
+
+    def fold_event_history(
+        self,
+        *,
+        chain_id: int,
+        event_address: str,
+        event_hints: list[dict[str, Any]],
+        key_sources: list[dict[str, Any]],
+        block: int | None = None,
+    ) -> EnumerationResult:
+        member_key = _caller_key_index(key_sources)
+        if member_key is None:
+            return EnumerationResult(members=[], confidence="partial", partial_reason="unresolved_event_key")
+
+        key_filters = _constant_key_filters(key_sources, member_key)
+        if key_filters is None:
+            return EnumerationResult(members=[], confidence="partial", partial_reason="unresolved_event_key")
+
+        hints_by_topic = _event_hints_by_topic(event_hints)
+        if not hints_by_topic:
+            return EnumerationResult(members=[], confidence="partial", partial_reason="unresolved_event_key")
+
+        topic0s = sorted(hints_by_topic)
+        q = (
+            select(IndexedEventLog)
+            .where(IndexedEventLog.chain_id == chain_id)
+            .where(func.lower(IndexedEventLog.event_address) == event_address.lower())
+            .where(func.lower(IndexedEventLog.topic0).in_(topic0s))
+            .order_by(
+                IndexedEventLog.block_number.asc(),
+                IndexedEventLog.transaction_index.asc(),
+                IndexedEventLog.log_index.asc(),
+            )
+        )
+        if block is not None:
+            q = q.where(IndexedEventLog.block_number <= block)
+
+        state: dict[str, bool] = {}
+        for row in self.session.execute(q).scalars():
+            topic0 = str(row.topic0).lower()
+            for hint in hints_by_topic.get(topic0, []):
+                event_keys = _event_keys(
+                    row.topics or [],
+                    row.data_words or [],
+                    hint.get("topics_to_keys") or {},
+                    hint.get("data_to_keys") or {},
+                )
+                if any(event_keys.get(idx) != expected for idx, expected in key_filters.items()):
+                    continue
+                member = _word_to_address(event_keys.get(member_key))
+                if member is None:
+                    continue
+                state[member] = hint["direction"] == "add"
+
+        cursor_blocks = {topic0: self._cursor_block(chain_id, event_address, topic0) for topic0 in topic0s}
+        indexed_blocks = [value for value in cursor_blocks.values() if value is not None and value > 0]
+        last_indexed_block = min(indexed_blocks) if indexed_blocks else None
+        if len(indexed_blocks) != len(topic0s):
+            return EnumerationResult(
+                members=sorted(addr for addr, present in state.items() if present),
+                confidence="partial",
+                partial_reason="no_index_cursor",
+                last_indexed_block=last_indexed_block,
+            )
+
+        return EnumerationResult(
+            members=sorted(addr for addr, present in state.items() if present),
+            confidence="enumerable",
+            last_indexed_block=last_indexed_block,
         )
 
     def _cursor_block(self, chain_id: int, event_address: str, topic0: str) -> int | None:
@@ -100,6 +177,10 @@ def _constant_key_filters(key_sources: list[dict[str, Any]], member_key: int) ->
 
 
 def _constant_word(source: dict[str, Any]) -> str | None:
+    raw_const = source.get("constant_value")
+    word = _normalize_word(raw_const)
+    if word is not None:
+        return word
     if source.get("source") == "constant":
         for key in ("constant_value", "value"):
             raw = source.get(key)
@@ -112,6 +193,17 @@ def _constant_word(source: dict[str, Any]) -> str | None:
         if len(values) == 1:
             return _normalize_word(values[0])
     return None
+
+
+def _event_hints_by_topic(event_hints: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {}
+    for hint in event_hints:
+        topic0 = _normalize_topic(hint.get("topic0"))
+        direction = hint.get("direction")
+        if topic0 is None or direction not in {"add", "remove"}:
+            continue
+        out.setdefault(topic0, []).append(hint)
+    return out
 
 
 def _event_keys(
@@ -158,6 +250,15 @@ def _normalize_word(raw: Any) -> str | None:
     if len(body) == 64:
         return value
     return None
+
+
+def _normalize_topic(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    value = raw.lower()
+    if not value.startswith("0x"):
+        return None
+    return value
 
 
 def _word_to_address(word: str | None) -> str | None:

@@ -78,7 +78,7 @@ def test_build_company_function_entry_filters_generic_authority_contract_when_sp
             resolved_type="contract",
             origin="roleRegistry",
             principal_type="controller",
-            details={"authority_kind": "access_control_like"},
+            details={"authority_kind": "external_authority"},
         ),
         SimpleNamespace(
             address="0xsafe",

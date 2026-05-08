@@ -1,7 +1,7 @@
 contract_name: C
 description: |
   Maker DSS wards: ``rely(addr)`` self-administered (writer reads
-  the same map M as its own gate). Both ``rely`` and the privileged
+  the same map M as its own gate). Both ``rely`` and the guarded
   ``mint`` see ``wards[msg.sender] == 1`` — the value-compare
   membership lift in the predicate builder picks this up as 1-key
   caller-keyed; writer-gate's b.ii path promotes to caller_authority

@@ -1,12 +1,7 @@
-"""v2 predicate-pipeline live cutover gate.
+"""Semantic predicate-pipeline live cutover gate.
 
-These tests are the explicit merge gate for the v1->v2 cutover described
-in /tmp/psat-plans/pr70-v1-to-v2-cutover.md S F.1. They are intentionally
-written to fail today — pre-existing live tests in
-``test_pipeline_stages.py`` and ``test_analyses.py`` only assert v1
-artifacts (control_tracking_plan, control_snapshot, effective_permissions),
-so the live job would happily go green even if the v2 pipeline were
-entirely broken. This module closes that gap by asserting that the v2
+These tests are the explicit merge gate for the semantic predicate
+pipeline. They assert that the semantic
 artifacts exist, the typed leaves carry the right shape, the capability
 resolver returns a non-empty payload, and EffectiveFunction rows carry a
 populated ``capability_expr``.
@@ -46,7 +41,7 @@ import pytest
 
 from tests.live.conftest import LiveClient
 
-# Closed kind sets pulled from the v2 type modules — kept here as plain
+# Closed kind sets pulled from the semantic type modules — kept here as plain
 # tuples so a future schema bump that introduces a new kind shows up as
 # a clear test failure rather than a silent pass.
 #
@@ -101,24 +96,24 @@ def _iter_leaves(tree: dict):
 
 
 def test_predicate_trees_artifact_exists(analyzed_weth, live_client: LiveClient):
-    """Gates the v2 static-stage emit (predicate_artifacts.py).
+    """Gates the semantic static-stage emit (predicate_artifacts.py).
 
     Asserts the ``predicate_trees`` artifact is written for every
-    completed analysis and carries the v2 schema marker. WETH is
+    completed analysis and carries the current schema marker. WETH is
     controls-free so ``trees`` may legitimately be empty; the
     schema_version check is what proves the emit ran end-to-end.
     """
     art = live_client.artifact(analyzed_weth["name"], "predicate_trees")
     assert art is not None, (
-        "predicate_trees artifact missing — v2 static-stage emit did not "
+        "predicate_trees artifact missing — semantic static-stage emit did not "
         "run (gates predicate_artifacts.py / contract_analysis_pipeline core)."
     )
     assert isinstance(art, dict), "predicate_trees should be a JSON object"
-    assert art.get("schema_version") == "v2", (
-        f"predicate_trees.schema_version must be 'v2', got {art.get('schema_version')!r} — "
-        "v2 emit produced the wrong schema marker."
+    assert art.get("schema_version") == "semantic", (
+        f"predicate_trees.schema_version must be 'semantic', got {art.get('schema_version')!r} — "
+        "semantic emit produced the wrong schema marker."
     )
-    assert "trees" in art, "predicate_trees missing 'trees' key (v2 schema violation)"
+    assert "trees" in art, "predicate_trees missing 'trees' key (semantic schema violation)"
     assert isinstance(art["trees"], dict), "predicate_trees.trees must be a dict keyed on function name"
 
 
@@ -137,9 +132,9 @@ def test_predicate_trees_has_typed_leaves(analyzed_weth, live_client: LiveClient
     trees = art.get("trees") or {}
     if not trees:
         pytest.skip(
-            "WETH has no privileged controls; trees is empty by design. "
+            "WETH has no guarded controls; trees is empty by design. "
             "The schema_version assertion in test_predicate_trees_artifact_exists "
-            "is the real v2-emit gate for controls-free contracts."
+            "is the real semantic-emit gate for controls-free contracts."
         )
 
     saw_typed_leaf = False
@@ -149,11 +144,11 @@ def test_predicate_trees_has_typed_leaves(analyzed_weth, live_client: LiveClient
             kind = leaf.get("kind")
             role = leaf.get("authority_role")
             assert kind in EXPECTED_LEAF_KINDS, (
-                f"Leaf kind {kind!r} for {fn_sig} is not in the closed v2 LeafKind set "
+                f"Leaf kind {kind!r} for {fn_sig} is not in the closed semantic LeafKind set "
                 f"({sorted(EXPECTED_LEAF_KINDS)}) — schema drift."
             )
             assert role in EXPECTED_AUTHORITY_ROLES, (
-                f"Leaf authority_role {role!r} for {fn_sig} is not in the closed v2 "
+                f"Leaf authority_role {role!r} for {fn_sig} is not in the closed semantic "
                 f"AuthorityRole set ({sorted(EXPECTED_AUTHORITY_ROLES)}) — schema drift."
             )
             if kind in TYPED_LEAF_KINDS:
@@ -175,7 +170,7 @@ def test_capability_resolution_returns_non_empty(analyzed_weth, live_client: Liv
     """Gates the resolver read path (services/resolution/capability_resolver.py).
 
     Hits ``GET /api/contract/{address}/capabilities`` and
-    asserts the response shape matches the v2 contract. WETH is
+    asserts the response shape matches the semantic contract. WETH is
     controls-free, so ``capabilities`` may be ``{}`` (every function
     unguarded — the resolver convention). When non-empty, asserts at
     least one entry carries a ``CapabilityExpr.kind`` in the closed kind
@@ -198,7 +193,7 @@ def test_capability_resolution_returns_non_empty(analyzed_weth, live_client: Liv
     )
     assert resp.status_code == 200, (
         f"GET /api/contract/{addr}/capabilities returned {resp.status_code} — "
-        "v2 capabilities route is wired but the resolver failed (gates "
+        "semantic capabilities route is wired but the resolver failed (gates "
         "capability_resolver.resolve_contract_capabilities). Body: {resp.text[:400]!r}"
     )
     body = resp.json()
@@ -250,7 +245,7 @@ def test_effective_function_has_capability_expr(analyzed_weth, live_client: Live
     eff = (detail.get("effective_permissions") or {}).get("functions") or []
     if not eff:
         pytest.skip(
-            "WETH has no effective_functions rows (no privileged controls). "
+            "WETH has no effective_functions rows (no guarded controls). "
             "B.1 gate is exercised on contracts that produce non-empty effective_permissions."
         )
 
@@ -344,29 +339,17 @@ def test_effective_function_principal_consistent_with_capability_expr(analyzed_w
         )
 
 
-def test_no_v1_only_artifacts_present(analyzed_weth, live_client: LiveClient):
-    """Negative gate for A.6 / B.2 — v1-only artifacts removed or deprecated.
-
-    The cutover plan calls for ``permission_graph`` and
-    ``semantic_guards`` to be either removed entirely or clearly marked
-    deprecated once v2 is the source of truth. Today both still emit; this
-    test fails until A.6 (permission_graph retirement) and B.2
-    (semantic_guards retirement) land.
-
-    'Clearly marked deprecated' is operationalised as: artifact body is
-    a dict carrying ``"deprecated": True`` at the top level. If the
-    artifact is absent (404) that also satisfies the gate.
-    """
-    for legacy_name in ("permission_graph", "semantic_guards"):
-        art = live_client.artifact(analyzed_weth["name"], legacy_name)
+def test_no_retired_artifacts_present(analyzed_weth, live_client: LiveClient):
+    """Negative gate: retired artifacts stay absent or explicitly deprecated."""
+    for retired_name in ("permission_graph", "semantic_guards"):
+        art = live_client.artifact(analyzed_weth["name"], retired_name)
         if art is None:
             # Artifact absent — already retired.
             continue
         assert isinstance(art, dict), (
-            f"{legacy_name} artifact still emitted but is not a dict — cannot carry a deprecation marker."
+            f"{retired_name} artifact still emitted but is not a dict — cannot carry a deprecation marker."
         )
         assert art.get("deprecated") is True, (
-            f"{legacy_name} artifact still emits without a 'deprecated': true marker. "
-            "Gates A.6 (permission_graph retirement) / B.2 (semantic_guards retirement) — "
-            "remove the writer or add the marker."
+            f"{retired_name} artifact still emits without a 'deprecated': true marker. "
+            "Remove the writer or add the marker."
         )

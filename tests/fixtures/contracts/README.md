@@ -3,7 +3,7 @@ Solidity fixture contracts used by the test suite live in this directory.
 The fixtures are grouped by analysis theme:
 - `pause/`: pause-control scenarios
 - `upgrade/`: upgrade-control scenarios
-- `calls/`: privileged external-call, delegatecall, and selfdestruct scenarios
+- `calls/`: guarded external-call, delegatecall, and selfdestruct scenarios
 - `token/`: fungible token scenarios
 - `nft/`: non-fungible token scenarios
 - `composed/`: mixed-pattern scenarios

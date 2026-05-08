@@ -17,6 +17,7 @@ slither = pytest.importorskip("slither")
 from slither import Slither  # noqa: E402
 
 from services.resolution.predicate_evaluator import (  # noqa: E402
+    EvaluationContext,
     evaluate_tree,
 )
 from services.static.contract_analysis_pipeline.predicates import (  # noqa: E402
@@ -229,6 +230,35 @@ def test_external_bool_yields_check_only(tmp_path):
     trees = _build_pipeline(contract)
     cap = evaluate_tree(trees["f()"])
     assert cap.kind == "external_check_only"
+
+
+def test_external_bool_descriptor_populates_check_target_and_selector(tmp_path):
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        interface IAuthority {
+            function permitted(address who, bytes32 role) external view returns (bool);
+        }
+        contract C {
+            bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+            IAuthority public authority;
+            function f() external view {
+                require(authority.permitted(msg.sender, OPERATOR_ROLE));
+            }
+        }
+    """,
+    )
+    contract = next(c for c in sl.contracts if c.name == "C")
+    trees = _build_pipeline(contract)
+    authority_addr = "0x" + "12" * 20
+    ctx = EvaluationContext(state_var_values={"authority": authority_addr})
+    cap = evaluate_tree(trees["f()"], ctx)
+    assert cap.kind == "external_check_only"
+    assert cap.check is not None
+    assert cap.check.target_address == authority_addr
+    assert cap.check.target_call_selector is not None
+    assert cap.check.extra["callee_signature"] == "permitted(address,bytes32)"
 
 
 def test_reentrancy_yields_conditional_universal(tmp_path):

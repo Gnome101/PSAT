@@ -95,7 +95,6 @@ def test_build_control_tracking_plan_uses_event_watch_when_available(tmp_path):
         ],
         "writer_functions": ["setAuthority(AuthorityLike)"],
     }
-    assert plan["tracked_policies"] == []
 
 
 def test_build_control_tracking_plan_falls_back_to_state_only(tmp_path):
@@ -113,31 +112,6 @@ def test_build_control_tracking_plan_falls_back_to_state_only(tmp_path):
     assert owner["event_watch"] is None
     assert owner["polling_fallback"]["cadence"] == "state_only"
     assert owner["polling_fallback"]["polling_sources"] == ["owner"]
-    assert plan["tracked_policies"] == []
-
-
-def test_build_control_tracking_plan_includes_can_call_policy_events(tmp_path):
-    project_dir = _write_project(
-        tmp_path,
-        "RolesAuthorityPolicy",
-        _fixture_source("tracking/roles_authority_policy.sol"),
-    )
-    analysis = collect_contract_analysis(project_dir)
-
-    plan = build_control_tracking_plan(analysis)
-
-    policy = next(item for item in plan["tracked_policies"] if item["label"] == "canCall policy")
-    assert policy["policy_function"] == "canCall(address,address,bytes4)"
-    assert policy["tracked_state_targets"] == [
-        "getRolesWithCapability",
-        "getUserRoles",
-        "isCapabilityPublic",
-    ]
-    assert {event["signature"] for event in policy["event_watch"]["events"]} == {
-        "PublicCapabilityUpdated(address,bytes4,bool)",
-        "RoleCapabilityUpdated(uint8,address,bytes4,bool)",
-        "UserRoleUpdated(address,uint8,bool)",
-    }
 
 
 def test_build_control_tracking_plan_from_dict_matches_fixture():
@@ -192,7 +166,6 @@ def test_build_control_tracking_plan_from_dict_matches_fixture():
                 "notes": ["Monitor associated events for low-latency detection and confirm state via RPC."],
             }
         ],
-        "policy_tracking": [],
     }
 
     plan = build_control_tracking_plan(cast(ContractAnalysis, analysis))
@@ -201,4 +174,3 @@ def test_build_control_tracking_plan_from_dict_matches_fixture():
     event_watch = plan["tracked_controllers"][0]["event_watch"]
     assert event_watch is not None
     assert event_watch["events"][0]["name"] == "OwnershipTransferred"
-    assert plan["tracked_policies"] == []

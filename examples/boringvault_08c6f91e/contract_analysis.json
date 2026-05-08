@@ -659,7 +659,7 @@
           "enter(address,ERC20,uint256,address,uint256):node2:external_authority_check:external_contract:authority"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -725,7 +725,7 @@
           "exit(address,ERC20,uint256,address,uint256):node3:external_authority_check:external_contract:authority"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -791,7 +791,7 @@
           "manage(address,bytes,uint256):node1:external_authority_check:external_contract:authority"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -813,7 +813,7 @@
           "manage(address[],bytes[],uint256[]):node7:external_authority_check:external_contract:authority"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -916,7 +916,7 @@
         "node_id": 2,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -973,7 +973,7 @@
         "node_id": 2,
         "guarded_by": [],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "evidence": [
           {
@@ -1078,7 +1078,7 @@
     "factory_functions": [],
     "evidence": []
   },
-  "access_control": {
+  "semantic_control": {
     "pattern": "ownable",
     "owner_variables": [
       "owner"
@@ -1099,7 +1099,7 @@
         ]
       }
     ],
-    "privileged_functions": [
+    "semantic_functions": [
       {
         "contract": "BoringVault",
         "function": "enter(address,ERC20,uint256,address,uint256)",
@@ -1126,7 +1126,7 @@
           "enter(address,ERC20,uint256,address,uint256):node_mint@2:state_write:balanceOf"
         ],
         "effects": [
-          "privileged_external_call",
+          "arbitrary_external_call",
           "writes:balanceOf",
           "writes:totalSupply"
         ],
@@ -1167,7 +1167,7 @@
           "exit(address,ERC20,uint256,address,uint256):node_burn@2:state_write:totalSupply"
         ],
         "effects": [
-          "privileged_external_call",
+          "arbitrary_external_call",
           "writes:balanceOf",
           "writes:totalSupply"
         ],
@@ -1206,7 +1206,7 @@
           "manage(address,bytes,uint256):node1:external_call:target.functionCallWithValue"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "effect_targets": [
           "target.functionCallWithValue"
@@ -1240,7 +1240,7 @@
           "manage(address[],bytes[],uint256[]):node7:external_call:REF_67.functionCallWithValue"
         ],
         "effects": [
-          "privileged_external_call"
+          "arbitrary_external_call"
         ],
         "effect_targets": [
           "REF_67.functionCallWithValue"
@@ -1617,6 +1617,5 @@
         "Monitor associated events for low-latency detection and confirm the resulting controller state with RPC reads."
       ]
     }
-  ],
-  "policy_tracking": []
+  ]
 }

@@ -1,7 +1,7 @@
 """Corpus tests — real-world auth patterns end-to-end.
 
 Each test compiles a structurally-faithful version of a canonical
-production access-control pattern, runs it through the full
+production control pattern, runs it through the full
 predicate pipeline (provenance → predicate builder → writer-gate
 → reentrancy/pause → capability evaluator), and asserts the
 expected CapabilityExpr shape.
@@ -12,7 +12,7 @@ fidelity tests: "given source matching this canonical pattern, the
 pipeline emits the right capability shape."
 
 Patterns covered:
-  - OZ AccessControl ``grantRole`` via onlyRole modifier with
+  - OZ role mapping ``grantRole`` via onlyRole modifier with
     ``_checkRole(getRoleAdmin(role))`` two-hop helper chain
   - OZ Ownable (single-owner check via require)
   - OZ Pausable (pause flag toggled by admin)
@@ -146,12 +146,12 @@ def test_oz_ownable_pattern(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# OZ AccessControl — the canonical 2-key role mapping pattern
+# OZ role mapping — the canonical 2-key role mapping pattern
 # ---------------------------------------------------------------------------
 
 
-def test_oz_access_control_full_3_hop_helper_chain(tmp_path):
-    """The actual production OZ AccessControl (5.0+) uses a 3-hop
+def test_oz_role_mapping_full_3_hop_helper_chain(tmp_path):
+    """The actual production OZ role mapping (5.0+) uses a 3-hop
     helper chain:
 
       onlyRole(role)
@@ -172,7 +172,7 @@ def test_oz_access_control_full_3_hop_helper_chain(tmp_path):
             }
             mapping(bytes32 => RoleData) private _roles;
 
-            error AccessControlUnauthorizedAccount(address account, bytes32 needed);
+            error UnauthorizedAccount(address account, bytes32 needed);
 
             function _msgSender() internal view returns (address) {
                 return msg.sender;
@@ -182,7 +182,7 @@ def test_oz_access_control_full_3_hop_helper_chain(tmp_path):
             }
             function _checkRoleAddr(bytes32 role, address account) internal view {
                 if (!hasRole(role, account)) {
-                    revert AccessControlUnauthorizedAccount(account, role);
+                    revert UnauthorizedAccount(account, role);
                 }
             }
             function _checkRole(bytes32 role) internal view {
@@ -213,8 +213,8 @@ def test_oz_access_control_full_3_hop_helper_chain(tmp_path):
     assert leaf["authority_role"] == "caller_authority"
 
 
-def test_oz_access_control_grantrole_via_onlyrole(tmp_path):
-    """The OZ AccessControl ``grantRole`` is gated by ``onlyRole(
+def test_oz_role_mapping_grantrole_via_onlyrole(tmp_path):
+    """The OZ role-mapping ``grantRole`` is gated by ``onlyRole(
     getRoleAdmin(role))`` which dispatches to ``_checkRole`` which
     contains the ``hasRole`` membership check. This is the
     canonical EtherFiTimelock pattern and the original motivation
@@ -265,11 +265,11 @@ def test_oz_access_control_grantrole_via_onlyrole(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Direct AccessControl: function with inline _checkRole call
+# Direct role mapping: function with inline _checkRole call
 # ---------------------------------------------------------------------------
 
 
-def test_oz_access_control_inline_check(tmp_path):
+def test_oz_role_mapping_inline_check(tmp_path):
     """Some AC contracts inline the role check directly in the
     function body — this case the pipeline DOES handle today."""
     sl = _compile(
@@ -402,8 +402,8 @@ def test_maker_wards_pattern(tmp_path):
     assert leaf["kind"] == "membership"
     assert leaf["set_descriptor"]["truthy_value"] == "1"
     assert leaf["authority_role"] == "caller_authority"
-    # D.1 — value_predicate preserves the operator and RHS the v1
-    # ``truthy_value`` flattened. ``wards[msg.sender] == 1`` keeps
+    # D.1 — value_predicate preserves the operator and RHS that the
+    # scalar ``truthy_value`` field flattened. ``wards[msg.sender] == 1`` keeps
     # ``op="eq"``, ``rhs_values=["1"]``.
     vp = leaf["set_descriptor"].get("value_predicate")
     assert vp is not None
@@ -436,7 +436,7 @@ def test_mapping_value_predicate_polarity_folds_neq_to_eq(tmp_path):
     leaf = leaves[0]
     assert leaf["kind"] == "membership"
     desc = leaf["set_descriptor"]
-    # Backward-compat: truthy_value still set for v1 consumers.
+    # The scalar truthy_value remains available alongside value_predicate.
     assert desc["truthy_value"] == "10"
     # D.1: structured form with allowed-state semantics.
     vp = desc.get("value_predicate")

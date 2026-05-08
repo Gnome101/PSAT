@@ -1299,7 +1299,7 @@ def copy_static_cache(session: Session, source_job_id: Any, target_job_id: Any) 
     Copies:
     - ``contracts`` row (immutable fields only; proxy fields left as defaults)
     - ``source_files`` rows
-    - ``contract_summaries``, ``privileged_functions``, ``role_definitions``
+    - ``contract_summaries`` and ``role_definitions``
       rows (linked to the new contract row)
     - Static artifacts (``contract_analysis``, ``control_tracking_plan``,
       ``static_dependencies``, ``enrichment_cache``)

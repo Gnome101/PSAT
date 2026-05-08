@@ -496,7 +496,7 @@ def test_delegatecall_preserves_destination_taint(tmp_path):
 def test_member_records_field_name(tmp_path):
     """``s.field`` should produce a ``computed`` source whose
     ``computed_kind`` is ``member.<field_name>`` AND preserve the
-    base's provenance. Critical for the OZ AccessControl pattern:
+    base's provenance. Critical for the OZ role-mapping pattern:
     ``_roles[role].adminRole`` must surface both the parameter taint
     (so the predicate builder marks it parametric) AND the field name
     (so the builder can recognize the getRoleAdmin shape)."""

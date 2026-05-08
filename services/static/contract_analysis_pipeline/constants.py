@@ -3,19 +3,6 @@
 from __future__ import annotations
 
 SEVERITY_ORDER = {"High": 0, "Medium": 1, "Low": 2, "Informational": 3, "Optimization": 4}
-CONTROL_EFFECTS = {
-    "pause_state_change",
-    "upgrade_control",
-    "ownership_change",
-    "role_management",
-    "mint_capability",
-    "burn_capability",
-    "timelock_control",
-    "factory_deployment",
-    "privileged_external_call",
-    "delegatecall_control",
-    "selfdestruct_capability",
-}
 STANDARD_SIGNATURES = {
     "ERC20": {
         "totalSupply()",
@@ -50,4 +37,3 @@ STANDARD_EVENTS = {
     "ERC721": {"Transfer", "Approval", "ApprovalForAll"},
     "ERC1155": {"TransferSingle", "TransferBatch", "ApprovalForAll"},
 }
-FACTORY_NAME_KEYWORDS = ("factory", "create", "deploy", "spawn", "clone")

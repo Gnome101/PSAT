@@ -242,7 +242,6 @@ def db_session():
         MonitoredContract,
         MonitoredEvent,
         PrincipalLabel,
-        PrivilegedFunction,
         Protocol,
         ProtocolSubscription,
         ProxySubscription,
@@ -271,7 +270,6 @@ def db_session():
             UpgradeEvent,
             ContractDependency,
             ContractBalance,
-            PrivilegedFunction,
             RoleDefinition,
             ContractSummary,
             MonitoredEvent,
@@ -307,7 +305,6 @@ def _create_completed_job_with_static_data(session, address=ADDR_A):
         ContractSummary,
         JobStage,
         JobStatus,
-        PrivilegedFunction,
         RoleDefinition,
     )
     from db.queue import create_job, store_artifact, store_source_files
@@ -345,17 +342,6 @@ def _create_completed_job_with_static_data(session, address=ADDR_A):
             is_pausable=True,
             has_timelock=False,
             risk_level="medium",
-        )
-    )
-
-    # Privileged functions
-    session.add(
-        PrivilegedFunction(
-            contract_id=contract.id,
-            function_name="pause",
-            selector="0x8456cb59",
-            effect_labels=["pause"],
-            authority_public=False,
         )
     )
 

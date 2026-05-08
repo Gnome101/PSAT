@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Join protected-contract analysis with authority policy state."""
+"""Build effective permission artifacts from semantic resolver output."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ if __package__ in {None, ""}:
 from schemas.contract_analysis import ContractAnalysis
 from schemas.control_tracking import ControlSnapshot
 from schemas.effective_permissions import (
-    AuthorityRoleGrant,
     EffectiveFunctionPermission,
     EffectivePermissions,
     PrincipalResolution,
@@ -187,8 +186,6 @@ def _controller_grants_for_refs(
     grants: list[ResolvedControllerGrant] = []
     seen: set[str] = set()
     for ref in controller_refs:
-        if ref in {"owner", "authority"}:
-            continue
         for controller_id, value in controller_lookup.get(ref, []):
             if controller_id in seen:
                 continue
@@ -222,12 +219,7 @@ def _controller_grants_for_refs(
                 and raw_value != "0x0000000000000000000000000000000000000000"
             ):
                 kind = controller_id.split(":", 1)[0] if ":" in controller_id else "unknown"
-                ref_lower = ref.lower()
-                auth_like = any(
-                    token in ref_lower
-                    for token in ("owner", "admin", "govern", "guardian", "authority", "committee", "timelock")
-                )
-                if not principals and (kind in {"state_variable", "singleton_slot", "computed"} or auth_like):
+                if not principals and kind in {"state_variable", "singleton_slot", "computed"}:
                     principals.append(_principal_for_address(raw_value, known))
             elif raw_value and not principals:
                 notes.append(f"value={raw_value}")
@@ -247,15 +239,6 @@ def _controller_grants_for_refs(
     return grants
 
 
-def _controller_refs_from_effect_targets(effect_targets: list[str]) -> list[str]:
-    refs: list[str] = []
-    for target in effect_targets:
-        lowered = str(target or "").lower()
-        if ".onlyprotocolupgrader" in lowered and "roleregistry" in lowered:
-            refs.append("roleRegistry")
-    return sorted(set(refs))
-
-
 def _normalize_capability_output(
     capability_resolver_output: Mapping[str, Any] | None,
 ) -> dict[str, dict[str, Any]]:
@@ -271,27 +254,53 @@ def _normalize_capability_output(
         if cap is None:
             continue
         if isinstance(cap, dict):
-            out[str(fn_signature)] = dict(cap)
+            cap_dict = dict(cap)
+            if not isinstance(cap_dict.get("kind"), str):
+                cap_dict = _unsupported_capability("malformed_semantic_capability")
+            out[str(fn_signature)] = cap_dict
             continue
         if is_dataclass(cap):
             try:
                 from services.resolution.capability_resolver import capability_to_dict
 
-                out[str(fn_signature)] = capability_to_dict(cap)  # type: ignore[arg-type]
+                cap_dict = capability_to_dict(cap)  # type: ignore[arg-type]
+                if not isinstance(cap_dict.get("kind"), str):
+                    cap_dict = _unsupported_capability("malformed_semantic_capability")
+                out[str(fn_signature)] = cap_dict
             except Exception as exc:
                 logger.warning(
                     "Failed to serialize CapabilityExpr for function %s: %s",
                     fn_signature,
                     exc,
                 )
-                continue
+                out[str(fn_signature)] = _unsupported_capability("malformed_semantic_capability")
+            continue
+        out[str(fn_signature)] = _unsupported_capability("malformed_semantic_capability")
     return out
+
+
+def _unsupported_capability(reason: str) -> dict[str, Any]:
+    return {
+        "kind": "unsupported",
+        "unsupported_reason": reason,
+        "membership_quality": "exact",
+        "confidence": "check_only",
+    }
+
+
+def _public_capability() -> dict[str, Any]:
+    return {
+        "kind": "conditional_universal",
+        "conditions": [],
+        "membership_quality": "exact",
+        "confidence": "enumerable",
+    }
 
 
 def _effects_by_function(
     effects: Mapping[str, Any] | None,
 ) -> dict[str, dict[str, Any]]:
-    """The v2 ``effects`` artifact (Wave 2 T1) keyed by function full-name.
+    """The semantic ``effects`` artifact keyed by function full-name.
     Returns a flat ``{function_signature: effect_record}`` dict where each
     record carries ``effect_labels`` / ``effect_targets`` / ``action_summary``.
 
@@ -304,6 +313,54 @@ def _effects_by_function(
     return {str(fn_sig): record for fn_sig, record in functions.items() if isinstance(record, dict)}
 
 
+def _predicate_trees_by_function(predicate_trees: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
+    if not isinstance(predicate_trees, dict):
+        return {}
+    trees = predicate_trees.get("trees")
+    if not isinstance(trees, dict):
+        return {}
+    return {str(fn_sig): tree for fn_sig, tree in trees.items() if isinstance(tree, dict)}
+
+
+def _controller_refs_from_tree(tree: Mapping[str, Any] | None) -> list[str]:
+    if not isinstance(tree, dict):
+        return []
+    refs: list[str] = []
+    seen: set[str] = set()
+
+    def add(name: Any) -> None:
+        if isinstance(name, str) and name and name not in seen:
+            seen.add(name)
+            refs.append(name)
+
+    def visit(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get("op") == "LEAF":
+            leaf = node.get("leaf") or {}
+            if not isinstance(leaf, dict):
+                return
+            for operand in leaf.get("operands") or []:
+                if isinstance(operand, dict) and operand.get("source") == "state_variable":
+                    add(operand.get("state_variable_name"))
+            descriptor = leaf.get("set_descriptor") or {}
+            if isinstance(descriptor, dict):
+                authority = descriptor.get("authority_contract") or {}
+                if isinstance(authority, dict):
+                    address_source = authority.get("address_source") or {}
+                    if isinstance(address_source, dict) and address_source.get("source") == "state_variable":
+                        add(address_source.get("state_variable_name"))
+                for key_source in descriptor.get("key_sources") or []:
+                    if isinstance(key_source, dict) and key_source.get("source") == "state_variable":
+                        add(key_source.get("state_variable_name"))
+            return
+        for child in node.get("children") or []:
+            visit(child)
+
+    visit(tree)
+    return refs
+
+
 _SENSITIVE_SINK_KINDS = frozenset({"state_write", "external_call", "delegatecall", "contract_creation", "selfdestruct"})
 
 
@@ -314,13 +371,16 @@ def _effect_record_has_sensitive_sink(record: Mapping[str, Any]) -> bool:
     return False
 
 
-def _function_records_from_v2(
+def _function_records_from_semantic_artifacts(
     *,
     capability_dicts: Mapping[str, dict[str, Any]],
     effects_by_function: Mapping[str, dict[str, Any]],
+    predicate_trees_by_function: Mapping[str, dict[str, Any]],
+    resolver_output_available: bool,
 ) -> list[dict[str, Any]]:
-    """Build effective-permission function records from v2 resolver/effects data."""
+    """Build effective-permission function records from semantic resolver/effects data."""
     signatures = set(capability_dicts)
+    signatures.update(predicate_trees_by_function)
     signatures.update(
         signature for signature, record in effects_by_function.items() if _effect_record_has_sensitive_sink(record)
     )
@@ -330,20 +390,24 @@ def _function_records_from_v2(
         effect_info = effects_by_function.get(signature) or {}
         record: dict[str, Any] = {
             "function": signature,
-            "controller_refs": [],
+            "controller_refs": _controller_refs_from_tree(predicate_trees_by_function.get(signature)),
             "effect_targets": list(effect_info.get("effect_targets") or []),
             "effect_labels": list(effect_info.get("effect_labels") or []),
-            "action_summary": effect_info.get("action_summary") or "Performs a permissioned contract action.",
+            "action_summary": effect_info.get("action_summary") or "Performs a contract action.",
         }
+        if signature not in capability_dicts:
+            if signature in predicate_trees_by_function:
+                record["capability_expr"] = _unsupported_capability("missing_semantic_capability_for_predicate_tree")
+                record["status"] = "unsupported"
+            elif resolver_output_available:
+                record["capability_expr"] = _public_capability()
+                record["status"] = "public"
+                record["authority_public"] = True
+            else:
+                record["capability_expr"] = _unsupported_capability("missing_semantic_capability_resolver_output")
+                record["status"] = "unsupported"
         records.append(record)
     return records
-
-
-def _function_records_from_analysis(target_analysis: Mapping[str, Any] | ContractAnalysis) -> list[dict[str, Any]]:
-    access_control = target_analysis.get("access_control") or {}
-    if not isinstance(access_control, dict):
-        return []
-    return [dict(item) for item in access_control.get("privileged_functions") or [] if isinstance(item, dict)]
 
 
 def _column_values_for_capability(cap_dict: dict[str, Any]) -> dict[str, Any]:
@@ -361,9 +425,26 @@ def _column_values_for_capability(cap_dict: dict[str, Any]) -> dict[str, Any]:
         out["conditions"] = list(cap_dict.get("conditions") or [])
         out["status"] = "public"
         out["authority_public"] = True
+    elif _is_public_composite_capability(cap_dict):
+        out["status"] = "public"
+        out["authority_public"] = True
     elif kind == "unsupported":
         out["status"] = "unsupported"
     return out
+
+
+def _is_public_composite_capability(cap_dict: dict[str, Any]) -> bool:
+    kind = cap_dict.get("kind")
+    if kind == "conditional_universal":
+        return True
+    if kind not in {"AND", "OR"}:
+        return False
+    children = cap_dict.get("children")
+    return (
+        isinstance(children, list)
+        and bool(children)
+        and all(isinstance(child, dict) and _is_public_composite_capability(child) for child in children)
+    )
 
 
 def build_effective_permissions(
@@ -371,131 +452,71 @@ def build_effective_permissions(
     *,
     target_snapshot: Mapping[str, Any] | ControlSnapshot | None = None,
     authority_snapshot: Mapping[str, Any] | ControlSnapshot | None = None,
-    policy_state: Mapping[str, Any] | None = None,
     artifact_paths: dict[str, str] | None = None,
     principal_resolution: PrincipalResolution | None = None,
     predicate_trees: Mapping[str, Any] | None = None,
     capability_resolver_output: Mapping[str, Any] | None = None,
     effects: Mapping[str, Any] | None = None,
 ) -> EffectivePermissions:
-    """Build the ``effective_permissions`` artifact from v2 resolver/effects
-    inputs. If no v2 inputs are supplied, old fixture/read paths can still
-    provide ``access_control.privileged_functions`` as a compatibility source.
+    """Build the ``effective_permissions`` artifact from semantic resolver/effects
+    inputs only.
 
     ``capability_resolver_output`` is the per-function CapabilityExpr
     dict the resolver produces. Tests typically supply it directly to
     avoid spinning up Slither + the full adapter chain.
 
-    ``effects`` is the v2 ``effects`` artifact keyed by function full-name.
+    ``effects`` is the semantic ``effects`` artifact keyed by function full-name.
     """
-    # ``predicate_trees`` is accepted for cutover signalling; the resolver
-    # consumes the trees and passes the normalized capability output here.
-    del predicate_trees
-
     contract_address = target_analysis["subject"]["address"].lower()
     contract_name = target_analysis["subject"]["name"]
-    policy_state = policy_state or {"public_capabilities": [], "role_capabilities": [], "user_roles": []}
 
     known = _known_principals(target_snapshot, authority_snapshot)
-    target_controller_values = (target_snapshot or {}).get("controller_values", {})
     controller_lookup = _controller_lookup(target_snapshot)
     capability_dicts = _normalize_capability_output(capability_resolver_output)
     effects_by_function = _effects_by_function(effects)
-    if capability_dicts or effects_by_function:
-        function_records = _function_records_from_v2(
-            capability_dicts=capability_dicts,
-            effects_by_function=effects_by_function,
-        )
-    else:
-        function_records = _function_records_from_analysis(target_analysis)
-    owner_value = next(
-        (
-            _lower_string(value.get("value", ""))
-            for key, value in target_controller_values.items()
-            if key.endswith(":owner")
-        ),
-        None,
+    predicate_tree_functions = _predicate_trees_by_function(predicate_trees)
+    function_records = _function_records_from_semantic_artifacts(
+        capability_dicts=capability_dicts,
+        effects_by_function=effects_by_function,
+        predicate_trees_by_function=predicate_tree_functions,
+        resolver_output_available=capability_resolver_output is not None,
     )
-    authority_value = next(
-        (
-            _lower_string(value.get("value", ""))
-            for key, value in target_controller_values.items()
-            if key.endswith(":authority")
-        ),
-        None,
-    )
-
-    public_by_selector = {
-        entry["function_sig"].lower(): bool(entry["enabled"])
-        for entry in policy_state.get("public_capabilities", [])
-        if entry["target"].lower() == contract_address
-    }
-
-    role_capabilities_by_selector: dict[str, list[dict]] = {}
-    for entry in policy_state.get("role_capabilities", []):
-        if entry["target"].lower() != contract_address or not entry.get("enabled"):
-            continue
-        role_capabilities_by_selector.setdefault(entry["function_sig"].lower(), []).append(entry)
-
-    users_by_role: dict[int, list[dict]] = {}
-    for entry in policy_state.get("user_roles", []):
-        if not entry.get("enabled"):
-            continue
-        users_by_role.setdefault(int(entry["role"]), []).append(entry)
 
     functions: list[EffectiveFunctionPermission] = []
-    for privileged in function_records:
-        selector = _selector(privileged["function"])
-        controller_refs = list(privileged.get("controller_refs", [])) + _controller_refs_from_effect_targets(
-            list(privileged.get("effect_targets", []))
-        )
-        controller_refs = sorted(set(controller_refs))
+    for function_record in function_records:
+        selector = _selector(function_record["function"])
+        controller_refs = sorted(set(function_record.get("controller_refs", [])))
         direct_owner = None
-        if "owner" in controller_refs and owner_value and owner_value != "0x0000000000000000000000000000000000000000":
-            direct_owner = _principal_for_address(owner_value, known)
-
-        role_grants: list[AuthorityRoleGrant] = []
-        for capability in sorted(role_capabilities_by_selector.get(selector, []), key=lambda item: item["role"]):
-            role = int(capability["role"])
-            principals = [
-                _principal_for_address(user_entry["user"], known)
-                for user_entry in sorted(users_by_role.get(role, []), key=lambda item: item["user"])
-            ]
-            role_grants.append(
-                {
-                    "role": role,
-                    "principals": principals,
-                }
-            )
 
         notes: list[str] = []
-        controller_grants = _controller_grants_for_refs(controller_refs, controller_lookup, known)
-        if "authority" in controller_refs and authority_value:
-            notes.append(f"authority={authority_value}")
-        if direct_owner is None and "owner" in controller_refs and owner_value:
-            notes.append(f"owner={owner_value}")
+        controller_grants = _controller_grants_for_refs(
+            controller_refs,
+            controller_lookup,
+            known,
+        )
 
         # The ``effects`` artifact is the source of truth for effect labels,
-        # targets, and summaries when present; compatibility records may carry
-        # the same fields directly.
-        fn_signature = privileged["function"]
+        # targets, and summaries when present.
+        fn_signature = function_record["function"]
         effects_record = effects_by_function.get(fn_signature) or {}
-        v2_effect_labels = effects_record.get("effect_labels") if effects_record else None
-        v2_effect_targets = effects_record.get("effect_targets") if effects_record else None
-        v2_action_summary = effects_record.get("action_summary") if effects_record else None
+        semantic_effect_labels = effects_record.get("effect_labels") if effects_record else None
+        semantic_effect_targets = effects_record.get("effect_targets") if effects_record else None
+        semantic_action_summary = effects_record.get("action_summary") if effects_record else None
 
         effect_labels_out = (
-            list(v2_effect_labels) if isinstance(v2_effect_labels, list) else list(privileged.get("effect_labels", []))
+            list(semantic_effect_labels)
+            if isinstance(semantic_effect_labels, list)
+            else list(function_record.get("effect_labels", []))
         )
         effect_targets_out = (
-            list(v2_effect_targets)
-            if isinstance(v2_effect_targets, list)
-            else list(privileged.get("effect_targets", []))
+            list(semantic_effect_targets)
+            if isinstance(semantic_effect_targets, list)
+            else list(function_record.get("effect_targets", []))
         )
         action_summary_out = (
-            v2_action_summary
-            if isinstance(v2_action_summary, str) and v2_action_summary
-            else privileged.get("action_summary", "Performs a permissioned contract action.")
+            semantic_action_summary
+            if isinstance(semantic_action_summary, str) and semantic_action_summary
+            else function_record.get("action_summary", "Performs a contract action.")
         )
 
         function_permission: EffectiveFunctionPermission = {
@@ -503,8 +524,8 @@ def build_effective_permissions(
             "abi_signature": _abi_signature(fn_signature),
             "selector": selector,
             "direct_owner": direct_owner,
-            "authority_public": bool(public_by_selector.get(selector, False)),
-            "authority_roles": role_grants,
+            "authority_public": False,
+            "authority_roles": [],
             "controllers": controller_grants,
             "effect_targets": effect_targets_out,
             "effect_labels": effect_labels_out,
@@ -512,7 +533,7 @@ def build_effective_permissions(
             "notes": notes,
         }
 
-        # v2 capability columns: when a CapabilityExpr is supplied for this
+        # Semantic capability columns: when a CapabilityExpr is supplied for this
         # function, it dictates capability_expr / conditions / status /
         # authority_public. The dict-form override here lets the writer
         # propagate these columns onto EffectiveFunction without re-resolving.
@@ -527,6 +548,15 @@ def build_effective_permissions(
             # conditional_universal short-circuits authority_public.
             if cap_columns["authority_public"]:
                 function_permission["authority_public"] = True
+        else:
+            if function_record.get("capability_expr") is not None:
+                function_permission["capability_expr"] = function_record["capability_expr"]
+            if function_record.get("conditions") is not None:
+                function_permission["conditions"] = function_record["conditions"]
+            if function_record.get("status") is not None:
+                function_permission["status"] = function_record["status"]
+            if function_record.get("authority_public") is True:
+                function_permission["authority_public"] = True
 
         functions.append(function_permission)
 
@@ -534,13 +564,11 @@ def build_effective_permissions(
         "schema_version": "0.1",
         "contract_address": contract_address,
         "contract_name": contract_name,
-        "authority_contract": authority_value if authority_value else None,
+        "authority_contract": None,
         "principal_resolution": principal_resolution
         or {
-            "status": "complete" if policy_state else "missing_policy_state",
-            "reason": "Authority policy state was joined into the permission view."
-            if policy_state
-            else "No authority policy state was provided for this artifact.",
+            "status": "complete",
+            "reason": "Semantic capability resolver output was joined into the permission view.",
         },
         "artifacts": artifact_paths or {},
         "functions": functions,
@@ -552,7 +580,6 @@ def write_effective_permissions_from_files(
     *,
     target_snapshot_path: Path | None = None,
     authority_snapshot_path: Path | None = None,
-    policy_state_path: Path | None = None,
     resolved_control_graph_path: Path | None = None,
     output_path: Path | None = None,
     principal_resolution: PrincipalResolution | None = None,
@@ -560,7 +587,6 @@ def write_effective_permissions_from_files(
     target_analysis = _load_json(target_analysis_path)
     target_snapshot = _load_json(target_snapshot_path) if target_snapshot_path else None
     authority_snapshot = _load_json(authority_snapshot_path) if authority_snapshot_path else None
-    policy_state = _load_json(policy_state_path) if policy_state_path else None
 
     artifact_paths = {
         "target_analysis": str(target_analysis_path),
@@ -569,8 +595,6 @@ def write_effective_permissions_from_files(
         artifact_paths["target_snapshot"] = str(target_snapshot_path)
     if authority_snapshot_path:
         artifact_paths["authority_snapshot"] = str(authority_snapshot_path)
-    if policy_state_path:
-        artifact_paths["policy_state"] = str(policy_state_path)
     if resolved_control_graph_path:
         artifact_paths["resolved_control_graph"] = str(resolved_control_graph_path)
 
@@ -578,7 +602,6 @@ def write_effective_permissions_from_files(
         target_analysis,
         target_snapshot=target_snapshot,
         authority_snapshot=authority_snapshot,
-        policy_state=policy_state,
         artifact_paths=artifact_paths,
         principal_resolution=principal_resolution,
     )
@@ -590,12 +613,11 @@ def write_effective_permissions_from_files(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Resolve effective permissions from contract analysis and authority policy state."
+        description="Resolve effective permissions from semantic contract-analysis artifacts."
     )
     parser.add_argument("target_analysis", help="Path to target contract_analysis.json")
     parser.add_argument("--target-snapshot", help="Optional path to target control_snapshot.json")
     parser.add_argument("--authority-snapshot", help="Optional path to authority control_snapshot.json")
-    parser.add_argument("--policy-state", help="Optional path to authority policy_state.json")
     parser.add_argument("--out", help="Optional path to effective_permissions.json")
     args = parser.parse_args()
 
@@ -603,7 +625,6 @@ def main() -> None:
         Path(args.target_analysis),
         target_snapshot_path=Path(args.target_snapshot) if args.target_snapshot else None,
         authority_snapshot_path=Path(args.authority_snapshot) if args.authority_snapshot else None,
-        policy_state_path=Path(args.policy_state) if args.policy_state else None,
         output_path=Path(args.out) if args.out else None,
     )
     print(f"Effective permissions: {output_path}")

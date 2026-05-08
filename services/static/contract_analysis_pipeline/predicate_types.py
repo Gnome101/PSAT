@@ -1,8 +1,8 @@
 """Typed shapes for the predicate-based access analysis output.
 
-These are the ``v2.0`` schema types — the static stage emits a
-``PredicateTree`` per privileged function describing the structural
-gates that admit it, and the resolver evaluates that tree. No
+These are the semantic schema types — the static stage emits a
+``PredicateTree`` per guarded function describing the structural gates
+that admit it, and the resolver evaluates that tree. No
 shape-name labels in the routing path; shape labels are diagnostic
 only.
 
@@ -61,8 +61,8 @@ SetKind = Literal[
     "mapping_membership",
     "array_contains",
     "external_set",
-    "bitwise_role_flag",  # only inside unsupported leaves in v2.0
-    "diamond_facet_acl",  # only inside unsupported leaves in v2.0
+    "bitwise_role_flag",  # only inside unsupported leaves
+    "diamond_facet_acl",  # only inside unsupported leaves
 ]
 
 
@@ -95,8 +95,15 @@ class EventHint(TypedDict):
     topic0: str
     topics_to_keys: dict[int, int]
     data_to_keys: dict[int, int]
-    direction: Literal["add", "remove"]
+    direction: Literal["add", "remove", "set"]
     key_value_taint: NotRequired[str | None]
+    event_signature: NotRequired[str | None]
+    event_name: NotRequired[str | None]
+    mapping_name: NotRequired[str | None]
+    key_position: NotRequired[int | None]
+    indexed_positions: NotRequired[list[int]]
+    value_position: NotRequired[int | None]
+    writer_function: NotRequired[str | None]
 
 
 class ValuePredicate(TypedDict):

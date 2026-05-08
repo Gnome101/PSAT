@@ -1,6 +1,6 @@
 contract_name: C
 description: |
-  OZ AccessControl 5.0+ pattern: ``grantRole`` is gated by
+  OZ role mapping 5.0+ pattern: ``grantRole`` is gated by
   ``onlyRole(getRoleAdmin(role))`` which dispatches to
   ``_checkRole`` which contains the ``if (!_roles[role][msg.sender])
   revert()`` membership check. This is the canonical

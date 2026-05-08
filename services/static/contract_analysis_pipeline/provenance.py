@@ -494,8 +494,8 @@ class ProvenanceEngine:
         """``s.field`` — propagate base sources AND tag the result with
         a ``computed`` source whose ``computed_kind`` is
         ``member.<field_name>``. Predicate builder reads computed_kind
-        to surface the field path; e.g. for OZ's
-        ``_roles[role].adminRole`` the leaf will see both the base
+        to surface the field path; e.g. for
+        ``records[key].adminRole`` the leaf will see both the base
         provenance (state_variable _roles + parameter role) and the
         field tag (``member.adminRole``).
         """
@@ -789,9 +789,7 @@ class ProvenanceEngine:
         if name == "this":
             # Self-address — the contract's own address, structurally
             # an authority operand for self-call gates like
-            # ``require(msg.sender == address(this))`` (Compound
-            # Timelock setDelay / setPendingAdmin pattern, OZ Timelock-
-            # Controller's _execute path, OZ proxy upgradeToAndCall, …).
+            # ``require(msg.sender == address(this))``.
             return frozenset({Source(kind="self_address")})
         if name in (
             "block.timestamp",

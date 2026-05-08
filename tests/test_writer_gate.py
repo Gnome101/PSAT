@@ -203,6 +203,37 @@ def test_open_registration_stays_business(tmp_path):
     assert leaves[0]["authority_role"] == "business"
 
 
+def test_mixed_gated_and_public_external_writers_stays_business(tmp_path):
+    """A public external-keyed writer can grant membership, so an
+    otherwise gated writer is not enough to promote the mapping."""
+    sl = _compile(
+        tmp_path,
+        """
+        pragma solidity ^0.8.19;
+        contract C {
+            address public ownerVar;
+            mapping(address => bool) public _registered;
+            function setRegistered(address user, bool val) external {
+                require(msg.sender == ownerVar);
+                _registered[user] = val;
+            }
+            function registerFor(address user) external {
+                _registered[user] = true;
+            }
+            function someAction() external view {
+                require(_registered[msg.sender]);
+            }
+        }
+    """,
+    )
+    contract = sl.contracts[0]
+    trees = _build_trees(contract)
+    apply_writer_gate_pass(contract, trees)
+    leaves = _all_leaves(trees["someAction()"])
+    assert len(leaves) == 1
+    assert leaves[0]["authority_role"] == "business"
+
+
 # ---------------------------------------------------------------------------
 # Confidence: writer-gate-promoted 1-key leaves classify as MEDIUM
 # (the auth signal depends on writer-side analysis, not direct shape).

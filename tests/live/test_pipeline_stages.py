@@ -33,7 +33,7 @@ def test_dependencies_artifact(analyzed_weth, live_client: LiveClient):
 
 
 def test_control_tracking_plan_artifact(analyzed_weth, live_client: LiveClient):
-    # WETH has no privileged controls; plan can be empty but the artifact must still exist.
+    # WETH has no guarded controls; plan can be empty but the artifact must still exist.
     art = live_client.artifact(analyzed_weth["name"], "control_tracking_plan")
     assert isinstance(art, dict), "control_tracking_plan artifact should exist"
 

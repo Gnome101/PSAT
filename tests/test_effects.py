@@ -1,7 +1,7 @@
 """Tests for ``build_effects``.
 
 End-to-end: compile a Solidity fixture, run the effects builder, and
-assert sink discovery + label inference + the v1-superset property.
+assert semantic sink discovery + label inference.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from eth_utils.crypto import keccak
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -24,6 +25,10 @@ from services.static.contract_analysis_pipeline.effects import (  # noqa: E402
     EffectsArtifact,
     build_effects,
 )
+
+
+def _selector(signature: str) -> str:
+    return "0x" + keccak(text=signature).hex()[:8]
 
 
 def _compile(tmp_path: Path, source: str) -> Slither:
@@ -125,7 +130,9 @@ def test_external_call_sink_classification(tmp_path):
     artifact = build_effects(_contract(sl, "C"))
     info = _info(artifact, "poke(address,uint256)")
     external_calls = [s for s in info["sinks"] if s["kind"] == "external_call"]
-    assert any(s["target"] == "token.mint" for s in external_calls), info["sinks"]
+    assert any(
+        s["target"] == "token.mint" and s["selector"] == _selector("mint(address,uint256)") for s in external_calls
+    ), info["sinks"]
 
 
 def test_effect_label_recognition_pause_toggle(tmp_path):
@@ -160,8 +167,8 @@ def test_effect_label_recognition_pause_toggle(tmp_path):
     assert "pause_toggle" in info["effect_labels"], info["effect_labels"]
 
 
-def test_v2_effects_includes_unguarded_public_function(tmp_path):
-    """Sanity: the v2 effects artifact MUST surface unguarded
+def test_semantic_effects_includes_unguarded_public_function(tmp_path):
+    """Sanity: the semantic effects artifact MUST surface unguarded
     externally-callable functions (e.g. an unprotected ``publicSetter``).
     ``predicate_trees`` deliberately omits these (no revert path) but
     consumers still need to see the sink."""
@@ -196,15 +203,15 @@ def test_v2_effects_includes_unguarded_public_function(tmp_path):
         """,
     )
     contract = _contract(sl, "C")
-    v2 = build_effects(contract)
+    artifact = build_effects(contract)
 
-    assert "publicSetter(uint256)" in v2["functions"]
-    public_setter = v2["functions"]["publicSetter(uint256)"]
+    assert "publicSetter(uint256)" in artifact["functions"]
+    public_setter = artifact["functions"]["publicSetter(uint256)"]
     sinks = {(s["kind"], s["target"]) for s in public_setter["sinks"]}
     assert ("state_write", "x") in sinks
 
     # setBoth writes x directly and y transitively via the internal helper.
-    set_both_sinks = {(s["kind"], s["target"]) for s in v2["functions"]["setBoth(uint256,uint256)"]["sinks"]}
+    set_both_sinks = {(s["kind"], s["target"]) for s in artifact["functions"]["setBoth(uint256,uint256)"]["sinks"]}
     assert ("state_write", "x") in set_both_sinks
     assert ("state_write", "y") in set_both_sinks
 

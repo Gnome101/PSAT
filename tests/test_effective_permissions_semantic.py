@@ -1,4 +1,4 @@
-"""Wave 3 Track B.1 — per-kind row representation tests for the v2
+"""Wave 3 Track B.1 — per-kind row representation tests for the semantic
 ``build_effective_permissions`` + ``write_effective_function_rows``
 pipeline.
 
@@ -454,6 +454,18 @@ def test_column_values_conditional_universal() -> None:
     assert cols["status"] == "public"
     assert cols["authority_public"] is True
     assert cols["conditions"] and cols["conditions"][0]["kind"] == "pause"
+
+
+def test_column_values_public_or_composite() -> None:
+    left = CapabilityExpr.conditional_universal(Condition(kind="business", description="initialized branch"))
+    right = CapabilityExpr.conditional_universal(Condition(kind="business", description="constructor branch"))
+    cap_dict = capability_to_dict(CapabilityExpr.structural_or([left, right]))
+
+    cols = _column_values_for_capability(cap_dict)
+
+    assert cols["status"] == "public"
+    assert cols["authority_public"] is True
+    assert cols["conditions"] is None
 
 
 def test_column_values_unsupported() -> None:

@@ -1,4 +1,4 @@
-"""Build the v2 predicate-tree artifact for a contract.
+"""Build the semantic predicate-tree artifact for a contract.
 
 Runs the full predicate pipeline (``build_predicate_tree`` per
 function + ``apply_writer_gate_pass`` + ``apply_reentrancy_pause_pass``
@@ -18,19 +18,23 @@ Convention:
 External/public visibility is the boundary we report on — internal/
 private functions never appear in the output. We also skip
 constructors and fallback/receive functions (their guard semantics
-are different and the v1 pipeline excludes them too).
+are different from ordinary external entry points).
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+from eth_utils.crypto import keccak
+
+from .mapping_events import WriterEventSpec, discover_mapping_writer_events
 from .predicate_types import PredicateTree
 from .predicates import _helper_engine_cache, build_predicate_tree
 from .reentrancy_pause import PauseInfo, apply_reentrancy_pause_pass
 from .writer_gate import apply_writer_gate_pass
 
-SCHEMA_VERSION = "v2"
+SCHEMA_VERSION = "semantic"
 
 
 def _empty_pause_info() -> PauseInfo:
@@ -65,15 +69,13 @@ def build_predicate_artifacts(contract: Any) -> dict[str, Any]:
 def build_predicate_artifacts_with_pause_info(
     contract: Any,
 ) -> tuple[dict[str, Any], PauseInfo]:
-    """Build the v2 predicate artifact AND return the structured
+    """Build the predicate artifact and return the structured
     ``PauseInfo`` from ``apply_reentrancy_pause_pass``. The pipeline
-    consumes the pause info to drive ``_detect_pausability`` (replacing
-    the v1 modifier-name heuristic)."""
+    consumes the pause info to drive ``_detect_pausability``."""
     # Scope a per-contract helper-engine cache for the cross-fn
-    # build path. Multiple functions on the same AC contract
-    # often share helpers (grantRole / revokeRole / renounceRole
-    # all funnel through onlyRole→_checkRole); this cache makes
-    # the second + third cross-fn build effectively free.
+    # build path. Multiple functions on the same contract often share
+    # helper guards; this cache makes later cross-fn builds effectively
+    # free.
     cache_token = _helper_engine_cache.set({})
     try:
         trees: dict[str, PredicateTree] = {}
@@ -95,6 +97,7 @@ def build_predicate_artifacts_with_pause_info(
     # the contract's functions.
     if trees:
         apply_writer_gate_pass(contract, trees)
+        apply_mapping_event_hint_pass(contract, trees)
         pause_info = apply_reentrancy_pause_pass(contract, trees)
 
     artifact = {
@@ -103,6 +106,119 @@ def build_predicate_artifacts_with_pause_info(
         "trees": trees,
     }
     return artifact, pause_info
+
+
+def apply_mapping_event_hint_pass(contract: Any, trees: dict[str, PredicateTree]) -> None:
+    """Attach generic mapping-writer event hints to matching leaves.
+
+    ``discover_mapping_writer_events`` already finds semantic writer
+    evidence like ``wards[user] = 1; emit Rely(user)`` or
+    ``roles[user] = mask; emit RolesUpdated(user, mask)``. This pass
+    copies that evidence onto matching ``mapping_membership`` descriptors.
+    """
+    specs_by_mapping: dict[str, list[WriterEventSpec]] = {}
+    for spec in discover_mapping_writer_events(contract):
+        mapping_name = spec.get("mapping_name")
+        if mapping_name:
+            specs_by_mapping.setdefault(mapping_name, []).append(spec)
+
+    if not specs_by_mapping:
+        return
+
+    for tree in trees.values():
+        _walk_tree_leaves(tree, lambda leaf: _attach_hints_to_leaf(leaf, specs_by_mapping))
+
+
+def _walk_tree_leaves(node: Any, callback: Callable[[dict[str, Any]], None]) -> None:
+    if not isinstance(node, dict):
+        return
+    if node.get("op") == "LEAF":
+        leaf = node.get("leaf")
+        if isinstance(leaf, dict):
+            callback(leaf)
+        return
+    for child in node.get("children") or []:
+        _walk_tree_leaves(child, callback)
+
+
+def _attach_hints_to_leaf(leaf: dict[str, Any], specs_by_mapping: dict[str, list[WriterEventSpec]]) -> None:
+    descriptor = leaf.get("set_descriptor")
+    if not isinstance(descriptor, dict) or descriptor.get("kind") != "mapping_membership":
+        return
+    storage_var = descriptor.get("storage_var")
+    if not isinstance(storage_var, str) or not storage_var:
+        return
+    specs = specs_by_mapping.get(storage_var)
+    if not specs:
+        return
+    member_key_index = _caller_key_index(descriptor.get("key_sources") or [])
+    if member_key_index is None:
+        return
+
+    hints = list(descriptor.get("enumeration_hint") or [])
+    seen = {_hint_identity(h) for h in hints if isinstance(h, dict)}
+    for spec in specs:
+        hint = _event_hint_from_writer_spec(spec, member_key_index)
+        identity = _hint_identity(hint)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        hints.append(hint)
+    if hints:
+        descriptor["enumeration_hint"] = hints
+
+
+def _caller_key_index(key_sources: list[dict[str, Any]]) -> int | None:
+    for idx, source in enumerate(key_sources):
+        if source.get("source") in ("msg_sender", "tx_origin", "signature_recovery"):
+            return idx
+    return None
+
+
+def _event_hint_from_writer_spec(spec: WriterEventSpec, member_key_index: int) -> dict[str, Any]:
+    topic0 = "0x" + keccak(text=spec["event_signature"]).hex()
+    key_position = int(spec["key_position"])
+    indexed_positions = [int(pos) for pos in spec.get("indexed_positions") or []]
+    topics_to_keys, data_to_keys = _event_arg_to_key_maps(
+        event_arg_position=key_position,
+        key_index=member_key_index,
+        indexed_positions=indexed_positions,
+    )
+    return {
+        "topic0": topic0,
+        "topics_to_keys": topics_to_keys,
+        "data_to_keys": data_to_keys,
+        "direction": spec["direction"],
+        "event_signature": spec["event_signature"],
+        "event_name": spec["event_name"],
+        "mapping_name": spec["mapping_name"],
+        "key_position": key_position,
+        "indexed_positions": indexed_positions,
+        "value_position": spec.get("value_position"),
+        "writer_function": spec.get("writer_function"),
+    }
+
+
+def _event_arg_to_key_maps(
+    *,
+    event_arg_position: int,
+    key_index: int,
+    indexed_positions: list[int],
+) -> tuple[dict[int, int], dict[int, int]]:
+    if event_arg_position in indexed_positions:
+        return {1 + indexed_positions.index(event_arg_position): key_index}, {}
+    data_position = sum(1 for pos in range(event_arg_position + 1) if pos not in indexed_positions) - 1
+    return {}, {data_position: key_index}
+
+
+def _hint_identity(hint: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        hint.get("topic0"),
+        hint.get("direction"),
+        hint.get("event_signature"),
+        hint.get("key_position"),
+        hint.get("value_position"),
+    )
 
 
 def _is_externally_callable(fn: Any) -> bool:

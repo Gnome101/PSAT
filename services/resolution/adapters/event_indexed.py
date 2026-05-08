@@ -9,8 +9,10 @@ adapter consumes those records directly with no per-standard adapter.
 
 from __future__ import annotations
 
+from typing import Callable, cast
+
 from ..capabilities import CapabilityExpr, ExternalCheck
-from . import EvaluationContext
+from . import EnumerationResult, EvaluationContext
 
 
 class EventIndexedAdapter:
@@ -44,7 +46,7 @@ class EventIndexedAdapter:
         # D.2 — when the descriptor carries a ValuePredicate and at
         # least one ``set``-direction hint, dispatch to the value-aware
         # fold path (latest-value-per-key, filtered by predicate)
-        # rather than the legacy add/remove present-set fold.
+        # rather than the add/remove present-set fold.
         value_predicate = descriptor.get("value_predicate")
         hints = descriptor.get("enumeration_hint") or []
         if value_predicate and ctx.contract_address is not None:
@@ -66,41 +68,71 @@ class EventIndexedAdapter:
                 return CapabilityExpr.unsupported("event_indexed_no_hint")
             return self._external_check(descriptor, primary, ctx, ["no_event_log_repo"])
 
-        merged: list[str] = []
-        worst_confidence = "enumerable"
-        last_block: int | None = None
+        grouped_hints: dict[str, list[dict]] = {}
+        primary_hint: dict | None = None
         for hint in hints:
             topic0 = hint.get("topic0")
             direction = hint.get("direction")
             if not topic0 or direction not in ("add", "remove"):
                 continue
+            primary_hint = primary_hint or hint
             event_address = _resolve_event_address(descriptor, hint, ctx)
             if event_address is None:
                 return self._external_check(descriptor, hint, ctx, ["event_address_unresolved"])
+            grouped_hints.setdefault(event_address, []).append(hint)
+
+        if not grouped_hints or primary_hint is None:
+            return CapabilityExpr.unsupported("event_indexed_no_hint")
+        if not any(hint.get("direction") == "add" for group in grouped_hints.values() for hint in group):
+            return self._external_check(descriptor, primary_hint, ctx, ["event_indexed_no_add_hint"])
+
+        key_sources = _contextual_key_sources(descriptor.get("key_sources") or [], ctx)
+        merged: list[str] = []
+        worst_confidence = "enumerable"
+        last_block: int | None = None
+        for event_address, event_hints in grouped_hints.items():
+            first_hint = event_hints[0]
             try:
-                result = repo.fold_event_writes(
+                result = _fold_event_history(
+                    repo=repo,
                     chain_id=ctx.chain_id,
                     event_address=event_address,
-                    topic0=topic0,
-                    topics_to_keys=hint.get("topics_to_keys") or {},
-                    data_to_keys=hint.get("data_to_keys") or {},
-                    key_sources=descriptor.get("key_sources") or [],
-                    direction=direction,
+                    event_hints=event_hints,
+                    key_sources=key_sources,
                     block=ctx.block,
                 )
             except Exception:
-                continue
-            if result.confidence == "partial" and result.partial_reason == "unresolved_event_key":
-                return self._external_check(descriptor, hint, ctx, [result.partial_reason])
-            if direction == "add":
-                merged.extend(result.members)
-            elif direction == "remove":
-                # Remove members that were revoked.
-                bad = {m.lower() for m in result.members}
-                merged = [m for m in merged if m.lower() not in bad]
+                return self._external_check(descriptor, first_hint, ctx, ["event_log_backend_error"])
+            if result.confidence == "partial" and result.partial_reason in {
+                "event_history_fold_unavailable",
+                "unresolved_event_key",
+            }:
+                return self._external_check(descriptor, first_hint, ctx, [result.partial_reason])
+            if result.confidence == "partial" and result.partial_reason == "no_index_cursor":
+                try:
+                    fallback = _hypersync_fallback_result(
+                        hints=event_hints,
+                        ctx=ctx,
+                        event_address=event_address,
+                        key_sources=key_sources,
+                    )
+                except Exception:
+                    return self._external_check(descriptor, first_hint, ctx, ["event_log_backend_error"])
+                if fallback.confidence == "partial" and fallback.partial_reason == "no_hypersync_token":
+                    return self._external_check(descriptor, first_hint, ctx, ["no_index_cursor", "no_hypersync_token"])
+                result = fallback
+                if result.confidence == "partial" and result.partial_reason in {
+                    "event_history_fold_unavailable",
+                    "unresolved_event_key",
+                }:
+                    return self._external_check(descriptor, first_hint, ctx, [result.partial_reason])
+            merged.extend(result.members)
             if result.confidence == "partial" and worst_confidence == "enumerable":
                 worst_confidence = "partial"
-            last_block = result.last_indexed_block
+            if result.last_indexed_block is not None:
+                last_block = (
+                    result.last_indexed_block if last_block is None else min(last_block, result.last_indexed_block)
+                )
 
         return CapabilityExpr.finite_set(
             merged,
@@ -206,3 +238,99 @@ def _resolve_event_address(descriptor: dict, hint: dict, ctx: EvaluationContext)
     if ctx.contract_address and ctx.contract_address.startswith("0x") and len(ctx.contract_address) == 42:
         return ctx.contract_address.lower()
     return None
+
+
+def _contextual_key_sources(key_sources: list[dict], ctx: EvaluationContext) -> list[dict]:
+    out: list[dict] = []
+    values = ctx.state_var_values or {}
+    for source in key_sources:
+        if source.get("source") == "self_address" and ctx.contract_address:
+            out.append({"source": "constant", "constant_value": ctx.contract_address})
+            continue
+        resolved = _contextual_constant_value(source, values)
+        if resolved is not None:
+            patched = dict(source)
+            patched["source"] = "constant"
+            patched["constant_value"] = resolved
+            out.append(patched)
+            continue
+        out.append(source)
+    return out
+
+
+def _contextual_constant_value(source: dict, values: dict[str, str]) -> str | None:
+    if source.get("constant_value") is not None:
+        return None
+    name = None
+    if source.get("source") == "state_variable":
+        name = source.get("state_variable_name")
+    elif source.get("source") in {"external_call", "view_call"}:
+        name = source.get("callee")
+    if not isinstance(name, str) or not name:
+        return None
+    value = values.get(name)
+    if isinstance(value, str) and value.startswith("0x") and len(value) in {42, 66}:
+        return value.lower()
+    return None
+
+
+def _fold_event_history(
+    *,
+    repo: object,
+    chain_id: int,
+    event_address: str,
+    event_hints: list[dict],
+    key_sources: list[dict],
+    block: int | None,
+) -> EnumerationResult:
+    fold_history = getattr(repo, "fold_event_history", None)
+    if callable(fold_history):
+        typed_fold_history = cast(Callable[..., EnumerationResult], fold_history)
+        return typed_fold_history(
+            chain_id=chain_id,
+            event_address=event_address,
+            event_hints=event_hints,
+            key_sources=key_sources,
+            block=block,
+        )
+    if len(event_hints) != 1:
+        return EnumerationResult(members=[], confidence="partial", partial_reason="event_history_fold_unavailable")
+
+    hint = event_hints[0]
+    fold_writes = getattr(repo, "fold_event_writes", None)
+    if not callable(fold_writes):
+        return EnumerationResult(members=[], confidence="partial", partial_reason="event_history_fold_unavailable")
+    typed_fold_writes = cast(Callable[..., EnumerationResult], fold_writes)
+    return typed_fold_writes(
+        chain_id=chain_id,
+        event_address=event_address,
+        topic0=hint.get("topic0"),
+        topics_to_keys=hint.get("topics_to_keys") or {},
+        data_to_keys=hint.get("data_to_keys") or {},
+        key_sources=key_sources,
+        direction=hint.get("direction"),
+        block=block,
+    )
+
+
+def _hypersync_fallback_result(
+    *,
+    hints: list[dict],
+    ctx: EvaluationContext,
+    event_address: str,
+    key_sources: list[dict],
+) -> EnumerationResult:
+    from ..repos.event_logs_hypersync import HyperSyncEventLogRepo
+
+    repo = HyperSyncEventLogRepo(
+        url=str(ctx.meta.get("hypersync_url") or "https://eth.hypersync.xyz"),
+        bearer_token=ctx.meta.get("hypersync_token"),
+    )
+    return _fold_event_history(
+        repo=repo,
+        chain_id=ctx.chain_id,
+        event_address=event_address,
+        event_hints=hints,
+        key_sources=key_sources,
+        block=ctx.block,
+    )

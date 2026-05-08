@@ -832,11 +832,10 @@ def test_resolution_worker_rewrites_address_for_impl_jobs(monkeypatch):
         "contract_name": "VaultImpl",
         "tracking_strategy": "event_first_with_polling_fallback",
         "tracked_controllers": [],
-        "tracked_policies": [],
     }
     contract_analysis = {
         "subject": {"address": IMPL, "name": "VaultImpl"},
-        "access_control": {"privileged_functions": []},
+        "semantic_control": {"semantic_functions": []},
     }
 
     artifacts = {
@@ -954,7 +953,6 @@ def test_tracking_plan_preserves_controller_ids_and_read_specs():
                 "notes": [],
             },
         ],
-        "policy_tracking": [],
     }
 
     plan = build_control_tracking_plan(analysis)  # type: ignore[arg-type]
@@ -977,51 +975,6 @@ def test_tracking_plan_preserves_controller_ids_and_read_specs():
     assert owner["event_watch"] is not None
     assert len(owner["event_watch"]["events"]) == 1
     assert owner["event_watch"]["events"][0]["name"] == "OwnershipTransferred"
-
-
-# ===================================================================
-# 15. Tracking plan policy_tracking round-trip
-# ===================================================================
-
-
-def test_tracking_plan_preserves_policy_tracking_fields():
-    """Policy tracking targets from contract_analysis must carry through
-    to the tracking plan. The resolution and policy workers depend on
-    the policy_id, tracked_state_targets, and event_watch fields."""
-    from services.resolution.tracking_plan import build_control_tracking_plan
-
-    analysis = {
-        "subject": {"address": "0x1111111111111111111111111111111111111111", "name": "Auth"},
-        "controller_tracking": [],
-        "policy_tracking": [
-            {
-                "policy_id": "canCall_policy",
-                "label": "canCall policy",
-                "policy_function": "canCall(address,address,bytes4)",
-                "tracked_state_targets": ["getUserRoles", "getRolesWithCapability"],
-                "associated_events": [
-                    {
-                        "name": "UserRoleUpdated",
-                        "signature": "UserRoleUpdated(address,uint8,bool)",
-                        "topic0": "0xabcdef",
-                        "inputs": [],
-                    }
-                ],
-                "writer_functions": [{"function": "setUserRole(address,uint8,bool)"}],
-                "notes": ["Track role mutations"],
-            }
-        ],
-    }
-
-    plan = build_control_tracking_plan(analysis)  # type: ignore[arg-type]
-
-    assert len(plan["tracked_policies"]) == 1
-    policy = plan["tracked_policies"][0]
-    assert policy["policy_id"] == "canCall_policy"
-    assert policy["policy_function"] == "canCall(address,address,bytes4)"
-    assert policy["tracked_state_targets"] == ["getUserRoles", "getRolesWithCapability"]
-    assert policy["event_watch"]["events"][0]["name"] == "UserRoleUpdated"
-    assert policy["event_watch"]["writer_functions"] == ["setUserRole(address,uint8,bool)"]
 
 
 # ===================================================================
@@ -1493,9 +1446,7 @@ def test_resolution_worker_fails_on_missing_artifacts(monkeypatch):
     monkeypatch.setattr(
         "workers.resolution_worker.get_artifact",
         lambda _s, _j, name: (
-            {"schema_version": "0.1", "tracked_controllers": [], "tracked_policies": []}
-            if name == "control_tracking_plan"
-            else None
+            {"schema_version": "0.1", "tracked_controllers": []} if name == "control_tracking_plan" else None
         ),
     )
     with pytest.raises(RuntimeError, match="contract_analysis"):

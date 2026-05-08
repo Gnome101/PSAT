@@ -1,14 +1,9 @@
-"""Wave-3 B.1 row writer — drives ``EffectiveFunction`` and
-``FunctionPrincipal`` rows directly from per-function
-``CapabilityExpr`` shapes (the v2 read path).
+"""Row writer for semantic per-function capabilities.
 
-This module is the **single** writer post-cutover. The legacy in-worker
-``_enrich_principals_from_v2_capabilities`` path was lossy (it skipped
-Safe owners, signature_witness, and irreducible composites) and is
-gone; ``build_effective_permissions`` calls this module instead.
+This module drives ``EffectiveFunction`` and ``FunctionPrincipal`` rows
+directly from per-function ``CapabilityExpr`` shapes.
 
-Per-kind row representation (Option A — full table in
-``/tmp/psat-plans/pr70-v1-to-v2-cutover.md§B.1``):
+Per-kind row representation:
 
   finite_set                    -> N rows, principal_type=controller
   threshold_group (Safe)        -> 1 row,  resolved_type=safe, details.owners[]
@@ -107,9 +102,9 @@ def _rows_for_finite_set(cap_dict: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "address": member.lower(),
                 "resolved_type": None,
-                "origin": "v2_capability:finite_set",
+                "origin": "semantic_capability:finite_set",
                 "principal_type": "controller",
-                "details": {"source": "v2_predicate_capability_resolver"},
+                "details": {"source": "semantic_predicate_capability_resolver"},
             }
         )
     return rows
@@ -152,13 +147,13 @@ def _rows_for_threshold_group(
         {
             "address": safe_address.lower(),
             "resolved_type": "safe",
-            "origin": "v2_capability:threshold_group",
+            "origin": "semantic_capability:threshold_group",
             "principal_type": "controller",
             "details": {
                 "threshold": int(m) if isinstance(m, int) else None,
                 "owners": owners,
                 "total_signers": len(owners),
-                "source": "v2_predicate_capability_resolver",
+                "source": "semantic_predicate_capability_resolver",
             },
         }
     ]
@@ -181,11 +176,11 @@ def _rows_for_signature_witness(cap_dict: dict[str, Any]) -> list[dict[str, Any]
             {
                 "address": member.lower(),
                 "resolved_type": None,
-                "origin": "v2_capability:signature_witness",
+                "origin": "semantic_capability:signature_witness",
                 "principal_type": "signature_witness",
                 "details": {
                     "signer_kind": "finite_set",
-                    "source": "v2_predicate_capability_resolver",
+                    "source": "semantic_predicate_capability_resolver",
                 },
             }
         )
@@ -210,9 +205,26 @@ def _column_values_for_capability(
         out["conditions"] = list(cap_dict.get("conditions") or [])
         out["status"] = "public"
         out["authority_public"] = True
+    elif _is_public_composite_capability(cap_dict):
+        out["status"] = "public"
+        out["authority_public"] = True
     elif kind == "unsupported":
         out["status"] = "unsupported"
     return out
+
+
+def _is_public_composite_capability(cap_dict: dict[str, Any]) -> bool:
+    kind = cap_dict.get("kind")
+    if kind == "conditional_universal":
+        return True
+    if kind not in {"AND", "OR"}:
+        return False
+    children = cap_dict.get("children")
+    return (
+        isinstance(children, list)
+        and bool(children)
+        and all(isinstance(child, dict) and _is_public_composite_capability(child) for child in children)
+    )
 
 
 def write_effective_function_rows(
@@ -223,8 +235,8 @@ def write_effective_function_rows(
     capability_by_function: Mapping[str, CapabilityExpr | dict[str, Any]] | None,
     safe_address_lookup: dict[str, str] | None = None,
 ) -> int:
-    """Replace this contract's ``EffectiveFunction`` rows with v2-driven
-    ones (and their associated ``FunctionPrincipal`` rows).
+    """Replace this contract's ``EffectiveFunction`` rows with semantic
+    rows and their associated ``FunctionPrincipal`` rows.
 
     ``function_records`` is the list of per-function dicts emitted by
     ``build_effective_permissions``. Each must carry at minimum
@@ -296,8 +308,7 @@ def write_effective_function_rows(
             "authority_public": cap_columns["authority_public"],
             "authority_roles": fn.get("authority_roles"),
         }
-        # B.1 columns — only pass them when the model defines them
-        # (Wave 1 migration may not have landed in every test branch).
+        # Optional columns may be absent in older test metadata.
         for col_name in ("capability_expr", "conditions", "status"):
             if hasattr(EffectiveFunction, col_name):
                 ef_kwargs[col_name] = cap_columns.get(col_name)
@@ -305,19 +316,19 @@ def write_effective_function_rows(
         session.add(ef)
         session.flush()
 
-        # v2 caller-shaped principals. ``ON CONFLICT DO NOTHING`` is
+        # Semantic caller-shaped principals. ``ON CONFLICT DO NOTHING`` is
         # implemented at the (function_id, address, origin, principal_type)
         # level via an in-memory dedup set — the row schema has no UNIQUE
         # constraint so we can't lean on Postgres for it.
         seen: set[tuple[int, str, str, str]] = set()
 
         if cap_dict is not None:
-            v2_rows = _principal_rows_for_capability(
+            semantic_rows = _principal_rows_for_capability(
                 cap_dict,
                 safe_address_lookup=safe_address_lookup,
                 function_signature=fn_signature,
             )
-            for row in v2_rows:
+            for row in semantic_rows:
                 key = (
                     ef.id,
                     row["address"],

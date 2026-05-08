@@ -1,12 +1,12 @@
-"""Build the v2 ``effects`` artifact for a contract.
+"""Build the semantic ``effects`` artifact for a contract.
 
 Walks Slither IR for every externally-callable function on a contract
 and emits a typed record describing the function's *effects*: state
 writes, external calls, delegatecalls, contract creations, and
 selfdestructs — including those reached transitively through internal
-calls. The artifact is the v2 carrier replacing
-``permission_graph["sinks"]`` for downstream consumers
-(``cross_contract.py``, ``tracking.py``, ``effective_permissions.py``).
+calls. The artifact is the semantic sink/effect carrier for downstream
+consumers (``cross_contract.py``, ``tracking.py``,
+``effective_permissions.py``).
 
 Why a separate artifact (vs. extending ``predicate_trees``):
 ``predicate_trees`` deliberately omits *unguarded* functions
@@ -16,7 +16,7 @@ externally-callable function regardless of guard structure, so a
 publicly callable sensitive action (e.g. unprotected ``mint``) is
 still surfaced to the policy stage.
 
-Function inclusion (matches v1 graph behavior + a deliberate addition):
+Function inclusion:
   * external/public functions: included.
   * constructor: skipped (matches ``predicate_artifacts._is_externally_callable``;
     constructor effects are tracked elsewhere).
@@ -35,15 +35,12 @@ from typing import Any, TypedDict
 
 from eth_utils.crypto import keccak
 
-from .shared import (
-    _function_effects,
-)
 from .summaries import (
     _action_summary,
     _effect_labels,
 )
 
-SCHEMA_VERSION = "v2"
+SCHEMA_VERSION = "semantic"
 
 
 class SinkRecord(TypedDict):
@@ -114,7 +111,7 @@ def _function_full_name(fn: Any) -> str:
     return str(name)
 
 
-def _selector_for(signature: str) -> str | None:
+def _selector_for(signature: str | None) -> str | None:
     """Compute keccak256[:4] of a canonical ``name(types)`` signature.
     Returns ``None`` if the signature isn't in canonical form (e.g.
     fallback/receive, which have no selector)."""
@@ -128,9 +125,8 @@ def _sink_id(function_name: str, kind: str, target: str, idx: int) -> str:
     of the same (kind, target) on one function distinct (e.g. two
     state_write sinks to the same var from different branches).
 
-    Format mirrors the v1 graph format ``<function>:<idx>:<kind>:<target>``
-    so legacy tests asserting ``endswith(":<kind>:<target>")`` keep
-    passing through Phase A.6 / D.3."""
+    Format is ``<function>:sink<idx>:<kind>:<target>`` so callers can
+    reference individual sinks without relying on source order alone."""
     return f"{function_name}:sink{idx}:{kind}:{target}"
 
 
@@ -144,51 +140,64 @@ def _node_kind_state_writes(node: Any) -> list[str]:
     return names
 
 
-def _classify_node_irs(node: Any) -> list[tuple[str, str]]:
+def _callee_signature(ir: Any) -> str | None:
+    fn = getattr(ir, "function", None)
+    for attr in ("full_name", "signature_str"):
+        value = getattr(fn, attr, None)
+        if isinstance(value, str) and "(" in value and value.endswith(")"):
+            return value.rsplit(".", 1)[-1]
+    value = getattr(ir, "function_name", None)
+    if isinstance(value, str) and "(" in value and value.endswith(")"):
+        return value.rsplit(".", 1)[-1]
+    return None
+
+
+def _classify_node_irs(node: Any) -> list[tuple[str, str, str | None]]:
     """Classify the non-state-write sinks at a node. Returns a list of
-    ``(kind, target)`` pairs.
+    ``(kind, target, selector)`` triples.
 
     State writes are handled separately — Slither's
     ``node.state_variables_written`` is more reliable than walking IR
     assignments by hand."""
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str | None]] = []
     for ir in _node_irs(node):
         op = type(ir).__name__
         if op == "NewContract":
             target = getattr(ir, "contract_name", None) or str(getattr(ir, "contract_created", "")) or "unknown"
-            out.append(("contract_creation", str(target)))
+            out.append(("contract_creation", str(target), None))
         elif op in ("HighLevelCall", "LibraryCall"):
             destination = getattr(ir, "destination", None)
             destination_name = getattr(destination, "name", None) or str(destination) or "unknown"
             function_name = getattr(ir, "function_name", None) or "call"
+            selector = _selector_for(_callee_signature(ir))
             # LibraryCall's "destination" is in its first argument.
             if op == "LibraryCall":
                 arguments = list(getattr(ir, "arguments", []) or [])
                 if arguments:
                     arg = arguments[0]
                     destination_name = getattr(arg, "name", None) or str(arg) or destination_name
-            out.append(("external_call", f"{destination_name}.{function_name}"))
+            out.append(("external_call", f"{destination_name}.{function_name}", selector))
         elif op == "LowLevelCall":
             target = getattr(getattr(ir, "destination", None), "name", None) or str(
                 getattr(ir, "destination", None) or "unknown"
             )
             function_name = str(getattr(ir, "function_name", "") or "")
             if function_name == "delegatecall":
-                out.append(("delegatecall", str(target)))
+                out.append(("delegatecall", str(target), None))
             else:
-                out.append(("external_call", f"{target}.{function_name or 'call'}"))
+                out.append(("external_call", f"{target}.{function_name or 'call'}", None))
         elif op == "SolidityCall":
             function_name = getattr(getattr(ir, "function", None), "name", "") or ""
             if function_name.startswith("selfdestruct("):
-                out.append(("selfdestruct", "selfdestruct"))
+                out.append(("selfdestruct", "selfdestruct", None))
     return out
 
 
 def _walk_unit_for_sinks(
     unit: Any,
     visited: set[Any],
-) -> list[tuple[str, str]]:
-    """Recursively gather (kind, target) pairs from ``unit`` and any
+) -> list[tuple[str, str, str | None]]:
+    """Recursively gather sink triples from ``unit`` and any
     internal/library callees. Returns a flat list (de-dup happens at
     the caller level so we can keep distinct indices)."""
     unit_key = getattr(unit, "canonical_name", None) or getattr(unit, "full_name", None) or id(unit)
@@ -196,10 +205,10 @@ def _walk_unit_for_sinks(
         return []
     visited.add(unit_key)
 
-    found: list[tuple[str, str]] = []
+    found: list[tuple[str, str, str | None]] = []
     for node in getattr(unit, "nodes", []) or []:
         for var_name in _node_kind_state_writes(node):
-            found.append(("state_write", var_name))
+            found.append(("state_write", var_name, None))
         found.extend(_classify_node_irs(node))
         # Recurse into internal/library callees so transitive writes
         # surface on the entry-point's record.
@@ -218,16 +227,15 @@ def _build_sink_records(function: Any) -> list[SinkRecord]:
     """One sink per (kind, target) pair we discover, transitively
     deduped while preserving order. The selector field on
     ``SinkRecord`` is per-sink, not per-function: only ``external_call``
-    sinks carry one (the called function's selector when it can be
-    formed; we only have the function name from IR, not its full
-    canonical signature, so this is best-effort)."""
+    sinks carry one, and only when Slither exposes the called function's
+    canonical signature."""
     function_name = _function_full_name(function)
-    pairs = _walk_unit_for_sinks(function, set())
+    triples = _walk_unit_for_sinks(function, set())
 
     out: list[SinkRecord] = []
-    seen: set[tuple[str, str]] = set()
-    for kind, target in pairs:
-        key = (kind, target)
+    seen: set[tuple[str, str, str | None]] = set()
+    for kind, target, selector in triples:
+        key = (kind, target, selector)
         if key in seen:
             continue
         seen.add(key)
@@ -237,7 +245,7 @@ def _build_sink_records(function: Any) -> list[SinkRecord]:
             "function": function_name,
             "kind": kind,
             "target": target,
-            "selector": None,
+            "selector": selector,
         }
         out.append(record)
     return out
@@ -249,11 +257,12 @@ def _build_sink_records(function: Any) -> list[SinkRecord]:
 
 
 def _effect_targets_from_sinks(sinks: list[SinkRecord]) -> list[str]:
-    """The state-var name(s) this function writes — sourced from the
-    sink list. Mirrors the v1 graph's ``effect_targets`` for state-writes;
-    consumers of effect_targets only key on writes (see _effect_labels'
-    targets_lower lookups for ".transfer", ".mint" etc., which we
-    augment from external_call sinks)."""
+    """Compatibility display targets sourced from the sink list.
+
+    State writes and external-call dotted targets both remain here because
+    API/UI consumers already render this field. Semantic consumers should
+    read ``sinks`` and selectors directly.
+    """
     seen: list[str] = []
     seen_set: set[str] = set()
     for sink in sinks:
@@ -261,9 +270,8 @@ def _effect_targets_from_sinks(sinks: list[SinkRecord]) -> list[str]:
             seen.append(sink["target"])
             seen_set.add(sink["target"])
         elif sink["kind"] == "external_call" and sink["target"] not in seen_set:
-            # ``_effect_labels`` checks targets ending in ``.mint`` /
-            # ``.transfer`` etc., so we include external-call dotted
-            # targets here for compatibility with that label path.
+            # Kept for API/UI compatibility; label inference reads the
+            # selector-bearing sink records instead.
             seen.append(sink["target"])
             seen_set.add(sink["target"])
     return seen
@@ -286,12 +294,10 @@ def _writer_selectors_for(function: Any, sinks: list[SinkRecord]) -> list[str]:
 
 def _effect_info_for_function(function: Any) -> EffectInfo:
     sinks = _build_sink_records(function)
-    effects = _function_effects(function)
+    effects: list[str] = []
 
-    # ``effect_targets`` for label inference includes both state-write
-    # var names and external-call dotted targets (so ``.mint``-style
-    # detection still fires). The downstream "what state does this
-    # write" consumer (tracking.py) keys only on state_write sinks.
+    # ``effect_targets`` remains a compatibility display field. Semantic
+    # consumers should read ``sinks`` and selectors instead.
     effect_targets = _effect_targets_from_sinks(sinks)
 
     # _effect_labels takes a synthetic graph-entry analog so its
@@ -302,11 +308,11 @@ def _effect_info_for_function(function: Any) -> EffectInfo:
         "effects": list(effects),
         "effect_targets": list(effect_targets),
         "sink_kinds": sink_kinds,
+        "sinks": list(sinks),
     }
-    labels = _effect_labels(function, list(effects), list(effect_targets), effect_context)
+    labels = _effect_labels(function, effect_context)
     # Functions with external_call sinks but no specific (mint/burn/asset/etc)
-    # label get ``external_contract_call`` — the v1 graph emitted this via
-    # the ``privileged_external_call`` effect when the sink was guarded.
+    # label get ``external_contract_call`` directly from the sink shape.
     has_external_call = any(s["kind"] == "external_call" for s in sinks)
     if has_external_call and not any(
         lbl
@@ -343,8 +349,7 @@ def _effect_info_for_function(function: Any) -> EffectInfo:
         "effects": list(effects),
         "effect_labels": list(labels),
         # Includes both state-write var names and external-call dotted
-        # targets (mirrors v1 graph behavior + the inputs ``_effect_labels``
-        # / ``_action_summary`` expect). Tracking.py reads ``sinks``
+        # targets for label/summary rendering. Tracking.py reads ``sinks``
         # directly to enumerate state_write writers.
         "effect_targets": list(effect_targets),
         "action_summary": summary,

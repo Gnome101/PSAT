@@ -1,8 +1,8 @@
-"""End-to-end tests for ``GET /api/company/{name}/v2_capabilities``.
+"""End-to-end tests for ``GET /api/company/{name}/semantic_capabilities``.
 
-Read-only, not admin-gated. Returns the per-contract v2
+Read-only, not admin-gated. Returns the per-contract semantic
 capability map for every analyzed contract in the company,
-distinguishing "no v2 artifact" (``null``) from "v2-analyzed
+distinguishing "no predicate-tree artifact" (``null``) from "semantically analyzed
 with no guarded functions" (``{}``).
 """
 
@@ -66,9 +66,9 @@ def _seed_protocol_with_jobs(db_session, *, name: str, addresses_with_artifacts)
     return proto
 
 
-def _v2_artifact_with_guard() -> dict:
+def _semantic_artifact_with_guard() -> dict:
     return {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "f()": {
@@ -91,16 +91,16 @@ def _v2_artifact_with_guard() -> dict:
     }
 
 
-def _v2_artifact_unguarded_only() -> dict:
-    return {"schema_version": "v2", "contract_name": "T", "trees": {}}
+def _semantic_artifact_unguarded_only() -> dict:
+    return {"schema_version": "semantic", "contract_name": "T", "trees": {}}
 
 
 @requires_postgres
-def test_company_v2_capabilities_per_contract_map(api_client, db_session):
-    """Three contracts in the company: one with v2 guards, one
-    v2-analyzed but unguarded, one legacy pre-v2. Each maps
+def test_company_semantic_capabilities_per_contract_map(api_client, db_session):
+    """Three contracts in the company: one with semantic guards, one
+    semantically analyzed but unguarded, one legacy pre-semantic. Each maps
     distinguishably."""
-    name = f"company_v2_{uuid.uuid4().hex[:6]}"
+    name = f"company_semantic_{uuid.uuid4().hex[:6]}"
     addr_guarded = "0x" + uuid.uuid4().hex[:8] + "11" * 16
     addr_unguarded = "0x" + uuid.uuid4().hex[:8] + "22" * 16
     addr_legacy = "0x" + uuid.uuid4().hex[:8] + "33" * 16
@@ -108,17 +108,17 @@ def test_company_v2_capabilities_per_contract_map(api_client, db_session):
         db_session,
         name=name,
         addresses_with_artifacts=[
-            (addr_guarded, _v2_artifact_with_guard()),
-            (addr_unguarded, _v2_artifact_unguarded_only()),
+            (addr_guarded, _semantic_artifact_with_guard()),
+            (addr_unguarded, _semantic_artifact_unguarded_only()),
             (addr_legacy, None),  # no predicate_trees artifact
         ],
     )
 
-    resp = api_client.get(f"/api/company/{name}/v2_capabilities")
+    resp = api_client.get(f"/api/company/{name}/semantic_capabilities")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["company"] == name
-    assert body["missing_v2_count"] == 1
+    assert body["missing_semantic_count"] == 1
     contracts = body["contracts"]
     assert addr_guarded in contracts
     assert "f()" in contracts[addr_guarded]
@@ -130,14 +130,14 @@ def test_company_v2_capabilities_per_contract_map(api_client, db_session):
 
 
 @requires_postgres
-def test_company_v2_capabilities_unknown_company_404(api_client, db_session):
-    resp = api_client.get(f"/api/company/no_such_{uuid.uuid4().hex[:6]}/v2_capabilities")
+def test_company_semantic_capabilities_unknown_company_404(api_client, db_session):
+    resp = api_client.get(f"/api/company/no_such_{uuid.uuid4().hex[:6]}/semantic_capabilities")
     assert resp.status_code == 404
     assert resp.json()["detail"] == "Company not found"
 
 
 @requires_postgres
-def test_company_v2_capabilities_empty_when_no_completed_jobs(api_client, db_session):
+def test_company_semantic_capabilities_empty_when_no_completed_jobs(api_client, db_session):
     """A company with no completed analyses returns an empty
     contracts map — distinct from the 404 unknown-company case."""
     from db.models import Protocol
@@ -147,16 +147,16 @@ def test_company_v2_capabilities_empty_when_no_completed_jobs(api_client, db_ses
     db_session.add(proto)
     db_session.commit()
 
-    resp = api_client.get(f"/api/company/{name}/v2_capabilities")
+    resp = api_client.get(f"/api/company/{name}/semantic_capabilities")
     assert resp.status_code == 200
     body = resp.json()
     assert body["company"] == name
     assert body["contracts"] == {}
-    assert body["missing_v2_count"] == 0
+    assert body["missing_semantic_count"] == 0
 
 
 @requires_postgres
-def test_company_v2_capabilities_resolver_failure_treated_as_missing(api_client, db_session, monkeypatch):
+def test_company_semantic_capabilities_resolver_failure_treated_as_missing(api_client, db_session, monkeypatch):
     """If the resolver raises for a contract, that contract is
     counted as missing rather than 500ing the whole endpoint."""
     name = f"company_failsafe_{uuid.uuid4().hex[:6]}"
@@ -164,7 +164,7 @@ def test_company_v2_capabilities_resolver_failure_treated_as_missing(api_client,
     _seed_protocol_with_jobs(
         db_session,
         name=name,
-        addresses_with_artifacts=[(addr, _v2_artifact_with_guard())],
+        addresses_with_artifacts=[(addr, _semantic_artifact_with_guard())],
     )
 
     def _boom(*a, **kw):
@@ -178,15 +178,15 @@ def test_company_v2_capabilities_resolver_failure_treated_as_missing(api_client,
 
     monkeypatch.setattr(cr_mod, "resolve_contract_capabilities", _boom)
 
-    resp = api_client.get(f"/api/company/{name}/v2_capabilities")
+    resp = api_client.get(f"/api/company/{name}/semantic_capabilities")
     assert resp.status_code == 200
     body = resp.json()
     assert body["contracts"][addr] is None
-    assert body["missing_v2_count"] == 1
+    assert body["missing_semantic_count"] == 1
 
 
 @requires_postgres
-def test_company_v2_capabilities_route_not_admin_gated(api_client, db_session):
+def test_company_semantic_capabilities_route_not_admin_gated(api_client, db_session):
     """Mirror of the /api/contract/{addr}/capabilities pin: this
     endpoint is read-only and external consumers need it without
     credentials."""
@@ -200,8 +200,8 @@ def test_company_v2_capabilities_route_not_admin_gated(api_client, db_session):
     _seed_protocol_with_jobs(
         db_session,
         name=name,
-        addresses_with_artifacts=[(addr, _v2_artifact_with_guard())],
+        addresses_with_artifacts=[(addr, _semantic_artifact_with_guard())],
     )
 
-    resp = api_client.get(f"/api/company/{name}/v2_capabilities")
+    resp = api_client.get(f"/api/company/{name}/semantic_capabilities")
     assert resp.status_code == 200

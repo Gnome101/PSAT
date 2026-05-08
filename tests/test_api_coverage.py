@@ -1569,7 +1569,7 @@ def test_analysis_detail_proxy_inherits_impl_relational_tables(
     fp_controller.resolved_type = "contract"
     fp_controller.origin = "roleRegistry"
     fp_controller.principal_type = "controller"
-    fp_controller.details = {"authority_kind": "access_control_like"}
+    fp_controller.details = {"authority_kind": "external_authority"}
 
     cv = MagicMock()
     cv.controller_id = "admin"
@@ -1834,7 +1834,7 @@ def test_company_overview_with_proxy_and_effects(db_session, api_client):
                 resolved_type="contract",
                 origin="roleRegistry",
                 principal_type="controller",
-                details={"authority_kind": "access_control_like"},
+                details={"authority_kind": "external_authority"},
             ),
         ]
     )

@@ -1,6 +1,6 @@
 # Corpus manifests
 
-YAML files in this directory pin the **expected v2 predicate-pipeline
+YAML files in this directory pin the **expected semantic predicate-pipeline
 output** for representative real-protocol contract shapes. The harness
 in `tests/test_corpus_manifests.py` parametrizes one test per manifest:
 
@@ -10,10 +10,10 @@ in `tests/test_corpus_manifests.py` parametrizes one test per manifest:
 3. Assert each function listed in `expected_functions` has the
    declared `authority_role` / `kind` / `confidence` / `unsupported_reason`.
 4. Assert any function listed under `unguarded` is absent from the
-   v2 trees dict.
+   semantic trees dict.
 
 These are the **cutover-gate fixtures** for #18 — when a manifest's
-expected output stops matching, either the v2 pipeline regressed
+expected output stops matching, either the semantic pipeline regressed
 or a real-world shape changed. Add manifests as the pipeline grows
 to cover new protocols.
 
@@ -25,7 +25,7 @@ description: short text         # optional — human-readable summary
 source: |                       # required (or `source_path:`)
   pragma solidity ^0.8.19;
   contract C { ... }
-source_path: contracts/oz_ac.sol  # alternative to inline `source`
+source_path: contracts/oz_role.sol  # alternative to inline `source`
 
 expected_functions:
   "f()":
@@ -38,12 +38,12 @@ expected_functions:
     parameter_indices: [0]             # optional, exact list
 
 unguarded:                             # optional — these functions must NOT
-  - "open()"                           #   appear in v2 trees (resolver = public)
+  - "open()"                           #   appear in semantic trees (resolver = public)
 ```
 
 Field semantics:
 - `expected_functions` keys are full function signatures (e.g. `"transfer(address,uint256)"`).
-- Per-function fields are matched against the v2 leaf for that function.
+- Per-function fields are matched against the semantic leaf for that function.
   When the function's tree is composite (AND/OR), the harness walks
   every leaf and picks the **first** matching one — multi-leaf
   expectations need explicit handling per manifest (see
@@ -58,4 +58,4 @@ Field semantics:
    `contracts/<protocol>.sol` and reference via `source_path:`.
 3. Run `pytest tests/test_corpus_manifests.py::test_corpus_manifest -k <name>`.
 4. The test fails on the first divergence — iterate on the manifest
-   or extend the v2 pipeline until it passes.
+   or extend the semantic pipeline until it passes.

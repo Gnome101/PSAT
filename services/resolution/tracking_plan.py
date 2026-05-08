@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from schemas.contract_analysis import ContractAnalysis
-from schemas.control_tracking import ControlTrackingPlan, EventWatch, PollingFallback, TrackedController, TrackedPolicy
+from schemas.control_tracking import ControlTrackingPlan, EventWatch, PollingFallback, TrackedController
 
 
 def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPlan:
@@ -12,7 +12,6 @@ def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPl
     contract_name = analysis["subject"]["name"]
 
     tracked_controllers: list[TrackedController] = []
-    tracked_policies: list[TrackedPolicy] = []
     for target in analysis.get("controller_tracking", []):
         associated_events = list(target.get("associated_events", []))
         writer_functions = [item["function"] for item in target.get("writer_functions", [])]
@@ -53,28 +52,10 @@ def build_control_tracking_plan(analysis: ContractAnalysis) -> ControlTrackingPl
             }
         )
 
-    for policy in analysis.get("policy_tracking", []):
-        tracked_policies.append(
-            {
-                "policy_id": policy["policy_id"],
-                "label": policy["label"],
-                "policy_function": policy["policy_function"],
-                "tracked_state_targets": list(policy.get("tracked_state_targets", [])),
-                "event_watch": {
-                    "transport": "wss_logs",
-                    "contract_address": contract_address,
-                    "events": list(policy.get("associated_events", [])),
-                    "writer_functions": [item["function"] for item in policy.get("writer_functions", [])],
-                },
-                "notes": list(policy.get("notes", [])),
-            }
-        )
-
     return {
         "schema_version": "0.1",
         "contract_address": contract_address,
         "contract_name": contract_name,
         "tracking_strategy": "event_first_with_polling_fallback",
         "tracked_controllers": sorted(tracked_controllers, key=lambda item: item["label"]),
-        "tracked_policies": sorted(tracked_policies, key=lambda item: item["label"]),
     }

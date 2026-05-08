@@ -133,7 +133,7 @@ def test_resolve_returns_per_function_capabilities(session):
 
     address = "0x" + uuid.uuid4().hex[:8] + "01" * 16
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "f()": {
@@ -208,7 +208,7 @@ def test_resolve_yields_finite_set_with_indexed_event_repo(session):
     session.commit()
 
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "guardedFn()": {
@@ -261,7 +261,7 @@ def test_resolve_serializes_unsupported_with_reason(session):
 
     address = "0x" + uuid.uuid4().hex[:8] + "03" * 16
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "tryFn()": {
@@ -298,7 +298,7 @@ def test_resolve_returns_empty_dict_for_unguarded_only_contract(session):
     from services.resolution.capability_resolver import resolve_contract_capabilities
 
     address = "0x" + uuid.uuid4().hex[:8] + "04" * 16
-    artifact = {"schema_version": "v2", "contract_name": "T", "trees": {}}
+    artifact = {"schema_version": "semantic", "contract_name": "T", "trees": {}}
     _seed_job_with_artifact(session, address=address, predicate_trees=artifact)
 
     out = resolve_contract_capabilities(session, address=address, chain_id=1)
@@ -367,7 +367,7 @@ def test_state_variable_owner_resolved_via_controller_values(session):
     session.commit()
 
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "transferOwnership(address)": {
@@ -418,7 +418,7 @@ def test_state_variable_owner_resolved_via_controller_values(session):
 
 @requires_postgres
 def test_external_set_resolves_to_indexed_event_members(session):
-    """A v2 leaf that says 'membership in role X on registry Y' must
+    """A semantic leaf that says 'membership in role X on registry Y' must
     serialize as ``finite_set(members=[m1, m2], confidence=enumerable)``
     when indexed_event_logs has the data. The registry contract itself
     is never an answer — that's the indirection layer, not the principal."""
@@ -459,7 +459,7 @@ def test_external_set_resolves_to_indexed_event_members(session):
     session.commit()
 
     artifact = {
-        "schema_version": "v2",
+        "schema_version": "semantic",
         "contract_name": "T",
         "trees": {
             "upgradeTo(address)": {
@@ -512,11 +512,441 @@ def test_external_set_resolves_to_indexed_event_members(session):
     )
 
 
+@requires_postgres
+def test_external_authority_inlining_follows_proxy_to_impl_predicate_trees(session):
+    """If an authority contract is a proxy, inline the implementation's
+    predicate_trees while keeping event reads keyed to the runtime proxy."""
+    from db.models import Contract, ControllerValue, IndexedEventCursor, IndexedEventLog, Protocol
+    from services.resolution.capability_resolver import resolve_contract_capabilities
+
+    target_addr = "0x" + uuid.uuid4().hex[:8] + "a1" * 16
+    registry_proxy = "0x" + uuid.uuid4().hex[:8] + "b2" * 16
+    registry_impl = "0x" + uuid.uuid4().hex[:8] + "c3" * 16
+    member = "0x" + "77" * 20
+    role_const_hex = "0x" + "12" * 32
+    topic0 = "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
+
+    proto = Protocol(name=f"capres_proxy_inline_{uuid.uuid4().hex[:8]}")
+    session.add(proto)
+    session.flush()
+
+    target_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "EtherFiAdmin",
+        "trees": {
+            "upgradeTo(address)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "external_bool",
+                    "operator": "truthy",
+                    "authority_role": "delegated_authority",
+                    "operands": [{"source": "msg_sender"}],
+                    "set_descriptor": {
+                        "kind": "external_set",
+                        "authority_contract": {
+                            "address_source": {
+                                "source": "state_variable",
+                                "state_variable_name": "roleRegistry",
+                            }
+                        },
+                        "callee_signature": "hasRole(bytes32,address)",
+                    },
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "roleRegistry.hasRole(PROTOCOL_UPGRADER, msg.sender)",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    target_job = _seed_job_with_artifact(session, address=target_addr, predicate_trees=target_artifact)
+    target_contract = Contract(address=target_addr, chain="ethereum", protocol_id=proto.id, job_id=target_job.id)
+    session.add(target_contract)
+    session.flush()
+    session.add(
+        ControllerValue(
+            contract_id=target_contract.id,
+            controller_id="external_contract:roleRegistry",
+            value=registry_proxy,
+            resolved_type="contract",
+            source="state_variable",
+        )
+    )
+
+    proxy_job = _seed_job_with_artifact(session, address=registry_proxy, predicate_trees=None)
+    proxy_contract = Contract(
+        address=registry_proxy,
+        chain="ethereum",
+        protocol_id=proto.id,
+        job_id=proxy_job.id,
+        is_proxy=True,
+        implementation=registry_impl,
+    )
+    session.add(proxy_contract)
+
+    registry_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "RoleRegistry",
+        "trees": {
+            "hasRole(bytes32,address)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "membership",
+                    "operator": "truthy",
+                    "authority_role": "caller_authority",
+                    "operands": [{"source": "msg_sender"}],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "key_sources": [
+                            {"source": "constant", "constant_value": role_const_hex},
+                            {"source": "msg_sender"},
+                        ],
+                        "storage_var": "_roles",
+                        "enumeration_hint": [
+                            {
+                                "event_address": registry_proxy,
+                                "topic0": topic0,
+                                "topics_to_keys": {1: 0, 2: 1},
+                                "data_to_keys": {},
+                                "direction": "add",
+                            }
+                        ],
+                    },
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "_roles[role][msg.sender]",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    impl_job = _seed_job_with_artifact(session, address=registry_impl, predicate_trees=registry_artifact)
+    impl_job.request = {
+        "address": registry_impl,
+        "name": "RoleRegistry: (impl)",
+        "chain": "ethereum",
+        "parent_job_id": str(proxy_job.id),
+        "proxy_address": registry_proxy,
+    }
+    session.add(Contract(address=registry_impl, chain="ethereum", protocol_id=proto.id, job_id=impl_job.id))
+
+    session.add(
+        IndexedEventLog(
+            chain_id=1,
+            event_address=registry_proxy,
+            topic0=topic0,
+            tx_hash=b"\xdd" * 32,
+            log_index=0,
+            block_number=100,
+            block_hash=b"\xee" * 32,
+            transaction_index=0,
+            topics=[topic0, role_const_hex, _address_topic(member)],
+            data_words=[],
+        )
+    )
+    session.add(
+        IndexedEventCursor(
+            chain_id=1,
+            event_address=registry_proxy,
+            topic0=topic0,
+            last_indexed_block=18_500_000,
+            last_indexed_block_hash=b"\xff" * 32,
+        )
+    )
+    session.commit()
+
+    out = resolve_contract_capabilities(session, address=target_addr, chain_id=1, job_id=target_job.id)
+    assert out is not None
+    cap = out["upgradeTo(address)"]
+    assert cap["kind"] == "finite_set"
+    assert member in (cap.get("members") or [])
+
+
+@requires_postgres
+def test_unscanned_event_cursor_uses_hypersync_fallback(session, monkeypatch):
+    """A just-enrolled cursor at block 0 is not a complete empty index."""
+    import services.resolution.adapters.event_indexed as event_indexed_mod
+    from db.models import IndexedEventCursor
+    from services.resolution.adapters import EnumerationResult
+    from services.resolution.capability_resolver import resolve_contract_capabilities
+
+    address = "0x" + uuid.uuid4().hex[:8] + "c9" * 16
+    role_const_hex = "0x" + "44" * 32
+    member = "0x" + "55" * 20
+    topic0 = "0x2f8788117e7eff1d82e926ec794901d17c78024a50270940304540a733656f0d"
+
+    def fake_fallback(**_kwargs):
+        return EnumerationResult(members=[member], confidence="enumerable", last_indexed_block=123)
+
+    monkeypatch.setattr(event_indexed_mod, "_hypersync_fallback_result", fake_fallback)
+    _seed_contract(session, address=address)
+    session.add(
+        IndexedEventCursor(
+            chain_id=1,
+            event_address=address,
+            topic0=topic0,
+            last_indexed_block=0,
+            last_indexed_block_hash=None,
+        )
+    )
+    session.commit()
+
+    artifact = {
+        "schema_version": "semantic",
+        "contract_name": "T",
+        "trees": {
+            "pause()": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "external_bool",
+                    "operator": "truthy",
+                    "authority_role": "delegated_authority",
+                    "operands": [{"source": "msg_sender"}],
+                    "set_descriptor": {
+                        "kind": "mapping_membership",
+                        "key_sources": [
+                            {"source": "constant", "constant_value": role_const_hex},
+                            {"source": "msg_sender"},
+                        ],
+                        "enumeration_hint": [
+                            {
+                                "event_address": address,
+                                "topic0": topic0,
+                                "topics_to_keys": {1: 0, 2: 1},
+                                "data_to_keys": {},
+                                "direction": "add",
+                            }
+                        ],
+                    },
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "hasRole(ROLE, msg.sender)",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    _seed_job_with_artifact(session, address=address, predicate_trees=artifact)
+
+    out = resolve_contract_capabilities(session, address=address, chain_id=1)
+    assert out is not None
+    cap = out["pause()"]
+    assert cap["kind"] == "finite_set"
+    assert cap.get("members") == [member]
+    assert cap.get("last_indexed_block") == 123
+
+
+@requires_postgres
+def test_external_authority_inlining_binds_msg_sender_argument(session):
+    """Inlining B(account) must bind A's msg.sender argument before
+    evaluating B's parameter-based guard."""
+    from db.models import Contract, ControllerValue, Protocol
+    from services.resolution.capability_resolver import resolve_contract_capabilities
+
+    target_addr = "0x" + uuid.uuid4().hex[:8] + "d1" * 16
+    registry_proxy = "0x" + uuid.uuid4().hex[:8] + "d2" * 16
+    registry_impl = "0x" + uuid.uuid4().hex[:8] + "d3" * 16
+    owner = "0x" + "66" * 20
+
+    proto = Protocol(name=f"capres_bind_args_{uuid.uuid4().hex[:8]}")
+    session.add(proto)
+    session.flush()
+
+    target_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "EtherFiAdmin",
+        "trees": {
+            "upgradeTo(address)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "external_bool",
+                    "operator": "truthy",
+                    "authority_role": "delegated_authority",
+                    "operands": [
+                        {
+                            "source": "external_call",
+                            "callee": "onlyProtocolUpgrader",
+                            "callee_selector": "0x5006bb7b",
+                            "callee_signature": "onlyProtocolUpgrader(address)",
+                        },
+                        {"source": "msg_sender"},
+                    ],
+                    "set_descriptor": {
+                        "kind": "external_set",
+                        "authority_contract": {
+                            "address_source": {
+                                "source": "state_variable",
+                                "state_variable_name": "roleRegistry",
+                            }
+                        },
+                        "callee_signature": "onlyProtocolUpgrader(address)",
+                        "callee_selector": "0x5006bb7b",
+                    },
+                    "references_msg_sender": True,
+                    "parameter_indices": [],
+                    "expression": "roleRegistry.onlyProtocolUpgrader(msg.sender)",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    target_job = _seed_job_with_artifact(session, address=target_addr, predicate_trees=target_artifact)
+    target_contract = Contract(address=target_addr, chain="ethereum", protocol_id=proto.id, job_id=target_job.id)
+    session.add(target_contract)
+    session.flush()
+    session.add(
+        ControllerValue(
+            contract_id=target_contract.id,
+            controller_id="external_contract:roleRegistry",
+            value=registry_proxy,
+            resolved_type="contract",
+            source="state_variable",
+        )
+    )
+
+    proxy_job = _seed_job_with_artifact(session, address=registry_proxy, predicate_trees=None)
+    session.add(
+        Contract(
+            address=registry_proxy,
+            chain="ethereum",
+            protocol_id=proto.id,
+            job_id=proxy_job.id,
+            is_proxy=True,
+            implementation=registry_impl,
+        )
+    )
+
+    registry_artifact = {
+        "schema_version": "semantic",
+        "contract_name": "RoleRegistry",
+        "trees": {
+            "onlyProtocolUpgrader(address)": {
+                "op": "LEAF",
+                "leaf": {
+                    "kind": "equality",
+                    "operator": "eq",
+                    "authority_role": "business",
+                    "operands": [
+                        {"source": "state_variable", "state_variable_name": "_owner"},
+                        {"source": "parameter", "parameter_name": "account", "parameter_index": 0},
+                    ],
+                    "references_msg_sender": False,
+                    "parameter_indices": [0],
+                    "expression": "owner() != account",
+                    "basis": [],
+                },
+            }
+        },
+    }
+    impl_job = _seed_job_with_artifact(session, address=registry_impl, predicate_trees=registry_artifact)
+    impl_job.request = {
+        "address": registry_impl,
+        "name": "RoleRegistry: (impl)",
+        "chain": "ethereum",
+        "parent_job_id": str(proxy_job.id),
+        "proxy_address": registry_proxy,
+    }
+    impl_contract = Contract(address=registry_impl, chain="ethereum", protocol_id=proto.id, job_id=impl_job.id)
+    session.add(impl_contract)
+    session.flush()
+    session.add(
+        ControllerValue(
+            contract_id=impl_contract.id,
+            controller_id="state_variable:_owner",
+            value=owner,
+            resolved_type="eoa",
+            source="state_variable",
+        )
+    )
+    session.commit()
+
+    out = resolve_contract_capabilities(session, address=target_addr, chain_id=1, job_id=target_job.id)
+    assert out is not None
+    cap = out["upgradeTo(address)"]
+    assert cap["kind"] == "finite_set"
+    assert cap.get("members") == [owner]
+
+
+@requires_postgres
+def test_dependency_provider_lookup_returns_impl_child_for_proxy(session):
+    from db.models import Contract, Protocol
+    from db.queue import store_artifact
+    from services.resolution.capability_resolver import find_dependency_provider_job_for_address
+
+    proxy_addr = "0x" + uuid.uuid4().hex[:8] + "d4" * 16
+    impl_addr = "0x" + uuid.uuid4().hex[:8] + "e5" * 16
+
+    proto = Protocol(name=f"capres_dep_provider_{uuid.uuid4().hex[:8]}")
+    session.add(proto)
+    session.flush()
+
+    proxy_job = _seed_job_with_artifact(session, address=proxy_addr, predicate_trees=None)
+    proxy_job.request = {"address": proxy_addr, "name": "Registry", "chain": "ethereum"}
+    session.add(
+        Contract(
+            address=proxy_addr,
+            chain="ethereum",
+            protocol_id=proto.id,
+            job_id=proxy_job.id,
+            is_proxy=True,
+            implementation=impl_addr,
+        )
+    )
+
+    impl_job = _seed_job_with_artifact(session, address=impl_addr, predicate_trees=None)
+    impl_job.request = {
+        "address": impl_addr,
+        "name": "Registry: (impl)",
+        "chain": "ethereum",
+        "parent_job_id": str(proxy_job.id),
+        "proxy_address": proxy_addr,
+    }
+    store_artifact(session, impl_job.id, "effective_permissions", data={"functions": []})
+    session.commit()
+
+    lookup = find_dependency_provider_job_for_address(session, proxy_addr, chain="ethereum")
+    assert lookup is not None
+    assert lookup.runtime_job.id == proxy_job.id
+    assert lookup.analysis_job.id == impl_job.id
+
+
+@requires_postgres
+def test_static_proxy_resolution_redirects_pending_policy_dependency_to_impl(session):
+    from db.models import JobDependency, JobStage
+    from workers.static_worker import _redirect_proxy_policy_dependencies
+
+    depender_addr = "0x" + uuid.uuid4().hex[:8] + "f6" * 16
+    proxy_addr = "0x" + uuid.uuid4().hex[:8] + "a7" * 16
+    impl_addr = "0x" + uuid.uuid4().hex[:8] + "b8" * 16
+
+    depender = _seed_job_with_artifact(session, address=depender_addr, predicate_trees=None)
+    session.add(
+        JobDependency(
+            depender_job_id=depender.id,
+            provider_chain="ethereum",
+            provider_address=proxy_addr,
+            required_stage=JobStage.policy,
+            status="pending",
+        )
+    )
+    session.commit()
+
+    changed = _redirect_proxy_policy_dependencies(
+        session,
+        chain="ethereum",
+        proxy_addr=proxy_addr,
+        impl_addr=impl_addr,
+    )
+
+    assert changed == 1
+    row = session.query(JobDependency).filter_by(depender_job_id=depender.id).one()
+    assert row.provider_address == impl_addr.lower()
+    assert row.status == "pending"
+
+
 # ---------------------------------------------------------------------------
-# C.1 cutover: ``_load_state_var_values`` scoped by (job_id, chain).
-# Reproducible per job — a re-analysis on a different chain or a follow-up
-# job on the same address must NOT leak ControllerValue rows into the
-# resolved capability for an earlier job.
+# C.1 cutover: ``_load_state_var_values`` scoped by exact Contract.job_id
+# first, then by address/chain fallback for legacy rows.
 # ---------------------------------------------------------------------------
 
 
@@ -561,7 +991,7 @@ def test_load_state_var_values_scoped_by_chain(session):
     )
     session.commit()
 
-    # Seed a job with chain='ethereum' so the temporal floor is met.
+    # No Contract.job_id here, so this exercises the legacy address/chain fallback.
     job = _seed_job_with_artifact(session, address=address, predicate_trees=None)
 
     eth_values = _load_state_var_values(session, address, job_id=job.id, chain="ethereum")
@@ -577,19 +1007,13 @@ def test_load_state_var_values_scoped_by_chain(session):
 
 
 @requires_postgres
-def test_load_state_var_values_scoped_by_job_created_at(session):
-    """A Contract row whose ``created_at`` is AFTER the job's
-    ``created_at`` must NOT be selected — Option 2 reproducibility.
-    A re-discovery on the same (address, chain) overwrites the
-    Contract row's ``created_at`` to ``now``; an earlier completed
-    job must not pick up that newer row when re-rendered.
+def test_load_state_var_values_prefers_exact_job_contract_over_created_at(session):
+    """A Contract row tied to the analysis job must be selected even if its
+    ``created_at`` is later than the Job row.
 
-    The ``uq_contract_address_chain`` constraint guarantees one
-    Contract per (address, chain) so the realistic scenario is
-    "the existing Contract row was just rewritten by a follow-up
-    discovery and is now newer than this job." With the temporal
-    floor in place the resolver returns nothing; without it, the
-    later row's ControllerValues would leak into older jobs."""
+    Static/resolution can create or update the Contract row after the Job
+    record exists. Filtering on ``Contract.created_at <= Job.created_at``
+    drops the very ControllerValue rows the current job just wrote."""
     from datetime import timedelta
 
     from db.models import Contract, ControllerValue, Job, JobStage, JobStatus, Protocol
@@ -617,9 +1041,8 @@ def test_load_state_var_values_scoped_by_job_created_at(session):
     session.add(job)
     session.commit()
 
-    # Contract row created AFTER job_time — represents a follow-up
-    # discovery overwriting the row.
-    late_contract = Contract(address=address, chain="ethereum", protocol_id=proto.id)
+    # Contract row created AFTER job_time, but explicitly owned by this job.
+    late_contract = Contract(address=address, chain="ethereum", protocol_id=proto.id, job_id=job.id)
     late_contract.created_at = job_time + timedelta(hours=1)
     session.add(late_contract)
     session.flush()
@@ -635,10 +1058,7 @@ def test_load_state_var_values_scoped_by_job_created_at(session):
     session.commit()
 
     values = _load_state_var_values(session, address, job_id=job.id, chain="ethereum")
-    assert "_owner" not in values, (
-        f"expected the temporally-newer Contract row to be filtered out by "
-        f"created_at <= job.created_at; got {values.get('_owner')} (={late_owner})"
-    )
+    assert values.get("_owner") == late_owner
 
 
 @requires_postgres

@@ -1,8 +1,8 @@
 contract_name: C
 description: |
-  Real OZ 5.x AccessControl shape — overloaded ``_checkRole``
+  Real OZ 5.x role-mapping shape — overloaded ``_checkRole``
   helper chain with custom error and ``hasRole`` getter wrapping.
-  Distinct from oz_ac_cross_fn_helper.yaml's 2-hop synthetic case.
+  Distinct from oz_role_cross_fn_helper.yaml's 2-hop synthetic case.
 
   The 4-hop chain:
     onlyRole(role) modifier
@@ -12,7 +12,7 @@ description: |
             → reads _roles[role].hasRole[account]
 
   And the if-revert: ``if (!hasRole(role, account)) revert
-  AccessControlUnauthorizedAccount(account, role)`` is a custom
+  UnauthorizedAccount(account, role)`` is a custom
   error, not a bare revert().
 
   Pinning this manifest validates:
@@ -21,7 +21,7 @@ description: |
        (3 internal calls + getter resolve to a base state read)
     2. Overloaded function selection (``_checkRole(bytes32)`` vs
        ``_checkRole(bytes32,address)``) doesn't confuse the call_chain
-    3. Custom error AccessControlUnauthorizedAccount classifies as
+    3. Custom error UnauthorizedAccount classifies as
        if_revert (not opaque)
     4. Multi-key membership (role + msg.sender) direct-promotes via
        Rule B to caller_authority HIGH
@@ -31,7 +31,7 @@ source: |
   contract C {
       mapping(bytes32 => mapping(address => bool)) private _roles;
       uint256 public x;
-      error AccessControlUnauthorizedAccount(address account, bytes32 neededRole);
+      error UnauthorizedAccount(address account, bytes32 neededRole);
 
       function _msgSender() internal view returns (address) { return msg.sender; }
 
@@ -41,7 +41,7 @@ source: |
 
       function _checkRole(bytes32 role, address account) internal view {
           if (!hasRole(role, account)) {
-              revert AccessControlUnauthorizedAccount(account, role);
+              revert UnauthorizedAccount(account, role);
           }
       }
 

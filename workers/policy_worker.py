@@ -18,14 +18,13 @@ from db.models import (
     PrincipalLabel,
     SessionLocal,
 )
-from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, artifact_key, parse_key
+from db.nested_artifacts import ARTIFACT_KINDS, KEY_PREFIX, parse_key
 from db.nested_artifacts import store_bundle as store_nested_artifacts
 from db.queue import get_artifact, store_artifact
-from schemas.control_tracking import ControlSnapshot, ControlTrackingPlan
+from schemas.control_tracking import ControlSnapshot
 from schemas.effective_permissions import PrincipalResolution
 from services.policy import build_effective_permissions, build_principal_labels
 from services.policy.effective_permissions_writer import write_effective_function_rows
-from services.policy.hypersync_backfill import run_hypersync_policy_backfill
 from services.resolution.recursive import LoadedArtifacts, resolve_control_graph
 from utils.concurrency import parallel_map
 from utils.logging import record_degraded
@@ -34,7 +33,6 @@ from workers.base import BaseWorker
 logger = logging.getLogger("workers.policy_worker")
 
 DEFAULT_RPC_URL = os.getenv("ETH_RPC", "https://ethereum-rpc.publicnode.com")
-DEFAULT_HYPERSYNC_URL = "https://eth.hypersync.xyz"
 RECURSION_MAX_DEPTH = int(os.getenv("PSAT_RECURSION_MAX_DEPTH", "6"))
 
 
@@ -111,17 +109,16 @@ def _load_nested_artifacts(session: Session, job_id) -> dict[str, LoadedArtifact
     }
 
 
-def _resolve_v2_capabilities(
+def _resolve_semantic_capabilities(
     session: Session,
     *,
     contract_address: str,
     job_id: Any,
     chain: str | None = None,
 ) -> dict[str, dict[str, Any]] | None:
-    """Run the v2 capability resolver for ``contract_address`` against
+    """Run the semantic capability resolver for ``contract_address`` against
     the in-progress job. Returns ``{function_signature: capability_dict}``
-    or None on miss / failure (logged so the policy stage can continue
-    with compatibility inputs only).
+    or None on miss / failure.
 
     ``chain`` (e.g. ``"ethereum"``) plumbs through to the resolver's
     ``_load_state_var_values`` so the controller-value lookup is
@@ -130,19 +127,48 @@ def _resolve_v2_capabilities(
     so passing it here is belt-and-suspenders."""
     try:
         from services.resolution.capability_resolver import resolve_contract_capabilities
-    except Exception:  # pragma: no cover — import-error handled defensively
+    except Exception as exc:  # pragma: no cover — import-error handled defensively
+        record_degraded(
+            phase="semantic_capability_resolution",
+            exc=exc,
+            context={"address": contract_address, "job_id": str(job_id)},
+        )
+        logger.warning(
+            "semantic capability resolver unavailable for %s: %s",
+            contract_address,
+            exc,
+            extra={"exc_type": type(exc).__name__},
+        )
         return None
 
     try:
-        return resolve_contract_capabilities(
+        result = resolve_contract_capabilities(
             session,
             address=contract_address,
             job_id=job_id,
             chain=chain,
         )
+        if result is None:
+            exc = RuntimeError("semantic capability resolver produced no output")
+            record_degraded(
+                phase="semantic_capability_resolution",
+                exc=exc,
+                context={"address": contract_address, "job_id": str(job_id), "chain": chain},
+            )
+            logger.warning(
+                "semantic capability resolver produced no output for %s",
+                contract_address,
+                extra={"chain": chain},
+            )
+        return result
     except Exception as exc:
+        record_degraded(
+            phase="semantic_capability_resolution",
+            exc=exc,
+            context={"address": contract_address, "job_id": str(job_id), "chain": chain},
+        )
         logger.warning(
-            "v2 capability resolution skipped for %s: %s",
+            "semantic capability resolution skipped for %s: %s",
             contract_address,
             exc,
             extra={"exc_type": type(exc).__name__},
@@ -181,6 +207,25 @@ def _safe_address_lookup_from_graph(
     return out
 
 
+def _semantic_controller_context_address(
+    snapshot: dict,
+    nested_artifacts: dict[str, LoadedArtifacts],
+) -> str | None:
+    addresses: set[str] = set()
+    for value in snapshot.get("controller_values", {}).values():
+        if not isinstance(value, dict):
+            continue
+        address = str(value.get("value", "")).lower()
+        if address == "0x0000000000000000000000000000000000000000":
+            continue
+        if not (address.startswith("0x") and len(address) == 42):
+            continue
+        bundle = nested_artifacts.get(address)
+        if isinstance(bundle, dict):
+            addresses.add(address)
+    return sorted(addresses)[0] if addresses else None
+
+
 class PolicyWorker(BaseWorker):
     stage = JobStage.policy
     next_stage = JobStage.coverage
@@ -200,11 +245,28 @@ class PolicyWorker(BaseWorker):
         contract_analysis = get_artifact(session, job.id, "contract_analysis")
         control_snapshot = get_artifact(session, job.id, "control_snapshot")
         resolved_control_graph = get_artifact(session, job.id, "resolved_control_graph")
-        # Schema-v2 (Wave 4 B.2): ``predicate_trees`` + ``effects`` are
-        # the only inputs to ``build_effective_permissions``. The v1
-        # ``semantic_guards`` artifact is gone.
+        # ``predicate_trees`` and ``effects`` are the semantic inputs to
+        # ``build_effective_permissions``.
         predicate_trees = get_artifact(session, job.id, "predicate_trees")
         effects_artifact = get_artifact(session, job.id, "effects")
+        missing_semantic_inputs = [
+            name
+            for name, artifact in (("predicate_trees", predicate_trees), ("effects", effects_artifact))
+            if not isinstance(artifact, dict)
+        ]
+        if missing_semantic_inputs:
+            exc = RuntimeError("missing semantic input artifact(s): " + ", ".join(sorted(missing_semantic_inputs)))
+            record_degraded(
+                phase="effective_permissions_semantic_inputs",
+                exc=exc,
+                context={"job_id": str(job.id), "missing_artifacts": sorted(missing_semantic_inputs)},
+            )
+            logger.warning(
+                "Policy stage missing semantic inputs for job %s: %s",
+                job.id,
+                ", ".join(sorted(missing_semantic_inputs)),
+                extra={"missing_artifacts": sorted(missing_semantic_inputs)},
+            )
         tracking_plan = get_artifact(session, job.id, "control_tracking_plan")
         # Optional: classify cache populated by the resolution stage. Lets the
         # refresh + labeling passes skip 6-10 RPCs per address.
@@ -222,12 +284,11 @@ class PolicyWorker(BaseWorker):
 
         nested_artifacts = _load_nested_artifacts(session, job.id)
 
-        # Determine authority snapshot and policy state
+        # Determine nested controller context for effective-permission enrichment.
         authority_snapshot: dict | None = None
-        policy_state: dict | None = None
         principal_resolution: PrincipalResolution = {
             "status": "no_authority",
-            "reason": "Worker-mode authority resolution",
+            "reason": "No nested controller context resolved",
         }
         if isinstance(resolved_control_graph, dict):
             authority_result = self._resolve_authority(
@@ -238,7 +299,6 @@ class PolicyWorker(BaseWorker):
                 nested_artifacts,
             )
             authority_snapshot = authority_result.get("authority_snapshot")
-            policy_state = authority_result.get("policy_state")
             principal_resolution = authority_result.get("principal_resolution", principal_resolution)
             logger.info(
                 "Policy stage authority resolution for job %s address=%s status=%s",
@@ -250,15 +310,14 @@ class PolicyWorker(BaseWorker):
         # Build effective permissions
         self.update_detail(session, job, "Computing effective permissions")
 
-        # B.1 cutover: resolve per-function CapabilityExpr now so the
-        # artifact builder can populate capability_expr / conditions /
-        # status from v2, and the writer can pin v2-shaped principals.
+        # Resolve per-function CapabilityExpr now so the artifact builder
+        # and writer use the same semantic principal source.
         # Pass job.id — without it the resolver's default
         # ``Job.status==completed`` filter skips the in-progress job.
         capability_resolver_output: dict[str, dict[str, Any]] | None = None
         if isinstance(predicate_trees, dict) and job.address:
             job_chain = job.request.get("chain") if isinstance(job.request, dict) else None
-            capability_resolver_output = _resolve_v2_capabilities(
+            capability_resolver_output = _resolve_semantic_capabilities(
                 session,
                 contract_address=(job.address or "").lower(),
                 job_id=job.id,
@@ -271,7 +330,6 @@ class PolicyWorker(BaseWorker):
                 contract_analysis,
                 target_snapshot=control_snapshot,
                 authority_snapshot=authority_snapshot,
-                policy_state=policy_state,
                 principal_resolution=principal_resolution,
                 predicate_trees=predicate_trees if isinstance(predicate_trees, dict) else None,
                 capability_resolver_output=capability_resolver_output,
@@ -280,7 +338,7 @@ class PolicyWorker(BaseWorker):
         )
 
         # Write to effective_functions and function_principals tables from
-        # resolver-native v2 capability rows only.
+        # resolver-native semantic capability rows only.
         contract_row = session.execute(select(Contract).where(Contract.job_id == job.id).limit(1)).scalar_one_or_none()
         if contract_row and isinstance(ep_data, dict):
             graph_nodes = resolved_control_graph.get("nodes") if isinstance(resolved_control_graph, dict) else None
@@ -569,8 +627,14 @@ class PolicyWorker(BaseWorker):
 
         callee_map = build_callee_effect_map(sibling_analyses, effects_by_address=sibling_effects)
         controller_values = control_snapshot.get("controller_values", {})
+        target_effects = get_artifact(session, job.id, "effects")
 
-        enriched = enrich_cross_contract_effects(contract_analysis, controller_values, callee_map)
+        enriched = enrich_cross_contract_effects(
+            contract_analysis,
+            controller_values,
+            callee_map,
+            target_effects=target_effects if isinstance(target_effects, dict) else None,
+        )
         if enriched:
             logger.info(
                 "Job %s: cross-contract enrichment added labels: %s",
@@ -589,14 +653,6 @@ class PolicyWorker(BaseWorker):
                             EffectiveFunction.abi_signature == fn_sig,
                         )
                     ).scalar_one_or_none()
-                    if ef is None:
-                        fn_name = fn_sig.split("(")[0]
-                        ef = session.execute(
-                            select(EffectiveFunction).where(
-                                EffectiveFunction.contract_id == contract_row.id,
-                                EffectiveFunction.function_name == fn_name,
-                            )
-                        ).scalar_one_or_none()
                     if ef:
                         existing = set(ef.effect_labels or [])
                         ef.effect_labels = sorted(existing | set(new_labels))
@@ -611,20 +667,17 @@ class PolicyWorker(BaseWorker):
         snapshot: dict,
         nested_artifacts: dict[str, LoadedArtifacts],
     ) -> dict:
-        """Locate authority artifacts from the resolution stage's DB bundles.
+        """Locate nested controller context from resolution-stage DB bundles.
 
         The resolution worker persists per-sub-contract artifacts as
         ``recursive:<address>:<kind>`` rows. This method fetches the
-        authority's bundle from that set (or falls back to existing
-        ``policy_state`` / ``policy_event_history`` artifacts when present)
-        and, if HyperSync is configured, backfills missing policy state.
+        first nested snapshot referenced by the target's controller values.
+        Semantic capability resolution is responsible for function-level
+        principals; this snapshot only enriches controller labels/details.
         """
-        # Find authority address from snapshot
-        authority_address = None
-        for controller_id, value in snapshot.get("controller_values", {}).items():
-            if controller_id.endswith(":authority"):
-                authority_address = str(value.get("value", "")).lower()
-                break
+        del session, job, resolved_graph
+
+        authority_address = _semantic_controller_context_address(snapshot, nested_artifacts)
 
         if not authority_address or authority_address == "0x0000000000000000000000000000000000000000":
             return {"principal_resolution": {"status": "no_authority", "reason": "No non-zero authority found"}}
@@ -639,57 +692,12 @@ class PolicyWorker(BaseWorker):
             }
 
         authority_snapshot = cast(dict, authority_bundle["snapshot"])
-        authority_analysis = authority_bundle.get("analysis")
-        authority_plan = authority_bundle.get("tracking_plan")
-        policy_state = get_artifact(session, job.id, artifact_key(authority_address, "policy_state"))
-        if policy_state is not None and not isinstance(policy_state, dict):
-            policy_state = None
-
-        if (
-            isinstance(authority_analysis, dict)
-            and isinstance(authority_plan, dict)
-            and authority_analysis.get("policy_tracking")
-        ):
-            if isinstance(policy_state, dict):
-                return {
-                    "authority_snapshot": authority_snapshot,
-                    "policy_state": policy_state,
-                    "principal_resolution": {
-                        "status": "complete",
-                        "reason": "Existing authority policy state joined into permission view",
-                    },
-                }
-            if os.getenv("ENVIO_API_TOKEN"):
-                events, state = run_hypersync_policy_backfill(
-                    cast(ControlTrackingPlan, authority_plan),
-                    url=DEFAULT_HYPERSYNC_URL,
-                )
-                store_artifact(
-                    session,
-                    job.id,
-                    artifact_key(authority_address, "policy_event_history"),
-                    data=events,
-                )
-                store_artifact(
-                    session,
-                    job.id,
-                    artifact_key(authority_address, "policy_state"),
-                    data=state,
-                )
-                return {
-                    "authority_snapshot": authority_snapshot,
-                    "policy_state": state,
-                    "principal_resolution": {
-                        "status": "complete",
-                        "reason": "Authority policy backfill completed",
-                    },
-                }
 
         return {
             "authority_snapshot": authority_snapshot,
             "principal_resolution": {
-                "status": "missing_policy_state",
-                "reason": "Authority artifacts incomplete or ENVIO_API_TOKEN not set",
+                "status": "complete",
+                "reason": "Nested controller snapshot joined into semantic permission view",
             },
         }
 

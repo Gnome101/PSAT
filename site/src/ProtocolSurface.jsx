@@ -1324,7 +1324,7 @@ function InspectorCard({ selected, onNavigate }) {
 
       <div className="ps-inspector-block">
         <div className="ps-inspector-label">Action</div>
-        <p className="ps-inspector-body">{selected.action || "Permissioned path"}</p>
+        <p className="ps-inspector-body">{selected.action || "Controlled path"}</p>
       </div>
 
       <div className="ps-inspector-block">
@@ -1550,7 +1550,7 @@ function PrincipalDetail({ principal, machines, onNavigate, onFocusContract, add
                 function-level permissions. Labeling it "Controls" would claim
                 direct call rights — which we can't guarantee without per-
                 function role-holder validation (see service/policy TODO). */}
-            <span title="Computed from the recursive control graph — does not imply direct call rights on these contracts' privileged functions">
+            <span title="Computed from the recursive control graph — does not imply direct call rights on these contracts' controlled functions">
               Appears In Governance Path For ({controlledMachines.length})
             </span>
             {controlledMachines.length > 1 && (

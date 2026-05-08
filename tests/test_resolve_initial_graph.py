@@ -56,7 +56,7 @@ def _root_artifacts(*, with_role_principals: bool) -> LoadedArtifacts:
     """Root LoadedArtifacts used for both walks. ``with_role_principals``
     adds an effective_permissions block referencing ROLE_PRINCIPAL_EOA —
     the second walk should pick that up; the first should not see it."""
-    analysis = {"subject": {"address": ROOT_ADDR, "name": "Root"}, "access_control": {}}
+    analysis = {"subject": {"address": ROOT_ADDR, "name": "Root"}, "semantic_control": {}}
     plan = {"contract_address": ROOT_ADDR, "controllers": []}
     snapshot = {"controller_values": {}}
     bundle: dict[str, Any] = {

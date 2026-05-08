@@ -10,7 +10,7 @@ Verifies the Wave-2 plumbing T2 owns:
     ``conditions`` / ``status`` reach the per-function dict from both
     serializers.
   - ``_safe_role_int`` falls back to ``None`` for non-int identifiers
-    rather than crashing on the v1 builder's ``int(role_grant["role"])``.
+    rather than forcing every role identifier through ``int(...)``.
 """
 
 from __future__ import annotations
@@ -164,7 +164,7 @@ def test_capability_expr_propagates_through_analysis_detail_serializer() -> None
 
 
 def test_safe_role_int_handles_string_and_dict_without_crashing() -> None:
-    """The v1 ``int(role_grant["role"])`` cast crashes on B.1's
+    """A direct ``int(role_grant["role"])`` cast crashes on B.1's
     string role-name and Condition-mapping shapes. ``_safe_role_int``
     must coerce ints, return ``None`` for non-int, and never raise."""
     from services.policy.principal_enrichment import _safe_role_int as _safe_role_int_pe
@@ -174,7 +174,7 @@ def test_safe_role_int_handles_string_and_dict_without_crashing() -> None:
         # Happy path — int passes through.
         assert safe_role_int(0) == 0
         assert safe_role_int(7) == 7
-        # Numeric string also works (matches v1 hex-role behavior).
+        # Numeric string also works for persisted numeric role identifiers.
         assert safe_role_int("3") == 3
         # Non-numeric string returns None — caller decides skip/log.
         assert safe_role_int("PAUSER_ROLE") is None
@@ -187,8 +187,8 @@ def test_safe_role_int_handles_string_and_dict_without_crashing() -> None:
 
 
 def test_principal_enrichment_skips_non_int_role_without_crashing() -> None:
-    """The v1 ``_collect_permissions`` path swallows non-int role grants
-    instead of crashing — matches the pre-v2 behavior of dropping
+    """The principal-enrichment path swallows non-int role grants
+    instead of crashing, dropping
     unrecognized shapes onto the ``role_<label>`` controller bucket."""
     from services.policy.principal_enrichment import _collect_permissions
 
