@@ -47,10 +47,10 @@ jobs:
               - 'db/**'
               - 'tests/fixtures/**'
             frontend:
+              # No negations: dorny/paths-filter ORs patterns, so `'!foo/**'`
+              # would match every file outside foo/ and force frontend=true
+              # on every PR.
               - 'site/**'
-              - '!site/dist/**'
-              - '!site/test-results/**'
-              - '!site/node_modules/**'
             ci-config:
               - '.github/workflows/**'
               - 'Dockerfile'

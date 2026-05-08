@@ -109,13 +109,23 @@ jobs:
         # on the new branch to get a fresh password we can use for this
         # preview only — prod's password is unaffected.
         #
-        # --stage so the auto-restart doesn't un-stop the workers/monitor/
-        # browser we just turned off. We restart only the web group below.
+        # --stage so we control when the secret applies — the next step
+        # uses `secrets deploy` which only rolls running machines (web),
+        # leaving the workers/monitor/browser we stopped earlier stopped.
         run: |
           BRANCH_ID="${{ steps.branch.outputs.branch_id }}"
-          PW_RESPONSE=$(curl -sf -X POST \
-            -H "Authorization: Bearer $NEON_API_KEY" \
-            "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches/$BRANCH_ID/roles/neondb_owner/reset_password")
+          # Retry: Neon returns 4xx on reset_password until the create-branch
+          # operations finish provisioning. A few seconds is usually enough.
+          PW_RESPONSE=""
+          for i in $(seq 1 24); do
+            if PW_RESPONSE=$(curl -sf -X POST \
+                -H "Authorization: Bearer $NEON_API_KEY" \
+                "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches/$BRANCH_ID/roles/neondb_owner/reset_password"); then
+              break
+            fi
+            echo "attempt $i: branch not ready, sleeping 5s"
+            sleep 5
+          done
           NEW_PW=$(echo "$PW_RESPONSE" | jq -r '.role.password')
           if [[ -z "$NEW_PW" || "$NEW_PW" == "null" ]]; then
             echo "::error::Password reset returned unexpected shape: $PW_RESPONSE"
@@ -127,12 +137,12 @@ jobs:
           DB_URL="postgresql://neondb_owner:${NEW_PW}@${{ steps.branch.outputs.endpoint_host }}/neondb?sslmode=require"
           flyctl secrets set --stage -a "$APP_NAME" DATABASE_URL="$DB_URL"
 
-      - name: Restart preview web machines
-        # Picks up the staged DATABASE_URL.
-        run: |
-          flyctl machines list -a "$APP_NAME" --json \
-            | jq -r '.[] | select(.config.metadata.fly_process_group == "web") | .id' \
-            | xargs -r -I{} flyctl machines restart {} -a "$APP_NAME"
+      - name: Apply staged DATABASE_URL
+        # `flyctl machines restart` does NOT apply staged secrets — only
+        # `flyctl secrets deploy` (or a full deploy) does. This rolls only
+        # currently-running machines, so workers/monitor/browser that we
+        # stopped earlier stay stopped.
+        run: flyctl secrets deploy -a "$APP_NAME"
 
       - name: Wait for preview /api/health
         # Same 2-min ceiling pattern as pr.yml live-tests.
@@ -149,6 +159,23 @@ jobs:
           echo "::error::Preview never healthy at $URL after fork"
           curl -v --max-time 5 "$URL" || true
           exit 1
+
+      - name: Delete prior fork branches for this PR
+        # Only after the new fork is healthy and serving traffic — otherwise
+        # we'd kill the old endpoint while web is still connected to it.
+        # The PR-close cleanup also globs these, but cleaning up here keeps
+        # idle Neon endpoints from accumulating across multiple /fork-prod
+        # refreshes during the same PR.
+        run: |
+          KEEP="${{ steps.branch.outputs.branch_id }}"
+          curl -sf -H "Authorization: Bearer $NEON_API_KEY" \
+            "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches" \
+            | jq -r ".branches[] | select(.name | startswith(\"pr-${PR_NUMBER}-fork-\")) | select(.id != \"$KEEP\") | .id" \
+            | while read OLD_ID; do
+                echo "Deleting prior fork branch: $OLD_ID"
+                curl -sf -X DELETE -H "Authorization: Bearer $NEON_API_KEY" \
+                  "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches/$OLD_ID" || true
+              done
 
       - name: Post sticky comment
         uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405

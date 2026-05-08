@@ -306,11 +306,24 @@ def test_two_processes_materializing_same_bytecode_compile_once(monkeypatch):
 
 
 def test_two_concurrent_requests_dedup_via_advisory_lock(monkeypatch):
-    """Two materialization requests fired concurrently for the same
-    (chain, bytecode_keccak) must produce exactly one build — the loser
-    of the advisory-lock race waits for the winner and reads the result.
+    """Two concurrent materialization requests for the same
+    ``(chain, bytecode_keccak)`` must collapse to **one stored row** — the
+    second caller serves the first caller's bundle.
+
+    Note: the cache layer no longer holds the advisory lock across
+    ``builder()`` (that caused Neon SSL idle drops mid-forge-build). The
+    new shape is short-lock → unlocked build → short-lock recheck-and-
+    upsert. Under tight contention two callers can both enter ``builder()``;
+    the phase-3 recheck collapses the race to one stored row, not one
+    build. That's the intentional trade — guaranteed cache write
+    correctness, occasional duplicate build under contention.
+
+    The build-count therefore can be 1 or 2 here; what's invariant is
+    that only one row is materialized as ``status='ready'``.
     """
     import threading
+
+    from db import contract_materializations as cm
 
     scaffold_calls: list[Any] = []
     collect_calls: list[Any] = []
@@ -335,8 +348,15 @@ def test_two_concurrent_requests_dedup_via_advisory_lock(monkeypatch):
     t1.join()
     t2.join()
 
-    assert len(scaffold_calls) == 1, "concurrent requests for same bytecode must coalesce"
-    assert len(collect_calls) == 1
+    # Build count is non-deterministic under tight contention.
+    assert 1 <= len(scaffold_calls) <= 2
+    assert len(collect_calls) == len(scaffold_calls)
+
+    # The invariant: exactly one ready row stored for this keccak.
+    with cm.SessionLocal() as session:
+        row = cm.find_by_keccak(session, chain="ethereum", bytecode_keccak="0x" + "ab" * 32)
+    assert row is not None, "concurrent requests must produce exactly one stored row"
+    assert row.status == "ready"
 
 
 def test_materialization_persists_a_row_keyed_by_chain_and_keccak(monkeypatch):
