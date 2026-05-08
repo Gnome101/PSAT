@@ -9,8 +9,11 @@ on:
     branches: [main]
 
 # Latest push wins; the whole chain (ci/deploy/live-tests) cancels together.
+# Shared with fork-prod-to-pr.yml so a deploy and a /fork-prod can't race on
+# the preview's secrets and machines — a push during fork cancels the fork
+# (rerun /fork-prod after); a fork during deploy queues behind the deploy.
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: preview-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:
@@ -126,9 +129,14 @@ jobs:
             This environment is torn down automatically when the PR closes.
 
   live-tests:
-    needs: deploy
-    # Explicit fork gate — don't rely solely on transitive skip from deploy.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    needs: [ci, deploy]
+    # Skip on site-only PRs (no Python or CI-config changes) — saves the
+    # OpenRouter / Etherscan / Tavily / RPC spend that the live suite incurs.
+    # Explicit fork gate retained — don't rely solely on transitive skip
+    # from deploy when forks lack secrets.
+    if: |
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (needs.ci.outputs.python == 'true' || needs.ci.outputs.ci-config == 'true')
     runs-on: ubuntu-latest
     environment: staging
     steps:

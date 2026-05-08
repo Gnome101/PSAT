@@ -2,15 +2,66 @@ name: CI checks
 
 # Reusable suite — called by pr.yml (pull_request) and main.yml (push to main).
 # Failures here block both PR previews and prod deploys via the caller's `needs:` chain.
+#
+# Path-based gating: on pull_request events, jobs skip when no relevant files
+# changed (e.g. site-only PRs skip lint/typecheck/test). Push events to main
+# bypass the gates and run everything — main is the source of truth and we
+# want every job exercised regardless of what the push touched.
 on:
   workflow_call:
+    outputs:
+      python:
+        description: "Caller can use this to gate downstream jobs (e.g. live-tests)."
+        value: ${{ jobs.changes.outputs.python }}
+      frontend:
+        description: "True when frontend files changed."
+        value: ${{ jobs.changes.outputs.frontend }}
+      ci-config:
+        description: "True when CI / Docker / Fly config changed — implies run-everything."
+        value: ${{ jobs.changes.outputs.ci-config }}
 
 # Pinned here so a future caller can't widen scope by accident.
 permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      ci-config: ${{ steps.filter.outputs.ci-config }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - '**/*.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - '.python-version'
+              - 'alembic/**'
+              - 'alembic.ini'
+              - 'db/**'
+              - 'tests/fixtures/**'
+            frontend:
+              - 'site/**'
+              - '!site/dist/**'
+              - '!site/test-results/**'
+              - '!site/node_modules/**'
+            ci-config:
+              - '.github/workflows/**'
+              - 'Dockerfile'
+              - 'fly.toml'
+              - 'start_*.sh'
+              - 'docker-compose.yml'
+
   lint:
+    needs: changes
+    # Bypass on push events (main pushes run everything).
+    if: github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' || needs.changes.outputs.ci-config == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +71,8 @@ jobs:
       - run: uv run ruff format --check .
 
   typecheck:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' || needs.changes.outputs.ci-config == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +81,8 @@ jobs:
       - run: uv run pyright
 
   frontend-test:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.ci-config == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -45,6 +100,8 @@ jobs:
       - run: npx playwright test
 
   test:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.python == 'true' || needs.changes.outputs.ci-config == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -145,3 +202,34 @@ jobs:
           name: diff-cover-report
           path: diff-cover.html
           if-no-files-found: ignore
+
+  # Single aggregate status for branch protection. Treats `success` and
+  # `skipped` the same — a site-only PR where lint/typecheck/test are
+  # legitimately skipped still merges. Only fails when an upstream job
+  # actually failed or was cancelled.
+  #
+  # Set this as the sole required check on `main` in branch protection;
+  # the per-job checks should be removed from the required list since
+  # they'll appear as "Skipped" on site-only PRs and block the merge.
+  ci-pass:
+    needs: [changes, lint, typecheck, frontend-test, test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate upstream results
+        run: |
+          # `changes` gates every other job — if it didn't succeed, the four
+          # downstream jobs all skip on missing outputs and would otherwise
+          # silently green-light a PR with zero checks executed.
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "::error::changes job did not succeed: ${{ needs.changes.result }}"
+            exit 1
+          fi
+          fail=0
+          for r in "${{ needs.lint.result }}" "${{ needs.typecheck.result }}" "${{ needs.frontend-test.result }}" "${{ needs.test.result }}"; do
+            if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
+              echo "::error::Upstream job result: $r"
+              fail=1
+            fi
+          done
+          exit $fail

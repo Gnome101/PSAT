@@ -1,0 +1,136 @@
+name: Reset PR preview DB
+
+# Manual workflow — comment `/reset-db` on a PR to dispatch (see
+# pr-comment-commands.yml). Drops the per-PR Neon DB, recreates it, runs
+# `alembic upgrade head`, and restarts the preview machines so they reconnect
+# with a fresh schema.
+#
+# Always points DATABASE_URL at the per-PR staging DB. If the preview was
+# previously /fork-prod'd, the fork is undone — comment `/fork-prod` again
+# to restore.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number whose preview DB should be wiped"
+        required: true
+        type: string
+
+# Shared with pr.yml and fork-prod-to-pr.yml — serializes deploys, forks,
+# and resets on the same preview's secrets and machines.
+concurrency:
+  group: preview-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      NEON_STAGING_HOST: ${{ secrets.NEON_STAGING_HOST }}
+      NEON_STAGING_POOLER_HOST: ${{ secrets.NEON_STAGING_POOLER_HOST }}
+      NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
+      NEON_STAGING_PASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
+      PR_NUMBER: ${{ inputs.pr_number }}
+      APP_NAME: psat-pr-${{ inputs.pr_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+
+      - name: Verify preview app exists
+        # Belt-and-suspenders: refuse to ever target the prod app, and bail
+        # if the preview doesn't exist (mistyped PR number).
+        run: |
+          if [[ "$APP_NAME" == "psat" ]]; then
+            echo "::error::Refusing to target prod app"
+            exit 1
+          fi
+          flyctl status -a "$APP_NAME" > /dev/null
+
+      - name: Stop all preview machines
+        # Drain connections so DROP DATABASE WITH FORCE doesn't have to fight
+        # active uvicorn/worker pools, and prevent writes during the reset.
+        run: |
+          flyctl machines list -a "$APP_NAME" --json \
+            | jq -r '.[] | select(.state != "stopped") | .id' \
+            | xargs -r -I{} flyctl machines stop {} -a "$APP_NAME" || true
+
+      - name: Stage per-PR staging DATABASE_URL
+        # If the preview was forked, DATABASE_URL points at a Neon CoW branch.
+        # Reset always returns to the per-PR staging DB so behavior is
+        # predictable. --stage so subsequent secret writes don't auto-restart;
+        # we restart explicitly below after migrations are applied.
+        run: |
+          DB_URL="postgresql://${NEON_STAGING_USER}:${NEON_STAGING_PASSWORD}@${NEON_STAGING_POOLER_HOST}/psat_pr_${PR_NUMBER}?sslmode=require"
+          flyctl secrets set --stage -a "$APP_NAME" DATABASE_URL="$DB_URL"
+
+      - name: Drop and recreate per-PR database
+        env:
+          PGPASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
+        run: |
+          # WITH (FORCE) terminates any lingering connections from machines
+          # that didn't cleanly shut down. Hits the direct compute endpoint —
+          # pgbouncer txn mode blocks DDL.
+          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
+            -c "DROP DATABASE IF EXISTS \"psat_pr_${PR_NUMBER}\" WITH (FORCE);"
+          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
+            -c "CREATE DATABASE \"psat_pr_${PR_NUMBER}\";"
+
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --dev
+
+      - name: Apply migrations
+        # Run alembic from the runner against the freshly-recreated DB. The
+        # app's release_command also runs alembic, but invoking flyctl deploy
+        # would trigger a full rebuild — slower and unnecessary since the
+        # image hasn't changed.
+        env:
+          DATABASE_URL: postgresql://${{ secrets.NEON_STAGING_USER }}:${{ secrets.NEON_STAGING_PASSWORD }}@${{ secrets.NEON_STAGING_HOST }}/psat_pr_${{ inputs.pr_number }}?sslmode=require
+        run: uv run --no-sync alembic upgrade head
+
+      - name: Start preview machines
+        # Picks up the staged DATABASE_URL on boot. Web auto-starts on first
+        # request via auto_start_machines, but we kick everything explicitly
+        # so workers/monitor/browser come back too.
+        run: |
+          flyctl machines list -a "$APP_NAME" --json \
+            | jq -r '.[] | select(.state == "stopped") | .id' \
+            | xargs -r -I{} flyctl machines start {} -a "$APP_NAME"
+
+      - name: Wait for preview /api/health
+        # Same 2-min ceiling pattern as pr.yml live-tests. Confirms the new
+        # connection pool reaches the migrated DB before we declare success.
+        run: |
+          URL="https://$APP_NAME.fly.dev/api/health"
+          for i in $(seq 1 24); do
+            if curl -fsS --max-time 5 "$URL" >/dev/null; then
+              echo "preview healthy after attempt $i"
+              exit 0
+            fi
+            echo "attempt $i: $URL not healthy yet, sleeping 5s"
+            sleep 5
+          done
+          echo "::error::Preview never healthy at $URL after reset"
+          curl -v --max-time 5 "$URL" || true
+          exit 1
+
+      - name: Post sticky comment
+        uses: marocchino/sticky-pull-request-comment@773744901bac0e8cbb5a0dc842800d45e9b2b405
+        with:
+          number: ${{ env.PR_NUMBER }}
+          header: psat-reset-db
+          message: |
+            ### :recycle: Preview DB reset
+
+            - **DB:** `psat_pr_${{ env.PR_NUMBER }}` (dropped, recreated, migrated to head)
+            - **URL:** https://${{ env.APP_NAME }}.fly.dev
+            - **Run:** [#${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            > Any prior `/fork-prod` is undone — `DATABASE_URL` now points at the per-PR staging DB. Comment `/fork-prod` to restore the prod fork.
