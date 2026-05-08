@@ -29,6 +29,9 @@ jobs:
       FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       NEON_STAGING_HOST: ${{ secrets.NEON_STAGING_HOST }}
       NEON_STAGING_USER: ${{ secrets.NEON_STAGING_USER }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      # Hardcoded project id for fork-branch cleanup — see fork-prod-to-pr.yml.
+      PROD_NEON_PROJECT_ID: morning-silence-94271256
       ARTIFACT_STORAGE_ENDPOINT: ${{ secrets.ARTIFACT_STORAGE_ENDPOINT }}
       ARTIFACT_STORAGE_BUCKET: ${{ secrets.ARTIFACT_STORAGE_BUCKET }}
       # awscli reads these standard names; Tigris is S3-compatible.
@@ -51,6 +54,22 @@ jobs:
           # supports it. Fresh psql session — don't reuse any prior one.
           psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
             -c "DROP DATABASE IF EXISTS \"psat_pr_${PR_NUMBER}\" WITH (FORCE);" || true
+
+      - name: Delete forked Neon branches
+        # Idempotent — matches branches named "pr-${PR_NUMBER}-fork-*" in the
+        # prod project. PRs that were never forked match nothing; the loop is
+        # a no-op. Skips cleanly when NEON_API_KEY isn't set so the workflow
+        # stays usable from environments that haven't adopted forking yet.
+        if: env.NEON_API_KEY != ''
+        run: |
+          curl -sf -H "Authorization: Bearer $NEON_API_KEY" \
+            "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches" \
+            | jq -r ".branches[] | select(.name | startswith(\"pr-${PR_NUMBER}-fork-\")) | .id" \
+            | while read BRANCH_ID; do
+                echo "Deleting forked branch: $BRANCH_ID"
+                curl -sf -X DELETE -H "Authorization: Bearer $NEON_API_KEY" \
+                  "https://console.neon.tech/api/v2/projects/$PROD_NEON_PROJECT_ID/branches/$BRANCH_ID" || true
+              done
 
       - name: Delete Tigris prefix
         run: |
