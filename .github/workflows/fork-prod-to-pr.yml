@@ -15,9 +15,13 @@ on:
         required: true
         type: string
 
-# Sequential per-PR — don't race two forks against the same preview.
+# Shared with pr.yml so fork and deploy serialize on the same preview.
+# cancel-in-progress: false → fork queues behind any in-progress deploy
+# rather than stomping its secrets/restarts. A subsequent push will cancel
+# this fork (pr.yml uses cancel-in-progress: true); rerun /fork-prod to
+# restore.
 concurrency:
-  group: fork-pr-${{ inputs.pr_number }}
+  group: preview-${{ inputs.pr_number }}
   cancel-in-progress: false
 
 permissions:
@@ -139,5 +143,6 @@ jobs:
 
             - **URL:** https://${{ env.APP_NAME }}.fly.dev
             - **Neon branch:** `${{ steps.branch.outputs.branch_name }}` (auto-deleted when the PR closes)
-            - **Workers:** scaled to 0 — push a commit to redeploy if you need them back
-            - **Refresh:** re-run this workflow to pull a newer prod snapshot
+            - **Workers:** scaled to 0 against the forked data
+            - :warning: **Any push to this PR will undo the fork** (the deploy resets `DATABASE_URL` to the per-PR staging DB and restarts workers). Comment `/fork-prod` again to restore.
+            - **Refresh:** comment `/fork-prod` again to pull a newer prod snapshot

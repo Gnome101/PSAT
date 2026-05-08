@@ -9,8 +9,11 @@ on:
     branches: [main]
 
 # Latest push wins; the whole chain (ci/deploy/live-tests) cancels together.
+# Shared with fork-prod-to-pr.yml so a deploy and a /fork-prod can't race on
+# the preview's secrets and machines — a push during fork cancels the fork
+# (rerun /fork-prod after); a fork during deploy queues behind the deploy.
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: preview-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 permissions:

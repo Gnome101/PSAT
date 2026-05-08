@@ -212,12 +212,19 @@ jobs:
   # the per-job checks should be removed from the required list since
   # they'll appear as "Skipped" on site-only PRs and block the merge.
   ci-pass:
-    needs: [lint, typecheck, frontend-test, test]
+    needs: [changes, lint, typecheck, frontend-test, test]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate upstream results
         run: |
+          # `changes` gates every other job — if it didn't succeed, the four
+          # downstream jobs all skip on missing outputs and would otherwise
+          # silently green-light a PR with zero checks executed.
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "::error::changes job did not succeed: ${{ needs.changes.result }}"
+            exit 1
+          fi
           fail=0
           for r in "${{ needs.lint.result }}" "${{ needs.typecheck.result }}" "${{ needs.frontend-test.result }}" "${{ needs.test.result }}"; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
