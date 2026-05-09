@@ -58,13 +58,21 @@ jobs:
       - name: Create Fly app if missing
         run: flyctl apps create "${{ steps.fly.outputs.app }}" --org personal || true
 
-      - name: Create per-PR Neon database
+      - name: Stop preview machines before DB reset
+        run: |
+          flyctl machines list -a "${{ steps.fly.outputs.app }}" --json \
+            | jq -r '.[] | select(.state != "stopped") | .id' \
+            | xargs -r -I{} flyctl machines stop {} -a "${{ steps.fly.outputs.app }}" || true
+
+      - name: Reset per-PR Neon database
         env:
           PGPASSWORD: ${{ secrets.NEON_STAGING_PASSWORD }}
         run: |
-          # CREATE DATABASE must hit the direct compute endpoint (pgbouncer txn mode blocks admin).
+          # Keep merge-gate live tests isolated from stale work left by older pushes.
           psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
-            -c "CREATE DATABASE \"psat_pr_${PR_NUMBER}\";" || true
+            -c "DROP DATABASE IF EXISTS \"psat_pr_${PR_NUMBER}\" WITH (FORCE);"
+          psql "sslmode=require host=$NEON_STAGING_HOST user=$NEON_STAGING_USER dbname=neondb" \
+            -c "CREATE DATABASE \"psat_pr_${PR_NUMBER}\";"
 
       - name: Stage Fly secrets
         run: |
