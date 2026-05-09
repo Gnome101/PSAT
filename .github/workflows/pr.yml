@@ -178,7 +178,7 @@ jobs:
           PSAT_ADMIN_KEY: ${{ secrets.PSAT_ADMIN_KEY }}
           # Pin to PR head SHA via raw.github — stable in git history regardless of renames.
           PSAT_LIVE_AUDIT_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.event.pull_request.head.sha }}/tests/fixtures/audits/sample_audit.pdf
-        run: uv run pytest -m live -q
+        run: uv run pytest -m "live and not expensive_live" -q
 
       - name: Post sticky result (success)
         if: success()

@@ -20,6 +20,7 @@ def _drain_etherfi_queue(live_client: LiveClient):
     live_client.cancel_queued_company_jobs(DEFAULT_TEST_COMPANY)
 
 
+@pytest.mark.expensive_live
 def test_analyze_remaining_response_shape(analyzed_company, live_client: LiveClient, _drain_etherfi_queue):
     # Shape-only: ``queued`` count depends on prior runs against this preview's DB.
     body = live_client.analyze_remaining(DEFAULT_TEST_COMPANY)
