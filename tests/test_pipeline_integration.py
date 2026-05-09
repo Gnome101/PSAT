@@ -852,7 +852,7 @@ def test_resolution_worker_rewrites_address_for_impl_jobs(monkeypatch):
     captured_plans: list[dict] = []
     captured_analyses: list[dict] = []
 
-    def fake_build_snapshot(plan, _rpc_url):
+    def fake_build_snapshot(plan, _rpc_url, **_kw):
         captured_plans.append(plan)
         return {
             "schema_version": "0.1",

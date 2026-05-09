@@ -103,7 +103,7 @@ def _patch_all(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> dict[str, A
         create_job_calls.append(request_dict)
         return SimpleNamespace(id=uuid.uuid4(), company=None)
 
-    def fake_build_control_snapshot(plan: Any, rpc_url: str) -> dict:
+    def fake_build_control_snapshot(plan: Any, rpc_url: str, **_kw: Any) -> dict:
         return snapshot
 
     def fake_resolve_control_graph(
@@ -219,7 +219,7 @@ class TestProxyAddressOverride:
         captured_plan: list[Any] = []
         original_tracking = _minimal_tracking_plan()
 
-        def fake_build(plan: Any, rpc_url: str) -> dict:
+        def fake_build(plan: Any, rpc_url: str, **_kw: Any) -> dict:
             captured_plan.append(plan)
             return _minimal_snapshot()
 

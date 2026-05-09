@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import cast
 
@@ -100,7 +101,11 @@ class ResolutionWorker(BaseWorker):
         # Build control snapshot via RPC calls
         self.update_detail(session, job, "Reading current controller state")
         t0 = time.monotonic()
-        snapshot = build_control_snapshot(cast(ControlTrackingPlan, tracking_plan), rpc_url)
+        snapshot = build_control_snapshot(
+            cast(ControlTrackingPlan, tracking_plan),
+            rpc_url,
+            heartbeat=lambda: self._heartbeat(session, job),
+        )
         logger.info(
             "resolution phase complete: control snapshot",
             extra={"duration_ms": int((time.monotonic() - t0) * 1000), "phase": "control_snapshot"},
@@ -135,7 +140,7 @@ class ResolutionWorker(BaseWorker):
         )
 
         # Fetch token balances
-        self._fetch_balances(session, job, contract_row)
+        self._fetch_balances(session, job, contract_row, heartbeat=lambda: self._heartbeat(session, job))
 
         root_artifacts = _build_root_artifacts(contract_analysis, tracking_plan, snapshot, predicate_trees)
 
@@ -247,7 +252,14 @@ class ResolutionWorker(BaseWorker):
             job.name or "Contract",
         )
 
-    def _fetch_balances(self, session: Session, job: Job, contract_row: Contract | None) -> None:
+    def _fetch_balances(
+        self,
+        session: Session,
+        job: Job,
+        contract_row: Contract | None,
+        *,
+        heartbeat: Callable[[], None] | None = None,
+    ) -> None:
         """Fetch ETH + token balances and store in contract_balances table."""
         from utils.etherscan import get_eth_balance, get_eth_price, get_token_balances, parallel_get
 
@@ -267,7 +279,8 @@ class ResolutionWorker(BaseWorker):
                 "eth_wei": (lambda: get_eth_balance(target_address)),
                 "tokens": (lambda: get_token_balances(target_address)),
                 "eth_price": get_eth_price,
-            }
+            },
+            heartbeat=heartbeat,
         )
 
         eth_wei_raw = results.get("eth_wei")

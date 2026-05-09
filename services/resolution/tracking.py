@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 from eth_abi.abi import decode
@@ -414,7 +415,13 @@ def _read_polling_source(
     return _decode_controller_value(raw, controller_kind)
 
 
-def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: str = "latest") -> ControlSnapshot:
+def build_control_snapshot(
+    plan: ControlTrackingPlan,
+    rpc_url: str,
+    block_tag: str = "latest",
+    *,
+    heartbeat: Callable[[], None] | None = None,
+) -> ControlSnapshot:
     """Resolve every tracked controller's value at the given block.
 
     The classification cache is the process-wide ``_CLASSIFY_CACHE`` (see
@@ -478,7 +485,7 @@ def build_control_snapshot(plan: ControlTrackingPlan, rpc_url: str, block_tag: s
                 },
             }
 
-    results = parallel_map(_compute_controller, plan["tracked_controllers"], max_workers=8)
+    results = parallel_map(_compute_controller, plan["tracked_controllers"], max_workers=8, heartbeat=heartbeat)
     for _controller, outcome in results:
         if isinstance(outcome, BaseException):
             # parallel_map captures exceptions, but ``_compute_controller``

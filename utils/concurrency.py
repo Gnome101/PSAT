@@ -103,13 +103,11 @@ def parallel_map(
 
     executor = RpcExecutor.get()
     futures: dict[Future[R], int] = {}
-    # Cap concurrency at *workers* by submitting in waves of that size; the
-    # shared ``RpcExecutor`` is intentionally larger than any one site needs
-    # so callers can declare their own ceiling without starving siblings.
-    semaphore = threading.Semaphore(workers)
+    # Cap concurrency by keeping at most ``workers`` submitted futures at a
+    # time. Do not block during submission: long-running first-wave tasks
+    # must still get heartbeat callbacks while the remaining items wait.
 
     def _submit(idx: int, item: T) -> Future[R]:
-        semaphore.acquire()
         # Per-submission ``copy_context`` is mandatory: a single Context
         # object cannot be entered by ``Context.run`` concurrently from
         # two threads. Each worker thread needs its own snapshot of the
@@ -118,15 +116,16 @@ def parallel_map(
         ctx = contextvars.copy_context()
 
         def _wrapped() -> R:
-            try:
-                return ctx.run(fn, item)
-            finally:
-                semaphore.release()
+            return ctx.run(fn, item)
 
-        return executor.submit(_wrapped)
+        future = executor.submit(_wrapped)
+        futures[future] = idx
+        return future
 
-    for idx, item in enumerate(items_list):
-        futures[_submit(idx, item)] = idx
+    initial = min(workers, len(items_list))
+    for idx in range(initial):
+        _submit(idx, items_list[idx])
+    next_submit_idx = initial
 
     pending = set(futures)
     heartbeat_interval = _heartbeat_interval_s() if heartbeat is not None else None
@@ -154,6 +153,9 @@ def parallel_map(
                 for pending_fut in pending:
                     pending_fut.cancel()
                 raise
+            if next_submit_idx < len(items_list):
+                pending.add(_submit(next_submit_idx, items_list[next_submit_idx]))
+                next_submit_idx += 1
 
     return results
 

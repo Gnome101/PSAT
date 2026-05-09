@@ -134,6 +134,26 @@ def test_parallel_map_heartbeats_while_waiting(monkeypatch):
     assert counter["n"] >= 1
 
 
+def test_parallel_map_heartbeats_while_submission_is_backpressured(monkeypatch):
+    monkeypatch.setenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "0.01")
+    release = threading.Event()
+    counter = {"n": 0}
+
+    def wait_for_release(x):
+        if x in (1, 2):
+            assert release.wait(timeout=2)
+        return x
+
+    def heartbeat():
+        counter["n"] += 1
+        release.set()
+
+    results = parallel_map(wait_for_release, [1, 2, 3], max_workers=2, heartbeat=heartbeat)
+
+    assert [r for _, r in results] == [1, 2, 3]
+    assert counter["n"] >= 1
+
+
 def test_parallel_map_empty_input_returns_empty():
     assert parallel_map(lambda x: x, [], max_workers=4) == []
 
