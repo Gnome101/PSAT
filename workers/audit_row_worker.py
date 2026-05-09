@@ -32,6 +32,13 @@ from sqlalchemy.sql import Select, Update
 
 from db.models import AuditReport, SessionLocal
 from utils.logging import configure_logging
+from utils.memory import (
+    cgroup_memory_current_bytes,
+    cgroup_memory_max_bytes,
+    count_sibling_python_procs,
+    current_rss_bytes,
+    mb,
+)
 
 logger = logging.getLogger("workers.audit_row_worker")
 
@@ -197,11 +204,32 @@ class AuditRowWorker:
             self.stale_processing_seconds,
         )
 
+        # Mirror BaseWorker's [BOOT] line so audit-side RSS lands in the
+        # same log shape the OOM-attribution scrapes already understand.
+        boot_rss = current_rss_bytes()
+        self.log.info(
+            "[BOOT] worker=%s pid=%d phase=%s rss_mb=%s cgroup_used_mb=%s/%s python_siblings=%d pool=%d",
+            self.worker_id,
+            os.getpid(),
+            self.worker_name,
+            mb(boot_rss),
+            mb(cgroup_memory_current_bytes()),
+            mb(cgroup_memory_max_bytes()),
+            count_sibling_python_procs(),
+            self.max_concurrent,
+        )
+
         executor = ThreadPoolExecutor(
             max_workers=self.max_concurrent,
             thread_name_prefix=self.thread_name_prefix,
         )
 
+        # Per-batch RSS deltas vs boot let a leak hypothesis be tested
+        # from logs alone: a clean worker plateaus, a leaking one drifts
+        # monotonically. Tracked outside the loop so the delta is over
+        # the whole worker lifetime, not just this batch.
+        rss_at_boot = boot_rss
+        batch_counter = 0
         poll_counter = 0
         try:
             while self._running:
@@ -244,6 +272,20 @@ class AuditRowWorker:
                         continue
                     self._persist_outcome(audit_id, result)
                     self._log_outcome(audit_id, result)
+
+                batch_counter += 1
+                rss_after = current_rss_bytes()
+                self.log.info(
+                    "[BATCH] worker=%s phase=%s batch=%d processed=%d rss_mb=%s "
+                    "delta_since_boot_mb=%+d cgroup_used_mb=%s",
+                    self.worker_id,
+                    self.worker_name,
+                    batch_counter,
+                    len(claimed),
+                    mb(rss_after),
+                    int((rss_after - rss_at_boot) / (1024 * 1024)),
+                    mb(cgroup_memory_current_bytes()),
+                )
         finally:
             executor.shutdown(wait=True)
             self.log.info("Worker %s shut down", self.worker_id)
