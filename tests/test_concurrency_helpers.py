@@ -84,6 +84,35 @@ def test_parallel_map_heartbeat_exception_is_swallowed():
     assert [r for _, r in results] == [2, 4, 6]
 
 
+def test_parallel_map_lease_lost_heartbeat_propagates():
+    from db.queue import LeaseLost
+
+    def lost_lease():
+        raise LeaseLost("lease gone")
+
+    with pytest.raises(LeaseLost, match="lease gone"):
+        parallel_map(lambda x: x * 2, [1, 2, 3], max_workers=2, heartbeat=lost_lease)
+
+
+def test_parallel_map_heartbeats_while_waiting(monkeypatch):
+    monkeypatch.setenv("PSAT_PARALLEL_HEARTBEAT_INTERVAL_S", "0.01")
+    release = threading.Event()
+    counter = {"n": 0}
+
+    def wait_for_release(x):
+        assert release.wait(timeout=2)
+        return x
+
+    def heartbeat():
+        counter["n"] += 1
+        release.set()
+
+    results = parallel_map(wait_for_release, [1, 2], max_workers=2, heartbeat=heartbeat)
+
+    assert [r for _, r in results] == [1, 2]
+    assert counter["n"] >= 1
+
+
 def test_parallel_map_empty_input_returns_empty():
     assert parallel_map(lambda x: x, [], max_workers=4) == []
 

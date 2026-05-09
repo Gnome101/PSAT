@@ -184,9 +184,13 @@ def test_copy_static_cache(db_session):
     from sqlalchemy import select
 
     from db.models import Contract, ContractSummary, RoleDefinition
-    from db.queue import copy_static_cache, create_job, get_artifact, get_source_files
+    from db.queue import copy_static_cache, create_job, get_artifact, get_source_files, store_artifact
 
     source_job = _create_completed_job_with_static_data(db_session)
+    predicate_trees = {"schema_version": "semantic", "trees": {"pause()": {"node_type": "caller"}}}
+    effects = {"schema_version": "semantic", "effects": {"pause()": [{"kind": "external_call"}]}}
+    store_artifact(db_session, source_job.id, "predicate_trees", data=predicate_trees)
+    store_artifact(db_session, source_job.id, "effects", data=effects)
     target_job = create_job(db_session, {"address": ADDR_A})
 
     new_contract_id = copy_static_cache(db_session, source_job.id, target_job.id)
@@ -217,6 +221,8 @@ def test_copy_static_cache(db_session):
     assert rds[0].role_name == "ADMIN_ROLE"
 
     assert get_artifact(db_session, target_job.id, "contract_analysis") is not None
+    assert get_artifact(db_session, target_job.id, "predicate_trees") == predicate_trees
+    assert get_artifact(db_session, target_job.id, "effects") == effects
     # slither_results / analysis_report were removed from the static-artifact
     # cache copy set when the Slither CLI subprocess was excised — they no
     # longer participate in caching since they're no longer produced.
